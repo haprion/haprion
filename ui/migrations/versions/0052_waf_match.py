@@ -9,10 +9,12 @@ value: the WAF page is where a false alarm is told from an attack, and the
 value is what tells them apart. It is the requester's own text, so it is
 bounded here and shown escaped.
 
-`request_id` is the engine's transaction ID. The engine hands the same ID back
-to HAProxy as `txn.coraza.id`, which the traffic record carries as `waf_id` -
-the join between a request and what was found in it, with no `unique-id` in
-the configuration (measured 26-10-03).
+`request_id` is the engine's transaction ID, which HAProxy sets as
+`<object>.<uuid>` and hands to the engine: the engine's log names no object,
+so the ID does. The engine hands the same ID back to HAProxy as
+`txn.coraza.id`, which the traffic record carries as `waf_id` - the join
+between a request and what was found in it, with no `unique-id` in the
+configuration (measured 26-10-03).
 
 Daily partitions and duplicate handling as `traffic_log` (0030): the collector
 re-reads from a checkpoint, and `event_id` is what makes a repeat harmless.
@@ -54,7 +56,7 @@ def upgrade() -> None:
         constraint waf_match_node_shape
             check (node ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'),
         constraint waf_match_event_id_shape check (octet_length(event_id) = 32),
-        constraint waf_match_request_id_shape check (request_id ~ '^[A-Za-z0-9_-]{1,64}$'),
+        constraint waf_match_request_id_shape check (request_id ~ '^[A-Za-z0-9_.-]{1,96}$'),
         constraint waf_match_object_shape check (object ~ '^[a-z][a-z0-9_-]{0,39}$'),
         constraint waf_match_rule_id_range check (rule_id between 1 and 999999),
         constraint waf_match_field_form
@@ -122,7 +124,7 @@ def upgrade() -> None:
     alter table traffic_log
         add column waf_id text not null default '',
         add constraint traffic_log_waf_id_shape
-            check (waf_id ~ '^([A-Za-z0-9_-]{1,64})?$');
+            check (waf_id ~ '^([A-Za-z0-9_.-]{1,96})?$');
 
     grant insert (waf_id) on traffic_log to app_collector;
     grant select (waf_id) on traffic_log to app_web;

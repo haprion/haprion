@@ -730,6 +730,7 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
         text("rule", MAX_RULE_LENGTH),
         _waf_rules(value.get("waf_rules")),
         _waf_score(value.get("waf_score")),
+        _waf_id(value.get("waf_id")),
     )
 
 
@@ -776,6 +777,20 @@ def _waf_score(item: Any) -> int:
 
 
 #
+# `<object>.<uuid>`, as the generator sets it; read only for its form here.
+#
+WAF_ID = re.compile(r"[A-Za-z0-9_.-]{1,96}")
+
+
+def _waf_id(item: Any) -> str:
+    """The engine's transaction ID (migration 0052), or empty where there is none."""
+
+    if not isinstance(item, str) or WAF_ID.fullmatch(item) is None:
+        return ""
+    return item
+
+
+#
 # The column's own bound (migration 0050). A longer value is no rule this
 # installation wrote.
 #
@@ -785,7 +800,7 @@ _TRAFFIC_COPY = """
 copy traffic_log
     (event_id, cluster, node, occurred_at, request_number, client, method, host,
      path, frontend, backend, server, status, request_time, queue_time,
-     connect_time, response_time, total_time, bytes, rule, waf_rules, waf_score)
+     connect_time, response_time, total_time, bytes, rule, waf_rules, waf_score, waf_id)
 from stdin
 """
 

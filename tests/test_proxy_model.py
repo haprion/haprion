@@ -19,6 +19,7 @@ from haproxy_mgmt.proxy_model import (
     TCP_ONLY_KEYS,
     ModelError,
     RateLimit,
+    WafException,
     load_proxy,
     name_refusal,
 )
@@ -562,19 +563,76 @@ class TheWafEngineOnAnObject(unittest.TestCase):
     def test_a_new_engine_only_looks_lets_through_on_error_and_starts_at_level_one(self) -> None:
         waf = self.load("waf: {}").waf
         self.assertEqual(
-            (waf.mode, waf.on_engine_error, waf.paranoia, waf.exclude_rules),
+            (waf.mode, waf.on_engine_error, waf.paranoia, waf.exceptions),
             ("log", "allow", 1, ()),
         )
 
-    def test_every_field_reads_and_exclusions_come_back_sorted(self) -> None:
+    def test_every_field_reads_and_each_exception_keeps_its_scope(self) -> None:
         waf = self.load(
             "waf:\n  mode: block\n  on_engine_error: deny\n  paranoia: 2\n"
-            "  exclude_rules: [942100, 920350]"
+            "  exceptions:\n"
+            "    - rule: 942100\n      field: ARGS:json.q\n      paths: [/search, /find]\n"
+            "      by: admin\n      at: 2026-10-03T09:10:00Z\n"
+            "    - rule: 920350\n"
+            "    - {rule: 913100, field: 'REQUEST_HEADERS:User-Agent'}\n"
+            "    - {rule: 930120, field: REQUEST_FILENAME, paths: [/files/]}"
         ).waf
+        self.assertEqual((waf.mode, waf.on_engine_error, waf.paranoia), ("block", "deny", 2))
         self.assertEqual(
-            (waf.mode, waf.on_engine_error, waf.paranoia, waf.exclude_rules),
-            ("block", "deny", 2, (920350, 942100)),
+            waf.exceptions,
+            (
+                WafException(
+                    942100, "ARGS:json.q", ("/find", "/search"), "admin", "2026-10-03T09:10:00Z"
+                ),
+                WafException(920350),
+                WafException(913100, "REQUEST_HEADERS:User-Agent"),
+                WafException(930120, "REQUEST_FILENAME", ("/files/",)),
+            ),
         )
+
+    def test_the_old_exclusion_list_says_what_replaced_it(self) -> None:
+        self.assertIn("replaced by exceptions", self.refused("waf: {exclude_rules: [920350]}"))
+
+    def test_an_exception_writes_nothing_into_the_engine_it_was_not_meant_to(self) -> None:
+        for exception, word in (
+            ("{rule: 200002}", "rule"),
+            ("{rule: '942100'}", "rule"),
+            ("{rule: 949110}", "turn the engine off"),  # the blocking decision itself
+            ("{rule: 980170}", "turn the engine off"),
+            ("{field: ARGS:q}", "rule"),
+            ("{rule: 942100, field: 'ARGS:q;942200'}", "field"),
+            ("{rule: 942100, field: 'ARGS:a b'}", "field"),
+            ("{rule: 942100, field: 'ARGS:\"x\"'}", "field"),
+            ("{rule: 942100, field: 'ARGS:a,ctl:ruleEngine=Off'}", "field"),
+            ("{rule: 942100, field: 'TX:score'}", "field"),
+            ("{rule: 942100, field: REQUEST_HEADERS}", "field"),  # keyed, without its key
+            ("{rule: 942100, paths: [search]}", "paths"),
+            ("{rule: 942100, paths: ['/a b']}", "paths"),
+            ("{rule: 942100, paths: ['/a\"b']}", "paths"),
+            ("{rule: 942100, paths: ['/a%20b']}", "paths"),
+            ("{rule: 942100, paths: ['/a//b']}", "paths"),
+            ("{rule: 942100, paths: ['/a/../b']}", "paths"),
+            ("{rule: 942100, paths: ['/a/.']}", "paths"),
+            ("{rule: 942100, paths: [/a, /a]}", "paths"),
+            ("{rule: 942100, paths: [" + ", ".join(f"/p{n}" for n in range(21)) + "]}", "paths"),
+            ("{rule: 942100, by: " + "a" * 65 + "}", "by"),
+            ("{rule: 942100, at: 2026-10-03}", "at"),
+            ("{rule: 942100, at: '2026-10-03 09:10:00'}", "at"),
+            ("{rule: 942100, at: 2026-10-03T11:10:00+02:00}", "at"),  # UTC only
+            ("{rule: 942100, why: x}", "why"),
+        ):
+            with self.subTest(exception):
+                self.assertIn(word, self.refused(f"waf: {{exceptions: [{exception}]}}"))
+
+    def test_the_same_rule_on_the_same_scope_twice_is_refused(self) -> None:
+        self.assertIn(
+            "twice",
+            self.refused(
+                "waf: {exceptions: [{rule: 942100, paths: [/a]}, {rule: 942100, paths: [/a]}]}"
+            ),
+        )
+        # The same rule on another scope is another exception.
+        self.load("waf: {exceptions: [{rule: 942100, paths: [/a]}, {rule: 942100, field: ARGS:q}]}")
 
     def test_values_outside_their_range_are_refused_by_name(self) -> None:
         for block, field in (
@@ -582,9 +640,7 @@ class TheWafEngineOnAnObject(unittest.TestCase):
             ("waf: {on_engine_error: block}", "on_engine_error"),
             ("waf: {paranoia: 5}", "paranoia"),
             ("waf: {paranoia: true}", "paranoia"),
-            ("waf: {exclude_rules: [200002]}", "exclude_rules"),
-            ("waf: {exclude_rules: ['942100']}", "exclude_rules"),
-            ("waf: {exclude_rules: [942100, 942100]}", "exclude_rules"),
+            ("waf: {exceptions: {rule: 942100}}", "exceptions"),
             ("waf: {level: 2}", "level"),
         ):
             with self.subTest(block):

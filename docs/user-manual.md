@@ -549,7 +549,12 @@ waf:
   mode: log                # log (the default) or block
   on_engine_error: allow   # allow (the default) or deny
   paranoia: 1              # CRS paranoia level, 1 to 4
-  exclude_rules: [920350]  # CRS rule IDs turned off for this object
+  exceptions:              # false alarms let through, each as narrow as it can be
+    - rule: 942100         # a CRS rule ID
+      field: ARGS:q        # optional: one part of the request; absent = all of it
+      paths: [/search]     # optional: exact paths; absent = every path
+      by: admin            # who made it, and when (the WAF page fills these in)
+      at: 2026-10-03T09:10:00Z
 ```
 
 **Look before refusing.** In `log` a request the engine would refuse is served,
@@ -558,14 +563,30 @@ anomaly score; in `block` the visitor gets 403 and the record says `crs:deny`.
 The engine's checks come after the access rules, so a request those refuse is
 never inspected. *WAF logs* shows the records with a match and what each rule
 is. A rule that matches traffic the site is meant to receive is a false alarm:
-put its ID in `exclude_rules`, and the object can leave `log`. A higher
+let it through with an exception, and the object can leave `log`. A higher
 `paranoia` matches more attacks and more false alarms.
+
+**Exceptions** are as narrow as the finding allows. `field` names the part of
+the request the rule reacted to, as the rule set's own log names it - `ARGS:q`
+(a query or form field), `ARGS:json.q` (a field in a JSON body),
+`REQUEST_HEADERS:User-Agent`, `REQUEST_COOKIES:session` - and only that part
+stops being inspected by that rule; the rest of the request still is. `paths`
+are compared exactly, after the engine decodes and normalises the path:
+`/%73earch` is `/search`, while `/search/`, `/search/x` and `/search/../admin`
+are not. Without `field` the rule is off for the whole request on those paths;
+without `paths` on every path; without either, on the whole object. The rules
+that decide and report rather than detect (CRS 949xxx, 959xxx, 980xxx) cannot be
+excepted - that would turn the engine off. A field name with characters other
+than letters, digits and `_ . - [ ]` cannot be named; except the path instead.
 
 **When the engine does not answer** - stopped, restarting, or overloaded -
 `allow` serves the request uninspected and records `waf-engine:log`, and `deny`
-answers 503 and records `waf-engine:deny`. What a request matched is not kept
-beyond its rule IDs: the matched text, which is the attacker's own, stays in
-the engine's log on the node (`journalctl -u coraza-spoa`).
+answers 503 and records `waf-engine:deny`. Each rule the engine matched is
+logged on the node with the part of the request and the matched value, in the
+engine's own journal (`journalctl --namespace=haproxy-waf -u coraza-spoa`),
+and collected to the management host with the traffic log. The matched value is
+the requester's own text: it is kept to 1024 characters and always shown as
+text.
 
 **Installation.** The engine and the rule set are two packages built from
 pinned sources (see the installation guide). The engine package goes on the

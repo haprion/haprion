@@ -25,6 +25,7 @@ import ipaddress
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Any
 
@@ -786,14 +787,32 @@ class Waf:
     A new object starts in `log`, so false alarms show before anything is
     refused. `on_engine_error` is what happens when the engine does not answer:
     `allow` lets the request through, `deny` answers 503. `paranoia` is the CRS
-    blocking paranoia level; `exclude_rules` the CRS rules this object turns
-    off, which is how a false alarm is taken away.
+    blocking paranoia level; `exceptions` are how a false alarm is taken away
+    (B234), each as narrow as the finding allows.
     """
 
     mode: str = "log"
     on_engine_error: str = "allow"
     paranoia: int = 1
-    exclude_rules: tuple[int, ...] = ()
+    exceptions: tuple[WafException, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WafException:
+    """One CRS rule let through on this object (B234, chosen 26-10-03).
+
+    `field` narrows it to one part of the request as the rule set names it -
+    `ARGS:q`, `REQUEST_HEADERS:User-Agent` - and empty means the whole request.
+    `paths` narrows it to exact request paths, compared as the engine sees them
+    after decoding and normalising; empty means every path. `by` and `at` say
+    who made it and when, for the WAF page's list.
+    """
+
+    rule: int
+    field: str = ""
+    paths: tuple[str, ...] = ()
+    by: str = ""
+    at: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -2085,14 +2104,120 @@ WAF_ENGINE_ERRORS = ("allow", "deny")
 # not a false alarm being taken away.
 #
 WAF_RULE_IDS = range(900000, 1000000)
-MAX_WAF_EXCLUSIONS = 200
+#
+# The rule files that decide and report rather than detect: 949 refuses a
+# request whose score crossed the threshold, 959 the same for responses, 980
+# reports. Letting one of them through is not taking a false alarm away; it is
+# turning the engine off where it applies.
+#
+WAF_DECIDING_RULES = (949, 959, 980)
+MAX_WAF_EXCEPTIONS = 200
+MAX_WAF_EXCEPTION_PATHS = 20
+#
+# The parts of a request an exception can name, as the rule set's own log
+# names them: a collection and a key (`ARGS:q`, `ARGS:json.q`,
+# `REQUEST_HEADERS:User-Agent`), or a collection that has no keys. The key is
+# the requester's own text; only these characters go into the engine's
+# configuration, where `;`, `,`, quotes and spaces would change what the
+# directive says (measured 26-10-03).
+#
+WAF_KEYED_FIELDS = (
+    "ARGS",
+    "ARGS_GET",
+    "ARGS_POST",
+    "ARGS_NAMES",
+    "REQUEST_HEADERS",
+    "REQUEST_COOKIES",
+    "REQUEST_COOKIES_NAMES",
+    "FILES",
+    "FILES_NAMES",
+)
+WAF_KEYLESS_FIELDS = (
+    "REQUEST_FILENAME",
+    "REQUEST_BASENAME",
+    "REQUEST_URI",
+    "REQUEST_URI_RAW",
+    "REQUEST_LINE",
+    "REQUEST_BODY",
+    "QUERY_STRING",
+)
+WAF_FIELD_KEY = re.compile(r"^[A-Za-z0-9_.\-\[\]]{1,128}$")
+#
+# A path is compared after the engine decodes it and normalises it, so it is
+# written in that form: decoded (no `%`), with no empty, `.` or `..` segment.
+# Quotes, spaces and backslashes would end the directive's argument.
+#
+WAF_PATH = re.compile(r"^/[A-Za-z0-9._~!$&()*+=:@,/-]{0,1023}$")
+WAF_EXCEPTION_TIME = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+
+
+def waf_field(value: str) -> bool:
+    """Whether `value` is a part of a request an exception may name."""
+    collection, separator, key = value.partition(":")
+    if not separator:
+        return collection in WAF_KEYLESS_FIELDS
+    return collection in WAF_KEYED_FIELDS and WAF_FIELD_KEY.fullmatch(key) is not None
+
+
+def _waf_path(value: Any, location: str) -> str:
+    if not isinstance(value, str) or WAF_PATH.fullmatch(value) is None:
+        raise ModelError(
+            f"{location} must be a request path such as /search, without quotes, spaces or %"
+        )
+    segments = value.split("/")[1:]
+    if any(segment in ("", ".", "..") for segment in segments[:-1]) or segments[-1] in (".", ".."):
+        raise ModelError(f"{location} must be a normalised path, without //, /./ or /../")
+    return value
+
+
+def _waf_exception(value: Any, location: str) -> WafException:
+    data = _mapping(value, location)
+    _only_keys(data, {"rule", "field", "paths", "by", "at"}, location)
+    rule = data.get("rule")
+    if isinstance(rule, bool) or not isinstance(rule, int) or rule not in WAF_RULE_IDS:
+        raise ModelError(f"{location}.rule must be a CRS rule ID, 900000 to 999999")
+    if rule // 1000 in WAF_DECIDING_RULES:
+        raise ModelError(
+            f"{location}.rule {rule} decides or reports rather than detects; "
+            "letting it through would turn the engine off"
+        )
+    field = data.get("field", "")
+    if not isinstance(field, str) or (field and not waf_field(field)):
+        raise ModelError(
+            f"{location}.field must name a part of the request such as ARGS:q or "
+            "REQUEST_HEADERS:User-Agent"
+        )
+    paths = data.get("paths", [])
+    if not isinstance(paths, list) or len(paths) > MAX_WAF_EXCEPTION_PATHS:
+        raise ModelError(f"{location}.paths must list at most {MAX_WAF_EXCEPTION_PATHS} paths")
+    checked = tuple(_waf_path(path, f"{location}.paths") for path in paths)
+    if len(set(checked)) != len(checked):
+        raise ModelError(f"{location}.paths names the same path twice")
+    by = data.get("by", "")
+    if not isinstance(by, str) or len(by) > 64 or any(ord(c) < 32 or ord(c) == 127 for c in by):
+        raise ModelError(f"{location}.by must be an account name of at most 64 characters")
+    at = data.get("at", "")
+    #
+    # YAML reads an unquoted time as a time, and that is how a person writes
+    # it; in UTC and to the second it is the same value as the quoted form.
+    #
+    if isinstance(at, datetime) and at.utcoffset() == timedelta(0) and at.microsecond == 0:
+        at = at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not isinstance(at, str) or (at and WAF_EXCEPTION_TIME.fullmatch(at) is None):
+        raise ModelError(f"{location}.at must be a UTC time such as 2026-10-03T09:10:00Z")
+    return WafException(rule=rule, field=field, paths=tuple(sorted(checked)), by=by, at=at)
 
 
 def _waf(value: Any, location: str) -> Waf | None:
     if value is None:
         return None
     data = _mapping(value, location)
-    _only_keys(data, {"mode", "on_engine_error", "paranoia", "exclude_rules"}, location)
+    if "exclude_rules" in data:
+        raise ModelError(
+            f"{location}.exclude_rules was replaced by exceptions, "
+            "each with a rule and optionally a field and paths"
+        )
+    _only_keys(data, {"mode", "on_engine_error", "paranoia", "exceptions"}, location)
     mode = data.get("mode", "log")
     if mode not in WAF_MODES:
         raise ModelError(f"{location}.mode must be one of: {', '.join(WAF_MODES)}")
@@ -2104,21 +2229,22 @@ def _waf(value: Any, location: str) -> Waf | None:
     paranoia = data.get("paranoia", 1)
     if isinstance(paranoia, bool) or paranoia not in (1, 2, 3, 4):
         raise ModelError(f"{location}.paranoia must be 1, 2, 3 or 4")
-    excluded = data.get("exclude_rules", [])
-    if not isinstance(excluded, list) or len(excluded) > MAX_WAF_EXCLUSIONS:
+    listed = data.get("exceptions", [])
+    if not isinstance(listed, list) or len(listed) > MAX_WAF_EXCEPTIONS:
+        raise ModelError(f"{location}.exceptions must list at most {MAX_WAF_EXCEPTIONS} exceptions")
+    exceptions = tuple(
+        _waf_exception(item, f"{location}.exceptions[{index}]") for index, item in enumerate(listed)
+    )
+    scopes = [(e.rule, e.field, e.paths) for e in exceptions]
+    if len(set(scopes)) != len(scopes):
         raise ModelError(
-            f"{location}.exclude_rules must list at most {MAX_WAF_EXCLUSIONS} rule IDs"
+            f"{location}.exceptions lets the same rule through on the same scope twice"
         )
-    for rule in excluded:
-        if isinstance(rule, bool) or not isinstance(rule, int) or rule not in WAF_RULE_IDS:
-            raise ModelError(f"{location}.exclude_rules must hold CRS rule IDs, 900000 to 999999")
-    if len(set(excluded)) != len(excluded):
-        raise ModelError(f"{location}.exclude_rules names the same rule twice")
     return Waf(
         mode=str(mode),
         on_engine_error=str(on_error),
         paranoia=int(paranoia),
-        exclude_rules=tuple(sorted(excluded)),
+        exceptions=exceptions,
     )
 
 

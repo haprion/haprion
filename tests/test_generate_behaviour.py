@@ -2561,6 +2561,23 @@ backends:
         port: {web}
 """
 SQLI = "/?q=1'%20OR%201=1--"
+ATTACK = "1'%20OR%201=1--"
+#
+# Each form an exception takes: a rule on every path (the numeric Host), a
+# field on one path, a field on every path, the whole request on one path.
+#
+BLOCKS_WITH_EXCEPTIONS = """  mode: block
+  exceptions:
+    - rule: 920350
+    - rule: 942100
+      field: ARGS:q
+      paths: [/search]
+    - rule: 942100
+      field: ARGS:token
+    - rule: 942100
+      paths: [/health]
+      by: admin
+      at: 2026-10-03T09:10:00Z"""
 
 
 @unittest.skipUnless(
@@ -2570,8 +2587,9 @@ SQLI = "/?q=1'%20OR%201=1--"
 class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
     """Fas 21 del B (B232, B233): the generated layer, the installed engine and CRS.
 
-    Three objects: one that only looks, one that blocks and has turned the
-    numeric-Host rule off, one that refuses when the engine does not answer.
+    Three objects: one that only looks, one that blocks and lets rules through
+    in each form an exception takes (B234), one that refuses when the engine
+    does not answer.
     What the engine said is read back through a response header, the same
     window as the access-rule test; the second class stops nothing and
     starts no engine at all, which is what a stopped engine looks like.
@@ -2595,7 +2613,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         root = Path(cls.directory.name)
         objects = {
             "looks": "  mode: log",
-            "blocks": "  mode: block\n  exclude_rules: [920350]",
+            "blocks": BLOCKS_WITH_EXCEPTIONS,
             "closed": "  mode: block\n  on_engine_error: deny",
         }
         layer = generate(
@@ -2618,6 +2636,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             "    option httplog\n"
             "    http-after-response set-header X-Rule %[var(txn.rule)]\n"
             "    http-after-response set-header X-Waf %[var(txn.coraza.rule_ids)]\n"
+            "    http-after-response set-header X-Waf-Id %[var(txn.coraza.id)]\n"
         )
         layer = GeneratedLayer(
             configuration={
@@ -2704,6 +2723,33 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         self.assertEqual(connection.getresponse().status, 200)
         connection.close()
 
+    def test_an_exception_lets_through_exactly_what_it_names(self) -> None:
+        for target, status in (
+            (f"/search?q={ATTACK}", 200),  # the field, on its path
+            (f"/search?id={ATTACK}", 403),  # another field on that path
+            (f"/other?q={ATTACK}", 403),  # the field on another path
+            (f"/search/../admin?q={ATTACK}", 403),  # not /search once normalised
+            (f"/search/?q={ATTACK}", 403),
+            (f"/%73earch?q={ATTACK}", 200),  # /search once decoded
+            (f"/anywhere?token={ATTACK}", 200),  # a field on every path
+            (f"/health?a={ATTACK}", 200),  # the whole request on one path
+            (f"/health/x?a={ATTACK}", 403),
+        ):
+            with self.subTest(target):
+                self.assertEqual(self.ask(target, name="blocks")[0], status)
+
+    def test_the_engine_hands_its_transaction_id_back_to_haproxy(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.request("GET", SQLI, headers={"Host": "looks.example.com"})
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+        # `<object>.<uuid>`, set by HAProxy, taken by the engine and handed back.
+        self.assertRegex(
+            response.getheader("X-Waf-Id") or "",
+            "^looks\\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        )
+
 
 class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
     """The same layer with no engine: `on_engine_error` decides (B232)."""
@@ -2720,6 +2766,12 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
         self.skipTest("the engine is not running")
 
     def test_an_excluded_rule_no_longer_counts(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_an_exception_lets_through_exactly_what_it_names(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_the_engine_hands_its_transaction_id_back_to_haproxy(self) -> None:
         self.skipTest("the engine is not running")
 
     def test_open_lets_through_and_says_so_closed_refuses(self) -> None:
@@ -2748,7 +2800,7 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
         self.assertNotIn("spoe", layer.configuration["1000-frontends.cfg"])
 
     def test_each_object_is_an_application_and_an_unknown_name_inspects_nothing(self) -> None:
-        layer = self.layer("  paranoia: 3\n  exclude_rules: [942100, 920350]")
+        layer = self.layer("  paranoia: 3\n  exceptions: [{rule: 920350}]")
         engine = layer.waf_files["coraza.yaml"]
         self.assertIn("default_application: _unknown", engine)
         self.assertIn("  - name: shop\n", engine)
@@ -2763,6 +2815,30 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
             "filter spoe engine coraza config /etc/haproxy/waf/spoe.conf",
             layer.configuration["1000-frontends.cfg"],
         )
+
+    def test_exceptions_on_paths_come_before_the_rule_set_and_on_every_path_after(self) -> None:
+        engine = self.layer(
+            "  exceptions:\n"
+            "    - {rule: 942100, field: ARGS:q, paths: [/search, /find]}\n"
+            "    - {rule: 941100, paths: [/contact]}\n"
+            "    - {rule: 942100, field: 'REQUEST_HEADERS:User-Agent'}\n"
+            "    - {rule: 913100}"
+        ).waf_files["coraza.yaml"]
+        rule_set = engine.index("Include /etc/haproxy/waf/crs/crs-setup.conf")
+        for line in (
+            'SecRule REQUEST_FILENAME "@streq /find" "id:210000,phase:1,pass,nolog,'
+            't:none,t:urlDecodeUni,t:normalisePath,ctl:ruleRemoveTargetById=942100;ARGS:q"',
+            'SecRule REQUEST_FILENAME "@streq /search" "id:210001,phase:1,pass,nolog,'
+            't:none,t:urlDecodeUni,t:normalisePath,ctl:ruleRemoveTargetById=942100;ARGS:q"',
+            'SecRule REQUEST_FILENAME "@streq /contact" "id:210002,phase:1,pass,nolog,'
+            't:none,t:urlDecodeUni,t:normalisePath,ctl:ruleRemoveById=941100"',
+        ):
+            self.assertLess(engine.index(line), rule_set)
+        for line in (
+            'SecRuleUpdateTargetById 942100 "!REQUEST_HEADERS:User-Agent"',
+            "SecRuleRemoveById 913100",
+        ):
+            self.assertGreater(engine.index(line), rule_set)
 
     def test_nothing_else_may_take_the_engine_s_port(self) -> None:
         with self.assertRaisesRegex(Exception, "WAF engine"):

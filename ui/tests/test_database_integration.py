@@ -616,7 +616,7 @@ class ARealDatabase(unittest.TestCase):
             "(%s, 'alpha', 'node-a', %s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing"
         )
         good = (
-            "ABCDEFGHIJKLMNOP",
+            "shop.0b5e3c1a-7d42-4f0e-9c1b-2a6d8e4f7a90",
             "shop",
             942100,
             "ARGS:q",
@@ -630,7 +630,7 @@ class ARealDatabase(unittest.TestCase):
             connection.commit()
         for index, value in (
             (0, "has space"),  # request_id
-            (0, "A" * 65),
+            (0, "A" * 97),
             (1, "Shop"),  # object
             (2, 0),  # rule_id
             (2, 1_000_000),

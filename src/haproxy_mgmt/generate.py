@@ -55,6 +55,7 @@ from haproxy_mgmt.proxy_model import (
     Proxy,
     Route,
     Server,
+    WafException,
     is_range,
 )
 
@@ -231,7 +232,13 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     # column's bound; the collector keeps whole rule IDs only.
     #
     "%(waf_rules)[var(txn.coraza.rule_ids),bytes(0,1024)] "
-    '%(waf_score)[var(txn.coraza.anomaly_score)]"'
+    "%(waf_score)[var(txn.coraza.anomaly_score)] "
+    #
+    # The engine's transaction ID, which it hands back to HAProxy: the same ID
+    # its own log puts on every rule it matched, so the WAF page can tell what
+    # was found in this request (migration 0052, B234).
+    #
+    '%(waf_id)[var(txn.coraza.id),bytes(0,96)]"'
 )
 #
 # The same record for an external receiver, and which node wrote it. The
@@ -498,6 +505,49 @@ WAF_BASE = (
 )
 
 
+#
+# An exception's own rules, numbered from here within each object's
+# application (the base uses 2000xx; the rule set 9xxxxx). Each object has its
+# own rule set, so the numbers repeat between objects without meeting.
+#
+WAF_EXCEPTION_FIRST_ID = 210000
+
+
+def _waf_exception_directives(exceptions: Sequence[WafException]) -> tuple[list[str], list[str]]:
+    """What the exceptions add before the rule set, and after it.
+
+    An exception on paths is a phase 1 rule ahead of the rule set, which takes
+    the rule (or the field from it) away for that request only; the path is
+    compared exactly, after the same decoding and normalising the rule set
+    applies. One on every path changes the rule itself, once, after the rule
+    set has defined it. Both forms measured in a real HAProxy and engine
+    (26-10-03), including that `/search/../admin` is not `/search`.
+    """
+
+    before: list[str] = []
+    after: list[str] = []
+    number = WAF_EXCEPTION_FIRST_ID
+    for exception in exceptions:
+        if exception.field:
+            action = f"ctl:ruleRemoveTargetById={exception.rule};{exception.field}"
+        else:
+            action = f"ctl:ruleRemoveById={exception.rule}"
+        if not exception.paths:
+            after.append(
+                f'SecRuleUpdateTargetById {exception.rule} "!{exception.field}"'
+                if exception.field
+                else f"SecRuleRemoveById {exception.rule}"
+            )
+            continue
+        for path in exception.paths:
+            before.append(
+                f'SecRule REQUEST_FILENAME "@streq {path}" "id:{number},phase:1,pass,nolog,'
+                f't:none,t:urlDecodeUni,t:normalisePath,{action}"'
+            )
+            number += 1
+    return before, after
+
+
 def _waf_files(guarded: Sequence[Proxy]) -> dict[str, str]:
     """`coraza.yaml` - one application per object - and the SPOE configuration."""
 
@@ -507,8 +557,10 @@ def _waf_files(guarded: Sequence[Proxy]) -> dict[str, str]:
     applications = []
     for proxy in guarded:
         assert proxy.waf is not None  # noqa: S101 - `guarded` holds only these
+        before, after = _waf_exception_directives(proxy.waf.exceptions)
         directives = [
             *WAF_BASE,
+            *before,
             f"Include {crs}/crs-setup.conf",
             #
             # CRS reads the level from this variable if set before its
@@ -517,7 +569,7 @@ def _waf_files(guarded: Sequence[Proxy]) -> dict[str, str]:
             f'SecAction "id:900000,phase:1,pass,t:none,nolog,'
             f'setvar:tx.blocking_paranoia_level={proxy.waf.paranoia}"',
             f"Include {crs}/rules/*.conf",
-            *(f"SecRuleRemoveById {rule}" for rule in proxy.waf.exclude_rules),
+            *after,
         ]
         applications.append(_waf_application(proxy.name, directives))
     applications.append(_waf_application(WAF_UNKNOWN_APPLICATION, ["SecRuleEngine Off"]))
@@ -548,8 +600,8 @@ def _waf_files(guarded: Sequence[Proxy]) -> dict[str, str]:
             f"    use-backend {WAF_BACKEND}",
             "",
             f"spoe-message {WAF_SPOE_GROUP}",
-            "    args app=var(txn.coraza.app) src-ip=src src-port=src_port dst-ip=dst "
-            "dst-port=dst_port method=method path=path query=query version=req.ver "
+            "    args app=var(txn.coraza.app) id=var(txn.coraza.request) src-ip=src "
+            "src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver "
             "headers=req.hdrs body=req.body exportRuleIDs=bool(true)",
             "",
             f"spoe-group {WAF_SPOE_GROUP}",
@@ -1724,6 +1776,12 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
     lines = [
         f"    http-request wait-for-body time 1s if {host}",
         f"    http-request set-var(txn.coraza.app) str({proxy.name}) if {host}",
+        #
+        # The engine takes this as its transaction ID, puts it on every rule it
+        # logs and hands it back as txn.coraza.id - and its log names no
+        # object, so the ID does (B234; measured 26-10-03, Coraza SPOA v0.9.0).
+        #
+        f'    http-request set-var-fmt(txn.coraza.request) "{proxy.name}.%[uuid]" if {host}',
         f"    http-request send-spoe-group {WAF_SPOE_ENGINE} {WAF_SPOE_GROUP} if {host}",
         *_verdict(f"{host} {verdict}", "crs", "deny" if proxy.waf.mode == "block" else "log"),
     ]

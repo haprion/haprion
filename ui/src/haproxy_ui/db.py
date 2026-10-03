@@ -28,6 +28,7 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
+from haproxy_mgmt import node_resources
 from haproxy_mgmt.generate import METRICS_FRONTEND
 from psycopg import Connection, sql
 from psycopg.rows import class_row
@@ -1373,6 +1374,46 @@ def record_audit_event(
         )
 
 
+#
+# Older than this, the previous reading is not used for a CPU share: an average
+# over a poller that stood still for an hour describes that hour, not now.
+#
+CPU_READING_MAX_GAP = timedelta(minutes=5)
+
+
+def _with_cpu_shares(result: Mapping[str, Any], previous: Any) -> Mapping[str, Any]:
+    """Each node's CPU share since its previous reading, as `cpu_percent` beside its status.
+
+    `null` without a previous reading of the same node, so the first answer
+    after a gap shows a dash rather than a figure averaged over the gap.
+    """
+
+    nodes = result.get("nodes")
+    if not isinstance(nodes, list):
+        return result
+    before: dict[str, Any] = {}
+    if isinstance(previous, Mapping) and isinstance(previous.get("nodes"), list):
+        for node in previous["nodes"]:
+            if isinstance(node, Mapping) and isinstance(node.get("status"), Mapping):
+                before[str(node.get("name"))] = node["status"].get("resources")
+    shared: list[Any] = []
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            shared.append(node)
+            continue
+        status = node.get("status")
+        current = status.get("resources") if isinstance(status, Mapping) else None
+        shared.append(
+            {
+                **node,
+                "cpu_percent": node_resources.cpu_percent(
+                    before.get(str(node.get("name"))), current
+                ),
+            }
+        )
+    return {**result, "nodes": shared}
+
+
 def record_cluster_status(
     connection: Connection[Any],
     *,
@@ -1396,6 +1437,17 @@ def record_cluster_status(
     """
 
     with connection.cursor() as cursor:
+        #
+        # The previous answer, read before it is replaced: CPU use is a rate,
+        # and this row is the only place the previous reading is kept (B239).
+        #
+        cursor.execute(
+            "select result, now() - observed_at <= %(fresh)s "
+            "  from cluster_status where cluster = %(cluster)s",
+            {"cluster": cluster, "fresh": CPU_READING_MAX_GAP},
+        )
+        previous = cursor.fetchone()
+        result = _with_cpu_shares(result, previous[0] if previous and previous[1] else None)
         cursor.execute(
             "insert into cluster_status (cluster, outcome, result, warnings, error, poll_error) "
             "values (%(cluster)s, %(outcome)s, %(result)s, %(warnings)s, %(error)s, %(poll)s) "

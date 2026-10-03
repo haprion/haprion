@@ -149,6 +149,52 @@ def read_waf_engine():
 
 
 #
+# What the dashboard shows as a node's CPU and memory (B239). Counters, not a
+# percentage: CPU use is a rate, and a rate needs two readings. The poller
+# keeps the previous one and works out the share between them, so nothing here
+# waits to measure. Memory is what the kernel says a new process could have
+# without swapping - `available` in `free`, not `free`, which leaves out the
+# cache the kernel gives back on demand. Each part is `null` when it cannot be
+# read, so an unreadable figure is never shown as zero.
+#
+def read_resources():
+    cpu = None
+    try:
+        fields = Path("/proc/stat").read_text().splitlines()[0].split()
+        if fields[0] == "cpu":
+            # user nice system idle iowait irq softirq steal; guest time is
+            # already counted in user and nice.
+            ticks = [int(value) for value in fields[1:9]]
+            cpu = {"total": sum(ticks), "idle": ticks[3] + ticks[4]}
+    except (OSError, ValueError, IndexError):
+        cpu = None
+    memory = None
+    try:
+        values = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            name, _, rest = line.partition(":")
+            if name in ("MemTotal", "MemAvailable"):
+                values[name] = int(rest.split()[0])
+        if len(values) == 2:
+            memory = {"total_kb": values["MemTotal"], "available_kb": values["MemAvailable"]}
+    except (OSError, ValueError, IndexError):
+        memory = None
+    try:
+        load = float(Path("/proc/loadavg").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        load = None
+    return {"cpu": cpu, "memory": memory, "load": load, "cpus": os.cpu_count()}
+
+
+def memory_summary(memory):
+    if not memory or not memory["total_kb"]:
+        return "unknown"
+    total = memory["total_kb"]
+    used = total - memory["available_kb"]
+    return f"{round(100 * used / total)} % used ({used // 1024} of {total // 1024} MB)"
+
+
+#
 # A directive and its argument, with the trailing comment keepalived allows.
 # The comment is why these are not `\s*$`: the configuration this project ships
 # writes `interface eth0  # CHANGE`, and a pattern that insists on the end of
@@ -733,6 +779,7 @@ result = {
     "installation": read_installation(),
     "architecture": os.uname().machine,
     "waf_engine": read_waf_engine(),
+    "resources": read_resources(),
 }
 
 if args.json:
@@ -748,6 +795,12 @@ else:
     print(f"VIP owner:         {vip_owner}")
     print(f"ip_nonlocal_bind:  {ip_nonlocal_bind}")
     print(f"Runtime stats:     {'OK' if stats_ok else 'FAILED'}")
+    resources = result["resources"]
+    print(f"Memory:            {memory_summary(resources['memory'])}")
+    load = "unknown" if resources["load"] is None else "%.2f" % resources["load"]
+    cpus = resources["cpus"]
+    count = "1 CPU" if cpus == 1 else f"{cpus or '?'} CPUs"
+    print(f"Load:              {load} on {count}, last minute")
     waf = result["waf_engine"]
     print(
         f"WAF engine:        {waf['version'] or 'NOT INSTALLED'}"

@@ -24,7 +24,7 @@ import sys
 from collections.abc import Callable
 from typing import Any, TextIO
 
-from haproxy_mgmt import haproxy_versions
+from haproxy_mgmt import haproxy_versions, node_resources
 from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.cluster_status import StatusError, keepalived_state, parse_status
 from haproxy_mgmt.envelope import new_request_id
@@ -182,6 +182,10 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         addresses = _addresses_line(status)
         if addresses is not None:
             writer.write(f"  Addresses:    {addresses}\n")
+        resources = status.get("resources")
+        if isinstance(resources, dict):
+            writer.write(f"  Memory:       {node_resources.memory_line(resources)}\n")
+            writer.write(f"  Load:         {node_resources.load_line(resources)}\n")
         writer.write("\n")
 
     writer.write(f"VIP state:      {summary.get('vip_state')}\n")

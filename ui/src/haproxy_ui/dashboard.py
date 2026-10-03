@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from haproxy_mgmt import haproxy_versions
+from haproxy_mgmt import haproxy_versions, node_resources
 from haproxy_mgmt.cluster_status import keepalived_state
 
 from haproxy_ui.cluster_identity import accent_index
@@ -41,6 +41,39 @@ class NodeView:
     # The same sentence `haproxy-status` prints; None when there is nothing to say.
     #
     runtime_note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceFigure:
+    """One of the card's CPU and Memory columns (B239).
+
+    The VIP owner's figure, since that node carries the traffic; every node's
+    in `title`, for the hover; `high` when any node - the standby too - is at or
+    above `node_resources.HIGH_PERCENT`, so a standby running out of memory is
+    not hidden behind a quiet owner.
+    """
+
+    shown: str
+    title: str
+    high: bool
+
+
+def _resource_figure(
+    figures: list[tuple[str, int | None]], owner: str | None
+) -> ResourceFigure | None:
+    if not figures or all(value is None for _, value in figures):
+        return None
+    by_name = dict(figures)
+    lead = by_name.get(owner) if owner in by_name else figures[0][1]
+    return ResourceFigure(
+        shown="–" if lead is None else f"{lead} %",
+        title=" · ".join(
+            f"{name} {'–' if value is None else f'{value} %'}" for name, value in figures
+        ),
+        high=any(
+            value is not None and value >= node_resources.HIGH_PERCENT for _, value in figures
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +115,12 @@ class ClusterView:
     # buttons send, so the helper can refuse to roll out anything else.
     #
     target_version: int | None = None
+    #
+    # None when no node reports its resources - a node bundle from before
+    # B239 - and the columns are then left out rather than shown as dashes.
+    #
+    cpu: ResourceFigure | None = None
+    memory: ResourceFigure | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,6 +391,45 @@ def _cluster_view(
     target = _mapping(summary.get("target"))
     release_state = _text(summary.get("release_state"), "unknown")
 
+    reporting = [
+        _mapping(value)
+        for value in (node_values if isinstance(node_values, list) else [])
+        if isinstance(value, Mapping)
+        and value.get("status_ok") is True
+        and isinstance(_mapping(value.get("status")).get("resources"), Mapping)
+    ]
+    owner = owner_names[0] if len(owner_names) == 1 else None
+    cpu_figure = _resource_figure(
+        [
+            (
+                _text(value.get("name")),
+                value.get("cpu_percent") if isinstance(value.get("cpu_percent"), int) else None,
+            )
+            for value in reporting
+        ],
+        owner,
+    )
+    memory_figure = _resource_figure(
+        [
+            (
+                _text(value.get("name")),
+                node_resources.memory_percent(_mapping(value.get("status")).get("resources")),
+            )
+            for value in reporting
+        ],
+        owner,
+    )
+    if reporting and cpu_figure is None:
+        #
+        # Counters but no share yet - the first reading after a gap. A dash
+        # rather than no column, so the card does not change shape for one poll.
+        #
+        cpu_figure = ResourceFigure(
+            shown="–",
+            title=" · ".join(f"{_text(value.get('name'))} –" for value in reporting),
+            high=False,
+        )
+
     label: str
     tone: Tone
     detail: str
@@ -423,6 +501,8 @@ def _cluster_view(
         version=_version(target.get("version")),
         release_state=release_state.replace("_", " ").title(),
         target_version=_positive(target.get("version")),
+        cpu=cpu_figure,
+        memory=memory_figure,
     )
 
 

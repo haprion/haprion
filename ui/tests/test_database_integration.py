@@ -359,6 +359,40 @@ class ARealDatabase(unittest.TestCase):
                     "insert into cluster_status (cluster, outcome) values ('alpha', 'done')"
                 )
 
+    def test_the_poller_works_out_cpu_from_the_row_it_replaces(self) -> None:
+        # B239: CPU use is a rate; the previous reading is the row being replaced,
+        # read as the poller, whose grants have to allow it.
+        def answer(total: int, idle: int) -> dict[str, Any]:
+            return {
+                "nodes": [
+                    {
+                        "name": "node-a",
+                        "status_ok": True,
+                        "status": {
+                            "resources": {
+                                "cpu": {"total": total, "idle": idle},
+                                "memory": None,
+                                "load": None,
+                                "cpus": 1,
+                            }
+                        },
+                    }
+                ]
+            }
+
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            db.record_cluster_status(
+                connection, cluster="cpu-share", outcome="done", result=answer(1000, 900)
+            )
+            connection.commit()
+            db.record_cluster_status(
+                connection, cluster="cpu-share", outcome="done", result=answer(3000, 2400)
+            )
+            connection.commit()
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            (row,) = [row for row in db.cluster_statuses(connection) if row.cluster == "cpu-share"]
+            self.assertEqual(row.result["nodes"][0]["cpu_percent"], 25)
+
     def test_the_poller_records_cluster_settings_and_web_only_reads_them(self) -> None:
         # Fas 15: the cache the Settings card reads, written only by the poller.
         result = {

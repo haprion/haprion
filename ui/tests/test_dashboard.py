@@ -295,3 +295,85 @@ class TheFreshnessLineDoesNotClaimTheWallClock(unittest.TestCase):
         # contradict itself.
         #
         self.assertNotIn("ago", label)
+
+
+def with_resources(
+    status: ClusterStatus, figures: dict[str, tuple[int | None, int]]
+) -> ClusterStatus:
+    """`figures`: per node name, its CPU share and the memory share in use."""
+
+    result = dict(status.result)
+    nodes = []
+    for node in result["nodes"]:
+        node = dict(node)
+        if node["name"] in figures:
+            cpu, memory = figures[node["name"]]
+            node["cpu_percent"] = cpu
+            node["status"] = {
+                **node["status"],
+                "resources": {
+                    "cpu": {"total": 1000, "idle": 500},
+                    "memory": {"total_kb": 1000, "available_kb": 1000 - memory * 10},
+                    "load": 0.1,
+                    "cpus": 1,
+                },
+            }
+        nodes.append(node)
+    result["nodes"] = nodes
+    return ClusterStatus(
+        cluster=status.cluster,
+        observed_at=status.observed_at,
+        outcome=status.outcome,
+        result=result,
+        warnings=[],
+        error=None,
+        poll_error=None,
+    )
+
+
+class NodeResources(unittest.TestCase):
+    """The card's CPU and Memory columns (B239)."""
+
+    def cluster(self, status: ClusterStatus) -> Any:
+        return build_dashboard(
+            ("alpha",), (status,), now=NOW, stale_after=timedelta(seconds=120)
+        ).clusters[0]
+
+    def test_the_vip_owners_figure_is_shown_and_every_node_is_in_the_hover(self) -> None:
+        cluster = self.cluster(
+            with_resources(
+                reading("done-single-owner.json"), {"node-b": (12, 41), "node-a": (2, 30)}
+            )
+        )
+
+        self.assertEqual(cluster.cpu.shown, "12 %")
+        self.assertEqual(cluster.memory.shown, "41 %")
+        self.assertEqual(cluster.memory.title, "node-a 30 % · node-b 41 %")
+        self.assertFalse(cluster.memory.high)
+
+    def test_a_standby_running_high_marks_the_column(self) -> None:
+        cluster = self.cluster(
+            with_resources(
+                reading("done-single-owner.json"), {"node-b": (12, 41), "node-a": (2, 88)}
+            )
+        )
+
+        self.assertEqual(cluster.memory.shown, "41 %")
+        self.assertTrue(cluster.memory.high)
+        self.assertFalse(cluster.cpu.high)
+
+    def test_the_first_reading_after_a_gap_shows_a_dash_for_cpu(self) -> None:
+        cluster = self.cluster(
+            with_resources(
+                reading("done-single-owner.json"), {"node-b": (None, 41), "node-a": (None, 30)}
+            )
+        )
+
+        self.assertEqual(cluster.cpu.shown, "–")
+        self.assertEqual(cluster.memory.shown, "41 %")
+
+    def test_nodes_from_before_leave_the_columns_out(self) -> None:
+        cluster = self.cluster(reading("done-single-owner.json"))
+
+        self.assertIsNone(cluster.cpu)
+        self.assertIsNone(cluster.memory)

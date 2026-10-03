@@ -247,6 +247,34 @@
           },
           "additionalProperties": false
         },
+        "resources": {
+          "description": "The node's CPU and memory (B239): the running CPU counters from /proc/stat (all time and idle time, in ticks since boot), MemTotal and MemAvailable in kB, the one-minute load average and the number of CPUs. Each part is null when it could not be read. CPU use is a rate and needs two readings, so it is worked out by whoever keeps the previous one. Absent from nodes installed before it was reported.",
+          "type": "object",
+          "required": ["cpu", "memory", "load", "cpus"],
+          "properties": {
+            "cpu": {
+              "type": ["object", "null"],
+              "required": ["total", "idle"],
+              "properties": {
+                "total": { "type": "integer", "minimum": 0 },
+                "idle": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            },
+            "memory": {
+              "type": ["object", "null"],
+              "required": ["total_kb", "available_kb"],
+              "properties": {
+                "total_kb": { "type": "integer", "minimum": 0 },
+                "available_kb": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            },
+            "load": { "type": ["number", "null"], "minimum": 0 },
+            "cpus": { "type": ["integer", "null"], "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
         "installation": {
           "description": "The node bundle's compatibility level and a digest check of every script installed with it. Absent from nodes installed before this measurement existed.",
           "type": "object",

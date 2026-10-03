@@ -426,6 +426,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .cluster-facts > div { min-width: 0; padding: 1px 18px; border-right: 1px solid var(--line); }
 .cluster-facts > div:first-child { padding-left: 0; }
 .cluster-facts > div:last-child { padding-right: 0; border-right: 0; }
+.cluster-facts-resources { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.cluster-facts .status-dot { margin-right: 6px; vertical-align: 1px; }
 .cluster-facts dt { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 0.055em; text-transform: uppercase; }
 .cluster-facts dd { overflow: hidden; margin: 2px 0 0; color: var(--text-strong); font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .cluster-actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 20px; border-top: 1px solid var(--line); background: var(--panel-soft); }
@@ -1065,6 +1067,9 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   .cluster-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 0; }
   .cluster-facts > div:nth-child(2) { border-right: 0; }
   .cluster-facts > div:nth-child(3) { padding-left: 0; }
+  .cluster-facts-resources { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cluster-facts-resources > div:nth-child(2n) { border-right: 0; }
+  .cluster-facts-resources > div:nth-child(2n+1) { padding-left: 0; }
   .settings-card .cluster-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-card .cluster-facts > div:nth-child(2n) { border-right: 0; }
   .settings-card .cluster-facts > div:nth-child(2n+1) { padding-left: 0; }

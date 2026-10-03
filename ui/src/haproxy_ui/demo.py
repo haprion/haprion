@@ -30,13 +30,18 @@ from haproxy_ui.db import (
 CLUSTERS = ("edge-demo", "service-demo")
 
 
-def _node(name: str, *, owner: bool, version: int, current: bool) -> dict[str, Any]:
+def _node(
+    name: str, *, owner: bool, version: int, current: bool, cpu: int, memory: int
+) -> dict[str, Any]:
+    # A node with 1 GiB; `memory` is the share in use (B239).
+    total = 1_048_576
     return {
         "name": name,
         "mgmt_host": f"{name}.demo.example",
         "reachable": True,
         "status_ok": True,
         "current": current,
+        "cpu_percent": cpu,
         "status": {
             "haproxy": {"active": True},
             "keepalived": {"active": True, "state": "MASTER" if owner else "BACKUP"},
@@ -45,6 +50,12 @@ def _node(name: str, *, owner: bool, version: int, current: bool) -> dict[str, A
             "config_validation": {"valid": True},
             "stats_ok": True,
             "runtime": {"version": "3.2", "uptime_sec": 272_400},
+            "resources": {
+                "cpu": {"total": 34_000_000, "idle": 33_000_000},
+                "memory": {"total_kb": total, "available_kb": total * (100 - memory) // 100},
+                "load": cpu / 100,
+                "cpus": 1,
+            },
         },
     }
 
@@ -60,8 +71,8 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
             outcome="done",
             result={
                 "nodes": [
-                    _node("edge-a", owner=True, version=24, current=True),
-                    _node("edge-b", owner=False, version=24, current=True),
+                    _node("edge-a", owner=True, version=24, current=True, cpu=3, memory=38),
+                    _node("edge-b", owner=False, version=24, current=True, cpu=1, memory=36),
                 ],
                 "summary": {
                     "configured_nodes": 2,
@@ -82,8 +93,8 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
             outcome="done",
             result={
                 "nodes": [
-                    _node("service-a", owner=True, version=24, current=True),
-                    _node("service-b", owner=False, version=23, current=False),
+                    _node("service-a", owner=True, version=24, current=True, cpu=12, memory=41),
+                    _node("service-b", owner=False, version=23, current=False, cpu=2, memory=88),
                 ],
                 "summary": {
                     "configured_nodes": 2,

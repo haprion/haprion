@@ -596,6 +596,16 @@ always shown as text. The part of the request is kept only when an exception
 could name it, and the deciding and reporting rules are not kept at all - the
 traffic record already carries the score and the decision.
 
+**The engine's memory** is held to a share of the node's: it is slowed and made
+to give memory back above 30 % (`MemoryHigh`), and stopped and restarted at
+40 % (`MemoryMax`), so HAProxy always keeps at least 60 %. The share is taken of
+the memory the kernel sees when the unit is loaded, so a node given more memory
+gives the engine more after its next restart. While it restarts,
+`on_engine_error` decides what the object's requests get. One object's rules
+take about 50 MB, and each further object a few MB more. The dashboard shows
+each cluster's CPU and memory in use, the VIP owner's figure with every node's
+on hover, and marks a cluster when any node is at 85 % or more.
+
 **Installation.** The engine and the rule set are two packages built from
 pinned sources (see the installation guide). The engine package goes on the
 management host and on every node, the rule set on the management host only:

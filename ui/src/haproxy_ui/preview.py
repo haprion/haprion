@@ -305,6 +305,13 @@ class Preview:
     # only the first kind should stop them from saving what they have.
     #
     about_the_object: bool = False
+    #
+    # Whether the object was generated beside the cluster's others, so that a
+    # clash with a neighbour would have been found. False when the cluster's
+    # network description is missing or stale: the object is then known only to be valid on
+    # its own, and the page must not say more (26-10-03).
+    #
+    beside_others: bool = False
 
     @property
     def problem_field(self) -> str:

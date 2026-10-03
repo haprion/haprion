@@ -120,6 +120,12 @@
   somebody asked. Before that it named a file whose object has no name yet.
 #}
 {% if submitted and result.document %}
+{#
+  The verdict as well as the document: without it a check that passed said
+  nothing at all (26-10-03). Only as much as was checked - HAProxy itself
+  reads the configuration when it is published, not here.
+#}
+{% if not result.problem %}<p class="preview-notice"><span class="status-orb status-{{ 'healthy' if result.beside_others else 'warning' }}" aria-hidden="true"></span>{% if result.beside_others %}<strong>Valid.</strong> Checked with the other objects in {{ cluster }}; HAProxy checks the configuration when it is published.{% else %}<strong>Valid on its own.</strong> Not checked with the other objects in {{ cluster }}.{% endif %}</p>{% endif %}
 <section class="cluster-card result-card {{ accent | accent_class }}">
   <header class="cluster-header"><div class="cluster-identity"><div><h3>The object</h3><p>{% if unchanged %}Identical to what is stored as{% else %}What would be stored as{% endif %} <code>managed/proxies/{{ form.name }}.yaml</code></p></div></div></header>
   <pre class="config-block"><code>{{ result.document }}</code></pre>

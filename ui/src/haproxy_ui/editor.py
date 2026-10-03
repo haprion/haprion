@@ -219,7 +219,7 @@ def check(
         )
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))
-    return Preview(document=document)
+    return Preview(document=document, beside_others=True)
 
 
 def unchanged(document: str, stored: str | None) -> bool:

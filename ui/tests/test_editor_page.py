@@ -745,6 +745,29 @@ class WhereASaveLands(EditorTestCase):
 
         self.assertEqual(answer.status_code, 200)
 
+    def test_a_check_that_passes_says_so(self) -> None:
+        # 26-10-03: the stored object alone did not say whether the check passed.
+        fresh = replace(NETWORK, observed_at=datetime.now(UTC))
+        with mock.patch("haproxy_ui.db.cluster_networks", return_value=[fresh]):
+            answer = self.submit(self.editor(), "/proxies/alpha/shop/edit", action="check")
+
+        self.assertIn(
+            "<strong>Valid.</strong> Checked with the other objects in alpha", answer.text
+        )
+        self.assertNotIn("This object was refused", answer.text)
+
+    def test_without_the_cluster_it_says_only_what_was_checked(self) -> None:
+        answer = self.submit(self.editor(), "/proxies/alpha/shop/edit", action="check")
+
+        self.assertIn("<strong>Valid on its own.</strong> Not checked with the other", answer.text)
+        self.assertNotIn("<strong>Valid.</strong>", answer.text)
+
+    def test_a_refused_check_says_nothing_of_passing(self) -> None:
+        answer = self.submit(self.editor(), "/proxies/alpha/shop/edit", action="check", servers="")
+
+        self.assertIn("This object was refused", answer.text)
+        self.assertNotIn("<strong>Valid", answer.text)
+
 
 class SaveAndPublish(EditorTestCase):
     """One button, two acts, and the second one is a job.

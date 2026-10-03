@@ -103,7 +103,7 @@ class Packages(unittest.TestCase):
 
     def test_the_engine_package_holds_the_binary_the_unit_and_the_licence(self) -> None:
         deb = self.build_coraza(self.coraza_source(), "out")
-        self.assertEqual(deb.name, "haproxy-manager-coraza-spoa_9.9.9-2_amd64.deb")
+        self.assertEqual(deb.name, "haproxy-manager-coraza-spoa_9.9.9-3_amd64.deb")
         rows = listing(deb)
         self.assertEqual(rows["/usr/sbin/coraza-spoa"], "-rwxr-xr-x root/root")
         self.assertEqual(
@@ -117,7 +117,7 @@ class Packages(unittest.TestCase):
             rows["/usr/lib/systemd/journald@haproxy-waf.conf.d/haproxy-manager.conf"],
             "-rw-r--r-- root/root",
         )
-        self.assertEqual(field(deb, "Version"), "9.9.9-2")
+        self.assertEqual(field(deb, "Version"), "9.9.9-3")
         self.assertEqual(field(deb, "Architecture"), "amd64")
 
     def test_the_unit_waits_for_a_release_and_runs_without_privilege(self) -> None:
@@ -144,9 +144,13 @@ class Packages(unittest.TestCase):
         for script in (self.tool.POSTINST, self.tool.PRERM, self.tool.POSTRM):
             self.assertNotIn("enable --now", script)
 
-    def wait_listening(self, bind: str, *extra: str) -> subprocess.CompletedProcess[str]:
+    def wait_listening(
+        self, bind: str, *extra: str, tables: tuple[str, str] = ("/proc/net/tcp", "/proc/net/tcp6")
+    ) -> subprocess.CompletedProcess[str]:
         script = self.root / "wait-listening"
-        script.write_text(self.tool.WAIT_LISTENING)
+        text = self.tool.WAIT_LISTENING
+        self.assertIn("for table in /proc/net/tcp /proc/net/tcp6; do", text)
+        script.write_text(text.replace("/proc/net/tcp /proc/net/tcp6", " ".join(tables)))
         script.chmod(0o755)
         config = self.root / "coraza.yaml"
         config.write_text(f"# example\n{bind}log_level: info\n")
@@ -170,6 +174,21 @@ class Packages(unittest.TestCase):
             done = self.wait_listening(f"bind: 127.0.0.1:{port}\n", "1")
         self.assertEqual(done.returncode, 1)
         self.assertIn(f"did not listen on port {port} within 1 seconds", done.stderr)
+
+    def test_the_start_sees_the_engine_on_a_node_without_ipv6(self) -> None:
+        # A kernel booted with ipv6.disable=1 has no tcp6 (26-10-03).
+        missing = str(self.root / "no-tcp6")
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            done = self.wait_listening(
+                f"bind: 127.0.0.1:{port}\n", "5", tables=("/proc/net/tcp", missing)
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+        done = self.wait_listening("bind: 127.0.0.1:9\n", "1", tables=(missing, missing))
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("no socket table", done.stderr)
 
     def test_the_start_fails_without_a_bind_port(self) -> None:
         done = self.wait_listening("")

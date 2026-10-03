@@ -32,7 +32,7 @@ from pathlib import Path
 # Each package counts its own revision: it moves when our part of the package
 # changes (the unit, the build), not when the other package does.
 #
-CORAZA_REVISION = "2"
+CORAZA_REVISION = "3"
 CRS_REVISION = "1"
 GO_VERSION = "go1.26.8"
 MAINTAINER = "haproxy-manager maintainers <maintainers@example.org>"
@@ -81,10 +81,22 @@ if [ -z "$port" ]; then
     exit 1
 fi
 hex="$(printf '%04X' "$port")"
+# A kernel booted with ipv6.disable=1 has no tcp6, and awk stops at the first
+# file it cannot open - a node with IPv6 off never saw the engine listen
+# (26-10-03). Read only the tables there are.
+tables=""
+for table in /proc/net/tcp /proc/net/tcp6; do
+    [ -r "$table" ] && tables="$tables $table"
+done
+if [ -z "$tables" ]; then
+    echo "no socket table to read under /proc/net" >&2
+    exit 1
+fi
 tries=$((limit * 10))
 while [ "$tries" -gt 0 ]; do
+    # shellcheck disable=SC2086 # the table list splits on purpose
     if awk -v want=":$hex" '$4 == "0A" && substr($2, length($2) - 4) == want { found = 1 }
-                            END { exit !found }' /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
+                            END { exit !found }' $tables 2>/dev/null; then
         exit 0
     fi
     sleep 0.1

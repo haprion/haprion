@@ -154,7 +154,10 @@
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Features</h3></div></div></header>
   {% for feature, on, locked in features %}
   <div class="cluster-actions feature-row">
-    <div><strong>{{ feature.title }}</strong>{% set detail = feature_details.get(feature.name, "") %}{% if detail %}<span class="feature-detail">{{ detail }}</span>{% endif %}</div>
+    <div><strong>{{ feature.title }}</strong></div>
+    <div class="feature-control">
+    {# What the row says beside its switch, on the same line (B231: the WAF engine's versions or where it is missing). #}
+    {% set detail = feature_details.get(feature.name, "") %}{% if detail %}<span class="feature-detail">{{ detail }}</span>{% endif %}
     {# One switch per row, its state and its action in one control. A switch whose off does more than hide
        the feature asks first, on its own page (B193). #}
     {% set asks = on and feature.consequence %}
@@ -166,6 +169,7 @@
       {# Locked off: cluster colours with more clusters than colours (B204). #}
       <button type="submit" class="toggle-switch" role="switch" aria-checked="{{ 'true' if on else 'false' }}" aria-label="{{ feature.title }}"{% if locked %} disabled title="More than six clusters"{% endif %}><span class="toggle-track" aria-hidden="true"></span>{{ 'On' if on else 'Off' }}</button>
     </form>
+    </div>
   </div>
   {% endfor %}
 </section>

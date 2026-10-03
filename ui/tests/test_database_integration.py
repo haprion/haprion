@@ -538,6 +538,13 @@ class ARealDatabase(unittest.TestCase):
         ):
             hits = traffic_logs.read_database(connection, Path(temporary), ("alpha",), waf="hits")
             none = traffic_logs.read_database(connection, Path(temporary), ("alpha",), waf="none")
+            # The Requests tab's figure counts the rows the tab lists.
+            since = now - timedelta(days=7)
+            counted = db.waf_request_count(connection, clusters=("alpha",), since=since)
+            elsewhere = db.waf_request_count(connection, clusters=("beta",), since=since)
+        self.assertEqual(counted, sum(1 for entry in hits.entries if entry.at >= since))
+        self.assertGreaterEqual(counted, 1)
+        self.assertEqual(elsewhere, 0)
         self.assertIn(
             ("rule.example.com", "block-admin:deny"), [(e.host, e.rule) for e in hits.entries]
         )

@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}WAF — HAProxy Manager{% endblock %}
 {% block content %}
+<script defer src="{{ url_for('static', path='/waf.js') }}?v={{ asset_token }}"></script>
 {#
   The WAF page as a place to work (B234). Findings: per object and rule, what
   matched and where, with Allow… to let a false alarm through. Exceptions:
@@ -44,7 +45,7 @@
         <td><span class="finding-count">{{ finding.requests }}</span></td>
         <td><span class="finding-count">{{ finding.clients }}</span></td>
         <td><span class="users-date">{{ finding.last_seen | shown_at }}</span></td>
-        <td>{% if finding.in_draft %}<span class="finding-draft">In draft</span>{% elif can_write %}<a class="secondary-button" href="{{ finding.allow_href }}&amp;matched={{ finding.matched | urlencode }}">Allow…</a>{% endif %}</td>
+        <td>{% if finding.in_draft %}<span class="finding-draft">In draft</span>{% elif can_write %}<a class="secondary-button" href="{{ finding.allow_href }}&amp;matched={{ finding.matched | urlencode }}" data-waf-allow>Allow…</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

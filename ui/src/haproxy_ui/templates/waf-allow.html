@@ -32,6 +32,6 @@
     {% endif %}
     <label><input type="radio" name="scope" value="object"{% if scope == 'object' %} checked{% endif %}> Everywhere on {{ name }}</label>
   </fieldset>
-  <div class="dialog-buttons"><a class="secondary-button" href="/waf">Cancel</a><button type="submit" class="secondary-button">Allow</button></div>
+  <div class="dialog-buttons"><a class="secondary-button" href="/waf" data-allow-cancel>Cancel</a><button type="submit" class="secondary-button">Allow</button></div>
 </form>
 {% endblock %}

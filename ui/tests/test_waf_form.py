@@ -192,6 +192,11 @@ class TheGroupOnTheEditor(EditorTestCase):
         self.assertIn("The WAF engine is not installed on the manager.", text)
         self.assertNotIn('<select name="waf_mode"', text)
         self.assertIn('<input type="hidden" name="waf_mode" value="off">', text)
+        # B231: the sentence alone - nothing to set that the engine would not be there to do.
+        self.assertNotIn('<select name="waf_engine_error"', text)
+        self.assertNotIn('<select name="waf_paranoia"', text)
+        self.assertNotIn("Findings and exceptions on the WAF page", text)
+        self.assertIn('<input type="hidden" name="waf_paranoia" value="1">', text)
 
     def test_with_the_switch_off_an_object_without_it_carries_hidden_defaults(self) -> None:
         self.switch_off()

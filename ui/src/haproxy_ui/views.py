@@ -2094,10 +2094,20 @@ def build_router(config: Config) -> APIRouter:
             for offset in range((calendar_end - calendar_start).days + 1)
             for day in (calendar_start + timedelta(days=offset),)
         )
+        #
+        # The WAF page's Requests tab carries the same three figures as its
+        # other two (mock round 7), over the same clusters and days.
+        #
+        waf_tabs: dict[str, Any] = {}
+        if waf_page:
+            listed = listed_clusters(request, config)
+            chosen = (selected_cluster,) if selected_cluster in listed else tuple(listed)
+            waf_tabs = {"tab_counts": _waf_overview(request, config, chosen).tab_counts()}
         response = TEMPLATES.TemplateResponse(
             request,
             "logs.html",
             {
+                **waf_tabs,
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
@@ -8782,6 +8792,40 @@ def _waf_documents(
     return stored, drafted
 
 
+@dataclass(frozen=True, slots=True)
+class WafOverview:
+    """What the WAF page's three tabs show, and the figure on each (mock round 7)."""
+
+    days: int
+    findings: list[Any]
+    exceptions: list[Any]
+    request_count: int
+
+    def tab_counts(self) -> dict[str, int]:
+        return {
+            "findings": sum(len(card.findings) for card in self.findings),
+            "exceptions": len(self.exceptions),
+            "requests": self.request_count,
+        }
+
+
+def _waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> WafOverview:
+    days = min(WAF_DAYS, config.traffic_logs.retention_days)
+    since = datetime.now(UTC) - timedelta(days=days)
+    rules = crs.installed_catalog()
+    with request.app.state.pool.connection() as connection:
+        stored, drafted = _waf_documents(request, config, connection, chosen)
+        rows = db.waf_findings(connection, clusters=chosen, since=since)
+        verdicts = db.waf_verdicts(connection, clusters=chosen, since=since)
+        request_count = db.waf_request_count(connection, clusters=chosen, since=since)
+    return WafOverview(
+        days=days,
+        findings=waf.build_findings(rows, verdicts, stored, drafted, rules),
+        exceptions=waf.build_exceptions(stored, drafted, rules),
+        request_count=request_count,
+    )
+
+
 def _waf_work_page(request: Request, config: Config, view: str, problem: str = "") -> Response:
     session = current_session(request)
     if session is None:
@@ -8790,15 +8834,8 @@ def _waf_work_page(request: Request, config: Config, view: str, problem: str = "
     clusters = listed_clusters(request, config)
     selected = request.query_params.get("cluster", "")[:32]
     chosen = (selected,) if selected in clusters else tuple(clusters)
-    days = min(WAF_DAYS, config.traffic_logs.retention_days)
-    since = datetime.now(UTC) - timedelta(days=days)
-    rules = crs.installed_catalog()
-    with request.app.state.pool.connection() as connection:
-        stored, drafted = _waf_documents(request, config, connection, chosen)
-        rows = db.waf_findings(connection, clusters=chosen, since=since)
-        verdicts = db.waf_verdicts(connection, clusters=chosen, since=since)
-    findings = waf.build_findings(rows, verdicts, stored, drafted, rules)
-    exceptions = waf.build_exceptions(stored, drafted, rules)
+    overview = _waf_overview(request, config, chosen)
+    days, findings, exceptions = overview.days, overview.findings, overview.exceptions
     return TEMPLATES.TemplateResponse(
         request,
         "waf.html",
@@ -8813,7 +8850,7 @@ def _waf_work_page(request: Request, config: Config, view: str, problem: str = "
             "clusters": clusters,
             "selected_cluster": selected if selected in clusters else "",
             "findings": findings,
-            "finding_count": sum(len(card.findings) for card in findings),
+            "tab_counts": overview.tab_counts(),
             "exceptions": exceptions,
             "where": waf.where,
             "saved": request.query_params.get("saved", "")[:40],

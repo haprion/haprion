@@ -546,8 +546,18 @@ class TheTrafficLogPage(LoginTestCase):
             mirror.write(record(request=2, path="/admin", status=403, rule="admin-post:deny"))
             mirror.write(record(request=3, path="/scan", rule="scanner:log"))
 
-        waf = self.page(path="/waf", query="?view=requests")
+        with (
+            patch("haproxy_ui.db.cluster_objects", return_value=[]),
+            patch("haproxy_ui.db.waf_findings", return_value=[]),
+            patch("haproxy_ui.db.waf_verdicts", return_value={}),
+            patch("haproxy_ui.db.waf_request_count", return_value=2),
+            patch("haproxy_mgmt.crs.installed_catalog", return_value={}),
+        ):
+            waf = self.page(path="/waf", query="?view=requests")
 
+        # The same three figures as on the other two tabs (mock round 7).
+        self.assertIn("Findings <b>0</b>", waf)
+        self.assertIn("Requests <b>2</b>", waf)
         self.assertNotIn(">/plain<", waf)
         self.assertIn(">/admin<", waf)
         self.assertIn(">admin-post</span>", waf)

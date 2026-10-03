@@ -158,17 +158,23 @@
     {% if waf_offered or waf_used %}
     {% call group(groups.waf, when('protocol', 'http https')) %}
     {% if waf_unavailable %}<p class="form-group-note">{{ waf_unavailable }}</p>{% endif %}
+    {#
+      B231: locked with the sentence alone until the engine is everywhere. An
+      object already using it keeps its fields, so it can still be turned off.
+    #}
+    {% if waf_unavailable and form.waf_mode == 'off' %}
+    <input type="hidden" name="waf_mode" value="off">
+    <input type="hidden" name="waf_engine_error" value="{{ form.waf_engine_error }}">
+    <input type="hidden" name="waf_paranoia" value="{{ form.waf_paranoia }}">
+    {% else %}
     <div class="form-grid">
-      {% if waf_unavailable and form.waf_mode == 'off' %}
-      <input type="hidden" name="waf_mode" value="off">
-      {% else %}
       <label><span class="field-title">Mode</span><select name="waf_mode" class="single-select">{% for mode in ('off', 'log', 'block') %}<option{% if form.waf_mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
-      {% endif %}
       <label><span class="field-title">Engine not answering</span><select name="waf_engine_error" class="single-select">{% for value, label in (('allow', 'let through'), ('deny', 'refuse (503)')) %}<option value="{{ value }}"{% if form.waf_engine_error == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       <label><span class="field-title">Strictness</span><select name="waf_paranoia" class="single-select">{% for value, label in (('1', '1 · fewest false alarms'), ('2', '2'), ('3', '3'), ('4', '4 · strictest')) %}<option value="{{ value }}"{% if form.waf_paranoia == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       {% set count = waf_exception_count(form) %}
       <p class="form-exceptions">{% if count %}{{ count }} exception{{ 's' if count != 1 }} · {% endif %}<a href="/waf?cluster={{ cluster }}">Findings and exceptions on the WAF page</a></p>
     </div>
+    {% endif %}
     {% endcall %}
     {% else %}
     <input type="hidden" name="waf_mode" value="{{ form.waf_mode }}">

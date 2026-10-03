@@ -1206,7 +1206,8 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
    closed, turned down while open, so the row says it opens before anybody
    hovers over it. */
 .form-groups { margin: 10px 20px 0; }
-.feature-detail { margin-left: 12px; color: var(--text-secondary); font-size: 13px; }
+.feature-control { display: flex; align-items: center; gap: 14px; }
+.feature-detail { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 .form-group-note { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
 .form-exceptions { grid-column: 1 / -1; align-self: center; margin: 0; color: var(--text-secondary); font-size: 13px; }
 .form-exceptions a { color: var(--info); }
@@ -2201,8 +2202,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .finding-verdict strong { color: var(--text-strong); font-weight: 650; }
 .finding-table, .exception-table { table-layout: fixed; }
 .finding-table th:nth-child(1), .finding-table td:nth-child(1) { width: auto; }
-.finding-table th:nth-child(2), .finding-table td:nth-child(2) { width: 190px; }
-.finding-table th:nth-child(3), .finding-table td:nth-child(3) { width: 120px; }
+.finding-table th:nth-child(2), .finding-table td:nth-child(2) { width: 210px; }
+.finding-table th:nth-child(3), .finding-table td:nth-child(3) { width: 180px; }
 .finding-table th:nth-child(4), .finding-table td:nth-child(4) { width: 82px; text-align: right; }
 .finding-table th:nth-child(5), .finding-table td:nth-child(5) { width: 66px; text-align: right; }
 .finding-table th:nth-child(6), .finding-table td:nth-child(6) { width: 150px; }
@@ -2217,13 +2218,19 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .finding-more { color: var(--muted); font-size: 12px; }
 .finding-draft { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 .finding-table .secondary-button, .exception-table .secondary-button { min-height: 24px; padding: 0 9px; font-size: 12px; white-space: nowrap; }
-.exception-table th:nth-child(1), .exception-table td:nth-child(1) { width: 170px; }
+.exception-table th:nth-child(1), .exception-table td:nth-child(1) { width: 200px; }
 .exception-table th:nth-child(2), .exception-table td:nth-child(2) { width: auto; }
 .exception-table th:nth-child(3), .exception-table td:nth-child(3) { width: 250px; }
 .exception-table th:nth-child(4), .exception-table td:nth-child(4) { width: 230px; }
 .exception-table th:nth-child(5), .exception-table td:nth-child(5) { width: 110px; text-align: right; }
+/* One line: the node table's cell `strong` is a block, which put the cluster under the name. */
+.exception-table td strong { display: inline; }
 .exception-cluster { margin-left: 6px; color: var(--muted); font-size: 12px; }
 .allow-dialog { max-width: 560px; margin: 0; padding: 18px 20px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-raised); box-shadow: var(--shadow-menu); }
+/* Allow… over the WAF page (waf.js): the form's own card is the dialog. */
+.allow-modal { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 0; border: 0; background: transparent; overflow: visible; }
+.allow-modal::backdrop { background: rgba(0, 0, 0, 0.45); }
+.allow-modal .allow-dialog { max-width: none; }
 .allow-dialog h2 { margin: 0 0 8px; color: var(--text-strong); font-size: 16px; }
 .allow-dialog .matched { margin: 8px 0 0; }
 .allow-dialog .preview-notice { margin: 12px 0 0; }

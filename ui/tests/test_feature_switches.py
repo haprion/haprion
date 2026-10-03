@@ -370,9 +370,7 @@ class TheWafEngineSwitch(Switched):
         client = self.admin()
         with self.objects(""):
             page = client.get("/settings")
-        self.assertIn(
-            'WAF engine</strong><span class="feature-detail">Engine 0.9.0-2 · CRS 4.25.1', page.text
-        )
+        self.assertIn('<span class="feature-detail">Engine 0.9.0-2 · CRS 4.25.1', page.text)
         status = SimpleNamespace(
             cluster="alpha",
             observed_at=MOMENT,

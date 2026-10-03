@@ -164,6 +164,7 @@ class ThePage(EditorTestCase):
         for target, value in (
             ("haproxy_ui.db.waf_findings", [finding()]),
             ("haproxy_ui.db.waf_verdicts", {("alpha", "shop"): (14, 3)}),
+            ("haproxy_ui.db.waf_request_count", 1297),
             ("haproxy_ui.db.cluster_objects", objects(LOGGING)),
             ("haproxy_mgmt.crs.installed_catalog", CATALOG),
         ):
@@ -183,6 +184,8 @@ class ThePage(EditorTestCase):
         self.assertIn("q: 1&#39; OR 1=1--", text)
         self.assertIn("/waf/allow?cluster=alpha&amp;object=shop&amp;rule=942100", text)
         self.assertIn("Findings <b>1</b>", text)
+        self.assertIn("Exceptions <b>0</b>", text)
+        self.assertIn("Requests <b>1297</b>", text)
 
     def test_allow_offers_the_narrowest_choice_first(self) -> None:
         text = (
@@ -195,6 +198,9 @@ class ThePage(EditorTestCase):
         self.assertIn("Let this through on shop", text)
         self.assertIn('value="field_paths" checked', text)
         self.assertIn('value="/search" checked', text)
+        self.assertIn(
+            "data-allow-cancel", text, "the dialog's Cancel closes it rather than leaving"
+        )
         self.assertNotIn("/a b", text, "a path the engine could not be told exactly is not offered")
 
     def test_allow_saves_the_exception_into_the_draft(self) -> None:

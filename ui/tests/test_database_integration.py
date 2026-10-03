@@ -331,7 +331,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0052",))
+            self.assertEqual(cursor.fetchone(), ("0053",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -649,6 +649,46 @@ class ARealDatabase(unittest.TestCase):
                     "select waf_rules, waf_score from traffic_log where host = 'waf.example.com'"
                 )
                 self.assertEqual(cursor.fetchall(), [("", 0)])
+            connection.rollback()
+
+    def test_0053_widens_the_id_shapes_a_database_kept_from_the_first_0052(self) -> None:
+        # Production was migrated with 0052 before it was edited, kept the narrow
+        # shapes and refused every engine ID with the object's name (26-10-03).
+        now = datetime.now(UTC).replace(microsecond=0)
+        dotted = "web-app.0b5e3c1a-7d42-4f0e-9c1b-2a6d8e4f7a90"
+        insert = (
+            "insert into waf_match (event_id, cluster, node, occurred_at, request_id, object, "
+            "rule_id, field, matched, path, client) values "
+            "(%s, 'alpha', 'node-a', %s, %s, 'web-app', 942100, '', 'x', '/', '192.0.2.10')"
+        )
+        with self.connect() as connection:
+            connection.execute("select waf_match_partition(%s::date)", (now.date(),))
+            connection.commit()
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "alter table waf_match drop constraint waf_match_request_id_shape, "
+                    "add constraint waf_match_request_id_shape "
+                    "check (request_id ~ '^[A-Za-z0-9_-]{1,64}$')"
+                )
+                cursor.execute(
+                    "alter table traffic_log drop constraint traffic_log_waf_id_shape, "
+                    "add constraint traffic_log_waf_id_shape "
+                    "check (waf_id ~ '^([A-Za-z0-9_-]{1,64})?$')"
+                )
+                cursor.execute("savepoint narrow")
+                with self.assertRaises(psycopg.errors.CheckViolation):
+                    cursor.execute(insert, (b"n" * 32, now, dotted))
+                cursor.execute("rollback to savepoint narrow")
+
+                _migration("0053_waf_id_shape.py", cursor).upgrade()
+
+                cursor.execute(insert, (b"n" * 32, now, dotted))
+                cursor.execute(
+                    "select pg_get_constraintdef(oid) from pg_constraint "
+                    "where conname = 'traffic_log_waf_id_shape' "
+                    "and conrelid = 'traffic_log'::regclass"
+                )
+                self.assertIn("_.-]{1,96}", cursor.fetchone()[0])
             connection.rollback()
 
     def test_waf_matches_are_bounded_joined_and_downgrade_and_upgrade_cleanly(self) -> None:

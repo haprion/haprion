@@ -102,5 +102,25 @@ class TheCatalogDescribesEachRule(unittest.TestCase):
         self.assertEqual(rules[942100].message, "SQL Injection Attack Detected via libinjection")
 
 
+class TheManagerSaysWhatItHas(unittest.TestCase):
+    def test_the_engine_package_and_the_rule_set_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            query = root / "dpkg-query"
+            query.write_text('#!/bin/sh\nprintf "install ok installed\\t0.9.0-2"\n')
+            query.chmod(0o755)
+            (root / "VERSION").write_text("4.25.1\n")
+            self.assertEqual(
+                crs.manager_versions(root, str(query)), {"engine": "0.9.0-2", "crs": "4.25.1"}
+            )
+            query.write_text('#!/bin/sh\nprintf "deinstall ok config-files\\t0.9.0-2"\n')
+            (root / "VERSION").write_text("not a version\n")
+            self.assertEqual(crs.manager_versions(root, str(query)), {"engine": None, "crs": None})
+            self.assertEqual(
+                crs.manager_versions(root / "absent", str(root / "absent")),
+                {"engine": None, "crs": None},
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -86,7 +86,13 @@ class ObjectsHelperTests(unittest.TestCase):
         return policy_path
 
     def run_helper(
-        self, *, tree_reader=None, head_resolver=None, cluster: str = "alpha", parameters=None
+        self,
+        *,
+        tree_reader=None,
+        head_resolver=None,
+        cluster: str = "alpha",
+        parameters=None,
+        waf=None,
     ):
         out, err = io.StringIO(), io.StringIO()
         read = tree_reader or (lambda _repo, _commit: {"managed/proxies/shop.yaml": SHOP})
@@ -101,8 +107,24 @@ class ObjectsHelperTests(unittest.TestCase):
             require_root=False,
             tree_reader=read,
             head_resolver=resolve,
+            waf_versions=lambda: waf or {"engine": "0.9.0-2", "crs": "4.25.1"},
         )
         return code, out.getvalue(), err.getvalue()
+
+    def test_the_listing_says_what_the_manager_can_publish_a_waf_with(self) -> None:
+        """B231: the engine and the rule set on the manager, beside the objects.
+        A package installed or upgraded is a new listing, not an unchanged one."""
+
+        _, first, _ = self.run_helper()
+        result = assert_contract("haproxy-objects", first)["result"]
+        self.assertEqual(result["waf"], {"engine": "0.9.0-2", "crs": "4.25.1"})
+        _, again, _ = self.run_helper(
+            parameters={"unchanged_since": result["fingerprint"]},
+            waf={"engine": "0.9.0-3", "crs": "4.25.1"},
+        )
+        changed = json.loads(again)["result"]
+        self.assertNotIn("unchanged", changed)
+        self.assertEqual(changed["waf"]["engine"], "0.9.0-3")
 
     def test_it_reads_head_rather_than_the_published_release(self) -> None:
         """The base a publish checks its snapshot against.

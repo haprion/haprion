@@ -56,7 +56,12 @@ def _engine_digest() -> str:
     return digest.hexdigest()
 
 
-def fingerprint(commit: str | None, network: Network | None, geo_stamp: str | None = None) -> str:
+def fingerprint(
+    commit: str | None,
+    network: Network | None,
+    geo_stamp: str | None = None,
+    waf: Mapping[str, str | None] | None = None,
+) -> str:
     """What an objects listing depends on: the commit, the network and this engine (B222).
 
     The poller sends back the fingerprint of the listing it holds, and an
@@ -77,12 +82,18 @@ def fingerprint(commit: str | None, network: Network | None, geo_stamp: str | No
     # The location database's date (B228): a new database changes nothing in
     # the tree, and a listing answered `unchanged` would keep saying the old one.
     #
-    document = {
+    document: dict[str, object] = {
         "commit": commit,
         "network": described,
         "engine": _engine_digest(),
         "geo": geo_stamp,
     }
+    #
+    # And the WAF engine and rule set on the manager (B231), for the same
+    # reason. Only when known, so a listing from before them keeps its value.
+    #
+    if waf is not None:
+        document["waf"] = dict(waf)
     return hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
 
 
@@ -216,6 +227,7 @@ def objects_result(
     network: Network | None = None,
     generated_at: datetime | None = None,
     geo_stamp: str | None = None,
+    waf: Mapping[str, str | None] | None = None,
 ) -> dict[str, object]:
     """Every stored proxy object at one commit, keyed by the name it is filed under.
 
@@ -229,7 +241,7 @@ def objects_result(
     result: dict[str, object] = {
         "commit": commit,
         "generated_at": timestamp.isoformat().replace("+00:00", "Z"),
-        "fingerprint": fingerprint(commit, network, geo_stamp),
+        "fingerprint": fingerprint(commit, network, geo_stamp, waf),
         "objects": [],
         #
         # How fresh the cluster's country files are against the database
@@ -237,6 +249,11 @@ def objects_result(
         # what tells somebody one is due.
         #
         "geo": {"database": geo_stamp, "published": geo.published_stamp(files)},
+        #
+        # Whether the manager can publish an object with WAF (B231): the engine
+        # compiles the rules here, from the rule set installed here.
+        #
+        "waf": dict(waf) if waf is not None else {"engine": None, "crs": None},
     }
     if commit is None:
         return result
@@ -269,6 +286,7 @@ def unchanged_result(
     *,
     generated_at: datetime | None = None,
     geo_stamp: str | None = None,
+    waf: Mapping[str, str | None] | None = None,
 ) -> dict[str, object]:
     """The answer to a caller whose listing is still the right one.
 
@@ -281,7 +299,7 @@ def unchanged_result(
     return {
         "commit": commit,
         "generated_at": timestamp.isoformat().replace("+00:00", "Z"),
-        "fingerprint": fingerprint(commit, network, geo_stamp),
+        "fingerprint": fingerprint(commit, network, geo_stamp, waf),
         "unchanged": True,
         "objects": [],
     }

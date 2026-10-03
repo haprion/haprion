@@ -22,7 +22,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haproxy_mgmt import geo
+from haproxy_mgmt import crs, geo
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import Message, envelope
 from haproxy_mgmt.git_command import GitError
@@ -62,6 +62,7 @@ def main(
     require_root: bool = True,
     tree_reader: ReadTree = read_tree_files,
     head_resolver: ResolveHead = resolve_head,
+    waf_versions: Callable[[], Mapping[str, str | None]] = crs.manager_versions,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -136,12 +137,15 @@ def main(
 
     repo = Path(cluster.config_path)
     stamp = geo.database_stamp()
+    waf = waf_versions()
     try:
         _, head = head_resolver(repo)
-        if known is not None and known == fingerprint(head, network, stamp):
-            result = unchanged_result(head, network, geo_stamp=stamp)
+        if known is not None and known == fingerprint(head, network, stamp, waf):
+            result = unchanged_result(head, network, geo_stamp=stamp, waf=waf)
         else:
-            result = objects_result(tree_reader(repo, head), head, network=network, geo_stamp=stamp)
+            result = objects_result(
+                tree_reader(repo, head), head, network=network, geo_stamp=stamp, waf=waf
+            )
     except PublishError as exc:
         return fail("objects_unavailable", str(exc), exc.exit_code)
     except GitError as exc:

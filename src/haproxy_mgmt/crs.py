@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import stat
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -179,3 +180,39 @@ def installed_catalog(root: Path = ROOT) -> dict[int, Rule]:
     rules = catalog(rule_set) if rule_set is not None else {}
     _catalogs[(root, version)] = rules
     return rules
+
+
+ENGINE_PACKAGE = "haproxy-manager-coraza-spoa"
+DPKG_QUERY = "/usr/bin/dpkg-query"
+
+
+def manager_versions(root: Path = ROOT, dpkg_query: str = DPKG_QUERY) -> dict[str, str | None]:
+    """The engine and the rule set on the manager, for the interface (B231).
+
+    The engine is the package's version, as each node reports its own in its
+    status, so the two read alike; the rule set is the version the package
+    installed. None for what is not installed: publishing an object with WAF
+    needs both here, as it needs the engine on every node.
+    """
+
+    engine = None
+    try:
+        answer = subprocess.run(  # noqa: S603 - fixed program and arguments
+            [dpkg_query, "-W", "-f=${Status}\t${Version}", ENGINE_PACKAGE],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        status, _, version = answer.stdout.partition("\t")
+        if answer.returncode == 0 and status.strip() == "install ok installed":
+            engine = version.strip()[:64] or None
+    except (OSError, subprocess.SubprocessError):
+        engine = None
+    rules = None
+    try:
+        found = _read(root / "VERSION").decode("ascii", "replace").strip()
+        rules = found if VERSION.match(found) else None
+    except RuleSetError:
+        rules = None
+    return {"engine": engine, "crs": rules}

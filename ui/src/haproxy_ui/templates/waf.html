@@ -16,6 +16,7 @@
   {% endif %}
 </section>
 {% include "_waf-views.html" %}
+{% if problem %}<p class="preview-notice form-problem" role="alert"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>{% endif %}
 {% if saved and saved_in %}<p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span>Saved in the draft of <a href="/proxies/{{ saved_in | urlencode }}/{{ saved | urlencode }}">{{ saved }}</a>. Publish it there for the change to take effect.</p>{% endif %}
 
 {% macro finding_what(kind, explanation, severity, message) %}<span class="finding-what"><span class="status-dot status-{{ 'critical' if severity in ('critical', 'error') else 'warning' if severity else 'unknown' }}"{% if severity %} title="{{ severity | capitalize }}"{% endif %}></span><span class="finding-kind"{% if explanation %} title="{{ explanation }}"{% endif %}>{{ kind }}</span><span>{{ message }}</span></span>{% endmacro %}

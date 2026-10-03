@@ -8782,7 +8782,7 @@ def _waf_documents(
     return stored, drafted
 
 
-def _waf_work_page(request: Request, config: Config, view: str) -> Response:
+def _waf_work_page(request: Request, config: Config, view: str, problem: str = "") -> Response:
     session = current_session(request)
     if session is None:
         return RedirectResponse("/login", status_code=303)
@@ -8819,7 +8819,9 @@ def _waf_work_page(request: Request, config: Config, view: str) -> Response:
             "saved": request.query_params.get("saved", "")[:40],
             "saved_in": request.query_params.get("in", "")[:32],
             "can_write": config.management_writes and session.role == "admin",
+            "problem": problem,
         },
+        status_code=409 if problem else 200,
     )
 
 
@@ -9019,7 +9021,7 @@ def _waf_remove(request: Request, config: Config, form: Any) -> Response:
         detail={"waf_exception_removed": {"rule": int(rule_text), "field": field, "paths": paths}},
     )
     if problem:
-        return PlainTextResponse(problem, status_code=409)
+        return _waf_work_page(request, config, "exceptions", problem=problem)
     return RedirectResponse(
         "/waf?" + urlencode({"view": "exceptions", "saved": name, "in": cluster}), status_code=303
     )

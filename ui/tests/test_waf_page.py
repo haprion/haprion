@@ -265,6 +265,26 @@ class ThePage(EditorTestCase):
         self.assertEqual(answer.status_code, 303)
         self.assertNotIn("exceptions", yaml.safe_load(self.saved[0]["yaml"])["waf"])
 
+    def test_an_exception_already_gone_is_answered_on_the_exceptions_page(self) -> None:
+        client = self.editor()
+        answer = client.post(
+            "/waf/exceptions/remove",
+            data={
+                "csrf_token": self.token(client),
+                "cluster": "alpha",
+                "object": "shop",
+                "rule": "920350",
+                "field": "",
+                "path": ["/health"],
+            },
+        )
+        self.assertEqual(answer.status_code, 409)
+        self.assertIn("text/html", answer.headers["content-type"])
+        self.assertIn("that exception is no longer on the object", answer.text)
+        self.assertIn('role="alert"', answer.text)
+        self.assertIn("<h1>WAF</h1>", answer.text)
+        self.assertEqual(self.saved, [])
+
     def test_a_reader_sees_findings_and_changes_nothing(self) -> None:
         self.account = replace(self.account, role="reader")
         client = self.editor()

@@ -161,6 +161,14 @@ under `/usr/lib/systemd/journald@haproxy-waf.conf.d/`; override them in `/etc`.
 nothing else in the journal (`/etc/tmpfiles.d/haproxy-manager-waf.conf`), and the
 collector reads it through the same forced command as the traffic log.
 
+The engine runs as a dynamic user, which belongs to no group, and `/etc/haproxy/releases`
+is closed to every account but root. `04-node-prepare` therefore creates the group
+`haproxy-waf`, with no members, lets it pass through that directory without listing it
+(`/etc/tmpfiles.d/haproxy-manager-waf-engine.conf`), and gives the engine the group in a
+drop-in, `/etc/systemd/system/coraza-spoa.service.d/haproxy-manager.conf`. A node bundle
+from before this cannot start the engine: the first deploy with rules fails on that node
+and returns it to the previous release.
+
 When updating to a release that reads the engine's journal, install its node bundle on
 every node **before** the release on the management host. The nodes' reader still answers
 an older collector; the new collector counts a node whose reader cannot answer it as a

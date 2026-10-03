@@ -88,6 +88,26 @@ class NodeInstallationReadingTests(unittest.TestCase):
     def test_release_root_denies_unprivileged_service_accounts(self) -> None:
         self.assertIn("ensure_dir /etc/haproxy/releases root:root 750", INSTALLER.read_text())
 
+    def test_only_the_waf_engine_passes_through_the_release_root(self) -> None:
+        """26-10-03: the engine's DynamicUser could not reach /etc/haproxy/waf through it."""
+
+        installer = INSTALLER.read_text()
+        # Pass, not list, and only for a group with no members.
+        self.assertIn("a+ /etc/haproxy/releases - - - - group:${WAF_ENGINE_GROUP}:--x", installer)
+        self.assertIn('WAF_ENGINE_GROUP="haproxy-waf"', installer)
+        self.assertIn("has members; only the WAF engine may pass", installer)
+        # Given to the engine beside its package, which names no account of ours.
+        self.assertIn(
+            'WAF_ENGINE_DROPIN="/etc/systemd/system/coraza-spoa.service.d/haproxy-manager.conf"',
+            installer,
+        )
+        self.assertIn("SupplementaryGroups=${WAF_ENGINE_GROUP}", installer)
+        # After the directory exists, so a fresh node gets the entry too.
+        self.assertLess(
+            installer.index("ensure_dir /etc/haproxy/releases root:root 750"),
+            installer.index('systemd-tmpfiles --create "$WAF_ENGINE_TMPFILES"'),
+        )
+
     def test_the_service_accounts_own_nothing_in_their_homes(self) -> None:
         """B131: a key file or dotfile the account could write is its way out of the forced command."""
 

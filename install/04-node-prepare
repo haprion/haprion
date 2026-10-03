@@ -199,6 +199,33 @@ step "HAProxy release layout"
 # configuration merely because files inside an immutable release are 0644.
 ensure_dir /etc/haproxy/releases root:root 750
 ensure_dir /etc/haproxy/certs    root:root 750
+#
+# The one exception is the WAF engine. Its package runs it as a DynamicUser,
+# which is in no group, so /etc/haproxy/waf - a link through the release - was
+# out of its reach: the first deploy with WAF rules failed on a node with
+# "Permission denied" (26-10-03). A group of its own, with no members, may pass
+# through the releases directory and not list it; the engine is given the
+# group in a drop-in, not in its package, which knows nothing of this
+# installation's accounts. Every other account is still kept out. The access
+# entry is written the way the journal's above is, and `chmod 750` from
+# ensure_dir leaves its execute bit standing (the mask stays r-x).
+#
+WAF_ENGINE_GROUP="haproxy-waf"
+ensure_group "$WAF_ENGINE_GROUP"
+[[ -z "$(getent group "$WAF_ENGINE_GROUP" | cut -d: -f4)" ]] \
+    || die "${WAF_ENGINE_GROUP} has members; only the WAF engine may pass through /etc/haproxy/releases"
+WAF_ENGINE_TMPFILES="/etc/tmpfiles.d/haproxy-manager-waf-engine.conf"
+install_file "$WAF_ENGINE_TMPFILES" root:root 644 "# Installed by install/04-node-prepare.
+a+ /etc/haproxy/releases - - - - group:${WAF_ENGINE_GROUP}:--x"
+systemd-tmpfiles --create "$WAF_ENGINE_TMPFILES"
+log "  applied  ${WAF_ENGINE_TMPFILES}"
+WAF_ENGINE_DROPIN="/etc/systemd/system/coraza-spoa.service.d/haproxy-manager.conf"
+ensure_dir "${WAF_ENGINE_DROPIN%/*}" root:root 755
+install_file "$WAF_ENGINE_DROPIN" root:root 644 "# Installed by install/04-node-prepare.
+[Service]
+SupplementaryGroups=${WAF_ENGINE_GROUP}"
+systemctl daemon-reload
+log "  applied  ${WAF_ENGINE_DROPIN}"
 # /run/lock is a distribution-owned shared directory, normally mode 1777.
 # The deploy helpers own their root-created lock files, not this directory.
 [[ -d /run/lock ]] || die "/run/lock is missing"

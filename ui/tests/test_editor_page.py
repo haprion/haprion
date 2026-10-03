@@ -756,6 +756,16 @@ class WhereASaveLands(EditorTestCase):
         )
         self.assertNotIn("This object was refused", answer.text)
 
+    def test_the_document_is_folded_under_the_verdict(self) -> None:
+        # 26-10-03: the verdict is the answer; the YAML is there to open, as on the object page.
+        answer = self.submit(self.editor(), "/proxies/alpha/shop/edit", action="check")
+        tail = answer.text.split("<strong>Valid", 1)[1]
+
+        self.assertIn('<details class="archive-details config-details">', tail)
+        self.assertIn("lines of YAML · ", tail)
+        self.assertIn("managed/proxies/shop.yaml", tail)
+        self.assertNotIn('<details class="archive-details config-details" open', tail)
+
     def test_without_the_cluster_it_says_only_what_was_checked(self) -> None:
         answer = self.submit(self.editor(), "/proxies/alpha/shop/edit", action="check")
 

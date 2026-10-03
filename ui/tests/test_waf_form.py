@@ -257,7 +257,7 @@ class TheGroupOnTheEditor(EditorTestCase):
         carried = text.split('name="waf_exceptions" value="', 1)[1].split('"', 1)[0]
         self.assertEqual(json.loads(carried.replace("&#34;", '"').replace("&quot;", '"')), [other])
         self.assertEqual(self.saved, [], "removed from the form, not saved")
-        self.assertNotIn("<h3>The object</h3>", text, "a change, not a question: no verdict")
+        self.assertNotIn("lines of YAML", text, "a change, not a question: no verdict")
 
     def test_the_group_opens_when_the_waf_page_sent_the_person(self) -> None:
         document = stored("waf:\n  mode: log\n")

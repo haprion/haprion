@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-pull-deploy"
-FUNCTIONS = ("validate_waf_candidate", "waf_listening", "sync_waf_engine")
+FUNCTIONS = ("validate_waf_candidate", "waf_listening", "waf_journal", "sync_waf_engine")
 
 #
 # systemctl answers from the state in the environment and records every call;
@@ -33,10 +33,12 @@ case "$1" in
     is-active) [[ "${ACTIVE:-0}" == 1 ]] ;;
     is-enabled) [[ "${ENABLED:-0}" == 1 ]] ;;
     reload) [[ -z "${REPLY_LINE:-}" ]] || echo "$REPLY_LINE" >> "$JOURNAL"; exit "${RELOAD_EXIT:-0}" ;;
+    show) echo "${NAMESPACE:-}" ;;
     *) exit "${SYSTEMCTL_EXIT:-0}" ;;
 esac
 """
 JOURNALCTL = """#!/bin/bash
+echo "journalctl $*" >> "$RECORD"
 for argument in "$@"; do
     [[ "$argument" == --show-cursor ]] && { echo "-- cursor: s=example"; exit 0; }
 done
@@ -209,6 +211,28 @@ class TheWafEngineSteps(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("systemctl reload coraza-spoa.service", self.calls())
         self.assertIn("took the new rules", output)
+
+    def test_the_answer_is_read_from_the_journal_the_unit_logs_to(self) -> None:
+        # Package revision 2 logs into a namespace; revision 1 into the system journal.
+        self.with_rules(self.current)
+        for namespace, wanted in (("haproxy-waf", "--namespace=haproxy-waf -u"), ("", "-u")):
+            with self.subTest(namespace=namespace or "system journal"):
+                self.record.unlink(missing_ok=True)
+                self.journal.unlink(missing_ok=True)
+                code, _ = self.run_step(
+                    "sync_waf_engine 1",
+                    ACTIVE="1",
+                    ENABLED="1",
+                    NAMESPACE=namespace,
+                    REPLY_LINE='{"level":"info","message":"Configuration successfully reloaded"}',
+                )
+                reads = [c for c in self.calls().splitlines() if c.startswith("journalctl ")]
+                self.assertEqual(code, 0)
+                self.assertTrue(reads)
+                for read in reads:
+                    self.assertTrue(
+                        read.startswith(f"journalctl {wanted} coraza-spoa.service"), read
+                    )
 
     def test_an_engine_that_keeps_its_old_rules_fails_the_deploy(self) -> None:
         self.with_rules(self.current)

@@ -182,6 +182,22 @@ waf_listening() {
     ss -Hltnp "sport = :${port}" | grep -q '"coraza-spoa"'
 }
 
+#
+# The engine's own lines. From package revision 2 the unit logs into a journal
+# namespace of its own (its matches carry whole request fields, longer than the
+# system journal and rsyslog keep whole); the unit says which, so this reads
+# the right journal under either package revision.
+#
+waf_journal() {
+    local namespace
+    namespace="$(systemctl show -P LogNamespace "$WAF_UNIT" 2>/dev/null || true)"
+    if [[ -n "$namespace" ]]; then
+        journalctl --namespace="$namespace" -u "$WAF_UNIT" "$@"
+    else
+        journalctl -u "$WAF_UNIT" "$@"
+    fi
+}
+
 sync_waf_engine() {
     local changed="$1" cursor lines waited
 
@@ -223,7 +239,7 @@ sync_waf_engine() {
     # journal's own position, so an earlier reload's line - even one within
     # the same second - is never read as this one's answer.
     #
-    cursor="$(journalctl -u "$WAF_UNIT" -n 0 --show-cursor --no-pager | sed -n 's/^-- cursor: //p')"
+    cursor="$(waf_journal -n 0 --show-cursor --no-pager | sed -n 's/^-- cursor: //p')"
     log "WAF: reloading the engine's rules."
     if ! systemctl reload "$WAF_UNIT"; then
         log "ERROR: the WAF engine could not be signalled."
@@ -231,9 +247,9 @@ sync_waf_engine() {
     fi
     for (( waited = 0; waited < WAF_WAIT_SECONDS * 5; waited++ )); do
         if [[ -n "$cursor" ]]; then
-            lines="$(journalctl -u "$WAF_UNIT" --after-cursor "$cursor" -o cat --no-pager)"
+            lines="$(waf_journal --after-cursor "$cursor" -o cat --no-pager)"
         else
-            lines="$(journalctl -u "$WAF_UNIT" -n 20 -o cat --no-pager)"
+            lines="$(waf_journal -n 20 -o cat --no-pager)"
         fi
         if grep -q 'Configuration successfully reloaded' <<<"$lines"; then
             log "WAF: engine took the new rules."

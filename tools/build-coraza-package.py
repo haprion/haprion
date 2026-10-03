@@ -28,12 +28,71 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-REVISION = "1"
+#
+# Each package counts its own revision: it moves when our part of the package
+# changes (the unit, the build), not when the other package does.
+#
+CORAZA_REVISION = "2"
+CRS_REVISION = "1"
 GO_VERSION = "go1.26.8"
 MAINTAINER = "haproxy-manager maintainers <maintainers@example.org>"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 DIGEST = re.compile(r"[0-9a-f]{64}")
 UNIT = "coraza-spoa.service"
+LIBEXEC = "usr/lib/haproxy-manager-coraza-spoa"
+#
+# The engine logs one JSON line per matched rule, and a line carries the
+# matched value whole - as long as the request field it came from. rsyslog
+# cuts at 8 KiB and the default journal splits at 48 KiB, so the engine logs
+# into a journal of its own, with lines long enough for any field it can be
+# handed and the traffic log's retention. Measured on a node (26-10-03): a
+# 150 000 character line arrives whole, and nothing reaches rsyslog.
+#
+JOURNAL_NAMESPACE = "haproxy-waf"
+JOURNAL_CONF = f"""\
+# Installed by haproxy-manager-coraza-spoa. Override in
+# /etc/systemd/journald@{JOURNAL_NAMESPACE}.conf.d/ rather than editing this file.
+[Journal]
+Storage=persistent
+LineMax=256K
+MaxRetentionSec=14day
+SystemMaxUse=512M
+"""
+#
+# The engine compiles every object's rules before it opens its port: about a
+# tenth of a second for one object and three tenths for twenty (measured on
+# two cores, 26-10-03). Started as `simple`, systemd would call it up the moment
+# the process exists, and HAProxy - ordered after it - would take requests the
+# engine cannot yet answer. This holds the start until the port listens. It
+# reads /proc/net, so it needs nothing the sandbox does not already give.
+#
+WAIT_LISTENING = """\
+#!/bin/sh
+#
+# wait-listening CONFIG [SECONDS]: return once something listens on the TCP
+# port of CONFIG's `bind:` line, or fail after SECONDS (default 60).
+#
+set -eu
+config="$1"
+limit="${2:-60}"
+port="$(sed -n 's/^bind:[[:space:]]*[^[:space:]]*:\\([0-9][0-9]*\\)[[:space:]]*$/\\1/p' "$config" | head -n 1)"
+if [ -z "$port" ]; then
+    echo "no bind port in $config" >&2
+    exit 1
+fi
+hex="$(printf '%04X' "$port")"
+tries=$((limit * 10))
+while [ "$tries" -gt 0 ]; do
+    if awk -v want=":$hex" '$4 == "0A" && substr($2, length($2) - 4) == want { found = 1 }
+                            END { exit !found }' /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
+        exit 0
+    fi
+    sleep 0.1
+    tries=$((tries - 1))
+done
+echo "the engine did not listen on port $port within $limit seconds" >&2
+exit 1
+"""
 
 
 @dataclass(frozen=True)
@@ -72,17 +131,21 @@ CRS = Source(
 # the release (B230). DynamicUser gives the process an account systemd creates
 # at start and forgets at stop - nothing to add, nothing to clean up.
 #
-UNIT_FILE = """\
+UNIT_FILE = f"""\
 [Unit]
 Description=Coraza SPOA web application firewall engine for HAProxy
 Documentation=https://github.com/corazawaf/coraza-spoa
 After=network.target
+Before=haproxy.service
 ConditionPathExists=/etc/haproxy/waf/coraza.yaml
 
 [Service]
 Type=simple
 ExecStart=/usr/sbin/coraza-spoa -config /etc/haproxy/waf/coraza.yaml
+ExecStartPost=/{LIBEXEC}/wait-listening /etc/haproxy/waf/coraza.yaml
 ExecReload=/bin/kill -HUP $MAINPID
+TimeoutStartSec=90
+LogNamespace={JOURNAL_NAMESPACE}
 Restart=on-failure
 RestartSec=2s
 DynamicUser=yes
@@ -301,6 +364,13 @@ def build_coraza(
         doc = "usr/share/doc/haproxy-manager-coraza-spoa"
         write(root, "usr/sbin/coraza-spoa", binary.read_bytes(), 0o755)
         write(root, f"usr/lib/systemd/system/{UNIT}", UNIT_FILE.encode(), 0o644)
+        write(root, f"{LIBEXEC}/wait-listening", WAIT_LISTENING.encode(), 0o755)
+        write(
+            root,
+            f"usr/lib/systemd/journald@{JOURNAL_NAMESPACE}.conf.d/haproxy-manager.conf",
+            JOURNAL_CONF.encode(),
+            0o644,
+        )
         write(root, f"{doc}/copyright", (tree / "LICENSE").read_bytes(), 0o644)
         write(
             root,
@@ -318,7 +388,7 @@ def build_coraza(
             root,
             {
                 "Package": "haproxy-manager-coraza-spoa",
-                "Version": f"{source.version}-{REVISION}",
+                "Version": f"{source.version}-{CORAZA_REVISION}",
                 "Architecture": "amd64",
                 "Section": "net",
                 "Priority": "optional",
@@ -365,7 +435,7 @@ def build_crs(source_dir: Path, output_dir: Path, *, source: Source = CRS) -> Pa
             root,
             {
                 "Package": "haproxy-manager-crs",
-                "Version": f"{source.version}-{REVISION}",
+                "Version": f"{source.version}-{CRS_REVISION}",
                 "Architecture": "all",
                 "Section": "net",
                 "Priority": "optional",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import socket
 import subprocess
 import sys
 import tarfile
@@ -102,14 +103,21 @@ class Packages(unittest.TestCase):
 
     def test_the_engine_package_holds_the_binary_the_unit_and_the_licence(self) -> None:
         deb = self.build_coraza(self.coraza_source(), "out")
-        self.assertEqual(deb.name, "haproxy-manager-coraza-spoa_9.9.9-1_amd64.deb")
+        self.assertEqual(deb.name, "haproxy-manager-coraza-spoa_9.9.9-2_amd64.deb")
         rows = listing(deb)
         self.assertEqual(rows["/usr/sbin/coraza-spoa"], "-rwxr-xr-x root/root")
         self.assertEqual(
             rows["/usr/lib/systemd/system/coraza-spoa.service"], "-rw-r--r-- root/root"
         )
         self.assertIn("/usr/share/doc/haproxy-manager-coraza-spoa/copyright", rows)
-        self.assertEqual(field(deb, "Version"), "9.9.9-1")
+        self.assertEqual(
+            rows["/usr/lib/haproxy-manager-coraza-spoa/wait-listening"], "-rwxr-xr-x root/root"
+        )
+        self.assertEqual(
+            rows["/usr/lib/systemd/journald@haproxy-waf.conf.d/haproxy-manager.conf"],
+            "-rw-r--r-- root/root",
+        )
+        self.assertEqual(field(deb, "Version"), "9.9.9-2")
         self.assertEqual(field(deb, "Architecture"), "amd64")
 
     def test_the_unit_waits_for_a_release_and_runs_without_privilege(self) -> None:
@@ -122,11 +130,51 @@ class Packages(unittest.TestCase):
             "NoNewPrivileges=yes",
             "CapabilityBoundingSet=",
             "ProtectSystem=strict",
+            # HAProxy starts after the engine, and the engine counts as started
+            # only once its port listens.
+            "Before=haproxy.service",
+            "ExecStartPost=/usr/lib/haproxy-manager-coraza-spoa/wait-listening "
+            "/etc/haproxy/waf/coraza.yaml",
+            "LogNamespace=haproxy-waf",
         ):
             self.assertIn(line + "\n", unit)
+        self.assertIn("LineMax=256K\n", self.tool.JOURNAL_CONF)
+        self.assertIn("MaxRetentionSec=14day\n", self.tool.JOURNAL_CONF)
         # The package never enables the engine; the node's deploy does (B230).
         for script in (self.tool.POSTINST, self.tool.PRERM, self.tool.POSTRM):
             self.assertNotIn("enable --now", script)
+
+    def wait_listening(self, bind: str, *extra: str) -> subprocess.CompletedProcess[str]:
+        script = self.root / "wait-listening"
+        script.write_text(self.tool.WAIT_LISTENING)
+        script.chmod(0o755)
+        config = self.root / "coraza.yaml"
+        config.write_text(f"# example\n{bind}log_level: info\n")
+        return subprocess.run(  # noqa: S603 - the script under test, fixed arguments
+            ["/bin/sh", str(script), str(config), *extra],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def test_the_start_waits_until_the_engine_listens(self) -> None:
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            done = self.wait_listening(f"bind: 127.0.0.1:{port}\n", "5")
+            self.assertEqual(done.returncode, 0, done.stderr)
+        with socket.socket() as closed:
+            closed.bind(("127.0.0.1", 0))  # bound, never listening
+            port = closed.getsockname()[1]
+            done = self.wait_listening(f"bind: 127.0.0.1:{port}\n", "1")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(f"did not listen on port {port} within 1 seconds", done.stderr)
+
+    def test_the_start_fails_without_a_bind_port(self) -> None:
+        done = self.wait_listening("")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("no bind port", done.stderr)
 
     def test_the_rule_set_package_holds_rules_and_setup_but_not_docs(self) -> None:
         out = self.root / "out"

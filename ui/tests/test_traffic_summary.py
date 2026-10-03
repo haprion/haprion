@@ -129,6 +129,24 @@ class TheClusterHeader(LoginTestCase):
         self.assertTrue(all(clusters == ["alpha"] for clusters in asked), "one cluster at a time")
         responses.assert_not_called()
 
+    def test_the_dashboard_redraws_itself_once_per_poll(self) -> None:
+        # The CPU, memory and freshness move without a reload (B239).
+        with (
+            mock.patch(
+                "haproxy_ui.db.read_traffic_summary",
+                return_value=measured(timedelta(minutes=5), (1, 1, 1)),
+            ),
+            mock.patch("haproxy_ui.db.read_response_times"),
+        ):
+            config = replace(configuration(), clusters=("alpha",))
+            client = self.client(config)
+            self.assertEqual(self.sign_in(client).status_code, 303)
+            page = client.get("/").text
+
+        self.assertIn(
+            f'<meta name="haproxy-live" content="{config.poller.interval_seconds}">', page
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -737,6 +737,16 @@ def build_router(config: Config) -> APIRouter:
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),
+                #
+                # The page redraws itself once per poll (live.js), so the CPU,
+                # memory and freshness on it move without a reload. Not for a
+                # snapshot or the demo data: nothing behind those changes.
+                #
+                "live_seconds": (
+                    None
+                    if config.production_snapshot or config.demo_fixture
+                    else config.poller.interval_seconds
+                ),
             },
         )
 

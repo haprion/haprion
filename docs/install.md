@@ -152,6 +152,15 @@ it when one no longer does; a release with rules is refused on a node without th
 The node status reports the engine's version, and the interface offers the engine on an
 object only when every node of its cluster has it.
 
+From package revision 2 the engine starts before HAProxy and counts as started only once
+its port listens, and it logs into a journal namespace of its own, `haproxy-waf`: each
+matched rule is a line carrying the matched value, longer than the system journal and
+rsyslog keep whole. The package sets that journal's line length and retention (14 days)
+under `/usr/lib/systemd/journald@haproxy-waf.conf.d/`; override them in `/etc`.
+`04-node-prepare` grants the traffic log's read group read access to that namespace and
+nothing else in the journal (`/etc/tmpfiles.d/haproxy-manager-waf.conf`), and the
+collector reads it through the same forced command as the traffic log.
+
 ## 6. Verify access
 
 Open `https://<SERVER_NAME>` and sign in with the administrator account created during

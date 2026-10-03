@@ -1,5 +1,12 @@
 #!/usr/bin/python3
-"""Forced-command reader for one node's bounded, query-free traffic log."""
+"""Forced-command reader for one node's bounded, query-free traffic log.
+
+Two requests, one forced command (the collector's single key):
+
+    YYYY-MM-DD OFFSET   the traffic log's day file, from a byte offset
+    waf CURSOR | waf -  the WAF engine's journal, after a journal cursor or
+                        from its oldest entry (Fas 21, B234)
+"""
 
 from __future__ import annotations
 
@@ -7,6 +14,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -19,6 +27,18 @@ MAX_SEND = 8 * 1024 * 1024
 # transfer window so a response never ends in the middle of JSON.
 MAX_RECORD = 16 * 1024
 RETENTION_DAYS = 14
+#
+# The engine logs into a journal namespace of its own (its package, revision 2)
+# that this account may read and nothing else (04-node-prepare). A cursor is
+# journald's own position; journalctl validates it, this only bounds its form.
+#
+WAF_REQUEST = re.compile(r"^waf (-|[A-Za-z0-9=;_-]{1,512})$")
+WAF_NAMESPACE = "haproxy-waf"
+WAF_UNIT = "coraza-spoa.service"
+WAF_MAX_ENTRIES = 20_000
+WAF_TIMEOUT_SECONDS = 30
+JOURNALCTL = "/usr/bin/journalctl"
+JOURNAL_ROOT = Path("/var/log/journal")
 
 
 class RequestError(ValueError):
@@ -122,8 +142,111 @@ def serve(raw: str, root: Path, output: BinaryIO, *, today: date | None = None) 
         os.close(descriptor)
 
 
+def _message(value: object) -> str | None:
+    """journalctl writes a field that is not clean UTF-8 as a list of bytes."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(b, int) and 0 <= b <= 255 for b in value):
+        return bytes(value).decode("utf-8", errors="replace")
+    return None
+
+
+def serve_waf(
+    raw: str,
+    output: BinaryIO,
+    *,
+    journalctl: str = JOURNALCTL,
+    journal: Path | None = None,
+) -> int:
+    """Write the engine's lines after a cursor: a header, then one JSON record each.
+
+    `--all` is not optional: without it journalctl writes any field longer than
+    4096 bytes as null (measured 26-10-03), and the long lines are the reason
+    the engine has a journal of its own.
+    """
+
+    match = WAF_REQUEST.fullmatch(raw)
+    if match is None:
+        return 64
+    cursor = None if match.group(1) == "-" else match.group(1)
+    if journal is None:
+        try:
+            machine = Path("/etc/machine-id").read_text().strip()
+        except OSError:
+            return 65
+        journal = JOURNAL_ROOT / f"{machine}.{WAF_NAMESPACE}"
+    if not journal.is_dir():
+        # The engine has never run on this node: nothing to read, and nothing wrong.
+        output.write(_header(cursor=cursor or "", eof=True, reset=False, sent=0))
+        return 0
+
+    command = [
+        journalctl,
+        f"--namespace={WAF_NAMESPACE}",
+        f"--unit={WAF_UNIT}",
+        "--output=json",
+        "--output-fields=MESSAGE",
+        "--all",
+        "--no-pager",
+        "--quiet",
+    ]
+    if cursor is not None:
+        command.append(f"--after-cursor={cursor}")
+    records: list[bytes] = []
+    size = 0
+    last = cursor or ""
+    eof = True
+    try:
+        with subprocess.Popen(  # noqa: S603 - fixed program, validated arguments
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        ) as process:
+            assert process.stdout is not None  # noqa: S101 - requested above
+            for line in process.stdout:
+                entry = json.loads(line)
+                message = _message(entry.get("MESSAGE"))
+                position = entry.get("__CURSOR")
+                at = entry.get("__REALTIME_TIMESTAMP")
+                if not isinstance(position, str) or not isinstance(at, str):
+                    return 65
+                last = position
+                if message is None:
+                    continue
+                record = (
+                    json.dumps(
+                        {"at": int(at), "cursor": position, "message": message},
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode("ascii")
+                    + b"\n"
+                )
+                records.append(record)
+                size += len(record)
+                if size >= MAX_SEND or len(records) >= WAF_MAX_ENTRIES:
+                    eof = False
+                    break
+            if not eof:
+                process.kill()
+            code = process.wait(timeout=WAF_TIMEOUT_SECONDS)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 65
+    if eof and code != 0:
+        if cursor is not None:
+            # A cursor journald no longer accepts: start over, as a replaced day file does.
+            output.write(_header(cursor="", eof=True, reset=True, sent=0))
+            return 0
+        return 65
+    output.write(_header(cursor=last, eof=eof, reset=False, sent=len(records)))
+    output.writelines(records)
+    return 0
+
+
 def main() -> int:
     raw = os.environ.get("SSH_ORIGINAL_COMMAND", "")
+    if raw.startswith("waf "):
+        return serve_waf(raw, sys.stdout.buffer)
     return serve(raw, LOG_ROOT, sys.stdout.buffer)
 
 

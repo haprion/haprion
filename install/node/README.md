@@ -11,7 +11,7 @@
 | `haproxy-health-probe` | tries a health check against named servers, from this node, and reports whether they answered |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
-| `haproxy-traffic-log-read` | returns bounded, whole JSONL records for one validated UTC day and cursor |
+| `haproxy-traffic-log-read` | returns bounded, whole JSONL records for one validated UTC day and cursor, or the WAF engine's journal lines after a journal cursor (`waf <cursor>`) |
 | `haproxy-traffic-log-enable` | installs or removes the node's rsyslog route and its retention timer |
 | `haproxy-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
 

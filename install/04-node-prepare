@@ -72,6 +72,8 @@ SBIN="/usr/local/sbin"
 NODE_CONF="/etc/haproxy-manager/node.conf"
 LOGREAD_GROUP="haproxy-logread"
 TRAFFIC_LOG_ROOT="/var/log/haproxy-manager"
+# The engine package's LogNamespace=, read by haproxy-traffic-log-read.
+WAF_JOURNAL_NAMESPACE="haproxy-waf"
 
 SCRIPTS=(
     haproxy-pull-deploy
@@ -168,6 +170,21 @@ usermod -a -G "$LOGREAD_GROUP" "$LOGREAD_USER"
 #
 ensure_dir "$TRAFFIC_LOG_ROOT" "${RSYSLOG_WRITER}:${LOGREAD_GROUP}" 2750
 log "  member    ${LOGREAD_USER} -> ${LOGREAD_GROUP}"
+#
+# The WAF engine logs into a journal namespace of its own (its package, from
+# revision 2), and the reader reads it there. The same group is granted read on
+# that namespace's directory, and its default entry is what each journal file
+# journald later creates inherits - so the reader sees the engine's lines and
+# nothing else in the journal. Written the way systemd grants its own journal
+# (tmpfiles.d/systemd.conf), which needs no acl package. Measured on a node
+# (26-10-03): read whole, read after rotation, system journal still refused.
+#
+WAF_JOURNAL_TMPFILES="/etc/tmpfiles.d/haproxy-manager-waf.conf"
+install_file "$WAF_JOURNAL_TMPFILES" root:root 644 "# Installed by install/04-node-prepare.
+d /var/log/journal/%m.${WAF_JOURNAL_NAMESPACE} 2755 root systemd-journal -
+a+ /var/log/journal/%m.${WAF_JOURNAL_NAMESPACE} - - - - d:group:${LOGREAD_GROUP}:r-x,group:${LOGREAD_GROUP}:r-x"
+systemd-tmpfiles --create "$WAF_JOURNAL_TMPFILES"
+log "  applied  ${WAF_JOURNAL_TMPFILES}"
 
 step "HAProxy release layout"
 

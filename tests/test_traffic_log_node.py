@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from datetime import date
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -120,6 +121,144 @@ def render_rule() -> str:
     return subprocess.run(
         [str(script), "--print"], capture_output=True, text=True, check=True
     ).stdout
+
+
+#
+# Stands in for journalctl: records its arguments and prints what the test
+# wrote, in the shape `journalctl -o json --output-fields=MESSAGE --all` was
+# measured to print (26-10-03). The values are invented.
+#
+JOURNALCTL_STUB = """#!/bin/bash
+printf '%s\\n' "$@" > "$STUB_ARGS"
+cat "$STUB_OUTPUT"
+exit "${STUB_EXIT:-0}"
+"""
+
+
+def journal_entry(number: int, message: object) -> str:
+    return json.dumps(
+        {
+            "MESSAGE": message,
+            "__CURSOR": f"s=0000;i={number:x};b=1111;m=1;t=1;x=1",
+            "__REALTIME_TIMESTAMP": str(1_790_000_000_000_000 + number),
+            "__MONOTONIC_TIMESTAMP": "1",
+        }
+    )
+
+
+class WafJournalReaderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.journal = self.root / "machine.haproxy-waf"
+        self.journal.mkdir()
+        self.stub = self.root / "journalctl"
+        self.stub.write_text(JOURNALCTL_STUB)
+        self.stub.chmod(0o755)
+        self.args = self.root / "args"
+        self.output = self.root / "output"
+        self.output.write_text("")
+
+    def call(
+        self, request: str, *, exit_code: int = 0, journal: Path | None = None
+    ) -> tuple[int, dict[str, object] | None, list[dict[str, object]]]:
+        output = io.BytesIO()
+        environment = {"STUB_ARGS": str(self.args), "STUB_OUTPUT": str(self.output)}
+        environment["STUB_EXIT"] = str(exit_code)
+        with unittest.mock.patch.dict("os.environ", environment):
+            code = HELPER.serve_waf(
+                request, output, journalctl=str(self.stub), journal=journal or self.journal
+            )
+        if not output.getvalue():
+            return code, None, []
+        head, *rows = output.getvalue().decode().splitlines()
+        return code, json.loads(head), [json.loads(row) for row in rows]
+
+    def arguments(self) -> list[str]:
+        return self.args.read_text().splitlines()
+
+    def test_only_waf_and_a_cursor_or_a_dash_are_accepted(self) -> None:
+        for request in (
+            "waf",
+            "waf ",
+            "waf  -",
+            "waf a b",
+            "waf ../x",
+            "waf " + "a" * 513,
+            "WAF -",
+        ):
+            with self.subTest(request=request):
+                self.assertEqual(self.call(request)[0], 64)
+        self.assertFalse(self.args.exists())
+
+    def test_a_node_whose_engine_never_ran_has_nothing_to_read(self) -> None:
+        code, head, rows = self.call("waf -", journal=self.root / "absent")
+        self.assertEqual(code, 0)
+        self.assertEqual(head, {"cursor": "", "eof": True, "reset": False, "sent": 0})
+        self.assertEqual(rows, [])
+        self.assertFalse(self.args.exists())
+
+    def test_whole_lines_after_the_cursor_from_the_engine_s_own_journal(self) -> None:
+        long = "x" * 20_000
+        self.output.write_text(
+            "\n".join(
+                [
+                    journal_entry(1, '{"level":"error","match":{"rule_id":942100}}'),
+                    journal_entry(2, None),  # what journalctl prints without --all
+                    journal_entry(3, list(b"caf\xc3\xa9 \xff")),  # not clean UTF-8
+                    journal_entry(4, long),
+                ]
+            )
+            + "\n"
+        )
+        code, head, rows = self.call("waf s=0000;i=0;b=1111;m=1;t=1;x=1")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            head,
+            {"cursor": "s=0000;i=4;b=1111;m=1;t=1;x=1", "eof": True, "reset": False, "sent": 3},
+        )
+        self.assertEqual(
+            [row["message"] for row in rows][:2],
+            [
+                '{"level":"error","match":{"rule_id":942100}}',
+                "caf\u00e9 \ufffd",
+            ],
+        )
+        self.assertEqual(len(rows[2]["message"]), 20_000)
+        self.assertEqual(rows[0]["at"], 1_790_000_000_000_001)
+        arguments = self.arguments()
+        for wanted in (
+            "--namespace=haproxy-waf",
+            "--unit=coraza-spoa.service",
+            "--output=json",
+            "--all",
+            "--after-cursor=s=0000;i=0;b=1111;m=1;t=1;x=1",
+        ):
+            self.assertIn(wanted, arguments)
+
+    def test_from_the_oldest_entry_without_a_cursor(self) -> None:
+        self.output.write_text(journal_entry(1, "first") + "\n")
+        code, head, rows = self.call("waf -")
+        self.assertEqual((code, head["sent"], rows[0]["message"]), (0, 1, "first"))
+        self.assertFalse(any(a.startswith("--after-cursor") for a in self.arguments()))
+
+    def test_a_cursor_journald_refuses_asks_for_a_start_over(self) -> None:
+        code, head, rows = self.call("waf s=gone;i=1", exit_code=1)
+        self.assertEqual(code, 0)
+        self.assertEqual(head, {"cursor": "", "eof": True, "reset": True, "sent": 0})
+
+    def test_a_journal_that_cannot_be_read_from_the_start_is_an_error(self) -> None:
+        self.assertEqual(self.call("waf -", exit_code=1)[0], 65)
+
+    def test_a_response_is_bounded_and_resumes_after_its_last_line(self) -> None:
+        self.output.write_text("".join(journal_entry(n, f"line {n}") + "\n" for n in range(1, 6)))
+        with unittest.mock.patch.object(HELPER, "WAF_MAX_ENTRIES", 2):
+            code, head, rows = self.call("waf -")
+        self.assertEqual(code, 0)
+        self.assertEqual(head["eof"], False)
+        self.assertEqual(head["cursor"], "s=0000;i=2;b=1111;m=1;t=1;x=1")
+        self.assertEqual([row["message"] for row in rows], ["line 1", "line 2"])
 
 
 class TrafficLogRsyslogRuleTests(unittest.TestCase):

@@ -3256,7 +3256,7 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haproxy-health-probe` | opens one connection per named target and reports the status line |
-| `haproxy-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB |
+| `haproxy-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB; `waf <cursor>` returns the WAF engine's journal lines after a journal cursor, same cap |
 | `haproxy-traffic-log-enable` | installs or removes this node's rsyslog route and retention timer |
 | `haproxy-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
 

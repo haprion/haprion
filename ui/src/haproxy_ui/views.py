@@ -32,13 +32,13 @@ from hashlib import sha256
 from pathlib import Path
 from time import monotonic
 from typing import Annotated, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from haproxy_mgmt import backup_retention, backup_schedule, proxy_model
+from haproxy_mgmt import backup_retention, backup_schedule, crs, proxy_model
 from haproxy_mgmt import cluster_settings as cluster_settings_module
 from haproxy_mgmt.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
@@ -90,6 +90,7 @@ from haproxy_ui import (
     traffic_logs,
     traffic_summary,
     users,
+    waf,
 )
 from haproxy_ui import editor as editor_module
 from haproxy_ui import preview as preview_module
@@ -98,7 +99,7 @@ from haproxy_ui import version_changes as version_changes_view
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.config import CLUSTER_ID, Config
 from haproxy_ui.db import AuthenticatedSession
-from haproxy_ui.form_groups import form_groups
+from haproxy_ui.form_groups import form_groups, waf_exception_count
 from haproxy_ui.health_rows import health_rows
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -160,9 +161,13 @@ TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 #
 TEMPLATES.env.globals["check_phrase"] = health.check_phrase
 TEMPLATES.env.globals["form_groups"] = form_groups
+TEMPLATES.env.globals["waf_exception_count"] = waf_exception_count
 TEMPLATES.env.globals["health_rows"] = health_rows
 TEMPLATES.env.globals["feature_on"] = features.is_on
 TEMPLATES.env.filters["accent_class"] = cluster_identity.accent_class
+TEMPLATES.env.filters["cluster_accent"] = lambda cluster: cluster_identity.accent_class(
+    cluster_identity.accent_index(cluster)
+)
 TEMPLATES.env.globals["through_provider"] = oidc_web.through_provider
 
 #
@@ -1944,7 +1949,27 @@ def build_router(config: Config) -> APIRouter:
     #
     @router.get("/waf", response_class=HTMLResponse)
     def waf_page(request: Request) -> Response:
-        return _traffic_log_page(request, waf_page=True)
+        #
+        # A place to work (B234): what the engine found per object and rule,
+        # the exceptions objects carry, and - as before - the requests a rule
+        # met, which is the traffic log narrowed.
+        #
+        view = request.query_params.get("view", "")
+        if view == "requests":
+            return _traffic_log_page(request, waf_page=True)
+        return _waf_work_page(request, config, "exceptions" if view == "exceptions" else "findings")
+
+    @router.get("/waf/allow", response_class=HTMLResponse)
+    def waf_allow_page(request: Request) -> Response:
+        return _waf_allow(request, config, None)
+
+    @router.post("/waf/allow", response_class=HTMLResponse)
+    async def waf_allow(request: Request) -> Response:
+        return _waf_allow(request, config, await request.form())
+
+    @router.post("/waf/exceptions/remove", response_class=HTMLResponse)
+    async def waf_remove_exception(request: Request) -> Response:
+        return _waf_remove(request, config, await request.form())
 
     def _traffic_log_page(request: Request, *, waf_page: bool) -> Response:
         session = current_session(request)
@@ -2044,6 +2069,7 @@ def build_router(config: Config) -> APIRouter:
                 ("from", selected_from),
                 ("to", selected_to),
                 ("waf", "" if waf_page else selected_waf),
+                ("view", "requests" if waf_page else ""),
             )
             if value
         }
@@ -3450,6 +3476,16 @@ def build_router(config: Config) -> APIRouter:
                 # off: asked only of those that were on, an off switch read the
                 # previous one's answer, or none at all when it came first.
                 #
+                #
+                # What a switch's row says beside its name: for the WAF engine,
+                # whether the machines can do what the switch offers (B231).
+                #
+                "feature_details": {
+                    features.WAF_ENGINE: waf.engine(
+                        read_source(request, config, OBJECTS_SOURCE)[1],
+                        read_source(request, config, STATUS_SOURCE)[1],
+                    ).summary()
+                },
                 "features": [
                     (feature, switches[feature.name].enabled and not locked, locked)
                     for feature in features.FEATURES
@@ -3553,6 +3589,16 @@ def build_router(config: Config) -> APIRouter:
             )
         if current.enabled == want:
             return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
+        #
+        # A WAF the interface no longer shows still filters traffic (B231).
+        #
+        if name == features.WAF_ENGINE and not want:
+            using = waf.objects_using(read_source(request, config, OBJECTS_SOURCE)[1])
+            if using:
+                shown = ", ".join(using[:3]) + (
+                    f" and {len(using) - 3} more" if len(using) > 3 else ""
+                )
+                return refused(f"The WAF engine inspects {shown}. Turn it off there first.")
 
         remembered: dict[str, Any] = {}
         schedules: dict[str, dict[str, Any]] = {}
@@ -7409,6 +7455,10 @@ def _editor_page(
             "draft_revision": draft_revision,
             "unexpressible": unexpressible,
             "submitted": submitted,
+            "waf_offered": features.is_on(features.WAF_ENGINE),
+            "waf_unavailable": waf.engine(
+                read_source(request, config, OBJECTS_SOURCE)[1], status_rows
+            ).unavailable(cluster),
             "backend_health": backend,
             "probe": report,
             "notice": notice,
@@ -8697,3 +8747,279 @@ def _advanced_submit(
             replace(result, problem=queued), saved=_proxy_path(cluster, name) + "?saved=1"
         )
     return answer(result, saved="/proxies?published=" + quote(name), published=True)
+
+
+# - WAF page (Fas 21 del B, B234) ------------------------------------------
+#
+# What the engine found per object and rule, and the exceptions objects carry.
+# A finding is let through with an exception that is saved into the object's
+# draft, as the editor saves one: the same row, the same revision check, the
+# same refusal of a document the engine will not take. Publishing it is the
+# object's own publish.
+#
+WAF_DAYS = 7
+
+
+def _waf_documents(
+    request: Request, config: Config, connection: Any, clusters: Sequence[str]
+) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
+    """Each object's stored document, and its draft's where it has one (not a removal)."""
+
+    _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
+    stored: dict[tuple[str, str], str] = {}
+    for row in object_rows:
+        if row.cluster not in clusters:
+            continue
+        for view in objects.cluster_object_views(row):
+            if view.readable:
+                stored[(row.cluster, view.name)] = view.document
+    drafted: dict[tuple[str, str], str] = {}
+    for cluster in clusters:
+        names = {name for owner, name in stored if owner == cluster}
+        for draft in _settled_drafts(connection, cluster, names):
+            if not draft.deleted:
+                drafted[(cluster, draft.object_id)] = draft.yaml
+    return stored, drafted
+
+
+def _waf_work_page(request: Request, config: Config, view: str) -> Response:
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    clusters = listed_clusters(request, config)
+    selected = request.query_params.get("cluster", "")[:32]
+    chosen = (selected,) if selected in clusters else tuple(clusters)
+    days = min(WAF_DAYS, config.traffic_logs.retention_days)
+    since = datetime.now(UTC) - timedelta(days=days)
+    rules = crs.installed_catalog()
+    with request.app.state.pool.connection() as connection:
+        stored, drafted = _waf_documents(request, config, connection, chosen)
+        rows = db.waf_findings(connection, clusters=chosen, since=since)
+        verdicts = db.waf_verdicts(connection, clusters=chosen, since=since)
+    findings = waf.build_findings(rows, verdicts, stored, drafted, rules)
+    exceptions = waf.build_exceptions(stored, drafted, rules)
+    return TEMPLATES.TemplateResponse(
+        request,
+        "waf.html",
+        {
+            "username": session.username,
+            "role": session.role,
+            "csrf_token": auth.csrf_token(token),
+            "section": "waf",
+            "management_writes": config.management_writes,
+            "view": view,
+            "days": days,
+            "clusters": clusters,
+            "selected_cluster": selected if selected in clusters else "",
+            "findings": findings,
+            "finding_count": sum(len(card.findings) for card in findings),
+            "exceptions": exceptions,
+            "where": waf.where,
+            "saved": request.query_params.get("saved", "")[:40],
+            "saved_in": request.query_params.get("in", "")[:32],
+            "can_write": config.management_writes and session.role == "admin",
+        },
+    )
+
+
+def _waf_write_gate(
+    request: Request, config: Config, csrf: str | None
+) -> AuthenticatedSession | Response:
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    if not config.management_writes:
+        return PlainTextResponse("Not found", status_code=404)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    if csrf is not None and not auth.csrf_token_is_valid(token, csrf):
+        return PlainTextResponse("Refused", status_code=403)
+    if session.role != "admin":
+        return PlainTextResponse("Refused", status_code=403)
+    return session
+
+
+def _waf_save(
+    request: Request,
+    config: Config,
+    session: AuthenticatedSession,
+    *,
+    cluster: str,
+    name: str,
+    change: Callable[[str], str],
+    detail: dict[str, Any],
+) -> str | None:
+    """Apply one change to the object's draft (or its stored document); the problem, or None."""
+
+    state = _editor_state(request, config, cluster)
+    stored = next((view for view in state.stored if view.name == name), None)
+    with request.app.state.pool.connection() as connection:
+        draft = _settled_draft(connection, cluster, name, {view.name for view in state.stored})
+    if draft is not None and draft.deleted:
+        return f"The draft removes {name}."
+    base = draft.yaml if draft is not None else (stored.document if stored is not None else "")
+    if not base or state.commit is None:
+        return "The stored objects have not been read yet."
+    try:
+        document = change(base)
+        load_proxy(name, document.encode())
+    except (ValueError, ModelError) as exc:
+        return str(exc)
+    if editor_module.unchanged(document, base):
+        return None
+    with request.app.state.pool.connection() as connection:
+        try:
+            saved = db.save_draft(
+                connection,
+                cluster=cluster,
+                object_id=name,
+                yaml=document,
+                base_version=state.base_version,
+                base_hash=state.commit,
+                updated_by=session.username,
+                expected_revision=draft.revision if draft is not None else None,
+            )
+        except db.DraftConflict as conflict:
+            connection.rollback()
+            return f"{conflict}. Reload the page and try again."
+        db.record_audit_event(
+            connection,
+            actor=session.username,
+            action="save_draft",
+            cluster=cluster,
+            request_id=uuid4(),
+            detail={"object": name, "revision": saved.revision, **detail},
+        )
+        connection.commit()
+    return None
+
+
+def _waf_target(request: Request, config: Config, cluster: str, name: str) -> bool:
+    return cluster in listed_clusters(request, config) and bool(proxy_model.NAME.fullmatch(name))
+
+
+def _waf_allow(request: Request, config: Config, form: Any) -> Response:
+    """The Allow dialog (B234, B235): where to let a finding through, as narrow as it allows."""
+
+    values = form if form is not None else request.query_params
+    gate = _waf_write_gate(
+        request, config, str(values.get("csrf_token", "")) if form is not None else None
+    )
+    if not isinstance(gate, AuthenticatedSession):
+        return gate
+    session = gate
+    cluster = str(values.get("cluster", ""))[:32]
+    name = str(values.get("object", ""))[:40]
+    rule_text = str(values.get("rule", ""))[:6]
+    field = str(values.get("field", ""))[:256]
+    offered = [str(path)[:1024] for path in values.getlist("path")][:20]
+    if not _waf_target(request, config, cluster, name) or not rule_text.isdigit():
+        return PlainTextResponse("Not found", status_code=404)
+    rule = int(rule_text)
+    if field and not proxy_model.waf_field(field):
+        field = ""
+    #
+    # A path the engine could not be told exactly - percent-encoded, with an
+    # empty segment - is not offered; the object or the field still is.
+    #
+    paths = [path for path in dict.fromkeys(offered) if proxy_model.WAF_PATH.fullmatch(path)]
+    problem = ""
+    if form is not None:
+        chosen = str(values.get("scope", ""))
+        at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            exception = waf.exception_for(
+                chosen,
+                rule=rule,
+                field=field,
+                paths=[path for path in values.getlist("chosen_path") if path in paths],
+                by=session.username,
+                at=at,
+            )
+        except ValueError as exc:
+            problem = str(exc)
+        else:
+            problem = (
+                _waf_save(
+                    request,
+                    config,
+                    session,
+                    cluster=cluster,
+                    name=name,
+                    change=lambda base: waf.with_exception(name, base, exception),
+                    detail={"waf_exception": {k: v for k, v in exception.items() if k != "at"}},
+                )
+                or ""
+            )
+            if not problem:
+                return RedirectResponse(
+                    "/waf?" + urlencode({"saved": name, "in": cluster}), status_code=303
+                )
+    catalog = crs.installed_catalog().get(rule)
+    kind, explanation = waf.kind(rule // 1000)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    return TEMPLATES.TemplateResponse(
+        request,
+        "waf-allow.html",
+        {
+            "username": session.username,
+            "role": session.role,
+            "csrf_token": auth.csrf_token(token),
+            "section": "waf",
+            "management_writes": config.management_writes,
+            "cluster": cluster,
+            "name": name,
+            "rule": rule,
+            "field": field,
+            "shown_field": waf.shown_field(field) if field else "",
+            "paths": paths,
+            "kind": kind,
+            "explanation": explanation,
+            "message": catalog.message
+            if catalog is not None and catalog.message
+            else f"Rule {rule}",
+            "severity": catalog.severity if catalog is not None else "",
+            "matched": str(values.get("matched", ""))[:1024],
+            "scope": str(values.get("scope", ""))
+            or (
+                "field_paths"
+                if field and paths
+                else "field"
+                if field
+                else "paths"
+                if paths
+                else "object"
+            ),
+            "problem": problem,
+        },
+        status_code=409 if problem else 200,
+    )
+
+
+def _waf_remove(request: Request, config: Config, form: Any) -> Response:
+    gate = _waf_write_gate(request, config, str(form.get("csrf_token", "")))
+    if not isinstance(gate, AuthenticatedSession):
+        return gate
+    cluster = str(form.get("cluster", ""))[:32]
+    name = str(form.get("object", ""))[:40]
+    rule_text = str(form.get("rule", ""))[:6]
+    if not _waf_target(request, config, cluster, name) or not rule_text.isdigit():
+        return PlainTextResponse("Not found", status_code=404)
+    field = str(form.get("field", ""))[:256]
+    paths = [str(path)[:1024] for path in form.getlist("path")][:20]
+    problem = _waf_save(
+        request,
+        config,
+        gate,
+        cluster=cluster,
+        name=name,
+        change=lambda base: waf.without_exception(
+            name, base, rule=int(rule_text), field=field, paths=paths
+        ),
+        detail={"waf_exception_removed": {"rule": int(rule_text), "field": field, "paths": paths}},
+    )
+    if problem:
+        return PlainTextResponse(problem, status_code=409)
+    return RedirectResponse(
+        "/waf?" + urlencode({"view": "exceptions", "saved": name, "in": cluster}), status_code=303
+    )

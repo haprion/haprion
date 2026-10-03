@@ -546,15 +546,16 @@ class TheTrafficLogPage(LoginTestCase):
             mirror.write(record(request=2, path="/admin", status=403, rule="admin-post:deny"))
             mirror.write(record(request=3, path="/scan", rule="scanner:log"))
 
-        waf = self.page(path="/waf")
+        waf = self.page(path="/waf", query="?view=requests")
 
         self.assertNotIn(">/plain<", waf)
         self.assertIn(">/admin<", waf)
         self.assertIn(">admin-post</span>", waf)
         self.assertIn('status-badge-critical">admin-post', waf)
         self.assertIn('status-badge-warning">scanner', waf)
-        self.assertIn('aria-current="page"><svg', waf.split(">WAF logs</a>")[0][-400:])
-        self.assertIn('href="/waf?sort=', waf)
+        self.assertIn('aria-current="page"><svg', waf.split(">WAF</a>")[0][-400:])
+        self.assertIn('href="/waf?view=requests&amp;sort=', waf)
+        self.assertIn('<input type="hidden" name="view" value="requests">', waf)
         self.assertNotIn('name="waf"', waf)
 
     def test_the_traffic_page_filters_on_rule_hits_and_keeps_the_filter(self) -> None:

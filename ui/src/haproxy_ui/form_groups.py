@@ -15,6 +15,7 @@ always shown - so a field cannot be added and forgotten in neither.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -120,6 +121,28 @@ def _access_badges(form: Mapping[str, Any]) -> tuple[Badge, ...]:
         )
         if count
     )
+
+
+def waf_exception_count(form: Mapping[str, Any]) -> int:
+    """How many exceptions the object carries, from the field that carries them."""
+
+    try:
+        listed = json.loads(_text(form, "waf_exceptions") or "[]")
+    except ValueError:
+        return 0
+    return len(listed) if isinstance(listed, list) else 0
+
+
+WAF_MODES = {"log": "Logging", "block": "Blocking"}
+
+
+def _waf(form: Mapping[str, Any]) -> str:
+    count = waf_exception_count(form)
+    exceptions = f"{count} exception{'s' if count != 1 else ''}" if count else ""
+    mode = WAF_MODES.get(_text(form, "waf_mode"))
+    if mode is None:
+        return _joined(["Off", exceptions], "Off")
+    return _joined([mode, f"strictness {_text(form, 'waf_paranoia') or '1'}", exceptions], "")
 
 
 def _maintenance(form: Mapping[str, Any]) -> str:
@@ -239,6 +262,7 @@ GROUPS: Mapping[str, FormGroup] = {
         _access,
         _access_badges,
     ),
+    "waf": FormGroup("WAF", ("waf_mode", "waf_engine_error", "waf_paranoia"), _waf),
     "maintenance": FormGroup(
         "Maintenance", ("maintenance", "maintenance_message", "unavailable_message"), _maintenance
     ),
@@ -303,7 +327,7 @@ ALWAYS_SHOWN = (
 # advanced config is edited in the object's own dialog, and a pool it writes
 # has no fields on this form.
 #
-CARRIED = ("advanced", "handwritten_pool")
+CARRIED = ("advanced", "handwritten_pool", "waf_exceptions")
 
 
 def form_groups(form: Mapping[str, Any]) -> dict[str, GroupState]:

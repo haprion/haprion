@@ -1,0 +1,83 @@
+{% extends "layout.html" %}
+{% block title %}WAF — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  The WAF page as a place to work (B234). Findings: per object and rule, what
+  matched and where, with Allow… to let a false alarm through. Exceptions:
+  every one the objects carry, who made it and when.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>WAF</h1><p class="page-lede">What the WAF engine found, last {{ days }} days.</p></div>
+  {% if clusters | length > 1 %}
+  <form class="heading-badges waf-cluster" method="get" action="/waf">
+    <input type="hidden" name="view" value="{{ view }}">
+    <label>Cluster<select name="cluster" onchange="this.form.submit()"><option value="">All clusters</option>{% for cluster in clusters %}<option value="{{ cluster }}"{% if cluster == selected_cluster %} selected{% endif %}>{{ cluster }}</option>{% endfor %}</select></label>
+  </form>
+  {% endif %}
+</section>
+{% include "_waf-views.html" %}
+{% if saved and saved_in %}<p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span>Saved in the draft of <a href="/proxies/{{ saved_in | urlencode }}/{{ saved | urlencode }}">{{ saved }}</a>. Publish it there for the change to take effect.</p>{% endif %}
+
+{% macro finding_what(kind, explanation, severity, message) %}<span class="finding-what"><span class="status-dot status-{{ 'critical' if severity in ('critical', 'error') else 'warning' if severity else 'unknown' }}"{% if severity %} title="{{ severity | capitalize }}"{% endif %}></span><span class="finding-kind"{% if explanation %} title="{{ explanation }}"{% endif %}>{{ kind }}</span><span>{{ message }}</span></span>{% endmacro %}
+
+{% if view == 'findings' %}
+{% for card in findings %}
+<section class="cluster-card finding-card {{ card.cluster | cluster_accent }}">
+  <header class="cluster-header">
+    <div class="cluster-identity"><div><h3>{{ card.name }}</h3><p>{{ card.cluster }}</p></div></div>
+    <div class="cluster-state">
+      {% if card.judged %}<span class="finding-verdict">{{ 'Would have blocked' if card.mode != 'block' else 'Blocked' }} <strong>{{ card.judged }} request{{ 's' if card.judged != 1 }}</strong> from <strong>{{ card.clients }} client{{ 's' if card.clients != 1 }}</strong></span>{% endif %}
+      {% if card.mode == 'block' %}<span class="status-badge status-badge-critical">Blocking</span>{% elif card.mode == 'log' %}<span class="status-badge status-badge-warning">Logging</span>{% else %}<span class="status-badge">Off</span>{% endif %}
+      {% if can_write %}<a class="secondary-button" href="{{ card.edit_href }}">Edit object</a>{% endif %}
+    </div>
+  </header>
+  <div class="table-scroll"><table class="node-table finding-table">
+    <thead><tr><th>Finding</th><th>Matched</th><th>Paths</th><th>Requests</th><th>Clients</th><th>Last seen</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      {% for finding in card.findings %}
+      {% set shown = (finding.shown_field ~ ': ' ~ finding.matched) if finding.shown_field else finding.matched %}
+      <tr>
+        <td title="{{ finding.message }}">{{ finding_what(finding.kind, finding.explanation, finding.severity, finding.message) }}</td>
+        <td title="{{ shown }}"><code class="matched">{{ shown }}</code></td>
+        <td title="{{ finding.paths | join(', ') }}"><code>{{ finding.paths | join(', ') }}</code>{% if finding.more_paths %} <span class="finding-more">+{{ finding.more_paths }}</span>{% endif %}</td>
+        <td><span class="finding-count">{{ finding.requests }}</span></td>
+        <td><span class="finding-count">{{ finding.clients }}</span></td>
+        <td><span class="users-date">{{ finding.last_seen | shown_at }}</span></td>
+        <td>{% if finding.in_draft %}<span class="finding-draft">In draft</span>{% elif can_write %}<a class="secondary-button" href="{{ finding.allow_href }}&amp;matched={{ finding.matched | urlencode }}">Allow…</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% else %}
+<section class="cluster-card"><p class="empty-state">Nothing found in the last {{ days }} days.</p></section>
+{% endfor %}
+{% else %}
+<section class="cluster-card">
+  {% if exceptions %}
+  <div class="table-scroll"><table class="node-table exception-table">
+    <thead><tr><th>Object</th><th>Finding</th><th>Where</th><th>Added</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      {% for row in exceptions %}
+      <tr>
+        <td><strong>{{ row.name }}</strong>{% if clusters | length > 1 %} <span class="exception-cluster">{{ row.cluster }}</span>{% endif %}</td>
+        <td title="{{ row.message }}">{{ finding_what(row.kind, row.explanation, row.severity, row.message) }}</td>
+        <td title="{{ where(row.exception, row.name) }}">{{ where(row.exception, row.name) }}</td>
+        <td><span class="users-date">{% if row.exception.by %}{{ row.exception.by }}{% endif %}{% if row.exception.by and row.exception.at %} · {% endif %}{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">In draft</span>{% endif %}</td>
+        <td>{% if can_write %}<form method="post" action="/waf/exceptions/remove" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="cluster" value="{{ row.cluster }}"><input type="hidden" name="object" value="{{ row.name }}">
+          <input type="hidden" name="rule" value="{{ row.exception.rule }}"><input type="hidden" name="field" value="{{ row.exception.field }}">
+          {% for path in row.exception.paths %}<input type="hidden" name="path" value="{{ path }}">{% endfor %}
+          <button type="submit" class="secondary-button">Remove</button>
+        </form>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="empty-state">No object has an exception.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

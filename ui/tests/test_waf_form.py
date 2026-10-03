@@ -1,0 +1,227 @@
+"""The WAF group on the object form (Fas 21 steg 5, B231, B234)."""
+
+from __future__ import annotations
+
+import json
+import unittest
+from dataclasses import replace
+from types import SimpleNamespace
+from typing import Any
+from unittest import mock
+
+import yaml
+
+from haproxy_ui import waf
+from haproxy_ui.db import ClusterObjects, FeatureSwitch
+from haproxy_ui.form_groups import form_groups
+from haproxy_ui.preview import DEFAULTS, build_document, form_from_document
+from tests.test_editor_page import OBJECTS, OBSERVED, SHOP, EditorTestCase
+
+EXCEPTION = {
+    "rule": 942100,
+    "field": "ARGS:q",
+    "paths": ["/search"],
+    "by": "admin",
+    "at": "2026-10-03T09:10:00Z",
+}
+
+
+def stored(block: str) -> str:
+    return SHOP + block
+
+
+class TheFormSaysWhatTheObjectSays(unittest.TestCase):
+    def test_an_object_with_the_engine_opens_and_is_written_back_the_same(self) -> None:
+        document = stored(
+            "waf:\n  mode: block\n  on_engine_error: deny\n  paranoia: 2\n  exceptions:\n"
+            "  - rule: 942100\n    field: ARGS:q\n    paths: [/search, /find]\n"
+            "    by: admin\n    at: 2026-10-03T09:10:00Z\n"
+        )
+        form = form_from_document(document)
+        self.assertEqual(
+            (form["waf_mode"], form["waf_engine_error"], form["waf_paranoia"]),
+            ("block", "deny", "2"),
+        )
+        carried = json.loads(form["waf_exceptions"])
+        self.assertEqual(carried[0]["paths"], ["/find", "/search"])
+        self.assertEqual(carried[0]["at"], "2026-10-03T09:10:00Z")
+        written = yaml.safe_load(build_document(form))["waf"]
+        self.assertEqual(written["mode"], "block")
+        self.assertEqual(written["exceptions"][0]["rule"], 942100)
+
+    def test_defaults_left_unsaid_and_an_unquoted_off_are_the_same_settings(self) -> None:
+        form = form_from_document(stored("waf:\n  mode: off\n  exceptions: [{rule: 920350}]\n"))
+        self.assertEqual(form["waf_mode"], "off")
+        self.assertEqual(json.loads(form["waf_exceptions"]), [{"rule": 920350}])
+        written = yaml.safe_load(build_document(form))["waf"]
+        self.assertEqual(
+            written,
+            {
+                "mode": "off",
+                "on_engine_error": "allow",
+                "paranoia": 1,
+                "exceptions": [{"rule": 920350}],
+            },
+        )
+        self.assertEqual(form_from_document(stored("waf: {}\n"))["waf_mode"], "log")
+
+    def test_off_with_nothing_to_keep_is_an_object_without_the_engine(self) -> None:
+        self.assertNotIn("waf", yaml.safe_load(build_document(dict(DEFAULTS, name="shop"))))
+        form = form_from_document(stored("waf: {mode: 'off'}\n"))
+        self.assertNotIn("waf", yaml.safe_load(build_document(form)))
+
+    def test_exceptions_the_form_cannot_read_are_refused(self) -> None:
+        for carried in ("{", '{"rule": 1}', "[1"):
+            with self.subTest(carried=carried), self.assertRaises(ValueError):
+                build_document(dict(DEFAULTS, name="shop", waf_mode="log", waf_exceptions=carried))
+
+    def test_the_closed_group_says_mode_strictness_and_exceptions(self) -> None:
+        def line(**fields: str) -> str:
+            return form_groups(dict(DEFAULTS, **fields))["waf"].summary
+
+        self.assertEqual(line(), "Off")
+        self.assertEqual(line(waf_mode="log"), "Logging · strictness 1")
+        exceptions = json.dumps([EXCEPTION, {"rule": 920350}])
+        self.assertEqual(
+            line(waf_mode="block", waf_paranoia="3", waf_exceptions=exceptions),
+            "Blocking · strictness 3 · 2 exceptions",
+        )
+        self.assertEqual(line(waf_exceptions=json.dumps([EXCEPTION])), "Off · 1 exception")
+
+
+def node(name: str, version: str | None, *, reported: bool = True) -> dict[str, Any]:
+    status: dict[str, Any] = {}
+    if reported:
+        status["waf_engine"] = {"version": version, "active": False}
+    return {"name": name, "status": status}
+
+
+class WhereTheEngineIs(unittest.TestCase):
+    def test_the_manager_and_every_node_of_the_cluster(self) -> None:
+        objects = [SimpleNamespace(result={"waf": {"engine": "0.9.0-2", "crs": "4.25.1"}})]
+        statuses = [
+            SimpleNamespace(
+                cluster="alpha",
+                result={"nodes": [node("node-a", "0.9.0-2"), node("node-b", "0.9.0-2")]},
+            ),
+            SimpleNamespace(
+                cluster="beta",
+                result={
+                    "nodes": [
+                        node("lb-01", None),
+                        node("lb-02", "x", reported=False),
+                        node("lb-03", "0.9.0-1"),
+                    ]
+                },
+            ),
+        ]
+        engine = waf.engine(objects, statuses)
+        self.assertEqual(engine.unavailable("alpha"), "")
+        self.assertEqual(
+            engine.unavailable("beta"), "The WAF engine is not installed on lb-01 and lb-02."
+        )
+        without = waf.engine(
+            [SimpleNamespace(result={"waf": {"engine": None, "crs": "4.25.1"}})], statuses
+        )
+        self.assertEqual(
+            without.unavailable("alpha"), "The WAF engine is not installed on the manager."
+        )
+        self.assertEqual(
+            waf.engine([], statuses).unavailable("beta"),
+            "The WAF engine is not installed on lb-01, lb-02 and the manager.",
+        )
+
+
+def objects_with(document: str, versions: dict[str, Any] | None) -> ClusterObjects:
+    result = dict(OBJECTS.result, objects=[dict(OBJECTS.result["objects"][0], document=document)])
+    if versions is not None:
+        result["waf"] = versions
+    return replace(OBJECTS, result=result)
+
+
+STATUS = SimpleNamespace(
+    cluster="alpha",
+    observed_at=OBSERVED,
+    outcome="done",
+    result={"nodes": [node("node-a", "0.9.0-2"), node("node-b", "0.9.0-2")]},
+    warnings=[],
+    error=None,
+    poll_error=None,
+)
+VERSIONS = {"engine": "0.9.0-2", "crs": "4.25.1"}
+
+
+class TheGroupOnTheEditor(EditorTestCase):
+    def page(
+        self,
+        document: str = SHOP,
+        *,
+        versions: dict[str, Any] | None = VERSIONS,
+        statuses: list[Any] | None = None,
+    ) -> str:
+        with (
+            mock.patch(
+                "haproxy_ui.db.cluster_objects", return_value=[objects_with(document, versions)]
+            ),
+            mock.patch(
+                "haproxy_ui.db.cluster_statuses",
+                return_value=[STATUS] if statuses is None else statuses,
+            ),
+        ):
+            return self.editor().get("/proxies/alpha/shop/edit").text
+
+    def switch_off(self) -> None:
+        self.switches = {
+            "waf_engine": FeatureSwitch(
+                name="waf_engine",
+                enabled=False,
+                remembered={},
+                updated_at=OBSERVED,
+                updated_by="admin",
+            )
+        }
+
+    def test_offered_where_the_engine_is_installed(self) -> None:
+        text = self.page()
+        self.assertIn('<select name="waf_mode"', text)
+        self.assertIn("Strictness", text)
+        self.assertNotIn("is not installed", text)
+
+    def test_waiting_for_the_engine_says_where_it_is_missing_and_offers_no_mode(self) -> None:
+        text = self.page(versions={"engine": None, "crs": "4.25.1"})
+        self.assertIn("The WAF engine is not installed on the manager.", text)
+        self.assertNotIn('<select name="waf_mode"', text)
+        self.assertIn('<input type="hidden" name="waf_mode" value="off">', text)
+
+    def test_with_the_switch_off_an_object_without_it_carries_hidden_defaults(self) -> None:
+        self.switch_off()
+        text = self.page()
+        self.assertNotIn('<select name="waf_mode"', text)
+        self.assertIn('<input type="hidden" name="waf_mode" value="off">', text)
+
+    def test_an_object_that_uses_it_shows_it_whatever_the_switch_says(self) -> None:
+        self.switch_off()
+        text = self.page(stored("waf:\n  mode: log\n  exceptions: [{rule: 920350}]\n"))
+        self.assertIn('<select name="waf_mode"', text)
+        self.assertIn("1 exception ·", text)
+        self.assertIn("Findings and exceptions on the WAF page", text)
+
+    def test_a_save_keeps_the_exceptions_the_page_carried(self) -> None:
+        client = self.editor()
+        carried = json.dumps([EXCEPTION])
+        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=[STATUS]):
+            self.submit(
+                client,
+                "/proxies/alpha/shop/edit",
+                action="save",
+                waf_mode="log",
+                waf_engine_error="allow",
+                waf_paranoia="1",
+                waf_exceptions=carried,
+            )
+        saved = yaml.safe_load(self.saved[-1]["yaml"])
+        self.assertEqual(saved["waf"]["exceptions"], [EXCEPTION])
+
+
+if __name__ == "__main__":
+    unittest.main()

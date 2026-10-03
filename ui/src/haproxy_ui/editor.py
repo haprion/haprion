@@ -367,6 +367,14 @@ class ObjectForm(BaseModel):
     #
     advanced: Annotated[str, StringConstraints(max_length=MAX_TEXT)] = ""
     handwritten_pool: bool = False
+    #
+    # The WAF engine (Fas 21, B234). The exceptions are made on the WAF page and
+    # carried here as JSON; the engine reads them again on every save.
+    #
+    waf_mode: Annotated[str, StringConstraints(max_length=8)] = "off"
+    waf_engine_error: Annotated[str, StringConstraints(max_length=8)] = "allow"
+    waf_paranoia: Annotated[str, StringConstraints(max_length=1)] = "1"
+    waf_exceptions: Annotated[str, StringConstraints(max_length=MAX_TEXT)] = ""
 
     #
     # The three fields that are about the submission rather than about the

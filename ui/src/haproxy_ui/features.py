@@ -24,6 +24,7 @@ CERT_RECEIVERS = "cert_receivers"
 NODE_BACKUPS = "node_backups"
 CLUSTER_COLOURS = "cluster_colours"
 ADVANCED_CONFIG = "advanced_config"
+WAF_ENGINE = "waf_engine"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,13 @@ FEATURES = (
     # engine generates what is stored whatever this says.
     #
     Feature(ADVANCED_CONFIG, "Advanced config"),
+    #
+    # Whether the interface offers the engine on an object (B231). Not whether
+    # it is installed - that is the packages, and the row says where it is
+    # missing. Refused off while an object uses it: a WAF the interface no
+    # longer shows still filters traffic.
+    #
+    Feature(WAF_ENGINE, "WAF engine"),
 )
 BY_NAME = {feature.name: feature for feature in FEATURES}
 

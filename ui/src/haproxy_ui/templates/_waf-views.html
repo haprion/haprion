@@ -1,0 +1,11 @@
+{#
+  The WAF page's three views (B234): what the engine found, the exceptions the
+  objects carry, and the requests a rule met.
+#}
+<div class="page-ranges-sticky waf-strip"><nav class="traffic-ranges page-ranges waf-views" aria-label="WAF views">
+  {% for value, label in (('findings', 'Findings'), ('exceptions', 'Exceptions'), ('requests', 'Requests')) %}
+  {% set current = (view | default('requests')) == value %}
+  {% set count = finding_count if value == 'findings' else (exceptions | length if value == 'exceptions' and exceptions is defined else none) %}
+  <a href="/waf?view={{ value }}{% if selected_cluster %}&amp;cluster={{ selected_cluster }}{% endif %}"{% if current %} class="is-current" aria-current="true"{% endif %}><span>{{ label }}{% if count is not none and count is defined %} <b>{{ count }}</b>{% endif %}</span><span class="segment-reserve" aria-hidden="true">{{ label }}{% if count is not none and count is defined %} <b>{{ count }}</b>{% endif %}</span></a>
+  {% endfor %}
+</nav></div>

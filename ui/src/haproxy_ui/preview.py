@@ -16,8 +16,10 @@ during a publish rather than here.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -184,6 +186,15 @@ DEFAULTS = {
     #
     "advanced": "",
     "handwritten_pool": False,
+    #
+    # The WAF engine (Fas 21, B234): mode, what happens when the engine does not
+    # answer, and how strict. Exceptions are made on the WAF page and carried
+    # here unchanged, as JSON, so a save from this form keeps them.
+    #
+    "waf_mode": "off",
+    "waf_engine_error": "allow",
+    "waf_paranoia": "1",
+    "waf_exceptions": "",
 }
 
 
@@ -642,11 +653,123 @@ def build_document(form: dict[str, object]) -> str:
     # the text. Normalised as the engine stores it, so carrying it through the
     # browser - which sends its line ends as CRLF - changes nothing.
     #
+    waf = waf_block(
+        text("waf_mode") or "off",
+        text("waf_engine_error") or "allow",
+        text("waf_paranoia") or "1",
+        str(form.get("waf_exceptions", "") or ""),
+    )
+    if waf is not None:
+        document["waf"] = waf
+
     advanced = normalise_advanced(str(form.get("advanced", "") or ""))
     if advanced:
         document["advanced"] = advanced
 
     return dump_document(document)
+
+
+WAF_EXCEPTION_KEYS = ("rule", "field", "paths", "by", "at")
+
+
+def canonical_waf_exception(value: Any) -> Any:
+    """One exception in the form the form writes: its keys in order, empty ones left out.
+
+    Anything that is not the shape of one is handed on as it is, for the engine
+    to refuse in its own words.
+    """
+
+    if not isinstance(value, Mapping):
+        return value
+    out: dict[str, Any] = {"rule": value.get("rule")}
+    for key in ("field", "paths", "by", "at"):
+        item = value.get(key)
+        #
+        # As the engine reads it: YAML's unquoted time is the same value as the
+        # quoted form only in UTC and to the second; any other is left for the
+        # engine to refuse.
+        #
+        if isinstance(item, datetime) and item.utcoffset() == timedelta(0) and not item.microsecond:
+            item = item.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if key == "paths" and isinstance(item, list) and all(isinstance(p, str) for p in item):
+            item = sorted(item)
+        if item not in (None, "", []):
+            out[key] = item
+    out.update({key: item for key, item in value.items() if key not in WAF_EXCEPTION_KEYS})
+    return out
+
+
+def canonical_waf(value: Any) -> Any:
+    """`waf` with every setting written out, as the form writes it, or None for none.
+
+    A block that says no more than `mode: off` with the defaults is the same
+    object as one without `waf`, and the form writes it as none.
+    """
+
+    if not isinstance(value, Mapping):
+        return value
+    mode = value.get("mode", "log")
+    out: dict[str, Any] = {
+        "mode": "off" if mode is False else mode,
+        "on_engine_error": value.get("on_engine_error", "allow"),
+        "paranoia": value.get("paranoia", 1),
+    }
+    listed = value.get("exceptions", [])
+    if isinstance(listed, list):
+        if listed:
+            out["exceptions"] = [canonical_waf_exception(item) for item in listed]
+    else:
+        out["exceptions"] = listed
+    out.update(
+        {key: item for key, item in value.items() if key not in (*out, "exceptions", "mode")}
+    )
+    if out == {"mode": "off", "on_engine_error": "allow", "paranoia": 1}:
+        return None
+    return out
+
+
+def waf_block(
+    mode: str, engine_error: str, paranoia: str, exceptions: str
+) -> dict[str, Any] | None:
+    """The `waf` block the form's four fields describe."""
+
+    try:
+        listed = json.loads(exceptions) if exceptions.strip() else []
+    except ValueError:
+        raise ValueError("the WAF exceptions could not be read") from None
+    if not isinstance(listed, list):
+        raise ValueError("the WAF exceptions could not be read")
+    if not paranoia.isdigit():
+        raise ValueError("the WAF strictness must be 1, 2, 3 or 4")
+    block = canonical_waf(
+        {
+            "mode": mode,
+            "on_engine_error": engine_error,
+            "paranoia": int(paranoia),
+            "exceptions": listed,
+        }
+    )
+    return block if isinstance(block, dict) else None
+
+
+def waf_fields(data: Mapping[str, Any]) -> dict[str, str]:
+    """The form's four WAF fields for a stored object."""
+
+    block = canonical_waf(data.get("waf"))
+    if not isinstance(block, Mapping):
+        return {
+            "waf_mode": "off",
+            "waf_engine_error": "allow",
+            "waf_paranoia": "1",
+            "waf_exceptions": "",
+        }
+    listed = block.get("exceptions", [])
+    return {
+        "waf_mode": str(block.get("mode", "log")),
+        "waf_engine_error": str(block.get("on_engine_error", "allow")),
+        "waf_paranoia": str(block.get("paranoia", 1)),
+        "waf_exceptions": json.dumps(listed, separators=(",", ":")) if listed else "",
+    }
 
 
 def _routes(
@@ -1087,7 +1210,8 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
     except (ModelError, ValueError) as exc:
         raise Unexpressible(str(exc)) from exc
     difference = _first_difference(
-        _with_normalised_advanced(_without_a_redundant_check_protocol(data)), rebuilt
+        _with_normalised_waf(_with_normalised_advanced(_without_a_redundant_check_protocol(data))),
+        rebuilt,
     )
     if difference:
         raise Unexpressible(difference)
@@ -1203,7 +1327,22 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         #
         "advanced": data["advanced"] if isinstance(data.get("advanced"), str) else "",
         "handwritten_pool": pool_written_by_hand(backend),
+        **waf_fields(data),
     }
+
+
+def _with_normalised_waf(data: Any) -> Any:
+    """The stored object with `waf` written out as the form writes it.
+
+    Defaults left unsaid, an unquoted `off`, exception paths in another order:
+    the same settings, and no reason to refuse the object.
+    """
+
+    if not isinstance(data, Mapping) or "waf" not in data:
+        return data
+    block = canonical_waf(data["waf"])
+    rest = {key: item for key, item in data.items() if key != "waf"}
+    return rest if block is None else {**rest, "waf": block}
 
 
 def _with_normalised_advanced(data: Any) -> Any:

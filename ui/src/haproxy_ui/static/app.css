@@ -1113,6 +1113,8 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   border-radius: var(--radius-sm); background: var(--info-soft); color: var(--text);
 }
 .preview-form { display: grid; gap: 18px; margin-bottom: 18px; }
+/* Outside the form's grid, so its gap does not reach it (measured 0 px, 26-10-02). */
+.draft-card { margin-bottom: 18px; }
 .preview-form .cluster-card { padding-bottom: 18px; }
 /* In a card list the list's gap spaces the cards; the form adds none of its own. */
 .cluster-list > .nodes-form { margin-bottom: 0; }
@@ -1204,6 +1206,10 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
    closed, turned down while open, so the row says it opens before anybody
    hovers over it. */
 .form-groups { margin: 10px 20px 0; }
+.feature-detail { margin-left: 12px; color: var(--text-secondary); font-size: 13px; }
+.form-group-note { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
+.form-exceptions { grid-column: 1 / -1; align-self: center; margin: 0; color: var(--text-secondary); font-size: 13px; }
+.form-exceptions a { color: var(--info); }
 .form-group { border-top: 1px solid var(--line); }
 /* A row whose every group the shape has hidden - no check, say - draws no rule either. */
 .form-groups:not(:has(> .form-group:not([hidden]))) { display: none; }
@@ -2180,3 +2186,49 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .log-table .log-rule { margin-right: 4px; }
 .form-group-badge { flex: none; }
 .location-data-table th:nth-child(3), .location-data-table td:nth-child(3) { width: 330px; text-align: right; }
+
+/*
+ * The WAF page (Fas 21, B234; mock round 7). Findings per object and rule,
+ * exceptions, and the Allow dialog.
+ */
+.waf-strip { margin: 0 0 18px; }
+.waf-views a { padding: 7px 15px; font-size: 13.5px; }
+.waf-views b { margin-left: 7px; font-variant-numeric: tabular-nums; }
+.waf-cluster label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 13px; }
+.finding-card + .finding-card { margin-top: 18px; }
+.finding-card .cluster-header { padding: 12px 20px; }
+.finding-verdict { color: var(--text-secondary); font-size: 13px; }
+.finding-verdict strong { color: var(--text-strong); font-weight: 650; }
+.finding-table, .exception-table { table-layout: fixed; }
+.finding-table th:nth-child(1), .finding-table td:nth-child(1) { width: auto; }
+.finding-table th:nth-child(2), .finding-table td:nth-child(2) { width: 190px; }
+.finding-table th:nth-child(3), .finding-table td:nth-child(3) { width: 120px; }
+.finding-table th:nth-child(4), .finding-table td:nth-child(4) { width: 82px; text-align: right; }
+.finding-table th:nth-child(5), .finding-table td:nth-child(5) { width: 66px; text-align: right; }
+.finding-table th:nth-child(6), .finding-table td:nth-child(6) { width: 150px; }
+.finding-table th:nth-child(7), .finding-table td:nth-child(7) { width: 104px; text-align: right; }
+.finding-table th, .finding-table td { padding-left: 10px; padding-right: 10px; }
+.finding-table td, .exception-table td { padding-top: 7px; padding-bottom: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.finding-what { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.finding-what span:last-child { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
+.finding-kind { color: var(--text-strong); font-weight: 650; white-space: nowrap; }
+.matched { display: inline-block; max-width: 100%; overflow: hidden; padding: 1px 6px; border-radius: 4px; background: var(--panel-soft); color: var(--text-strong); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.finding-count { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.finding-more { color: var(--muted); font-size: 12px; }
+.finding-draft { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.finding-table .secondary-button, .exception-table .secondary-button { min-height: 24px; padding: 0 9px; font-size: 12px; white-space: nowrap; }
+.exception-table th:nth-child(1), .exception-table td:nth-child(1) { width: 170px; }
+.exception-table th:nth-child(2), .exception-table td:nth-child(2) { width: auto; }
+.exception-table th:nth-child(3), .exception-table td:nth-child(3) { width: 250px; }
+.exception-table th:nth-child(4), .exception-table td:nth-child(4) { width: 230px; }
+.exception-table th:nth-child(5), .exception-table td:nth-child(5) { width: 110px; text-align: right; }
+.exception-cluster { margin-left: 6px; color: var(--muted); font-size: 12px; }
+.allow-dialog { max-width: 560px; margin: 0; padding: 18px 20px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-raised); box-shadow: var(--shadow-menu); }
+.allow-dialog h2 { margin: 0 0 8px; color: var(--text-strong); font-size: 16px; }
+.allow-dialog .matched { margin: 8px 0 0; }
+.allow-dialog .preview-notice { margin: 12px 0 0; }
+.allow-dialog fieldset { margin: 14px 0 0; padding: 0; border: 0; display: grid; gap: 6px; }
+.allow-dialog label { display: flex; align-items: center; gap: 8px; color: var(--text-primary); font-size: 13px; }
+.allow-dialog .scope-sub { display: grid; gap: 4px; margin: 2px 0 4px 24px; }
+.allow-dialog .paths { display: grid; gap: 4px; }
+.allow-dialog .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

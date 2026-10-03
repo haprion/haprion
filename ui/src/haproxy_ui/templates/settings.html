@@ -154,7 +154,7 @@
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Features</h3></div></div></header>
   {% for feature, on, locked in features %}
   <div class="cluster-actions feature-row">
-    <div><strong>{{ feature.title }}</strong></div>
+    <div><strong>{{ feature.title }}</strong>{% set detail = feature_details.get(feature.name, "") %}{% if detail %}<span class="feature-detail">{{ detail }}</span>{% endif %}</div>
     {# One switch per row, its state and its action in one control. A switch whose off does more than hide
        the feature asks first, on its own page (B193). #}
     {% set asks = on and feature.consequence %}

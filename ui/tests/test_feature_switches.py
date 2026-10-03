@@ -333,5 +333,59 @@ class WhatOffStops(unittest.TestCase):
             self.assertIn(words, str(raised.exception))
 
 
+class TheWafEngineSwitch(Switched):
+    """B231: the switch is intent, the packages are capability."""
+
+    def objects(self, block: str) -> Any:
+        from tests.test_editor_page import OBJECTS, SHOP
+
+        result = dict(
+            OBJECTS.result,
+            objects=[dict(OBJECTS.result["objects"][0], document=SHOP + block)],
+            waf={"engine": "0.9.0-2", "crs": "4.25.1"},
+        )
+        return mock.patch(
+            "haproxy_ui.db.cluster_objects", return_value=[replace(OBJECTS, result=result)]
+        )
+
+    def test_off_is_refused_while_an_object_is_inspected(self) -> None:
+        self.switches[features.WAF_ENGINE] = switch(features.WAF_ENGINE, enabled=True)
+        client = self.admin()
+        with self.objects("waf: {mode: log}\n"):
+            answer = self.post(client, "/settings/features/waf_engine", enabled="off")
+        self.assertEqual(answer.status_code, 409)
+        self.assertIn("The WAF engine inspects alpha/shop. Turn it off there first.", answer.text)
+        self.assertEqual(self.flips, [])
+
+    def test_an_object_with_the_engine_off_does_not_hold_the_switch(self) -> None:
+        self.switches[features.WAF_ENGINE] = switch(features.WAF_ENGINE, enabled=True)
+        client = self.admin()
+        with self.objects("waf: {mode: 'off', exceptions: [{rule: 920350}]}\n"):
+            answer = self.post(client, "/settings/features/waf_engine", enabled="off")
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(self.flips[0]["enabled"], False)
+
+    def test_the_row_says_the_versions_or_where_the_engine_is_missing(self) -> None:
+        self.switches[features.WAF_ENGINE] = switch(features.WAF_ENGINE, enabled=False)
+        client = self.admin()
+        with self.objects(""):
+            page = client.get("/settings")
+        self.assertIn(
+            'WAF engine</strong><span class="feature-detail">Engine 0.9.0-2 · CRS 4.25.1', page.text
+        )
+        status = SimpleNamespace(
+            cluster="alpha",
+            observed_at=MOMENT,
+            outcome="done",
+            result={"nodes": [{"name": "node-b", "status": {}}]},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        with self.objects(""), mock.patch("haproxy_ui.db.cluster_statuses", return_value=[status]):
+            page = client.get("/settings")
+        self.assertIn("Not installed on node-b", page.text)
+
+
 if __name__ == "__main__":
     unittest.main()

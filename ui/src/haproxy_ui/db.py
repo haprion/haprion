@@ -3531,3 +3531,79 @@ def session_id_token(connection: Connection[Any], token_hash: bytes) -> str | No
         cursor.execute("select id_token from app_session where token_hash = %s", (token_hash,))
         row = cursor.fetchone()
     return None if row is None else row[0]
+
+
+@dataclass(frozen=True, slots=True)
+class WafFinding:
+    """One rule's matches on one object and part of the request (Fas 21, B234)."""
+
+    cluster: str
+    object: str
+    rule_id: int
+    field: str
+    requests: int
+    clients: int
+    last_seen: datetime
+    matched: str
+    paths: list[str]
+    path_count: int
+
+
+#
+# The paths a finding lists, and the findings a page shows. Bounded so a scan
+# that touched ten thousand paths with one rule is one row with its first
+# twenty paths, not a page nobody can read; the count says there were more.
+#
+WAF_FINDING_PATHS = 20
+WAF_FINDING_LIMIT = 500
+
+
+def waf_findings(
+    connection: Connection[Any], *, clusters: Sequence[str], since: datetime
+) -> list[WafFinding]:
+    """What the engine matched since then, per cluster, object, rule and field (0052)."""
+
+    with connection.cursor(row_factory=class_row(WafFinding)) as cursor:
+        cursor.execute(
+            "select cluster, object, rule_id, field, "
+            "       count(distinct request_id)::int as requests, "
+            "       count(distinct nullif(client, ''))::int as clients, "
+            "       max(occurred_at) as last_seen, "
+            "       (array_agg(matched order by occurred_at desc))[1] as matched, "
+            "       (array_agg(distinct path order by path))[1:%(paths)s] as paths, "
+            "       count(distinct path)::int as path_count "
+            "  from waf_match "
+            " where cluster = any(%(clusters)s) and occurred_at >= %(since)s "
+            " group by cluster, object, rule_id, field "
+            " order by cluster, object, max(occurred_at) desc "
+            " limit %(limit)s",
+            {
+                "clusters": list(clusters),
+                "since": since,
+                "paths": WAF_FINDING_PATHS,
+                "limit": WAF_FINDING_LIMIT,
+            },
+        )
+        return cursor.fetchall()
+
+
+def waf_verdicts(
+    connection: Connection[Any], *, clusters: Sequence[str], since: datetime
+) -> dict[tuple[str, str], tuple[int, int]]:
+    """Per cluster and object: requests the engine judged an attack, and their clients.
+
+    Read from the traffic record (`crs:log` or `crs:deny`, 0051) and the
+    engine's transaction ID that names the object (`<object>.<uuid>`, 0052).
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select cluster, split_part(waf_id, '.', 1), count(*)::int, "
+            "       count(distinct client)::int "
+            "  from traffic_log "
+            " where cluster = any(%(clusters)s) and occurred_at >= %(since)s "
+            "   and rule in ('crs:log', 'crs:deny') and waf_id <> '' "
+            " group by 1, 2",
+            {"clusters": list(clusters), "since": since},
+        )
+        return {(row[0], row[1]): (row[2], row[3]) for row in cursor.fetchall()}

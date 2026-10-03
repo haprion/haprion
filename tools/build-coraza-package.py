@@ -32,7 +32,7 @@ from pathlib import Path
 # Each package counts its own revision: it moves when our part of the package
 # changes (the unit, the build), not when the other package does.
 #
-CORAZA_REVISION = "3"
+CORAZA_REVISION = "4"
 CRS_REVISION = "1"
 GO_VERSION = "go1.26.8"
 MAINTAINER = "haproxy-manager maintainers <maintainers@example.org>"
@@ -143,6 +143,16 @@ CRS = Source(
 # the release (B230). DynamicUser gives the process an account systemd creates
 # at start and forgets at stop - nothing to add, nothing to clean up.
 #
+#
+# The engine's memory is held to a share of the node's, not to a fixed size:
+# systemd takes a percentage of the memory the kernel sees when it loads the
+# unit, so a node given more memory and restarted gives the engine more too.
+# HAProxy keeps at least 60 %. Above MemoryHigh the engine is slowed and made
+# to give memory back; at MemoryMax it is killed and restarted, and each
+# object's on-engine-error setting decides what its traffic gets meanwhile
+# (B240, 26-10-03). Measured: 35-52 MB for one object on a 1 GB node, 122 MB
+# for twenty.
+#
 UNIT_FILE = f"""\
 [Unit]
 Description=Coraza SPOA web application firewall engine for HAProxy
@@ -185,7 +195,8 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
-MemoryMax=512M
+MemoryHigh=30%
+MemoryMax=40%
 
 [Install]
 WantedBy=multi-user.target

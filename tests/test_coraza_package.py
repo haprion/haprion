@@ -103,7 +103,7 @@ class Packages(unittest.TestCase):
 
     def test_the_engine_package_holds_the_binary_the_unit_and_the_licence(self) -> None:
         deb = self.build_coraza(self.coraza_source(), "out")
-        self.assertEqual(deb.name, "haproxy-manager-coraza-spoa_9.9.9-3_amd64.deb")
+        self.assertEqual(deb.name, "haproxy-manager-coraza-spoa_9.9.9-4_amd64.deb")
         rows = listing(deb)
         self.assertEqual(rows["/usr/sbin/coraza-spoa"], "-rwxr-xr-x root/root")
         self.assertEqual(
@@ -117,7 +117,7 @@ class Packages(unittest.TestCase):
             rows["/usr/lib/systemd/journald@haproxy-waf.conf.d/haproxy-manager.conf"],
             "-rw-r--r-- root/root",
         )
-        self.assertEqual(field(deb, "Version"), "9.9.9-3")
+        self.assertEqual(field(deb, "Version"), "9.9.9-4")
         self.assertEqual(field(deb, "Architecture"), "amd64")
 
     def test_the_unit_waits_for_a_release_and_runs_without_privilege(self) -> None:
@@ -136,6 +136,9 @@ class Packages(unittest.TestCase):
             "ExecStartPost=/usr/lib/haproxy-manager-coraza-spoa/wait-listening "
             "/etc/haproxy/waf/coraza.yaml",
             "LogNamespace=haproxy-waf",
+            # A share of the node's memory, not a fixed size (B240).
+            "MemoryHigh=30%",
+            "MemoryMax=40%",
         ):
             self.assertIn(line + "\n", unit)
         self.assertIn("LineMax=256K\n", self.tool.JOURNAL_CONF)

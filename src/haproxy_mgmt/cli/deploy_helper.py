@@ -28,7 +28,6 @@ half looked up is used as the basis for what happens to a node.
 
 from __future__ import annotations
 
-import io
 import os
 import subprocess
 import sys
@@ -305,11 +304,14 @@ def main(
             return refuse("certificate_missing", str(exc), EXIT_CERTIFICATE_MISSING)
 
     #
-    # In JSON mode the human-readable stream is collected and thrown away rather
-    # than interleaved with the result: a reader parsing stdout must not have to
-    # skip past progress lines to find the document.
+    # In JSON mode the human-readable stream goes to stderr rather than being
+    # interleaved with the result: a reader parsing stdout must not have to skip
+    # past progress lines to find the document. It used to be thrown away, and a
+    # node that refused a release was then only `deploy_failed` on the jobs page
+    # while its own sentence - why it rolled back - was lost (26-10-03). On
+    # stderr it is the job's diagnostics.
     #
-    stream: TextIO = io.StringIO() if json_mode else writer
+    stream: TextIO = errors if json_mode else writer
 
     status_identity = policy.status_identity
     if status_identity is None and status_reader is None:

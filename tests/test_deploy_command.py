@@ -318,6 +318,48 @@ class HelperBehaviourTests(HelperFixture):
         self.assertEqual(payload["request_id"], REQUEST_ID)
         self.assertNotIn("=== Deploy", shown)
 
+    def test_json_mode_keeps_a_refusing_nodes_own_words_as_diagnostics(self) -> None:
+        # A node that rolls a release back says why; that sentence used to be
+        # thrown away with the rollout text, and the jobs page showed only
+        # deploy_failed (26-10-03). stderr is the job's diagnostics.
+        key = self.root / "deploy-key"
+        key.write_text("not a key\n", encoding="utf-8")
+        policy_path = self.runtime()
+        policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+        policy["deploy_identity"] = {"user": "svc-app", "key": str(key)}
+        policy["status_identity"] = {"user": "svc-app", "key": str(key)}
+        policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+
+        class Refused:
+            returncode = 1
+            stdout = "ERROR: the WAF engine could not be started.\n"
+            stderr = "Job for coraza-spoa.service failed.\n"
+
+        original = deploy_helper.subprocess.run
+        deploy_helper.subprocess.run = lambda *_, **__: Refused()  # type: ignore[assignment]
+        try:
+            out, err = io.StringIO(), io.StringIO()
+            code = deploy_helper.main(
+                [],
+                policy_path=policy_path,
+                input_stream=io.BytesIO(request(json=True)),
+                output_stream=out,
+                error_stream=err,
+                require_secure=False,
+                require_root=False,
+                lock_root=self.root / "locks",
+                status_reader=lambda: parse_status(self.cluster.read_status()),
+            )
+        finally:
+            deploy_helper.subprocess.run = original  # type: ignore[assignment]
+
+        payload = json.loads(out.getvalue())
+        self.assertNotEqual(code, 0)
+        self.assertEqual(payload["outcome"], "failed")
+        self.assertIn("=== Deploy: node-b ===", err.getvalue())
+        self.assertIn("ERROR: the WAF engine could not be started.", err.getvalue())
+        self.assertIn("Job for coraza-spoa.service failed.", err.getvalue())
+
     def test_a_second_deploy_is_refused_while_one_is_running(self) -> None:
         from haproxy_mgmt.cluster_lock import hold
 

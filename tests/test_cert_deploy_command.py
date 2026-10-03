@@ -221,6 +221,24 @@ class RolloutTests(HelperFixture):
             [{"id": "example-net", "fingerprint_sha256": FINGERPRINT}],
         )
 
+    def test_json_mode_keeps_a_refusing_nodes_own_words_as_diagnostics(self) -> None:
+        # As for deploy (26-10-03): the node's sentence is the job's diagnostics.
+        class Refused:
+            returncode = 1
+            stdout = "ERROR: the certificate could not be installed.\n"
+            stderr = ""
+
+        original = cert_deploy_helper.subprocess.run
+        cert_deploy_helper.subprocess.run = lambda *_, **__: Refused()  # type: ignore[assignment]
+        try:
+            code, out, err = self.run_helper(request(json=True), real_trigger=True)
+        finally:
+            cert_deploy_helper.subprocess.run = original  # type: ignore[assignment]
+
+        self.assertNotEqual(code, 0)
+        self.assertEqual(json.loads(out)["operation"], "cert_deploy")
+        self.assertIn("ERROR: the certificate could not be installed.", err)
+
     def test_the_target_is_read_from_the_distribution_directory(self) -> None:
         #
         # Not from the caller and not from the node: the fingerprint in the

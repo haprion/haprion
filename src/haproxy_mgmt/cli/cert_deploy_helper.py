@@ -20,7 +20,6 @@ half the pair has been reloaded.
 
 from __future__ import annotations
 
-import io
 import os
 import subprocess
 import sys
@@ -229,7 +228,12 @@ def main(
     except CertificateError as exc:
         return refuse("certificate_missing", str(exc), 68)
 
-    stream: TextIO = io.StringIO() if json_mode else writer
+    #
+    # In JSON mode the rollout text goes to stderr, the job's diagnostics, so a
+    # node that refuses says why on the jobs page too; stdout stays the
+    # document alone. As in deploy_helper (26-10-03).
+    #
+    stream: TextIO = errors if json_mode else writer
 
     status_identity = policy.status_identity
     if status_identity is None and status_reader is None:

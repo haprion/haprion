@@ -2192,6 +2192,9 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * The WAF page (Fas 21, B234; mock round 7). Findings per object and rule,
  * exceptions, and the Allow dialog.
  */
+/* The WAF page's three views share one heading height - the Requests view's export button (32px + border) - so the
+   tabs below do not move when the view changes (2026-10-03: 30 against 34 px, measured). */
+.waf-heading { min-height: 34px; }
 .waf-strip { margin: 0 0 18px; }
 .waf-views a { padding: 7px 15px; font-size: 13.5px; }
 .waf-views b { margin-left: 7px; font-variant-numeric: tabular-nums; }

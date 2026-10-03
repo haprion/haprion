@@ -17,7 +17,7 @@
 </div>
 {% endmacro %}
 <div data-log-region>
-<section class="page-heading">
+<section class="page-heading{% if waf_page %} waf-heading{% endif %}">
   <div class="heading-title">{% if waf_page %}<h1>WAF</h1><p class="page-lede">Requests an access rule or the WAF engine logged or refused.</p>{% else %}<h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p>{% endif %}</div>
   <div class="heading-badges">
     {% if enabled and reading.entries %}<div class="log-export"><button class="secondary-button" type="button" data-log-export disabled>Export selected (.csv)</button><span data-log-selected-count>No rows selected</span></div>{% endif %}

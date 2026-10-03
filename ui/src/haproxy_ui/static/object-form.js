@@ -368,7 +368,41 @@
     });
   };
 
+  //
+  // "Everywhere" and "Nobody" are the empty choices, and each stops being true
+  // the moment an address is written below it - so it leaves the list then
+  // (2026-10-03), as the page rendered after a post already has it. Cleared
+  // again with no group chosen, it comes back chosen, which is what an empty
+  // pair means.
+  //
+  const EMPTY_CHOICES = [
+    ["allow_from", "allow_ranges"],
+    ["deny_from", "deny_ranges"],
+  ];
+
+  const wireEmptyChoices = () => {
+    for (const [groupsName, rangesName] of EMPTY_CHOICES) {
+      const groups = document.querySelector(`select[name='${groupsName}']`);
+      const ranges = document.querySelector(`textarea[name='${rangesName}']`);
+      const empty = groups && groups.querySelector("option[value='']");
+      if (!ranges || !empty) continue;
+
+      const apply = () => {
+        const written = ranges.value.trim() !== "";
+        empty.hidden = written;
+        if (written) {
+          empty.selected = false;
+        } else if (groups.selectedOptions.length === 0) {
+          empty.selected = true;
+        }
+      };
+      ranges.addEventListener("input", apply);
+      apply();
+    }
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
+    wireEmptyChoices();
     wireRules();
     wireRecheck();
     wireShownWhen();

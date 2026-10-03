@@ -575,6 +575,30 @@ class TheShapeDecidesWhichFieldsApply(EditorTestCase):
 
         self.assertNotRegex(page.text, r'name="tcp_port"[^>]*disabled')
 
+    def test_everywhere_is_chosen_while_nothing_restricts_the_object(self) -> None:
+        page = self.editor().get("/proxies/alpha/shop/edit")
+
+        self.assertRegex(page.text, r'<option value="" selected>Everywhere')
+
+    def test_everywhere_leaves_the_list_once_an_address_is_written(self) -> None:
+        client = self.editor()
+
+        page = self.submit(
+            client, "/proxies/alpha/shop/edit", action="check", allow_ranges="country:SE"
+        )
+
+        self.assertRegex(page.text, r'<option value="" hidden>Everywhere')
+
+    def test_nobody_leaves_the_list_once_a_denied_address_is_written(self) -> None:
+        client = self.editor()
+
+        page = self.submit(
+            client, "/proxies/alpha/shop/edit", action="check", deny_ranges="country:CN"
+        )
+
+        self.assertRegex(page.text, r'<option value="" hidden>Nobody')
+        self.assertRegex(page.text, r'<option value="" selected>Everywhere')
+
 
 class TheHealthCardOnThePage(EditorTestCase):
     """What the probe's answer looks like once it is rendered.

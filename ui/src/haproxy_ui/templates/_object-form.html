@@ -121,7 +121,7 @@
       <div class="field">
         <label><span class="field-title">Reachable from — groups <span class="optional">(optional)</span></span>
           <select name="allow_from" multiple size="5">
-            <option value="" {% if not form.allow_from and not form.allow_ranges %}selected{% endif %}>Everywhere</option>
+            <option value="" {% if form.allow_ranges|trim %}hidden{% elif not form.allow_from %}selected{% endif %}>Everywhere</option>
             {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.allow_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
           </select>
         </label>
@@ -134,7 +134,7 @@
     <div class="form-grid form-grid-pair">
       <label><span class="field-title">Denied — groups <span class="optional">(optional)</span></span>
         <select name="deny_from" multiple size="5">
-          <option value="" {% if not form.deny_from %}selected{% endif %}>Nobody</option>
+          <option value="" {% if form.deny_ranges|trim %}hidden{% elif not form.deny_from %}selected{% endif %}>Nobody</option>
           {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.deny_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
         </select>
       </label>

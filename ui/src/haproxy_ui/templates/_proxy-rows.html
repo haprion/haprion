@@ -4,8 +4,25 @@
   its way. A second copy of this markup would drift from the first, and the
   drift would show as a row that changes shape when it updates.
 #}
+{% macro draft_badge(draft, queued, failed) %}{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
+        A publish that was refused used to leave this row saying "Draft" and
+        nothing else. The row stopped spinning, the work stayed, and the reason
+        was on the jobs page behind a click nobody had a reason to make - so
+        what it looked like was that publishing had quietly turned the object
+        back into a draft. The reason is named here; the full text is one click
+        away, where it has room.
+      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endmacro %}
+
 {% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
+{#
+  A draft of an object that is already stored keeps that object's row - its
+  hosts, addresses, health and ownership - with the draft's badge in the
+  protocol cell, as a reconfigured object does (26-10-03). Only an object that
+  has never been stored has nothing else to show.
+#}
+{% set stored_names = written | map(attribute='name') | list %}
+{% set drafts = {} %}{% for draft in unpublished %}{% set _ = drafts.update({draft.object_id: draft}) %}{% endfor %}
 {#
   One list in the order the reader chose (alphabetical unless a heading was
   clicked; `proxies.TABLE`), whatever state a row is in. Drafts and rows waiting
@@ -16,9 +33,9 @@
   since a badge changes while somebody is looking.
 #}
 {% set rows = [] %}
-{% for draft in unpublished %}{% set _ = rows.append((draft.object_id, 'draft', draft)) %}{% endfor %}
+{% for draft in unpublished if draft.object_id not in stored_names %}{% set _ = rows.append((draft.object_id, 'draft', draft)) %}{% endfor %}
 {% for name in removed %}{% set _ = rows.append((name, 'removed', name)) %}{% endfor %}
-{% for object in written if object.name not in drafted %}{% set _ = rows.append((object.name, 'written', object)) %}{% endfor %}
+{% for object in written %}{% set _ = rows.append((object.name, 'written', object)) %}{% endfor %}
 {% for proxy in foreign %}{% set _ = rows.append((proxy.name, 'foreign', proxy)) %}{% endfor %}
 {#
   A hundred rows at a time once a cluster has more (B222); the page is in the
@@ -30,14 +47,7 @@
 {% set page = [[paging.get(cluster, 1), 1] | max, pages] | min %}
 {% for _name, kind, item in (ordered[(page - 1) * proxy_page_size : page * proxy_page_size] if total > proxy_page_size else ordered) %}
 {% if kind == 'draft' %}{% set draft = item %}
-      <tr class="proxy-draft" data-href="/proxies/{{ cluster }}/{{ draft.object_id }}"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
-        A publish that was refused used to leave this row saying "Draft" and
-        nothing else. The row stopped spinning, the work stayed, and the reason
-        was on the jobs page behind a click nobody had a reason to make - so
-        what it looked like was that publishing had quietly turned the object
-        back into a draft. The reason is named here; the full text is one click
-        away, where it has room.
-      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
+      <tr class="proxy-draft" data-href="/proxies/{{ cluster }}/{{ draft.object_id }}"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol">{{ draft_badge(draft, queued, failed) }}</td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
 {#
   What a finished removal took out of the repository and the nodes have
   not stopped serving. The object is gone, so there is nothing to link to and
@@ -93,7 +103,7 @@
   https object that redirects plain HTTP takes two of them.
 #}
 {% elif kind == 'written' %}{% set object = item %}
-      <tr{% if not object.serving %} class="proxy-waiting"{% endif %}{% if role == 'admin' %} data-href="/proxies/{{ cluster }}/{{ object.name }}"{% endif %}>
+      <tr{% if object.name in drafts %} class="proxy-draft"{% elif not object.serving %} class="proxy-waiting"{% endif %}{% if role == 'admin' %} data-href="/proxies/{{ cluster }}/{{ object.name }}"{% endif %}>
         <td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a>{% else %}<strong>{{ object.name }}</strong>{% endif %}</td>
         {#
           What the nodes are serving this as, and not what the document intends.
@@ -120,7 +130,7 @@
           urgent to say than "https". So the badge replaces it and the
           hostnames stay where they are, on every row, always.
         #}
-        <td data-label="Protocol">{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% elif object.name in reconfigured %}<span class="status-badge status-badge-warning waiting-badge">Reconfigured · deploy to activate</span>{% elif object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td data-label="Protocol">{% if object.name in drafts %}{{ draft_badge(drafts[object.name], queued, failed) }}{% elif not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% elif object.name in reconfigured %}<span class="status-badge status-badge-warning waiting-badge">Reconfigured · deploy to activate</span>{% elif object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span></td>
         {#
           The addresses rather than their names (B221): an address is what

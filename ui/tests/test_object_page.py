@@ -434,6 +434,22 @@ class ADraftInTheListing(DraftReading):
 
         self.assertIn("status-badge-info waiting-badge", body)
 
+    def test_a_draft_of_a_stored_object_keeps_the_rest_of_its_row(self) -> None:
+        # 26-10-03: a draft is a badge on the object's row, as a pending deploy is,
+        # not a row of dashes - unless the object has never been stored. edge-demo
+        # stores public-web; service-demo does not, so its draft there is new.
+        body = self.listing([self.drafted("public-web")])
+        stored = body.split('class="proxy-draft" data-href="/proxies/edge-demo/public-web"', 1)
+        row = stored[1].split("</tr>", 1)[0]
+        new = body.split('class="proxy-draft" data-href="/proxies/service-demo/public-web"', 1)
+        new_row = new[1].split("</tr>", 1)[0]
+
+        self.assertIn(">Draft<", row)
+        self.assertIn("app.demo.example", row)
+        self.assertIn("ownership-managed", row)
+        self.assertEqual(body.count('href="/proxies/edge-demo/public-web"><strong>'), 1)
+        self.assertIn('<td data-label="Hosts / ports"><span class="table-empty">', new_row)
+
     def test_without_drafts_the_listing_says_nothing_about_them(self) -> None:
         self.assertNotIn(">Draft<", self.listing([]))
 

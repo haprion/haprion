@@ -25,7 +25,9 @@ from haproxy_mgmt.traffic_collector import (
     NodeTarget,
     _database_days,
     _ingest_part,
+    _ingest_waf_pages,
     _mirror_window,
+    _parse_waf_response,
     forget_database_positions,
 )
 from psycopg.types.json import Jsonb
@@ -760,6 +762,58 @@ class ARealDatabase(unittest.TestCase):
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select count(*) from traffic_log where host = 'copy.example.com'")
             self.assertEqual(cursor.fetchone(), (1,))
+
+    def test_the_waf_engine_s_matches_are_stored_once_and_the_cursor_follows(self) -> None:
+        """Fas 21 steg 4a: what the collector role may write into waf_match is
+        what the parser builds, a repeat of the same journal lines stores
+        nothing twice, and the page's role reads it back."""
+
+        at = int(datetime.now(UTC).timestamp()) * 1_000_000 + 250_000
+        request_id = f"shop.{uuid4()}"
+        match = {
+            "client": "192.0.2.30",
+            "rule_id": 942100,
+            "data": "Matched Data: s&1c found within ARGS:id: 1' OR 1=1--\u0007",
+            "uri": "/search?id=1",
+            "unique_id": request_id,
+        }
+        records = [
+            {"at": at, "cursor": "s=ab;i=1;b=cd", "message": json.dumps({"match": match})},
+            {
+                "at": at + 1,
+                "cursor": "s=ab;i=2;b=cd",
+                "message": json.dumps({"match": match | {"rule_id": 949110}}),
+            },
+        ]
+        raw = (
+            json.dumps({"cursor": "s=ab;i=2;b=cd", "eof": True, "reset": False, "sent": 2})
+            + "\n"
+            + "".join(json.dumps(record) + "\n" for record in records)
+        ).encode()
+        target = NodeTarget("alpha", "node-a", "node-a.example.com")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = CollectorConfig(
+                "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
+            )
+            page = _parse_waf_response(raw, target)
+            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+                self.assertEqual(_ingest_waf_pages(config, connection, [(target, page)]), (0, 0))
+                (root / ".alpha--node-a.waf-cursor").unlink()
+                self.assertEqual(_ingest_waf_pages(config, connection, [(target, page)]), (0, 0))
+            self.assertEqual((root / ".alpha--node-a.waf-cursor").read_text(), "s=ab;i=2;b=cd\n")
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select object, rule_id, field, matched, path, client, occurred_at "
+                "from waf_match where cluster = 'alpha' and request_id = %s",
+                (request_id,),
+            )
+            rows = cursor.fetchall()
+        self.assertEqual(len(rows), 1, "949110 is not stored, and the repeat is not either")
+        self.assertEqual(
+            rows[0][:6], ("shop", 942100, "ARGS:id", "1' OR 1=1--\u0007", "/search", "192.0.2.30")
+        )
+        self.assertEqual(rows[0][6].microsecond, 250_000)
 
     def test_a_database_restored_on_its_own_gets_back_what_staging_still_holds(self) -> None:
         """Review 2026-09-30, R3, its acceptance case.

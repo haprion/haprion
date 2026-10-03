@@ -260,6 +260,27 @@ class WafJournalReaderTests(unittest.TestCase):
         self.assertEqual(head["cursor"], "s=0000;i=2;b=1111;m=1;t=1;x=1")
         self.assertEqual([row["message"] for row in rows], ["line 1", "line 2"])
 
+    def test_a_response_never_crosses_what_the_collector_takes(self) -> None:
+        """The collector refuses more than MAX_SEND; the line that would cross
+        it waits, and the cursor stays before it. A line too large on its own
+        is stepped over rather than stopping the reader at it for ever."""
+
+        self.output.write_text("".join(journal_entry(n, "x" * 400) + "\n" for n in range(1, 6)))
+        with unittest.mock.patch.object(HELPER, "MAX_SEND", 1000):
+            code, head, rows = self.call("waf -")
+        self.assertEqual(code, 0)
+        self.assertEqual((head["eof"], head["sent"], len(rows)), (False, 2, 2))
+        self.assertEqual(head["cursor"], "s=0000;i=2;b=1111;m=1;t=1;x=1")
+        self.assertEqual(rows[-1]["cursor"], head["cursor"])
+
+        self.output.write_text(
+            journal_entry(1, "x" * 2000) + "\n" + journal_entry(2, "small") + "\n"
+        )
+        with unittest.mock.patch.object(HELPER, "MAX_SEND", 1000):
+            code, head, rows = self.call("waf -")
+        self.assertEqual((head["eof"], head["cursor"]), (True, "s=0000;i=2;b=1111;m=1;t=1;x=1"))
+        self.assertEqual([row["message"] for row in rows], ["small"])
+
 
 class TrafficLogRsyslogRuleTests(unittest.TestCase):
     """What the node's own log chain has to be true for.

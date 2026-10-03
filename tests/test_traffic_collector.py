@@ -14,7 +14,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import psycopg
 
 from haproxy_mgmt.traffic_collector import (
     CLOSED_DAY_GRACE,
@@ -28,15 +30,26 @@ from haproxy_mgmt.traffic_collector import (
     _entry,
     _failure_outcome,
     _parse_response,
+    _parse_waf_response,
     _replace,
+    _retire_staging,
+    _waf_cursor,
+    _waf_data,
+    _waf_row,
     _within_margin,
     collect,
     collect_node,
     forget_database_positions,
     load_config,
+    ssh_fetch_waf,
 )
 
 NOW = datetime(2026, 9, 8, 12, tzinfo=UTC)
+
+
+def no_waf(_target: NodeTarget, _cursor: str) -> bytes:
+    """A node whose WAF journal has nothing to say."""
+    return b'{"cursor":"","eof":true,"reset":false,"sent":0}\n'
 
 
 class TrafficCollectorTests(unittest.TestCase):
@@ -344,7 +357,7 @@ class TrafficCollectorTests(unittest.TestCase):
             "haproxy_mgmt.traffic_collector._ingest_database",
             side_effect=CollectorError("database import failed"),
         ):
-            self.assertEqual(collect(configured, now=NOW, fetch=fetch), 1)
+            self.assertEqual(collect(configured, now=NOW, fetch=fetch, fetch_waf_page=no_waf), 1)
 
         meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
         self.assertEqual(meta["outcome"], "database")
@@ -386,8 +399,12 @@ class TrafficCollectorTests(unittest.TestCase):
             patch("haproxy_mgmt.traffic_collector._ingest_database", side_effect=ingest),
             patch("haproxy_mgmt.traffic_collector._assemble") as assemble,
         ):
-            self.assertEqual(collect(self.database_configured(), now=NOW, fetch=fetch), 0)
-            self.assertEqual(collect(self.database_configured(), now=NOW, fetch=fetch), 0)
+            self.assertEqual(
+                collect(self.database_configured(), now=NOW, fetch=fetch, fetch_waf_page=no_waf), 0
+            )
+            self.assertEqual(
+                collect(self.database_configured(), now=NOW, fetch=fetch, fetch_waf_page=no_waf), 0
+            )
 
         assemble.assert_not_called()
         self.assertFalse((self.mirror / "alpha--node-a.jsonl").exists(), "the old one is gone")
@@ -568,6 +585,390 @@ class TrafficCollectorTests(unittest.TestCase):
             _entry()
         self.assertEqual(stopped.exception.code, 65)
         self.assertIn("nothing to replay", errors.getvalue())
+
+
+REQUEST_ID = "shop.0b5e3c1a-7d42-4f0e-9c1b-2a6d8e4f7a90"
+WAF_AT = int(NOW.timestamp()) * 1_000_000 + 123_456
+
+
+def engine_line(rule: int = 942100, **fields: object) -> str:
+    """One line as the engine writes it to its journal (shape of `private/waf-prov`)."""
+    match: dict[str, object] = {
+        "client": "192.0.2.20",
+        "rule_id": rule,
+        "msg": "SQL Injection Attack Detected via libinjection",
+        "data": "Matched Data: s&1c found within ARGS:id: 1' OR 1=1--",
+        "severity": "critical",
+        "uri": "/search?id=1%27%20OR%201=1--",
+        "unique_id": REQUEST_ID,
+    }
+    match.update(fields)
+    return json.dumps({"level": "error", "match": match, "time": "2026-09-08T14:00:00+02:00"})
+
+
+def journal_cursor(number: int) -> str:
+    return f"s=0000;i={number:x};b=1111;m=1;t=1;x=1"
+
+
+def waf_response(*messages: str, first: int = 1, **header: object) -> bytes:
+    records = [
+        json.dumps({"at": WAF_AT + number, "cursor": journal_cursor(number), "message": message})
+        for number, message in enumerate(messages, first)
+    ]
+    head = {
+        "cursor": journal_cursor(first + len(messages) - 1) if messages else "",
+        "eof": True,
+        "reset": False,
+        "sent": len(records),
+    }
+    head.update(header)
+    return "".join(f"{line}\n" for line in [json.dumps(head), *records]).encode()
+
+
+class WafJournalCollectorTests(unittest.TestCase):
+    """Fas 21 steg 4a: the engine's matches from each node into `waf_match`."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.mirror = root / "mirror"
+        self.staging = root / "staging"
+        self.mirror.mkdir()
+        self.staging.mkdir()
+        self.target = NodeTarget("alpha", "node-a", "node-a.example.com")
+        self.config = CollectorConfig(
+            "svc-logread",
+            root / "key",
+            root / "known_hosts",
+            self.mirror,
+            self.staging,
+            (self.target,),
+            "haproxy_ui",
+            "/run/postgresql",
+        )
+        self.cursor_file = self.staging / ".alpha--node-a.waf-cursor"
+
+    def row(self, message: str, cursor: str = journal_cursor(1)) -> tuple[object, ...] | None:
+        return _waf_row("alpha", "node-a", WAF_AT, cursor, message)
+
+    def test_the_field_and_the_value_are_told_apart_as_the_rule_set_writes_them(self) -> None:
+        for data, wanted in (
+            ("Matched Data: s&1c found within ARGS:id: 1' OR 1=1--", ("ARGS:id", "1' OR 1=1--")),
+            (
+                "Matched Data: <script> found within ARGS:json.q: <script>x",
+                ("ARGS:json.q", "<script>x"),
+            ),
+            (
+                "Matched Data: sqlmap found within REQUEST_HEADERS:User-Agent: sqlmap/1.8",
+                ("REQUEST_HEADERS:User-Agent", "sqlmap/1.8"),
+            ),
+            (
+                "Matched Data: ../ found within REQUEST_FILENAME: /a/../b",
+                ("REQUEST_FILENAME", "/a/../b"),
+            ),
+            # The value keeps its own `: `; only the first one ends the field.
+            ("Matched Data: x found within ARGS:q: a: b", ("ARGS:q", "a: b")),
+            # A rule whose log data is the value alone, as the Host rule's is.
+            ("192.0.2.10", ("", "192.0.2.10")),
+            ("", ("", "")),
+            (None, ("", "")),
+            (7, ("", "")),
+        ):
+            with self.subTest(data=data):
+                self.assertEqual(_waf_data(data), wanted)
+
+    def test_a_field_no_exception_could_name_is_not_kept(self) -> None:
+        """The requester names the field; only what `waf_field` accepts survives,
+        since the page offers it to the exception model as written."""
+
+        for name in ("ARGS:a b", 'ARGS:a"b', "ARGS:a;b", "ARGS:a,b", "TX:x", "ARGS:" + "a" * 129):
+            with self.subTest(name=name):
+                field, value = _waf_data(f"Matched Data: x found within {name}: v")
+                self.assertEqual(field, "")
+        # A request built to move the split moves what is shown, and no more:
+        # the field is still one an exception may name, and the model checks it.
+        field, _ = _waf_data("Matched Data: a found within ARGS:decoy: b found within ARGS:real: c")
+        self.assertEqual(field, "ARGS:decoy")
+
+    def test_only_a_match_becomes_a_row(self) -> None:
+        for message in (
+            '{"level":"info","time":"2026-09-08T12:00:00Z","message":"Starting coraza-spoa"}',
+            "not json at all",
+            "[1, 2]",
+            '{"level":"error","match":"text"}',
+            engine_line(949110, data=""),  # the score crossing its threshold
+            engine_line(959100, data=""),
+            engine_line(980170, data=""),  # the report of every score
+        ):
+            with self.subTest(message=message[:60]):
+                self.assertIsNone(self.row(message))
+
+        row = self.row(engine_line())
+        assert row is not None
+        self.assertEqual(
+            row[1:],
+            (
+                "alpha",
+                "node-a",
+                datetime(2026, 9, 8, 12, 0, 0, 123_456, tzinfo=UTC),
+                REQUEST_ID,
+                "shop",
+                942100,
+                "ARGS:id",
+                "1' OR 1=1--",
+                "/search",
+                "192.0.2.20",
+            ),
+        )
+
+    def test_a_match_that_names_no_object_this_installation_wrote_is_refused(self) -> None:
+        for unique_id in ("VLRVGAUYXBZONLCY", "Shop.x", ".x", "shop;x.y", "", 7, None):
+            with self.subTest(unique_id=unique_id), self.assertRaises(CollectorError):
+                self.row(engine_line(unique_id=unique_id))
+        for rule in (0, 1_000_000, "942100", True, None):
+            with self.subTest(rule=rule), self.assertRaises(CollectorError):
+                self.row(engine_line(rule))  # type: ignore[arg-type]
+
+    def test_what_the_requester_wrote_is_bounded_and_storable(self) -> None:
+        long = "a" * 5000
+        row = self.row(
+            engine_line(
+                data=f"Matched Data: x found within ARGS:q: {long}\0\ud800",
+                uri="/" + "p" * 3000 + "?q=1",
+                client="not an address",
+            )
+        )
+        assert row is not None
+        _, _, _, _, _, _, _, field, matched, path, client = row
+        self.assertEqual((field, len(matched), set(matched)), ("ARGS:q", 1024, {"a"}))
+        self.assertEqual((len(path), "?" in path), (2048, False))
+        self.assertEqual(client, "")
+        row = self.row(engine_line(data="x\0y\ud800", client="2001:db8::1"))
+        assert row is not None
+        self.assertEqual((row[8], row[10]), ("xy?", "2001:db8::1"))
+        row[8].encode("utf-8")  # what COPY has to do with it
+
+    def test_one_journal_entry_is_one_event_on_one_node(self) -> None:
+        first = self.row(engine_line(), journal_cursor(1))
+        again = self.row(engine_line(), journal_cursor(1))
+        later = self.row(engine_line(), journal_cursor(2))
+        other = _waf_row("alpha", "node-b", WAF_AT, journal_cursor(1), engine_line())
+        assert first and again and later and other
+        self.assertEqual(first[0], again[0])
+        self.assertEqual(len({first[0], later[0], other[0]}), 3)
+        self.assertEqual(len(first[0]), 32)  # type: ignore[arg-type]
+
+    def test_the_response_frame_is_the_reader_s_and_must_agree_with_itself(self) -> None:
+        good = waf_response(engine_line())
+        page = _parse_waf_response(good, self.target)
+        self.assertEqual(
+            (page.cursor, page.reset, len(page.rows), page.skipped),
+            (journal_cursor(1), False, 1, 0),
+        )
+        record = json.dumps({"at": WAF_AT, "cursor": journal_cursor(1), "message": "m"})
+        for raw in (
+            b"",
+            b"not json\n",
+            b'{"cursor":"","eof":true,"reset":false}\n',
+            b'{"cursor":"bad cursor","eof":true,"reset":false,"sent":0}\n',
+            b'{"cursor":"","eof":1,"reset":false,"sent":0}\n',
+            b'{"cursor":"","eof":true,"reset":false,"sent":true}\n',
+            b'{"cursor":"","eof":true,"reset":false,"sent":2}\n' + record.encode() + b"\n",
+            b'{"cursor":"","eof":true,"reset":false,"sent":1}\n' + record.encode(),
+            b'{"cursor":"x=1","eof":true,"reset":true,"sent":0}\n',
+            b'{"cursor":"","eof":true,"reset":false,"sent":1}\nnot json\n',
+            b'{"cursor":"","eof":true,"reset":false,"sent":1}\n{"at":1,"message":"m"}\n',
+            b'{"cursor":"","eof":true,"reset":false,"sent":1}\n'
+            + json.dumps({"at": "1", "cursor": journal_cursor(1), "message": "m"}).encode()
+            + b"\n",
+            b'{"cursor":"","eof":true,"reset":false,"sent":1}\n'
+            + json.dumps({"at": 1, "cursor": "a b", "message": "m"}).encode()
+            + b"\n",
+        ):
+            with self.subTest(raw=raw[:70]), self.assertRaises(ProtocolError):
+                _parse_waf_response(raw, self.target)
+
+    def test_a_match_that_cannot_be_stored_is_counted_and_stepped_over(self) -> None:
+        page = _parse_waf_response(
+            waf_response(engine_line(unique_id="VLRVGAUYXBZONLCY"), "Starting", engine_line()),
+            self.target,
+        )
+        self.assertEqual((len(page.rows), page.skipped, page.cursor), (1, 1, journal_cursor(3)))
+
+    def collect_with(
+        self, fetch_waf_page: object, connection: MagicMock | None = None
+    ) -> tuple[int, str, MagicMock]:
+        connection = connection or MagicMock()
+        errors = StringIO()
+        with (
+            patch("haproxy_mgmt.traffic_collector.psycopg.connect") as connect,
+            patch(
+                "haproxy_mgmt.traffic_collector._database_days",
+                return_value=frozenset({f"{NOW:%Y%m%d}"}),
+            ),
+            patch("haproxy_mgmt.traffic_collector._ingest_database", return_value=(0, 0)),
+            patch("sys.stderr", errors),
+        ):
+            connect.return_value.__enter__.return_value = connection
+            code = collect(
+                self.config,
+                now=NOW,
+                fetch=lambda _t, wanted, offset: (
+                    Response(0, offset, 0, True, False, 0, b"")
+                    if offset == 0
+                    else Response(offset, offset, 0, True, False, 0, b"")
+                ),
+                fetch_waf_page=fetch_waf_page,  # type: ignore[arg-type]
+            )
+        return code, errors.getvalue(), connection
+
+    def test_the_cursor_moves_only_after_the_rows_are_committed(self) -> None:
+        asked: list[str] = []
+        committed_with: list[bool] = []
+        connection = MagicMock()
+        connection.commit.side_effect = lambda: committed_with.append(self.cursor_file.exists())
+
+        def fetch(_target: NodeTarget, cursor: str) -> bytes:
+            asked.append(cursor)
+            return waf_response(engine_line(), "Starting", first=len(asked) * 10)
+
+        code, errors, _ = self.collect_with(fetch, connection)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(asked, ["-"])
+        self.assertEqual(committed_with, [False], "committed before the cursor was written")
+        self.assertEqual(self.cursor_file.read_text(), journal_cursor(11) + "\n")
+        self.assertEqual(stat.S_IMODE(self.cursor_file.stat().st_mode), 0o600)
+        copied = connection.cursor.return_value.__enter__.return_value.copy.return_value
+        rows = [call.args[0] for call in copied.__enter__.return_value.write_row.call_args_list]
+        self.assertEqual([row[5:7] for row in rows], [("shop", 942100)])
+
+        self.collect_with(fetch, connection)
+        self.assertEqual(asked, ["-", journal_cursor(11)])
+
+    def test_a_failed_import_leaves_the_cursor_where_it_was(self) -> None:
+        connection = MagicMock()
+        connection.commit.side_effect = psycopg.OperationalError("gone")
+        code, errors, _ = self.collect_with(lambda _t, _c: waf_response(engine_line()), connection)
+        self.assertEqual(code, 1)
+        self.assertIn("waf: WAF import failed", errors)
+        self.assertFalse(self.cursor_file.exists())
+
+    def test_a_match_outside_the_partitions_is_passed_and_said(self) -> None:
+        def fetch(_target: NodeTarget, _cursor: str) -> bytes:
+            return waf_response(engine_line()).replace(
+                str(WAF_AT + 1).encode(), str(WAF_AT + 1 - 3 * 86_400_000_000).encode()
+            )
+
+        code, errors, connection = self.collect_with(fetch)
+        self.assertEqual(code, 0)
+        self.assertIn("waf: 1 match(es) fall outside the days the database holds", errors)
+        connection.commit.assert_not_called()
+        self.assertEqual(self.cursor_file.read_text(), journal_cursor(1) + "\n")
+
+    def test_a_node_that_lost_the_position_is_read_from_its_start_again(self) -> None:
+        self.cursor_file.write_text(journal_cursor(5) + "\n")
+        reset = b'{"cursor":"","eof":true,"reset":true,"sent":0}\n'
+        code, _, connection = self.collect_with(lambda _t, _c: reset)
+        self.assertEqual(code, 0)
+        self.assertFalse(self.cursor_file.exists())
+        connection.commit.assert_not_called()
+
+    def test_a_quiet_minute_opens_no_database_connection(self) -> None:
+        self.cursor_file.write_text(journal_cursor(5) + "\n")
+        quiet = b'{"cursor":"%s","eof":true,"reset":false,"sent":0}\n' % journal_cursor(5).encode()
+        errors = StringIO()
+        with (
+            patch("haproxy_mgmt.traffic_collector._ingest_database", return_value=(0, 0)),
+            patch("haproxy_mgmt.traffic_collector._mirror_window", return_value=14),
+            patch("haproxy_mgmt.traffic_collector.psycopg.connect") as connect,
+            patch("sys.stderr", errors),
+        ):
+            code = collect(
+                self.config,
+                now=NOW,
+                fetch=lambda _t, _d, offset: Response(offset, offset, 0, True, False, 0, b""),
+                fetch_waf_page=lambda _t, _c: quiet,
+            )
+        self.assertEqual(code, 0)
+        connect.assert_not_called()
+
+    def test_a_node_bundle_from_before_the_journal_fails_the_run(self) -> None:
+        """Not tolerated as a passing state: the node's matches would be
+        missing from the WAF page while every run looked fine. The rollout
+        puts the node bundle before the collector instead."""
+
+        with patch("haproxy_mgmt.traffic_collector._bounded_ssh", return_value=(64, b"", b"")):
+            code, errors, _ = self.collect_with(
+                lambda target, cursor: ssh_fetch_waf(self.config, target, cursor)
+            )
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "alpha/node-a: waf: the node refused the WAF request (exit 64): its node bundle is "
+            "older than this collector",
+            errors,
+        )
+
+    def test_an_unreadable_journal_fails_the_run_but_not_the_traffic_log(self) -> None:
+        def broken(_target: NodeTarget, _cursor: str) -> bytes:
+            raise SSHError("SSH request failed with exit 65")
+
+        code, errors, _ = self.collect_with(broken)
+        self.assertEqual(code, 1)
+        self.assertIn("alpha/node-a: waf: SSH request failed with exit 65", errors)
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
+        self.assertEqual(meta["outcome"], "ok")
+
+    def test_the_request_names_the_cursor_and_any_exit_but_zero_fails(self) -> None:
+        with (
+            patch(
+                "haproxy_mgmt.traffic_collector._bounded_ssh", return_value=(255, b"", b"")
+            ) as ssh,
+            self.assertRaises(SSHError) as raised,
+        ):
+            ssh_fetch_waf(self.config, self.target, journal_cursor(1))
+        self.assertEqual(str(raised.exception), "SSH request failed with exit 255")
+        self.assertEqual(ssh.call_args.args[0][-1], f"waf {journal_cursor(1)}")
+
+    def test_without_a_database_no_journal_is_asked_for(self) -> None:
+        mirror_only = CollectorConfig(
+            "svc-logread",
+            self.config.key,
+            self.config.known_hosts,
+            self.mirror,
+            self.staging,
+            (self.target,),
+        )
+        asked: list[str] = []
+        code = collect(
+            mirror_only,
+            now=NOW,
+            fetch=lambda _t, _d, offset: Response(offset, offset, 0, True, False, 0, b""),
+            fetch_waf_page=lambda _t, cursor: asked.append(cursor) or b"",  # type: ignore[func-returns-value]
+        )
+        self.assertEqual((code, asked), (0, []))
+
+    def test_a_cursor_this_collector_did_not_write_starts_over(self) -> None:
+        self.cursor_file.write_text("not a cursor\n")
+        self.assertEqual(_waf_cursor(self.config, self.target), "-")
+        self.cursor_file.unlink()
+        self.cursor_file.symlink_to(self.staging / "elsewhere")
+        with self.assertRaises((CollectorError, OSError)):
+            _waf_cursor(self.config, self.target)
+
+    def test_a_replay_reads_every_journal_again(self) -> None:
+        self.cursor_file.write_text(journal_cursor(5) + "\n")
+        (self.staging / ".alpha--node-a--2026-09-08.jsonl.database-offset").write_text("10\n")
+        self.assertEqual(forget_database_positions(self.config), 2)
+        self.assertFalse(self.cursor_file.exists())
+
+    def test_a_retired_node_s_cursor_is_removed(self) -> None:
+        self.cursor_file.write_text(journal_cursor(5) + "\n")
+        gone = self.staging / ".alpha--node-z.waf-cursor"
+        gone.write_text(journal_cursor(5) + "\n")
+        _retire_staging(self.config, now=NOW)
+        self.assertTrue(self.cursor_file.exists())
+        self.assertFalse(gone.exists())
 
 
 if __name__ == "__main__":

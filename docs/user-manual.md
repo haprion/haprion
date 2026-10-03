@@ -584,9 +584,12 @@ than letters, digits and `_ . - [ ]` cannot be named; except the path instead.
 answers 503 and records `waf-engine:deny`. Each rule the engine matched is
 logged on the node with the part of the request and the matched value, in the
 engine's own journal (`journalctl --namespace=haproxy-waf -u coraza-spoa`),
-and collected to the management host with the traffic log. The matched value is
-the requester's own text: it is kept to 1024 characters and always shown as
-text.
+and collected to the management host with the traffic log, a page of up to
+20 000 lines per node and minute, when the management host has a database. The
+matched value is the requester's own text: it is kept to 1024 characters and
+always shown as text. The part of the request is kept only when an exception
+could name it, and the deciding and reporting rules are not kept at all - the
+traffic record already carries the score and the decision.
 
 **Installation.** The engine and the rule set are two packages built from
 pinned sources (see the installation guide). The engine package goes on the
@@ -1359,6 +1362,11 @@ how far each node has been fetched stay — and the next run imports every stage
 record the database already holds is passed over by the table's own duplicate check, so nothing is
 counted twice. What staging no longer holds (older than the retention window plus one day) cannot
 be replayed.
+
+The WAF engine's matches are replayed the same way, from the nodes rather than from staging: the
+command also drops how far each node's WAF journal has been imported, and the next runs read each
+journal again from its oldest entry, a page per minute. What a node's journal no longer holds
+(older than its 14 days) cannot be replayed.
 
 ## Node backups
 

@@ -211,8 +211,8 @@ def serve_waf(
                 at = entry.get("__REALTIME_TIMESTAMP")
                 if not isinstance(position, str) or not isinstance(at, str):
                     return 65
-                last = position
                 if message is None:
+                    last = position
                     continue
                 record = (
                     json.dumps(
@@ -222,9 +222,24 @@ def serve_waf(
                     ).encode("ascii")
                     + b"\n"
                 )
+                #
+                # The collector refuses a response larger than MAX_SEND, so the
+                # line that would cross it waits for the next request, and the
+                # cursor stays before it. One line alone cannot cross it - the
+                # engine's journal holds a line to 256 KiB, a few times that
+                # escaped - but were one to, it is stepped over rather than
+                # left to stop the reader at the same place for ever.
+                #
+                if size + len(record) > MAX_SEND:
+                    if not records:
+                        last = position
+                        continue
+                    eof = False
+                    break
+                last = position
                 records.append(record)
                 size += len(record)
-                if size >= MAX_SEND or len(records) >= WAF_MAX_ENTRIES:
+                if len(records) >= WAF_MAX_ENTRIES:
                     eof = False
                     break
             if not eof:

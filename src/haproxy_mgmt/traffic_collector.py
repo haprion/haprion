@@ -22,6 +22,9 @@ from typing import Any
 
 import psycopg
 
+from haproxy_mgmt.proxy_model import NAME as OBJECT_NAME
+from haproxy_mgmt.proxy_model import WAF_DECIDING_RULES, waf_field
+
 MAX_CONFIG_BYTES = 1024 * 1024
 MAX_HEADER_BYTES = 4096
 MAX_SEND = 8 * 1024 * 1024
@@ -304,8 +307,8 @@ def _parse_response(raw: bytes, wanted: date, offset: int) -> Response:
     )
 
 
-def ssh_fetch(config: CollectorConfig, target: NodeTarget, wanted: date, offset: int) -> Response:
-    argv = [
+def _ssh_argv(config: CollectorConfig, target: NodeTarget, request: str) -> list[str]:
+    return [
         "/usr/bin/ssh",
         "-T",
         "-o",
@@ -326,8 +329,12 @@ def ssh_fetch(config: CollectorConfig, target: NodeTarget, wanted: date, offset:
         config.user,
         "--",
         target.host,
-        f"{wanted.isoformat()} {offset}",
+        request,
     ]
+
+
+def ssh_fetch(config: CollectorConfig, target: NodeTarget, wanted: date, offset: int) -> Response:
+    argv = _ssh_argv(config, target, f"{wanted.isoformat()} {offset}")
     try:
         code, stdout, _stderr = _bounded_ssh(argv)
     except OSError as exc:
@@ -620,9 +627,21 @@ def _retire_staging(
     """The same window, applied to parts and markers no active node claims."""
 
     keep = {f"{target.cluster}--{target.node}--" for target in config.nodes}
+    cursors = {_waf_cursor_path(config, target).name for target in config.nodes}
     oldest = (now.date() - timedelta(days=window - 1)).isoformat()
     for path in config.staging.iterdir():
         name = path.name
+        if name.endswith(".waf-cursor") and name not in cursors:
+            #
+            # A node no longer in inventory. Should it come back, its journal is
+            # read again from the start and nothing is stored twice.
+            #
+            try:
+                if stat.S_ISREG(path.lstat().st_mode):
+                    path.unlink()
+            except OSError as exc:
+                print(f"retired cursor {name}: {exc}", file=sys.stderr)
+            continue
         if name.startswith(".") or not name.endswith((".jsonl", ".done")):
             continue
         if any(name.startswith(prefix) for prefix in keep):
@@ -869,7 +888,9 @@ def _ingest_part(
     return skipped
 
 
-def _database_days(connection: psycopg.Connection[Any]) -> frozenset[str]:
+def _database_days(
+    connection: psycopg.Connection[Any], table: str = "traffic_log"
+) -> frozenset[str]:
     """The days the database can still store, asked of the database itself.
 
     The mirror deliberately keeps files for longer than the database keeps rows:
@@ -883,6 +904,8 @@ def _database_days(connection: psycopg.Connection[Any]) -> frozenset[str]:
     to keep in step. `[traffic_logs].retention_days` can change on the platform
     without anything here being told, and the next run simply reads the new
     horizon.
+
+    `waf_match` (0052) is partitioned the same way and asked the same thing.
     """
 
     with connection.cursor() as cursor:
@@ -890,8 +913,9 @@ def _database_days(connection: psycopg.Connection[Any]) -> frozenset[str]:
             "select right(child.relname, 8) from pg_inherits "
             "join pg_class child on child.oid = pg_inherits.inhrelid "
             "join pg_class parent on parent.oid = pg_inherits.inhparent "
-            "where parent.relname = 'traffic_log' "
-            "and child.relname ~ '^traffic_log_[0-9]{8}$'"
+            "where parent.relname = %s "
+            "and child.relname ~ ('^' || %s || '_[0-9]{8}$')",
+            (table, table),
         )
         days = frozenset(str(row[0]) for row in cursor.fetchall())
     if not days:
@@ -900,7 +924,7 @@ def _database_days(connection: psycopg.Connection[Any]) -> frozenset[str]:
         # what this collector was built against, and skipping every part would
         # look exactly like a quiet week of traffic.
         #
-        raise CollectorError("the database holds no traffic log partitions")
+        raise CollectorError(f"the database holds no {table} partitions")
     return days
 
 
@@ -989,6 +1013,327 @@ def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
     return skipped, expired
 
 
+#
+# The WAF engine's own log, rule by rule (Fas 21, B234-B236). Each node keeps it
+# in a journal namespace that the traffic log's forced command reads after a
+# journald cursor (`waf <cursor>`, or `waf -` from the oldest entry). Unlike the
+# traffic log there is no staging copy: the node's journal is the buffer, and
+# the cursor is a database position - written only after the rows it covers
+# are committed, so a failed import fetches the same lines again and the
+# duplicate trigger passes over what was already stored.
+#
+# Only with a database. The rows exist for the WAF page, which reads nothing
+# else, and a mirror-only installation has no page to read them.
+#
+WAF_CURSOR = re.compile(r"[A-Za-z0-9=;_-]{1,512}")
+WAF_MATCHED_PREFIX = "Matched Data: "
+WAF_MATCHED_WITHIN = " found within "
+MAX_WAF_FIELD = 256
+MAX_WAF_MATCHED = 1024
+MAX_WAF_PATH = 2048
+WAF_CLIENT = re.compile(r"[0-9A-Fa-f.:]{2,64}")
+MAX_WAF_MICROSECONDS = MAX_TIMESTAMP * 1_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class WafPage:
+    cursor: str
+    reset: bool
+    rows: tuple[tuple[Any, ...], ...]
+    skipped: int
+
+
+WafFetch = Callable[[NodeTarget, str], bytes]
+
+
+def ssh_fetch_waf(config: CollectorConfig, target: NodeTarget, cursor: str) -> bytes:
+    try:
+        code, stdout, _stderr = _bounded_ssh(_ssh_argv(config, target, f"waf {cursor}"))
+    except OSError as exc:
+        raise SSHError(f"cannot run SSH request: {exc}") from exc
+    if code == 64:
+        #
+        # 64 is the reader's answer to a request it does not know: a node
+        # bundle from before the WAF journal - installed by mistake, or rolled
+        # back to - or a request this collector got wrong. A failure either
+        # way, and not one to tolerate: the node's matches would be missing
+        # from the WAF page while every run looked fine, and an empty page is
+        # what is read before an object leaves `log`. Nodes get the bundle
+        # before the manager gets this collector, so no rollout passes here.
+        #
+        raise SSHError(
+            "the node refused the WAF request (exit 64): its node bundle is older than "
+            "this collector"
+        )
+    if code != 0:
+        raise SSHError(f"SSH request failed with exit {code}")
+    return stdout
+
+
+def _waf_cursor_path(config: CollectorConfig, target: NodeTarget) -> Path:
+    return config.staging / f".{target.cluster}--{target.node}.waf-cursor"
+
+
+def _waf_cursor(config: CollectorConfig, target: NodeTarget) -> str:
+    """Where the node's journal was last imported to; `-` for its start."""
+
+    path = _waf_cursor_path(config, target)
+    if not path.exists() and not path.is_symlink():
+        return "-"
+    raw = _read_small_file(path, 1024)
+    try:
+        cursor = raw.decode("ascii").strip()
+    except UnicodeError:
+        return "-"
+    #
+    # A cursor this collector did not write is no position at all. Starting
+    # over costs one read of the node's journal and stores nothing twice.
+    #
+    return cursor if WAF_CURSOR.fullmatch(cursor) else "-"
+
+
+def _storable(text: str, maximum: int) -> str:
+    """Text a PostgreSQL text column takes: no NUL, and nothing UTF-8 cannot encode.
+
+    JSON can spell a lone surrogate (`\\ud800`), which `json.loads` hands on
+    and COPY then cannot encode - an error outside everything the import
+    catches. Neither the engine nor the reader writes one; this does not rely
+    on it.
+    """
+
+    return text.replace("\0", "").encode("utf-8", "replace").decode("utf-8")[:maximum]
+
+
+def _waf_data(item: Any) -> tuple[str, str]:
+    """The field and the value out of a rule's log data, as far as they can be told.
+
+    The rule set writes `Matched Data: <match> found within <field>: <value>`
+    for most attack rules, and every part after the prefix is the requester's
+    own text. The first ` found within ` after the prefix is taken, and the
+    field ends at the first `: ` after it; a request built to say otherwise can
+    move where the split falls, which changes what the page shows and nothing
+    else. The field is kept only where an exception could name it
+    (`waf_field`), so it is never more than a suggestion the model checks
+    again. Data in any other form is the value, with no field.
+    """
+
+    if not isinstance(item, str):
+        return "", ""
+    if item.startswith(WAF_MATCHED_PREFIX):
+        within = item.find(WAF_MATCHED_WITHIN, len(WAF_MATCHED_PREFIX))
+        if within >= 0:
+            name, separator, value = item[within + len(WAF_MATCHED_WITHIN) :].partition(": ")
+            if separator:
+                field = name if len(name) <= MAX_WAF_FIELD and waf_field(name) else ""
+                return field, _storable(value, MAX_WAF_MATCHED)
+    return "", _storable(item, MAX_WAF_MATCHED)
+
+
+def _waf_row(cluster: str, node: str, at: int, cursor: str, message: str) -> tuple[Any, ...] | None:
+    """One `waf_match` row, None for a line that is no match, or CollectorError.
+
+    The engine logs more than matches - starting, reloading, its own errors -
+    and those are not rows. A match is: what the rule set reports, the object
+    taken from the transaction ID HAProxy gave the engine (`<object>.<uuid>`),
+    and the time journald received the line, which no requester writes.
+    """
+
+    try:
+        value = json.loads(message)
+    except ValueError:
+        return None
+    match = value.get("match") if isinstance(value, dict) else None
+    if not isinstance(match, dict):
+        return None
+    rule = match.get("rule_id")
+    if not isinstance(rule, int) or isinstance(rule, bool) or not 1 <= rule <= 999999:
+        raise CollectorError("WAF match rule_id is invalid")
+    #
+    # The score crossing its threshold, and the report of every score: the
+    # traffic record already carries both, and neither is a finding to allow.
+    #
+    if rule // 1000 in WAF_DECIDING_RULES:
+        return None
+    request_id = match.get("unique_id")
+    if not isinstance(request_id, str) or WAF_ID.fullmatch(request_id) is None:
+        raise CollectorError("WAF match unique_id is invalid")
+    name, dot, _ = request_id.partition(".")
+    if not dot or OBJECT_NAME.fullmatch(name) is None:
+        raise CollectorError("WAF match names no object")
+    if not 0 <= at <= MAX_WAF_MICROSECONDS:
+        raise CollectorError("WAF match time is invalid")
+    field, matched = _waf_data(match.get("data"))
+    uri = match.get("uri")
+    path = _storable(uri.partition("?")[0], MAX_WAF_PATH) if isinstance(uri, str) else ""
+    #
+    # The address HAProxy handed the engine (`src-ip=src`), not text from the
+    # request; anything that is not the form of one is not kept.
+    #
+    client = match.get("client")
+    if not isinstance(client, str) or WAF_CLIENT.fullmatch(client) is None:
+        client = ""
+    seconds, microseconds = divmod(at, 1_000_000)
+    return (
+        hashlib.sha256(f"{cluster}\0{node}\0{cursor}".encode()).digest(),
+        cluster,
+        node,
+        datetime.fromtimestamp(seconds, UTC).replace(microsecond=microseconds),
+        request_id,
+        name,
+        rule,
+        field,
+        matched,
+        path,
+        client,
+    )
+
+
+def _parse_waf_response(raw: bytes, target: NodeTarget) -> WafPage:
+    try:
+        header_line, payload = raw.split(b"\n", 1)
+    except ValueError as exc:
+        raise ProtocolError("node WAF response has no header") from exc
+    if len(header_line) > MAX_HEADER_BYTES:
+        raise ProtocolError("node WAF response header is too large")
+    try:
+        header = json.loads(header_line)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ProtocolError("node WAF response header is not JSON") from exc
+    if not isinstance(header, dict) or set(header) != {"cursor", "eof", "reset", "sent"}:
+        raise ProtocolError("node WAF response header has unexpected or missing fields")
+    cursor, sent = header["cursor"], header["sent"]
+    if not isinstance(cursor, str) or (cursor and WAF_CURSOR.fullmatch(cursor) is None):
+        raise ProtocolError("node WAF response cursor is invalid")
+    if not isinstance(header["eof"], bool) or not isinstance(header["reset"], bool):
+        raise ProtocolError("node WAF response flags are invalid")
+    if not isinstance(sent, int) or isinstance(sent, bool) or sent < 0:
+        raise ProtocolError("node WAF response sent is invalid")
+    if payload and not payload.endswith(b"\n"):
+        raise ProtocolError("node WAF response ends in a partial record")
+    lines = payload.splitlines()
+    if sent != len(lines):
+        raise ProtocolError("node WAF response record count is invalid")
+    if header["reset"] and (sent or cursor):
+        raise ProtocolError("node WAF reset response is inconsistent")
+    rows: list[tuple[Any, ...]] = []
+    skipped = 0
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise ProtocolError("node WAF record is not JSON") from exc
+        if not isinstance(record, dict) or set(record) != {"at", "cursor", "message"}:
+            raise ProtocolError("node WAF record has unexpected or missing fields")
+        at, position, message = record["at"], record["cursor"], record["message"]
+        if (
+            not isinstance(at, int)
+            or isinstance(at, bool)
+            or not isinstance(position, str)
+            or WAF_CURSOR.fullmatch(position) is None
+            or not isinstance(message, str)
+        ):
+            raise ProtocolError("node WAF record is invalid")
+        #
+        # The record's frame is the reader's, so a fault in it is the
+        # protocol's; the message inside is the engine's, about a requester's
+        # text, and one that cannot be stored is stepped over and counted -
+        # as an unusable traffic record is - rather than stopping the node.
+        #
+        try:
+            row = _waf_row(target.cluster, target.node, at, position, message)
+        except CollectorError:
+            skipped += 1
+            continue
+        if row is not None:
+            rows.append(row)
+    return WafPage(cursor=cursor, reset=header["reset"], rows=tuple(rows), skipped=skipped)
+
+
+def fetch_waf(config: CollectorConfig, target: NodeTarget, fetch: WafFetch) -> WafPage:
+    """One page of the node's WAF journal after the imported position.
+
+    One page per run, as the traffic log takes one closed day per run: a
+    backlog is caught up a minute at a time without holding more than one
+    response per node in memory.
+    """
+
+    return _parse_waf_response(fetch(target, _waf_cursor(config, target)), target)
+
+
+_WAF_COPY = """
+copy waf_match
+    (event_id, cluster, node, occurred_at, request_id, object, rule_id, field,
+     matched, path, client)
+from stdin
+"""
+
+
+def _ingest_waf(
+    config: CollectorConfig, pages: list[tuple[NodeTarget, WafPage]]
+) -> tuple[int, int]:
+    """Store each node's page, then move its cursor; answer what was skipped: matches, expired."""
+
+    #
+    # Most minutes bring nothing: no WAF on the cluster, or no request matched.
+    # That is no reason to open a database connection per run.
+    #
+    pages = [
+        (target, page)
+        for target, page in pages
+        if page.reset
+        or page.rows
+        or page.skipped
+        or page.cursor not in ("", _waf_cursor(config, target))
+    ]
+    if config.database is None or config.database_socket is None or not pages:
+        return 0, 0
+    try:
+        with psycopg.connect(
+            f"dbname={config.database} host={config.database_socket}", autocommit=False
+        ) as connection:
+            return _ingest_waf_pages(config, connection, pages)
+    except psycopg.Error as exc:
+        raise CollectorError("WAF import failed") from exc
+
+
+def _ingest_waf_pages(
+    config: CollectorConfig,
+    connection: psycopg.Connection[Any],
+    pages: list[tuple[NodeTarget, WafPage]],
+) -> tuple[int, int]:
+    skipped = 0
+    expired = 0
+    days = _database_days(connection, "waf_match")
+    for target, page in pages:
+        path = _waf_cursor_path(config, target)
+        skipped += page.skipped
+        if page.reset:
+            #
+            # The node no longer knows the position: its journal was rotated
+            # past it or replaced. Read it again from the start.
+            #
+            if path.exists() or path.is_symlink():
+                _regular(path, maximum=1024)
+                path.unlink()
+            continue
+        #
+        # Never offered to a day without a partition: PostgreSQL refuses the
+        # whole batch for one such row (see `_database_days`). A match that
+        # falls outside is passed by the cursor all the same - unlike a staged
+        # traffic day, nothing here could hold it until its day exists.
+        #
+        rows = [row for row in page.rows if f"{row[3]:%Y%m%d}" in days]
+        expired += len(page.rows) - len(rows)
+        if rows:
+            with connection.cursor() as cursor, cursor.copy(_WAF_COPY) as copy:
+                for row in rows:
+                    copy.write_row(row)
+            connection.commit()
+        if page.cursor and page.cursor != _waf_cursor(config, target):
+            _replace(path, f"{page.cursor}\n".encode(), 0o600)
+    return skipped, expired
+
+
 @contextlib.contextmanager
 def _run_lock(config: CollectorConfig, *, wait: bool) -> Iterator[bool]:
     """The collector's one lock; yields False when not waiting and another run holds it."""
@@ -1020,6 +1365,10 @@ def forget_database_positions(config: CollectorConfig) -> int:
     over by its own duplicate trigger, so nothing is counted twice. The fetch
     cursors - how far each node's day has been copied - are not touched.
 
+    The WAF journal's cursors are dropped with them: they are database
+    positions too (see `_ingest_waf`), and without them the next runs read each
+    node's journal again from its oldest entry.
+
     Waits for a run in progress rather than racing it: that run's import would
     otherwise write a position back after it was dropped.
     """
@@ -1027,15 +1376,27 @@ def forget_database_positions(config: CollectorConfig) -> int:
     _directory(config.staging)
     with _run_lock(config, wait=True):
         dropped = 0
-        for checkpoint in config.staging.glob(".*.database-offset"):
-            _regular(checkpoint, maximum=32)
-            checkpoint.unlink()
-            dropped += 1
+        for pattern, maximum in ((".*.database-offset", 32), (".*.waf-cursor", 1024)):
+            for checkpoint in config.staging.glob(pattern):
+                _regular(checkpoint, maximum=maximum)
+                checkpoint.unlink()
+                dropped += 1
         return dropped
 
 
+@dataclass(frozen=True, slots=True)
+class _NodeRun:
+    problem: str | None
+    waf: WafPage | None = None
+    waf_problem: str | None = None
+
+
 def collect(
-    config: CollectorConfig, *, now: datetime | None = None, fetch: Fetch | None = None
+    config: CollectorConfig,
+    *,
+    now: datetime | None = None,
+    fetch: Fetch | None = None,
+    fetch_waf_page: WafFetch | None = None,
 ) -> int:
     _directory(config.mirror)
     _directory(config.staging)
@@ -1045,32 +1406,50 @@ def collect(
         attempted = now or datetime.now(UTC)
         window = _mirror_window(config, now=attempted)
         selected = fetch or (lambda node, day, offset: ssh_fetch(config, node, day, offset))
+        selected_waf = fetch_waf_page or (lambda node, cursor: ssh_fetch_waf(config, node, cursor))
 
-        def one(target: NodeTarget) -> str | None:
+        def one(target: NodeTarget) -> _NodeRun:
+            problem = None
             try:
                 collect_node(config, target, now=attempted, fetch=selected, window=window)
             except (CollectorError, OSError) as exc:
-                return str(exc)
-            return None
+                problem = str(exc)
+            if config.database is None:
+                return _NodeRun(problem)
+            #
+            # Its own outcome, apart from the traffic log's: the page's
+            # freshness is the traffic log's metadata, and a node whose WAF
+            # journal cannot be read is still a node whose traffic is current.
+            #
+            try:
+                return _NodeRun(problem, waf=fetch_waf(config, target, selected_waf))
+            except (CollectorError, OSError) as exc:
+                return _NodeRun(problem, waf_problem=str(exc))
 
         #
         # The nodes at once (Fas 16 punkt 1). Each node's staging parts, mirror
         # and metadata carry its own name, so two nodes never touch one file;
         # the import below reads them afterwards, one after the other, as before.
         #
-        problems: list[str | None] = []
+        runs: list[_NodeRun] = []
         if config.nodes:
             with ThreadPoolExecutor(
                 max_workers=min(len(config.nodes), MAX_PARALLEL_NODES)
             ) as threads:
-                problems = list(threads.map(one, config.nodes))
+                runs = list(threads.map(one, config.nodes))
         failures = 0
         mirrored: list[NodeTarget] = []
-        for target, problem in zip(config.nodes, problems, strict=True):
-            if problem is None:
+        pages: list[tuple[NodeTarget, WafPage]] = []
+        for target, run in zip(config.nodes, runs, strict=True):
+            if run.waf is not None:
+                pages.append((target, run.waf))
+            if run.waf_problem is not None:
+                print(f"{target.cluster}/{target.node}: waf: {run.waf_problem}", file=sys.stderr)
+                failures += 1
+            if run.problem is None:
                 mirrored.append(target)
                 continue
-            print(f"{target.cluster}/{target.node}: {problem}", file=sys.stderr)
+            print(f"{target.cluster}/{target.node}: {run.problem}", file=sys.stderr)
             failures += 1
         try:
             skipped, expired = _ingest_database(config)
@@ -1091,6 +1470,18 @@ def collect(
                     outcome="database",
                     success=False,
                 )
+            failures += 1
+        try:
+            skipped, expired = _ingest_waf(config, pages)
+            if skipped:
+                print(f"waf: skipped {skipped} unusable match(es)", file=sys.stderr)
+            if expired:
+                print(
+                    f"waf: {expired} match(es) fall outside the days the database holds",
+                    file=sys.stderr,
+                )
+        except (CollectorError, OSError) as exc:
+            print(f"waf: {exc}", file=sys.stderr)
             failures += 1
         _retire(config, now=attempted, window=window)
         _retire_staging(config, now=attempted, window=window)

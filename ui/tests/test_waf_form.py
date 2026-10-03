@@ -195,7 +195,7 @@ class TheGroupOnTheEditor(EditorTestCase):
         # B231: the sentence alone - nothing to set that the engine would not be there to do.
         self.assertNotIn('<select name="waf_engine_error"', text)
         self.assertNotIn('<select name="waf_paranoia"', text)
-        self.assertNotIn("Findings and exceptions on the WAF page", text)
+        self.assertNotIn("Findings and exceptions in WAF logs", text)
         self.assertIn('<input type="hidden" name="waf_paranoia" value="1">', text)
 
     def test_with_the_switch_off_an_object_without_it_carries_hidden_defaults(self) -> None:
@@ -209,7 +209,7 @@ class TheGroupOnTheEditor(EditorTestCase):
         text = self.page(stored("waf:\n  mode: log\n  exceptions: [{rule: 920350}]\n"))
         self.assertIn('<select name="waf_mode"', text)
         self.assertIn('class="node-table form-exception-table"', text)
-        self.assertIn("Findings and exceptions on the WAF page", text)
+        self.assertIn("Findings and exceptions in WAF logs", text)
 
     def test_the_exceptions_are_listed_and_the_unpublished_ones_marked(self) -> None:
         # 26-10-03: see which exceptions Save and publish sends, not a count.
@@ -235,6 +235,28 @@ class TheGroupOnTheEditor(EditorTestCase):
         self.assertIn("q on /search", rows)
         self.assertIn("id, every path", rows)
         self.assertEqual(rows.count("In draft"), 1, "only the exception not yet published")
+
+    def test_remove_draws_the_page_without_it_and_saves_nothing(self) -> None:
+        # 26-10-03: change one's mind on the publishing page, not back in WAF logs.
+        other = {"rule": 920273, "field": "ARGS:id", "by": "admin", "at": "2026-10-03T20:20:02Z"}
+        client = self.editor()
+        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=[STATUS]):
+            text = self.submit(
+                client,
+                "/proxies/alpha/shop/edit",
+                drop_exception="0",
+                waf_mode="log",
+                waf_engine_error="allow",
+                waf_paranoia="1",
+                waf_exceptions=json.dumps([EXCEPTION, other]),
+            ).text
+        rows = text.split('class="node-table form-exception-table"', 1)[1].split("</table>", 1)[0]
+        self.assertNotIn("q on /search", rows)
+        self.assertIn("id, every path", rows)
+        self.assertIn('value="0" class="secondary-button" formnovalidate>Remove', rows)
+        carried = text.split('name="waf_exceptions" value="', 1)[1].split('"', 1)[0]
+        self.assertEqual(json.loads(carried.replace("&#34;", '"').replace("&quot;", '"')), [other])
+        self.assertEqual(self.saved, [], "removed from the form, not saved")
 
     def test_the_group_opens_when_the_waf_page_sent_the_person(self) -> None:
         document = stored("waf:\n  mode: log\n")

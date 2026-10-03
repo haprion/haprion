@@ -6,7 +6,7 @@
   preselected - the field, on the paths it was seen on, when the rule names a
   field; the paths otherwise. Saved into the object's draft.
 #}
-<section class="page-heading"><div class="heading-title"><h1>WAF</h1></div></section>
+<section class="page-heading"><div class="heading-title"><h1>WAF logs</h1></div></section>
 <form class="allow-dialog" method="post" action="/waf/allow">
   <h2>Let this through on {{ name }}</h2>
   <span class="finding-what"><span class="status-dot status-{{ 'critical' if severity in ('critical', 'error') else 'warning' if severity else 'unknown' }}"></span><span class="finding-kind"{% if explanation %} title="{{ explanation }}"{% endif %}>{{ kind }}</span><span>{{ message }}</span></span>

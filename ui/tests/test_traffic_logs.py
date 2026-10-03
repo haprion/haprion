@@ -563,7 +563,7 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn(">admin-post</span>", waf)
         self.assertIn('status-badge-critical">admin-post', waf)
         self.assertIn('status-badge-warning">scanner', waf)
-        self.assertIn('aria-current="page"><svg', waf.split(">WAF</a>")[0][-400:])
+        self.assertIn('aria-current="page"><svg', waf.split(">WAF logs</a>")[0][-400:])
         self.assertIn('href="/waf?view=requests&amp;sort=', waf)
         self.assertIn('<input type="hidden" name="view" value="requests">', waf)
         self.assertNotIn('name="waf"', waf)

@@ -386,6 +386,8 @@ class ExceptionRow:
     severity: str
     in_draft: bool
     """Made in the draft and not yet published."""
+    index: int = -1
+    """Its place in the form's own list, which the editor's Remove names; -1 elsewhere."""
 
 
 def build_exceptions(
@@ -442,7 +444,11 @@ def form_exceptions(
         return []
     published = object_exceptions(published_document) or ()
     rows = []
-    for exception in _exceptions_from({"exceptions": listed}):
+    for index, item in enumerate(listed):
+        parsed = _exceptions_from({"exceptions": [item]})
+        if not parsed:
+            continue
+        exception = parsed[0]
         rule = rules.get(exception.rule)
         kind_name, explanation = kind(exception.rule // 1000)
         rows.append(
@@ -457,9 +463,23 @@ def form_exceptions(
                 else f"Rule {exception.rule}",
                 severity=rule.severity if rule is not None else "",
                 in_draft=exception not in published,
+                index=index,
             )
         )
     return rows
+
+
+def without_form_exception(carried: str, index: int) -> str:
+    """The form's exceptions without the one at that place; unchanged when there is none."""
+
+    try:
+        listed = json.loads(carried or "[]")
+    except ValueError:
+        return carried
+    if not isinstance(listed, list) or not 0 <= index < len(listed):
+        return carried
+    del listed[index]
+    return json.dumps(listed, separators=(",", ":")) if listed else ""
 
 
 def where(exception: ObjectException, name: str) -> str:

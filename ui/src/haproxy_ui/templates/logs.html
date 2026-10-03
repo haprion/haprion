@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% import "_sort.html" as sort %}
-{% block title %}{{ "WAF" if waf_page else "Traffic logs" }} — HAProxy Manager{% endblock %}
+{% block title %}{{ "WAF logs" if waf_page else "Traffic logs" }} — HAProxy Manager{% endblock %}
 {% block head_extra %}<script defer src="{{ url_for('static', path='/logs.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {% macro date_time_picker(name, label, value, default) %}
@@ -18,7 +18,7 @@
 {% endmacro %}
 <div data-log-region>
 <section class="page-heading{% if waf_page %} waf-heading{% endif %}">
-  <div class="heading-title">{% if waf_page %}<h1>WAF</h1><p class="page-lede">Requests an access rule or the WAF engine logged or refused.</p>{% else %}<h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p>{% endif %}</div>
+  <div class="heading-title">{% if waf_page %}<h1>WAF logs</h1><p class="page-lede">Requests an access rule or the WAF engine logged or refused.</p>{% else %}<h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p>{% endif %}</div>
   <div class="heading-badges">
     {% if enabled and reading.entries %}<div class="log-export"><button class="secondary-button" type="button" data-log-export disabled>Export selected (.csv)</button><span data-log-selected-count>No rows selected</span></div>{% endif %}
     {% if enabled and (reading.unavailable or freshness_warnings or not reading.nodes) %}

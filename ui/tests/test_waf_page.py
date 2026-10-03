@@ -288,7 +288,7 @@ class ThePage(EditorTestCase):
         self.assertIn("text/html", answer.headers["content-type"])
         self.assertIn("that exception is no longer on the object", answer.text)
         self.assertIn('role="alert"', answer.text)
-        self.assertIn("<h1>WAF</h1>", answer.text)
+        self.assertIn("<h1>WAF logs</h1>", answer.text)
         self.assertEqual(self.saved, [])
 
     def test_the_saved_notice_leads_to_where_the_draft_is_published(self) -> None:

@@ -383,6 +383,11 @@ class ObjectForm(BaseModel):
     # beside it makes every field nest under a name no browser sends.
     #
     action: Annotated[str, StringConstraints(max_length=16)] = "check"
+    #
+    # The editor's Remove on one WAF exception: its place in `waf_exceptions`.
+    # The page is drawn again without it, unsaved, as any other change here.
+    #
+    drop_exception: Annotated[str, StringConstraints(max_length=4)] = ""
     expected_revision: Annotated[str, StringConstraints(max_length=16)] = ""
     csrf_token: Annotated[str, StringConstraints(max_length=128)] = ""
 

@@ -180,19 +180,20 @@
       #}
       {% if waf_exceptions %}
       <div class="table-scroll form-exceptions-table"><table class="node-table form-exception-table">
-        <thead><tr><th>Exception</th><th>Where</th><th>Added</th></tr></thead>
+        <thead><tr><th>Exception</th><th>Where</th><th>Added</th><th><span class="visually-hidden">Action</span></th></tr></thead>
         <tbody>
           {% for row in waf_exceptions %}
           <tr>
             <td title="{{ row.message }}">{{ finding_what(row.kind, row.explanation, row.severity, row.message) }}</td>
             <td title="{{ waf_where(row.exception, row.name) }}">{{ waf_where(row.exception, row.name) }}</td>
             <td><span class="users-date">{% if row.exception.by %}{{ row.exception.by }}{% endif %}{% if row.exception.by and row.exception.at %} · {% endif %}{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">In draft</span>{% endif %}</td>
+            <td><button type="submit" name="drop_exception" value="{{ row.index }}" class="secondary-button" formnovalidate>Remove</button></td>
           </tr>
           {% endfor %}
         </tbody>
       </table></div>
       {% endif %}
-      <p class="form-exceptions"><a href="/waf?cluster={{ cluster }}">Findings and exceptions on the WAF page</a></p>
+      <p class="form-exceptions"><a href="/waf?cluster={{ cluster }}">Findings and exceptions in WAF logs</a></p>
     </div>
     {% endif %}
     {% endcall %}

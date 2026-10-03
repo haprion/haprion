@@ -7571,6 +7571,25 @@ def _editor_submit(
     if session.role != "admin":
         return PlainTextResponse("Refused", status_code=403)
 
+    if form.drop_exception.isdigit():
+        form = form.model_copy(
+            update={
+                "waf_exceptions": waf.without_form_exception(
+                    form.waf_exceptions, int(form.drop_exception)
+                ),
+                "drop_exception": "",
+            }
+        )
+        return _editor_page(
+            request,
+            config,
+            cluster,
+            name,
+            form,
+            draft_revision=form.expected_revision,
+            open_group="waf",
+        )
+
     if form.action == "check":
         return _editor_page(
             request, config, cluster, name, form, draft_revision=form.expected_revision

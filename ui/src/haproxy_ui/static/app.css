@@ -1222,6 +1222,8 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 .form-exception-table th:nth-child(1), .form-exception-table td:nth-child(1) { width: auto; }
 .form-exception-table th:nth-child(2), .form-exception-table td:nth-child(2) { width: 240px; }
 .form-exception-table th:nth-child(3), .form-exception-table td:nth-child(3) { width: 290px; }
+.form-exception-table th:nth-child(4), .form-exception-table td:nth-child(4) { width: 100px; text-align: right; overflow: visible; }
+.form-exception-table .secondary-button { min-height: 24px; padding: 0 9px; font-size: 12px; white-space: nowrap; }
 .form-group { border-top: 1px solid var(--line); }
 /* A row whose every group the shape has hidden - no check, say - draws no rule either. */
 .form-groups:not(:has(> .form-group:not([hidden]))) { display: none; }

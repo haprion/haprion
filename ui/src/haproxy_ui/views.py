@@ -7334,6 +7334,7 @@ def _editor_page(
     notice: str = "",
     probe_asked: bool = False,
     open_group: str = "",
+    answered: bool = True,
 ) -> Response:
     """Draw the editor, whether it was reached by a link or by a submission.
 
@@ -7376,7 +7377,7 @@ def _editor_page(
     # the nodes about the backend, and a page that answered it with a verdict on
     # the document would be reporting on work the person did not ask about.
     #
-    submitted = form is not None and form.action != "recheck"
+    submitted = form is not None and form.action != "recheck" and answered
     if form is None:
         #
         # Opened rather than submitted. A draft is what the person was last
@@ -7588,6 +7589,11 @@ def _editor_submit(
             form,
             draft_revision=form.expected_revision,
             open_group="waf",
+            #
+            # A change to the form, not a question about the object: the page
+            # answers nothing, so it shows no verdict and no stored object.
+            #
+            answered=False,
         )
 
     if form.action == "check":

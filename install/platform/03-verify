@@ -46,7 +46,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\njob\nlogin_attempt\nlogin_unlock\nmetric_backend_hour\nmetric_backend_member\nmetric_frontend\nmetric_rollup_state\nndes_provider_profile\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\ntraffic_log\nversion_diff'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\njob\nlogin_attempt\nlogin_unlock\nmetric_backend_hour\nmetric_backend_member\nmetric_frontend\nmetric_rollup_state\nndes_provider_profile\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\ntraffic_log\nversion_diff\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -83,7 +83,8 @@ step "Column privileges"
 # rollback. They are listed until the schema change that drops them.
 #
 expected_grants=$(cat <<'EOF'
-app_collector	traffic_log	INSERT	backend, bytes, client, cluster, connect_time, event_id, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, rule, server, status, total_time, waf_rules, waf_score
+app_collector	traffic_log	INSERT	backend, bytes, client, cluster, connect_time, event_id, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, rule, server, status, total_time, waf_id, waf_rules, waf_score
+app_collector	waf_match	INSERT	client, cluster, event_id, field, matched, node, object, occurred_at, path, request_id, rule_id
 app_poller	cluster_backups	INSERT	cluster, error, outcome, poll_error, result, warnings
 app_poller	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_poller	cluster_backups	UPDATE	error, outcome, poll_error, result, warnings
@@ -172,8 +173,9 @@ app_web	proxy_draft	INSERT	base_hash, base_version, cluster, deleted, object_id,
 app_web	proxy_draft	SELECT	base_hash, base_version, cluster, deleted, id, object_id, revision, updated_at, updated_by, yaml
 app_web	proxy_draft	UPDATE	base_hash, base_version, deleted, updated_by, yaml
 app_web	search_entry	SELECT	admin_only, cluster, href, kind, label, source, title, value
-app_web	traffic_log	SELECT	backend, bytes, client, cluster, connect_time, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, rule, server, status, total_time, waf_rules, waf_score
+app_web	traffic_log	SELECT	backend, bytes, client, cluster, connect_time, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, rule, server, status, total_time, waf_id, waf_rules, waf_score
 app_web	version_diff	SELECT	cluster, commit, diff, recorded_at
+app_web	waf_match	SELECT	client, cluster, field, matched, node, object, occurred_at, path, request_id, rule_id
 app_worker	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_worker	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_worker	dns_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version

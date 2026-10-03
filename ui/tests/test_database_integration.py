@@ -329,7 +329,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0051",))
+            self.assertEqual(cursor.fetchone(), ("0052",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -472,6 +472,9 @@ class ARealDatabase(unittest.TestCase):
                 "select waf_rules, waf_score from traffic_log where host = 'service.example.com'"
             )
             self.assertEqual(cursor.fetchall(), [("", 0)])
+            # ... and no engine transaction (0052).
+            cursor.execute("select waf_id from traffic_log where host = 'service.example.com'")
+            self.assertEqual(cursor.fetchall(), [("",)])
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 cursor.execute(statement, values)
         with (
@@ -595,7 +598,7 @@ class ARealDatabase(unittest.TestCase):
                 migration.downgrade()
                 cursor.execute(
                     "select count(*) from information_schema.columns "
-                    "where table_name = 'traffic_log' and column_name like 'waf_%%'"
+                    "where table_name = 'traffic_log' and column_name in ('waf_rules', 'waf_score')"
                 )
                 self.assertEqual(cursor.fetchone(), (0,))
                 migration.upgrade()
@@ -604,6 +607,115 @@ class ARealDatabase(unittest.TestCase):
                 )
                 self.assertEqual(cursor.fetchall(), [("", 0)])
             connection.rollback()
+
+    def test_waf_matches_are_bounded_joined_and_downgrade_and_upgrade_cleanly(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        insert = (
+            "insert into waf_match (event_id, cluster, node, occurred_at, request_id, object, "
+            "rule_id, field, matched, path, client) values "
+            "(%s, 'alpha', 'node-a', %s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing"
+        )
+        good = (
+            "ABCDEFGHIJKLMNOP",
+            "shop",
+            942100,
+            "ARGS:q",
+            "1' OR 1=1--",
+            "/search",
+            "192.0.2.10",
+        )
+        with self.connect() as connection:
+            connection.execute("select waf_match_partition(%s::date)", (now.date(),))
+            connection.execute("select traffic_log_partition(%s::date)", (now.date(),))
+            connection.commit()
+        for index, value in (
+            (0, "has space"),  # request_id
+            (0, "A" * 65),
+            (1, "Shop"),  # object
+            (2, 0),  # rule_id
+            (2, 1_000_000),
+            (3, "ARGS:q\nsecond"),  # field: no control characters
+            (3, "A" * 257),
+            (4, "x" * 1025),  # matched
+            (5, "/" * 2049),  # path
+            (6, "1" * 65),  # client
+        ):
+            row = list(good)
+            row[index] = value
+            with (
+                self.subTest(column=index, value=str(value)[:20]),
+                self.connect() as connection,
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                connection.execute(insert, (b"w" * 32, now, *row))
+        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            connection.execute(insert, (b"m" * 32, now, *good))
+            connection.execute(insert, (b"m" * 32, now, *good))  # a re-read changes nothing
+            connection.execute(
+                "insert into traffic_log (event_id, cluster, node, occurred_at, "
+                "request_number, client, method, host, path, frontend, backend, server, "
+                "status, request_time, queue_time, connect_time, response_time, "
+                "total_time, bytes, rule, waf_id) values (%s, 'alpha', 'node-a', %s, 1, "
+                "'192.0.2.10', 'GET', 'match.example.com', '/search', 'f', 'b', 's', 200, "
+                "0, 0, 0, 0, 0, 0, 'crs:log', %s) on conflict do nothing",
+                (b"t" * 32, now, good[0]),
+            )
+        with (
+            self.connect() as connection,
+            self.assertRaises(psycopg.errors.CheckViolation),
+        ):
+            connection.execute(
+                "update traffic_log set waf_id = 'has space' where host = 'match.example.com'"
+            )
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select t.path, m.object, m.rule_id, m.field, m.matched from traffic_log t "
+                "join waf_match m on m.cluster = t.cluster and m.request_id = t.waf_id "
+                "where t.host = 'match.example.com'"
+            )
+            self.assertEqual(cursor.fetchall(), [("/search", "shop", 942100, "ARGS:q", good[4])])
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                cursor.execute(insert, (b"n" * 32, now, *good))
+        with self.connect() as connection, connection.cursor() as cursor:
+            old = now.date() - timedelta(days=30)
+            cursor.execute("select waf_match_partition(%s::date)", (old,))
+            cursor.execute(self.retention_partitions_expired("waf_match"))
+            expired = [row[0] for row in cursor.fetchall()]
+            self.assertIn(f"waf_match_{old:%Y%m%d}", expired)
+            self.assertNotIn(f"waf_match_{now:%Y%m%d}", expired)
+            connection.rollback()
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0052_waf_match.py", cursor)
+                migration.downgrade()
+                cursor.execute("select to_regclass('public.waf_match')")
+                self.assertEqual(cursor.fetchone(), (None,))
+                cursor.execute(
+                    "select count(*) from information_schema.columns "
+                    "where table_name = 'traffic_log' and column_name = 'waf_id'"
+                )
+                self.assertEqual(cursor.fetchone(), (0,))
+                migration.upgrade()
+                cursor.execute("select waf_id from traffic_log where host = 'match.example.com'")
+                self.assertEqual(cursor.fetchall(), [("",)])
+            connection.rollback()
+
+    def retention_partitions_expired(self, table: str) -> str:
+        """The retention command's own query for a day-partitioned table's expired days."""
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'eval "$(sed -n \'/^TRAFFIC_KEEP_DAYS=/p;/^partitions_expired() {/,/^}/p\' "$0")"; '
+                'partitions_expired "$1"',
+                str(script),
+                table,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
 
     def test_collector_copy_is_checkpointed_and_safe_to_repeat(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)

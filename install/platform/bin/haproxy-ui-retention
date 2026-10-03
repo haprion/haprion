@@ -184,10 +184,6 @@ rollup_state_present() {
     [[ "$(psql_as -c "select to_regclass('public.metric_rollup_state') is not null")" == "t" ]]
 }
 
-traffic_logs_present() {
-    [[ "$(psql_as -c "select to_regclass('public.traffic_log') is not null")" == "t" ]]
-}
-
 oidc_logins_present() {
     [[ "$(psql_as -c "select to_regclass('public.oidc_login') is not null")" == "t" ]]
 }
@@ -298,14 +294,22 @@ account_history() {
     account_history_table login_attempt "$(where_login_attempt_old)" "${LOGIN_ATTEMPT_KEEP_DAYS} day(s)"
 }
 
-traffic_partitions_expired() {
+#
+# The day-partitioned record tables share one window: the traffic log and,
+# since 0052, the WAF engine's matches, which are read beside the requests they
+# came from. Each has its own `<table>_partition(day)` from its migration.
+#
+TRAFFIC_TABLES=(traffic_log waf_match)
+
+partitions_expired() {
+    local parent="$1"
     cat <<SQL
     select child.relname
       from pg_inherits
       join pg_class parent on parent.oid = pg_inherits.inhparent
       join pg_class child on child.oid = pg_inherits.inhrelid
-     where parent.relname = 'traffic_log'
-       and child.relname ~ '^traffic_log_[0-9]{8}\$'
+     where parent.relname = '${parent}'
+       and child.relname ~ '^${parent}_[0-9]{8}\$'
        and to_date(right(child.relname, 8), 'YYYYMMDD')
            < current_date - ${TRAFFIC_KEEP_DAYS} + 1
      order by child.relname
@@ -313,28 +317,31 @@ SQL
 }
 
 traffic_partitions() {
-    local partition
-    local -a expired=()
-    traffic_logs_present || return 0
-    if [[ "$dry_run" -eq 1 ]]; then
-        log "  traffic_log: dry run, partition horizon unchanged"
-    else
-        psql_as -c "select traffic_log_partition(day::date)
-                      from generate_series(
-                          current_date - ${TRAFFIC_KEEP_DAYS} + 1,
-                          current_date + ${TRAFFIC_AHEAD_DAYS},
-                          interval '1 day'
-                      ) as day" >/dev/null
-    fi
-    mapfile -t expired < <(psql_as -c "$(traffic_partitions_expired)")
-    if [[ "$dry_run" -eq 1 ]]; then
-        log "  traffic_log: ${#expired[@]} expired partition(s), none dropped"
-        return 0
-    fi
-    for partition in "${expired[@]}"; do
-        psql_as -c "drop table if exists \"${partition}\""
+    local table partition
+    local -a expired
+    for table in "${TRAFFIC_TABLES[@]}"; do
+        [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
+        expired=()
+        if [[ "$dry_run" -eq 1 ]]; then
+            log "  ${table}: dry run, partition horizon unchanged"
+        else
+            psql_as -c "select ${table}_partition(day::date)
+                          from generate_series(
+                              current_date - ${TRAFFIC_KEEP_DAYS} + 1,
+                              current_date + ${TRAFFIC_AHEAD_DAYS},
+                              interval '1 day'
+                          ) as day" >/dev/null
+        fi
+        mapfile -t expired < <(psql_as -c "$(partitions_expired "$table")")
+        if [[ "$dry_run" -eq 1 ]]; then
+            log "  ${table}: ${#expired[@]} expired partition(s), none dropped"
+            continue
+        fi
+        for partition in "${expired[@]}"; do
+            psql_as -c "drop table if exists \"${partition}\""
+        done
+        log "  ${table}: dropped ${#expired[@]} expired partition(s)"
     done
-    log "  traffic_log: dropped ${#expired[@]} expired partition(s)"
 }
 
 metrics_report() {
@@ -664,7 +671,7 @@ counts() {
 }
 
 main() {
-    local total removable removed
+    local total removable removed table
     { read -r total; read -r removable; } < <(counts)
 
     log "  ${DB_NAME}: ${total} job row(s), ${removable} older than ${KEEP_DAYS} day(s)"
@@ -673,9 +680,10 @@ main() {
     case "$command" in
         report)
             metrics_report
-            if traffic_logs_present; then
-                log "  traffic_log: $(psql_as -c 'select count(*) from traffic_log') row(s), retention ${TRAFFIC_KEEP_DAYS} day(s)"
-            fi
+            for table in "${TRAFFIC_TABLES[@]}"; do
+                [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
+                log "  ${table}: $(psql_as -c "select count(*) from ${table}") row(s), retention ${TRAFFIC_KEEP_DAYS} day(s)"
+            done
             oidc_logins
             version_diffs
             account_history

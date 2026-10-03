@@ -628,6 +628,19 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertNotIn("<script>alert(1)</script>", page)
         self.assertIn("&lt;script&gt;", page)
 
+    def test_an_invalid_search_is_shown_as_the_form_s_error(self) -> None:
+        # 26-10-03: it was drawn with classes no rule styled, as plain text.
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page(query="?q=api+AND")
+
+        self.assertIn(
+            '<p class="preview-notice form-problem" role="alert">'
+            '<span class="status-orb status-critical" aria-hidden="true"></span>'
+            "<strong>The search expression ends with an operator.</strong></p>",
+            page,
+        )
+
     def test_the_page_shows_the_configured_destination_instead_of_s3(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(
             record(backend="mgd-sample-proxy-primary-backend", server="s3")

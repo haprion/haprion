@@ -1119,10 +1119,10 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   margin: 0 0 16px; padding: 11px 16px; border-left: 3px solid var(--info);
   border-radius: var(--radius-sm); background: var(--info-soft); color: var(--text);
 }
-/* A finished act, and one that leaves something open (26-10-03): the notice
-   takes the tone its orb already has, as the badges do. Blue stays information. */
-.preview-notice.notice-done { border-left-color: var(--healthy); background: var(--healthy-soft); }
-.preview-notice.notice-warning { border-left-color: var(--warning); background: var(--warning-soft); }
+/* A finished act, and one that leaves something open (26-10-03): the edge takes
+   the tone its orb already has, on the cards' own ground. Blue stays information. */
+.preview-notice.notice-done { border-left-color: var(--healthy); background: var(--panel); }
+.preview-notice.notice-warning { border-left-color: var(--warning); background: var(--panel); }
 .preview-form { display: grid; gap: 18px; margin-bottom: 18px; }
 /* Outside the form's grid, so its gap does not reach it (measured 0 px, 26-10-02). */
 .draft-card { margin-bottom: 18px; }

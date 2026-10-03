@@ -546,7 +546,7 @@ HAProxy's buffer holds it.
 
 ```yaml
 waf:
-  mode: log                # log (the default) or block
+  mode: log                # log (the default), block, or off
   on_engine_error: allow   # allow (the default) or deny
   paranoia: 1              # CRS paranoia level, 1 to 4
   exceptions:              # false alarms let through, each as narrow as it can be
@@ -556,6 +556,9 @@ waf:
       by: admin            # who made it, and when (the WAF page fills these in)
       at: 2026-10-03T09:10:00Z
 ```
+
+`off` keeps the settings and the exceptions while the engine inspects nothing:
+the release then carries no trace of it, as for an object without `waf`.
 
 **Look before refusing.** In `log` a request the engine would refuse is served,
 and its traffic record says `crs:log` with the CRS rules it matched and its

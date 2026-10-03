@@ -796,6 +796,11 @@ class Waf:
     paranoia: int = 1
     exceptions: tuple[WafException, ...] = ()
 
+    @property
+    def inspecting(self) -> bool:
+        """Whether the engine sees the object's requests: `off` keeps settings, not inspection."""
+        return self.mode != "off"
+
 
 @dataclass(frozen=True, slots=True)
 class WafException:
@@ -922,7 +927,12 @@ class Proxy:
     """Refusals on path, method, header and source, in order (Fas 21)."""
 
     waf: Waf | None = None
-    """The WAF engine's settings. None means the engine does not see this object."""
+    """The WAF engine's settings. None, or `mode: off`, means the engine does not see this object."""
+
+    @property
+    def inspected(self) -> Waf | None:
+        """The settings the engine applies, or None where it does not see the object."""
+        return self.waf if self.waf is not None and self.waf.inspecting else None
 
     max_request_body: int | None = None
     """The largest declared request body in bytes. None means no limit (Fas 21).
@@ -2095,7 +2105,13 @@ def _body_size(value: Any, location: str) -> int | None:
     return size
 
 
-WAF_MODES = ("log", "block")
+#
+# `off` keeps the settings and the exceptions while the engine looks at nothing
+# (26-10-03): turning the engine off for a while is not deleting the work of
+# telling false alarms from attacks, and a form that could only drop the whole
+# block would do exactly that.
+#
+WAF_MODES = ("log", "block", "off")
 WAF_ENGINE_ERRORS = ("allow", "deny")
 #
 # The CRS rule ranges an object may turn off: the attack rules the engine
@@ -2219,6 +2235,12 @@ def _waf(value: Any, location: str) -> Waf | None:
         )
     _only_keys(data, {"mode", "on_engine_error", "paranoia", "exceptions"}, location)
     mode = data.get("mode", "log")
+    #
+    # YAML reads an unquoted `off` as false, and `mode: off` is how a person
+    # writes it. Only false: `true` names no mode.
+    #
+    if mode is False:
+        mode = "off"
     if mode not in WAF_MODES:
         raise ModelError(f"{location}.mode must be one of: {', '.join(WAF_MODES)}")
     on_error = data.get("on_engine_error", "allow")

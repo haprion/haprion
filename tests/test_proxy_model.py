@@ -634,9 +634,19 @@ class TheWafEngineOnAnObject(unittest.TestCase):
         # The same rule on another scope is another exception.
         self.load("waf: {exceptions: [{rule: 942100, paths: [/a]}, {rule: 942100, field: ARGS:q}]}")
 
+    def test_off_keeps_the_settings_and_inspects_nothing(self) -> None:
+        proxy = self.load("waf: {mode: off, paranoia: 3, exceptions: [{rule: 920350}]}")
+        assert proxy.waf is not None
+        self.assertEqual((proxy.waf.mode, proxy.waf.paranoia), ("off", 3))
+        self.assertEqual(len(proxy.waf.exceptions), 1)
+        self.assertIsNone(proxy.inspected)
+        logging = self.load("waf: {mode: log}")
+        self.assertIs(logging.inspected, logging.waf)
+
     def test_values_outside_their_range_are_refused_by_name(self) -> None:
         for block, field in (
             ("waf: {mode: deny}", "mode"),
+            ("waf: {mode: on}", "mode"),
             ("waf: {on_engine_error: block}", "on_engine_error"),
             ("waf: {paranoia: 5}", "paranoia"),
             ("waf: {paranoia: true}", "paranoia"),

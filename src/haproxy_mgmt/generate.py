@@ -407,7 +407,7 @@ def generate(
     }
     if settings.log_targets or settings.metrics is not None:
         files[CLUSTER_FILE] = _cluster_file(settings)
-    guarded = [proxy for proxy in ordered if proxy.waf is not None]
+    guarded = [proxy for proxy in ordered if proxy.inspected is not None]
     if guarded:
         _refuse_waf_port(settings, reservations)
         files[WAF_FILE] = _waf_backend_file()
@@ -1198,7 +1198,9 @@ def _frontend_file(
             ),
             *(
                 (f"    filter spoe engine {WAF_SPOE_ENGINE} config {WAF_DIRECTORY}/spoe.conf",)
-                if any(proxy.waf is not None and role == "serve" for _, proxy, role in members)
+                if any(
+                    proxy.inspected is not None and role == "serve" for _, proxy, role in members
+                )
                 else ()
             ),
             f"    timeout client {TIMEOUT_CLIENT}",
@@ -1769,7 +1771,8 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
     here, so changing it changes HAProxy's configuration and nothing else.
     """
 
-    if proxy.waf is None:
+    waf = proxy.inspected
+    if waf is None:
         return []
     verdict = "{ var(txn.coraza.action) -m str deny }"
     failed = "{ var(txn.coraza.error) -m found }"
@@ -1783,9 +1786,9 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
         #
         f'    http-request set-var-fmt(txn.coraza.request) "{proxy.name}.%[uuid]" if {host}',
         f"    http-request send-spoe-group {WAF_SPOE_ENGINE} {WAF_SPOE_GROUP} if {host}",
-        *_verdict(f"{host} {verdict}", "crs", "deny" if proxy.waf.mode == "block" else "log"),
+        *_verdict(f"{host} {verdict}", "crs", "deny" if waf.mode == "block" else "log"),
     ]
-    if proxy.waf.on_engine_error == "deny":
+    if waf.on_engine_error == "deny":
         lines += [
             f"    http-request set-var(txn.rule) str(waf-engine:deny) if {host} {failed}",
             f"    http-request deny deny_status 503 if {host} {failed}",

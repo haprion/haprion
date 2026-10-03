@@ -2799,6 +2799,16 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
         self.assertNotIn("1000-waf.cfg", layer.configuration)
         self.assertNotIn("spoe", layer.configuration["1000-frontends.cfg"])
 
+    def test_an_object_with_the_engine_off_is_generated_as_one_without_it(self) -> None:
+        """`mode: off` keeps the settings and exceptions in the object (26-10-03);
+        the release carries no trace of the engine, so a node needs none."""
+
+        layer = self.layer("  mode: off\n  paranoia: 2\n  exceptions: [{rule: 920350}]")
+        self.assertEqual(layer.waf_files, {})
+        self.assertNotIn("1000-waf.cfg", layer.configuration)
+        self.assertNotIn("spoe", layer.configuration["1000-frontends.cfg"])
+        self.assertNotIn("coraza", layer.configuration["1000-frontends.cfg"])
+
     def test_each_object_is_an_application_and_an_unknown_name_inspects_nothing(self) -> None:
         layer = self.layer("  paranoia: 3\n  exceptions: [{rule: 920350}]")
         engine = layer.waf_files["coraza.yaml"]

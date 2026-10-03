@@ -18,7 +18,7 @@
 <p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> This page refreshes until it has finished.</p>
 {% endif %}
 {% if done %}
-<p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>{{ done }}</strong></p>
+<p class="preview-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>{{ done }}</strong></p>
 {% endif %}
 {% if problem %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>

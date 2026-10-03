@@ -18,7 +18,7 @@
 </section>
 {% include "_waf-views.html" %}
 {% if problem %}<p class="preview-notice form-problem" role="alert"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>{% endif %}
-{% if saved and saved_in %}<p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span>Saved in the draft of <a href="/proxies/{{ saved_in | urlencode }}/{{ saved | urlencode }}/edit?open=waf">{{ saved }}</a>. Publish it there for the change to take effect.</p>{% endif %}
+{% if saved and saved_in %}<p class="preview-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span>Saved in the draft of <a href="/proxies/{{ saved_in | urlencode }}/{{ saved | urlencode }}/edit?open=waf">{{ saved }}</a>. Publish it there for the change to take effect.</p>{% endif %}
 
 {% from "_waf-finding.html" import finding_what %}
 

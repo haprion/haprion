@@ -125,7 +125,7 @@
   nothing at all (26-10-03). Only as much as was checked - HAProxy itself
   reads the configuration when it is published, not here.
 #}
-{% if not result.problem %}<p class="preview-notice"><span class="status-orb status-{{ 'healthy' if result.beside_others else 'warning' }}" aria-hidden="true"></span>{% if result.beside_others %}<strong>Valid.</strong> Checked with the other objects in {{ cluster }}; HAProxy checks the configuration when it is published.{% else %}<strong>Valid on its own.</strong> Not checked with the other objects in {{ cluster }}.{% endif %}</p>{% endif %}
+{% if not result.problem %}<p class="preview-notice {{ 'notice-done' if result.beside_others else 'notice-warning' }}"><span class="status-orb status-{{ 'healthy' if result.beside_others else 'warning' }}" aria-hidden="true"></span>{% if result.beside_others %}<strong>Valid.</strong> Checked with the other objects in {{ cluster }}; HAProxy checks the configuration when it is published.{% else %}<strong>Valid on its own.</strong> Not checked with the other objects in {{ cluster }}.{% endif %}</p>{% endif %}
 {#
   Folded, as the object page folds its source (26-10-03): the verdict is the
   answer, and the document is there for whoever wants to read it.

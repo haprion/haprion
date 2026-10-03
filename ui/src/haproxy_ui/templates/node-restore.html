@@ -29,14 +29,14 @@
 {% elif restore.stage == 'prepare_failed' %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore could not be prepared: {{ restore.error }}</strong></p>
 {% elif restore.stage == 'done' %}
-<p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>Restored.</strong> {{ restore.result.hostname or restore.node }} answers on {{ restore.result.address or '—' }}; the one-time key has been removed.</p>
+<p class="preview-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>Restored.</strong> {{ restore.result.hostname or restore.node }} answers on {{ restore.result.address or '—' }}; the one-time key has been removed.</p>
 {% elif restore.stage == 'failed' %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore stopped{% if restore.failed_stage %} in {{ restore.failed_stage }}{% endif %}: {{ restore.error }}</strong></p>
 {% if not restore.failed_stage and not restore.rolled_back %}<p class="table-note">The helper's answer could not be read, so whether anything was written is not known. Check the node before anything else.</p>
 {% elif restore.mode == 'overwrite' %}<p class="table-note">{% if restore.rolled_back %}The node was put back from its copy and keepalived started again.{% else %}The node was not put back. Check its console before anything else.{% endif %}</p>
 {% else %}<p class="table-note">{% if restore.rolled_back %}The network was rolled back: the VM is on its temporary address again.{% else %}The network was not rolled back. Check the VM's console before anything else.{% endif %}</p>{% endif %}
 {% elif restore.stage == 'unknown' %}
-<p class="preview-notice"><span class="status-orb status-warning" aria-hidden="true"></span><strong>Outcome unknown.</strong> The restore's answer never arrived, and it may have changed the node.</p>
+<p class="preview-notice notice-warning"><span class="status-orb status-warning" aria-hidden="true"></span><strong>Outcome unknown.</strong> The restore's answer never arrived, and it may have changed the node.</p>
 {% if restore.standing %}<p class="table-note">{{ restore.standing }}</p>{% endif %}
 {% elif restore.stage == 'expired' %}
 <p class="preview-notice"><span class="status-orb status-unknown" aria-hidden="true"></span><strong>Expired.</strong> A run has an hour from being prepared to being started, and this one's ended at {{ expires }}. Start the restore again from the backup page. This manager removes the run's one-time key, and the VM stops accepting it by itself.</p>

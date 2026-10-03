@@ -790,6 +790,8 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    divider above it, so this one does not draw a second. */
 .config-details > summary { border-top: 0; padding-top: 4px; }
 .config-details[open] > summary { padding-bottom: 4px; }
+/* Alone in its card (the editor's verdict, 26-10-03): as much room above as below. */
+.result-card > .config-details > summary { padding-top: 13px; }
 
 /* A one-line page lede sits beside the heading so the metric row keeps its height. */
 .heading-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }

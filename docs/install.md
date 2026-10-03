@@ -161,6 +161,11 @@ under `/usr/lib/systemd/journald@haproxy-waf.conf.d/`; override them in `/etc`.
 nothing else in the journal (`/etc/tmpfiles.d/haproxy-manager-waf.conf`), and the
 collector reads it through the same forced command as the traffic log.
 
+When updating to a release that reads the engine's journal, install its node bundle on
+every node **before** the release on the management host. The nodes' reader still answers
+an older collector; the new collector counts a node whose reader cannot answer it as a
+failed run, rather than showing that node's WAF findings as none.
+
 ## 6. Verify access
 
 Open `https://<SERVER_NAME>` and sign in with the administrator account created during

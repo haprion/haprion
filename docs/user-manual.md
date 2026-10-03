@@ -578,6 +578,8 @@ without `paths` on every path; without either, on the whole object. The rules
 that decide and report rather than detect (CRS 949xxx, 959xxx, 980xxx) cannot be
 excepted - that would turn the engine off. A field name with characters other
 than letters, digits and `_ . - [ ]` cannot be named; except the path instead.
+`exceptions` came with engine API 13 and replaced engine API 12's
+`exclude_rules`, which is refused with a message saying so.
 
 **When the engine does not answer** - stopped, restarting, or overloaded -
 `allow` serves the request uninspected and records `waf-engine:log`, and `deny`

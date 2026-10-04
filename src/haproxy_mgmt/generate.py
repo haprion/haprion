@@ -30,6 +30,7 @@ meaning without being regenerated.
 from __future__ import annotations
 
 import ipaddress
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -948,8 +949,9 @@ def _refuse_unknown_networks(
 
 
 def _refuse_duplicate_names(proxies: Sequence[Proxy]) -> None:
-    names = [proxy.name for proxy in proxies]
-    duplicates = sorted({name for name in names if names.count(name) > 1})
+    # One pass, not a count per name (review 2026-10-03, K2): quadratic at 10 000 objects.
+    counted = Counter(proxy.name for proxy in proxies)
+    duplicates = sorted(name for name, count in counted.items() if count > 1)
     if duplicates:
         raise GeneratorError(f"two objects share a name: {', '.join(duplicates)}")
 

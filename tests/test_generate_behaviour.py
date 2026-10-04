@@ -31,14 +31,21 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from haproxy_mgmt import geo
 from haproxy_mgmt.cluster_settings import ClusterSettings, Metrics
 from haproxy_mgmt.config import AbuseProtection, Vip
-from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, GeneratedLayer, generate
+from haproxy_mgmt.generate import (
+    NODE_CERTIFICATE_DIR,
+    GeneratedLayer,
+    GeneratorError,
+    generate,
+)
 from haproxy_mgmt.proxy_model import load_proxy
 from haproxy_mgmt.route_match import order_routes, rewrite, select
 from tests import spawned
@@ -2827,6 +2834,31 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
                 started = time.monotonic()
                 self.ask("/?q=hello", name=name)
                 self.assertLess(time.monotonic() - started, 0.25)
+
+
+class TwoObjectsMayNotShareAName(unittest.TestCase):
+    """Review 2026-10-03, K2: one pass over the names, the same refusal as before."""
+
+    def shop(self, name: str) -> Any:
+        document = OBJECT.format(hostname=f"{name}.example.com", web=8080, api=8081, orders=8082)
+        proxy = load_proxy("shop", document.encode())
+        return replace(proxy, name=name)
+
+    def layer(self, *names: str) -> GeneratedLayer:
+        return generate(
+            [self.shop(name) for name in names],
+            vips={"main": Vip(name="main", address="192.0.2.1")},
+            default_vip="main",
+        )
+
+    def test_the_names_that_repeat_are_listed_once_in_order(self) -> None:
+        with self.assertRaises(GeneratorError) as raised:
+            self.layer("shop", "web", "shop", "api", "web", "web")
+        self.assertEqual(str(raised.exception), "two objects share a name: shop, web")
+
+    def test_no_objects_and_unique_names_are_accepted(self) -> None:
+        self.assertIsInstance(self.layer(), GeneratedLayer)
+        self.assertIsInstance(self.layer("shop", "web"), GeneratedLayer)
 
 
 class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):

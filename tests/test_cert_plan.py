@@ -232,7 +232,8 @@ class OrderAndBlockingTests(unittest.TestCase):
 
         self.assertIs(blocked, Outcome.BLOCKED)
         self.assertIs(overridden, Outcome.DONE)
-        self.assertEqual(trace, ["deploy:node-a", "deploy:node-b"])
+        # The known standby before the node whose ownership is unknown (review 2026-10-03, F1).
+        self.assertEqual(trace, ["deploy:node-b", "deploy:node-a"])
 
     def test_an_unreadable_peer_still_reconciles_the_reachable_node(self) -> None:
         state = pair(

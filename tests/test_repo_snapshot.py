@@ -208,6 +208,23 @@ class ReadingATree(RepositoryFixture):
             self.assertEqual(files["core/haproxy.cfg"], HAPROXY_CFG)
             self.assertEqual(len(files), 3 + len(awkward))
 
+    def test_a_reader_may_ask_for_only_the_files_it_needs(self) -> None:
+        """Review 2026-10-03, K4: the settings reader needs one file of the tree."""
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self.repository(Path(directory))
+            tree = git(repo, "rev-parse", "HEAD^{tree}")
+            whole = read_tree_files(repo, tree)
+
+            self.assertEqual(
+                read_tree_files(repo, tree, ("core/haproxy.cfg",)),
+                {"core/haproxy.cfg": whole["core/haproxy.cfg"]},
+            )
+            self.assertEqual(
+                read_tree_files(repo, tree, ("managed/",)),
+                {path: data for path, data in whole.items() if path.startswith("managed/")},
+            )
+            self.assertEqual(read_tree_files(repo, tree, ("managed/cluster.yaml",)), {})
+
     def test_an_empty_tree_reads_as_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = self.repository(Path(directory))

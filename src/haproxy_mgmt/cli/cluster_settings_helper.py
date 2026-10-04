@@ -41,7 +41,7 @@ def settings_result(cluster: Cluster) -> dict[str, object]:
     """The settings at the published head, and that head."""
 
     _branch, head = resolve_head(cluster.config_path)
-    files = read_tree_files(cluster.config_path, head)
+    files = read_tree_files(cluster.config_path, head, (LOCATION,))
     return {
         "cluster": cluster.cluster_id,
         "head": head,

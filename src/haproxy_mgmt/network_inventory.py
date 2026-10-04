@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from haproxy_mgmt.config import Cluster
-from haproxy_mgmt.managed_publish import managed_proxies
+from haproxy_mgmt.managed_publish import PROXY_PREFIX, managed_proxies
 from haproxy_mgmt.repo_snapshot import read_tree_files, resolve_head
 
 
@@ -34,7 +34,7 @@ def network_result(cluster: Cluster) -> dict[str, Any]:
     # observation is refused by the publishing helper instead of replacing a
     # newer network description it has not shown the operator.
     _branch, head = resolve_head(cluster.config_path)
-    files = read_tree_files(cluster.config_path, head)
+    files = read_tree_files(cluster.config_path, head, (PROXY_PREFIX,))
     default_vip_object_count = sum(proxy.listen.vip is None for proxy in managed_proxies(files))
     return {
         "cluster": cluster.cluster_id,

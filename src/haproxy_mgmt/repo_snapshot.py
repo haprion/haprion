@@ -23,7 +23,7 @@ staged behind.
 from __future__ import annotations
 
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -164,14 +164,21 @@ def committed_snapshot(repo: Path, commit: str) -> Snapshot:
     )
 
 
-def read_tree_files(repo: Path, tree: str) -> dict[str, bytes]:
+def read_tree_files(repo: Path, tree: str, paths: Sequence[str] = ()) -> dict[str, bytes]:
     """Every file in `tree`, keyed by repository relative path.
 
     This is what the release artifact is derived from - the committed candidate,
     never the work tree, which may differ in managed/.
+
+    `paths` narrows it to those files and directories, for a reader that needs
+    one file of a tree whose map files can run to megabytes (review 2026-10-03,
+    K4). They are the caller's own constants, never a request's; a path that is
+    not in the tree is simply absent from the answer.
     """
 
-    listing = _git(repo, "ls-tree", "-r", "-z", "--full-tree", tree).decode()
+    listing = _git(
+        repo, "ls-tree", "-r", "-z", "--full-tree", tree, *(("--", *paths) if paths else ())
+    ).decode()
     blobs: list[tuple[str, str]] = []
     for entry in listing.split("\0"):
         if not entry:

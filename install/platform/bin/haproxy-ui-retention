@@ -301,6 +301,28 @@ account_history() {
 #
 TRAFFIC_TABLES=(traffic_log waf_match)
 
+#
+# Every partitioned table. PostgreSQL's autovacuum analyzes each partition but
+# never a partitioned parent, so the statistics a query over the whole table is
+# planned with go stale unless something runs ANALYZE on it (review 2026-10-03,
+# D1; PostgreSQL 16, "Updating Planner Statistics"). Held to the schema by a
+# database test, so a new partitioned table cannot be left out.
+#
+PARTITIONED_TABLES=(traffic_log waf_match metric_frontend metric_backend_member metric_backend_hour)
+
+statistics() {
+    local table
+    for table in "${PARTITIONED_TABLES[@]}"; do
+        [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
+        if [[ "$dry_run" -eq 1 ]]; then
+            log "  ${table}: dry run, statistics not refreshed"
+            continue
+        fi
+        psql_as -c "analyze ${table}"
+        log "  ${table}: statistics refreshed"
+    done
+}
+
 partitions_expired() {
     local parent="$1"
     cat <<SQL
@@ -711,6 +733,7 @@ main() {
             oidc_logins
             version_diffs
             account_history
+            statistics
             if [[ "$dry_run" -eq 1 ]]; then
                 log "  dry run: nothing was deleted"
             elif [[ "$removable" -eq 0 ]]; then

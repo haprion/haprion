@@ -784,6 +784,31 @@ class ARealDatabase(unittest.TestCase):
                 self.assertEqual(cursor.fetchall(), [("",)])
             connection.rollback()
 
+    def test_retention_analyzes_every_partitioned_table_and_no_other(self) -> None:
+        """Review 2026-10-03, D1: autovacuum never analyzes a partitioned parent."""
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        listed = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'eval "$(sed -n \'/^PARTITIONED_TABLES=/p\' "$0")"; printf "%s\\n" "${PARTITIONED_TABLES[@]}"',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select relname from pg_class where relkind = 'p' "
+                "and relnamespace = 'public'::regnamespace order by relname"
+            )
+            self.assertEqual(sorted(listed), [row[0] for row in cursor.fetchall()])
+            for table in listed:
+                cursor.execute(f"analyze {table}")  # the names are the schema's own, checked above
+            connection.rollback()
+
     def retention_partitions_expired(self, table: str) -> str:
         """The retention command's own query for a day-partitioned table's expired days."""
         script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"

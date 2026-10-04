@@ -490,11 +490,24 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
         )
 
     def test_the_names_the_generator_writes_are_not_a_rule_s(self) -> None:
-        for name in ("deny-from", "body-limit", "body-unbounded"):
+        for name in ("deny-from", "body-limit", "body-unbounded", "path-dots"):
             with self.subTest(name):
                 self.assertIn(
                     "generator itself", self.refused(f"deny_rules:\n  - name: {name}\n    path: /x")
                 )
+
+    def test_a_rule_path_is_written_as_it_reads_decoded(self) -> None:
+        # Review 2026-10-04 F2: the rule reads the decoded, slash-merged path.
+        for path in ("/a%20b", "/a//b", "/./a", "/a/..", "/a/./b"):
+            with self.subTest(path):
+                self.assertIn(
+                    "as it reads decoded",
+                    self.refused(f"deny_rules:\n  - name: a\n    path: '{path}'"),
+                )
+        self.assertEqual(
+            self.load("deny_rules:\n  - name: a\n    path: /.well-known/a..b").deny_rules[0].path,
+            "/.well-known/a..b",
+        )
 
     def test_two_rules_may_not_share_a_name(self) -> None:
         block = "deny_rules:\n  - name: a\n    path: /x\n  - name: a\n    path: /y"

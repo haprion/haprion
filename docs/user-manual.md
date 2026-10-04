@@ -477,6 +477,18 @@ whose User-Agent contains `sqlmap`, from anyone outside `office`. A rule that na
 since it would refuse everything the object serves. Header values are matched
 as text, never as patterns.
 
+**A rule's path is read as the backend will read it**, as nginx matches its
+locations: percent-decoded, with runs of slashes made one. `/%61dmin`,
+`//admin` and `/admin%2Fusers` meet a rule on `/admin`. A path with a `.` or
+`..` segment once decoded - `/./admin`, `/x/../admin`, `/%2e%2e/admin` - is
+answered 400 and recorded `path-dots:deny` on an object with a refusing path
+rule (`path-dots:log` when its path rules only look); browsers resolve such
+segments before they send. The backend still receives the path as it was
+sent. A rule's own path is therefore written decoded, without `%`, `//`, `.`
+or `..`. Two things are the backend's own and not matched here: letter case
+(`/Admin`) and path parameters (`/admin;x`, which some Java servers read as
+`/admin`) - a rule meant to cover them needs the backend to refuse them too.
+
 **Countries.** Wherever a group or a range may be named - `allow_from`,
 `deny_from` and a rule's `source` - a country may be too, as `country:SE`
 (two letters, as ISO 3166 spells them). Publishing reads the networks of each

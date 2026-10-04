@@ -1692,6 +1692,57 @@ def _verdict(condition: str, name: str, mode: str) -> list[str]:
     ]
 
 
+#
+# The path an access rule reads (review 2026-10-04 F2, B242): percent-decoded,
+# with runs of slashes made one, as nginx matches its locations. HAProxy's own
+# `path` is neither, so `/%61dmin`, `//admin` and `/admin%2Fx` passed a rule on
+# `/admin` to a backend that serves them as `/admin` (measured in 3.4.6).
+# `normalize-uri` would do it but is experimental in 3.4.6, and missed `%2F`
+# and `%2e%2e` (measured). Dot segments are not resolved but refused - see
+# `_access_path_rules`. The backend still gets the path as it was sent.
+#
+ACCESS_PATH = "var(txn.access_path)"
+#
+# A `.` or `..` segment once decoded. A regular expression with no groups cannot
+# resolve them however often it is applied (`/././…` always leaves one), and
+# converter arguments cannot hold the groups that could; an ACL pattern can.
+# Browsers resolve them before sending, so a request that still has one was
+# written by hand.
+#
+DOT_SEGMENT = r"(^|/)\.\.?(/|$)"
+
+
+def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
+    """The decoded path the access rules read, and the refusal of dot segments.
+
+    Only on an object with a rule on a path other than every path. The refusal
+    is 400, as nginx answers a path that leaves the root, and follows the rules
+    it protects: it refuses when any of them refuses and only looks when all of
+    them only look.
+    """
+
+    rules = [
+        rule
+        for rule in proxy.deny_rules
+        if rule.path is not None and not (rule.path == "/" and rule.path_match == "prefix")
+    ]
+    if not rules:
+        return []
+    dots = _acl_name(proxy.name, "path-dots")
+    condition = f"{host} {dots}"
+    lines = [
+        f"    http-request set-var(txn.access_path) path,url_dec,regsub(/+,/,g) if {host}",
+        f"    acl {dots} path,url_dec -m reg {DOT_SEGMENT}",
+    ]
+    if any(rule.mode == "deny" for rule in rules):
+        return [
+            *lines,
+            f"    http-request set-var(txn.rule) str(path-dots:deny) if {condition}",
+            f"    http-request deny deny_status 400 if {condition}",
+        ]
+    return [*lines, *_verdict(condition, "path-dots", "log")]
+
+
 def _access_rules(
     proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str, trusted: bool
 ) -> list[str]:
@@ -1707,6 +1758,7 @@ def _access_rules(
         acl = _acl_name(proxy.name, "deny-from")
         lines.extend(_address_acl(acl, fetch, proxy.deny_from.sources, networks))
         lines.extend(_verdict(f"{host} {acl}", "deny-from", proxy.deny_from.mode))
+    lines.extend(_access_path_rules(proxy, host))
     for index, rule in enumerate(proxy.deny_rules):
         prefix = f"rule{index}"
         condition = [host]
@@ -1719,14 +1771,14 @@ def _access_rules(
                 pass
             elif rule.path_match == "exact":
                 lines += [
-                    f"    acl {acl} path -m str {rule.path}",
-                    f"    acl {acl} path -m str {rule.path}/",
+                    f"    acl {acl} {ACCESS_PATH} -m str {rule.path}",
+                    f"    acl {acl} {ACCESS_PATH} -m str {rule.path}/",
                 ]
                 condition.append(acl)
             else:
                 lines += [
-                    f"    acl {acl} path -m str {rule.path}",
-                    f"    acl {acl} path -m beg {rule.path}/",
+                    f"    acl {acl} {ACCESS_PATH} -m str {rule.path}",
+                    f"    acl {acl} {ACCESS_PATH} -m beg {rule.path}/",
                 ]
                 condition.append(acl)
         if rule.methods:

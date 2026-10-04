@@ -2493,6 +2493,20 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
         self.assertEqual(self.ask("/admin"), (200, ""))
         self.assertEqual(self.ask("/administrator", method="POST", body=b"x"), (200, ""))
 
+    def test_a_path_rule_reads_the_path_as_the_backend_will(self) -> None:
+        # Review 2026-10-04 F2: each of these passed a rule on /admin before.
+        for target in ("/%61dmin", "//admin", "/admin%2Fusers", "/admin//users"):
+            with self.subTest(target):
+                self.assertEqual(
+                    self.ask(target, method="POST", body=b"x"), (403, "admin-post:deny")
+                )
+        for target in ("/./admin", "/x/../admin", "/%2e%2e/admin", "/admin/.", "/%2E/admin"):
+            with self.subTest(target):
+                self.assertEqual(self.ask(target), (400, "path-dots:deny"))
+        for target in ("/app//x", "/.well-known/x", "/a..b/c", "/a%20b"):
+            with self.subTest(target):
+                self.assertEqual(self.ask(target), (200, ""))
+
     def test_a_logged_rule_lets_the_request_through_and_names_itself(self) -> None:
         self.assertEqual(
             self.ask(headers={"User-Agent": "sqlmap/1.8, like curl"}), (200, "scanner:log")

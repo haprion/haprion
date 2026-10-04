@@ -1940,7 +1940,14 @@ HTTP_METHODS = ("CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", 
 # Names the generator writes on a traffic record itself. A rule called the same
 # would be indistinguishable from them on the WAF page.
 #
-RESERVED_RULE_NAMES = ("deny-from", "body-limit", "body-unbounded", "crs", "waf-engine")
+RESERVED_RULE_NAMES = (
+    "deny-from",
+    "body-limit",
+    "body-unbounded",
+    "crs",
+    "waf-engine",
+    "path-dots",
+)
 #
 # A rule list long enough to be a mistake rather than a policy, and short
 # enough that the shared frontend stays readable. Raised when someone needs it.
@@ -2024,6 +2031,17 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
     if path is not None:
         if not isinstance(path, str) or not ROUTE_PATH.match(path):
             raise ModelError(f"{location}.path must be an absolute path")
+        #
+        # The rule reads the request's path decoded and with its slashes merged
+        # (review 2026-10-04 F2), so a path written any other way could never
+        # match - and a rule that silently matches nothing refuses nothing.
+        #
+        segments = path.split("/")[1:]
+        if "%" in path or "//" in path or any(part in (".", "..") for part in segments):
+            raise ModelError(
+                f"{location}.path must be written as it reads decoded: no %, //, . or .. "
+                f"(requests are matched after decoding)"
+            )
         path = path.rstrip("/") or "/"
         if match not in MATCH_MODES:
             raise ModelError(f"{location}.match must be one of: {', '.join(MATCH_MODES)}")

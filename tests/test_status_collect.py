@@ -309,6 +309,20 @@ class MoreThanTwoNodes(unittest.TestCase):
 
         self.assertEqual(report.result["summary"]["vip_state"], str(VipState.SPLIT_BRAIN))
 
+    def test_two_owners_stay_split_brain_when_the_third_cannot_be_read(self) -> None:
+        # Review 2026-10-03, F1: INCOMPLETE used to hide an observed conflict.
+        report = self.read(
+            **{
+                "node-a": node_status("node-a", owner=True, release_hash=TARGET.hash),
+                "node-b": node_status("node-b", owner=True, release_hash=TARGET.hash),
+                "node-c": NodeResponse(exit_code=255, stdout=""),
+            }
+        )
+
+        summary = report.result["summary"]
+        self.assertEqual(summary["vip_state"], str(VipState.SPLIT_BRAIN))
+        self.assertEqual(summary["vip_owners"], ["node-a", "node-b"])
+
     def test_the_third_node_behind_makes_the_cluster_behind(self) -> None:
         report = self.read(
             **{

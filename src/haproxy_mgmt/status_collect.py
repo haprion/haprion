@@ -430,15 +430,20 @@ def _vip_state(results: list[dict[str, Any]]) -> tuple[VipState, list[str], list
         elif owner is None:
             unknown.append(str(entry["name"]))
 
+    #
+    # Two owners seen is split brain whatever else could not be read: a node
+    # that did not answer cannot make an observed conflict any safer (review
+    # 2026-10-03, F1). Before INCOMPLETE, which every deploy lets through.
+    #
+    if len(owners) > 1:
+        return VipState.SPLIT_BRAIN, owners, unknown
     if any(not entry["status_ok"] for entry in results):
         return VipState.INCOMPLETE, owners, unknown
     if unknown:
         return VipState.UNKNOWN, owners, unknown
     if not owners:
         return VipState.NO_OWNER, owners, unknown
-    if len(owners) == 1:
-        return VipState.SINGLE_OWNER, owners, unknown
-    return VipState.SPLIT_BRAIN, owners, unknown
+    return VipState.SINGLE_OWNER, owners, unknown
 
 
 def _release_state(results: list[dict[str, Any]], target: ReleaseTarget | None) -> str:

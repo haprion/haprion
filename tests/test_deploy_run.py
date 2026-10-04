@@ -133,7 +133,8 @@ class BlockedStateTests(unittest.TestCase):
         self.assertIn("--allow-vip-unknown", shown)
 
         allowed, shown = deploy(cluster, allow_vip_unknown=True)
-        self.assertEqual(cluster.triggered, ["node-a", "node-b"])
+        # The known standby first, the node of unknown ownership after (review 2026-10-03, F1).
+        self.assertEqual(cluster.triggered, ["node-b", "node-a"])
         self.assertEqual(allowed, 0)
         self.assertIn("explicit CLI override accepted", shown)
 

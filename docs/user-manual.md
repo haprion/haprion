@@ -65,7 +65,10 @@ Editing produces a draft; publishing produces an immutable release; deploying br
 to that release. Publishing and deploying are separate operations. On the dashboard,
 *Deploy certificates* installs the certificates and *Deploy configuration* installs the
 published configuration. A rollout deploys the nodes that do not own the VIP first and
-the owner last.
+the owner last - also when another node cannot be read, and a node whose ownership is
+unknown goes between the two. Two nodes that both report the VIP stop the rollout
+before anything is changed, whatever else could not be read, and no override lets it
+past.
 
 At the terminal, inspect the configuration and the nodes before deploying:
 

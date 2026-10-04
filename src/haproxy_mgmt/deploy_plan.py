@@ -341,7 +341,13 @@ def _blocking_reason(
     if not observation.usable:
         return "no node returned usable status; deploy blocked", EXIT_NO_STATUS
 
-    if observation.vip_state is VipState.SPLIT_BRAIN:
+    #
+    # Two owners among the nodes that answered, whatever the summary says: a
+    # status from before the rule above, or one read as UNKNOWN and overridden,
+    # must not carry a conflict past this point (review 2026-10-03, F1).
+    #
+    owners = sum(1 for node in observation.usable if node.owns_vip is True)
+    if observation.vip_state is VipState.SPLIT_BRAIN or owners > 1:
         #
         # No override exists for this one, deliberately. Two owners means the
         # pair is already damaged, and deploying can deepen the damage.
@@ -408,19 +414,20 @@ def _candidates(observation: ClusterObservation, progress: Progress) -> tuple[No
 def _ordered(
     candidates: tuple[NodeObservation, ...], vip_state: VipState
 ) -> tuple[NodeObservation, ...]:
-    """Non-owner first, owner last - decided from the ownership seen just now.
+    """Known standbys first, nodes of unknown ownership next, a known owner last.
 
-    Every other state keeps configured order. With no owner there is no traffic
-    order left to preserve, and with ownership overridden as unknown there is
-    nothing trustworthy to order by; in both cases the stable order from the
-    cluster configuration is the honest choice.
+    Decided from the ownership seen just now, and from what is known rather
+    than from the cluster's summary: with one node unreadable the summary is
+    INCOMPLETE, and the owner among the others is still the node whose traffic
+    a deploy should touch last (review 2026-10-03, F1). Within each group the
+    configured order holds, so with no owner, or with every node unknown, the
+    order is the cluster configuration's as before. A node that could not be
+    read is only ever skipped, never changed, and keeps its place.
     """
 
-    if vip_state is not VipState.SINGLE_OWNER:
-        return candidates
-    return tuple(node for node in candidates if not node.owns_vip) + tuple(
-        node for node in candidates if node.owns_vip
-    )
+    del vip_state  # what is known about each node decides; kept for the callers
+    rank = {False: 0, None: 1, True: 2}
+    return tuple(sorted(candidates, key=lambda node: rank[node.owns_vip] if node.status_ok else 0))
 
 
 def next_step(

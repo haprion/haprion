@@ -53,9 +53,73 @@ class MoreThanTwoNodesTests(unittest.TestCase):
 
         trace, outcome, code = drive([state] * 3)
 
-        self.assertEqual(trace, ["deploy:node-a", "skip:node-b", "deploy:node-c"])
+        # The owner last although the summary is INCOMPLETE (review 2026-10-03, F1).
+        self.assertEqual(trace, ["skip:node-b", "deploy:node-c", "deploy:node-a"])
         self.assertIs(outcome, Outcome.PARTIAL)
         self.assertEqual(code, 69)
+
+
+class AnObservedConflictIsNeverDeployedInto(unittest.TestCase):
+    """Review 2026-10-03, F1: what is known about the nodes, not only the summary."""
+
+    def test_two_owners_and_an_unreadable_node_stop_even_with_the_override(self) -> None:
+        for summary in (VipState.INCOMPLETE, VipState.UNKNOWN):
+            state = pair(
+                summary,
+                node("node-a", owner=True),
+                node("node-b", owner=True),
+                node("node-c", ok=False, owner=None, hash_=None),
+            )
+            for override in (False, True):
+                with self.subTest(summary=summary, override=override):
+                    trace, outcome, _ = drive([state], allow_vip_unknown=override)
+                    self.assertEqual(trace, [])
+                    self.assertIs(outcome, Outcome.BLOCKED)
+
+    def test_a_conflict_that_appears_after_the_first_change_stops_the_rest(self) -> None:
+        before = pair(
+            VipState.INCOMPLETE,
+            node("node-a", owner=False),
+            node("node-b", owner=True),
+            node("node-c", ok=False, owner=None, hash_=None),
+        )
+        after = pair(
+            VipState.INCOMPLETE,
+            node("node-a", owner=True, hash_=TARGET),
+            node("node-b", owner=True),
+            node("node-c", ok=False, owner=None, hash_=None),
+        )
+
+        trace, outcome, _ = drive([before, after], target=ReleaseTarget(version=8, hash=TARGET))
+
+        self.assertEqual(trace, ["deploy:node-a"])
+        # Something already changed: partial, as any stop after a change (review 2026-09-28 F4).
+        self.assertIs(outcome, Outcome.PARTIAL)
+
+    def test_with_one_node_unreadable_the_standby_goes_before_the_owner(self) -> None:
+        state = pair(
+            VipState.INCOMPLETE,
+            node("node-a", owner=True),
+            node("node-b", owner=False),
+            node("node-c", ok=False, owner=None, hash_=None),
+        )
+
+        trace, outcome, _ = drive([state] * 3)
+
+        self.assertEqual(trace, ["deploy:node-b", "skip:node-c", "deploy:node-a"])
+        self.assertIs(outcome, Outcome.PARTIAL)
+
+    def test_unknown_ownership_among_several_goes_between_standby_and_owner(self) -> None:
+        state = pair(
+            VipState.UNKNOWN,
+            node("node-a", owner=True),
+            node("node-b", owner=None),
+            node("node-c", owner=False),
+        )
+
+        trace, _, _ = drive([state] * 4, allow_vip_unknown=True)
+
+        self.assertEqual(trace, ["deploy:node-c", "deploy:node-b", "deploy:node-a"])
 
 
 class BothNodesReadableTests(unittest.TestCase):
@@ -123,7 +187,8 @@ class BothNodesReadableTests(unittest.TestCase):
 
         trace, outcome, _ = drive([state, state, state], allow_vip_unknown=True)
 
-        self.assertEqual(trace, ["deploy:node-a", "deploy:node-b"])
+        # The known standby before the node whose ownership is unknown (review 2026-10-03, F1).
+        self.assertEqual(trace, ["deploy:node-b", "deploy:node-a"])
         self.assertIs(outcome, Outcome.DONE)
         self.assertIn("explicit CLI override accepted", warnings_for(state, allow_vip_unknown=True))
 

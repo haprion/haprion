@@ -824,6 +824,17 @@ from stdin
 """
 
 
+def _passed_line_end(stream: Any) -> bool:
+    """Read past the end of the current line; False, with nothing passed, at end of file first."""
+
+    start = stream.tell()
+    while block := stream.readline(64 * 1024):
+        if block.endswith(b"\n"):
+            return True
+    stream.seek(start)
+    return False
+
+
 def _ingest_part(
     config: CollectorConfig,
     connection: psycopg.Connection[Any],
@@ -841,6 +852,20 @@ def _ingest_part(
     with part.open("rb") as stream:
         stream.seek(offset)
         while line := stream.readline(MAX_RECORD_BYTES + 1):
+            if not line.endswith(b"\n") and len(line) > MAX_RECORD_BYTES:
+                #
+                # Longer than any record, so not a record the writer is half
+                # way through but one no schema here describes (review
+                # 2026-10-03, F3). Read on to its end a block at a time, so
+                # memory stays bounded however long it is, and count it as
+                # skipped like any other unreadable line. Without its newline
+                # yet it is still being written: wait for it from its start.
+                #
+                if not _passed_line_end(stream):
+                    break
+                skipped += 1
+                end = stream.tell()
+                continue
             if not line.endswith(b"\n"):
                 #
                 # The open day is still being written to. A final line without

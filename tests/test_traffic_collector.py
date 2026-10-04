@@ -29,6 +29,7 @@ from haproxy_mgmt.traffic_collector import (
     _database_row,
     _entry,
     _failure_outcome,
+    _ingest_part,
     _parse_response,
     _parse_waf_response,
     _replace,
@@ -136,6 +137,42 @@ class TrafficCollectorTests(unittest.TestCase):
             _database_row("alpha", "node-a", json.dumps(base | {"at": 253402300799}).encode())[3],
             datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC),
         )
+
+    def test_a_line_longer_than_any_record_is_stepped_over_not_waited_for(self) -> None:
+        """Review 2026-10-03, F3: an over-long finished line read as the writer
+        half way through a record, so the checkpoint never passed it and the
+        rest of the day never reached the database."""
+
+        record = {
+            "schema": 1, "at": 1_700_000_000, "client": "192.0.2.1", "method": "GET",
+            "host": "a.example.test", "path": "/", "frontend": "f", "backend": "b",
+            "server": "s1", "status": 200, "request_time": 0, "queue_time": 0,
+            "connect_time": 0, "response_time": 0, "total_time": 0, "bytes": 0,
+        }  # fmt: skip
+        good = json.dumps(record).encode() + b"\n"
+        part = self.staging / "alpha--node-a--2026-09-08.jsonl"
+        long_line = b"x" * 200_000 + b"\n"
+        part.write_bytes(good + long_line + good)
+
+        def ingest() -> tuple[int, int]:
+            connection = MagicMock()
+            skipped = _ingest_part(self.config, connection, self.target, part)
+            copy = connection.cursor.return_value.__enter__.return_value.copy.return_value
+            return skipped, copy.__enter__.return_value.write_row.call_count
+
+        self.assertEqual(ingest(), (1, 2))
+        checkpoint = self.staging / f".{part.name}.database-offset"
+        self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
+
+        # Still being written: an over-long line without its newline is waited for from its start.
+        size = part.stat().st_size
+        with part.open("ab") as stream:
+            stream.write(b"y" * 100_000)
+        self.assertEqual(ingest(), (0, 0))
+        self.assertEqual(int(checkpoint.read_text()), size)
+        with part.open("ab") as stream:
+            stream.write(b"\n" + good)
+        self.assertEqual(ingest(), (1, 1))
 
     def test_what_the_waf_engine_said_is_kept_as_far_as_it_is_whole(self) -> None:
         """B233: rule IDs and score as the engine reported them. HAProxy cuts

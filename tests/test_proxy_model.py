@@ -573,6 +573,15 @@ class TheWafEngineOnAnObject(unittest.TestCase):
     def test_an_object_without_the_key_is_not_seen_by_the_engine(self) -> None:
         self.assertIsNone(load_proxy("shop", MINIMAL).waf)
 
+    def test_large_bodies_are_paths_written_as_an_exception_s_are(self) -> None:
+        # Review 2026-10-04 F1, B243.
+        waf = self.load("waf:\n  mode: block\n  large_bodies: [/upload/, /api/files]").waf
+        self.assertEqual(waf.large_bodies, ("/api/files", "/upload"))
+        self.assertEqual(self.load("waf: {}").waf.large_bodies, ())
+        for paths in ("[/a%20b]", "[/a/../b]", "[a]", "[/x, /x/]"):
+            with self.subTest(paths), self.assertRaises(ModelError):
+                self.load(f"waf:\n  large_bodies: {paths}")
+
     def test_a_new_engine_only_looks_lets_through_on_error_and_starts_at_level_one(self) -> None:
         waf = self.load("waf: {}").waf
         self.assertEqual(

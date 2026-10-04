@@ -789,12 +789,21 @@ class Waf:
     `allow` lets the request through, `deny` answers 503. `paranoia` is the CRS
     blocking paranoia level; `exceptions` are how a false alarm is taken away
     (B234), each as narrow as the finding allows.
+
+    The engine reads a body only as far as HAProxy's buffer holds it, so in
+    `block` a request whose body did not fit is refused (413, `waf-body:deny`)
+    rather than passed with its end unread - padding before an attack would
+    otherwise carry it through (review 2026-10-04 F1, B243). `large_bodies`
+    are the paths where such a body is expected - an upload, a large JSON call
+    - and is let through with what fitted inspected; each covers itself and
+    what lies under it. In `log` the body is only marked `waf-body:log`.
     """
 
     mode: str = "log"
     on_engine_error: str = "allow"
     paranoia: int = 1
     exceptions: tuple[WafException, ...] = ()
+    large_bodies: tuple[str, ...] = ()
 
     @property
     def inspecting(self) -> bool:
@@ -2251,7 +2260,9 @@ def _waf(value: Any, location: str) -> Waf | None:
             f"{location}.exclude_rules was replaced by exceptions, "
             "each with a rule and optionally a field and paths"
         )
-    _only_keys(data, {"mode", "on_engine_error", "paranoia", "exceptions"}, location)
+    _only_keys(
+        data, {"mode", "on_engine_error", "paranoia", "exceptions", "large_bodies"}, location
+    )
     mode = data.get("mode", "log")
     #
     # YAML reads an unquoted `off` as false, and `mode: off` is how a person
@@ -2280,11 +2291,20 @@ def _waf(value: Any, location: str) -> Waf | None:
         raise ModelError(
             f"{location}.exceptions lets the same rule through on the same scope twice"
         )
+    large = data.get("large_bodies", [])
+    if not isinstance(large, list) or len(large) > MAX_WAF_EXCEPTION_PATHS:
+        raise ModelError(
+            f"{location}.large_bodies must list at most {MAX_WAF_EXCEPTION_PATHS} paths"
+        )
+    bodies = tuple(_waf_path(path, f"{location}.large_bodies").rstrip("/") or "/" for path in large)
+    if len(set(bodies)) != len(bodies):
+        raise ModelError(f"{location}.large_bodies names the same path twice")
     return Waf(
         mode=str(mode),
         on_engine_error=str(on_error),
         paranoia=int(paranoia),
         exceptions=exceptions,
+        large_bodies=tuple(sorted(bodies)),
     )
 
 

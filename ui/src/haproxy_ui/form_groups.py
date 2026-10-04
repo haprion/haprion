@@ -278,7 +278,12 @@ GROUPS: Mapping[str, FormGroup] = {
         _access,
         _access_badges,
     ),
-    "waf": FormGroup("WAF", ("waf_mode", "waf_engine_error", "waf_paranoia"), _waf, _waf_badges),
+    "waf": FormGroup(
+        "WAF",
+        ("waf_mode", "waf_engine_error", "waf_paranoia", "waf_large_bodies"),
+        _waf,
+        _waf_badges,
+    ),
     "maintenance": FormGroup(
         "Maintenance", ("maintenance", "maintenance_message", "unavailable_message"), _maintenance
     ),

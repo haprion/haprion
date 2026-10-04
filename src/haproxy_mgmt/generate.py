@@ -55,6 +55,7 @@ from haproxy_mgmt.proxy_model import (
     Proxy,
     Route,
     Server,
+    Waf,
     WafException,
     is_range,
 )
@@ -1820,6 +1821,44 @@ def _access_rules(
     return lines
 
 
+def _waf_body_rules(proxy: Proxy, waf: Waf, host: str) -> list[str]:
+    """A body the engine could not read to its end (review 2026-10-04 F1, B243).
+
+    The engine gets what HAProxy's buffer holds after `wait-for-body` - about
+    15 kB of a 16 kB buffer - and an attack after that much padding passed
+    `block` uninspected (measured). `req.body_size` is the declared length, or
+    what has been parsed of a chunked body, and `req.body_len` what the buffer
+    holds; the difference is above zero exactly when the body did not fit,
+    with a length and chunked alike (measured in 3.4.6). A body that arrives
+    too slowly is answered 408 by `wait-for-body` and never gets here.
+
+    `block` refuses it with 413, `log` marks it; `large_bodies` are the paths
+    that expect it, where it is let through with what fitted inspected. Matched
+    on the path decoded and with its slashes merged, as the access rules are.
+    """
+
+    short = "{ req.body_size,sub(txn.waf_body) gt 0 }"
+    lines = [f"    http-request set-var(txn.waf_body) req.body_len if {host}"]
+    condition = f"{host} {short}"
+    if waf.large_bodies:
+        acl = _acl_name(proxy.name, "large-body")
+        for path in waf.large_bodies:
+            if path == "/":
+                return []
+            lines += [
+                f"    acl {acl} path,url_dec,regsub(/+,/,g) -m str {path}",
+                f"    acl {acl} path,url_dec,regsub(/+,/,g) -m beg {path}/",
+            ]
+        condition += f" !{acl}"
+    if waf.mode == "block":
+        return [
+            *lines,
+            f"    http-request set-var(txn.rule) str(waf-body:deny) if {condition}",
+            f"    http-request deny deny_status 413 if {condition}",
+        ]
+    return [*lines, *_verdict(condition, "waf-body", "log")]
+
+
 def _waf_rules(proxy: Proxy, host: str) -> list[str]:
     """Ask the engine about the request, then decide on its answer (B232).
 
@@ -1854,7 +1893,11 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
         ]
     else:
         lines += _verdict(f"{host} {failed}", "waf-engine", "log")
-    return lines
+    #
+    # After the engine's answer: a record whose engine did not answer says so
+    # first, and a refused body names itself whatever was logged before.
+    #
+    return [*lines, *_waf_body_rules(proxy, waf, host)]
 
 
 def _message(proxy: Proxy, message: str) -> str:

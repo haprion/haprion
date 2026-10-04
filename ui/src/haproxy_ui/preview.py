@@ -195,6 +195,7 @@ DEFAULTS = {
     "waf_engine_error": "allow",
     "waf_paranoia": "1",
     "waf_exceptions": "",
+    "waf_large_bodies": "",
 }
 
 
@@ -665,6 +666,7 @@ def build_document(form: dict[str, object]) -> str:
         text("waf_engine_error") or "allow",
         text("waf_paranoia") or "1",
         str(form.get("waf_exceptions", "") or ""),
+        str(form.get("waf_large_bodies", "") or ""),
     )
     if waf is not None:
         document["waf"] = waf
@@ -727,8 +729,15 @@ def canonical_waf(value: Any) -> Any:
             out["exceptions"] = [canonical_waf_exception(item) for item in listed]
     else:
         out["exceptions"] = listed
+    large = value.get("large_bodies", [])
+    if large != []:
+        out["large_bodies"] = large
     out.update(
-        {key: item for key, item in value.items() if key not in (*out, "exceptions", "mode")}
+        {
+            key: item
+            for key, item in value.items()
+            if key not in (*out, "exceptions", "large_bodies", "mode")
+        }
     )
     if out == {"mode": "off", "on_engine_error": "allow", "paranoia": 1}:
         return None
@@ -736,9 +745,9 @@ def canonical_waf(value: Any) -> Any:
 
 
 def waf_block(
-    mode: str, engine_error: str, paranoia: str, exceptions: str
+    mode: str, engine_error: str, paranoia: str, exceptions: str, large_bodies: str = ""
 ) -> dict[str, Any] | None:
-    """The `waf` block the form's four fields describe."""
+    """The `waf` block the form's fields describe; `large_bodies` one path per line."""
 
     try:
         listed = json.loads(exceptions) if exceptions.strip() else []
@@ -754,13 +763,14 @@ def waf_block(
             "on_engine_error": engine_error,
             "paranoia": int(paranoia),
             "exceptions": listed,
+            "large_bodies": [line.strip() for line in large_bodies.splitlines() if line.strip()],
         }
     )
     return block if isinstance(block, dict) else None
 
 
 def waf_fields(data: Mapping[str, Any]) -> dict[str, str]:
-    """The form's four WAF fields for a stored object."""
+    """The form's WAF fields for a stored object."""
 
     block = canonical_waf(data.get("waf"))
     if not isinstance(block, Mapping):
@@ -769,13 +779,18 @@ def waf_fields(data: Mapping[str, Any]) -> dict[str, str]:
             "waf_engine_error": "allow",
             "waf_paranoia": "1",
             "waf_exceptions": "",
+            "waf_large_bodies": "",
         }
     listed = block.get("exceptions", [])
+    large = block.get("large_bodies", [])
     return {
         "waf_mode": str(block.get("mode", "log")),
         "waf_engine_error": str(block.get("on_engine_error", "allow")),
         "waf_paranoia": str(block.get("paranoia", 1)),
         "waf_exceptions": json.dumps(listed, separators=(",", ":")) if listed else "",
+        "waf_large_bodies": "\n".join(str(path) for path in large)
+        if isinstance(large, list)
+        else "",
     }
 
 

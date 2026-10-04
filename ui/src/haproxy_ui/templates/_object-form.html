@@ -168,11 +168,13 @@
     <input type="hidden" name="waf_mode" value="off">
     <input type="hidden" name="waf_engine_error" value="{{ form.waf_engine_error }}">
     <input type="hidden" name="waf_paranoia" value="{{ form.waf_paranoia }}">
+    <input type="hidden" name="waf_large_bodies" value="{{ form.waf_large_bodies }}">
     {% else %}
     <div class="form-grid">
       <label><span class="field-title">Mode</span><select name="waf_mode" class="single-select">{% for mode in ('off', 'log', 'block') %}<option{% if form.waf_mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
       <label><span class="field-title">Engine not answering</span><select name="waf_engine_error" class="single-select">{% for value, label in (('allow', 'let through'), ('deny', 'refuse (503)')) %}<option value="{{ value }}"{% if form.waf_engine_error == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       <label><span class="field-title">Strictness</span><select name="waf_paranoia" class="single-select">{% for value, label in (('1', '1 · fewest false alarms'), ('2', '2'), ('3', '3'), ('4', '4 · strictest')) %}<option value="{{ value }}"{% if form.waf_paranoia == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label><span class="field-title">Large bodies on <span class="optional">(optional)</span></span><textarea name="waf_large_bodies" rows="2" placeholder="/upload">{{ form.waf_large_bodies }}</textarea><small>One path per line.</small></label>
       {#
         What Save and publish would send, listed rather than counted, so a
         person sees which false alarms they are letting through before they

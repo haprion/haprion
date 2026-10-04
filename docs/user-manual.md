@@ -567,6 +567,7 @@ waf:
       paths: [/search]     # optional: exact paths; absent = every path
       by: admin            # who made it, and when (the WAF page fills these in)
       at: 2026-10-03T09:10:00Z
+  large_bodies: [/upload]  # optional: paths where a body past the buffer is expected
 ```
 
 `off` keeps the settings and the exceptions while the engine inspects nothing:
@@ -594,7 +595,20 @@ that decide and report rather than detect (CRS 949xxx, 959xxx, 980xxx) cannot be
 excepted - that would turn the engine off. A field name with characters other
 than letters, digits and `_ . - [ ]` cannot be named; except the path instead.
 `exceptions` came with engine API 13 and replaced engine API 12's
-`exclude_rules`, which is refused with a message saying so.
+`exclude_rules`, which is refused with a message saying so. `large_bodies`, the
+refusal of a body the engine could not read and access rules read on the decoded
+path came with engine API 14.
+
+**A body longer than the engine reads.** HAProxy hands the engine as much of
+the body as its buffer holds - about 15 kB of 16 kB (`tune.bufsize`) - and the
+rest would reach the backend unread, so an attack after enough padding would
+pass. In `block` such a request is refused with 413 and recorded
+`waf-body:deny`; in `log` it is served and recorded `waf-body:log`, which shows
+where large bodies arrive before `block` is turned on. `large_bodies` lists the
+paths that expect them - an upload, a large JSON call - each covering itself
+and what lies under it, matched as an access rule's path is: there the request
+is served with what fitted inspected. `/` covers the whole object. A body that
+arrives too slowly is answered 408 after a second, as before.
 
 **When the engine does not answer** - stopped, restarting, or overloaded -
 `allow` serves the request uninspected and records `waf-engine:log`, and `deny`

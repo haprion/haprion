@@ -70,6 +70,21 @@ class TheFormSaysWhatTheObjectSays(unittest.TestCase):
         form = form_from_document(stored("waf: {mode: 'off'}\n"))
         self.assertNotIn("waf", yaml.safe_load(build_document(form)))
 
+    def test_large_bodies_survive_the_form_and_are_written_one_path_a_line(self) -> None:
+        # Review 2026-10-04 F1, B243: a save from the form must not drop them.
+        form = form_from_document(
+            stored("waf:\n  mode: block\n  large_bodies: [/upload, /api/files]\n")
+        )
+        self.assertEqual(form["waf_large_bodies"], "/upload\n/api/files")
+        self.assertEqual(
+            yaml.safe_load(build_document(form))["waf"]["large_bodies"], ["/upload", "/api/files"]
+        )
+        written = yaml.safe_load(build_document(dict(form, waf_large_bodies="\r\n /x \r\n\r\n")))
+        self.assertEqual(written["waf"]["large_bodies"], ["/x"])
+        self.assertNotIn(
+            "large_bodies", yaml.safe_load(build_document(dict(form, waf_large_bodies="")))["waf"]
+        )
+
     def test_exceptions_the_form_cannot_read_are_refused(self) -> None:
         for carried in ("{", '{"rule": 1}', "[1"):
             with self.subTest(carried=carried), self.assertRaises(ValueError):
@@ -190,13 +205,16 @@ class TheGroupOnTheEditor(EditorTestCase):
     def test_offered_where_the_engine_is_installed(self) -> None:
         text = self.page()
         self.assertIn('<select name="waf_mode"', text)
+        self.assertIn('<textarea name="waf_large_bodies"', text)
         self.assertIn("Strictness", text)
         self.assertNotIn("is not installed", text)
 
     def test_the_closed_group_draws_its_shield_in_the_mode_colour(self) -> None:
         # 26-10-04: whether the engine refuses visitors, seen at a glance.
         text = self.page(stored("waf:\n  mode: block\n"))
-        head = text.split('<span class="form-group-title">WAF</span>', 1)[1].split("</summary>", 1)[0]
+        head = text.split('<span class="form-group-title">WAF</span>', 1)[1].split("</summary>", 1)[
+            0
+        ]
         self.assertIn("Blocking · strictness 1", head)
         self.assertIn(
             'class="status-badge status-badge-critical form-group-badge form-group-icon"'
@@ -215,6 +233,7 @@ class TheGroupOnTheEditor(EditorTestCase):
         self.assertNotIn('<select name="waf_paranoia"', text)
         self.assertNotIn("Findings and exceptions in WAF logs", text)
         self.assertIn('<input type="hidden" name="waf_paranoia" value="1">', text)
+        self.assertIn('<input type="hidden" name="waf_large_bodies" value="">', text)
 
     def test_with_the_switch_off_an_object_without_it_carries_hidden_defaults(self) -> None:
         self.switch_off()

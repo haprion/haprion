@@ -30,7 +30,7 @@
       "0052",
       "0053"
     ],
-    "engine_api": 13,
+    "engine_api": 14,
     "node_api": 1,
     "poller_helpers": [
       "haproxy-status-helper",

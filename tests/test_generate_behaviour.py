@@ -2591,7 +2591,8 @@ BLOCKS_WITH_EXCEPTIONS = """  mode: block
     - rule: 942100
       paths: [/health]
       by: admin
-      at: 2026-10-03T09:10:00Z"""
+      at: 2026-10-03T09:10:00Z
+  large_bodies: [/upload]"""
 
 
 @unittest.skipUnless(
@@ -2752,6 +2753,24 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             with self.subTest(target):
                 self.assertEqual(self.ask(target, name="blocks")[0], status)
 
+    def test_a_body_the_engine_could_not_read_to_its_end_is_refused_in_block(self) -> None:
+        # Review 2026-10-04 F1: padding before the attack carried it past `block`.
+        padded = b"pad=" + b"a" * 20_000 + b"&name=x' UNION SELECT password FROM users--"
+        self.assertEqual(self.ask("/form", name="blocks", body=padded)[:2], (413, "waf-body:deny"))
+        self.assertEqual(
+            self.ask("/form", name="blocks", body=b"pad=" + b"a" * 1_000)[:2], (200, "")
+        )
+        self.assertEqual(self.ask("/form", name="looks", body=padded)[:2], (200, "waf-body:log"))
+
+    def test_a_large_body_path_lets_it_through_with_what_fitted_inspected(self) -> None:
+        padded = b"pad=" + b"a" * 20_000
+        for target in ("/upload", "/upload/x", "//upload/x"):
+            with self.subTest(target):
+                self.assertEqual(self.ask(target, name="blocks", body=padded)[:2], (200, ""))
+        self.assertEqual(self.ask("/uploads", name="blocks", body=padded)[0], 413)
+        early = b"name=x' UNION SELECT password FROM users--&pad=" + b"a" * 20_000
+        self.assertEqual(self.ask("/upload", name="blocks", body=early)[:2], (403, "crs:deny"))
+
     def test_the_engine_hands_its_transaction_id_back_to_haproxy(self) -> None:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
         connection.request("GET", SQLI, headers={"Host": "looks.example.com"})
@@ -2786,6 +2805,15 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
         self.skipTest("the engine is not running")
 
     def test_the_engine_hands_its_transaction_id_back_to_haproxy(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_a_body_the_engine_could_not_read_to_its_end_is_refused_in_block(self) -> None:
+        padded = b"pad=" + b"a" * 20_000
+        # Unread by an engine that is not there either way; the record says why first.
+        self.assertEqual(self.ask("/form", name="looks", body=padded)[:2], (200, "waf-engine:log"))
+        self.assertEqual(self.ask("/form", name="blocks", body=padded)[:2], (413, "waf-body:deny"))
+
+    def test_a_large_body_path_lets_it_through_with_what_fitted_inspected(self) -> None:
         self.skipTest("the engine is not running")
 
     def test_open_lets_through_and_says_so_closed_refuses(self) -> None:

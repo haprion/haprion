@@ -375,6 +375,7 @@ class ObjectForm(BaseModel):
     waf_engine_error: Annotated[str, StringConstraints(max_length=8)] = "allow"
     waf_paranoia: Annotated[str, StringConstraints(max_length=1)] = "1"
     waf_exceptions: Annotated[str, StringConstraints(max_length=MAX_TEXT)] = ""
+    waf_large_bodies: Annotated[str, StringConstraints(max_length=MAX_TEXT)] = ""
 
     #
     # The three fields that are about the submission rather than about the

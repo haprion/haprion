@@ -481,8 +481,36 @@ class TheTrafficLogPage(LoginTestCase):
         )
         page = self.page(now=NOW)
         self.assertIn("collection succeeded; catching up", page)
+        self.assertIn("last success 0 s ago", page)
         self.assertIn("1234 bytes remaining", page)
         self.assertIn("2 older day(s) pending", page)
+
+    def test_backlog_keeps_the_age_of_a_previous_success_visible(self) -> None:
+        for age, shown in (
+            (timedelta(minutes=10), "10 min ago"),
+            (timedelta(hours=9), "9.0 h ago"),
+        ):
+            for complete in (False, True):
+                with self.subTest(age=age, current_complete=complete):
+                    stamp = (NOW - age).isoformat()
+                    (self.root / "alpha--node-a.meta.json").write_text(
+                        json.dumps(
+                            {
+                                "schema_version": 1,
+                                "last_attempt": stamp,
+                                "last_success": stamp,
+                                "outcome": "ok",
+                                "current_complete": complete,
+                                "remaining_bytes": 0 if complete else 1234,
+                                "pending_days": 2,
+                            }
+                        )
+                    )
+                    page = self.page(now=NOW)
+                    self.assertIn(f"last success {shown}", page)
+                    self.assertIn("2 older day(s) pending", page)
+                    if not complete:
+                        self.assertIn("1234 bytes remaining", page)
 
     def host_zone(self, name: str) -> None:
         """Run this test as if the machine stood somewhere in particular.

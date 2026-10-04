@@ -38,7 +38,11 @@
           {%- elif stale is none -%}
             never reached{% if node.outcome != 'unknown' %} — {{ node.outcome }}{% endif %}
           {%- elif node.catching_up() -%}
-            collection succeeded; catching up
+            collection succeeded; catching up — last success
+            {%- if stale < 90 %} {{ stale | round | int }} s ago
+            {%- elif stale < 5400 %} {{ (stale / 60) | round | int }} min ago
+            {%- else %} {{ (stale / 3600) | round(1) }} h ago
+            {%- endif -%}
             {% if node.current_complete == false %} — today's log is incomplete{% if node.remaining_bytes is not none %} ({{ node.remaining_bytes }} bytes remaining at last read){% endif %}{% endif %}
             {% if node.pending_days %} — {{ node.pending_days }} older day(s) pending{% endif %}
           {%- elif stale < 5400 -%}

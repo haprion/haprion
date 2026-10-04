@@ -214,6 +214,20 @@ class TrafficLogReadingTests(unittest.TestCase):
         reading = read(self.root, ("alpha",))
         self.assertEqual(reading.nodes[0].stale_seconds(now=NOW), 2520.0)
 
+    def test_successful_contact_still_reports_backlog_and_invalid_counts_are_unknown(self) -> None:
+        self.meta("alpha", "node-a", current_complete=False, remaining_bytes=1234, pending_days=2)
+        node = read(self.root, ("alpha",)).nodes[0]
+        self.assertTrue(node.catching_up())
+        self.assertFalse(node.latest_attempt_failed())
+        self.assertEqual((node.remaining_bytes, node.pending_days), (1234, 2))
+        self.meta(
+            "alpha", "node-a", current_complete="false", remaining_bytes=True, pending_days=-1
+        )
+        node = read(self.root, ("alpha",)).nodes[0]
+        self.assertEqual(
+            (node.current_complete, node.remaining_bytes, node.pending_days), (None,) * 3
+        )
+
     def test_a_mirror_without_metadata_is_reported_as_unknown(self) -> None:
         self.mirror("alpha", "node-a", record())
 
@@ -450,6 +464,25 @@ class TheTrafficLogPage(LoginTestCase):
         self.root = Path(self.temporary.name)
         # What zone.js would have written; None is a browser that has not yet.
         self.browser_zone: str | None = None
+
+    def test_successful_contact_with_backlog_shows_a_log_warning(self) -> None:
+        (self.root / "alpha--node-a.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt": NOW.isoformat(),
+                    "last_success": NOW.isoformat(),
+                    "outcome": "ok",
+                    "current_complete": False,
+                    "remaining_bytes": 1234,
+                    "pending_days": 2,
+                }
+            )
+        )
+        page = self.page(now=NOW)
+        self.assertIn("collection succeeded; catching up", page)
+        self.assertIn("1234 bytes remaining", page)
+        self.assertIn("2 older day(s) pending", page)
 
     def host_zone(self, name: str) -> None:
         """Run this test as if the machine stood somewhere in particular.

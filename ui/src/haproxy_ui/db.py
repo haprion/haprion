@@ -1660,14 +1660,18 @@ def cluster_history(connection: Connection[Any], cluster: str) -> ClusterHistory
         return cursor.fetchone()
 
 
-def cluster_histories(connection: Connection[Any]) -> list[ClusterHistory]:
+def cluster_histories(
+    connection: Connection[Any], *, cluster: str | None = None
+) -> list[ClusterHistory]:
     """Every cluster's newest version listing, with the stalest one first."""
 
     with connection.cursor(row_factory=class_row(ClusterHistory)) as cursor:
         cursor.execute(
-            "select cluster, observed_at, outcome, result, warnings, error, poll_error "
-            "  from cluster_history "
-            " order by observed_at asc"
+            sql.SQL(
+                "select cluster, observed_at, outcome, result, warnings, error, poll_error "
+                "from cluster_history {scope} order by observed_at asc"
+            ).format(scope=sql.SQL("where cluster = %(cluster)s" if cluster is not None else "")),
+            {"cluster": cluster},
         )
         return cursor.fetchall()
 
@@ -1750,14 +1754,18 @@ def record_cluster_certificates(
         )
 
 
-def cluster_certificates(connection: Connection[Any]) -> list[ClusterCertificates]:
+def cluster_certificates(
+    connection: Connection[Any], *, cluster: str | None = None
+) -> list[ClusterCertificates]:
     """Every cluster's newest certificate metadata, with the stalest one first."""
 
     with connection.cursor(row_factory=class_row(ClusterCertificates)) as cursor:
         cursor.execute(
-            "select cluster, observed_at, outcome, result, warnings, error, poll_error "
-            "  from cluster_certificates "
-            " order by observed_at asc"
+            sql.SQL(
+                "select cluster, observed_at, outcome, result, warnings, error, poll_error "
+                "from cluster_certificates {scope} order by observed_at asc"
+            ).format(scope=sql.SQL("where cluster = %(cluster)s" if cluster is not None else "")),
+            {"cluster": cluster},
         )
         return cursor.fetchall()
 
@@ -1795,14 +1803,18 @@ def record_cluster_network(
         )
 
 
-def cluster_networks(connection: Connection[Any]) -> list[ClusterNetwork]:
+def cluster_networks(
+    connection: Connection[Any], *, cluster: str | None = None
+) -> list[ClusterNetwork]:
     """Every cluster's newest network description, with the stalest one first."""
 
     with connection.cursor(row_factory=class_row(ClusterNetwork)) as cursor:
         cursor.execute(
-            "select cluster, observed_at, outcome, result, warnings, error, poll_error "
-            "  from cluster_network "
-            " order by observed_at asc"
+            sql.SQL(
+                "select cluster, observed_at, outcome, result, warnings, error, poll_error "
+                "from cluster_network {scope} order by observed_at asc"
+            ).format(scope=sql.SQL("where cluster = %(cluster)s" if cluster is not None else "")),
+            {"cluster": cluster},
         )
         return cursor.fetchall()
 
@@ -2070,14 +2082,18 @@ def objects_fingerprint(connection: Connection[Any], cluster: str) -> str | None
     return row[0] if row is not None and isinstance(row[0], str) else None
 
 
-def cluster_objects(connection: Connection[Any]) -> list[ClusterObjects]:
+def cluster_objects(
+    connection: Connection[Any], *, cluster: str | None = None
+) -> list[ClusterObjects]:
     """Every cluster's newest objects reading, with the stalest one first."""
 
     with connection.cursor(row_factory=class_row(ClusterObjects)) as cursor:
         cursor.execute(
-            "select cluster, observed_at, outcome, result, warnings, error, poll_error "
-            "  from cluster_objects "
-            " order by observed_at asc"
+            sql.SQL(
+                "select cluster, observed_at, outcome, result, warnings, error, poll_error "
+                "from cluster_objects {scope} order by observed_at asc"
+            ).format(scope=sql.SQL("where cluster = %(cluster)s" if cluster is not None else "")),
+            {"cluster": cluster},
         )
         return cursor.fetchall()
 
@@ -2738,7 +2754,7 @@ STORED_DELTAS = (
 )
 
 
-def _interval_aggregates(names: Sequence[str]) -> sql.Composed:
+def _interval_aggregates(names: Sequence[str], *, by_cluster: bool = False) -> sql.Composed:
     """The one aggregate both readers end in, over rows shaped as intervals.
 
     Each row is one interval: `started_at`, `ended_at`, `restarted`,
@@ -2756,12 +2772,12 @@ def _interval_aggregates(names: Sequence[str]) -> sql.Composed:
         for name in names
     )
     return sql.SQL(
-        "select count(*)::bigint, min(started_at), max(ended_at), "
+        "select {cluster}count(*)::bigint, min(started_at), max(ended_at), "
         "       coalesce(bool_or(restarted), false), "
         "       coalesce(bool_or(handed_over), false), "
         "       coalesce(sum(span_sec) filter (where not restarted and not handed_over), 0), "
         "       coalesce(sum(span_sec), 0), {per_counter} "
-    ).format(per_counter=per_counter)
+    ).format(per_counter=per_counter, cluster=sql.SQL("cluster, " if by_cluster else ""))
 
 
 def _stored_intervals(names: Sequence[str]) -> sql.Composed:
@@ -2868,7 +2884,10 @@ def _backend_totals() -> sql.Composed:
 
 
 def _frontend_totals(
-    counters: tuple[tuple[str, str], ...] = metrics.CARD_COUNTERS, *, every_frontend: bool = False
+    counters: tuple[tuple[str, str], ...] = metrics.CARD_COUNTERS,
+    *,
+    every_frontend: bool = False,
+    by_cluster: bool = False,
 ) -> sql.Composed:
     """One frontend's figures, summed from the differences stored per sample.
 
@@ -2885,16 +2904,18 @@ def _frontend_totals(
     names = [name for name, _label in counters]
     return sql.SQL(
         "with intervals as ("
-        "    select {stored} "
+        "    select {cluster}{stored} "
         "      from metric_frontend "
         "     where {scope} "
         "       and owns_vip and observed_at >= %(since)s and observed_at <= %(until)s "
         "       and previous_at >= %(since)s"
         ") "
-        "{aggregates} from intervals"
+        "{aggregates} from intervals{grouping}"
     ).format(
         stored=_stored_intervals(names),
-        aggregates=_interval_aggregates(names),
+        aggregates=_interval_aggregates(names, by_cluster=by_cluster),
+        cluster=sql.SQL("cluster, " if by_cluster else ""),
+        grouping=sql.SQL(" group by cluster" if by_cluster else ""),
         #
         # Every frontend but the metrics exporter's, whose requests are the
         # monitoring system's scrapes and not traffic to anything served.
@@ -2987,6 +3008,69 @@ def read_traffic_summary(
     if row is None:
         raise RuntimeError("the traffic summary aggregate returned no row")
     return _measurement(row, metrics.SUMMARY_COUNTERS)
+
+
+def read_traffic_summaries(
+    connection: Connection[Any],
+    *,
+    clusters: Sequence[str],
+    since: datetime,
+    until: datetime,
+) -> dict[str, metrics.BackendMeasurement]:
+    """One aggregate per selected cluster, including clusters without readings."""
+
+    empty = _measurement(
+        (
+            0,
+            None,
+            None,
+            False,
+            False,
+            0,
+            0,
+            *(0 for _ in metrics.SUMMARY_COUNTERS for _ in range(2)),
+        ),
+        metrics.SUMMARY_COUNTERS,
+    )
+    result = dict.fromkeys(clusters, empty)
+    if not clusters:
+        return result
+    with connection.cursor() as cursor:
+        cursor.execute(
+            _frontend_totals(metrics.SUMMARY_COUNTERS, every_frontend=True, by_cluster=True),
+            {"clusters": list(clusters), "since": since, "until": until},
+        )
+        for row in cursor.fetchall():
+            result[row[0]] = _measurement(row[1:], metrics.SUMMARY_COUNTERS)
+    return result
+
+
+def read_response_times_by_cluster(
+    connection: Connection[Any],
+    *,
+    clusters: Sequence[str],
+    since: datetime,
+    until: datetime,
+) -> dict[str, tuple[int, int | None, int | None]]:
+    """Exact percentiles per cluster; unanswered requests remain excluded."""
+
+    result: dict[str, tuple[int, int | None, int | None]] = dict.fromkeys(clusters, (0, None, None))
+    if not clusters:
+        return result
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select cluster, count(*), "
+            "       percentile_disc(0.5) within group (order by response_time), "
+            "       percentile_disc(0.95) within group (order by response_time) "
+            "  from traffic_log "
+            " where cluster = any(%(clusters)s) and response_time >= 0 "
+            "   and occurred_at >= %(since)s and occurred_at <= %(until)s "
+            " group by cluster",
+            {"clusters": list(clusters), "since": since, "until": until},
+        )
+        for row in cursor.fetchall():
+            result[row[0]] = int(row[1]), int(row[2]), int(row[3])
+    return result
 
 
 def read_response_times(

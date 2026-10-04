@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
@@ -105,18 +106,23 @@ class TheClusterHeader(LoginTestCase):
         asked: list[object] = []
 
         def summary(
-            _connection: object, *, clusters: object, since: datetime, until: datetime
-        ) -> BackendMeasurement:
+            _connection: object, *, clusters: Sequence[str], since: datetime, until: datetime
+        ) -> dict[str, BackendMeasurement]:
             asked.append(clusters)
             if until - since > timedelta(hours=1):
-                return measured(timedelta(hours=24), (1_234_567, 3_400_000_000, 41_200_000_000))
-            return measured(timedelta(minutes=5), (3_612, 9_250_000, 121_000_000))
+                return dict.fromkeys(
+                    clusters,
+                    measured(timedelta(hours=24), (1_234_567, 3_400_000_000, 41_200_000_000)),
+                )
+            return dict.fromkeys(
+                clusters, measured(timedelta(minutes=5), (3_612, 9_250_000, 121_000_000))
+            )
 
         with (
-            mock.patch("haproxy_ui.db.read_traffic_summary", side_effect=summary),
-            mock.patch("haproxy_ui.db.read_response_times") as responses,
+            mock.patch("haproxy_ui.db.read_traffic_summaries", side_effect=summary),
+            mock.patch("haproxy_ui.db.read_response_times_by_cluster") as responses,
         ):
-            client = self.client(replace(configuration(), clusters=("alpha",)))
+            client = self.client(replace(configuration(), clusters=("alpha", "beta")))
             self.assertEqual(self.sign_in(client).status_code, 303)
             page = client.get("/").text
 
@@ -126,17 +132,17 @@ class TheClusterHeader(LoginTestCase):
         self.assertIn("<dt>Out</dt><dd>3.2 Mbit/s</dd>", page)
         self.assertIn(f"<dt>Response</dt><dd>{traffic_summary.DASH}</dd>", page)
         self.assertNotIn("<span>Requests 24 h</span>", page, "no row of tiles any more")
-        self.assertTrue(all(clusters == ["alpha"] for clusters in asked), "one cluster at a time")
+        self.assertEqual(asked, [("alpha", "beta"), ("alpha", "beta")])
         responses.assert_not_called()
 
     def test_the_dashboard_redraws_itself_once_per_poll(self) -> None:
         # The CPU, memory and freshness move without a reload (B239).
         with (
             mock.patch(
-                "haproxy_ui.db.read_traffic_summary",
-                return_value=measured(timedelta(minutes=5), (1, 1, 1)),
+                "haproxy_ui.db.read_traffic_summaries",
+                return_value={"alpha": measured(timedelta(minutes=5), (1, 1, 1))},
             ),
-            mock.patch("haproxy_ui.db.read_response_times"),
+            mock.patch("haproxy_ui.db.read_response_times_by_cluster"),
         ):
             config = replace(configuration(), clusters=("alpha",))
             client = self.client(config)

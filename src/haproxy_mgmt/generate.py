@@ -1226,9 +1226,10 @@ def _frontend_file(
             tail.append(f"    default_backend {_fallback_name(vip, protocol)}")
             fallbacks.extend(_fallback(vip, protocol, unknown_host))
         body += envelope
+        tls_names = _tls_group_names(members, protocol)
         for _, proxy, role in members:
             rules = _frontend_rules(
-                proxy, role, networks, members=members, trusted=bool(trusted_proxies)
+                proxy, role, networks, tls_names=tls_names, trusted=bool(trusted_proxies)
             )
             body.extend(rules)
             _record(shared, proxy.name, listener=[*envelope, *tail], routing=rules)
@@ -2050,7 +2051,7 @@ def _frontend_rules(
     role: str = "serve",
     networks: Mapping[str, Sequence[str]] | None = None,
     *,
-    members: Sequence[tuple[Vip, Proxy, str]] = (),
+    tls_names: Mapping[str, str] | None = None,
     trusted: bool = False,
 ) -> list[str]:
     """One object's whole contribution to the shared frontend.
@@ -2077,7 +2078,7 @@ def _frontend_rules(
         #
         return [*lines, f"    redirect scheme https code 301 if {host}"]
 
-    lines.extend(_tls_sni_guard(proxy, host, members))
+    lines.extend(_tls_sni_guard(proxy, host, tls_names or {}))
 
     lines.extend(_access_rules(proxy, networks or {}, host, trusted))
 
@@ -2104,28 +2105,34 @@ def _frontend_rules(
     return lines + decisions
 
 
-def _tls_sni_guard(
-    proxy: Proxy, host_acl: str, members: Sequence[tuple[Vip, Proxy, str]]
-) -> list[str]:
+def _tls_group_names(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> dict[str, str]:
+    """Build each policy's allowed SNI names once for this frontend."""
+
+    if protocol != "https":
+        return {}
+    served = [(vip, member) for vip, member, role in members if role == "serve"]
+    policies: dict[str | None, set[str]] = {}
+    for vip, member in served:
+        policies.setdefault(member.listen.tls_policy or vip.tls_policy, set()).update(
+            member.hostnames
+        )
+    if len(policies) < 2:
+        return {}
+    allowed = {policy: " ".join(sorted(names)) for policy, names in policies.items()}
+    return {
+        member.name: allowed[member.listen.tls_policy or vip.tls_policy] for vip, member in served
+    }
+
+
+def _tls_sni_guard(proxy: Proxy, host_acl: str, tls_names: Mapping[str, str]) -> list[str]:
     """Do not route an HTTP site over another policy group's TLS connection."""
 
-    served = [(vip, member) for vip, member, role in members if role == "serve"]
-    policies = {member.listen.tls_policy or vip.tls_policy for vip, member in served}
-    if proxy.listen.protocol != "https" or len(policies) < 2:
+    allowed = tls_names.get(proxy.name)
+    if proxy.listen.protocol != "https" or allowed is None:
         return []
-    vip = next(vip for vip, member in served if member is proxy)
-    policy = proxy.listen.tls_policy or vip.tls_policy
-    allowed = sorted(
-        {
-            hostname
-            for other_vip, member in served
-            if (member.listen.tls_policy or other_vip.tls_policy) == policy
-            for hostname in member.hostnames
-        }
-    )
     sni_acl = _acl_name(proxy.name, "tls-sni")
     return [
-        f"    acl {sni_acl} ssl_fc_sni,lower -m str {' '.join(allowed)}",
+        f"    acl {sni_acl} ssl_fc_sni,lower -m str {allowed}",
         f"    http-request deny deny_status 421 if {host_acl} !{sni_acl}",
     ]
 

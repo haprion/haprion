@@ -365,6 +365,7 @@ class Source:
     demo_rows: Callable[[], Iterable[Any]]
     snapshot_rows: Callable[[snapshot.ProductionSnapshot], Iterable[Any]]
     cached_rows: Callable[[Any], Iterable[Any]]
+    scoped_rows: Callable[[Any, str], Iterable[Any]] | None = None
 
 
 #
@@ -386,6 +387,7 @@ HISTORY_SOURCE = Source(
     demo.history_rows,
     lambda taken: taken.history_rows,
     lambda connection: db.cluster_histories(connection),
+    lambda connection, cluster: db.cluster_histories(connection, cluster=cluster),
 )
 BACKUP_SOURCE = Source(
     demo.backup_rows,
@@ -396,11 +398,13 @@ CERTIFICATE_SOURCE = Source(
     demo.certificate_rows,
     lambda taken: taken.certificate_rows,
     lambda connection: db.cluster_certificates(connection),
+    lambda connection, cluster: db.cluster_certificates(connection, cluster=cluster),
 )
 NETWORK_SOURCE = Source(
     demo.network_rows,
     lambda taken: taken.network_rows,
     lambda connection: db.cluster_networks(connection),
+    lambda connection, cluster: db.cluster_networks(connection, cluster=cluster),
 )
 #
 # A production snapshot carries no objects, and that is a decision rather than
@@ -424,6 +428,7 @@ OBJECTS_SOURCE = Source(
     demo.object_rows,
     lambda taken: (),
     lambda connection: db.cluster_objects(connection),
+    lambda connection, cluster: db.cluster_objects(connection, cluster=cluster),
 )
 
 
@@ -473,7 +478,12 @@ def _cluster_list(request: Request, config: Config) -> tuple[tuple[str, ...], bo
 
 
 def read_source(
-    request: Request, config: Config, source: Source
+    request: Request,
+    config: Config,
+    source: Source,
+    *,
+    cluster: str | None = None,
+    clusters: tuple[str, ...] | None = None,
 ) -> tuple[tuple[str, ...], Iterable[Any], datetime | None]:
     """The clusters to render, their newest readings, and the clock to judge them by.
 
@@ -493,15 +503,39 @@ def read_source(
     if config.demo_fixture:
         # The fixture times its readings from the moment it is read, so it needs
         # no clock of its own; it is never stale.
-        return demo.CLUSTERS, source.demo_rows(), None
+        return (
+            demo.CLUSTERS,
+            [
+                row
+                for row in source.demo_rows()
+                if cluster is None or getattr(row, "cluster", None) == cluster
+            ],
+            None,
+        )
     if config.production_snapshot:
         captured = snapshot.load_production_snapshot(
             snapshot.path_for_config(request.app.state.config_path)
         )
-        return captured.clusters, source.snapshot_rows(captured), captured.captured_at
-    listed, from_file = _cluster_list(request, config)
+        return (
+            captured.clusters,
+            [
+                row
+                for row in source.snapshot_rows(captured)
+                if cluster is None or getattr(row, "cluster", None) == cluster
+            ],
+            captured.captured_at,
+        )
+    listed, from_file = _cluster_list(request, config) if clusters is None else (clusters, True)
+    if cluster is not None and cluster not in listed:
+        return listed, (), None
     with request.app.state.pool.connection() as connection:
-        rows = source.cached_rows(connection)
+        rows = (
+            source.scoped_rows(connection, cluster)
+            if cluster is not None and source.scoped_rows is not None
+            else source.cached_rows(connection)
+        )
+    if cluster is not None:
+        rows = [row for row in rows if getattr(row, "cluster", None) == cluster]
     #
     # A cluster the cluster file no longer names has been removed (Settings or
     # `haproxy-cluster remove`), and its last cached readings are never deleted:
@@ -689,27 +723,33 @@ def build_router(config: Config) -> APIRouter:
             # on 2026-10-01: traffic is a fact about a cluster's VIPs).
             #
             recent_since = moment - traffic_summary.recent_window(config.poller.interval_seconds)
+            traffic_clusters = listed_clusters(request, config)
+            day_traffic = db.read_traffic_summaries(
+                connection,
+                clusters=traffic_clusters,
+                since=moment - traffic_summary.DAY,
+                until=moment,
+            )
+            recent_traffic = db.read_traffic_summaries(
+                connection, clusters=traffic_clusters, since=recent_since, until=moment
+            )
+            response_times = (
+                db.read_response_times_by_cluster(
+                    connection,
+                    clusters=traffic_clusters,
+                    since=moment - traffic_summary.RESPONSE_WINDOW,
+                    until=moment,
+                )
+                if config.traffic_logs.enabled
+                else None
+            )
             traffic = {
                 name: traffic_summary.row(
-                    db.read_traffic_summary(
-                        connection,
-                        clusters=[name],
-                        since=moment - traffic_summary.DAY,
-                        until=moment,
-                    ),
-                    db.read_traffic_summary(
-                        connection, clusters=[name], since=recent_since, until=moment
-                    ),
-                    db.read_response_times(
-                        connection,
-                        clusters=[name],
-                        since=moment - traffic_summary.RESPONSE_WINDOW,
-                        until=moment,
-                    )
-                    if config.traffic_logs.enabled
-                    else None,
+                    day_traffic[name],
+                    recent_traffic[name],
+                    response_times[name] if response_times is not None else None,
                 )
-                for name in listed_clusters(request, config)
+                for name in traffic_clusters
             }
         running = jobs.in_flight(recent)
         return TEMPLATES.TemplateResponse(
@@ -2092,7 +2132,10 @@ def build_router(config: Config) -> APIRouter:
         freshness_warnings = tuple(
             item
             for item in freshness
-            if item[0].latest_attempt_failed() or item[1] is None or item[1] > 300
+            if item[0].latest_attempt_failed()
+            or item[0].catching_up()
+            or item[1] is None
+            or item[1] > 300
         )
         calendar_start = local_earliest.date() - timedelta(days=local_earliest.weekday())
         calendar_end = local_now.date() + timedelta(days=6 - local_now.weekday())
@@ -7257,7 +7300,9 @@ class EditorState:
 
 
 def _editor_state(request: Request, config: Config, cluster: str) -> EditorState:
-    clusters, object_rows, captured_at = read_source(request, config, OBJECTS_SOURCE)
+    clusters, object_rows, captured_at = read_source(
+        request, config, OBJECTS_SOURCE, cluster=cluster
+    )
     if cluster not in clusters:
         raise HTTPException(status_code=404)
     stale_after = timedelta(seconds=config.poller.interval_seconds * 2)
@@ -7265,12 +7310,14 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
     result = reading.result if reading is not None and isinstance(reading.result, dict) else {}
     commit = result.get("commit")
 
-    _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
+    _, network_rows, _ = read_source(
+        request, config, NETWORK_SOURCE, cluster=cluster, clusters=clusters
+    )
     described = next(
         (
             view
             for view in network.build_network_overview(
-                clusters,
+                (cluster,),
                 network_rows,
                 now=captured_at,
                 stale_after=stale_after,
@@ -7280,12 +7327,14 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
         ),
         None,
     )
-    _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
+    _, certificate_rows, _ = read_source(
+        request, config, CERTIFICATE_SOURCE, cluster=cluster, clusters=clusters
+    )
     held = next(
         (
             view
             for view in certificates.build_certificate_overview(
-                clusters,
+                (cluster,),
                 certificate_rows,
                 now=captured_at,
                 stale_after=stale_after,
@@ -7295,12 +7344,14 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
         ),
         None,
     )
-    _, history_rows, _ = read_source(request, config, HISTORY_SOURCE)
+    _, history_rows, _ = read_source(
+        request, config, HISTORY_SOURCE, cluster=cluster, clusters=clusters
+    )
     released = next(
         (
             version
             for view in history.build_history_overview(
-                clusters,
+                (cluster,),
                 history_rows,
                 now=captured_at,
                 stale_after=stale_after,

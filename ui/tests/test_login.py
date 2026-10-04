@@ -146,8 +146,18 @@ class LoginTestCase(unittest.TestCase):
             # installation the poller has not measured yet. A test about the
             # row patches these itself.
             #
-            mock.patch("haproxy_ui.db.read_traffic_summary", return_value=NO_TRAFFIC),
-            mock.patch("haproxy_ui.db.read_response_times", return_value=(0, None, None)),
+            mock.patch(
+                "haproxy_ui.db.read_traffic_summaries",
+                side_effect=lambda _c, *, clusters, since, until: dict.fromkeys(
+                    clusters, NO_TRAFFIC
+                ),
+            ),
+            mock.patch(
+                "haproxy_ui.db.read_response_times_by_cluster",
+                side_effect=lambda _c, *, clusters, since, until: dict.fromkeys(
+                    clusters, (0, None, None)
+                ),
+            ),
             # Settings draws its Users card from this; none unless a test says.
             mock.patch("haproxy_ui.db.account_rows", return_value=[]),
             mock.patch("haproxy_ui.db.feature_switches", side_effect=lambda _c: self.switches),

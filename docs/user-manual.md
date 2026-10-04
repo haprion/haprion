@@ -1643,10 +1643,15 @@ write; the manager is backed up as a whole machine and needs no older copies tha
 ## Keeping jobs, sessions and metric history bounded
 
 ```bash
-sudo haproxy-ui-retention report              # how many rows, how many removable
+sudo haproxy-ui-retention report              # quick overview; log row counts are estimates
+sudo haproxy-ui-retention report --exact      # count every traffic/WAF log row
 sudo haproxy-ui-retention prune --dry-run     # the same, deleting nothing
 sudo haproxy-ui-retention prune               # what the daily timer runs
 ```
+
+The quick report sums row estimates and total storage (including indexes) from leaf
+partitions only. It labels the counts as estimates and lists partitions without statistics;
+run `report --exact` when an exact log count is needed. Both reports leave data unchanged.
 
 **It is a root command because no application role holds `delete` on any table,
 and none is going to.** That is the same boundary as the audit trail and the
@@ -4020,6 +4025,12 @@ The collector imports complete records with PostgreSQL `COPY` and advances an at
 checkpoint only after the database transaction commits. Repeating a batch is safe because each
 record has a deterministic identity. The interface reads indexed database rows once
 `[traffic_logs]` is enabled in `ui.toml`; the mirror metadata still reports collection freshness.
+Successful contact does not mean the log is caught up: the log warning shows whether today's
+file is incomplete, the bytes remaining at the last read and older days still pending. Each
+run reads at most one 8 MiB block from today and one from an older day per node, each within
+the existing 30-second SSH timeout. Both make progress even while today's file grows; the
+transfer cap per response remains unchanged. The remaining byte count is an observation,
+not a prediction of how much new traffic arrived afterwards.
 With the database configured the collector keeps the day files in staging and one metadata file
 per node in the mirror directory, and does not join the days into one log file per node: nothing
 reads that file, and writing it meant rewriting the whole retained history once a minute. A joined
@@ -4493,4 +4504,3 @@ This guide is honest about its gaps rather than complete on paper:
 
 The acceptance criterion for closing them is mechanical: a new management host and a new pair of nodes, with names of your own choosing, built
 from this repository alone by someone who has never seen the maintainer's environment.
-

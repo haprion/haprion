@@ -809,6 +809,60 @@ class ARealDatabase(unittest.TestCase):
                 cursor.execute(f"analyze {table}")  # the names are the schema's own, checked above
             connection.rollback()
 
+    def test_quick_log_report_sums_leaf_statistics_and_sizes_once(self) -> None:
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        for table in ("traffic_log", "waf_match"):
+            query = subprocess.run(  # noqa: S603 - fixed interpreter, repository script
+                [
+                    "/bin/bash",
+                    "-c",
+                    'eval "$(sed -n \'/^partition_report_query() {/,/^}/p\' "$0")"; '
+                    'partition_report_query "$1"',
+                    str(script),
+                    table,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(psycopg.sql.SQL("analyze {}").format(psycopg.sql.Identifier(table)))
+                cursor.execute(query)
+                actual = cursor.fetchone()
+                cursor.execute(
+                    "select coalesce(sum(greatest(child.reltuples, 0)), 0)::bigint, "
+                    "count(*) filter (where child.reltuples < 0), "
+                    "pg_size_pretty(coalesce(sum(pg_total_relation_size(child.oid)), 0)::bigint) "
+                    "from pg_inherits join pg_class child on child.oid = inhrelid "
+                    "where inhparent = %s::regclass",
+                    (table,),
+                )
+                self.assertEqual(actual, cursor.fetchone())
+                self.assertNotIn("count(*) from", query.lower())
+                connection.rollback()
+
+    def test_editor_cache_readers_select_the_cluster_before_decoding_documents(self) -> None:
+        pairs = (
+            (db.record_cluster_objects, db.cluster_objects),
+            (db.record_cluster_network, db.cluster_networks),
+            (db.record_cluster_history, db.cluster_histories),
+            (db.record_cluster_certificates, db.cluster_certificates),
+        )
+        with self.connect() as connection:
+            for writer, reader in pairs:
+                for cluster in ("read-alpha", "read-beta"):
+                    writer(connection, cluster=cluster, outcome="done", result={"marker": cluster})
+                selected = reader(connection, cluster="read-alpha")
+                self.assertEqual([row.cluster for row in selected], ["read-alpha"])
+                self.assertEqual(selected[0].result, {"marker": "read-alpha"})
+                self.assertEqual(reader(connection, cluster="read-absent"), [])
+                self.assertTrue(
+                    {"read-alpha", "read-beta"}.issubset(
+                        {row.cluster for row in reader(connection)}
+                    )
+                )
+            connection.rollback()
+
     def retention_partitions_expired(self, table: str) -> str:
         """The retention command's own query for a day-partitioned table's expired days."""
         script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
@@ -1368,6 +1422,18 @@ class ARealDatabase(unittest.TestCase):
             summed = db.read_traffic_summary(
                 connection, clusters=["dash-a"], since=start, until=until
             )
+            selected = ["dash-a", "dash-b", "dash-empty"]
+            grouped = db.read_traffic_summaries(
+                connection, clusters=selected, since=start, until=until
+            )
+            for name in selected:
+                self.assertEqual(
+                    grouped[name],
+                    db.read_traffic_summary(connection, clusters=[name], since=start, until=until),
+                )
+            self.assertEqual(
+                db.read_traffic_summaries(connection, clusters=[], since=start, until=until), {}
+            )
             cards = [
                 db.read_frontend_totals(
                     connection, cluster="dash-a", frontend=name, since=start, until=until
@@ -1411,6 +1477,26 @@ class ARealDatabase(unittest.TestCase):
                 clusters=["rt-only"],
                 since=now - timedelta(minutes=1),
                 until=now + timedelta(minutes=1),
+            )
+            selected = ["rt-only", "rt-other", "rt-empty"]
+            grouped = db.read_response_times_by_cluster(
+                connection,
+                clusters=selected,
+                since=now - timedelta(minutes=1),
+                until=now + timedelta(minutes=1),
+            )
+            for name in selected:
+                self.assertEqual(
+                    grouped[name],
+                    db.read_response_times(
+                        connection,
+                        clusters=[name],
+                        since=now - timedelta(minutes=1),
+                        until=now + timedelta(minutes=1),
+                    ),
+                )
+            self.assertEqual(
+                db.read_response_times_by_cluster(connection, clusters=[], since=now, until=now), {}
             )
         self.assertEqual((answered, median, p95), (100, 50, 95))
 

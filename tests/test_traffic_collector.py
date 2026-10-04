@@ -322,6 +322,37 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(collect(self.config, now=NOW, fetch=fetch), 0)
         self.assertEqual((self.mirror / "alpha--node-a.jsonl").read_bytes(), line)
 
+    def test_growing_current_data_and_older_backlog_both_advance_with_two_calls(self) -> None:
+        calls: list[tuple[date, int]] = []
+        line = b'{"schema":1}\n'
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            calls.append((wanted, offset))
+            return Response(offset + len(line) + 100, offset, len(line), False, False, 0, line)
+
+        for pass_number in range(2):
+            calls.clear()
+            collect_node(self.config, self.target, now=NOW, fetch=fetch)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0], (NOW.date(), pass_number * len(line)))
+            self.assertLess(calls[1][0], NOW.date())
+            self.assertEqual(calls[1][1], pass_number * len(line))
+            meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
+            self.assertEqual(meta["outcome"], "ok")
+            self.assertFalse(meta["current_complete"])
+            self.assertEqual(meta["remaining_bytes"], 100)
+            self.assertGreater(meta["pending_days"], 0)
+
+        collect_node(
+            self.config,
+            self.target,
+            now=NOW,
+            fetch=lambda _target, wanted, offset: self.response(wanted, offset, b""),
+        )
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
+        self.assertTrue(meta["current_complete"])
+        self.assertEqual(meta["remaining_bytes"], 0)
+
     def test_yesterday_is_read_again_until_the_midnight_grace_has_passed(self) -> None:
         yesterday = NOW.date() - date.resolution
         for age in range(2, 14):

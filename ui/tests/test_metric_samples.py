@@ -594,20 +594,20 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
     def test_both_aggregates_return_the_same_columns_in_the_same_order(self) -> None:
         """`_measurement` unpacks both by position, so a drift is silent.
 
-        The two builders are deliberate copies - one reads a rollup half and
-        the other cannot - and a comment saying they must match is not a thing
-        that fails. This is.
+        One reader has a rollup half and the other cannot. Compare rendered
+        SQL, because a Composed object's debug representation is not the
+        statement PostgreSQL executes.
         """
 
-        backend = str(db._backend_totals())
-        frontend = str(db._frontend_totals())
+        backend = db._backend_totals().as_string()
+        frontend = db._frontend_totals().as_string()
         tail = "select count(*)::bigint, min(started_at), max(ended_at), "
 
         self.assertIn(tail, backend)
         self.assertIn(tail, frontend)
         self.assertEqual(
-            backend.split(tail, 1)[1].split(" from differences", 1)[0],
-            frontend.split(tail, 1)[1].split(" from differences", 1)[0],
+            backend.split(tail, 1)[1].split(" from intervals", 1)[0],
+            frontend.split(tail, 1)[1].split(" from intervals", 1)[0],
         )
 
 

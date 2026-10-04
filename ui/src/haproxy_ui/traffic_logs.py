@@ -82,6 +82,12 @@ class Freshness:
     last_attempt: datetime | None
     last_success: datetime | None
     outcome: str
+    current_complete: bool | None = None
+    remaining_bytes: int | None = None
+    pending_days: int | None = None
+
+    def catching_up(self) -> bool:
+        return self.current_complete is False or bool(self.pending_days)
 
     def stale_seconds(self, *, now: datetime) -> float | None:
         if self.last_success is None:
@@ -395,12 +401,20 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         return Freshness(cluster, node, None, None, "unknown")
     outcome = value.get("outcome")
+    complete = value.get("current_complete")
+    remaining = value.get("remaining_bytes")
+    pending = value.get("pending_days")
     return Freshness(
         cluster=cluster,
         node=node,
         last_attempt=_stamp(value.get("last_attempt")),
         last_success=_stamp(value.get("last_success")),
         outcome=outcome if isinstance(outcome, str) and len(outcome) <= 64 else "unknown",
+        current_complete=complete if isinstance(complete, bool) else None,
+        remaining_bytes=remaining
+        if type(remaining) is int and 0 <= remaining <= 2**63 - 1
+        else None,
+        pending_days=pending if type(pending) is int and 0 <= pending <= 90 else None,
     )
 
 

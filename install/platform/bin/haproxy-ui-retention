@@ -3,7 +3,7 @@
 # haproxy-ui-retention - keep the database bounded.
 #
 #     haproxy-ui-retention prune  [-e <environment>] [--days <n>] [--dry-run]
-#     haproxy-ui-retention report [-e <environment>] [--days <n>]
+#     haproxy-ui-retention report [-e <environment>] [--days <n>] [--exact]
 #
 # The job table grows without limit otherwise: it holds one row per management
 # request ever made, and nothing has ever removed one. The audit trail is what
@@ -338,6 +338,30 @@ partitions_expired() {
 SQL
 }
 
+partition_report_query() {
+    local table="$1"
+    cat <<SQL
+    select coalesce(sum(greatest(child.reltuples, 0)), 0)::bigint,
+           count(*) filter (where child.reltuples < 0),
+           pg_size_pretty(coalesce(sum(pg_total_relation_size(child.oid)), 0)::bigint)
+      from pg_partition_tree('public.${table}'::regclass) tree
+      join pg_class child on child.oid = tree.relid
+     where tree.isleaf
+SQL
+}
+
+traffic_report() {
+    local table="$1" estimated unknown size exact figures
+    figures="$(psql_as -c "$(partition_report_query "$table")")"
+    IFS='|' read -r estimated unknown size <<< "$figures"
+    if [[ "$exact_count" -eq 1 ]]; then
+        exact="$(psql_as -c "select count(*) from ${table}")"
+        log "  ${table}: ${exact} row(s) (exact), ${size}, retention ${TRAFFIC_KEEP_DAYS} day(s)"
+    else
+        log "  ${table}: ${estimated} row(s) (estimated), ${size}, retention ${TRAFFIC_KEEP_DAYS} day(s); ${unknown} partition(s) without statistics"
+    fi
+}
+
 traffic_partitions() {
     local table partition
     local -a expired
@@ -588,6 +612,7 @@ metric_partitions_prune() {
 
 environment=prod
 dry_run=0
+exact_count=0
 command="${1:-}"
 shift || true
 while [[ $# -gt 0 ]]; do
@@ -595,9 +620,11 @@ while [[ $# -gt 0 ]]; do
         -e|--environment) environment="${2:-}"; shift 2 ;;
         --days) KEEP_DAYS="${2:-}"; shift 2 ;;
         --dry-run) dry_run=1; shift ;;
+        --exact) exact_count=1; shift ;;
         *) usage ;;
     esac
 done
+[[ "$exact_count" -eq 0 || "$command" == "report" ]] || usage
 [[ "$environment" =~ ^[a-z0-9]+$ ]] || die "environment names are alphanumeric"
 [[ "$KEEP_DAYS" =~ ^[0-9]+$ && "$KEEP_DAYS" -ge 1 ]] || die "--days takes a whole number of days"
 
@@ -704,7 +731,7 @@ main() {
             metrics_report
             for table in "${TRAFFIC_TABLES[@]}"; do
                 [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
-                log "  ${table}: $(psql_as -c "select count(*) from ${table}") row(s), retention ${TRAFFIC_KEEP_DAYS} day(s)"
+                traffic_report "$table"
             done
             oidc_logins
             version_diffs

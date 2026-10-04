@@ -403,20 +403,22 @@ def _append(path: Path, payload: bytes) -> None:
         os.close(descriptor)
 
 
-def _update_day(config: CollectorConfig, target: NodeTarget, wanted: date, fetch: Fetch) -> bool:
+def _update_day(
+    config: CollectorConfig, target: NodeTarget, wanted: date, fetch: Fetch
+) -> tuple[bool, int]:
     path = _part(config, target, wanted)
     offset = _safe_size(path)
     response = fetch(target, wanted, offset)
     if response.reset:
         _replace(path, b"", 0o600)
-        return False
+        return False, response.size
     if response.skipped_bytes:
         # A local cursor in the middle of a remote record can only come from a
         # damaged/replaced file. Rebuild the day rather than preserving a hole.
         _replace(path, b"", 0o600)
-        return False
+        return False, response.size
     _append(path, response.payload)
-    return response.eof
+    return response.eof, response.size - _safe_size(path)
 
 
 def _assemble(config: CollectorConfig, target: NodeTarget, days: tuple[date, ...]) -> None:
@@ -485,6 +487,9 @@ def _write_meta(
     attempted: datetime,
     outcome: str,
     success: bool,
+    current_complete: bool | None = None,
+    remaining_bytes: int | None = None,
+    pending_days: int | None = None,
 ) -> None:
     path = _meta_path(config, target)
     previous = _previous_success(path)
@@ -497,6 +502,10 @@ def _write_meta(
             "last_attempt": stamp,
             "last_success": stamp if success else previous,
             "outcome": outcome,
+            "current_day": attempted.astimezone(UTC).date().isoformat(),
+            "current_complete": current_complete,
+            "remaining_bytes": remaining_bytes,
+            "pending_days": pending_days,
         },
         separators=(",", ":"),
         sort_keys=True,
@@ -544,25 +553,26 @@ def collect_node(
                         checkpoint.unlink()
 
     try:
-        current_complete = _update_day(config, target, today, fetch)
+        current_complete, remaining_bytes = _update_day(config, target, today, fetch)
         # Bootstrap/catch-up progresses one closed day per run, while current
         # traffic is always fetched first. A large backlog therefore cannot
         # starve the last minute before an incident.
-        if current_complete:
-            for wanted in days[:-1]:
-                marker = config.staging / f"{prefix}{wanted.isoformat()}.done"
-                if marker.exists() or marker.is_symlink():
-                    _regular(marker, maximum=1)
-                    continue
-                complete = _update_day(config, target, wanted, fetch)
-                yesterday_still_open = (
-                    wanted == today - timedelta(days=1)
-                    and utc_now - datetime.combine(today, datetime.min.time(), UTC)
-                    < CLOSED_DAY_GRACE
-                )
-                if complete and not yesterday_still_open:
-                    _replace(marker, b"", 0o600)
-                break
+        # One block for today and one for older data, even while today grows:
+        # at most two MAX_SEND responses and two bounded SSH calls per node.
+        # Neither backlog can starve the other.
+        for wanted in days[:-1]:
+            marker = config.staging / f"{prefix}{wanted.isoformat()}.done"
+            if marker.exists() or marker.is_symlink():
+                _regular(marker, maximum=1)
+                continue
+            complete, _ = _update_day(config, target, wanted, fetch)
+            yesterday_still_open = (
+                wanted == today - timedelta(days=1)
+                and utc_now - datetime.combine(today, datetime.min.time(), UTC) < CLOSED_DAY_GRACE
+            )
+            if complete and not yesterday_still_open:
+                _replace(marker, b"", 0o600)
+            break
         #
         # The joined file is for a reader of files. With the database as the
         # reader (schema 2) nothing reads it: the interface asks PostgreSQL and
@@ -576,7 +586,20 @@ def collect_node(
             _assemble(config, target, days)
         else:
             _drop_mirror(config, target)
-        _write_meta(config, target, attempted=now, outcome="ok", success=True)
+        pending_days = sum(
+            not (config.staging / f"{prefix}{wanted.isoformat()}.done").exists()
+            for wanted in days[:-1]
+        )
+        _write_meta(
+            config,
+            target,
+            attempted=now,
+            outcome="ok",
+            success=True,
+            current_complete=current_complete,
+            remaining_bytes=remaining_bytes,
+            pending_days=pending_days,
+        )
     except (CollectorError, OSError) as exc:
         _write_meta(
             config,

@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import yaml
 
-from haproxy_ui import auth, db, health
+from haproxy_ui import auth, db, health, views
 from haproxy_ui import probe as probe_module
 from haproxy_ui.db import ClusterNetwork, ClusterObjects, DraftConflict, Job, ProxyDraft
 from tests.test_login import LoginTestCase, configuration
@@ -98,8 +98,8 @@ class EditorTestCase(LoginTestCase):
         self.draft: ProxyDraft | None = None
         self.conflict = False
         for target, side_effect in (
-            ("cluster_objects", lambda _c: [OBJECTS]),
-            ("cluster_networks", lambda _c: [NETWORK]),
+            ("cluster_objects", lambda _c, **_kw: [OBJECTS]),
+            ("cluster_networks", lambda _c, **_kw: [NETWORK]),
             ("read_draft", self._read_draft),
             ("save_draft", self._save_draft),
             ("rename_draft", self._rename_draft),
@@ -182,6 +182,33 @@ class EditorTestCase(LoginTestCase):
 
 
 class ReachingTheEditor(EditorTestCase):
+    def test_editor_reads_the_cluster_list_once_and_only_its_four_sources(self) -> None:
+        request = mock.Mock()
+        request.app.state.pool = self.pool
+        with (
+            mock.patch("haproxy_ui.db.cluster_list", return_value=("alpha", "beta")) as listed,
+            mock.patch("haproxy_ui.db.cluster_objects", return_value=[OBJECTS]) as objects_read,
+            mock.patch("haproxy_ui.db.cluster_networks", return_value=[NETWORK]) as networks_read,
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[]) as certificates_read,
+            mock.patch("haproxy_ui.db.cluster_histories", return_value=[]) as histories_read,
+        ):
+            state = views._editor_state(request, writing_configuration(), "alpha")
+        self.assertEqual(state.commit, COMMIT)
+        self.assertEqual([obj.name for obj in state.stored], ["shop"])
+        self.assertEqual(listed.call_count, 1)
+        for reader in (objects_read, networks_read, certificates_read, histories_read):
+            self.assertEqual(reader.call_count, 1)
+            self.assertEqual(reader.call_args.kwargs, {"cluster": "alpha"})
+
+    def test_removed_cluster_is_refused_before_its_cached_objects_are_read(self) -> None:
+        client = self.editor()
+        with (
+            mock.patch("haproxy_ui.db.cluster_list", return_value=("beta",)),
+            mock.patch("haproxy_ui.db.cluster_objects") as objects_read,
+        ):
+            self.assertEqual(client.get("/proxies/alpha/shop/edit").status_code, 404)
+        objects_read.assert_not_called()
+
     def test_an_object_opens_with_its_own_values(self) -> None:
         page = self.editor().get("/proxies/alpha/shop/edit")
 

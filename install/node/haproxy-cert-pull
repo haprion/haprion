@@ -128,8 +128,8 @@ for id in "$@"; do
 
     log "Fetching ${id}..."
 
-    rsync -t \
-        -e "ssh -i ${SSH_KEY} -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" \
+    rsync -t --timeout=120 \
+        -e "ssh -i ${SSH_KEY} -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4" \
         "${REMOTE_USER}@${MANAGER}:${id}.pem" \
         "$candidate" \
         || fail "${id} could not be fetched"

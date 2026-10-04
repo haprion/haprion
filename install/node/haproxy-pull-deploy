@@ -31,6 +31,16 @@ SSH_KEY="$CONFIG_PULL_KEY"
 HAPROXY_DIR="/etc/haproxy"
 RELEASE_DIR="${HAPROXY_DIR}/releases"
 CURRENT="${HAPROXY_DIR}/current"
+#
+# A release `current` points at but HAProxy has not loaded (review 2026-10-03,
+# F2). Written before the link is switched and removed once HAProxy has
+# reloaded: a run stopped in between leaves it, `haproxy-node-status` then
+# reports the release HAProxy still runs - the first line - and the next run,
+# which finds nothing new to fetch, finishes the reload instead of calling the
+# node done. In /run on purpose, as the certificate marker: a reboot empties
+# it, and a rebooted HAProxy read `current` from disk.
+#
+PENDING="/run/haproxy-pull-deploy.pending"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -266,11 +276,40 @@ sync_waf_engine() {
 }
 
 OLD_RELEASE="$(readlink -f "$CURRENT")"
+#
+# The release HAProxy is running: `current`, unless an earlier run switched the
+# link and never reloaded, when it is the one that run left in the marker.
+#
+RUNNING="$OLD_RELEASE"
+if [[ -s "$PENDING" ]]; then
+    RUNNING="$(head -n 1 "$PENDING")"
+fi
+
+mark_pending() {
+    printf '%s\n%s\n' "$RUNNING" "$1" > "${PENDING}.new"
+    mv -f "${PENDING}.new" "$PENDING"
+}
+
+#
+# `current` was put back on OLD_RELEASE. HAProxy runs it again if a reload
+# succeeded, or if it never left it; otherwise the marker says what it runs.
+#
+settle_pending() {
+    if [[ "$RUNNING" == "$OLD_RELEASE" ]]; then
+        rm -f "$PENDING"
+    else
+        mark_pending "$OLD_RELEASE"
+    fi
+}
 
 log "Fetching published configuration from ${MANAGER}..."
 
-rsync -a --delete \
-    -e "ssh -i ${SSH_KEY} -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" \
+#
+# Bounded in time (review 2026-10-03, I3): a connection that goes silent ends
+# the run within a minute or two instead of holding the deploy lock for ever.
+#
+rsync -a --delete --timeout=120 \
+    -e "ssh -i ${SSH_KEY} -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4" \
     "${REMOTE_USER}@${MANAGER}:${REMOTE_PATH}" \
     "${STAGE}/"
 
@@ -292,6 +331,21 @@ fi
 
 # Nothing changed?
 if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
+    if [[ -e "$PENDING" ]]; then
+        #
+        # The files are the ones asked for, but an earlier run was stopped
+        # before HAProxy read them. The engine and the reload are the part it
+        # never did; validated again through the paths systemd uses.
+        #
+        log "An earlier run switched to this configuration but never reloaded. Finishing..."
+        haproxy -c -f "${HAPROXY_DIR}/haproxy.cfg" -f "${HAPROXY_DIR}/conf.d"
+        sync_waf_engine 1
+        systemctl reload haproxy
+        rm -f "$PENDING"
+        sync_keepalived_addresses
+        log "Deploy complete."
+        exit 0
+    fi
     log "No change. No deploy or reload needed."
     #
     # Except possibly the address list. The release is what changes when an
@@ -359,6 +413,7 @@ find "$RELEASE" -type f -exec chmod 644 {} \;
 #
 NEW_LINK="${HAPROXY_DIR}/current.new"
 
+mark_pending "$RELEASE"
 rm -f "$NEW_LINK"
 ln -s "$RELEASE" "$NEW_LINK"
 mv -Tf "$NEW_LINK" "$CURRENT"
@@ -377,6 +432,7 @@ then
     rm -f "$NEW_LINK"
     ln -s "$OLD_RELEASE" "$NEW_LINK"
     mv -Tf "$NEW_LINK" "$CURRENT"
+    settle_pending
 
     exit 1
 fi
@@ -392,6 +448,7 @@ if ! sync_waf_engine 1; then
     rm -f "$NEW_LINK"
     ln -s "$OLD_RELEASE" "$NEW_LINK"
     mv -Tf "$NEW_LINK" "$CURRENT"
+    settle_pending
 
     sync_waf_engine 1 || log "ERROR: the WAF engine could not be returned to the previous rules either."
 
@@ -404,6 +461,7 @@ fi
 log "Reloading HAProxy..."
 
 if systemctl reload haproxy; then
+    rm -f "$PENDING"
     #
     # Explicitly, rather than by letting `set -e` end the script: a deploy that
     # activated the configuration and could not activate the addresses is a
@@ -424,7 +482,10 @@ else
     mv -Tf "$NEW_LINK" "$CURRENT"
 
     # Try to bring HAProxy back to the known-good config
-    systemctl reload haproxy || true
+    if systemctl reload haproxy; then
+        RUNNING="$OLD_RELEASE"
+    fi
+    settle_pending
     sync_waf_engine 1 || true
 
     exit 1

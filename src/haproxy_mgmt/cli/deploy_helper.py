@@ -88,11 +88,29 @@ SSH_OPTIONS = (
     "ConnectTimeout=10",
     "-o",
     "ConnectionAttempts=1",
+    #
+    # A connection that goes silent is noticed within a minute rather than
+    # never (review 2026-10-03, I3): ssh asks every 15 s and gives up after
+    # four unanswered.
+    #
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=4",
     "-o",
     "LogLevel=ERROR",
 )
 
 SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
+
+#
+# How long one node may take to pull, validate, start its WAF engine and
+# reload (review 2026-10-03, I3). The lifeline is read between nodes, so a call
+# that never returned held the worker - and the cluster lock - for ever. A node
+# measured at a few seconds; five minutes is a stop, not a schedule.
+#
+TRIGGER_TIMEOUT_SECONDS = 300
+EXIT_TRIGGER_TIMEOUT = 124
 
 EXIT_NOT_ROOT = 68
 
@@ -150,19 +168,40 @@ def trigger_node(node: NodeStatus, identity: DeployIdentity, writer: TextIO) -> 
     public.
     """
 
-    completed = subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
-        [
-            SSH,
-            *SSH_OPTIONS,
-            "-i",
-            str(identity.key),
-            f"{identity.user}@{node.mgmt_host}",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=SSH_ENVIRONMENT,
+    return run_trigger(
+        [SSH, *SSH_OPTIONS, "-i", str(identity.key), f"{identity.user}@{node.mgmt_host}"],
+        node.name,
+        writer,
     )
+
+
+def run_trigger(argv: list[str], node: str, writer: TextIO) -> int:
+    """Run one node's forced command within its time; the node's own words go to `writer`.
+
+    A call that runs out of time is a failed step, never a success: what the
+    node did is read back from its status afterwards, as after any failed step,
+    and its activation marker (F2) keeps a half-finished change visible there.
+    """
+
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=SSH_ENVIRONMENT,
+            timeout=TRIGGER_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as expired:
+        for part in (expired.stdout, expired.stderr):
+            if part:
+                text = part.decode(errors="replace") if isinstance(part, bytes) else part
+                writer.write(text.rstrip() + "\n")
+        writer.write(
+            f"{node} gave no answer within {TRIGGER_TIMEOUT_SECONDS} seconds; "
+            "its status decides what it runs\n"
+        )
+        return EXIT_TRIGGER_TIMEOUT
     if completed.stdout:
         writer.write(completed.stdout.rstrip() + "\n")
     if completed.stderr:

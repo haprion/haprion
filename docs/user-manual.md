@@ -70,6 +70,13 @@ unknown goes between the two. Two nodes that both report the VIP stop the rollou
 before anything is changed, whatever else could not be read, and no override lets it
 past.
 
+A node counts as running a release once HAProxy has reloaded it, not once the files are
+in place: the node marks the switch in `/run/haproxy-pull-deploy.pending` until the
+reload, its status reports the release HAProxy still runs meanwhile, and the next deploy
+finishes the reload of a run that was stopped in between. Each node gets five minutes
+to answer a deploy; one that does not is a failed step, and its status decides what it
+runs.
+
 At the terminal, inspect the configuration and the nodes before deploying:
 
 ```bash

@@ -16,6 +16,7 @@ import base64
 import hashlib
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -382,6 +383,28 @@ class HelperBehaviourTests(HelperFixture):
 
         self.assertEqual(allowed, 0)
         self.assertIn("explicit CLI override accepted", shown)
+
+    def test_a_node_that_never_answers_is_a_failed_step_within_the_time(self) -> None:
+        # Review 2026-10-03, I3: the call had no end, and the lifeline is read between nodes.
+        asked: dict[str, object] = {}
+
+        def silent(argv, **options):  # type: ignore[no-untyped-def]
+            asked.update(options)
+            raise subprocess.TimeoutExpired(argv, options["timeout"], output="Fetching...\n")
+
+        original = deploy_helper.subprocess.run
+        deploy_helper.subprocess.run = silent  # type: ignore[assignment]
+        try:
+            shown = io.StringIO()
+            code = deploy_helper.run_trigger(["ssh", "node-a"], "node-a", shown)
+        finally:
+            deploy_helper.subprocess.run = original  # type: ignore[assignment]
+
+        self.assertEqual(asked["timeout"], deploy_helper.TRIGGER_TIMEOUT_SECONDS)
+        self.assertEqual(code, deploy_helper.EXIT_TRIGGER_TIMEOUT)
+        self.assertIn("Fetching...", shown.getvalue())
+        self.assertIn("node-a gave no answer within 300 seconds", shown.getvalue())
+        self.assertIn("ServerAliveInterval=15", deploy_helper.SSH_OPTIONS)
 
 
 class CertificatePreflightTests(HelperFixture):

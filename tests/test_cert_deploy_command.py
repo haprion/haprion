@@ -22,7 +22,7 @@ from pathlib import Path
 
 import yaml
 
-from haproxy_mgmt.cli import cert_deploy, cert_deploy_helper
+from haproxy_mgmt.cli import cert_deploy, cert_deploy_helper, deploy_helper
 from haproxy_mgmt.cluster_lock import hold
 from haproxy_mgmt.cluster_status import NodeStatus, parse_status
 from tests.contract_schema import assert_contract
@@ -228,12 +228,12 @@ class RolloutTests(HelperFixture):
             stdout = "ERROR: the certificate could not be installed.\n"
             stderr = ""
 
-        original = cert_deploy_helper.subprocess.run
-        cert_deploy_helper.subprocess.run = lambda *_, **__: Refused()  # type: ignore[assignment]
+        original = deploy_helper.subprocess.run
+        deploy_helper.subprocess.run = lambda *_, **__: Refused()  # type: ignore[assignment]
         try:
             code, out, err = self.run_helper(request(json=True), real_trigger=True)
         finally:
-            cert_deploy_helper.subprocess.run = original  # type: ignore[assignment]
+            deploy_helper.subprocess.run = original  # type: ignore[assignment]
 
         self.assertNotEqual(code, 0)
         self.assertEqual(json.loads(out)["operation"], "cert_deploy")
@@ -289,8 +289,8 @@ class TriggerTests(unittest.TestCase):
             sent.append(argv)
             return FakeCompleted()
 
-        original = cert_deploy_helper.subprocess.run
-        cert_deploy_helper.subprocess.run = fake_run  # type: ignore[assignment]
+        original = deploy_helper.subprocess.run
+        deploy_helper.subprocess.run = fake_run  # type: ignore[assignment]
         try:
             cert_deploy_helper.trigger_node(
                 NodeStatus(
@@ -309,7 +309,7 @@ class TriggerTests(unittest.TestCase):
                 io.StringIO(),
             )
         finally:
-            cert_deploy_helper.subprocess.run = original  # type: ignore[assignment]
+            deploy_helper.subprocess.run = original  # type: ignore[assignment]
 
         self.assertEqual(sent[0][-1], "cert-pull example-net example-com")
 

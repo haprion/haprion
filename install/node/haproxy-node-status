@@ -17,6 +17,8 @@ KEEPALIVED_ADDRESSES = Path("/etc/keepalived/addresses.conf")
 PUBLISHED_ADDRESSES = Path("/etc/haproxy/current/keepalived/addresses.conf")
 RUNTIME_SOCKET = "/run/haproxy/ui-status.sock"
 CURRENT_RELEASE = Path("/etc/haproxy/current/RELEASE")
+RELEASES = Path("/etc/haproxy/releases")
+CONFIG_PENDING = Path("/run/haproxy-pull-deploy.pending")
 VALIDATION_STATE = Path("/run/haproxy/last-validation.json")
 CERTS_DIR = Path("/etc/haproxy/certs")
 CERT_PENDING = Path("/run/haproxy-cert-pull.pending")
@@ -559,6 +561,29 @@ def runtime_stat():
     return parse_stat(text)
 
 
+def running_release_file():
+    """The RELEASE file of the configuration HAProxy runs, or None when unknown.
+
+    `current`'s, unless `haproxy-pull-deploy` switched the link and has not
+    reloaded yet (review 2026-10-03, F2): its marker's first line then names
+    the release HAProxy still runs, and that one is reported, so the manager
+    sees the node as behind and the deploy it offers finishes the reload. A
+    marker that cannot be read, or names anything but a release directory,
+    reports nothing: this cannot tell what is in service.
+    """
+
+    if not CONFIG_PENDING.exists():
+        return CURRENT_RELEASE
+    try:
+        named = CONFIG_PENDING.read_text(encoding="utf-8").splitlines()[0].strip()
+    except Exception:
+        return None
+    running = Path(named)
+    if running.parent != RELEASES or not running.name or running.name.startswith("."):
+        return None
+    return running / "RELEASE"
+
+
 def read_release():
     result = {
         "version": None,
@@ -567,11 +592,12 @@ def read_release():
         "cluster": None,
     }
 
-    if not CURRENT_RELEASE.is_file():
+    release_file = running_release_file()
+    if release_file is None or not release_file.is_file():
         return result
 
     try:
-        for line in CURRENT_RELEASE.read_text(encoding="utf-8").splitlines():
+        for line in release_file.read_text(encoding="utf-8").splitlines():
             if "=" not in line:
                 continue
 

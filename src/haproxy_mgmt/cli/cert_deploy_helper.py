@@ -21,7 +21,6 @@ half the pair has been reloaded.
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -32,9 +31,9 @@ from haproxy_mgmt.cli.deploy_helper import (
     EXIT_NO_IDENTITY,
     EXIT_NOT_ROOT,
     SSH,
-    SSH_ENVIRONMENT,
     SSH_OPTIONS,
     read_status,
+    run_trigger,
 )
 from haproxy_mgmt.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haproxy_mgmt.cluster_status import NodeStatus
@@ -95,25 +94,11 @@ def trigger_node(
 
     request = " ".join([REQUEST_VERB, *(ref.id for ref in target.certificates)])
 
-    completed = subprocess.run(  # noqa: S603 - fixed path, host and IDs from validated configuration
-        [
-            SSH,
-            *SSH_OPTIONS,
-            "-i",
-            str(identity.key),
-            f"{identity.user}@{node.mgmt_host}",
-            request,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=SSH_ENVIRONMENT,
+    return run_trigger(
+        [SSH, *SSH_OPTIONS, "-i", str(identity.key), f"{identity.user}@{node.mgmt_host}", request],
+        node.name,
+        writer,
     )
-    if completed.stdout:
-        writer.write(completed.stdout.rstrip() + "\n")
-    if completed.stderr:
-        writer.write(completed.stderr.rstrip() + "\n")
-    return completed.returncode
 
 
 def main(

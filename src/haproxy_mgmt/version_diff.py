@@ -14,6 +14,10 @@ Bounded, because a page shows it and a database keeps it: at most
 `MAX_DIFF_BYTES` of patch text and `MAX_FILES` files, and a diff that is cut says
 so rather than ending as if it were whole. Paths come from `--name-status -z`,
 never parsed out of patch text, so a file name cannot be mistaken for a header.
+
+Bounded in what is read as well as in what is kept (review 2026-10-03, K6): the
+counts come from one `--numstat -z` for every file, a file's patch is read only
+while it can still fit, and no patch is asked for once the budget is spent.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt.git_command import git as _git
+from haproxy_mgmt.git_command import git_bounded
 
 MAX_DIFF_BYTES = 256 * 1024
 MAX_FILES = 200
@@ -108,6 +113,30 @@ def _changes(repo: Path, base: str, commit: str) -> list[tuple[str, str, str | N
     return found
 
 
+def _counts(repo: Path, base: str, commit: str) -> dict[str, tuple[int, int, bool]]:
+    """(added, removed, binary) per path, from one NUL-separated numstat.
+
+    A rename is `<added>\t<removed>\t` followed by the old and the new path as
+    fields of their own; it is keyed by the new path, as `_changes` names it. A
+    binary file counts `-` for both.
+    """
+
+    raw = _git(repo, "diff", "--numstat", "-z", "--find-renames", base, commit, "--")
+    fields = raw.decode("utf-8", "replace").split("\0")
+    found: dict[str, tuple[int, int, bool]] = {}
+    index = 0
+    while index < len(fields) and fields[index]:
+        added, removed, path = fields[index].split("\t", 2)
+        if path:
+            index += 1
+        else:
+            path = fields[index + 2]
+            index += 3
+        binary = added == "-"
+        found[path] = (0 if binary else int(added), 0 if binary else int(removed), binary)
+    return found
+
+
 def _hunks(text: str) -> tuple[bool, list[str]]:
     lines = text.splitlines()
     if any(line.startswith("Binary files ") for line in lines):
@@ -130,25 +159,37 @@ def version_diff(repo: Path, commit: str) -> VersionDiff:
     if len(changes) > MAX_FILES:
         changes = changes[:MAX_FILES]
         truncated = True
+    counts = _counts(repo, base, commit)
     for status, path, old_path in changes:
-        paths = (old_path, path) if old_path else (path,)
-        text = _git(repo, "diff", *DIFF_OPTIONS, base, commit, "--", *paths).decode(
-            "utf-8", "replace"
-        )
-        binary, lines = _hunks(text)
-        added = sum(1 for line in lines if line.startswith("+"))
-        removed = sum(1 for line in lines if line.startswith("-"))
-        size = sum(len(line.encode()) + 1 for line in lines)
-        if size > budget:
+        added, removed, binary = counts.get(path, (0, 0, False))
+        lines: list[str] = []
+        if not binary and (added or removed):
             #
-            # The file is still named, with its counts; only its lines are
-            # left out. A reader learns what else changed even when one file
-            # was too large to show.
+            # The patch's own header lines come before the hunks, so the read
+            # allows for them beyond what the hunks may take; whether the
+            # hunks fit is decided on the hunks alone, as before.
             #
-            lines = []
-            truncated = True
-        else:
-            budget -= size
+            paths = (old_path, path) if old_path else (path,)
+            raw = (
+                git_bounded(
+                    repo, "diff", *DIFF_OPTIONS, base, commit, "--", *paths, limit=budget + 4096
+                )
+                if budget > 0
+                else None
+            )
+            if raw is not None:
+                binary, lines = _hunks(raw.decode("utf-8", "replace"))
+            size = sum(len(line.encode()) + 1 for line in lines)
+            if raw is None or size > budget:
+                #
+                # The file is still named, with its counts; only its lines are
+                # left out. A reader learns what else changed even when one
+                # file was too large to show.
+                #
+                lines = []
+                truncated = True
+            else:
+                budget -= size
         files.append(
             FileChange(
                 path=path,

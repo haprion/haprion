@@ -39,3 +39,29 @@ def git(
         detail = completed.stderr.decode("utf-8", "replace").strip()
         raise GitError(f"git {args[0]} failed: {detail}")
     return completed.stdout
+
+
+def git_bounded(repo: Path, *args: str, limit: int) -> bytes | None:
+    """git's output if it is at most `limit` bytes, None if it is longer.
+
+    Read as it arrives and stopped past the limit, so a reader that keeps a
+    bounded amount never holds more than that in memory either (review
+    2026-10-03, K6: a 250 000-line file was read whole to be thrown away).
+    """
+
+    with subprocess.Popen(  # noqa: S603 - argv is constructed here, never from input
+        [GIT, "-C", str(repo), *args],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as process:
+        assert process.stdout is not None and process.stderr is not None  # noqa: S101
+        output = process.stdout.read(limit + 1)
+        if len(output) > limit:
+            process.kill()
+            process.wait()
+            return None
+        detail = process.stderr.read()
+        if process.wait() != 0:
+            raise GitError(f"git {args[0]} failed: {detail.decode('utf-8', 'replace').strip()}")
+    return output

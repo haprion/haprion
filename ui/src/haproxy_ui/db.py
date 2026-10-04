@@ -3718,21 +3718,37 @@ WAF_FINDING_LIMIT = 500
 def waf_findings(
     connection: Connection[Any], *, clusters: Sequence[str], since: datetime
 ) -> list[WafFinding]:
-    """What the engine matched since then, per cluster, object, rule and field (0052)."""
+    """What the engine matched since then, per cluster, object, rule and field.
+
+    Read from the counts kept as the matches arrive (0054), not from the
+    matches themselves: an attack's hundred thousand rows are a few rows here.
+    The window starts on the hour `since` falls in, which is how they are kept.
+    """
 
     with connection.cursor(row_factory=class_row(WafFinding)) as cursor:
         cursor.execute(
-            "select cluster, object, rule_id, field, "
-            "       count(distinct request_id)::int as requests, "
-            "       count(distinct nullif(client, ''))::int as clients, "
-            "       max(occurred_at) as last_seen, "
-            "       (array_agg(matched order by occurred_at desc))[1] as matched, "
-            "       (array_agg(distinct path order by path))[1:%(paths)s] as paths, "
-            "       count(distinct path)::int as path_count "
-            "  from waf_match "
-            " where cluster = any(%(clusters)s) and occurred_at >= %(since)s "
-            " group by cluster, object, rule_id, field "
-            " order by cluster, object, max(occurred_at) desc "
+            "with paths as ("
+            "  select cluster, object, rule_id, field, "
+            "         sum(requests)::int as requests, "
+            "         max(last_seen) as last_seen, "
+            "         (array_agg(matched order by last_seen desc))[1] as matched, "
+            "         (array_agg(distinct path order by path))[1:%(paths)s] as paths, "
+            "         count(distinct path)::int as path_count "
+            "    from waf_finding_path "
+            "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "   group by cluster, object, rule_id, field"
+            "), clients as ("
+            "  select cluster, object, rule_id, field, "
+            "         count(distinct nullif(client, ''))::int as clients "
+            "    from waf_finding_client "
+            "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "   group by cluster, object, rule_id, field"
+            ") "
+            "select paths.cluster, paths.object, paths.rule_id, paths.field, paths.requests, "
+            "       coalesce(clients.clients, 0) as clients, paths.last_seen, paths.matched, "
+            "       paths.paths, paths.path_count "
+            "  from paths left join clients using (cluster, object, rule_id, field) "
+            " order by paths.cluster, paths.object, paths.last_seen desc "
             " limit %(limit)s",
             {
                 "clusters": list(clusters),

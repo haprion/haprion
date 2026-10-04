@@ -325,6 +325,9 @@ it. Listener metrics have no rollup and retain their fixed seven days.
 Traffic logs follow the separate `[traffic_logs].retention_days` setting. The
 same privileged timer creates upcoming daily partitions and drops only complete
 partitions older than that boundary; application roles never receive `delete`.
+The WAF page's per-hour counts (`waf_finding_path`, `waf_finding_client`,
+revision `0054`) are kept by a trigger as matches are imported and are not
+partitioned; the timer deletes their hours before the same boundary.
 
 Its units are named after the environment, unlike the backup step's. Development
 runs this step and does not run step 6, so these are the units that would

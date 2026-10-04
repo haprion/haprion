@@ -390,6 +390,39 @@ traffic_partitions() {
     done
 }
 
+#
+# The WAF page's counts (0054), kept per hour beside the matches they were
+# counted from. Not partitioned - a trigger that could meet a missing day could
+# fail the collector's import - so they are trimmed here, to the same first day
+# the traffic partitions keep.
+#
+WAF_FINDING_TABLES=(waf_finding_path waf_finding_client)
+
+where_waf_finding_expired() {
+    echo "hour < (current_date - ${TRAFFIC_KEEP_DAYS} + 1)::timestamptz"
+}
+
+waf_findings() {
+    local table expired removed
+    for table in "${WAF_FINDING_TABLES[@]}"; do
+        [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
+        expired="$(psql_as -c "select count(*) from ${table} where $(where_waf_finding_expired)")"
+        if [[ "$command" == "report" ]]; then
+            log "  ${table}: $(psql_as -c "select count(*) from ${table}") row(s), ${expired} before the traffic window"
+            continue
+        fi
+        if [[ "$dry_run" -eq 1 ]]; then
+            log "  ${table}: dry run, would remove ${expired} row(s)"
+            continue
+        fi
+        removed="$(psql_as -c "with removed as (
+                                  delete from ${table} where $(where_waf_finding_expired)
+                                  returning 1
+                               ) select count(*) from removed")"
+        log "  ${table}: removed ${removed} row(s) before the traffic window"
+    done
+}
+
 metrics_report() {
     local table covered expired complete_before
 
@@ -733,6 +766,7 @@ main() {
                 [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
                 traffic_report "$table"
             done
+            waf_findings
             oidc_logins
             version_diffs
             account_history
@@ -746,6 +780,7 @@ main() {
             #
             metric_partitions_prepare
             traffic_partitions
+            waf_findings
             if metrics_present; then
                 #
                 # After the partitions and before the pruning, because the

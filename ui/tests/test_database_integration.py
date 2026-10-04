@@ -351,7 +351,12 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0053",))
+            declared = json.loads(
+                (
+                    Path(__file__).resolve().parents[1] / "src/haproxy_ui/compatibility.json"
+                ).read_text()
+            )["requires"]["database_head"]
+            self.assertEqual(cursor.fetchone(), (declared,))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -801,6 +806,136 @@ class ARealDatabase(unittest.TestCase):
                 migration.upgrade()
                 cursor.execute("select waf_id from traffic_log where host = 'match.example.com'")
                 self.assertEqual(cursor.fetchall(), [("",)])
+            connection.rollback()
+
+    # The WAF page's question as it was asked of the matches themselves until
+    # 0054: what the counts kept in advance must answer exactly.
+    WAF_FINDINGS_FROM_MATCHES = (
+        "select cluster, object, rule_id, field, "
+        "       count(distinct request_id)::int, "
+        "       count(distinct nullif(client, ''))::int, "
+        "       max(occurred_at), "
+        "       (array_agg(matched order by occurred_at desc))[1], "
+        "       (array_agg(distinct path order by path))[1:20], "
+        "       count(distinct path)::int "
+        "  from waf_match "
+        " where cluster = any(%s) and occurred_at >= %s "
+        " group by cluster, object, rule_id, field "
+        " order by cluster, object, max(occurred_at) desc"
+    )
+
+    def waf_findings_both_ways(self, since: datetime) -> tuple[list[tuple[Any, ...]], ...]:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            kept = [
+                (
+                    f.cluster,
+                    f.object,
+                    f.rule_id,
+                    f.field,
+                    f.requests,
+                    f.clients,
+                    f.last_seen,
+                    f.matched,
+                    f.paths,
+                    f.path_count,
+                )
+                for f in db.waf_findings(connection, clusters=["rollup"], since=since)
+            ]
+        with self.connect() as connection:
+            counted = connection.execute(
+                self.WAF_FINDINGS_FROM_MATCHES, (["rollup"], since)
+            ).fetchall()
+        return kept, [tuple(row) for row in counted]
+
+    def test_waf_findings_kept_in_advance_answer_as_the_matches_do(self) -> None:
+        """0054: counted as the collector imports, with its repeats, and refilled on upgrade."""
+
+        now = datetime.now(UTC).replace(minute=30, second=0, microsecond=0)
+        rows = []
+        for number, (hours_ago, request, rule, field, path, client, matched) in enumerate(
+            (
+                (3, "a", 942100, "ARGS:q", "/search", "192.0.2.10", "old"),
+                (3, "b", 942100, "ARGS:q", "/search", "192.0.2.11", "older"),
+                (1, "c", 942100, "ARGS:q", "/other", "192.0.2.10", "newest"),
+                (1, "c", 920350, "", "/other", "192.0.2.10", "192.0.2.1"),
+                (0, "d", 920350, "", "/health", "", "192.0.2.1"),
+                (0, "e", 942100, "ARGS:id", "/search", "198.51.100.7", "1 OR 1"),
+            )
+        ):
+            at = now - timedelta(hours=hours_ago, seconds=number)
+            rows.append(
+                (
+                    bytes([number]) * 32,
+                    "rollup",
+                    "node-a",
+                    at,
+                    f"shop.{request}",
+                    "shop",
+                    rule,
+                    field,
+                    matched,
+                    path,
+                    client,
+                )
+            )
+        copy = (
+            "copy waf_match (event_id, cluster, node, occurred_at, request_id, object, "
+            "rule_id, field, matched, path, client) from stdin"
+        )
+        with self.connect() as connection:
+            for day in {row[3].date() for row in rows}:
+                connection.execute("select waf_match_partition(%s::date)", (day,))
+            connection.commit()
+        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            # Two imports, and the second read again from an earlier checkpoint.
+            for batch in (rows[:4], rows[2:]):
+                with connection.cursor() as cursor, cursor.copy(copy) as writer:
+                    for row in batch:
+                        writer.write_row(row)
+                connection.commit()
+
+        since = now - timedelta(days=7)
+        kept, counted = self.waf_findings_both_ways(since)
+        self.assertEqual(len(counted), 3)
+        self.assertEqual(kept, counted)
+        by_rule = {(row[2], row[3]): row for row in kept}
+        self.assertEqual(by_rule[(942100, "ARGS:q")][4:6], (3, 2))
+        self.assertEqual(by_rule[(942100, "ARGS:q")][7], "newest")
+        self.assertEqual(by_rule[(920350, "")][5], 1)  # an empty client is no client
+
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0054_waf_finding_rollup.py", cursor)
+                migration.downgrade()
+                cursor.execute("select to_regclass('public.waf_finding_path')")
+                self.assertEqual(cursor.fetchone(), (None,))
+                migration.upgrade()
+            connection.commit()
+        self.assertEqual(self.waf_findings_both_ways(since), (counted, counted))
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        expired = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'eval "$(sed -n \'/^TRAFFIC_KEEP_DAYS=/p;/^where_waf_finding_expired() {/,/^}/p\' "$0")"; '
+                "where_waf_finding_expired",
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into waf_finding_path values "
+                "('rollup', 'shop', 942100, 'ARGS:q', %s, '/gone', 1, %s, 'x')",
+                (now - timedelta(days=30), now - timedelta(days=30)),
+            )
+            cursor.execute(
+                f"select path from waf_finding_path where cluster = 'rollup' and {expired}"  # noqa: S608 - the script's own clause
+            )
+            self.assertEqual(cursor.fetchall(), [("/gone",)])
             connection.rollback()
 
     def test_retention_analyzes_every_partitioned_table_and_no_other(self) -> None:

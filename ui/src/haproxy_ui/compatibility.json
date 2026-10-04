@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0053",
+    "database_head": "0054",
     "database_revisions": [
       "0028",
       "0029",

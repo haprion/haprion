@@ -33,10 +33,14 @@ class FormGroup:
 
 @dataclass(frozen=True, slots=True)
 class Badge:
-    """A count beside a closed group's line, coloured by what it means."""
+    """A count beside a closed group's line, coloured by what it means.
+
+    With `icon` it is drawn as that icon alone, and `text` is its accessible name.
+    """
 
     text: str
     kind: str
+    icon: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +147,18 @@ def _waf(form: Mapping[str, Any]) -> str:
     if mode is None:
         return _joined(["Off", exceptions], "Off")
     return _joined([mode, f"strictness {_text(form, 'waf_paranoia') or '1'}", exceptions], "")
+
+
+def _waf_badges(form: Mapping[str, Any]) -> tuple[Badge, ...]:
+    """A shield beside the line, in the colours the WAF page uses (26-10-04).
+
+    The line already names the mode; the shield is there so that whether the
+    engine is refusing visitors is seen at a glance rather than read.
+    """
+
+    mode = _text(form, "waf_mode")
+    kind = {"log": "warning", "block": "critical"}.get(mode)
+    return (Badge(WAF_MODES[mode], kind, icon="shield"),) if kind else ()
 
 
 def _maintenance(form: Mapping[str, Any]) -> str:
@@ -262,7 +278,7 @@ GROUPS: Mapping[str, FormGroup] = {
         _access,
         _access_badges,
     ),
-    "waf": FormGroup("WAF", ("waf_mode", "waf_engine_error", "waf_paranoia"), _waf),
+    "waf": FormGroup("WAF", ("waf_mode", "waf_engine_error", "waf_paranoia"), _waf, _waf_badges),
     "maintenance": FormGroup(
         "Maintenance", ("maintenance", "maintenance_message", "unavailable_message"), _maintenance
     ),

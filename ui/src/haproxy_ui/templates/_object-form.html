@@ -60,7 +60,7 @@
 
 {% macro group(state, shown='', expanded=false) %}
 <details class="form-group"{{ shown }}{% if expanded %} open{% endif %}>
-  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span>{% for badge in state.badges %}<span class="status-badge status-badge-{{ badge.kind }} form-group-badge">{{ badge.text }}</span>{% endfor %}</summary>
+  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span>{% for badge in state.badges %}{% if badge.icon == 'shield' %}<span class="status-badge status-badge-{{ badge.kind }} form-group-badge form-group-icon" role="img" aria-label="{{ badge.text }}" title="{{ badge.text }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6z"></path></svg></span>{% else %}<span class="status-badge status-badge-{{ badge.kind }} form-group-badge">{{ badge.text }}</span>{% endif %}{% endfor %}</summary>
   {{ caller() }}
 </details>
 {% endmacro %}

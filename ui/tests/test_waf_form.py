@@ -75,18 +75,24 @@ class TheFormSaysWhatTheObjectSays(unittest.TestCase):
             with self.subTest(carried=carried), self.assertRaises(ValueError):
                 build_document(dict(DEFAULTS, name="shop", waf_mode="log", waf_exceptions=carried))
 
-    def test_the_closed_group_says_mode_strictness_and_exceptions(self) -> None:
-        def line(**fields: str) -> str:
-            return form_groups(dict(DEFAULTS, **fields))["waf"].summary
+    def test_the_closed_group_says_mode_strictness_and_exceptions_with_a_shield(self) -> None:
+        def line(**fields: str) -> tuple[str, tuple[tuple[str, str, str], ...]]:
+            state = form_groups(dict(DEFAULTS, **fields))["waf"]
+            return state.summary, tuple((b.text, b.kind, b.icon) for b in state.badges)
 
-        self.assertEqual(line(), "Off")
-        self.assertEqual(line(waf_mode="log"), "Logging · strictness 1")
+        self.assertEqual(line(), ("Off", ()))
+        self.assertEqual(
+            line(waf_mode="log"), ("Logging · strictness 1", (("Logging", "warning", "shield"),))
+        )
         exceptions = json.dumps([EXCEPTION, {"rule": 920350}])
         self.assertEqual(
             line(waf_mode="block", waf_paranoia="3", waf_exceptions=exceptions),
-            "Blocking · strictness 3 · 2 exceptions",
+            (
+                "Blocking · strictness 3 · 2 exceptions",
+                (("Blocking", "critical", "shield"),),
+            ),
         )
-        self.assertEqual(line(waf_exceptions=json.dumps([EXCEPTION])), "Off · 1 exception")
+        self.assertEqual(line(waf_exceptions=json.dumps([EXCEPTION])), ("Off · 1 exception", ()))
 
 
 def node(name: str, version: str | None, *, reported: bool = True) -> dict[str, Any]:
@@ -186,6 +192,18 @@ class TheGroupOnTheEditor(EditorTestCase):
         self.assertIn('<select name="waf_mode"', text)
         self.assertIn("Strictness", text)
         self.assertNotIn("is not installed", text)
+
+    def test_the_closed_group_draws_its_shield_in_the_mode_colour(self) -> None:
+        # 26-10-04: whether the engine refuses visitors, seen at a glance.
+        text = self.page(stored("waf:\n  mode: block\n"))
+        head = text.split('<span class="form-group-title">WAF</span>', 1)[1].split("</summary>", 1)[0]
+        self.assertIn("Blocking · strictness 1", head)
+        self.assertIn(
+            'class="status-badge status-badge-critical form-group-badge form-group-icon"'
+            ' role="img" aria-label="Blocking"',
+            head,
+        )
+        self.assertNotIn("form-group-icon", self.page().split("</form>", 1)[0])
 
     def test_waiting_for_the_engine_says_where_it_is_missing_and_offers_no_mode(self) -> None:
         text = self.page(versions={"engine": None, "crs": "4.25.1"})

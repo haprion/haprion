@@ -2205,6 +2205,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 @media (max-width: 1000px) { .log-filters.log-filters-waf { grid-template-columns: 1fr 1fr; } }
 .log-table .log-rule { margin-right: 4px; }
 .form-group-badge { flex: none; }
+.form-group-icon { width: 24px; justify-content: center; padding: 0; }
+.form-group-icon svg { width: 14px; height: 14px; fill: currentColor; }
 .location-data-table th:nth-child(3), .location-data-table td:nth-child(3) { width: 330px; text-align: right; }
 
 /*

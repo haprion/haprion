@@ -3334,6 +3334,25 @@ class TheSearchIndex(unittest.TestCase):
         self.assertEqual(self.search("198.51.100.11", role="reader").total, 0)
         self.assertEqual(self.search("api", role="reader").groups[0].hits[0].href, "/proxies")
 
+    def test_an_unchanged_reading_leaves_its_rows_alone(self) -> None:
+        """Review 2026-10-03, D5: the same rows are not deleted and inserted again."""
+
+        def versions() -> list[Any]:
+            with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+                rows = connection.execute(
+                    "select value, xmin::text from search_entry where cluster = 'si-a' order by value"
+                ).fetchall()
+            return rows
+
+        self.write("si-a", "objects", self.objects("si-a", "shop", "api"))
+        before = versions()
+        self.write("si-a", "objects", list(reversed(self.objects("si-a", "shop", "api"))))
+        self.assertEqual(versions(), before, "rewritten although nothing changed")
+
+        self.write("si-a", "objects", self.objects("si-a", "shop"))
+        self.assertNotIn("api", [value for value, _ in versions()])
+        self.assertEqual(self.search("api").total, 0)
+
     def test_like_characters_in_a_query_are_text(self) -> None:
         self.write("si-a", "objects", self.objects("si-a", "a_b", "axb"))
 

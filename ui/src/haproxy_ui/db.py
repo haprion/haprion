@@ -1862,9 +1862,26 @@ def replace_search_entries(
 
     In the caller's transaction, so the search never sees the cluster with its
     old rows gone and its new ones not yet written.
+
+    Rows that already say exactly this are left alone (review 2026-10-03, D5):
+    most readings change nothing, and rewriting them every poll cost a delete
+    and an insert in two indexes, one of them trigram, for each. Compared in
+    the same transaction against what is stored, so a write that failed before
+    is not mistaken for one that happened.
     """
 
+    wanted = sorted(
+        (entry.kind, entry.title, entry.label, entry.value, entry.href, entry.admin_only)
+        for entry in entries
+    )
     with connection.cursor() as cursor:
+        cursor.execute(
+            "select kind, title, label, value, href, admin_only from search_entry "
+            "where cluster = %(cluster)s and source = %(source)s",
+            {"cluster": cluster, "source": source},
+        )
+        if sorted(tuple(row) for row in cursor.fetchall()) == wanted:
+            return len(entries)
         cursor.execute(
             "delete from search_entry where cluster = %(cluster)s and source = %(source)s",
             {"cluster": cluster, "source": source},

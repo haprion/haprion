@@ -56,7 +56,7 @@ def git_bounded(repo: Path, *args: str, limit: int) -> bytes | None:
         stderr=subprocess.PIPE,
     ) as process:
         assert process.stdout is not None and process.stderr is not None  # noqa: S101
-        output = process.stdout.read(limit + 1)
+        output: bytes = process.stdout.read(limit + 1)
         if len(output) > limit:
             process.kill()
             process.wait()

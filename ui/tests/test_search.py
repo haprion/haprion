@@ -223,7 +223,7 @@ class ThePages(LoginTestCase):
             mock.patch("haproxy_ui.db.search", side_effect=search),
             mock.patch("haproxy_ui.db.read_draft", return_value=None),
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
-            mock.patch("haproxy_ui.db.read_backend_samples", return_value=[]),
+            mock.patch("haproxy_ui.db.read_backend_series", return_value=[]),
             mock.patch(
                 "haproxy_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: measurement()
             ),

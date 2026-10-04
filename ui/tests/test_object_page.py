@@ -82,7 +82,7 @@ class DraftReading(LoginTestCase):
         # which the recording pool here cannot answer.
         #
         for name, answer in (
-            ("read_backend_samples", lambda *_a, **_k: []),
+            ("read_backend_series", lambda *_a, **_k: []),
             ("read_backend_totals", lambda *_a, **_k: measurement()),
         ):
             patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=answer)

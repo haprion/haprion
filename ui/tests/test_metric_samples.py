@@ -558,7 +558,7 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
 
         connection = BackendTotalConnection(())
 
-        db.read_frontend_samples(
+        db.read_frontend_series(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             frontend="mgd-vip-int-https",
@@ -567,8 +567,13 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
             width=timedelta(minutes=10),
         )
 
-        self.assertIn("distinct on (node, bucket)", connection.statement)
-        self.assertIn("partition by node", connection.statement)
+        statement = connection.statement
+        self.assertIn("group by node,", statement)
+        self.assertIn("owns_vip", statement)
+        self.assertIn("Identifier('delta_req_tot')", statement)
+        # The grid in UTC, never the server's zone (2026-10-04).
+        self.assertIn("timestamptz '2000-01-01 00:00:00+00'", statement)
+        self.assertNotIn("timestamptz '2000-01-01')", statement)
 
     def test_the_listing_asks_which_addresses_were_seen_not_which_were_held(self) -> None:
         """`owns_vip` is nullable, and null is "this node could not say".

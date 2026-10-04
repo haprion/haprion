@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt.generate import PREFIX, REDIRECT_PREFIX
+from haproxy_mgmt.generate import PREFIX, REDIRECT_PREFIX, WAF_BACKEND
 from haproxy_mgmt.guid import redirect_name
 from haproxy_mgmt.proxy_model import load_proxy
 
@@ -87,8 +87,8 @@ class ReadingACluster(LoginTestCase):
         for name, value in (
             ("read_cluster_frontends", lambda *_a, **_k: self.frontends),
             ("read_cluster_backends", lambda *_a, **_k: self.backends),
-            ("read_frontend_samples", self._frontend_samples),
-            ("read_backend_samples", self._backend_samples),
+            ("read_frontend_series", self._frontend_series),
+            ("read_backend_series", self._backend_series),
             ("read_frontend_totals", lambda *_a, **_k: measurement()),
             ("read_backend_totals", lambda *_a, **_k: measurement()),
         ):
@@ -96,13 +96,13 @@ class ReadingACluster(LoginTestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def _frontend_samples(self, *_args: object, **kwargs: object) -> list[metrics.Sample]:
+    def _frontend_series(self, *_args: object, **kwargs: object) -> list[metrics.Interval]:
         busy = str(kwargs.get("frontend")).endswith("-https")
-        return samples(400, 400) if busy else samples(3, 3)
+        return metrics.intervals(samples(400, 400) if busy else samples(3, 3))
 
-    def _backend_samples(self, *_args: object, **kwargs: object) -> list[metrics.Sample]:
+    def _backend_series(self, *_args: object, **kwargs: object) -> list[metrics.Interval]:
         busy = str(kwargs.get("backend")) == "mgd-shop-web"
-        return samples(400, 400) if busy else samples(1, 1)
+        return metrics.intervals(samples(400, 400) if busy else samples(1, 1))
 
     def admin(self) -> object:
         client = self.client(replace(configuration(), demo_fixture=True))
@@ -140,6 +140,15 @@ class WhoMayCompare(ReadingACluster):
 
 
 class WhatThePageSays(ReadingACluster):
+    def test_the_waf_engine_is_not_a_backend_card(self) -> None:
+        """Its requests are HAProxy handing requests to the engine (2026-10-04)."""
+
+        self.backends = [*ReadingACluster.backends, WAF_BACKEND]
+        text = self.page().text  # type: ignore[attr-defined]
+
+        self.assertNotIn("waf-engine", text)
+        self.assertIn("shop-web", text)
+
     def test_both_halves_are_drawn(self) -> None:
         text = self.page().text  # type: ignore[attr-defined]
 

@@ -2426,47 +2426,6 @@ def _counter_values(counters: Mapping[str, int]) -> dict[str, int | None]:
     return {name: counters.get(name) for name in metrics.METRIC_COUNTERS}
 
 
-def _bucketed_raw(width: timedelta) -> sql.Composed:
-    """The raw table, reduced to one reading per bucket.
-
-    The last reading in each bucket is the one kept, because the counters are
-    cumulative: a difference between two bucket-ends is exactly the traffic
-    between them, and the middle of a bucket cannot improve on it.
-
-    `floor_uptime_sec` is why this is not merely sampling. Dropping rows would
-    hide a restart that happened and was climbed past between two kept
-    readings, and that interval would then be reported as a quiet stretch - so
-    the lowest uptime anywhere inside the bucket travels with the reading.
-
-    **Every bucket is per node.** Backend members are recorded only from the node
-    holding the VIP, so a failover leaves one series written by two machines,
-    and a bucket that kept whichever row happened to be last would hand the
-    reader two processes' cumulative counters as one. The node is in the
-    table's primary key; taking it into the bucket, the restart window and the
-    result is what carries that fact as far as the difference is taken.
-    """
-
-    columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
-    return sql.SQL(
-        "select distinct on (node, bucket) bucket as at, observed_at, uptime_sec, "
-        "       floor_uptime_sec, node, {columns} "
-        "  from ( "
-        "       select date_bin(%(width)s, observed_at, timestamptz '2000-01-01') as bucket, "
-        "              observed_at, uptime_sec, node, {columns}, "
-        "              min(uptime_sec) over ( "
-        "                  partition by node, "
-        "                               date_bin(%(width)s, observed_at, timestamptz '2000-01-01') "
-        "              ) as floor_uptime_sec "
-        "         from metric_backend_member "
-        "        where cluster = %(cluster)s and backend = %(backend)s "
-        "          and member = %(member)s and observed_at >= %(since)s "
-        "          and observed_at >= %(raw_from)s "
-        "          and observed_at <= %(until)s "
-        "       ) as bucketed "
-        " order by node, bucket, observed_at desc"
-    ).format(columns=columns)
-
-
 def _rolled_up() -> sql.Composed:
     """The hourly rollup, in the same shape the bucketed raw query returns.
 
@@ -2521,7 +2480,70 @@ def _backend_history_boundary(
     return max(since, min(retained_from, row[0]))
 
 
-def read_backend_samples(
+#
+# The fixed grid every drawing is measured from, stated in UTC. A bare
+# `timestamptz '2000-01-01'` is read in the session's time zone, and the
+# installation's server runs in local time: the six-hour buckets then began at
+# 23, 05, 11 and 17 UTC while the drawing's grid (`metrics.BUCKET_EPOCH`) began
+# at 00, 06, 12 and 18 - measured 2026-10-04, with a day's load test drawn
+# into the wrong bucket.
+#
+BUCKET_EPOCH_SQL = sql.SQL("timestamptz '2000-01-01 00:00:00+00'")
+
+
+def _bucketed_changes(table: str, scope: sql.Composable) -> sql.Composed:
+    """A series' stored changes (0048), summed per node and bucket, as intervals.
+
+    **The graph sums what the figures sum.** It used to keep one cumulative
+    reading per bucket and difference neighbouring buckets, and a restart is
+    where that goes wrong: the reading kept is the newest process's, so a
+    reload late in a bucket erased everything counted before it in the same
+    bucket. Measured 2026-10-04: a load test of 28 998 requests at 17:44 UTC,
+    reloads at 17:05 and 19:05, and the 30-day graph drew nothing where the
+    figures beside it counted every request. Summing the per-sample changes
+    loses at most the one sample a restart cuts, whatever the bucket's width.
+
+    A sample whose pair lies in an earlier bucket is kept as its own interval,
+    so the drawing shares it out over the time it covers - a poll that was late
+    by an hour is an hour of traffic, not a spike in one bucket. The rest of the
+    bucket's samples lie inside it and are one interval.
+
+    An interval belongs to the range when it starts inside it - the totals'
+    rule, so the first sample, which has nothing in the range to pair with,
+    adds nothing to either.
+    """
+
+    bucket = sql.SQL("date_bin(%(width)s, observed_at, {epoch})").format(epoch=BUCKET_EPOCH_SQL)
+    sums = sql.SQL(", ").join(
+        sql.SQL("sum({delta})::bigint").format(delta=sql.Identifier(f"delta_{name}"))
+        for name in STORED_DELTAS
+    )
+    return sql.SQL(
+        "select min(previous_at), max(observed_at), coalesce(bool_or(restarted), false), {sums} "
+        "  from {table} "
+        " where {scope} and observed_at <= %(until)s "
+        "   and previous_at >= %(after)s and observed_at > %(after)s "
+        " group by node, {bucket}, previous_at < {bucket} "
+        " order by {bucket}, node"
+    ).format(sums=sums, table=sql.Identifier(table), scope=scope, bucket=bucket)
+
+
+def _changed_intervals(rows: Sequence[Any]) -> list[metrics.Interval]:
+    return [
+        metrics.Interval(
+            started_at=row[0],
+            ended_at=row[1],
+            counters={
+                name: None if value is None else int(value)
+                for name, value in zip(STORED_DELTAS, row[3:], strict=True)
+            },
+            restarted=bool(row[2]),
+        )
+        for row in rows
+    ]
+
+
+def read_backend_series(
     connection: Connection[Any],
     *,
     cluster: str,
@@ -2531,25 +2553,24 @@ def read_backend_samples(
     width: timedelta,
     member: str = "BACKEND",
     now: datetime | None = None,
-) -> list[metrics.Sample]:
-    """One backend's readings since a moment, one per bucket, oldest first.
+) -> list[metrics.Interval]:
+    """What one backend did, as intervals for its card's drawing, oldest first.
 
     `BACKEND` by default, which is HAProxy's own aggregate row for the backend -
     the sum across its servers, counted by the thing doing the balancing rather
     than added up here. A caller that wants one server names it.
 
-    **Two sources, one shape.** The raw samples are normally kept for a week;
-    anything older is answered from the hourly rollup. Its continuous
-    completion marker may move that boundary further back after missed runs,
-    and the raw prune follows the same marker. The two halves still meet at one
-    instant, so they cannot overlap and count an hour twice.
-
-    A window inside the retention never reads the rollup at all, so the common
-    case costs one query and the long one costs two.
+    **Two sources, one shape.** The raw samples are normally kept for a week
+    and are read as the changes stored with them; anything older is answered
+    from the hourly rollup, which keeps one cumulative reading per hour and is
+    paired here. Its continuous completion marker may move that boundary
+    further back after missed runs. The raw half begins where the last rollup
+    reading ended, so the two meet at one instant and cannot count an hour
+    twice.
     """
 
     raw_from = _backend_history_boundary(connection, since=since, now=now)
-    arguments = {
+    arguments: dict[str, Any] = {
         "cluster": cluster,
         "backend": backend,
         "member": member,
@@ -2557,94 +2578,40 @@ def read_backend_samples(
         "width": width,
         "raw_from": raw_from,
         "until": until,
+        "after": since,
     }
 
-    rows: list[Any] = []
+    found: list[metrics.Interval] = []
     with connection.cursor() as cursor:
         if since < raw_from:
             cursor.execute(_rolled_up(), arguments)
-            rows.extend(cursor.fetchall())
-        cursor.execute(_bucketed_raw(width), arguments)
-        rows.extend(cursor.fetchall())
-
-    found = [
-        metrics.Sample(
-            observed_at=row[1],
-            member=member,
-            uptime_sec=row[2],
-            floor_uptime_sec=row[3],
-            node=row[4],
-            counters=dict(zip(metrics.METRIC_COUNTERS, row[5:], strict=True)),
+            hours = [
+                metrics.Sample(
+                    observed_at=row[1],
+                    member=member,
+                    uptime_sec=row[2],
+                    floor_uptime_sec=row[3],
+                    node=row[4],
+                    counters=dict(zip(metrics.METRIC_COUNTERS, row[5:], strict=True)),
+                )
+                for row in cursor.fetchall()
+            ]
+            found.extend(metrics.intervals(hours))
+            if hours:
+                arguments["after"] = max(sample.observed_at for sample in hours)
+        cursor.execute(
+            _bucketed_changes(
+                "metric_backend_member",
+                sql.SQL("cluster = %(cluster)s and backend = %(backend)s and member = %(member)s"),
+            ),
+            arguments,
         )
-        for row in rows
-    ]
-    #
-    # Sorted here rather than trusted from the two queries. They are ordered
-    # individually and the rollup's half is older, so a concatenation happens to
-    # be right - and a `happens to be` in the one place a difference is taken
-    # is how a negative interval appears months later.
-    #
-    found.sort(key=lambda sample: (sample.observed_at, sample.node or ""))
+        found.extend(_changed_intervals(cursor.fetchall()))
+    found.sort(key=lambda interval: (interval.ended_at, interval.started_at))
     return found
 
 
-def _bucketed_frontend(width: timedelta) -> sql.Composed:
-    """One frontend's raw readings on one node, reduced to one per bucket.
-
-    The same reduction the backend query makes, against `metric_frontend` and
-    without a rollup half: frontends have no rollup, and their raw rows are
-    kept for a fixed seven days. A window reaching further back is answered by
-    the part of it that still exists, which the card's own coverage states.
-
-    **The VIP is what listens, so the series is the VIP's.** Every node
-    reports its own frontends, but only the node holding the address receives
-    anything on it - its peer binds the same ports and sits flat. Drawing both
-    put an implementation detail on the page and answered a question nobody
-    asks: what a standby did not serve.
-
-    So the readings are those of whichever node held the address, which is the
-    same rule backend members are already recorded under (B94) and makes the two
-    halves of the page one model. Both nodes' rows are kept per bucket, and
-    `intervals` differences each node against itself - the standby's flat
-    series adds nothing, and a failover is the active series ending where the
-    incoming one begins. Pairing them as neighbours in time instead made every
-    interval on an address a refused difference, which is why these cards
-    carried a star and a coverage of 0 % while nothing was wrong with them
-    (B97, measured 2026-09-07).
-
-    **Every bucket is per node**, exactly as the backend query's is, and that is
-    load-bearing rather than symmetry for its own sake. Collapsing to one row
-    per bucket looked safe while only the owner is read - and is not. An
-    address that moves away and back inside one bucket leaves the *other*
-    machine's low uptime as the bucket's floor while the kept row is the
-    original node, so the reader sees a restart with no change of author and
-    reports the node's cumulative counter as this bucket's traffic. Measured
-    2026-09-07: 5 000 400 requests where 400 had passed. Keeping both nodes'
-    rows makes it what it is - two handovers, refused.
-    """
-
-    columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
-    return sql.SQL(
-        "select distinct on (node, bucket) bucket as at, observed_at, uptime_sec, "
-        "       floor_uptime_sec, node, {columns} "
-        "  from ( "
-        "       select date_bin(%(width)s, observed_at, timestamptz '2000-01-01') as bucket, "
-        "              observed_at, uptime_sec, node, {columns}, "
-        "              min(uptime_sec) over ( "
-        "                  partition by node, "
-        "                               date_bin("
-        "                                   %(width)s, observed_at, timestamptz '2000-01-01')"
-        "              ) as floor_uptime_sec "
-        "         from metric_frontend "
-        "        where cluster = %(cluster)s and frontend = %(frontend)s "
-        "          and owns_vip and observed_at >= %(since)s "
-        "          and observed_at <= %(until)s "
-        "       ) as bucketed "
-        " order by node, bucket, observed_at desc"
-    ).format(columns=columns)
-
-
-def read_frontend_samples(
+def read_frontend_series(
     connection: Connection[Any],
     *,
     cluster: str,
@@ -2652,33 +2619,33 @@ def read_frontend_samples(
     since: datetime,
     until: datetime,
     width: timedelta,
-) -> list[metrics.Sample]:
-    """One VIP frontend's readings, one per bucket, oldest first."""
+) -> list[metrics.Interval]:
+    """What one VIP frontend did, as intervals for its card's drawing, oldest first.
+
+    **The VIP is what listens, so the series is the VIP's.** Every node reports
+    its own frontends, but only the node holding the address receives anything
+    on it; its peer binds the same ports and sits flat. Only the samples on
+    which a node held the address count, and each stored its change from that
+    node's previous such sample (0048) - which is also what keeps a failover
+    from being read as one node's lifetime total. Frontends have no rollup;
+    their raw rows are kept for seven days.
+    """
 
     with connection.cursor() as cursor:
         cursor.execute(
-            _bucketed_frontend(width),
+            _bucketed_changes(
+                "metric_frontend",
+                sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s and owns_vip"),
+            ),
             {
                 "cluster": cluster,
                 "frontend": frontend,
-                "since": since,
                 "width": width,
                 "until": until,
+                "after": since,
             },
         )
-        rows = cursor.fetchall()
-
-    return [
-        metrics.Sample(
-            observed_at=row[1],
-            member=frontend,
-            uptime_sec=row[2],
-            floor_uptime_sec=row[3],
-            node=row[4],
-            counters=dict(zip(metrics.METRIC_COUNTERS, row[5:], strict=True)),
-        )
-        for row in rows
-    ]
+        return _changed_intervals(cursor.fetchall())
 
 
 def read_cluster_frontends(

@@ -1561,8 +1561,8 @@ def build_router(config: Config) -> APIRouter:
                 )
         if served:
 
-            def samples(backend: str) -> Callable[[Any], list[metrics.Sample]]:
-                return lambda connection: db.read_backend_samples(
+            def samples(backend: str) -> Callable[[Any], list[metrics.Interval]]:
+                return lambda connection: db.read_backend_series(
                     connection,
                     cluster=cluster,
                     backend=backend,
@@ -1740,9 +1740,13 @@ def build_router(config: Config) -> APIRouter:
                 listed.append(
                     (
                         cluster,
-                        db.read_cluster_backends(
-                            connection, cluster=cluster, since=since, until=now
-                        ),
+                        [
+                            backend
+                            for backend in db.read_cluster_backends(
+                                connection, cluster=cluster, since=since, until=now
+                            )
+                            if not metrics.is_engine(backend)
+                        ],
                         #
                         # Name and ownership apart: an address nobody reported
                         # holding is still an address this cluster saw, and it
@@ -1761,9 +1765,9 @@ def build_router(config: Config) -> APIRouter:
 
         def frontend_reads(
             cluster: str, name: str
-        ) -> tuple[Callable[[Any], list[metrics.Sample]], Callable[[Any], Any]]:
-            def samples(connection: Any) -> list[metrics.Sample]:
-                return db.read_frontend_samples(
+        ) -> tuple[Callable[[Any], list[metrics.Interval]], Callable[[Any], Any]]:
+            def samples(connection: Any) -> list[metrics.Interval]:
+                return db.read_frontend_series(
                     connection,
                     cluster=cluster,
                     frontend=name,
@@ -1785,9 +1789,9 @@ def build_router(config: Config) -> APIRouter:
 
         def backend_reads(
             cluster: str, name: str
-        ) -> tuple[Callable[[Any], list[metrics.Sample]], Callable[[Any], Any]]:
-            def samples(connection: Any) -> list[metrics.Sample]:
-                return db.read_backend_samples(
+        ) -> tuple[Callable[[Any], list[metrics.Interval]], Callable[[Any], Any]]:
+            def samples(connection: Any) -> list[metrics.Interval]:
+                return db.read_backend_series(
                     connection,
                     cluster=cluster,
                     backend=name,
@@ -1839,7 +1843,7 @@ def build_router(config: Config) -> APIRouter:
 
             found = [(name, *read_back[(cluster, kind, name)]) for name in named]
             ceiling = metrics.shared_ceiling(
-                [metrics.intervals(samples) for _name, samples, _totals in found],
+                [series for _name, series, _totals in found],
                 start=since,
                 end=now,
                 bucket=chosen.bucket,

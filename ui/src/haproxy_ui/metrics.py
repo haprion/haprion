@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from haproxy_mgmt.generate import METRICS_FRONTEND, PREFIX, REDIRECT_PREFIX
+from haproxy_mgmt.generate import METRICS_FRONTEND, PREFIX, REDIRECT_PREFIX, WAF_BACKEND
 from haproxy_mgmt.guid import redirect_name
 
 #
@@ -689,8 +689,9 @@ class Point:
 # The grid every bucket is measured from, and it must be an absolute moment
 # rather than the window's own start.
 #
-# The reader's SQL bins rows with `date_bin(width, observed_at, '2000-01-01')`,
-# which is a fixed grid. A drawing that binned the same readings from `now -
+# The reader's SQL bins rows with `date_bin(width, observed_at, '2000-01-01
+# 00:00:00+00')` (`db.BUCKET_EPOCH_SQL`), which is a fixed grid - in UTC, as
+# this one is; a bare date is read in the server's time zone. A drawing that binned the same readings from `now -
 # span` would use a grid that moves every time the page is loaded, and the two
 # would sit a fraction of a bucket apart: some buckets would hold two readings
 # and their neighbours none, which draws a sawtooth down to zero - and a
@@ -1591,6 +1592,19 @@ def is_exporter(frontend: str) -> bool:
     return frontend == METRICS_FRONTEND
 
 
+def is_engine(backend: str) -> bool:
+    """The WAF engine's backend (Fas 21), which no site is served from.
+
+    The generator writes it on every cluster with the engine, so HAProxy can
+    hand requests to the engine for a verdict. Its requests are those hand-offs
+    rather than visitors, and on a page of what each backend served it would be
+    a card of the WAF counting itself - the exporter's frontend for the same
+    reason (`is_exporter`). Shown unintentionally until 2026-10-04.
+    """
+
+    return backend == WAF_BACKEND
+
+
 def is_redirect(backend: str) -> bool:
     """Whether this generated backend is a redirect answer rather than one with servers.
 
@@ -1679,7 +1693,7 @@ def shared_ceiling(
 
 def backend_traffic(
     series: str,
-    samples: Sequence[Sample],
+    found: Sequence[Interval],
     *,
     tick_format: str = "%H:%M",
     start: datetime,
@@ -1697,7 +1711,6 @@ def backend_traffic(
     two windows of the same backend incomparable, which is the whole use of them.
     """
 
-    found = intervals(samples)
     if measurement is None:
         measurement = BackendMeasurement(
             intervals=len(found),

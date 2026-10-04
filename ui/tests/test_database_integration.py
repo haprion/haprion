@@ -33,7 +33,7 @@ from haproxy_mgmt.traffic_collector import (
 )
 from psycopg.types.json import Jsonb
 
-from haproxy_ui import auth, db, search_index, timing, traffic_logs
+from haproxy_ui import auth, db, metrics, search_index, timing, traffic_logs
 
 DSN = os.environ.get("HAPROXY_UI_TEST_DATABASE_DSN", "")
 
@@ -1488,50 +1488,70 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual([entry.host for entry in reading.entries], ["copy.example.com"])
         self.assertEqual(reading.entries[0].path, "/ready")
 
-    def test_frontend_buckets_never_mix_two_nodes_uptime(self) -> None:
-        #
-        # Pinned to the start of a ten-minute bucket rather than placed relative
-        # to now. `date_bin` bins against a fixed origin, so rows laid out at
-        # `now - 20 min` and `+2 min` straddled a bucket boundary whenever that
-        # minute ended in 8 or 9 - the test then failed about one run in five
-        # while describing nothing but the clock.
-        #
-        now = datetime.now(UTC)
-        start = now.replace(minute=now.minute // 10 * 10, second=0, microsecond=0) - timedelta(
-            minutes=20
+    def test_a_reload_late_in_a_bucket_keeps_what_came_before_it(self) -> None:
+        """2026-10-04: the 30-day graph lost a load test the figures beside it counted.
+
+        One six-hour bucket holds a reload, a burst of traffic and a second
+        reload, with the address held briefly by the other node. The graph's
+        bucket must be what the stored changes sum to - the same figure the
+        card's totals give - in UTC buckets, read by a session in the server's
+        local zone.
+        """
+
+        day = (datetime.now(UTC) - timedelta(days=2)).replace(
+            hour=0, minute=0, second=0, microsecond=0
         )
+
+        def at(hour: int, minute: int, second: int = 0) -> datetime:
+            return day + timedelta(hours=hour, minutes=minute, seconds=second)
+
+        rows = [
+            # (node, observed_at, uptime_sec, req_tot)
+            ("node-a", at(11, 59, 40), 100_000, 500),
+            ("node-a", at(12, 5), 10, 0),  # reloaded
+            ("node-a", at(12, 44), 2_350, 1_000),
+            ("node-a", at(12, 48), 2_590, 29_998),  # the burst
+            ("node-b", at(13, 0), 10, 7),
+            ("node-b", at(13, 0, 20), 30, 9),
+            ("node-a", at(14, 5), 5, 0),  # reloaded again, later in the bucket
+            ("node-a", at(17, 59), 14_000, 3),
+            ("node-a", at(18, 5), 14_360, 4),
+        ]
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("select metric_partition('metric_frontend', %s::date)", (start.date(),))
+            cursor.execute("select metric_partition('metric_frontend', %s::date)", (day.date(),))
             cursor.executemany(
                 "insert into metric_frontend "
                 "(cluster, node, frontend, observed_at, owns_vip, uptime_sec, req_tot) "
-                "values (%s, %s, %s, %s, true, %s, %s)",
-                [
-                    ("alpha", "node-a", "mgd-main-http", start, 5000, 5_000_000),
-                    ("alpha", "node-b", "mgd-main-http", start + timedelta(minutes=1), 10, 100),
-                    (
-                        "alpha",
-                        "node-a",
-                        "mgd-main-http",
-                        start + timedelta(minutes=2),
-                        5120,
-                        5_000_400,
-                    ),
-                ],
+                "values ('reload', %s, 'mgd-main-https', %s, true, %s, %s)",
+                rows,
             )
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
-            samples = db.read_frontend_samples(
+            connection.execute("set timezone = 'Europe/Stockholm'")
+            series = db.read_frontend_series(
                 connection,
-                cluster="alpha",
-                frontend="mgd-main-http",
-                since=start,
-                until=start + timedelta(minutes=9),
-                width=timedelta(minutes=10),
+                cluster="reload",
+                frontend="mgd-main-https",
+                since=at(6, 0),
+                until=at(23, 0),
+                width=timedelta(hours=6),
             )
-        by_node = {sample.node: sample for sample in samples}
-        self.assertEqual(set(by_node), {"node-a", "node-b"})
-        self.assertEqual(by_node["node-a"].floor_uptime_sec, 5000)
-        self.assertEqual(by_node["node-b"].floor_uptime_sec, 10)
+            totals = db.read_frontend_totals(
+                connection,
+                cluster="reload",
+                frontend="mgd-main-https",
+                since=at(12, 0),
+                until=at(18, 0),
+            )
+        grid = {
+            bucket.at: bucket.counters["req_tot"]
+            for bucket in metrics.bucketed(
+                series, start=at(6, 0), end=at(23, 0), bucket=timedelta(hours=6)
+            )
+        }
+        # 1 000 + 28 998 + 3 on node-a, 2 on node-b; a reading per bucket said 3.
+        self.assertEqual(grid[at(12, 0)], 30_003)
+        self.assertEqual(totals.totals[0].value, 30_003)
+        self.assertEqual(grid[at(6, 0)], 0)
 
     def test_the_dashboard_sums_every_frontend_the_way_each_card_counts_one(self) -> None:
         """B220, 2026-10-01: one query for the dashboard, the card's own arithmetic.

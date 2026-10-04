@@ -173,11 +173,13 @@ class WhatHappenedInBetween(unittest.TestCase):
 
         card = metrics.backend_traffic(
             "be_alpha",
-            [
-                sample(0, uptime=100, node="node-a", req_tot=1000),
-                sample(20, uptime=90000, node="node-b", req_tot=9000),
-                sample(40, uptime=90020, node="node-b", req_tot=9100),
-            ],
+            metrics.intervals(
+                [
+                    sample(0, uptime=100, node="node-a", req_tot=1000),
+                    sample(20, uptime=90000, node="node-b", req_tot=9000),
+                    sample(40, uptime=90020, node="node-b", req_tot=9100),
+                ]
+            ),
             start=START,
             end=START + timedelta(seconds=40),
             bucket=timedelta(seconds=20),
@@ -244,10 +246,12 @@ class TotallingAWindow(unittest.TestCase):
 
         card = metrics.backend_traffic(
             "be_alpha",
-            [
-                sample(0, uptime=100, node="node-a", req_tot=10),
-                sample(20, uptime=120, node="node-a", req_tot=17),
-            ],
+            metrics.intervals(
+                [
+                    sample(0, uptime=100, node="node-a", req_tot=10),
+                    sample(20, uptime=120, node="node-a", req_tot=17),
+                ]
+            ),
             start=START,
             end=START + timedelta(seconds=20),
             bucket=timedelta(seconds=10),
@@ -784,7 +788,7 @@ class WhetherTheWindowSaysAnything(unittest.TestCase):
     def traffic(self, *samples: metrics.Sample) -> metrics.BackendTraffic:
         return metrics.backend_traffic(
             "mgd-site-web",
-            list(samples),
+            metrics.intervals(list(samples)),
             start=START,
             end=START + timedelta(minutes=1),
             bucket=timedelta(seconds=10),
@@ -846,7 +850,7 @@ class TheFiguresAreNotTheDrawing(unittest.TestCase):
 
         card = metrics.backend_traffic(
             "mgd-site-web",
-            drawing,
+            metrics.intervals(drawing),
             start=START,
             end=START + timedelta(hours=24),
             bucket=timedelta(hours=6),

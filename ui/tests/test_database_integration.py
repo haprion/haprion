@@ -33,7 +33,7 @@ from haproxy_mgmt.traffic_collector import (
 )
 from psycopg.types.json import Jsonb
 
-from haproxy_ui import auth, db, search_index, traffic_logs
+from haproxy_ui import auth, db, search_index, timing, traffic_logs
 
 DSN = os.environ.get("HAPROXY_UI_TEST_DATABASE_DSN", "")
 
@@ -43,6 +43,25 @@ class ARealDatabase(unittest.TestCase):
     def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         role = os.environ[role_variable]
         return psycopg.connect(f"{DSN} user={role}")
+
+    def test_the_timing_cursor_counts_each_statement_in_a_request(self) -> None:
+        with psycopg.connect(
+            f"{DSN} user={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}",
+            cursor_factory=timing.TimedCursor,
+        ) as connection:
+            # Outside a request: an ordinary cursor.
+            self.assertEqual(connection.execute("select 1").fetchone(), (1,))
+            measured = timing.Timing()
+            token = timing._CURRENT.set(measured)
+            try:
+                connection.execute("select pg_sleep(0.01)")
+                with connection.cursor() as cursor:
+                    cursor.execute("select %s::int", (2,))
+                    self.assertEqual(cursor.fetchone(), (2,))
+            finally:
+                timing._CURRENT.reset(token)
+        self.assertEqual(measured.queries, 2)
+        self.assertGreaterEqual(measured.database, 0.01)
 
     def test_the_release_guard_names_a_running_restore_and_nothing_else(self) -> None:
         """`update-platform-release` asks this before it restarts the worker.

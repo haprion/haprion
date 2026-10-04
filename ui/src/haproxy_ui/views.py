@@ -26,6 +26,7 @@ import json
 import logging
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -51,6 +52,7 @@ from haproxy_mgmt.proxy_model import (
     ModelError,
     load_proxy,
 )
+from starlette.templating import _TemplateResponse
 
 from haproxy_ui import (
     advanced_dialog,
@@ -86,6 +88,7 @@ from haproxy_ui import (
     proxies,
     search_index,
     snapshot,
+    timing,
     traffic_log_table,
     traffic_logs,
     traffic_summary,
@@ -102,7 +105,19 @@ from haproxy_ui.db import AuthenticatedSession
 from haproxy_ui.form_groups import form_groups, waf_exception_count
 from haproxy_ui.health_rows import health_rows
 
-TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+class _TimedTemplates(Jinja2Templates):
+    """Every page's template time counted as such (`timing`)."""
+
+    def TemplateResponse(self, *args: Any, **kwargs: Any) -> _TemplateResponse:  # noqa: N802
+        def render() -> _TemplateResponse:
+            response: _TemplateResponse = Jinja2Templates.TemplateResponse(self, *args, **kwargs)
+            return response
+
+        return timing.rendered(render)
+
+
+TEMPLATES = _TimedTemplates(directory=str(Path(__file__).parent / "templates"))
 logger = logging.getLogger("haproxy_ui")
 
 #
@@ -274,8 +289,13 @@ def _read_concurrently[T](pool: Any, reads: Sequence[Callable[[Any], T]]) -> lis
 
     if len(reads) <= 1:
         return [run(read) for read in reads]
+    #
+    # A thread does not inherit the request's context. Each read runs in a copy
+    # of it, so its queries are counted with the page that asked (`timing`).
+    #
+    context = copy_context()
     with ThreadPoolExecutor(max_workers=TRAFFIC_READERS) as readers:
-        return list(readers.map(run, reads))
+        return list(readers.map(lambda read: context.copy().run(run, read), reads))
 
 
 def _traffic_marks(request: Request, marked: metrics.Selection) -> dict[str, object]:

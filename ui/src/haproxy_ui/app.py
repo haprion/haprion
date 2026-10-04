@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from haproxy_ui import db, views
+from haproxy_ui import db, timing, views
 from haproxy_ui.config import DEFAULT_CONFIG_PATH, Config
 from haproxy_ui.config import load as load_config
 
@@ -85,6 +85,15 @@ def create_app(config: Config | None = None) -> FastAPI:
         )
 
     app.include_router(views.build_router(settings))
+    #
+    # Each response says where its time went (`timing`): in a header for the
+    # browser's network panel and in a line in the service log. The line is
+    # wired only for the service itself, which builds from the installed file;
+    # a test passes its own configuration and keeps its output to itself.
+    #
+    if config is None:
+        timing.log_handler()
+    app.add_middleware(timing.TimingMiddleware)
 
     @app.get("/healthz")
     def healthz() -> JSONResponse:

@@ -35,7 +35,7 @@ from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from haproxy_ui import metrics, search_index
+from haproxy_ui import metrics, search_index, timing
 from haproxy_ui.config import Database
 
 
@@ -253,12 +253,16 @@ def pool(database: Database, *, min_size: int = 1, max_size: int = 4) -> Connect
     `open=False` so nothing connects as a side effect of importing or
     constructing. Failing to reach the database has to happen where it can be
     reported, not during module import.
+
+    The cursor adds each statement's time to the web request it serves, and
+    does nothing more anywhere else (see `timing`).
     """
 
     return ConnectionPool(
         conninfo=database.connection_string,
         min_size=min_size,
         max_size=max_size,
+        kwargs={"cursor_factory": timing.TimedCursor},
         open=False,
     )
 

@@ -24,6 +24,7 @@ from haproxy_mgmt.traffic_collector import (
     CollectorConfig,
     NodeTarget,
     _database_days,
+    _database_reason,
     _ingest_part,
     _ingest_waf_pages,
     _mirror_window,
@@ -895,6 +896,43 @@ class ARealDatabase(unittest.TestCase):
             rows[0][:6], ("shop", 942100, "ARGS:id", "1' OR 1=1--\u0007", "/search", "192.0.2.30")
         )
         self.assertEqual(rows[0][6].microsecond, 250_000)
+
+    def test_a_refused_batch_names_its_constraint_and_not_the_row(self) -> None:
+        """Review 2026-10-04 F6: the collector's log says why PostgreSQL refused,
+        without quoting the requester's text that DETAIL carries."""
+
+        at = int(datetime.now(UTC).timestamp()) * 1_000_000
+        match = {
+            "rule_id": 942100,
+            "data": "Matched Data: s&1c found within ARGS:id: secret-looking-value",
+            "uri": "/search",
+            "unique_id": f"shop.{uuid4()}",
+        }
+        raw = (
+            json.dumps({"cursor": "s=ab;i=9;b=cd", "eof": True, "reset": False, "sent": 1})
+            + "\n"
+            + json.dumps(
+                {"at": at, "cursor": "s=ab;i=9;b=cd", "message": json.dumps({"match": match})}
+            )
+            + "\n"
+        ).encode()
+        # A cluster name the table's check refuses; the collector takes it from its configuration.
+        target = NodeTarget("Not-A-Cluster", "node-a", "node-a.example.com")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = CollectorConfig(
+                "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
+            )
+            page = _parse_waf_response(raw, target)
+            with (
+                self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection,
+                self.assertRaises(psycopg.Error) as refused,
+            ):
+                _ingest_waf_pages(config, connection, [(target, page)])
+        reason = _database_reason(refused.exception)
+        self.assertIn("waf_match_cluster_shape", reason)
+        self.assertIn("(23514)", reason)
+        self.assertNotIn("secret-looking-value", reason)
 
     def test_a_database_restored_on_its_own_gets_back_what_staging_still_holds(self) -> None:
         """Review 2026-09-30, R3, its acceptance case.

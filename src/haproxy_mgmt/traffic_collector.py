@@ -980,6 +980,21 @@ def _mirror_window(config: CollectorConfig, *, now: datetime) -> int:
     return min(RETENTION_DAYS, max(1, past) + MIRROR_MARGIN_DAYS)
 
 
+def _database_reason(exc: psycopg.Error) -> str:
+    """Why PostgreSQL refused, for the collector's log (review 2026-10-04 F6).
+
+    The primary message and the SQLSTATE: 26-10-03 a refused batch said only
+    "database import failed", and the constraint that refused it was in
+    PostgreSQL's own log. Never the DETAIL, which quotes the refused row - a
+    requester's text. A connection that failed before any server message has
+    only its own first line, which names the socket and nothing secret.
+    """
+
+    message = exc.diag.message_primary or (str(exc).splitlines() or [""])[0]
+    state = f" ({exc.sqlstate})" if exc.sqlstate else ""
+    return f"{message[:300]}{state}"
+
+
 def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
     """Import every staging part, and answer what it skipped: records, parts."""
 
@@ -1009,7 +1024,7 @@ def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
                         continue
                     skipped += _ingest_part(config, connection, target, part)
     except psycopg.Error as exc:
-        raise CollectorError("database import failed") from exc
+        raise CollectorError(f"database import failed: {_database_reason(exc)}") from exc
     return skipped, expired
 
 
@@ -1293,7 +1308,7 @@ def _ingest_waf(
         ) as connection:
             return _ingest_waf_pages(config, connection, pages)
     except psycopg.Error as exc:
-        raise CollectorError("WAF import failed") from exc
+        raise CollectorError(f"WAF import failed: {_database_reason(exc)}") from exc
 
 
 def _ingest_waf_pages(

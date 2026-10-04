@@ -851,7 +851,7 @@ class WafJournalCollectorTests(unittest.TestCase):
         connection.commit.side_effect = psycopg.OperationalError("gone")
         code, errors, _ = self.collect_with(lambda _t, _c: waf_response(engine_line()), connection)
         self.assertEqual(code, 1)
-        self.assertIn("waf: WAF import failed", errors)
+        self.assertIn("waf: WAF import failed: gone", errors)
         self.assertFalse(self.cursor_file.exists())
 
     def test_a_match_outside_the_partitions_is_passed_and_said(self) -> None:

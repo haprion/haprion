@@ -36,7 +36,7 @@ from typing import Any, Literal
 
 import yaml
 
-from haproxy_mgmt import haproxy_repository
+from haproxy_mgmt import haproxy_repository, safe_yaml
 from haproxy_mgmt.restore_source import Account, Entry, Group, RestoreSource, content
 
 Mode = Literal["new_vm", "test", "overwrite"]
@@ -329,7 +329,7 @@ def _network(
     node_address: ipaddress.IPv4Interface | None = None
     for entry in _netplan_files(source):
         try:
-            document = yaml.safe_load(_text(source, entry))
+            document = safe_yaml.load(_text(source, entry))
         except yaml.YAMLError as exc:
             raise PlanError(f"{entry.path} is not valid YAML") from exc
         found = _ethernet(document, entry.path)

@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml
 
+from haproxy_mgmt import safe_yaml
 from haproxy_mgmt.config import ConfigError
 
 LOCATION = "managed/cluster.yaml"
@@ -186,7 +187,7 @@ def load_document(document: bytes | None) -> ClusterSettings:
     if len(document) > MAX_BYTES:
         raise ConfigError(f"{LOCATION} exceeds the {MAX_BYTES} byte size limit")
     try:
-        parsed: Any = yaml.safe_load(document.decode("utf-8"))
+        parsed: Any = safe_yaml.load(document.decode("utf-8"))
     except (UnicodeError, yaml.YAMLError) as exc:
         raise ConfigError(f"{LOCATION} is not valid YAML") from exc
     return load_mapping(parsed)

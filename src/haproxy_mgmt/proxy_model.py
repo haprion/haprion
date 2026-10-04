@@ -32,7 +32,7 @@ from typing import Any
 import yaml
 
 from haproxy_mgmt import advanced as advanced_config
-from haproxy_mgmt import geo
+from haproxy_mgmt import geo, safe_yaml
 from haproxy_mgmt.config import (
     ABUSE_WINDOW,
     DEFAULT_ABUSE_WINDOW,
@@ -1446,7 +1446,7 @@ def read_document(name: str, document: bytes) -> dict[str, Any]:
     if len(document) > MAX_MODEL_BYTES:
         raise ModelError(f"{name}: the proxy object exceeds the size limit")
     try:
-        loaded = yaml.safe_load(document.decode("utf-8"))
+        loaded = safe_yaml.load(document.decode("utf-8"))
     except (UnicodeError, yaml.YAMLError) as exc:
         raise ModelError(f"{name}: the proxy object is not valid YAML: {exc}") from exc
     try:

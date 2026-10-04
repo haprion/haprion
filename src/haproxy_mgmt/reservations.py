@@ -57,6 +57,7 @@ from typing import Any
 
 import yaml
 
+from haproxy_mgmt import safe_yaml
 from haproxy_mgmt.config import ConfigError, _address, _mapping, _only_keys
 from haproxy_mgmt.proxy_model import HOSTNAME
 
@@ -179,7 +180,7 @@ def _load(document: bytes, location: str) -> Reservations:
     if len(document) > MAX_RESERVATIONS_BYTES:
         raise ReservationError(f"{location} exceeds the size limit")
     try:
-        loaded = yaml.safe_load(document.decode("utf-8"))
+        loaded = safe_yaml.load(document.decode("utf-8"))
     except (UnicodeError, yaml.YAMLError) as exc:
         raise ReservationError(f"{location} is not valid YAML: {exc}") from exc
     if loaded is None:

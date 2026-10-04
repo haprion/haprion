@@ -40,7 +40,7 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import cert_registry, node_enrollment, tls_policy
+from haproxy_mgmt import cert_registry, node_enrollment, safe_yaml, tls_policy
 from haproxy_mgmt.config import (
     CLUSTER_ID,
     NAME,
@@ -734,7 +734,7 @@ def plan_add(
     first = next(iter(runtime.clusters.values()))
 
     clusters_before = _read(policy.cluster_file)
-    document = yaml.safe_load(clusters_before)
+    document = safe_yaml.load(clusters_before)
     document["clusters"][spec.cluster] = _cluster_entry(
         policy,
         spec,
@@ -863,7 +863,7 @@ def remove(
     target = runtime.clusters[cluster]
 
     clusters_before = _read(policy.cluster_file)
-    document = yaml.safe_load(clusters_before)
+    document = safe_yaml.load(clusters_before)
     del document["clusters"][cluster]
     clusters_after = yaml.safe_dump(document, sort_keys=False).encode()
     registry_before = _read(policy.certificate_registry)

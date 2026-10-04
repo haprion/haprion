@@ -44,6 +44,7 @@ from typing import Any
 
 import yaml
 
+from haproxy_mgmt import safe_yaml
 from haproxy_mgmt.config import (
     CLUSTER_ID,
     MAX_NODES,
@@ -268,13 +269,13 @@ def keys_with(text: bytes, line: str, node: str, purpose: str) -> bytes:
 
 
 def clusters_with(text: bytes, cluster: str, node: Node) -> bytes:
-    document = yaml.safe_load(text)
+    document = safe_yaml.load(text)
     document["clusters"][cluster]["nodes"].append({"name": node.name, "mgmt_host": node.mgmt_host})
     return yaml.safe_dump(document, sort_keys=False).encode()
 
 
 def clusters_without(text: bytes, cluster: str, name: str) -> bytes:
-    document = yaml.safe_load(text)
+    document = safe_yaml.load(text)
     nodes = document["clusters"][cluster]["nodes"]
     document["clusters"][cluster]["nodes"] = [entry for entry in nodes if entry["name"] != name]
     return yaml.safe_dump(document, sort_keys=False).encode()

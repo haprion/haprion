@@ -15,9 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
-from haproxy_mgmt import cluster_settings
+from haproxy_mgmt import cluster_settings, safe_yaml
 from haproxy_mgmt.config import AbuseProtection, UnknownHost, Vip
 from haproxy_mgmt.generate import generate
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
@@ -59,7 +57,7 @@ def network(case: Path) -> tuple[dict[str, Vip], str]:
     path = case / NETWORK
     if not path.exists():
         return dict(DEFAULT_VIPS), "main"
-    document = yaml.safe_load(path.read_text())
+    document = safe_yaml.load(path.read_text())
     vips = {
         name: Vip(
             name=name,

@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from haproxy_mgmt import safe_yaml
 from haproxy_mgmt.config import NETWORK_FILE, ConfigError, Network, _mapping, parse_network
 
 # Network tables are small by design.  Keeping the bound below the general
@@ -45,7 +46,7 @@ def load_document(document: bytes, *, ownership_vip: str, location: str) -> Netw
     if len(document) > MAX_NETWORK_BYTES:
         raise ConfigError(f"{location} exceeds the {MAX_NETWORK_BYTES} byte size limit")
     try:
-        parsed: Any = yaml.safe_load(document.decode("utf-8"))
+        parsed: Any = safe_yaml.load(document.decode("utf-8"))
     except (UnicodeError, yaml.YAMLError) as exc:
         raise ConfigError(f"{location} is not valid YAML") from exc
     return load_mapping(parsed, ownership_vip=ownership_vip, location=location)

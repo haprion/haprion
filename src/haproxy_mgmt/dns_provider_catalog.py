@@ -27,7 +27,7 @@ from importlib.resources import files
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-import yaml
+from haproxy_mgmt import safe_yaml
 
 PROVIDER_ID = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 FIELD_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -310,7 +310,7 @@ def _provider(value: object, location: str) -> DNSProvider:
 
 
 def load_full_catalog() -> Catalog:
-    document = yaml.safe_load(files("haproxy_mgmt").joinpath("dns-providers.yaml").read_text())
+    document = safe_yaml.load(files("haproxy_mgmt").joinpath("dns-providers.yaml").read_text())
     root = _mapping(document, "catalogue")
     _exact(root, {"schema_version", "providers", "not_offered"}, "catalogue")
     if root["schema_version"] != 1 or type(root["schema_version"]) is not int:

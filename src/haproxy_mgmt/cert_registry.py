@@ -43,6 +43,7 @@ from typing import Any
 
 import yaml
 
+from haproxy_mgmt import safe_yaml
 from haproxy_mgmt.cert_lock import DEFAULT_LOCK_PATH, LOCK_WAIT_SECONDS, hold
 from haproxy_mgmt.config import (
     DEFAULT_RECEIVER_FORMAT,
@@ -87,7 +88,7 @@ def read_document(path: Path) -> dict[str, Any]:
     """
 
     try:
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        loaded = safe_yaml.load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
         raise RegistryError(
             "dependency_unavailable", f"cannot read the registry: {exc}", exit_code=78

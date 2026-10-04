@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from haproxy_mgmt import safe_yaml
+
 DEFAULT_POLICY_PATH = Path("/etc/haproxy-manager/runtime-policy.yaml")
 MAX_CONFIG_BYTES = 1024 * 1024
 CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
@@ -584,7 +586,7 @@ def _secure_yaml(path: Path, *, require_secure: bool) -> dict[str, Any]:
             exit_code=68,
         )
     try:
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        loaded = safe_yaml.load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise ConfigError(f"cannot read configuration file: {exc}", exit_code=68) from exc
     return _mapping(loaded, str(path))

@@ -191,6 +191,25 @@ def read_target(publish_path: Path, node_path: str) -> ReleaseTarget | None:
 #
 RELEASE_NAME = re.compile(r"^[0-9a-f]{7,64}$")
 
+
+def read_waf_published(publish_path: Path, node_path: str) -> bool | None:
+    """Whether the published release carries WAF rules; None when it cannot be read.
+
+    The question a node's engine state is measured against (review 2026-10-04
+    F3): a stopped engine is normal on a cluster without rules and a fault on
+    one with them, and only the published tree - read here, inside the
+    privilege boundary - says which.
+    """
+
+    node_root = publish_path / "current" / node_path
+    try:
+        if not (node_root / "RELEASE").is_file():
+            return None
+        return (node_root / "waf" / "coraza.yaml").is_file()
+    except OSError:
+        return None
+
+
 UNKNOWN = "unknown"
 
 
@@ -489,6 +508,7 @@ def collect(
     *,
     target: ReleaseTarget | None,
     publish_path: Path | None = None,
+    waf_published: bool | None = None,
 ) -> StatusReport:
     """Ask every node, then say what the pair adds up to.
 
@@ -522,6 +542,24 @@ def collect(
 
     vip_state, owners, unknown = _vip_state(results)
     valid = sum(1 for entry in results if entry["status_ok"])
+    if waf_published:
+        #
+        # The release has rules and the node's engine is not running them:
+        # every WAF object there gets its `on_engine_error` - let through
+        # uninspected, or refused - and nothing else says so (review
+        # 2026-10-04 F3). A node that does not report the engine is one from
+        # before the field, which a release with rules never reaches (B231).
+        #
+        for entry in results:
+            engine = _mapping(_mapping(entry["status"]).get("waf_engine"))
+            if entry["status_ok"] and engine and engine.get("active") is not True:
+                warnings.append(
+                    Message(
+                        code="waf_engine_stopped",
+                        message=f"the WAF engine is not running on {entry['name']}",
+                        node=str(entry["name"]),
+                    )
+                )
 
     result = {
         "nodes": results,
@@ -540,6 +578,7 @@ def collect(
             #
             "target": None if target is None else {"version": target.version, "hash": target.hash},
             "release_state": _release_state(results, target),
+            **({} if waf_published is None else {"waf_published": waf_published}),
         },
         #
         # Per object rather than per cluster, and empty when the comparison

@@ -421,6 +421,10 @@
           "type": "string",
           "enum": ["incomplete", "unknown", "no_owner", "single_owner", "split_brain"]
         },
+        "waf_published": {
+          "description": "Whether the published release carries WAF rules (`waf/`), so whether each node's WAF engine should be running (review 2026-10-04 F3). Absent when the published tree could not be read, and from an engine older than the field.",
+          "type": "boolean"
+        },
         "validator_version": {
           "description": "The HAProxy version the management host validates candidates with, as `haproxy -v` names it; null when it could not be read. Absent from an engine older than the field.",
           "type": ["string", "null"],

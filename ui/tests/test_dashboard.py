@@ -155,6 +155,47 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(unreachable.nodes[1].label, "Unreachable")
         self.assertEqual(unreachable.nodes[1].tone, "critical")
 
+    def engine(self, *, published: bool | None, active: bool) -> Any:
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        for node in nodes:
+            node["status"] = {
+                **node["status"],
+                "waf_engine": {"version": "0.9.0-4", "active": True},
+            }
+        nodes[1]["status"]["waf_engine"] = {"version": "0.9.0-4", "active": active}
+        result["nodes"] = nodes
+        if published is not None:
+            result["summary"] = {**result["summary"], "waf_published": published}
+        return self.dashboard(
+            ClusterStatus(
+                cluster=status.cluster,
+                observed_at=status.observed_at,
+                outcome="done",
+                result=result,
+                warnings=[],
+                error=None,
+                poll_error=None,
+            )
+        ).clusters[0]
+
+    def test_a_stopped_waf_engine_is_named_where_the_release_has_rules(self) -> None:
+        # Review 2026-10-04 F3: the node reported it, and nothing showed it.
+        cluster = self.engine(published=True, active=False)
+        self.assertEqual(
+            (cluster.nodes[1].label, cluster.nodes[1].tone), ("WAF engine stopped", "warning")
+        )
+        self.assertEqual(cluster.nodes[0].label, "Online")
+        self.assertEqual(cluster.label, "Degraded")
+
+    def test_a_stopped_waf_engine_is_normal_without_rules_or_without_knowing(self) -> None:
+        for published in (False, None):
+            with self.subTest(published=published):
+                cluster = self.engine(published=published, active=False)
+                self.assertEqual(cluster.nodes[1].label, "Online")
+                self.assertEqual(cluster.label, "Healthy")
+
     def test_version_drift_is_visible_without_calling_the_cluster_unhealthy(self) -> None:
         """Named for what it is, rather than as a fault.
 

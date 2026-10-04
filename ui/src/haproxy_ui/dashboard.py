@@ -372,6 +372,32 @@ def _cluster_view(
             summary.get("validator_version"),
         )
         nodes = tuple(replace(node, runtime_note=behind.get(node.name)) for node in nodes)
+        if summary.get("waf_published") is True:
+            #
+            # The release has WAF rules and this node's engine is not running
+            # them (review 2026-10-04 F3). Only on a node that is otherwise
+            # healthy: a stopped HAProxy or a fault already says more.
+            #
+            stopped = {
+                _text(value.get("name"))
+                for value in node_values
+                if isinstance(value, Mapping)
+                and value.get("status_ok") is True
+                and _mapping(_mapping(value.get("status")).get("waf_engine"))
+                and _mapping(_mapping(value.get("status")).get("waf_engine")).get("active")
+                is not True
+            }
+            nodes = tuple(
+                replace(
+                    node,
+                    label="WAF engine stopped",
+                    tone="warning",
+                    detail="The WAF engine is not running",
+                )
+                if node.name in stopped and node.tone == "healthy"
+                else node
+                for node in nodes
+            )
     stale = now - reading.observed_at > stale_after
 
     configured_nodes = summary.get("configured_nodes")

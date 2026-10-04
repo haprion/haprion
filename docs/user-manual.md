@@ -586,7 +586,10 @@ than letters, digits and `_ . - [ ]` cannot be named; except the path instead.
 
 **When the engine does not answer** - stopped, restarting, or overloaded -
 `allow` serves the request uninspected and records `waf-engine:log`, and `deny`
-answers 503 and records `waf-engine:deny`. Each rule the engine matched is
+answers 503 and records `waf-engine:deny`; either answers at once. A node whose
+engine is not running while the published release has rules is marked *WAF
+engine stopped* on the dashboard, and `haproxy-status` shows the engine on each
+node with a warning for that node. Each rule the engine matched is
 logged on the node with the part of the request and the matched value, in the
 engine's own journal (`journalctl --namespace=haproxy-waf -u coraza-spoa`),
 and collected to the management host with the traffic log, a page of up to

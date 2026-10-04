@@ -50,7 +50,14 @@ from haproxy_mgmt.helper_protocol import (
     write_document,
     write_failure,
 )
-from haproxy_mgmt.status_collect import NodeResponse, ReadNode, ask_node, collect, read_target
+from haproxy_mgmt.status_collect import (
+    NodeResponse,
+    ReadNode,
+    ask_node,
+    collect,
+    read_target,
+    read_waf_published,
+)
 
 OPERATION = "status"
 PARAMETERS: frozenset[str] = frozenset()
@@ -151,6 +158,7 @@ def main(
         node_reader or default_reader,
         target=read_target(Path(cluster.publish_path), cluster.node_path),
         publish_path=Path(cluster.publish_path),
+        waf_published=read_waf_published(Path(cluster.publish_path), cluster.node_path),
     )
 
     #

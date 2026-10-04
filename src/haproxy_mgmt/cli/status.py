@@ -141,6 +141,25 @@ def _addresses_line(status: dict[str, Any]) -> str | None:
     return "in use"
 
 
+def _waf_engine_line(engine: object, published: object) -> str | None:
+    """The node's WAF engine, read against whether the release has rules (review 2026-10-04 F3).
+
+    Stopped is only a fault where the published release carries rules; on a
+    cluster without them the engine is meant to be off, and says so.
+    """
+
+    if not isinstance(engine, dict):
+        return None
+    version = engine.get("version")
+    if not isinstance(version, str):
+        return "not installed"
+    if engine.get("active") is True:
+        return f"ACTIVE ({version})"
+    if published is False:
+        return f"not in use ({version})"
+    return f"STOPPED ({version})"
+
+
 def _render(envelope: dict[str, Any], writer: TextIO) -> None:
     cluster = envelope.get("cluster")
     result = envelope.get("result") or {}
@@ -186,6 +205,9 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         if isinstance(resources, dict):
             writer.write(f"  Memory:       {node_resources.memory_line(resources)}\n")
             writer.write(f"  Load:         {node_resources.load_line(resources)}\n")
+        engine = _waf_engine_line(status.get("waf_engine"), summary.get("waf_published"))
+        if engine is not None:
+            writer.write(f"  WAF engine:   {engine}\n")
         writer.write("\n")
 
     writer.write(f"VIP state:      {summary.get('vip_state')}\n")

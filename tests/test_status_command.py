@@ -55,10 +55,17 @@ ADDRESSES: dict[str, object] = {
 
 
 def node_status(
-    name: str, *, owner: bool, release_hash: str, addresses: object = None, runtime: str = "3.2.9"
+    name: str,
+    *,
+    owner: bool,
+    release_hash: str,
+    addresses: object = None,
+    runtime: str = "3.2.9",
+    waf_engine: dict[str, object] | None = None,
 ) -> str:
     return json.dumps(
         {
+            **({} if waf_engine is None else {"waf_engine": waf_engine}),
             "schema_version": 1,
             "node": name,
             "cluster": "alpha",
@@ -106,7 +113,9 @@ class HelperFixture(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.asked: list[str] = []
 
-    def runtime(self, *, published_hash: str | None = TARGET_HASH, identity: bool = True) -> Path:
+    def runtime(
+        self, *, published_hash: str | None = TARGET_HASH, identity: bool = True, waf: bool = False
+    ) -> Path:
         config_root = self.root / "config"
         publish_root = self.root / "published"
         cert_root = self.root / "certs"
@@ -130,6 +139,9 @@ class HelperFixture(unittest.TestCase):
                 "timestamp=2026-01-02T03:04:05+00:00\n",
                 encoding="utf-8",
             )
+            if waf:
+                (release / "waf").mkdir(exist_ok=True)
+                (release / "waf" / "coraza.yaml").write_text("bind: 127.0.0.1:9520\n")
 
         document: dict[str, object] = {
             "schema_version": 1,
@@ -153,6 +165,24 @@ class HelperFixture(unittest.TestCase):
             return NodeResponse(exit_code=0, stdout=stdout_by_name[node.name])
 
         return read
+
+    def engines(self, *, b_active: bool) -> object:
+        return self.reader(
+            **{
+                "node-a": node_status(
+                    "node-a",
+                    owner=True,
+                    release_hash=TARGET_HASH,
+                    waf_engine={"version": "0.9.0-4", "active": True},
+                ),
+                "node-b": node_status(
+                    "node-b",
+                    owner=False,
+                    release_hash=TARGET_HASH,
+                    waf_engine={"version": "0.9.0-4", "active": b_active},
+                ),
+            }
+        )
 
     def run_helper(
         self, payload: bytes, *, policy_path: Path | None = None, node_reader=None, **overrides
@@ -335,6 +365,34 @@ class HelperReadingTests(HelperFixture):
         self.assertIsNone(result["nodes"][1]["current"])
         self.assertEqual(result["summary"]["release_state"], "incomplete")
 
+    def test_a_stopped_engine_under_a_release_with_rules_is_a_warning(self) -> None:
+        # Review 2026-10-04 F3: the node said so, and nothing passed it on.
+        code, out, _ = self.run_helper(
+            request(), waf=True, node_reader=self.engines(b_active=False)
+        )
+        self.assertEqual(code, 0)
+        envelope = assert_contract("haproxy-status", out)
+        self.assertEqual(envelope["outcome"], "done")
+        self.assertIs(envelope["result"]["summary"]["waf_published"], True)
+        self.assertEqual(
+            [(w["code"], w["node"]) for w in envelope["warnings"]],
+            [("waf_engine_stopped", "node-b")],
+        )
+
+    def test_a_stopped_engine_without_rules_is_how_it_should_be(self) -> None:
+        code, out, _ = self.run_helper(request(), node_reader=self.engines(b_active=False))
+        self.assertEqual(code, 0)
+        envelope = assert_contract("haproxy-status", out)
+        self.assertIs(envelope["result"]["summary"]["waf_published"], False)
+        self.assertEqual(envelope["warnings"], [])
+
+    def test_nothing_published_says_nothing_about_the_engine(self) -> None:
+        code, out, _ = self.run_helper(
+            request(), published_hash=None, node_reader=self.engines(b_active=False)
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn("waf_published", json.loads(out)["result"]["summary"])
+
     def test_nothing_published_is_reported_as_unknown(self) -> None:
         code, out, _ = self.run_helper(request(), published_hash=None)
         self.assertEqual(code, 0)
@@ -432,6 +490,19 @@ class CallerTests(HelperFixture):
         self.assertIn("HAProxy ver:  3.4.6-1\n", out)
         self.assertIn("HAProxy ver:  3.4.4-1  (Behind 3.4.6)", out)
         self.assertIn("Validator:      3.4.4-1 (this host)", out)
+
+    def test_the_waf_engine_is_read_against_whether_the_release_has_rules(self) -> None:
+        stopped = self.engines(b_active=False)
+        # Without rules first: the fixture's published tree only ever gains them.
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(self.envelope(node_reader=stopped)))
+        self.assertIn("WAF engine:   not in use (0.9.0-4)\n", out)
+        self.assertNotIn("WARNING", out)
+        _, out, _ = self.run_caller(
+            ["-c", "alpha"], completed(self.envelope(waf=True, node_reader=stopped))
+        )
+        self.assertIn("WAF engine:   ACTIVE (0.9.0-4)\n", out)
+        self.assertIn("WAF engine:   STOPPED (0.9.0-4)\n", out)
+        self.assertIn("WARNING: the WAF engine is not running on node-b\n", out)
 
     def test_json_mode_prints_the_envelope_and_nothing_else(self) -> None:
         payload = self.envelope()

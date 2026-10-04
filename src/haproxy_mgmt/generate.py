@@ -461,6 +461,12 @@ def _waf_backend_file() -> str:
     loopback a refused connection is immediate, so without a check a request
     to a stopped engine fails at once (and `on_engine_error` decides), and the
     first request after it is back is inspected.
+
+    At once only with `retries 0`. Without it the backend takes HAProxy's own
+    default of 3 and retries the refused connection until the SPOE processing
+    timeout runs out: every request waited 0.5 s while the engine was down
+    (review 2026-10-04 F4, measured on a node and in 3.4.6 here; with the line,
+    0.6 ms down and the same verdicts up).
     """
 
     engine = Server(host="127.0.0.1", port=WAF_ENGINE_PORT)
@@ -471,6 +477,7 @@ def _waf_backend_file() -> str:
             f"backend {WAF_BACKEND}",
             f"    guid {backend_guid(WAF_IDENTITY, 'engine')}",
             "    mode spop",
+            "    retries 0",
             f"    server engine 127.0.0.1:{WAF_ENGINE_PORT}"
             f" guid {server_guid(WAF_IDENTITY, 'engine', engine)}",
         ],

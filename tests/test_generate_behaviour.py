@@ -2778,6 +2778,14 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
         self.assertEqual(self.ask(SQLI, name="blocks"), (200, "waf-engine:log", ""))
         self.assertEqual(self.ask(SQLI, name="closed"), (503, "waf-engine:deny", ""))
 
+    def test_the_answer_comes_at_once_not_after_the_processing_timeout(self) -> None:
+        # Review 2026-10-04 F4: retried connections waited out the 500 ms timeout.
+        for name in ("blocks", "closed"):
+            with self.subTest(name):
+                started = time.monotonic()
+                self.ask("/?q=hello", name=name)
+                self.assertLess(time.monotonic() - started, 0.25)
+
 
 class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
     """What the generator writes for the engine, without running it (B230, B232)."""

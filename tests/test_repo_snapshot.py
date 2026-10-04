@@ -109,7 +109,29 @@ class CandidateTreeTests(RepositoryFixture):
                 head,
                 {"core/haproxy.cfg": HAPROXY_CFG, "manual/reservations.yaml": RESERVATIONS},
             )
-            self.assertNotIn("manual/conf.d/0050-extra.cfg", read_tree_files(repo, snapshot.tree))
+            files = read_tree_files(repo, snapshot.tree)
+            self.assertNotIn("manual/conf.d/50-extra.cfg", files)
+            self.assertIn("core/haproxy.cfg", files)
+
+    def test_every_file_is_written_exactly_whatever_its_name(self) -> None:
+        """Review 2026-10-03, K1: all entries in one NUL-separated update-index."""
+        published = {
+            "core/haproxy.cfg": HAPROXY_CFG,
+            "manual/reservations.yaml": RESERVATIONS,
+            "manual/conf.d/space in name.cfg": b"# a\n",
+            "manual/conf.d/tab\tin name.cfg": b"# b\n",
+            "manual/conf.d/newline\nin name.cfg": b"# c\n",
+            "manual/conf.d/empty.cfg": b"",
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            repo = self.repository(Path(raw))
+            _, head = resolve_head(repo)
+            snapshot = build_candidate_tree(repo, head, published)
+            files = read_tree_files(repo, snapshot.tree)
+            self.assertEqual(
+                {path: files[path] for path in files if not path.startswith("managed/")}, published
+            )
+            self.assertEqual(files["managed/generated/1040-managed.cfg"], GENERATED)
 
     def test_the_repository_index_is_never_touched(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

@@ -133,16 +133,17 @@ def build_candidate_tree(
         for prefix in prefixes:
             _git(repo, "rm", "--cached", "-r", "--ignore-unmatch", "-q", "--", prefix, env=env)
 
+        #
+        # Every entry in one `update-index` rather than one process per file
+        # (review 2026-10-03, K1: half the time at a thousand files, the same
+        # tree). NUL-separated, so a path may hold a tab or a newline.
+        #
+        entries = []
         for path in sorted(files):
             blob = _git(repo, "hash-object", "-w", "--stdin", stdin=files[path], env=env)
-            _git(
-                repo,
-                "update-index",
-                "--add",
-                "--cacheinfo",
-                f"{BLOB_MODE},{blob.decode().strip()},{path}",
-                env=env,
-            )
+            entries.append(f"{BLOB_MODE} {blob.decode().strip()}\t{path}\0".encode())
+        if entries:
+            _git(repo, "update-index", "-z", "--index-info", stdin=b"".join(entries), env=env)
 
         tree = _git(repo, "write-tree", env=env).decode().strip()
 

@@ -115,6 +115,15 @@
 
 html { min-width: 320px; background: var(--bg); }
 
+/*
+ * The scrollbar's room is kept on every page, used or not (2026-10-05): a page
+ * short enough to need none was otherwise a few pixels wider, and the whole
+ * layout moved sideways when one tab needed a scrollbar and the next did not.
+ * Wide screens only: phones draw the scrollbar over the page and lose nothing,
+ * and the narrower layouts are measured to the pixel without it.
+ */
+@media (min-width: 1050px) { html { scrollbar-gutter: stable; } }
+
 body {
   margin: 0;
   background: var(--bg);

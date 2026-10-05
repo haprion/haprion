@@ -3,6 +3,7 @@
 {% block title %}Settings — HAProxy Manager{% endblock %}
 {% block head_extra %}{% if certificate_job %}<meta name="haproxy-live" content="3"><noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endblock %}
 {% block content %}
+<script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 {#
   What belongs to the manager itself rather than to what it manages (Fas 13,
   B161). First the certificate this page is served with (B188): what nginx
@@ -105,10 +106,10 @@
       <tr{% if row.readable %} data-href="{{ row.href }}"{% endif %}>
         <td data-label="Cluster">{% if row.readable %}<a class="proxy-link" href="{{ row.href }}"><strong>{{ row.cluster }}</strong></a>{% else %}<strong>{{ row.cluster }}</strong>{% endif %}</td>
         {# Active only when what is shown is what the nodes run; a publish owed says so instead, once, for the row, in the proxy listing's words. #}
-        {% set live = not row.waiting %}
+        {% set live = not row.waiting and not row.running %}
         <td data-label="Traffic log"{% if row.logs_title %} title="{{ row.logs_title }}"{% endif %}{% if not row.logs_set %} class="table-empty"{% endif %}>{% if row.logs_set and live %}{{ check() }}{% endif %}{{ row.logs }}</td>
         <td data-label="Metrics"{% if row.metrics_title %} title="{{ row.metrics_title }}"{% endif %}{% if not row.metrics_set %} class="table-empty"{% endif %}>{% if row.metrics_set and live %}{{ check() }}{% endif %}{{ row.metrics }}</td>
-        <td data-label="">{% if row.waiting %}<span class="status-badge status-badge-warning settings-active">Reconfigured · deploy to activate</span>{% endif %}{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>
+        <td data-label="">{% if row.running %}<span class="status-badge status-badge-info settings-active" data-busy="{{ row.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ row.running }}</span>{% elif row.waiting %}<span class="status-badge status-badge-warning settings-active">Reconfigured · deploy to activate</span>{% endif %}{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

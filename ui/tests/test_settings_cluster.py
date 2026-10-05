@@ -99,6 +99,34 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         self.assertIn("Reconfigured · deploy to activate", card)
         self.assertNotIn(">Active<", card)
 
+    def test_a_publish_still_queued_says_so_and_reloads_when_it_ends(self) -> None:
+        """Publishing lands here before its job is done; the row said nothing (2026-10-05)."""
+
+        patch = mock.patch(
+            "haproxy_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+        recent = mock.patch(
+            "haproxy_ui.db.recent_jobs",
+            return_value=[self.job("cluster_settings_publish", "edge-demo", state="pending")],
+        )
+        recent.start()
+        self.addCleanup(recent.stop)
+        self.account = replace(self.account, role="admin")
+        client = self.client(
+            replace(configuration(), management_writes=True, clusters=("edge-demo", "service-demo"))
+        )
+        self.sign_in(client)
+        page = client.get("/settings").text
+        card = page.split('id="logs-metrics"')[1].split("</section>")[0]
+        edge = next(row for row in card.split("<tr")[1:] if "/settings/clusters/edge-demo" in row)
+        self.assertIn('data-busy="edge-demo"', edge)
+        self.assertIn("Publishing settings", edge)
+        self.assertNotIn(">Active<", edge)
+        self.assertNotIn("deploy to activate", edge)
+        self.assertIn("/static/waiting.js", page)
+
 
 class ThePage(QueueRouteTestCase):
     def setUp(self) -> None:

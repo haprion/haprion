@@ -556,7 +556,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
   .log-target-table th:nth-child(2), .log-target-table td:nth-child(2) { width: auto; }
   .log-target-table th:nth-child(3), .log-target-table td:nth-child(3) { width: 96px; }
   .log-target-table th:nth-child(4), .log-target-table td:nth-child(4) { width: 116px; }
-  .log-target-table th:nth-child(5), .log-target-table td:nth-child(5) { width: 92px; }
+  .log-target-table th:nth-child(5), .log-target-table td:nth-child(5) { width: 104px; }
 }
 @media (max-width: 680px) {
   /* :nth-child(n) to outweigh the reading tables' `.node-table td:nth-child(k)` widths. */

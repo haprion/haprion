@@ -49,11 +49,17 @@ class ClusterSettingsView:
     #
     # A publish done since the last deploy - "Reconfigured · deploy to
     # activate", the proxy listing's words. *Active* only when there is none,
-    # so a published change is never shown as live. A job in flight is not
-    # shown here: the overview is text, and the queue's state belongs to the
-    # cluster's own page (2026-10-02).
+    # so a published change is never shown as live.
     #
     waiting: bool = False
+    #
+    # The cluster's job in flight, by its label. Publishing sends the reader
+    # back here the moment the job is queued, before it is done - so without
+    # this the row said nothing, and the deploy badge only appeared on a reload
+    # nobody made (2026-10-05). Drawn with `data-busy`, so the page reloads
+    # itself when the job ends.
+    #
+    running: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +130,7 @@ def card_views(
     rows: Iterable[Any],
     *,
     waiting: Iterable[str] = (),
+    running: Mapping[str, str] | None = None,
 ) -> list[ClusterSettingsView]:
     """One row per listed cluster, in the order the installation lists them."""
 
@@ -144,6 +151,7 @@ def card_views(
                 logs=_logs(result) if isinstance(result, Mapping) else "Not read yet",
                 metrics=_metrics(result) if isinstance(result, Mapping) else "",
                 waiting=cluster in waiting,
+                running=(running or {}).get(cluster, ""),
                 logs_set=isinstance(result, Mapping) and bool(_targets(result)),
                 metrics_set=isinstance(result, Mapping)
                 and isinstance(result.get("metrics"), Mapping),

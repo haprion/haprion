@@ -12,7 +12,8 @@ The repository has complementary gates. No single scanner replaces the others.
    contract tests, builds both sdist and wheel, imports the installed wheel from an isolated target,
    and runs `pip-audit` against the locked active environment (the project itself, installed
    editable and not published, is skipped). The interface's dependencies are audited from
-   `ui/uv.lock` with `uv audit --locked`, which needs `uv` on `PATH`.
+   `ui/uv.lock`, and the certbot environment's from `certbot/uv.lock`, both with `uv audit --locked`,
+   which needs `uv` on `PATH`.
 5. `tools/run-codeql` performs the heavier CodeQL `security-extended` analysis, Python and
    JavaScript, before the first push and before releases.
 6. `ui/run-tests` runs the interface's own suite and type checking in the environment holding its

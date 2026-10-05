@@ -98,3 +98,9 @@ pip-audit --local --skip-editable
 # so on purpose rather than printing it as a warning each run.
 #
 (cd "$base/ui" && uv audit --locked --preview-features audit-command)
+#
+# And certbot's: the locked set platform step 14 installs as the DNS issuer.
+# Not audited until 2026-10-05, when GitHub reported six advisories in it on a
+# push that the gate had passed.
+#
+(cd "$base/certbot" && uv audit --locked --preview-features audit-command)

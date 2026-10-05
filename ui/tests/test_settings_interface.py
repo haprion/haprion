@@ -136,10 +136,11 @@ class TheQueue(unittest.TestCase):
         prepared = operations.prepare(
             operation=operation, cluster=None, request_id=uuid4(), payload=payload
         )
-        return json.loads(prepared.request)["parameters"]
+        parameters: dict[str, Any] = json.loads(prepared.request)["parameters"]
+        return parameters
 
     def test_interface_travels_without_targets_and_is_refused_with_them(self) -> None:
-        payloads = {
+        payloads: dict[str, dict[str, object]] = {
             "cert_issue": {"domain": MANAGER, "method": "dns-01"},
             "cert_scep": {"id": "mgr-ui", "profile": "corp-ca", "domains": [MANAGER]},
             "cert_request": {"id": "mgr-ui", "domains": [MANAGER]},

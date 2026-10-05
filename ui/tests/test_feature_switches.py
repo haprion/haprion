@@ -24,7 +24,7 @@ from tests.test_certificates import registered, with_registry
 from tests.test_login import LoginTestCase, configuration
 
 MOMENT = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
-SCHEDULE = {
+SCHEDULE: dict[str, object] = {
     "time": "04:00",
     "frequency": "daily",
     "weekdays": [],

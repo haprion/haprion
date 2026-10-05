@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_ui import dashboard
-from haproxy_ui.dashboard import build_dashboard, relative_age
+from haproxy_ui.dashboard import DashboardView, build_dashboard, relative_age
 from haproxy_ui.db import ClusterNetwork, ClusterStatus
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "haproxy-status" / "valid"
@@ -70,7 +70,7 @@ class HaproxyVersions(unittest.TestCase):
 
 
 class HealthDerivation(unittest.TestCase):
-    def dashboard(self, status: ClusterStatus):
+    def dashboard(self, status: ClusterStatus) -> DashboardView:
         return build_dashboard(("alpha",), (status,), now=NOW, stale_after=timedelta(seconds=120))
 
     def test_done_and_converged_is_only_green_when_node_services_are_healthy(self) -> None:

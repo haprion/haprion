@@ -72,7 +72,7 @@ class TheFormModule(unittest.TestCase):
         self.assertEqual(opened.credentials, f"dns_cloudflare_api_token = {GUARD}\n")
 
     def test_refusals_name_the_field_and_never_the_value(self) -> None:
-        cases = [
+        cases: list[tuple[dict[str, Any], str]] = [
             (dict(profile_id="Cf Main"), "Profile ID"),
             (dict(provider_id="example"), "Choose a DNS provider"),
             (dict(values={"api_token": ""}), "API token — required"),

@@ -11,11 +11,12 @@ from __future__ import annotations
 import threading
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest import mock
 from uuid import uuid4
 
 import uvicorn
+from playwright.sync_api import Browser, Playwright
 
 from haproxy_ui.app import create_app
 from haproxy_ui.db import ProxyDraft
@@ -44,6 +45,9 @@ advanced: |
 
 
 class TheDialogInABrowser(DraftReading):
+    _playwright: ClassVar[Playwright]
+    _browser: ClassVar[Browser]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls._playwright = sync_playwright().start()

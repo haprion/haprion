@@ -61,6 +61,8 @@ dev = [
     #
     "playwright==1.62.0",
     "ruff==0.16.4",
+    # The tests read YAML; the engine's dev group pins the same stubs.
+    "types-PyYAML==6.0.12.20260815",
 ]
 
 #
@@ -105,4 +107,4 @@ select = ["E4", "E7", "E9", "F", "I", "UP", "B", "S", "SIM", "EXE"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-files = ["src", "migrations"]
+files = ["src", "migrations", "tests"]

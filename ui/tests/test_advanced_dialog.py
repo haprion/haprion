@@ -132,25 +132,29 @@ class CheckSaysWhereEachLineGoes(unittest.TestCase):
         self.assertTrue(answer.problem)
 
 
-class TheDialogsRoute(EditorTestCase):
+class AdvancedRouteTestCase(EditorTestCase):
+    """The dialog's route, posted as the page's own form posts it."""
+
     PATH = "/proxies/alpha/shop/advanced"
 
-    def post(self, client: object, **fields: str) -> object:
+    def post(self, client: Any, **fields: str) -> Any:
         data = {"csrf_token": self.token(client), "action": "check", "advanced": ""} | fields
-        return client.post(self.PATH, data=data, follow_redirects=False)  # type: ignore[attr-defined]
+        return client.post(self.PATH, data=data, follow_redirects=False)
 
+
+class TheDialogsRoute(AdvancedRouteTestCase):
     def test_check_draws_the_lines_and_saves_nothing(self) -> None:
         answer = self.post(self.editor(), advanced="retries 5\n")
 
-        self.assertEqual(answer.status_code, 200)  # type: ignore[attr-defined]
-        self.assertIn("retries 5", answer.text)  # type: ignore[attr-defined]
-        self.assertIn("status-badge-healthy", answer.text)  # type: ignore[attr-defined]
+        self.assertEqual(answer.status_code, 200)
+        self.assertIn("retries 5", answer.text)
+        self.assertIn("status-badge-healthy", answer.text)
         self.assertEqual(self.saved, [])
 
     def test_save_writes_the_draft_and_names_the_page(self) -> None:
         answer = self.post(self.editor(), action="save", advanced="retries 5\n")
 
-        self.assertIn('data-advanced-saved="/proxies/alpha/shop?saved=1"', answer.text)  # type: ignore[attr-defined]
+        self.assertIn('data-advanced-saved="/proxies/alpha/shop?saved=1"', answer.text)
         self.assertEqual(yaml.safe_load(self.saved[0]["yaml"])["advanced"], "retries 5\n")
         self.assertEqual(self.saved[0]["base_hash"], COMMIT)
         self.assertIsNone(self.saved[0]["expected_revision"])
@@ -158,14 +162,14 @@ class TheDialogsRoute(EditorTestCase):
     def test_a_refused_text_is_not_saved(self) -> None:
         answer = self.post(self.editor(), action="save", advanced="use_backend other\n")
 
-        self.assertIn("status-badge-critical", answer.text)  # type: ignore[attr-defined]
-        self.assertNotIn("data-advanced-saved", answer.text)  # type: ignore[attr-defined]
+        self.assertIn("status-badge-critical", answer.text)
+        self.assertNotIn("data-advanced-saved", answer.text)
         self.assertEqual(self.saved, [])
 
     def test_nothing_changed_is_not_a_draft(self) -> None:
         answer = self.post(self.editor(), action="save", advanced="")
 
-        self.assertIn("Nothing changed", answer.text)  # type: ignore[attr-defined]
+        self.assertIn("Nothing changed", answer.text)
         self.assertEqual(self.saved, [])
 
     def test_the_draft_is_edited_against_its_revision(self) -> None:
@@ -192,33 +196,33 @@ class TheDialogsRoute(EditorTestCase):
 
         answer = self.post(self.editor(), action="save", advanced="retries 5\n")
 
-        self.assertIn("Reload the page", answer.text)  # type: ignore[attr-defined]
+        self.assertIn("Reload the page", answer.text)
 
     def test_the_switch_off_is_no_route(self) -> None:
         self.switches = {"advanced_config": SimpleNamespace(enabled=False)}
 
         answer = self.post(self.editor(), advanced="retries 5\n")
 
-        self.assertEqual(answer.status_code, 404)  # type: ignore[attr-defined]
+        self.assertEqual(answer.status_code, 404)
 
     def test_a_text_too_long_is_said_in_the_dialog(self) -> None:
         answer = self.post(self.editor(), action="save", advanced="retries 5\n" * 7000)
 
-        self.assertEqual(answer.status_code, 200)  # type: ignore[attr-defined]
-        self.assertIn("it may be at most 65,536", answer.text)  # type: ignore[attr-defined]
+        self.assertEqual(answer.status_code, 200)
+        self.assertIn("it may be at most 65,536", answer.text)
         self.assertEqual(self.saved, [])
 
     def test_a_post_without_a_csrf_token_is_refused(self) -> None:
         answer = self.post(self.editor(), csrf_token="", advanced="retries 5\n")
 
-        self.assertEqual(answer.status_code, 403)  # type: ignore[attr-defined]
+        self.assertEqual(answer.status_code, 403)
 
 
 class TheButtonAndTheDialogOnThePage(DraftReading):
     def page(self) -> str:
         client = self.client(replace(configuration(), demo_fixture=True, management_writes=True))
         self.sign_in(client)
-        return client.get("/proxies/edge-demo/public-web").text  # type: ignore[attr-defined]
+        return str(client.get("/proxies/edge-demo/public-web").text)
 
     def test_the_button_sits_between_edit_and_remove(self) -> None:
         body = self.page()
@@ -276,11 +280,8 @@ class OneRuleForAPoolWrittenByHand(unittest.TestCase):
                 self.assertEqual(form_from_document(document)["handwritten_pool"], expected)
 
 
-class PublishingFromTheDialog(EditorTestCase):
+class PublishingFromTheDialog(AdvancedRouteTestCase):
     """Save and publish, as the editor's button does it (2026-10-01)."""
-
-    post = TheDialogsRoute.post
-    PATH = TheDialogsRoute.PATH
 
     def setUp(self) -> None:
         super().setUp()
@@ -296,8 +297,8 @@ class PublishingFromTheDialog(EditorTestCase):
     def test_the_draft_is_saved_and_the_same_publish_is_queued(self) -> None:
         answer = self.post(self.editor(), action="publish", advanced="retries 5\n")
 
-        self.assertIn("Saved and sent to publish", answer.text)  # type: ignore[attr-defined]
-        self.assertIn('data-advanced-saved="/proxies?published=shop"', answer.text)  # type: ignore[attr-defined]
+        self.assertIn("Saved and sent to publish", answer.text)
+        self.assertIn('data-advanced-saved="/proxies?published=shop"', answer.text)
         self.assertEqual(len(self.saved), 1)
         job = self.queued[0]
         self.assertEqual(job["operation"], "objects_publish")
@@ -314,7 +315,7 @@ class PublishingFromTheDialog(EditorTestCase):
     def test_what_is_already_stored_is_not_published(self) -> None:
         answer = self.post(self.editor(), action="publish", advanced="")
 
-        self.assertIn("Nothing to publish", answer.text)  # type: ignore[attr-defined]
+        self.assertIn("Nothing to publish", answer.text)
         self.assertEqual((self.saved, self.queued), ([], []))
 
     def test_a_busy_cluster_leaves_the_draft_saved_and_says_so(self) -> None:
@@ -325,5 +326,5 @@ class PublishingFromTheDialog(EditorTestCase):
             answer = self.post(self.editor(), action="publish", advanced="retries 5\n")
 
         self.assertEqual(len(self.saved), 1)
-        self.assertIn("already running a job", answer.text)  # type: ignore[attr-defined]
-        self.assertIn("Saved as a draft", answer.text)  # type: ignore[attr-defined]
+        self.assertIn("already running a job", answer.text)
+        self.assertIn("Saved as a draft", answer.text)

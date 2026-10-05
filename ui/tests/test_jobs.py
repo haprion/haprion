@@ -24,6 +24,8 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
+import psycopg
+
 from haproxy_ui import db, jobs, operations
 from haproxy_ui.db import Job
 
@@ -144,7 +146,7 @@ class ClaimingIsOneStatement(unittest.TestCase):
 class QueueConflictsAreClassifiedAfterTheKeyLookup(unittest.TestCase):
     def queue(self, constraint: str, existing: db.Job | None) -> db.Job:
         connection = QueueConnection(constraint, existing)
-        with mock.patch.object(db.psycopg.errors, "UniqueViolation", FakeUniqueViolation):
+        with mock.patch.object(psycopg.errors, "UniqueViolation", FakeUniqueViolation):
             result = db.queue_job(
                 connection,  # type: ignore[arg-type]
                 operation="deploy",
@@ -180,8 +182,8 @@ class WritesAreFenced(unittest.TestCase):
 
     def test_finishing_a_job_names_the_claim_token_and_clears_the_lease(self) -> None:
         connection = FakeConnection(row=(1,))
-        db.finish_job(  # type: ignore[arg-type]
-            connection,
+        db.finish_job(
+            connection,  # type: ignore[arg-type]
             job_id=1,
             claim_token=TOKEN,
             state="done",
@@ -205,8 +207,8 @@ class WritesAreFenced(unittest.TestCase):
         # about is visible.
         #
         connection = FakeConnection(row=(1,))
-        db.finish_job(  # type: ignore[arg-type]
-            connection,
+        db.finish_job(
+            connection,  # type: ignore[arg-type]
             job_id=1,
             claim_token=TOKEN,
             state="done",
@@ -228,8 +230,8 @@ class WritesAreFenced(unittest.TestCase):
         # touched.
         #
         connection = FakeConnection(row=None)
-        db.finish_job(  # type: ignore[arg-type]
-            connection,
+        db.finish_job(
+            connection,  # type: ignore[arg-type]
             job_id=1,
             claim_token=TOKEN,
             state="failed",
@@ -253,8 +255,8 @@ class WritesAreFenced(unittest.TestCase):
             db.renew_lease(connection, job_id=1, claim_token=TOKEN, lease_seconds=30)  # type: ignore[arg-type]
         )
         self.assertFalse(
-            db.finish_job(  # type: ignore[arg-type]
-                connection,
+            db.finish_job(
+                connection,  # type: ignore[arg-type]
                 job_id=1,
                 claim_token=TOKEN,
                 state="failed",

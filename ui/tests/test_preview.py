@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -634,7 +635,7 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
     everything.
     """
 
-    def document(self, **fields: object) -> dict:
+    def document(self, **fields: object) -> dict[str, Any]:
         form = dict(DEFAULTS)
         form.update(
             {
@@ -646,7 +647,8 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
             }
         )
         form.update(fields)
-        return yaml.safe_load(build_document(form))
+        document: dict[str, Any] = yaml.safe_load(build_document(form))
+        return document
 
     def test_a_check_may_speak_tls_where_the_backend_does_not(self) -> None:
         document = self.document(health_type="https", health_port="9443")

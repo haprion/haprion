@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from haproxy_ui import dashboard
 from haproxy_ui.db import ClusterObjects
 from haproxy_ui.history import VersionView
-from haproxy_ui.objects import build_object_detail, publication, stored_only
+from haproxy_ui.objects import ObjectDetail, build_object_detail, publication, stored_only
 from haproxy_ui.proxies import ProxyView
 
 NOW = datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
@@ -66,14 +66,17 @@ def reading(
     )
 
 
-def detail(name: str = "app", **kwargs: object) -> object:
-    rows = kwargs.pop("readings", [reading()])
-    published = kwargs.pop("published", [PUBLISHED])
+def detail(
+    name: str = "app",
+    *,
+    readings: list[ClusterObjects] | None = None,
+    published: list[ProxyView] | None = None,
+) -> ObjectDetail:
     return build_object_detail(
         "alpha",
         name,
-        rows,  # type: ignore[arg-type]
-        published,  # type: ignore[arg-type]
+        [reading()] if readings is None else readings,
+        [PUBLISHED] if published is None else published,
         now=NOW,
         stale_after=STALE_AFTER,
     )

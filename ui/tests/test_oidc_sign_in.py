@@ -101,6 +101,10 @@ class SigningInThroughTheProvider(LoginTestCase):
             self.account = account
             return True
 
+        def bind(_c: object, **fields: Any) -> bool:
+            self.bound.append(fields)
+            return True
+
         def audit(_c: object, *, action: str, detail: Any = None, **_: Any) -> None:
             self.audit.append(action)
             self.audit_details.append((action, dict(detail or {})))
@@ -116,7 +120,7 @@ class SigningInThroughTheProvider(LoginTestCase):
             mock.patch("haproxy_ui.db.create_oidc_account", side_effect=create),
             mock.patch(
                 "haproxy_ui.db.bind_oidc_account",
-                side_effect=lambda _c, **fields: self.bound.append(fields) or True,
+                side_effect=bind,
             ),
             mock.patch(
                 "haproxy_ui.db.set_role",
@@ -134,7 +138,7 @@ class SigningInThroughTheProvider(LoginTestCase):
         response = client.get("/login/oidc", follow_redirects=False)
         self.assertEqual(response.status_code, 303, response.text)
         query = parse_qs(urlsplit(response.headers["location"]).query)
-        return query["state"][0]
+        return str(query["state"][0])
 
     def back(self, client: TestClient, state: str, **extra: str) -> Any:
         return client.get(

@@ -6,22 +6,15 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haproxy_ui.db import ClusterStatus
+from haproxy_ui.db import ClusterStatus, Job
 from tests.test_certificates import reading as certificate_reading
 from tests.test_history import reading as history_reading
 from tests.test_job_page import job
 from tests.test_login import LoginTestCase, configuration
 
 
-class EveryPageThatDeploysSaysTheClusterIsBusy(LoginTestCase):
-    """One job per cluster, so every page that offers one draws the same state.
-
-    The dashboard learned this first and the other two pages did not follow,
-    which left two buttons that looked available and answered with a 409. The
-    cases below are written per page rather than once, so a page that grows a
-    deploy button and forgets the state fails here instead of in front of
-    somebody.
-    """
+class BusyPagesTestCase(LoginTestCase):
+    """The pages that offer a deploy, drawn with the jobs a test chooses."""
 
     #
     # The page, the reading it needs to draw its footer at all, and the button
@@ -32,14 +25,14 @@ class EveryPageThatDeploysSaysTheClusterIsBusy(LoginTestCase):
         ("/history", "haproxy_ui.db.cluster_histories", "Deploy configuration"),
     )
 
-    def reading_for(self, source: str) -> list:
+    def reading_for(self, source: str) -> list[object]:
         if source.endswith("cluster_histories"):
             return [history_reading(cluster="alpha")]
         if source.endswith("cluster_certificates"):
             return [certificate_reading(cluster="alpha")]
         return []
 
-    def page(self, path: str, source: str, jobs: list):
+    def page(self, path: str, source: str, jobs: list[Job]) -> Any:
         client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
         self.sign_in(client)
         with (
@@ -47,6 +40,17 @@ class EveryPageThatDeploysSaysTheClusterIsBusy(LoginTestCase):
             mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
         ):
             return client.get(path)
+
+
+class EveryPageThatDeploysSaysTheClusterIsBusy(BusyPagesTestCase):
+    """One job per cluster, so every page that offers one draws the same state.
+
+    The dashboard learned this first and the other two pages did not follow,
+    which left two buttons that looked available and answered with a 409. The
+    cases below are written per page rather than once, so a page that grows a
+    deploy button and forgets the state fails here instead of in front of
+    somebody.
+    """
 
     def test_the_button_is_drawn_while_the_cluster_is_idle(self) -> None:
         for path, source, label in self.PAGES:
@@ -98,7 +102,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TheBusyStateIsAlsoAvailableAsData(LoginTestCase):
+class TheBusyStateIsAlsoAvailableAsData(BusyPagesTestCase):
     """A page drawing a spinner has to learn when to stop drawing it.
 
     It cannot ask the rows endpoint - the answer it wants is not a row - and it
@@ -108,7 +112,7 @@ class TheBusyStateIsAlsoAvailableAsData(LoginTestCase):
     asks the server for itself again when the two differ.
     """
 
-    def busy(self, jobs: list) -> Any:
+    def busy(self, jobs: list[Job]) -> Any:
         client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
         self.sign_in(client)
         with mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs):
@@ -142,12 +146,8 @@ class TheBusyStateIsAlsoAvailableAsData(LoginTestCase):
                 self.assertIn('data-busy="alpha"', page.text)
                 self.assertIn("waiting.js", page.text)
 
-    PAGES = EveryPageThatDeploysSaysTheClusterIsBusy.PAGES
-    reading_for = EveryPageThatDeploysSaysTheClusterIsBusy.reading_for
-    page = EveryPageThatDeploysSaysTheClusterIsBusy.page
 
-
-class WhenTheReadingCatchesUp(LoginTestCase):
+class WhenTheReadingCatchesUp(BusyPagesTestCase):
     """A job finishing and the poller seeing what it did are two moments.
 
     Only the first is a job. A page reloaded on that alone has the buttons back
@@ -155,7 +155,7 @@ class WhenTheReadingCatchesUp(LoginTestCase):
     deploy - which is the state somebody reads as "it did not work".
     """
 
-    def answer(self, statuses: list) -> Any:
+    def answer(self, statuses: list[ClusterStatus]) -> Any:
         client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
         self.sign_in(client)
         with (
@@ -164,7 +164,7 @@ class WhenTheReadingCatchesUp(LoginTestCase):
         ):
             return client.get("/clusters/busy").json()
 
-    def status(self, observed: datetime | None) -> ClusterStatus:
+    def status(self, observed: datetime) -> ClusterStatus:
         return ClusterStatus(
             cluster="alpha",
             observed_at=observed,
@@ -183,16 +183,15 @@ class WhenTheReadingCatchesUp(LoginTestCase):
         )
 
     def test_a_cluster_never_read_names_no_moment(self) -> None:
-        self.assertEqual(self.answer([self.status(None)])["observed"], {})
+        # Never read is no row at all: the column is `not null` (0004).
+        self.assertEqual(self.answer([])["observed"], {})
 
     def test_the_cards_carry_the_reading_they_were_drawn_from(self) -> None:
         #
         # The comparison is against what is on the screen, so the screen has to
         # say what it was drawn from.
         #
-        for path, source, _ in EveryPageThatDeploysSaysTheClusterIsBusy.PAGES:
+        for path, source, _ in self.PAGES:
             with self.subTest(page=path):
-                page = EveryPageThatDeploysSaysTheClusterIsBusy.page(self, path, source, [])
+                page = self.page(path, source, [])
                 self.assertIn("data-observed=", page.text)
-
-    reading_for = EveryPageThatDeploysSaysTheClusterIsBusy.reading_for

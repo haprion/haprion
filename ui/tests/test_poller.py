@@ -16,6 +16,8 @@ import unittest
 import unittest.mock
 from typing import Any
 
+import psycopg
+
 from haproxy_ui import config, db, poller
 
 
@@ -291,7 +293,7 @@ class TheSingletonLockSession(unittest.TestCase):
             return object()
 
         database = config.Database(name="haproxy_ui", socket_directory="/var/run/postgresql")
-        with unittest.mock.patch.object(db.psycopg, "connect", fake_connect):
+        with unittest.mock.patch.object(psycopg, "connect", fake_connect):
             db.lock_session(database)
 
         self.assertTrue(recorded.get("autocommit"), "the lock session must not open a transaction")
@@ -517,10 +519,13 @@ class TheObjectsReadingSendsWhatItHolds(unittest.TestCase):
         return next(source for source in poller.SOURCES if source.operation == "objects")
 
     def test_the_held_fingerprint_is_asked_with(self) -> None:
+        asks = self.source().asks
+        if asks is None:
+            raise AssertionError("the objects source asks nothing")
         with unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value="f" * 64):
-            self.assertEqual(self.source().asks(object(), "alpha"), {"unchanged_since": "f" * 64})
+            self.assertEqual(asks(object(), "alpha"), {"unchanged_since": "f" * 64})
         with unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value=None):
-            self.assertEqual(self.source().asks(object(), "alpha"), {})
+            self.assertEqual(asks(object(), "alpha"), {})
 
     def test_an_unchanged_answer_leaves_the_search_alone(self) -> None:
         with unittest.mock.patch("haproxy_ui.db.replace_search_entries") as replace:

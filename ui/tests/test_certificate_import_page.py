@@ -213,7 +213,7 @@ class Submitting(ImportPageTestCase):
 
     def test_what_the_form_refuses(self) -> None:
         client = self.writing_client()
-        for fields, words in (
+        cases: tuple[tuple[dict[str, Any], str], ...] = (
             ({"name": ""}, "A name is required"),
             ({"name": "shop example"}, "lower-case"),
             ({"name": "example.com"}, "already registered"),
@@ -223,7 +223,8 @@ class Submitting(ImportPageTestCase):
             ({"password": "a\nb"}, "password"),
             ({"cluster": ["gamma"]}, "not a cluster"),
             ({"receiver": ["nobody.example.net"], "cluster": []}, "not registered"),
-        ):
+        )
+        for fields, words in cases:
             with self.subTest(words=words):
                 data = fields.pop("data", FAKE_CERT + FAKE_KEY)
                 response = self.post(client, data, **fields)
@@ -242,7 +243,8 @@ class Submitting(ImportPageTestCase):
         self.assertEqual(self.post(client).status_code, 403)
         client = self.writing_client()
         token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
-        self.assertEqual(self.post(client, **{auth.CSRF_FIELD: "wrong"}).status_code, 403)
+        wrong_token: dict[str, Any] = {auth.CSRF_FIELD: "wrong"}
+        self.assertEqual(self.post(client, **wrong_token).status_code, 403)
         self.assertEqual(self.post(client, idempotency_key="").status_code, 400)
         del token
         self.assertEqual(self.queued, [])

@@ -16,11 +16,14 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
+from fastapi.testclient import TestClient
+
 from haproxy_ui import demo
 from haproxy_ui.db import Job
 from haproxy_ui.jobs import Failure
 from haproxy_ui.network import (
     FormProblem,
+    NetworkClusterView,
     NetworkForm,
     awaiting_deploy,
     build_network_overview,
@@ -34,7 +37,7 @@ NOW = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 STALE_AFTER = timedelta(seconds=120)
 
 
-def overview(clusters: tuple[str, ...] = demo.CLUSTERS):
+def overview(clusters: tuple[str, ...] = demo.CLUSTERS) -> tuple[NetworkClusterView, ...]:
     return build_network_overview(
         clusters, demo.network_rows(NOW), now=NOW, stale_after=STALE_AFTER, captured=False
     )
@@ -399,7 +402,7 @@ class TheRowsBecomeTheDocument(unittest.TestCase):
 
 
 class ThePageIsReachableAndWritesNothing(LoginTestCase):
-    def demo_client(self):
+    def demo_client(self) -> TestClient:
         return self.client(replace(configuration(), demo_fixture=True))
 
     def test_the_tables_are_rendered_for_a_signed_in_user(self) -> None:

@@ -85,8 +85,8 @@ class WhatThePoolsAreCalled(unittest.TestCase):
     silently skipped every unmanaged proxy.
     """
 
-    def view(self, **extra: object):
-        return proxies._proxy_view(
+    def view(self, **extra: object) -> proxies.ProxyView:
+        view = proxies._proxy_view(
             {
                 "name": "public",
                 "protocol": "http",
@@ -98,6 +98,9 @@ class WhatThePoolsAreCalled(unittest.TestCase):
                 **extra,
             }
         )
+        if view is None:
+            raise AssertionError("the row was not read as a proxy")
+        return view
 
     def test_the_names_are_carried_as_reported(self) -> None:
         self.assertEqual(

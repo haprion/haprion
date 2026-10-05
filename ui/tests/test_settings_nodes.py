@@ -78,7 +78,7 @@ class NodesPage(QueueRouteTestCase):
         self.sign_in(client)
         return client
 
-    def post(self, client: Any, path: str, **fields: Any) -> Any:
+    def post_to(self, client: Any, path: str, **fields: Any) -> Any:
         token = client.cookies[auth.SESSION_COOKIE]
         data = {auth.CSRF_FIELD: auth.csrf_token(token), "idempotency_key": KEY, **fields}
         return client.post(path, data=data, follow_redirects=False)
@@ -105,7 +105,7 @@ class ThePage(NodesPage):
 
 class AddingANode(NodesPage):
     def test_a_block_is_shown_before_anything_is_queued(self) -> None:
-        response = self.post(self.client_for(), "/settings/nodes/edge-demo/add", block=block())
+        response = self.post_to(self.client_for(), "/settings/nodes/edge-demo/add", block=block())
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(node_enrollment.fingerprint(key(1)), response.text)
@@ -114,7 +114,7 @@ class AddingANode(NodesPage):
         self.assertEqual(self.queued, [])
 
     def test_the_name_typed_back_queues_the_block_and_the_host(self) -> None:
-        response = self.post(
+        response = self.post_to(
             self.client_for(),
             "/settings/nodes/edge-demo/add",
             block=block(),
@@ -131,14 +131,14 @@ class AddingANode(NodesPage):
         )
 
     def test_a_wrong_name_queues_nothing(self) -> None:
-        response = self.post(
+        response = self.post_to(
             self.client_for(), "/settings/nodes/edge-demo/add", block=block(), confirm="edge-x"
         )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.queued, [])
 
     def test_a_block_for_another_cluster_is_refused_on_the_page(self) -> None:
-        response = self.post(
+        response = self.post_to(
             self.client_for(), "/settings/nodes/edge-demo/add", block=block("service-demo")
         )
         self.assertEqual(response.status_code, 400)
@@ -146,14 +146,16 @@ class AddingANode(NodesPage):
         self.assertEqual(self.queued, [])
 
     def test_something_that_is_not_a_block_is_named(self) -> None:
-        response = self.post(self.client_for(), "/settings/nodes/edge-demo/add", block="hello")
+        response = self.post_to(self.client_for(), "/settings/nodes/edge-demo/add", block="hello")
         self.assertEqual(response.status_code, 400)
         self.assertIn("not an enrollment block", response.text)
 
 
 class RemovingANode(NodesPage):
     def test_a_pair_keeps_both_nodes(self) -> None:
-        response = self.post(self.client_for(), "/settings/nodes/edge-demo/remove", node="edge-b")
+        response = self.post_to(
+            self.client_for(), "/settings/nodes/edge-demo/remove", node="edge-b"
+        )
         self.assertEqual(response.status_code, 400)
         self.assertIn("at least 2 nodes", response.text)
 
@@ -161,11 +163,11 @@ class RemovingANode(NodesPage):
         self.rows = with_third_node()
         client = self.client_for()
 
-        asked = self.post(client, "/settings/nodes/edge-demo/remove", node="edge-c")
+        asked = self.post_to(client, "/settings/nodes/edge-demo/remove", node="edge-c")
         self.assertIn("Type edge-c to remove it", asked.text)
         self.assertEqual(self.queued, [])
 
-        response = self.post(
+        response = self.post_to(
             client, "/settings/nodes/edge-demo/remove", node="edge-c", confirm="edge-c"
         )
         self.assertEqual(response.status_code, 303, response.text)
@@ -174,7 +176,9 @@ class RemovingANode(NodesPage):
 
     def test_the_vip_holder_is_not_offered_and_is_refused(self) -> None:
         self.rows = with_third_node()
-        response = self.post(self.client_for(), "/settings/nodes/edge-demo/remove", node="edge-a")
+        response = self.post_to(
+            self.client_for(), "/settings/nodes/edge-demo/remove", node="edge-a"
+        )
         self.assertEqual(response.status_code, 400)
         self.assertIn("holds the VIP", response.text)
 
@@ -245,7 +249,7 @@ class CreatingACluster(ClusterPage):
         )
 
     def test_both_nodes_are_shown_before_anything_is_queued(self) -> None:
-        response = self.post(self.client_for(), "/settings/new-cluster", **self.creation())
+        response = self.post_to(self.client_for(), "/settings/new-cluster", **self.creation())
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIn("gamma-a.example.com", response.text)
@@ -255,7 +259,7 @@ class CreatingACluster(ClusterPage):
         self.assertEqual(self.queued, [])
 
     def test_the_id_typed_back_queues_the_request(self) -> None:
-        response = self.post(
+        response = self.post_to(
             self.client_for(), "/settings/new-cluster", **self.creation(confirm="gamma")
         )
 
@@ -288,7 +292,7 @@ class CreatingACluster(ClusterPage):
             ({"block_1": "hello"}, "not an enrollment block"),
         ):
             with self.subTest(fields=fields):
-                response = self.post(
+                response = self.post_to(
                     self.client_for(), "/settings/new-cluster", **self.creation(**fields)
                 )
                 self.assertEqual(response.status_code, 400)
@@ -296,7 +300,7 @@ class CreatingACluster(ClusterPage):
         self.assertEqual(self.queued, [])
 
     def test_a_wrong_id_queues_nothing(self) -> None:
-        response = self.post(
+        response = self.post_to(
             self.client_for(), "/settings/new-cluster", **self.creation(confirm="gamm")
         )
         self.assertEqual(response.status_code, 400)
@@ -311,12 +315,12 @@ class RemovingACluster(ClusterPage):
             client.get("/settings/nodes/service-demo").text,
         )
 
-        asked = self.post(client, "/settings/nodes/service-demo/remove-cluster")
+        asked = self.post_to(client, "/settings/nodes/service-demo/remove-cluster")
         self.assertIn("Type service-demo to remove it", asked.text)
         self.assertIn("keep serving the VIP", asked.text)
         self.assertEqual(self.queued, [])
 
-        response = self.post(
+        response = self.post_to(
             client, "/settings/nodes/service-demo/remove-cluster", confirm="service-demo"
         )
         self.assertEqual(response.status_code, 303, response.text)
@@ -333,7 +337,7 @@ class RemovingACluster(ClusterPage):
         client = self.client_for()
 
         self.assertNotIn("remove-cluster", client.get("/settings/nodes/service-demo").text)
-        response = self.post(client, "/settings/nodes/service-demo/remove-cluster")
+        response = self.post_to(client, "/settings/nodes/service-demo/remove-cluster")
         self.assertEqual(response.status_code, 400)
         self.assertIn("at least one cluster", response.text)
 

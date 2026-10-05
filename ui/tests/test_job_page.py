@@ -5,6 +5,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest import mock
 from uuid import uuid4
 
@@ -18,9 +19,9 @@ def job(
     *,
     state: str,
     outcome: str | None = None,
-    result: dict | None = None,
+    result: dict[str, Any] | None = None,
     operation: str = "deploy",
-    cluster: str = "alpha",
+    cluster: str | None = "alpha",
     exit_code: int | None = None,
 ) -> db.Job:
     now = datetime.now(UTC)
@@ -100,7 +101,7 @@ class JobPageTests(LoginTestCase):
         self.assertIn("Blocked", page.text)
         self.assertIn("Deploy configuration", page.text)
 
-    def follow_up_page(self, **config_overrides: object):
+    def follow_up_page(self, **config_overrides: object) -> Any:
         """The page showing a cluster that is published but not deployed."""
 
         rows = [job(state="done", outcome="done", operation="revert", result=revert_result())]
@@ -298,8 +299,8 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def revert_result(**changes: object) -> dict:
-    body: dict = {
+def revert_result(**changes: object) -> dict[str, Any]:
+    body: dict[str, object] = {
         "changed": True,
         "new_version": 26,
         "from_version": 25,
@@ -319,7 +320,9 @@ class WhatAFinishedJobStillOwes(unittest.TestCase):
     answered this in its result - it was simply never projected to the screen.
     """
 
-    def view(self, *, awaiting: frozenset[str] = frozenset({"alpha"}), **kwargs: object):
+    def view(
+        self, *, awaiting: frozenset[str] = frozenset({"alpha"}), **kwargs: object
+    ) -> jobs.JobView:
         overview = jobs.build_job_overview([job(**kwargs)], awaiting=awaiting)  # type: ignore[arg-type]
         return overview.jobs[0]
 
@@ -382,7 +385,8 @@ class WhatAFinishedJobStillOwes(unittest.TestCase):
         here - nothing is owed, and nothing is invented.
         """
 
-        for value in ("yes", 1, None, {}, "true"):
+        values: tuple[object, ...] = ("yes", 1, None, {}, "true")
+        for value in values:
             with self.subTest(value=value):
                 view = self.view(
                     state="done",
@@ -434,7 +438,8 @@ class WhichClustersAreBehind(unittest.TestCase):
         self.assertEqual(jobs.awaiting_deployment(rows), frozenset())
 
     def test_a_reading_that_says_nothing_useful_is_not_evidence(self) -> None:
-        for result in ({}, {"summary": None}, {"summary": {}}, "unreadable", None):
+        results: tuple[object, ...] = ({}, {"summary": None}, {"summary": {}}, "unreadable", None)
+        for result in results:
             with self.subTest(result=result):
                 self.assertEqual(
                     jobs.awaiting_deployment([self.status("alpha", result)]), frozenset()
@@ -534,7 +539,7 @@ class TheErrorCodeReachesThePage(LoginTestCase):
         client = self.client()
         self.sign_in(client)
         with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
-            return client.get("/jobs").text
+            return str(client.get("/jobs").text)
 
     def test_a_blocked_job_names_the_code_the_helper_blamed(self) -> None:
         envelope = {"error": {"code": "cluster_not_converged", "message": "not converged"}}
@@ -563,7 +568,14 @@ class TheErrorCodeReachesThePage(LoginTestCase):
     def test_a_result_that_is_not_the_expected_shape_is_survived(self) -> None:
         """The document is a privileged helper's, stored as it arrived."""
 
-        for broken in ({"error": "a string"}, {"error": {"code": 7}}, {"error": {}}, {}, None):
+        shapes: tuple[dict[str, Any] | None, ...] = (
+            {"error": "a string"},
+            {"error": {"code": 7}},
+            {"error": {}},
+            {},
+            None,
+        )
+        for broken in shapes:
             with self.subTest(result=broken):
                 body = self.page([job(state="failed", outcome="failed", result=broken)])
 
@@ -572,11 +584,13 @@ class TheErrorCodeReachesThePage(LoginTestCase):
 
 
 def certificate_refusal(
-    nodes: list[dict] | None = None, *, next_command: str | None = "haproxy-cert-deploy -c alpha"
-) -> dict:
+    nodes: list[dict[str, object]] | None = None,
+    *,
+    next_command: str | None = "haproxy-cert-deploy -c alpha",
+) -> dict[str, Any]:
     """What `haproxy-deploy` answers when its preflight finds a node behind."""
 
-    details: dict = {
+    details: dict[str, object] = {
         "nodes": [{"node": "node-b", "missing": ["example-net"], "stale": []}]
         if nodes is None
         else nodes
@@ -663,7 +677,7 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
                 operation="cert_deploy",
                 result=certificate_refusal(),
             ),
-            job(state="blocked", outcome="blocked", cluster=None, result=certificate_refusal()),  # type: ignore[arg-type]
+            job(state="blocked", outcome="blocked", cluster=None, result=certificate_refusal()),
             job(state="done", outcome="done"),
         ):
             with self.subTest(job=(row.operation, row.state, row.cluster, row.result)):
@@ -742,7 +756,7 @@ class TheBlockReachesThePages(LoginTestCase):
         )
         self.sign_in(client)
         with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
-            return client.get(path).text
+            return str(client.get(path).text)
 
     def test_the_jobs_page_offers_the_certificate_deploy_on_the_refused_job(self) -> None:
         body = self.page("/jobs", [blocked_deploy()])

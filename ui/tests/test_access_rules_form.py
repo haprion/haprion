@@ -148,15 +148,13 @@ class AddingAndRemovingRulesInTheBrowser(EditorTestCase):
         page = self.browser.new_page()
         self.addCleanup(page.close)
         posted: list[str] = []
-        page.route(
-            f"{ORIGIN}/proxies/alpha/shop/edit",
-            lambda route: (
+
+        def capture(route: Any) -> None:
+            if route.request.method == "POST":
                 posted.append(route.request.post_data or "")
-                if route.request.method == "POST"
-                else None,
-                route.fulfill(content_type="text/html", body=form_page),
-            ),
-        )
+            route.fulfill(content_type="text/html", body=form_page)
+
+        page.route(f"{ORIGIN}/proxies/alpha/shop/edit", capture)
 
         def serve(asset: str) -> Any:
             kind = "text/javascript" if asset.endswith(".js") else "text/css"

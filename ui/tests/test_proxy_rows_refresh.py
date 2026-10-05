@@ -236,7 +236,7 @@ class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
             mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
             mock.patch("haproxy_ui.db.cluster_statuses", return_value=[self.status(*backends)]),
         ):
-            return client.get("/proxies").text
+            return str(client.get("/proxies").text)
 
     def test_a_removed_object_stays_listed_while_a_node_still_serves_it(self) -> None:
         body = self.listing([self.job("gone")], "shop", "gone")
@@ -347,7 +347,7 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[removal]),
             mock.patch("haproxy_ui.db.cluster_statuses", return_value=[behind]),
         ):
-            return client.get("/proxies").text
+            return str(client.get("/proxies").text)
 
     def test_the_two_rows_say_opposite_things(self) -> None:
         body = self.listing()
@@ -401,7 +401,8 @@ class AServingObjectSaysWhenTheNodesAreBehind(unittest.TestCase):
     )
 
     def rendered(self, reconfigured: tuple[str, ...] = ()) -> str:
-        macro = TEMPLATES.env.get_template("_proxy-rows.html").module.proxy_rows
+        module: Any = TEMPLATES.env.get_template("_proxy-rows.html").module
+        macro = module.proxy_rows
         return str(macro("alpha", "admin", (), (), (self.SERVING,), (), {}, (), {}, reconfigured))
 
     def test_the_badge_takes_the_protocol_cell_and_leaves_the_hostnames(self) -> None:

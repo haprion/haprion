@@ -8,22 +8,35 @@ the control, and what it queues is what the helper will be asked to do.
 from __future__ import annotations
 
 import unittest
+from typing import Any
 from unittest import mock
 
 from haproxy_ui import auth, certificate_renew
+from haproxy_ui.certificates import RegistryCertificateView
 from tests.test_certificate_activity import csr_pending_row
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import overview, registered, registry_of, with_registry
 from tests.test_certificates import reading as certificate_reading
 
 
-def rows(*entries: dict) -> dict[str, object]:
+def rows(*entries: dict[str, object]) -> dict[str, RegistryCertificateView]:
     view = overview(with_registry(certificate_reading(), *entries))
     return {row.identifier: row for row in registry_of(view).certificates}
 
 
-def ndes_row(identifier: str = "ndes.example.net", **extra: object) -> dict:
-    entry = registered(identifier, kind="import", fingerprint="e" * 64, **extra)
+def ndes_row(
+    identifier: str = "ndes.example.net",
+    *,
+    readable: bool = True,
+    receivers: tuple[dict[str, object], ...] = (),
+) -> dict[str, Any]:
+    entry: dict[str, Any] = registered(
+        identifier,
+        kind="import",
+        fingerprint="e" * 64,
+        readable=readable,
+        receivers=receivers,
+    )
     entry["source"]["ndes_profile"] = "certserver1"
     entry["common_name"] = identifier
     entry["sans"] = [identifier, "*." + identifier]
@@ -100,7 +113,7 @@ class TheWay(unittest.TestCase):
 
 
 class TheRoutes(DeleteRouteTestCase):
-    def renew(self, client, *ids: str, confirm: bool = False):
+    def renew(self, client: Any, *ids: str, confirm: bool = False) -> Any:
         token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
         data = {"certificate": list(ids), auth.CSRF_FIELD: token}
         if confirm:

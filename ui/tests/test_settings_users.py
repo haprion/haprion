@@ -9,6 +9,7 @@ audit name and `via: web`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -45,12 +46,15 @@ class SettingsUsers(LoginTestCase):
             "bob": row("bob", locked=True),
             "operator": row("operator", role="admin"),
         }
-        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.calls: list[tuple[str, dict[str | int, Any]]] = []
         self.audit_details: list[tuple[str, dict[str, Any]]] = []
 
-        def record(name: str, result: Any = None):
+        def record(name: str, result: Any = None) -> Callable[..., Any]:
             def call(_c: object, *args: Any, **kwargs: Any) -> Any:
-                self.calls.append((name, {**kwargs, **dict(enumerate(args))}))
+                fields: dict[str | int, Any] = {}
+                fields.update(kwargs)
+                fields.update(enumerate(args))
+                self.calls.append((name, fields))
                 return result
 
             return call

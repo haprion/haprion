@@ -13,6 +13,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
@@ -70,7 +71,7 @@ class DraftReading(LoginTestCase):
     whatever the case was actually about.
     """
 
-    draft: object = None
+    draft: ProxyDraft | None = None
 
     def setUp(self) -> None:
         super().setUp()
@@ -403,7 +404,7 @@ class ADraftInTheListing(DraftReading):
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
         with mock.patch("haproxy_ui.db.cluster_drafts", return_value=drafts):
-            return client.get("/proxies").text
+            return str(client.get("/proxies").text)
 
     def drafted(self, name: str, *, deleted: bool = False) -> ProxyDraft:
         return ProxyDraft(
@@ -482,7 +483,7 @@ class ADraftOnItsWay(DraftReading):
             mock.patch("haproxy_ui.db.cluster_drafts", return_value=drafts),
             mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
         ):
-            return client.get("/proxies").text
+            return str(client.get("/proxies").text)
 
     def job(self, state: str, name: str = "half-done") -> Job:
         return Job(
@@ -627,8 +628,8 @@ class ADraftThatWasPublished(DraftReading):
             attempts=0,
         )
 
-    def listing(self, draft: ProxyDraft, jobs: list[Job]) -> tuple[str, list[object]]:
-        discarded: list[object] = []
+    def listing(self, draft: ProxyDraft, jobs: list[Job]) -> tuple[str, list[dict[str, Any]]]:
+        discarded: list[dict[str, Any]] = []
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
 
@@ -649,7 +650,7 @@ class ADraftThatWasPublished(DraftReading):
                 "haproxy_ui.db.discard_draft", side_effect=lambda *a, **k: discarded.append(k)
             ),
         ):
-            return client.get("/proxies").text, discarded
+            return str(client.get("/proxies").text), discarded
 
     def test_a_finished_publish_holds_the_draft_until_the_object_is_readable(self) -> None:
         #
@@ -717,7 +718,7 @@ class OneObjectIsOneRow(DraftReading):
     def listing(self) -> str:
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
-        return client.get("/proxies").text
+        return str(client.get("/proxies").text)
 
     def test_no_row_is_named_after_a_generated_frontend(self) -> None:
         body = self.listing()

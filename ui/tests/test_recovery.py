@@ -58,7 +58,9 @@ def history(
     )
 
 
-def version(request_id: UUID | None = REQUEST, *, number: int = 8, commit: str = "a" * 40):
+def version(
+    request_id: UUID | None = REQUEST, *, number: int = 8, commit: str = "a" * 40
+) -> dict[str, Any]:
     return {
         "version": number,
         "hash": commit,

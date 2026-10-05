@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
+from typing import Any
 from unittest import mock
 
 from haproxy_ui import auth
@@ -153,8 +154,10 @@ class TheCertificatePageNoLongerDeploys(LoginTestCase):
         rows.start()
         self.addCleanup(rows.stop)
 
-    def page(self, **overrides: object):
-        client = self.client(replace(configuration(), clusters=("alpha",), **overrides))
+    def page(self, *, management_writes: bool = False) -> Any:
+        client = self.client(
+            replace(configuration(), clusters=("alpha",), management_writes=management_writes)
+        )
         self.sign_in(client)
         return client.get("/certificates")
 
@@ -227,7 +230,7 @@ class TheModeBadgeAppearsOnlyWhenWritesAreOff(LoginTestCase):
             replace(configuration(), management_writes=writes, clusters=("alpha",))
         )
         self.sign_in(client)
-        return client.get(path).text
+        return str(client.get(path).text)
 
     def test_every_page_names_read_only_mode_when_writes_are_off(self) -> None:
         for path in PAGES:

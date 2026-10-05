@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from haproxy_ui.backups import BackupOverview, ScheduleView, build_backup_overview
 from haproxy_ui.db import ClusterBackups
@@ -17,7 +18,7 @@ NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 STALE_AFTER = timedelta(minutes=2)
 
 
-def archives(count: int = 3, *, newest_hours_ago: int = 5) -> list[dict[str, object]]:
+def archives(count: int = 3, *, newest_hours_ago: int = 5) -> list[dict[str, Any]]:
     newest = NOW - timedelta(hours=newest_hours_ago)
     return [
         {
@@ -34,7 +35,7 @@ def node(
     name: str = "node-a",
     *,
     available: bool = True,
-    backups: list[dict[str, object]] | None = None,
+    backups: list[dict[str, Any]] | None = None,
     error: str | None = None,
     retained_count: int | None = None,
 ) -> dict[str, object]:
@@ -90,7 +91,7 @@ def reading(
     )
 
 
-def overview(*readings: ClusterBackups, clusters: tuple[str, ...] = ("alpha",)):
+def overview(*readings: ClusterBackups, clusters: tuple[str, ...] = ("alpha",)) -> BackupOverview:
     return build_backup_overview(clusters, readings, now=NOW, stale_after=STALE_AFTER)
 
 

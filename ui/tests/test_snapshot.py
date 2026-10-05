@@ -6,6 +6,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CompletedProcess
+from typing import Any
 from unittest import mock
 from uuid import UUID
 
@@ -189,7 +190,7 @@ class SnapshotTests(unittest.TestCase):
                     stderr="",
                 )
 
-            document = snapshot.collect_production_snapshot(
+            document: dict[str, Any] = snapshot.collect_production_snapshot(
                 now=datetime(2026, 8, 29, 12, tzinfo=UTC),
                 status_runner=status_runner,
                 certificate_runner=certificate_runner,
@@ -388,8 +389,8 @@ class SnapshotFreshnessTests(unittest.TestCase):
                 return real_load(candidate, require_secure=False)
 
             with (
-                mock.patch.object(views.snapshot, "path_for_config", return_value=path),
-                mock.patch.object(views.snapshot, "load_production_snapshot", load),
+                mock.patch.object(snapshot, "path_for_config", return_value=path),
+                mock.patch.object(snapshot, "load_production_snapshot", load),
             ):
                 clusters, rows, captured_at = views.read_source(
                     self._request(path), config, views.STATUS_SOURCE

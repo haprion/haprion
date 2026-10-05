@@ -160,7 +160,7 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
 class WhetherTheVerdictIsTheChecksOwn(unittest.TestCase):
     """The button runs the object's check early, so it must judge as the check judges."""
 
-    def report(self, status: int, **fields: object):
+    def report(self, status: int, **fields: object) -> ProbeReport:
         answer = answered(
             [
                 {
@@ -313,7 +313,7 @@ class WhichAddressTheProbeLeavesFrom(unittest.TestCase):
 
 
 class WhatThePageIsToldAfterwards(unittest.TestCase):
-    def report(self, answer: str, **fields: object):
+    def report(self, answer: str, **fields: object) -> ProbeReport:
         return run("alpha", form(**fields), CHOICES, call=lambda *a, **k: answer)
 
     def test_a_probe_that_ran_carries_every_node_s_answer(self) -> None:
@@ -403,7 +403,7 @@ class WhichNodeCouldAnswer(unittest.TestCase):
     cluster that appears to have one node.
     """
 
-    def report(self, nodes: list[dict[str, object]]):
+    def report(self, nodes: list[dict[str, object]]) -> ProbeReport:
         return run("alpha", form(), CHOICES, call=lambda *a, **k: answered(nodes))
 
     def test_the_node_that_holds_the_address_is_named(self) -> None:

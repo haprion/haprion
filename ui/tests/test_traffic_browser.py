@@ -30,7 +30,7 @@ import threading
 import unittest
 from collections.abc import Iterator
 from dataclasses import replace
-from typing import Any
+from typing import Any, ClassVar
 
 import uvicorn
 
@@ -54,7 +54,9 @@ if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
         "directory, which ProtectHome hides"
     )
 
-from playwright.sync_api import sync_playwright  # noqa: E402
+# Re-exported: the other browser suites import it from here, after this guard.
+from playwright.sync_api import Browser, Playwright  # noqa: E402
+from playwright.sync_api import sync_playwright as sync_playwright  # noqa: E402
 
 
 def free_port() -> int:
@@ -70,6 +72,9 @@ class TheChartInABrowser(ReadingACluster):
     thread sees whatever the test set up. Starting the browser once is what
     keeps the suite to a few seconds rather than a few minutes.
     """
+
+    _playwright: ClassVar[Playwright]
+    _browser: ClassVar[Browser]
 
     @classmethod
     def setUpClass(cls) -> None:

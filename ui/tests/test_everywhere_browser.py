@@ -61,12 +61,13 @@ class EmptyChoicesFollowTheAddresses(unittest.TestCase):
         return page
 
     def empty(self, page: Any, field: str = "allow_from") -> dict[str, bool]:
-        return page.evaluate(
+        state: dict[str, bool] = page.evaluate(
             "(field) => { const o = document.querySelector("
             "`select[name='${field}'] option[value='']`);"
             " return {hidden: o.hidden, selected: o.selected}; }",
             field,
         )
+        return state
 
     def test_an_address_takes_it_away(self) -> None:
         page = self.page()

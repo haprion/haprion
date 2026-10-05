@@ -65,7 +65,7 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         self.sign_in(client)
         response = client.get(f"/certificates{query}")
         self.assertEqual(response.status_code, 200)
-        return response.text
+        return str(response.text)
 
     def test_the_registry_is_the_default_view(self) -> None:
         #
@@ -225,7 +225,7 @@ class WithoutARegistryThePageIsWhatItWas(LoginTestCase):
     def page(self, query: str = "") -> str:
         client = self.client(replace(configuration(), clusters=("alpha",)))
         self.sign_in(client)
-        return client.get(f"/certificates{query}").text
+        return str(client.get(f"/certificates{query}").text)
 
     def test_no_switch_is_drawn(self) -> None:
         self.assertNotIn("certificate-views", self.page())

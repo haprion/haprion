@@ -299,14 +299,15 @@ class DeletingCertificates(unittest.TestCase):
         )
 
     def test_the_list_is_held_to_shape_and_size(self) -> None:
-        for payload in (
+        payloads: tuple[dict[str, object], ...] = (
             {"certificates": []},
             {"certificates": "old.example.com"},
             {"certificates": ["../etc/passwd"]},
             {"certificates": ["a.example", "a.example"]},
             {"certificates": [f"c{i}.example" for i in range(33)]},
             {"certificates": ["a.example"], "force": True},
-        ):
+        )
+        for payload in payloads:
             with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
                 operations.prepare(
                     operation="cert_delete", cluster=None, request_id=REQUEST, payload=payload
@@ -530,7 +531,7 @@ class PublishingObjects(unittest.TestCase):
     instead of as a page saying what was wrong.
     """
 
-    def prepare(self, **payload: object):
+    def prepare(self, **payload: object) -> operations.Prepared:
         return operations.prepare(
             operation="objects_publish",
             cluster="alpha",

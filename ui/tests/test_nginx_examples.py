@@ -87,7 +87,7 @@ class ARealNginxBelievesOnlyTheProxy(unittest.TestCase):
         (root / "real-ip.conf").write_text(rendered.stdout)
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
+            port = int(probe.getsockname()[1])
         temporary = " ".join(
             f"{kind}_temp_path {root / kind};"
             for kind in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi")
@@ -145,7 +145,7 @@ http {{
         if forwarded is not None:
             request.add_header("X-Forwarded-For", forwarded)
         with urllib.request.urlopen(request, timeout=5) as answer:  # noqa: S310 - loopback
-            return answer.read().decode()
+            return str(answer.read().decode())
 
     def test_a_client_that_is_not_the_proxy_is_known_by_its_own_address(self) -> None:
         port = self.serve("192.0.2.10")

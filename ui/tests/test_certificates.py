@@ -13,8 +13,14 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
-from haproxy_ui.certificates import RegistryView, build_certificate_overview, short_issuer
+from haproxy_ui.certificates import (
+    CertificateOverview,
+    RegistryView,
+    build_certificate_overview,
+    short_issuer,
+)
 from haproxy_ui.db import ClusterCertificates, ClusterStatus
 
 NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
@@ -72,7 +78,7 @@ def overview(
     *readings: ClusterCertificates,
     clusters: tuple[str, ...] = ("alpha",),
     status: tuple[ClusterStatus, ...] = (),
-):
+) -> CertificateOverview:
     return build_certificate_overview(
         clusters, readings, status_readings=status, now=NOW, stale_after=STALE_AFTER
     )
@@ -90,7 +96,7 @@ def registered(
     days_left: int = 60,
     fingerprint: str | None = None,
     sans: list[str] | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     not_after = NOW + timedelta(days=days_left)
     if distribution is None and clusters:
         distribution = {"published_at": _stamp(NOW - timedelta(days=1)), "current": True}
@@ -421,7 +427,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def registry_of(view) -> RegistryView:
+def registry_of(view: CertificateOverview) -> RegistryView:
     """The overview's registry, or a clear failure instead of an AttributeError."""
 
     if view.registry is None:

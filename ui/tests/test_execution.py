@@ -230,7 +230,7 @@ class WhenTheGroupIsBeyondOurPrivilege(unittest.TestCase):
         def denied(_group: int, _signal: int) -> None:
             raise PermissionError(1, "Operation not permitted")
 
-        with unittest.mock.patch.object(execution.os, "killpg", denied):
+        with unittest.mock.patch.object(os, "killpg", denied):
             self.assertTrue(execution._group_exists(4242))
 
     def test_a_group_that_cannot_be_signalled_is_reported_not_raised(self) -> None:
@@ -241,7 +241,7 @@ class WhenTheGroupIsBeyondOurPrivilege(unittest.TestCase):
         finished.wait()
 
         with (
-            unittest.mock.patch.object(execution.os, "killpg", denied),
+            unittest.mock.patch.object(os, "killpg", denied),
             self.assertLogs(execution.logger, level="ERROR") as logged,
         ):
             execution._stop(finished, finished.pid)

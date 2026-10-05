@@ -71,12 +71,13 @@ class TypedValuesStayWithTheirForm(unittest.TestCase):
         tab.wait_for_function(
             f"document.querySelectorAll('main form').length === {second.count('<form')}"
         )
-        return tab.evaluate(
+        values: dict[str, str] = tab.evaluate(
             """() => Object.fromEntries(Array.from(document.querySelectorAll('main form'), (form) => [
                 form.querySelector('input[name=cluster]').value,
                 form.querySelector('input[name=backup_retention]').value,
             ]))"""
         )
+        return values
 
     def test_a_form_that_returns_ahead_of_it_does_not_take_the_value(self) -> None:
         """The review's reproduction: alpha's job finishes while beta is being edited."""

@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from haproxy_ui import metrics
 from haproxy_ui.db import ClusterHistory
-from haproxy_ui.history import build_history_overview
+from haproxy_ui.history import HistoryOverview, build_history_overview
 
 NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 
@@ -64,7 +64,7 @@ def reading(
     )
 
 
-def overview(row: ClusterHistory, clusters: tuple[str, ...] = ("alpha",)):
+def overview(row: ClusterHistory, clusters: tuple[str, ...] = ("alpha",)) -> HistoryOverview:
     return build_history_overview(clusters, (row,), now=NOW, stale_after=timedelta(minutes=2))
 
 
@@ -72,7 +72,7 @@ class VersionPagesTests(unittest.TestCase):
     """Fas 14 point 8: every listed version, ten to a page, and who asked (B207)."""
 
     def test_the_versions_are_numbered_into_pages_of_ten(self) -> None:
-        rows = [
+        rows: list[dict[str, object]] = [
             {
                 "version": number,
                 "hash": f"{number:040d}",

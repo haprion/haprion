@@ -650,7 +650,7 @@ class TheHealthCardOnThePage(EditorTestCase):
             client = self.editor()
             response = self.submit(client, "/proxies/alpha/shop/edit", action="recheck")
         self.assertEqual(response.status_code, 200)
-        return response.text
+        return str(response.text)
 
     def node(self, name: str, *, held: bool | None, ok: bool = True) -> probe_module.NodeReport:
         return probe_module.NodeReport(
@@ -1010,7 +1010,7 @@ class WhichNodeReportsOnThePool(EditorTestCase):
             },
         }
 
-    def card(self, nodes: list[dict[str, Any]], source: str):
+    def card(self, nodes: list[dict[str, Any]], source: str) -> health.BackendHealth:
         row = SimpleNamespace(cluster="alpha", result={"nodes": nodes}, observed_at=OBSERVED)
         return health.backend_health(
             [row], cluster="alpha", obj="shop", backend="web", source=source
@@ -1055,7 +1055,7 @@ class WhereTheFormOpens(EditorTestCase):
 
     def script(self) -> str:
         client = self.editor()
-        return client.get("/static/object-form.js").text
+        return str(client.get("/static/object-form.js").text)
 
     def test_every_button_that_answers_on_this_page_keeps_the_position(self) -> None:
         """The list is the point of this test.
@@ -1121,7 +1121,7 @@ class WhatEnterDoes(EditorTestCase):
         #
         # The editor's form, not the sign-out form in the header above it.
         #
-        return page.text[page.text.index('class="preview-form"') :]
+        return str(page.text[page.text.index('class="preview-form"') :])
 
     def test_the_first_submit_in_the_form_validates(self) -> None:
         body = self.form()

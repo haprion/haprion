@@ -50,11 +50,15 @@ class RetargetRouteTestCase(DeleteRouteTestCase):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def writing_client(self, *, role: str = "admin", writes: bool = True) -> Any:
+    def writing_client(
+        self,
+        *,
+        role: str = "admin",
+        writes: bool = True,
+        clusters: tuple[str, ...] = ("alpha", "beta"),
+    ) -> Any:
         self.account = replace(self.account, role=role)
-        client = self.client(
-            replace(configuration(), management_writes=writes, clusters=("alpha", "beta"))
-        )
+        client = self.client(replace(configuration(), management_writes=writes, clusters=clusters))
         self.sign_in(client)
         return client
 

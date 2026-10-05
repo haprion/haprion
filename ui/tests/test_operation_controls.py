@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 from uuid import uuid4
 
@@ -52,7 +53,7 @@ class WhereAnOperationSendsYou(LoginTestCase):
     it can keep them.
     """
 
-    def queue(self, **fields: str):
+    def queue(self, **fields: str) -> Any:
         client = self.client(replace(configuration(), management_writes=True))
         self.sign_in(client)
         data = {
@@ -65,7 +66,7 @@ class WhereAnOperationSendsYou(LoginTestCase):
         with mock.patch("haproxy_ui.db.queue_job", side_effect=self._queued):
             return client.post("/operations", data=data, follow_redirects=False)
 
-    def _queued(self, _c: object, **values: object):
+    def _queued(self, _c: object, **values: object) -> SimpleNamespace:
         return SimpleNamespace(id=1, request_id=uuid4())
 
     def test_a_named_page_is_where_it_returns(self) -> None:

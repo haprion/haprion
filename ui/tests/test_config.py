@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_ui.config import ConfigError, load
+from haproxy_ui.config import Config, ConfigError, load
 
 EXAMPLE = (
     Path(__file__).resolve().parents[2] / "install" / "platform" / "examples" / "ui.toml.example"
@@ -49,8 +49,8 @@ class ConfigTests(unittest.TestCase):
         path.chmod(mode)
         return path
 
-    def load(self, text: str, **kwargs: object):
-        return load(self.write(text), require_secure=False, **kwargs)  # type: ignore[arg-type]
+    def load(self, text: str) -> Config:
+        return load(self.write(text), require_secure=False)
 
     def test_a_complete_file_is_read(self) -> None:
         config = self.load(VALID)

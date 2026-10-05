@@ -349,7 +349,8 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
         return heads[0]
 
     def declared(self) -> dict[str, object]:
-        return json.loads(self.DECLARED.read_text())["requires"]
+        requires: dict[str, object] = json.loads(self.DECLARED.read_text())["requires"]
+        return requires
 
     def test_the_declaration_names_the_head_the_migrations_reach(self) -> None:
         self.assertEqual(self.declared()["database_head"], self.head())
@@ -357,7 +358,11 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
     def test_the_head_is_among_the_revisions_the_release_accepts(self) -> None:
         """`load_requirements` refuses otherwise; this says it about the real file."""
 
-        self.assertIn(self.declared()["database_head"], self.declared()["database_revisions"])
+        revisions = self.declared()["database_revisions"]
+
+        if not isinstance(revisions, list):
+            raise AssertionError(f"database_revisions is not a list: {revisions!r}")
+        self.assertIn(self.declared()["database_head"], revisions)
 
     def test_every_revision_has_exactly_one_child_or_is_the_head(self) -> None:
         """A fork would make "the head" ambiguous and the release unbuildable."""

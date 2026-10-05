@@ -20,7 +20,7 @@ if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
-VERSIONS = [
+VERSIONS: list[dict[str, object]] = [
     {
         "version": number,
         "hash": f"{number:040d}",

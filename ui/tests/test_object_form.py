@@ -10,6 +10,7 @@ one failure.
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 import yaml
 
@@ -206,8 +207,11 @@ class WhatTheFormMayOffer(unittest.TestCase):
         from haproxy_ui.preview import PREVIEW_CLUSTER, choices
 
         offered = choices(PREVIEW_CLUSTER)
+        vips = offered["vips"]
 
-        self.assertIn({"name": "dmz", "address": "198.51.100.20"}, offered["vips"])
+        if not isinstance(vips, list):
+            raise AssertionError(f"vips is not a list: {vips!r}")
+        self.assertIn({"name": "dmz", "address": "198.51.100.20"}, vips)
         self.assertEqual(offered["default_vip_address"], "192.0.2.20")
 
     def test_a_source_is_offered_with_its_address(self) -> None:
@@ -240,10 +244,11 @@ class ASiteMayNameItsOwnTlsPolicy(unittest.TestCase):
     what this writes.
     """
 
-    def document(self, **fields: str) -> dict[str, object]:
+    def document(self, **fields: str) -> dict[str, Any]:
         form = dict(DEFAULTS)
         form.update({"protocol": "https", "certificate": "shop", **fields})
-        return yaml.safe_load(build_document(form))
+        document: dict[str, Any] = yaml.safe_load(build_document(form))
+        return document
 
     def test_a_named_policy_reaches_the_frontend(self) -> None:
         self.assertEqual(self.document(listen_tls_policy="modern")["listen"]["tls"], "modern")

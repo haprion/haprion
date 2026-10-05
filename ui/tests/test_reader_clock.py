@@ -15,7 +15,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from haproxy_ui import metrics
-from haproxy_ui.backups import build_backup_overview
+from haproxy_ui.backups import ScheduleView, build_backup_overview
 from tests.test_backups import STALE_AFTER, reading, schedule, timer_of
 
 # A September moment: New York on EDT (-4), the host on CEST (+2).
@@ -87,7 +87,7 @@ class TheBackupSchedule(HostZone):
     def setUp(self) -> None:
         self.host_zone("Europe/Stockholm")
 
-    def schedule(self, zone: str | None, **changes: object):
+    def schedule(self, zone: str | None, **changes: object) -> ScheduleView:
         return read_in(
             zone,
             lambda: timer_of(

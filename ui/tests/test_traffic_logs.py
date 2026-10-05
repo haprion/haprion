@@ -581,7 +581,7 @@ class TheTrafficLogPage(LoginTestCase):
             response = client.get(f"{path}{query}")
 
         self.assertEqual(response.status_code, 200)
-        return response.text
+        return str(response.text)
 
     def healthy_meta(self, node: str = "node-a") -> None:
         now = datetime.now(UTC)

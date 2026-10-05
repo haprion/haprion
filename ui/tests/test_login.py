@@ -192,7 +192,8 @@ class LoginTestCase(unittest.TestCase):
         ]
         for patch in self.patches:
             patch.start()
-        self.addCleanup(lambda: [patch.stop() for patch in self.patches])
+        for patch in self.patches:
+            self.addCleanup(patch.stop)
 
     # - the fake database -------------------------------------------------
 

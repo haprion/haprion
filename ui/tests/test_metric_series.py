@@ -18,14 +18,19 @@ START = datetime(2026, 9, 5, 20, 0, tzinfo=UTC)
 
 
 def sample(
-    seconds: int, *, uptime: int | None, node: str | None = None, **counters: int | None
+    seconds: int,
+    *,
+    uptime: int | None,
+    node: str | None = None,
+    fill: int | None = None,
+    **counters: int | None,
 ) -> metrics.Sample:
     return metrics.Sample(
         observed_at=START + timedelta(seconds=seconds),
         member="BACKEND",
         uptime_sec=uptime,
         node=node,
-        counters=dict.fromkeys(metrics.METRIC_COUNTERS) | counters,
+        counters=dict.fromkeys(metrics.METRIC_COUNTERS, fill) | counters,
     )
 
 
@@ -804,8 +809,8 @@ class WhetherTheWindowSaysAnything(unittest.TestCase):
         """Counted nothing, as opposed to having nothing to count."""
 
         card = self.traffic(
-            sample(0, uptime=100, **dict.fromkeys(metrics.METRIC_COUNTERS, 0)),
-            sample(20, uptime=120, **dict.fromkeys(metrics.METRIC_COUNTERS, 0)),
+            sample(0, uptime=100, fill=0),
+            sample(20, uptime=120, fill=0),
         )
         self.assertTrue(card.measured)
 
@@ -813,8 +818,8 @@ class WhetherTheWindowSaysAnything(unittest.TestCase):
         """Measured, and its figures marked rather than withheld."""
 
         card = self.traffic(
-            sample(0, uptime=900, **dict.fromkeys(metrics.METRIC_COUNTERS, 0)),
-            sample(20, uptime=4, **dict.fromkeys(metrics.METRIC_COUNTERS, 0)),
+            sample(0, uptime=900, fill=0),
+            sample(20, uptime=4, fill=0),
         )
         self.assertTrue(card.measured)
         self.assertTrue(card.restarted)

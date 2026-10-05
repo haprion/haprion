@@ -19,11 +19,11 @@ import threading
 import unittest
 from collections.abc import Iterator
 from dataclasses import replace
-from typing import Any
+from typing import Any, ClassVar
 from unittest import mock
 
 import uvicorn
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Browser, Playwright, sync_playwright
 
 from haproxy_ui.app import create_app
 from tests.test_certificate_page import TheCertificatePageHasTwoViews
@@ -39,6 +39,9 @@ def free_port() -> int:
 
 
 class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
+    _playwright: ClassVar[Playwright]
+    _browser: ClassVar[Browser]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls._playwright = sync_playwright().start()
@@ -90,10 +93,11 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
 
     @staticmethod
     def widths(page: Any) -> list[float]:
-        return page.evaluate(
+        widths: list[float] = page.evaluate(
             "() => [...document.querySelectorAll('.certificate-views a')]"
             ".map(a => a.getBoundingClientRect().width)"
         )
+        return widths
 
     def test_choosing_a_view_swaps_it_in_place_and_moves_no_segment(self) -> None:
         with self.signed_in("?view=clusters") as page:

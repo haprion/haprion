@@ -102,7 +102,7 @@ class ARealDatabase(unittest.TestCase):
                         "lease": lease,
                     },
                 )
-                ids.append(cursor.fetchone()[0])
+                ids.append(_first(cursor))
             cursor.execute(query)
             self.assertEqual(cursor.fetchone(), (f"node_restore (job {ids[0]})",))
             connection.rollback()
@@ -234,7 +234,7 @@ class ARealDatabase(unittest.TestCase):
                 "values ('retention-probe', %s, 'reader') returning id",
                 (auth.hash_password("a long enough password"),),
             )
-            user = cursor.fetchone()[0]
+            user = _first(cursor)
             sessions = {
                 b"live": ("now() - interval '1 day'", "now() + interval '1 day'", "null"),
                 b"expired-recently": (
@@ -285,7 +285,7 @@ class ARealDatabase(unittest.TestCase):
                     "values (now() - %s::interval, %s, '192.0.2.10', %s) returning id",
                     (age, name, succeeded),
                 )
-                ids[cursor.fetchone()[0]] = label
+                ids[_first(cursor)] = label
             cursor.execute(f"select id from login_attempt where {clause}")  # noqa: S608 - the script's own
             removable = {ids[row[0]] for row in cursor.fetchall()}
             self.assertEqual(removable, {"old-failure", "old-success", "older-old-success"})
@@ -313,7 +313,7 @@ class ARealDatabase(unittest.TestCase):
             text=True,
             check=True,
         ).stdout
-        jobs = (
+        jobs: tuple[tuple[str, str, dict[str, object]], ...] = (
             ("old-apply", "dns_profile_apply", {"profile": "kept", "revision": 1}),
             ("newest-apply", "dns_profile_apply", {"profile": "kept", "revision": 2}),
             ("refused-removal", "dns_profile_apply", {"profile": "kept", "revision": 2,
@@ -342,7 +342,7 @@ class ARealDatabase(unittest.TestCase):
                         "key": uuid4(),
                     },
                 )
-                named[cursor.fetchone()[0]] = name
+                named[_first(cursor)] = name
             cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
             removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
             self.assertEqual(removable, {"old-apply", "removed-profile", "deploy"})
@@ -713,7 +713,7 @@ class ARealDatabase(unittest.TestCase):
                     "where conname = 'traffic_log_waf_id_shape' "
                     "and conrelid = 'traffic_log'::regclass"
                 )
-                self.assertIn("_.-]{1,96}", cursor.fetchone()[0])
+                self.assertIn("_.-]{1,96}", _first(cursor))
             connection.rollback()
 
     def test_waf_matches_are_bounded_joined_and_downgrade_and_upgrade_cleanly(self) -> None:
@@ -1886,6 +1886,15 @@ class _Executes:
         self.cursor.execute(sql)
 
 
+def _first(cursor: psycopg.Cursor) -> Any:
+    """The first column of the row the last statement returned, which it must have."""
+
+    row = cursor.fetchone()
+    if row is None:
+        raise AssertionError("the statement returned no row")
+    return row[0]
+
+
 def _migration(filename: str, cursor: psycopg.Cursor) -> Any:
     """One migration module, loaded by file, with `op` bound to this cursor."""
 
@@ -1893,7 +1902,7 @@ def _migration(filename: str, cursor: psycopg.Cursor) -> Any:
     spec = importlib.util.spec_from_file_location(f"migration_{filename[:4]}", path)
     if spec is None or spec.loader is None:
         raise AssertionError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
+    module: Any = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.op = _Executes(cursor)
     return module
@@ -2218,7 +2227,7 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("migration_0025", migration_path)
         if spec is None or spec.loader is None:
             self.fail(f"cannot load {migration_path}")
-        migration = importlib.util.module_from_spec(spec)
+        migration: Any = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
 
         with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
@@ -2231,7 +2240,7 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
                     "select pg_get_constraintdef(oid) from pg_constraint "
                     "where conname = 'job_operation_allowed'"
                 )
-                self.assertNotIn("dns_profile_apply", cursor.fetchone()[0])
+                self.assertNotIn("dns_profile_apply", _first(cursor))
                 migration.upgrade()
                 cursor.execute("select to_regclass('dns_provider_profile')")
                 self.assertEqual(cursor.fetchone(), ("dns_provider_profile",))
@@ -2327,7 +2336,7 @@ class CertificateDeletion(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("migration_0026", migration_path)
         if spec is None or spec.loader is None:
             self.fail(f"cannot load {migration_path}")
-        migration = importlib.util.module_from_spec(spec)
+        migration: Any = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
 
         with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
@@ -2338,13 +2347,13 @@ class CertificateDeletion(unittest.TestCase):
                     "select pg_get_constraintdef(oid) from pg_constraint "
                     "where conname = 'job_operation_allowed'"
                 )
-                self.assertNotIn("cert_delete", cursor.fetchone()[0])
+                self.assertNotIn("cert_delete", _first(cursor))
                 migration.upgrade()
                 cursor.execute(
                     "select pg_get_constraintdef(oid) from pg_constraint "
                     "where conname = 'job_operation_allowed'"
                 )
-                self.assertIn("cert_delete", cursor.fetchone()[0])
+                self.assertIn("cert_delete", _first(cursor))
             connection.rollback()
 
 
@@ -2735,7 +2744,7 @@ class AccountsFromTheWeb(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("migration_0039", migration_path)
         if spec is None or spec.loader is None:
             self.fail(f"cannot load {migration_path}")
-        migration = importlib.util.module_from_spec(spec)
+        migration: Any = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
 
         with self.connect() as connection:

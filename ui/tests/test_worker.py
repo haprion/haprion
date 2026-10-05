@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -508,7 +509,9 @@ class FakeListener:
         self._notifications = notifications
         self.waits: list[float | None] = []
 
-    def notifies(self, *, timeout: float | None = None, stop_after: int | None = None):
+    def notifies(
+        self, *, timeout: float | None = None, stop_after: int | None = None
+    ) -> Iterator[object]:
         self.waits.append(timeout)
         if not self._notifications:
             return
@@ -533,7 +536,7 @@ class WaitingForWork(unittest.TestCase):
     def test_a_notification_ends_the_wait_immediately(self) -> None:
         listener = FakeListener([[object()]])
 
-        worker._wait_for_work(listener, FakeStop(), 30)
+        worker._wait_for_work(listener, FakeStop(), 30)  # type: ignore[arg-type]
 
         # One second-long wait, not thirty: the point of the change.
         self.assertEqual(listener.waits, [1.0])
@@ -543,7 +546,7 @@ class WaitingForWork(unittest.TestCase):
 
         listener = FakeListener([])
 
-        worker._wait_for_work(listener, FakeStop(), 5)
+        worker._wait_for_work(listener, FakeStop(), 5)  # type: ignore[arg-type]
 
         self.assertEqual(len(listener.waits), 5)
 
@@ -552,7 +555,7 @@ class WaitingForWork(unittest.TestCase):
 
         listener = FakeListener([])
 
-        worker._wait_for_work(listener, FakeStop(stop_at=2), 3600)
+        worker._wait_for_work(listener, FakeStop(stop_at=2), 3600)  # type: ignore[arg-type]
 
         self.assertLessEqual(len(listener.waits), 2)
 

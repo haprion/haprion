@@ -43,7 +43,7 @@ def job(
     number: int = 1,
     **payload: Any,
 ) -> db.Job:
-    asked = {
+    asked_for: dict[str, dict[str, Any]] = {
         "node_restore_prepare": {
             "run": RUN,
             "node": "node-a",
@@ -55,7 +55,8 @@ def job(
         "node_restore": {"run": RUN, "confirm": "node-test"},
         "node_restore_discard": {"run": RUN},
         "node_restore_status": {"run": RUN},
-    }[operation]
+    }
+    asked = asked_for[operation]
     return queued(
         id=number,
         operation=operation,
@@ -687,7 +688,8 @@ class FollowingARun(RestoreRouteTestCase):
     def test_a_blocked_preview_says_each_problem_once_and_asks_again(self) -> None:
         self.runs = [PREPARED, BLOCKED_PREVIEW]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
-        (problem,) = BLOCKED_PREVIEW.result["result"]["problems"][:1]
+        preview = BLOCKED_PREVIEW.result or {}
+        (problem,) = preview["result"]["problems"][:1]
         self.assertEqual(page.count(problem), 1)
         self.assertIn("What stops this restore", page)
         self.assertIn(f'action="/backups/restore/{RUN}/preview"', page)

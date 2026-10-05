@@ -16,7 +16,9 @@ from typing import Any
 from haproxy_ui import db, metrics, poller
 
 
-def node(name: str, *, owner: bool | None, frontends: Any = None, servers: Any = None) -> dict:
+def node(
+    name: str, *, owner: bool | None, frontends: Any = None, servers: Any = None
+) -> dict[str, Any]:
     return {
         "name": name,
         "reachable": True,
@@ -47,7 +49,9 @@ MEMBER = {
 
 
 class WhatOneReadingIsWorthKeeping(unittest.TestCase):
-    def samples(self, *nodes: dict) -> tuple[list, list]:
+    def samples(
+        self, *nodes: dict[str, Any]
+    ) -> tuple[list[metrics.FrontendSample], list[metrics.MemberSample]]:
         return metrics.samples({"nodes": list(nodes)})
 
     def test_every_node_contributes_its_frontends(self) -> None:
@@ -101,7 +105,7 @@ class WhatOneReadingIsWorthKeeping(unittest.TestCase):
 
 class WhatIsWritten(unittest.TestCase):
     class Cursor:
-        def __init__(self, calls: list) -> None:
+        def __init__(self, calls: list[tuple[object, list[Any]]]) -> None:
             self.calls = calls
 
         def __enter__(self) -> Any:
@@ -110,22 +114,26 @@ class WhatIsWritten(unittest.TestCase):
         def __exit__(self, *_: object) -> None:
             return None
 
-        def executemany(self, statement: str, rows: list) -> None:
+        def executemany(self, statement: object, rows: list[Any]) -> None:
             self.calls.append((statement, rows))
 
     class Connection:
         def __init__(self) -> None:
-            self.calls: list = []
+            self.calls: list[tuple[object, list[Any]]] = []
 
         def cursor(self, **_: object) -> Any:
             return WhatIsWritten.Cursor(self.calls)
 
-    def write(self, result: dict) -> list:
+    def write(self, result: dict[str, Any]) -> list[tuple[object, list[Any]]]:
         connection = self.Connection()
-        db.record_metric_samples(connection, cluster="alpha", result=result)
+        db.record_metric_samples(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            result=result,
+        )
         return connection.calls
 
-    def statements(self, result: dict) -> list[str]:
+    def statements(self, result: dict[str, Any]) -> list[str]:
         """The composed SQL as text, which is what the server is actually sent."""
 
         return [str(statement) for statement, _ in self.write(result)]

@@ -189,7 +189,7 @@ class TheGroupOnTheEditor(EditorTestCase):
                 return_value=[STATUS] if statuses is None else statuses,
             ),
         ):
-            return self.editor().get("/proxies/alpha/shop/edit").text
+            return str(self.editor().get("/proxies/alpha/shop/edit").text)
 
     def switch_off(self) -> None:
         self.switches = {

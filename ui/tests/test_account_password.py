@@ -73,7 +73,10 @@ class ChangingOnesOwnPassword(LoginTestCase):
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/account/password?changed=1")
-        self.assertTrue(auth.verify_password(self.account.password_hash, NEW))
+        password_hash = self.account.password_hash
+        if password_hash is None:
+            raise AssertionError("the account was left without a password")
+        self.assertTrue(auth.verify_password(password_hash, NEW))
         self.assertIn("password_changed", self.audit)
         self.assertIn("Password changed.", client.get("/account/password?changed=1").text)
         self.assertEqual(elsewhere.get("/", follow_redirects=False).headers["location"], "/login")

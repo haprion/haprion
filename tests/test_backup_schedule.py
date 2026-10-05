@@ -8,8 +8,12 @@ appear when something is wrong.
 
 from __future__ import annotations
 
+import subprocess
 import unittest
+from collections.abc import Callable
 from datetime import timedelta
+from typing import Any
+from unittest import mock
 
 from haproxy_mgmt import backup_schedule
 from haproxy_mgmt.backup_schedule import (
@@ -38,7 +42,9 @@ LOADED = {
 }
 
 
-def reader(timer: dict[str, str], service: dict[str, str] | None = None):
+def reader(
+    timer: dict[str, str], service: dict[str, str] | None = None
+) -> tuple[Callable[[str, tuple[str, ...]], dict[str, str]], list[tuple[str, tuple[str, ...]]]]:
     asked: list[tuple[str, tuple[str, ...]]] = []
 
     def show(unit: str, properties: tuple[str, ...]) -> dict[str, str]:
@@ -170,21 +176,15 @@ class CommandShapeTests(unittest.TestCase):
         # is allowed to live in a root helper, so the shape of the command is
         # pinned rather than left to a later edit.
         #
-        captured: dict[str, object] = {}
+        captured: dict[str, Any] = {}
 
-        def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        def fake_run(command: list[str], **kwargs: Any) -> Any:
             captured["command"] = command
             captured["kwargs"] = kwargs
             return type("Completed", (), {"stdout": "LoadState=loaded\n", "returncode": 0})
 
-        import haproxy_mgmt.backup_schedule as module
-
-        original = module.subprocess.run
-        module.subprocess.run = fake_run  # type: ignore[assignment]
-        try:
+        with mock.patch.object(subprocess, "run", fake_run):
             values = _run(TIMER, ("LoadState",))
-        finally:
-            module.subprocess.run = original  # type: ignore[assignment]
 
         self.assertEqual(values, {"LoadState": "loaded"})
         self.assertEqual(
@@ -194,17 +194,11 @@ class CommandShapeTests(unittest.TestCase):
         self.assertIn("timeout", captured["kwargs"])
 
     def test_a_systemctl_that_cannot_be_run_is_an_empty_reading(self) -> None:
-        def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        def fake_run(command: list[str], **kwargs: Any) -> Any:
             raise OSError("no such binary")
 
-        import haproxy_mgmt.backup_schedule as module
-
-        original = module.subprocess.run
-        module.subprocess.run = fake_run  # type: ignore[assignment]
-        try:
+        with mock.patch.object(subprocess, "run", fake_run):
             values = _run(TIMER, ("LoadState",))
-        finally:
-            module.subprocess.run = original  # type: ignore[assignment]
 
         self.assertEqual(values, {})
         # An empty reading is "systemd does not know this unit", which is the

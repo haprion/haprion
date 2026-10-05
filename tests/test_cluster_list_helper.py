@@ -6,7 +6,9 @@ import io
 import json
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -17,7 +19,7 @@ BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "88888888-8888-4888-8888-888888888888"
 
 
-def policy_in(root: Path, mutate=None) -> Path:  # type: ignore[no-untyped-def]
+def policy_in(root: Path, mutate: Callable[[dict[str, Any]], None] | None = None) -> Path:
     clusters = yaml.safe_load((BASE / "examples" / "clusters.yaml").read_text())
     if mutate is not None:
         mutate(clusters)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
@@ -99,7 +100,14 @@ class PublishingToMoreTargets(RetargetFixture):
         # the second run know beta's nodes never took it.
         #
         answers = iter((3, 0))
-        self.deployer = lambda cluster_id: (self.deployed.append(cluster_id), next(answers))[1]  # type: ignore[method-assign]
+
+        def answering(cluster_id: str) -> int:
+            self.deployed.append(cluster_id)
+            return next(answers)
+
+        patcher = mock.patch.object(self, "deployer", answering)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
         first = self.retarget(self.policy_path, "add", "example.com", clusters=("beta",))
         second = self.retarget(self.policy_path, "add", "example.com", clusters=("beta",))

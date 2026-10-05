@@ -95,14 +95,14 @@ class HelperTest(unittest.TestCase):
                 scan=lambda _: TARGET_KEY,
                 fingerprint_of=lambda key: FINGERPRINT if key == TARGET_KEY else "SHA256:x",
                 answering=self.answering,
-                session_for=FakeSession,
+                session_for=FakeSession,  # type: ignore[arg-type]
                 bundle_of=lambda: self.bundle,
             ),
             run=partial(
                 node_restore.run,
                 answering=self.answering,
                 clock=Clock(now=lambda: float(next(ticks)), sleep=lambda _: None),
-                session_for=FakeSession,
+                session_for=FakeSession,  # type: ignore[arg-type]
                 bundle_of=lambda: self.bundle,
                 lock_root=self.lock_root,
             ),

@@ -165,14 +165,14 @@ class PublishFixture(unittest.TestCase):
             ).encode()
         )
 
-    def run_publish(  # type: ignore[no-untyped-def]
+    def run_publish(
         self,
         policy_path: Path,
         stream: io.BytesIO,
         *,
         valid: bool = True,
         diagnostics: str = "Configuration file is valid\n",
-    ):
+    ) -> tuple[int, str, str]:
         seen: list[Path] = []
 
         def validate(candidate_root: Path, request_id: str) -> ValidationResult:

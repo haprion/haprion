@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.check_policy import effective_check, effective_checks
-from haproxy_mgmt.proxy_model import load_proxy
+from haproxy_mgmt.check_policy import EffectiveCheck, effective_check, effective_checks
+from haproxy_mgmt.proxy_model import Proxy, load_proxy
 
 DOCUMENT = """schema: 1
 name: shop
@@ -44,7 +44,7 @@ def proxy(
     health: str = "",
     pool: str = "",
     host: str = "198.51.100.10",
-):
+) -> Proxy:
     #
     # An http check needs a path and the other kinds refuse one, so the fixture
     # supplies it where it belongs rather than every case repeating it.
@@ -54,8 +54,10 @@ def proxy(
     return load_proxy("shop", document.encode())
 
 
-def check(**fields: object):
-    built = proxy(**fields)  # type: ignore[arg-type]
+def check(
+    *, type: str = "http", health: str = "", pool: str = "", host: str = "198.51.100.10"
+) -> EffectiveCheck:
+    built = proxy(type=type, health=health, pool=pool, host=host)
     return effective_check(built.backends["web"], built.backends["web"].servers[0])
 
 

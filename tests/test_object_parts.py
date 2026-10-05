@@ -14,6 +14,7 @@ frontend file.
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from haproxy_mgmt.config import Vip
 from haproxy_mgmt.generate import generate
@@ -79,9 +80,9 @@ backends:
 """
 
 
-def parts(documents, **overrides):
+def parts(documents: list[tuple[str, bytes]], **overrides: object) -> dict[str, dict[str, str]]:
     proxies = [load_proxy(name, document) for name, document in documents]
-    arguments = {
+    arguments: dict[str, Any] = {
         "vips": dict(DEFAULT_VIPS),
         "default_vip": "main",
         "certificates": CERTIFICATES,

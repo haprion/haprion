@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import cluster_settings as command
@@ -58,7 +59,7 @@ class SettingsPublishFixture(NetworkPublishFixture):
             ).encode()
         )
 
-    def publish_settings(self, policy_path: Path, request: io.BytesIO):  # type: ignore[no-untyped-def]
+    def publish_settings(self, policy_path: Path, request: io.BytesIO) -> tuple[int, Any, str]:
         out, err = io.StringIO(), io.StringIO()
         self.recorder = Recorder()
         code = cluster_settings_publish.main(
@@ -82,7 +83,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
     def test_a_publish_is_a_version_stored_canonically_and_generated(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
-            self.assertEqual(self.run_publish(policy, self.request())[0], 0)
+            self.assertEqual(self.publish_network(policy, self.request())[0], 0)
 
             code, document, err = self.publish_settings(policy, self.settings_request())
 
@@ -112,7 +113,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
 
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
-            self.assertEqual(self.run_publish(policy, self.request())[0], 0)
+            self.assertEqual(self.publish_network(policy, self.request())[0], 0)
             sent = self.settings_request().getvalue()
             self.publish_settings(policy, io.BytesIO(sent))
             head = git(self.repo, "rev-parse", "HEAD")
@@ -142,7 +143,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
     def test_a_target_named_rather_than_addressed_is_refused_before_a_version(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
-            self.run_publish(policy, self.request())
+            self.publish_network(policy, self.request())
             before = git(self.repo, "rev-parse", "HEAD")
 
             code, document, _err = self.publish_settings(
@@ -157,10 +158,10 @@ class SettingsPublicationTests(SettingsPublishFixture):
     def test_a_later_network_publish_keeps_the_settings(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
-            self.run_publish(policy, self.request())
+            self.publish_network(policy, self.request())
             self.publish_settings(policy, self.settings_request())
 
-            code, _document, _err = self.run_publish(
+            code, _document, _err = self.publish_network(
                 policy, self.request(network=self.request_network_with_a_source())
             )
 
@@ -176,7 +177,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
     def test_the_read_helper_reports_the_settings_and_the_head(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
-            self.run_publish(policy, self.request())
+            self.publish_network(policy, self.request())
             self.publish_settings(policy, self.settings_request())
             out = io.StringIO()
 

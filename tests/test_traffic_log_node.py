@@ -12,6 +12,7 @@ from datetime import date
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -162,7 +163,7 @@ class WafJournalReaderTests(unittest.TestCase):
 
     def call(
         self, request: str, *, exit_code: int = 0, journal: Path | None = None
-    ) -> tuple[int, dict[str, object] | None, list[dict[str, object]]]:
+    ) -> tuple[int, Any, list[dict[str, Any]]]:
         output = io.BytesIO()
         environment = {"STUB_ARGS": str(self.args), "STUB_OUTPUT": str(self.output)}
         environment["STUB_EXIT"] = str(exit_code)

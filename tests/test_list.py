@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest import mock
 
 from haproxy_mgmt.cli import list as list_command
+from haproxy_mgmt.cli.caller import CallerError
 
 #
 # Fixed commit times plus a fixed zone, so the DATE column is a constant the
@@ -149,7 +150,7 @@ class FailureTests(ListFixture):
 
     def test_an_unknown_cluster_stops_before_git_is_reached(self) -> None:
         def missing(cluster: str) -> Path:
-            raise list_command.CallerError(f"unknown cluster '{cluster}'.", exit_code=64)
+            raise CallerError(f"unknown cluster '{cluster}'.", exit_code=64)
 
         out = io.StringIO()
         code = list_command.main(["-c", "gamma"], stream_out=out, config_path=missing)

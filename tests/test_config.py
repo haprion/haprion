@@ -3,15 +3,23 @@ from __future__ import annotations
 import io
 import tempfile
 import unittest
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from haproxy_mgmt.cli.cluster_config import main as cluster_config_main
 from haproxy_mgmt.config import (
+    AbuseProtection,
+    Cluster,
     ConfigError,
+    PathPolicy,
+    Receiver,
+    RegisteredCertificate,
+    RuntimeConfig,
     load_network,
     load_policy,
     load_runtime_config,
@@ -20,9 +28,12 @@ from haproxy_mgmt.config import (
 
 BASE = Path(__file__).resolve().parents[1]
 
+# Changes a parsed YAML document in place before it is written back out.
+Mutate = Callable[[dict[str, Any]], None]
+
 
 class ConfigTests(unittest.TestCase):
-    def test_generic_examples_load(self):
+    def test_generic_examples_load(self) -> None:
         policy = load_policy(BASE / "examples" / "runtime-policy.yaml", require_secure=False)
         policy = replace(policy, cluster_file=BASE / "examples" / "clusters.yaml")
         runtime = load_runtime_config(policy, require_secure=False)
@@ -33,14 +44,14 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cluster.trusted_proxy_cidrs, ("198.51.100.0/24",))
         self.assertFalse(cluster.traffic_logging)
 
-    def test_traffic_logging_is_an_explicit_cluster_boolean(self):
-        def enabled(data):
+    def test_traffic_logging_is_an_explicit_cluster_boolean(self) -> None:
+        def enabled(data: dict[str, Any]) -> None:
             data["clusters"]["alpha"]["traffic_logging"] = True
 
         with self.temporary_runtime(enabled) as runtime:
             self.assertTrue(runtime.cluster("alpha").traffic_logging)
 
-        def invalid(data):
+        def invalid(data: dict[str, Any]) -> None:
             data["clusters"]["alpha"]["traffic_logging"] = "yes"
 
         with (
@@ -49,7 +60,7 @@ class ConfigTests(unittest.TestCase):
         ):
             pass
 
-    def write_config(self, directory: Path, mutate=None):
+    def write_config(self, directory: Path, mutate: Mutate | None = None) -> Path:
         clusters = yaml.safe_load((BASE / "examples" / "clusters.yaml").read_text())
         if mutate is not None:
             mutate(clusters)
@@ -62,28 +73,28 @@ class ConfigTests(unittest.TestCase):
         return policy_file
 
     @contextmanager
-    def temporary_runtime(self, mutate=None):
+    def temporary_runtime(self, mutate: Mutate | None = None) -> Iterator[RuntimeConfig]:
         with tempfile.TemporaryDirectory() as raw:
             policy_file = self.write_config(Path(raw), mutate)
             policy = load_policy(policy_file, require_secure=False)
             yield load_runtime_config(policy, require_secure=False)
 
-    def test_unknown_field_is_rejected(self):
-        def mutate(data):
+    def test_unknown_field_is_rejected(self) -> None:
+        def mutate(data: dict[str, Any]) -> None:
             data["clusters"]["alpha"]["unexpected"] = True
 
         with self.assertRaisesRegex(ConfigError, "unknown field"), self.temporary_runtime(mutate):
             pass
 
-    def test_boolean_schema_version_is_rejected(self):
-        def mutate(data):
+    def test_boolean_schema_version_is_rejected(self) -> None:
+        def mutate(data: dict[str, Any]) -> None:
             data["schema_version"] = True
 
         with self.assertRaisesRegex(ConfigError, "schema_version"), self.temporary_runtime(mutate):
             pass
 
-    def test_path_escape_is_rejected(self):
-        def mutate(data):
+    def test_path_escape_is_rejected(self) -> None:
+        def mutate(data: dict[str, Any]) -> None:
             data["clusters"]["alpha"]["config_path"] = "/var/tmp/outside"
 
         with (
@@ -92,16 +103,16 @@ class ConfigTests(unittest.TestCase):
         ):
             pass
 
-    def test_duplicate_nodes_are_rejected(self):
-        def mutate(data):
+    def test_duplicate_nodes_are_rejected(self) -> None:
+        def mutate(data: dict[str, Any]) -> None:
             data["clusters"]["alpha"]["nodes"][1] = data["clusters"]["alpha"]["nodes"][0]
 
         with self.assertRaisesRegex(ConfigError, "unique names"), self.temporary_runtime(mutate):
             pass
 
-    def test_a_cluster_has_between_two_and_eight_nodes(self):
-        def nodes(count):
-            def mutate(data):
+    def test_a_cluster_has_between_two_and_eight_nodes(self) -> None:
+        def nodes(count: int) -> Mutate:
+            def mutate(data: dict[str, Any]) -> None:
                 data["clusters"]["alpha"]["nodes"] = [
                     {"name": f"node-{index}", "mgmt_host": f"node-{index}.example.com"}
                     for index in range(count)
@@ -120,8 +131,8 @@ class ConfigTests(unittest.TestCase):
             ):
                 pass
 
-    def test_a_third_node_may_not_share_a_host_with_the_first(self):
-        def mutate(data):
+    def test_a_third_node_may_not_share_a_host_with_the_first(self) -> None:
+        def mutate(data: dict[str, Any]) -> None:
             first = data["clusters"]["alpha"]["nodes"][0]
             data["clusters"]["alpha"]["nodes"].append(
                 {"name": "node-c", "mgmt_host": first["mgmt_host"]}
@@ -130,8 +141,8 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "unique names"), self.temporary_runtime(mutate):
             pass
 
-    def test_trust_all_network_is_rejected(self):
-        def mutate(data):
+    def test_trust_all_network_is_rejected(self) -> None:
+        def mutate(data: dict[str, Any]) -> None:
             data["clusters"]["alpha"]["trusted_proxy_cidrs"] = ["192.0.2.0/0"]
 
         with (
@@ -140,7 +151,7 @@ class ConfigTests(unittest.TestCase):
         ):
             pass
 
-    def test_symlinked_policy_is_rejected(self):
+    def test_symlinked_policy_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             real = root / "real.yaml"
@@ -150,7 +161,7 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "non-symlink"):
                 load_policy(link, require_secure=False)
 
-    def test_cluster_lookup_and_cli_output(self):
+    def test_cluster_lookup_and_cli_output(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.write_config(Path(raw))
             policy = load_policy(policy_path, require_secure=False)
@@ -293,7 +304,7 @@ def _cluster(
     sources: object = _UNSET,
     unknown_host: object = _UNSET,
     abuse_protection: object = _UNSET,
-):
+) -> Cluster:
     """One cluster from the shipped example, with its address table replaced.
 
     Defaults to removing the section entirely, which is the deployment that
@@ -437,7 +448,9 @@ class NamedNetworksAndTheUnknownHostAnswer(unittest.TestCase):
         self.assertIn("entire address family", str(raised.exception))
 
     def test_the_unknown_host_answer_is_a_status_or_a_redirect_not_both(self) -> None:
-        self.assertEqual(_cluster().unknown_host.status, 404)
+        unknown_host = _cluster().unknown_host
+        assert unknown_host is not None
+        self.assertEqual(unknown_host.status, 404)
 
         with self.assertRaises(ConfigError) as raised:
             _cluster(unknown_host={"status": 404, "redirect": "https://www.example.com/"})
@@ -473,7 +486,7 @@ class TheNetworkDescriptionInTheRepository(unittest.TestCase):
     """
 
     @contextmanager
-    def repository(self, description: object):
+    def repository(self, description: object) -> Iterator[Path]:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             (root / "managed").mkdir()
@@ -585,7 +598,7 @@ class AVipMayNameATlsPolicy(unittest.TestCase):
 class TheBrakeOnAbusiveTraffic(unittest.TestCase):
     """A brake and not a ban list, because a reload empties the counters."""
 
-    def protection(self, section: object):
+    def protection(self, section: object) -> AbuseProtection | None:
         return _cluster(abuse_protection=section).abuse_protection
 
     def test_absent_means_nothing_is_generated(self) -> None:
@@ -622,14 +635,15 @@ class TheBrakeOnAbusiveTraffic(unittest.TestCase):
         self.assertIn("duration", str(raised.exception))
 
 
-class TheCertificateRegistry(unittest.TestCase):
-    """B135: one root-owned file says where every certificate comes from and goes.
+class RegistryTestCase(unittest.TestCase):
+    """A runtime loaded from the example registry, changed by the test first."""
 
-    Declared in the runtime policy, and once declared it replaces the
-    per-cluster allowlist rather than sitting beside it.
-    """
-
-    def setup(self, root: Path, mutate_registry=None, mutate_clusters=None) -> Path:
+    def setup(
+        self,
+        root: Path,
+        mutate_registry: Mutate | None = None,
+        mutate_clusters: Mutate | None = None,
+    ) -> Path:
         registry = yaml.safe_load((BASE / "examples" / "certificates.yaml").read_text())
         if mutate_registry is not None:
             mutate_registry(registry)
@@ -650,11 +664,21 @@ class TheCertificateRegistry(unittest.TestCase):
         policy_file.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
         return policy_file
 
-    def load(self, mutate_registry=None, mutate_clusters=None):
+    def load(
+        self, mutate_registry: Mutate | None = None, mutate_clusters: Mutate | None = None
+    ) -> RuntimeConfig:
         with tempfile.TemporaryDirectory() as raw:
             policy_file = self.setup(Path(raw), mutate_registry, mutate_clusters)
             policy = load_policy(policy_file, require_secure=False)
             return load_runtime_config(policy, require_secure=False)
+
+
+class TheCertificateRegistry(RegistryTestCase):
+    """B135: one root-owned file says where every certificate comes from and goes.
+
+    Declared in the runtime policy, and once declared it replaces the
+    per-cluster allowlist rather than sitting beside it.
+    """
 
     def test_the_example_registry_loads_and_derives_the_cluster_list(self) -> None:
         runtime = self.load()
@@ -676,14 +700,14 @@ class TheCertificateRegistry(unittest.TestCase):
         )
 
     def test_an_acme_source_may_name_the_dns_profile_that_renews_it(self) -> None:
-        def add_profile(data):
+        def add_profile(data: dict[str, Any]) -> None:
             data["certificates"]["example.net"]["source"]["dns_profile"] = "cf-main"
 
         registry = self.load(mutate_registry=add_profile).registry
         assert registry is not None
         self.assertEqual(registry.certificates["example.net"].source.dns_profile, "cf-main")
 
-        def put_profile_on_import(data):
+        def put_profile_on_import(data: dict[str, Any]) -> None:
             data["certificates"]["lb-01.example.net"]["source"]["dns_profile"] = "cf-main"
 
         with self.assertRaisesRegex(ConfigError, "belongs to an acme source only"):
@@ -720,7 +744,7 @@ class TheCertificateRegistry(unittest.TestCase):
                 load_policy(policy_file, require_secure=False)
 
     def test_an_import_source_may_name_the_ndes_profile_that_enrolled_it(self) -> None:
-        def add_profile(data):
+        def add_profile(data: dict[str, Any]) -> None:
             data["certificates"]["lb-01.example.net"]["source"]["ndes_profile"] = "certserver1"
 
         registry = self.load(mutate_registry=add_profile).registry
@@ -728,13 +752,13 @@ class TheCertificateRegistry(unittest.TestCase):
         self.assertEqual(registry.certificates["lb-01.example.net"].source.ndes_profile, "certserver1")
         self.assertIsNone(registry.certificates["example.net"].source.ndes_profile)
 
-        def put_profile_on_acme(data):
+        def put_profile_on_acme(data: dict[str, Any]) -> None:
             data["certificates"]["example.net"]["source"]["ndes_profile"] = "certserver1"
 
         with self.assertRaisesRegex(ConfigError, "belongs to an import source only"):
             self.load(mutate_registry=put_profile_on_acme)
 
-        def bad_id(data):
+        def bad_id(data: dict[str, Any]) -> None:
             data["certificates"]["lb-01.example.net"]["source"]["ndes_profile"] = "Not Valid"
 
         with self.assertRaisesRegex(ConfigError, "not a profile ID"):
@@ -785,14 +809,14 @@ class TheCertificateRegistry(unittest.TestCase):
     def test_the_allowlist_in_clusters_yaml_is_refused_once_the_registry_exists(self) -> None:
         """One answer, not two that can drift apart."""
 
-        def keep_the_list(data):
+        def keep_the_list(data: dict[str, Any]) -> None:
             data["clusters"]["alpha"]["certificate_ids"] = ["example.com"]
 
         with self.assertRaisesRegex(ConfigError, "has moved to the certificate registry"):
             self.load(mutate_clusters=keep_the_list)
 
     def test_a_cluster_no_certificate_names_is_refused(self) -> None:
-        def nobody_names_alpha(data):
+        def nobody_names_alpha(data: dict[str, Any]) -> None:
             for entry in data["certificates"].values():
                 entry.pop("clusters", None)
 
@@ -800,41 +824,41 @@ class TheCertificateRegistry(unittest.TestCase):
             self.load(mutate_registry=nobody_names_alpha)
 
     def test_the_default_certificate_must_still_be_one_the_cluster_carries(self) -> None:
-        def only_net(data):
+        def only_net(data: dict[str, Any]) -> None:
             data["certificates"]["example.com"]["clusters"] = []
 
         with self.assertRaisesRegex(ConfigError, "default_certificate is not allowlisted"):
             self.load(mutate_registry=only_net)
 
     def test_a_certificate_naming_an_unknown_cluster_is_refused(self) -> None:
-        def typo(data):
+        def typo(data: dict[str, Any]) -> None:
             data["certificates"]["example.net"]["clusters"] = ["alpha", "alhpa"]
 
         with self.assertRaisesRegex(ConfigError, "names unknown cluster\\(s\\): alhpa"):
             self.load(mutate_registry=typo)
 
     def test_a_certificate_naming_an_unregistered_receiver_is_refused(self) -> None:
-        def typo(data):
+        def typo(data: dict[str, Any]) -> None:
             data["certificates"]["lb-01.example.net"]["receivers"] = ["lb-02.example.net"]
 
         with self.assertRaisesRegex(ConfigError, "unregistered receiver"):
             self.load(mutate_registry=typo)
 
     def test_a_lineage_on_an_imported_certificate_is_refused(self) -> None:
-        def contradiction(data):
+        def contradiction(data: dict[str, Any]) -> None:
             data["certificates"]["lb-01.example.net"]["source"]["lineage"] = "x"
 
         with self.assertRaisesRegex(ConfigError, "belongs to an acme source only"):
             self.load(mutate_registry=contradiction)
 
     def test_a_receiver_path_must_be_absolute_and_its_owner_an_account(self) -> None:
-        def relative(data):
+        def relative(data: dict[str, Any]) -> None:
             data["receivers"]["lb-01.example.net"]["path"] = "receivers/lb-01"
 
         with self.assertRaisesRegex(ConfigError, "must be absolute"):
             self.load(mutate_registry=relative)
 
-        def bad_owner(data):
+        def bad_owner(data: dict[str, Any]) -> None:
             data["receivers"]["lb-01.example.net"]["owner"] = "Not An Account"
 
         with self.assertRaisesRegex(ConfigError, "not a valid account name"):
@@ -851,7 +875,7 @@ class TheCertificateRegistry(unittest.TestCase):
                 self.load(mutate_registry=where)
 
     def test_the_interface_certificate_is_read_and_holds_no_target(self) -> None:
-        def mark(data):
+        def mark(data: dict[str, Any]) -> None:
             data["certificates"]["ui.example.net"] = {
                 "source": {"kind": "import"},
                 "interface": True,
@@ -862,7 +886,7 @@ class TheCertificateRegistry(unittest.TestCase):
         self.assertTrue(registry.certificates["ui.example.net"].interface)
         self.assertFalse(registry.certificates["example.net"].interface)
 
-        def with_cluster(data):
+        def with_cluster(data: dict[str, Any]) -> None:
             data["certificates"]["ui.example.net"] = {
                 "source": {"kind": "import"},
                 "interface": True,
@@ -872,14 +896,14 @@ class TheCertificateRegistry(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "cannot name clusters or receivers"):
             self.load(mutate_registry=with_cluster)
 
-        def with_receiver(data):
+        def with_receiver(data: dict[str, Any]) -> None:
             data["certificates"]["lb-01.example.net"]["interface"] = True
 
         with self.assertRaisesRegex(ConfigError, "cannot name clusters or receivers"):
             self.load(mutate_registry=with_receiver)
 
     def test_only_one_certificate_is_the_interface_s(self) -> None:
-        def two(data):
+        def two(data: dict[str, Any]) -> None:
             for name in ("ui-a.example.net", "ui-b.example.net"):
                 data["certificates"][name] = {"source": {"kind": "import"}, "interface": True}
 
@@ -887,7 +911,7 @@ class TheCertificateRegistry(unittest.TestCase):
             self.load(mutate_registry=two)
 
     def test_the_interface_flag_is_a_boolean(self) -> None:
-        def text(data):
+        def text(data: dict[str, Any]) -> None:
             data["certificates"]["ui.example.net"] = {
                 "source": {"kind": "import"},
                 "interface": "yes",
@@ -905,7 +929,7 @@ class TheCertificateRegistry(unittest.TestCase):
         self.assertEqual(runtime.cluster("alpha").certificate_ids, ("example.com", "example.net"))
 
 
-class AReceiverSaysHowItFetches(unittest.TestCase):
+class AReceiverSaysHowItFetches(RegistryTestCase):
     """C7 step 1: transport, layout and format, with defaults that keep today's file.
 
     The three receivers registered before C7 state neither transport nor
@@ -915,14 +939,13 @@ class AReceiverSaysHowItFetches(unittest.TestCase):
     example unchanged; the rest hold the new fields to their own rules.
     """
 
-    load = TheCertificateRegistry.load
-    setup = TheCertificateRegistry.setup
-
-    def receiver(self, **fields):
-        def mutate(data):
+    def receiver(self, **fields: object) -> Receiver:
+        def mutate(data: dict[str, Any]) -> None:
             data["receivers"]["lb-01.example.net"].update(fields)
 
-        return self.load(mutate_registry=mutate).registry.receivers["lb-01.example.net"]
+        registry = self.load(mutate_registry=mutate).registry
+        assert registry is not None
+        return registry.receivers["lb-01.example.net"]
 
     def test_an_entry_without_the_new_fields_is_rsync_and_flat(self) -> None:
         registry = self.load().registry
@@ -965,17 +988,16 @@ class AReceiverSaysHowItFetches(unittest.TestCase):
             self.receiver(transport="https", allow=["192.0.2.10", "192.0.2.10"])
 
 
-class ACertificateMaySayWhichFormAReceiverGets(unittest.TestCase):
+class ACertificateMaySayWhichFormAReceiverGets(RegistryTestCase):
     """B159: `{id, format}` beside the bare ID, which keeps meaning `pem`."""
 
-    load = TheCertificateRegistry.load
-    setup = TheCertificateRegistry.setup
-
-    def certificate(self, receivers):
-        def mutate(data):
+    def certificate(self, receivers: object) -> RegisteredCertificate:
+        def mutate(data: dict[str, Any]) -> None:
             data["certificates"]["lb-01.example.net"]["receivers"] = receivers
 
-        return self.load(mutate_registry=mutate).registry.certificates["lb-01.example.net"]
+        registry = self.load(mutate_registry=mutate).registry
+        assert registry is not None
+        return registry.certificates["lb-01.example.net"]
 
     def test_a_mapping_element_names_the_format(self) -> None:
         entry = self.certificate([{"id": "lb-01.example.net", "format": "pkcs12"}])
@@ -1020,7 +1042,7 @@ class AReceiverIdNamesAHost(unittest.TestCase):
 class TheReceiverRoot(unittest.TestCase):
     """Where `haproxy-cert-receiver` will create directories (C7, §9 choice 2)."""
 
-    def policy(self, value=None):
+    def policy(self, value: object = None) -> PathPolicy:
         with tempfile.TemporaryDirectory() as raw:
             data = yaml.safe_load((BASE / "examples" / "runtime-policy.yaml").read_text())
             if value is not None:

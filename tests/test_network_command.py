@@ -17,11 +17,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
+from unittest import mock
 
 import yaml
 
 from haproxy_mgmt.cli import network, network_helper
-from haproxy_mgmt.config import ConfigError, Vip
+from haproxy_mgmt.config import ConfigError, Network, Vip
 from haproxy_mgmt.network_inventory import network_result
 from tests.contract_schema import assert_contract
 
@@ -40,8 +41,8 @@ class FakeCluster:
         self.sources: dict[str, str] = {}
         self.networks: dict[str, tuple[str, ...]] = {}
 
-    def network(self):
-        from haproxy_mgmt.config import Network, load_network
+    def network(self) -> Network:
+        from haproxy_mgmt.config import load_network
 
         found = load_network(self.config_path, vip=self.vip)
         if found is not None:
@@ -157,7 +158,7 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
 
 
 class TheHelperAnswersInTheFrozenEnvelope(unittest.TestCase):
-    def _run(self, *, cluster: str = "alpha", description: object = None):
+    def _run(self, *, cluster: str = "alpha", description: object = None) -> tuple[int, str, str]:
         request = {
             "schema_version": 1,
             "operation": "network",
@@ -183,11 +184,10 @@ class TheHelperAnswersInTheFrozenEnvelope(unittest.TestCase):
                         raise ConfigError(f"unknown cluster '{cluster_id}'", exit_code=64)
                     return FakeCluster(root)
 
-            original_policy = network_helper.load_policy
-            original_config = network_helper.load_runtime_config
-            network_helper.load_policy = lambda *a, **k: object()  # type: ignore[assignment]
-            network_helper.load_runtime_config = lambda *a, **k: Config()  # type: ignore[assignment]
-            try:
+            with (
+                mock.patch.object(network_helper, "load_policy", lambda *a, **k: object()),
+                mock.patch.object(network_helper, "load_runtime_config", lambda *a, **k: Config()),
+            ):
                 code = network_helper.main(
                     [],
                     input_stream=io.BytesIO(json.dumps(request).encode("utf-8")),
@@ -195,9 +195,6 @@ class TheHelperAnswersInTheFrozenEnvelope(unittest.TestCase):
                     error_stream=err,
                     require_root=False,
                 )
-            finally:
-                network_helper.load_policy = original_policy  # type: ignore[assignment]
-                network_helper.load_runtime_config = original_config  # type: ignore[assignment]
         return code, out.getvalue(), err.getvalue()
 
     def test_a_description_from_the_helper_matches_the_frozen_schema(self) -> None:
@@ -273,7 +270,7 @@ class TheCommandRendersWhatTheHelperSaid(unittest.TestCase):
             "error": None,
         }
 
-    def _run(self, argv: list[str], document: object, *, code: int = 0):
+    def _run(self, argv: list[str], document: object, *, code: int = 0) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         completed = CompletedProcess(
             args=[], returncode=code, stdout=json.dumps(document), stderr=""
@@ -340,16 +337,19 @@ class TheCommandRendersWhatTheHelperSaid(unittest.TestCase):
     def test_the_request_the_command_builds_is_the_one_the_helper_expects(self) -> None:
         captured: dict[str, object] = {}
 
-        def fake_run(command, *, input, capture_output, text, check):  # noqa: A002
+        def fake_run(
+            command: list[str],
+            *,
+            input: str,  # noqa: A002
+            capture_output: bool,
+            text: bool,
+            check: bool,
+        ) -> CompletedProcess[str]:
             captured.update(json.loads(input))
             return CompletedProcess(args=command, returncode=0, stdout="{}", stderr="")
 
-        original = network.subprocess.run
-        network.subprocess.run = fake_run  # type: ignore[assignment]
-        try:
+        with mock.patch.object(subprocess, "run", fake_run):
             network.run_network_helper("alpha", REQUEST_ID)
-        finally:
-            network.subprocess.run = original  # type: ignore[assignment]
 
         self.assertEqual(captured["operation"], "network")
         self.assertEqual(captured["cluster"], "alpha")

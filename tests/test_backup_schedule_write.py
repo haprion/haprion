@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
@@ -10,22 +11,31 @@ from haproxy_mgmt import backup_retention, backup_schedule_write
 from haproxy_mgmt.backup_schedule import Schedule
 
 
+def recording(commands: list[tuple[str, ...]]) -> Callable[[tuple[str, ...]], int]:
+    """A `run` that keeps each command and reports success."""
+
+    def run(command: tuple[str, ...]) -> int:
+        commands.append(command)
+        return 0
+
+    return run
+
+
 class BackupScheduleWriteTests(unittest.TestCase):
     def test_a_daily_schedule_is_written_enabled_and_read_back(self) -> None:
         previous_umask = os.umask(0o077)  # as the socket helper runs
         self.addCleanup(os.umask, previous_umask)
         commands: list[tuple[str, ...]] = []
-        readings = iter(
-            (
-                {"known": True, "enabled": False, "active": False, "calendar": None},
-                {
-                    "known": True,
-                    "enabled": True,
-                    "active": True,
-                    "calendar": "*-*-* 04:30:00",
-                },
-            )
-        )
+        states: list[dict[str, object]] = [
+            {"known": True, "enabled": False, "active": False, "calendar": None},
+            {
+                "known": True,
+                "enabled": True,
+                "active": True,
+                "calendar": "*-*-* 04:30:00",
+            },
+        ]
+        readings = iter(states)
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             with (
@@ -38,7 +48,7 @@ class BackupScheduleWriteTests(unittest.TestCase):
                     True,
                     unit_root=root,
                     retention_root=root / "retention",
-                    run=lambda command: commands.append(command) or 0,
+                    run=recording(commands),
                     read=lambda unit: next(readings),
                 )
             dropin = root / "haproxy-state-backup@alpha.timer.d"
@@ -88,7 +98,7 @@ class BackupScheduleWriteTests(unittest.TestCase):
                     False,
                     unit_root=root,
                     retention_root=retention_root,
-                    run=lambda command: commands.append(command) or 0,
+                    run=recording(commands),
                     read=lambda unit: before,
                 )
 
@@ -111,12 +121,11 @@ class BackupScheduleWriteTests(unittest.TestCase):
                 self.assertIn(expected, content)
 
     def _apply(self, requested: Schedule, observed: str) -> str:
-        readings = iter(
-            (
-                {"known": True, "enabled": False, "active": False, "calendar": None},
-                {"known": True, "enabled": True, "active": True, "calendar": observed},
-            )
-        )
+        states: list[dict[str, object]] = [
+            {"known": True, "enabled": False, "active": False, "calendar": None},
+            {"known": True, "enabled": True, "active": True, "calendar": observed},
+        ]
+        readings = iter(states)
         with (
             tempfile.TemporaryDirectory() as raw,
             mock.patch.object(backup_schedule_write, "_private_directory", return_value=True),

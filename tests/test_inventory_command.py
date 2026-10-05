@@ -5,6 +5,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -67,7 +68,13 @@ class InventoryHelperTests(unittest.TestCase):
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         return policy_path
 
-    def run_helper(self, *, published: bool = True, tree_reader=None, cluster: str = "alpha"):
+    def run_helper(
+        self,
+        *,
+        published: bool = True,
+        tree_reader: Callable[[Path, str], dict[str, bytes]] | None = None,
+        cluster: str = "alpha",
+    ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         read = tree_reader or (lambda _repo, _commit: {"core/haproxy.cfg": b"global\n"})
         code = inventory_helper.main(
@@ -175,7 +182,9 @@ class InventoryCallerTests(unittest.TestCase):
             }
         )
 
-    def run_caller(self, argv: list[str], payload: subprocess.CompletedProcess[str]):
+    def run_caller(
+        self, argv: list[str], payload: subprocess.CompletedProcess[str]
+    ) -> tuple[int, str, str, list[tuple[str, str]]]:
         sent: list[tuple[str, str]] = []
 
         def helper(cluster: str, request_id: str) -> subprocess.CompletedProcess[str]:

@@ -15,7 +15,7 @@ from __future__ import annotations
 import ast
 import re
 import unittest
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -651,7 +651,7 @@ class TheDashboardCountsVisitorsNotScrapes(unittest.TestCase):
         )
 
 
-def _parts(composed: object):  # type: ignore[no-untyped-def]
+def _parts(composed: object) -> Iterator[object]:
     """Every leaf of a composed statement, so a literal can be found without a connection."""
 
     from psycopg import sql

@@ -37,7 +37,7 @@ def node(
     owner: bool | None = False,
     hash_: str | None = BEHIND,
     addresses: bool | None = True,
-):
+) -> NodeObservation:
     """One node as the status read saw it.
 
     `addresses` defaults to True - the node carries the address list its release

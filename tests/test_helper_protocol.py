@@ -5,10 +5,14 @@ import json
 import os
 import time
 import unittest
+from collections.abc import Mapping
+from typing import Any
 
 from haproxy_mgmt import helper_protocol
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
+    HelperRequest,
+    JsonValue,
     read_helper_request,
     require_no_arguments,
 )
@@ -29,22 +33,22 @@ def request_bytes(**changes: object) -> bytes:
 
 
 class HelperProtocolTests(unittest.TestCase):
-    def read(self, raw: bytes, **kwargs: object):
+    def read(self, raw: bytes, **kwargs: Any) -> HelperRequest:
         return read_helper_request(io.BytesIO(raw), expected_operation="status", **kwargs)
 
-    def test_valid_exact_request(self):
+    def test_valid_exact_request(self) -> None:
         result = self.read(request_bytes())
         self.assertEqual(result.operation, "status")
         self.assertEqual(result.cluster, "alpha")
         self.assertEqual(result.request_id, REQUEST_ID)
         self.assertEqual(result.parameters, {})
 
-    def test_no_argument_boundary(self):
+    def test_no_argument_boundary(self) -> None:
         require_no_arguments([])
         with self.assertRaisesRegex(HelperProtocolError, "no command-line arguments"):
             require_no_arguments(["--cluster", "alpha"])
 
-    def test_empty_malformed_trailing_and_multiple_documents_are_rejected(self):
+    def test_empty_malformed_trailing_and_multiple_documents_are_rejected(self) -> None:
         invalid_documents = (
             b"",
             b"not JSON",
@@ -55,13 +59,13 @@ class HelperProtocolTests(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(HelperProtocolError):
                 self.read(raw)
 
-    def test_oversized_and_invalid_utf8_are_rejected(self):
+    def test_oversized_and_invalid_utf8_are_rejected(self) -> None:
         with self.assertRaisesRegex(HelperProtocolError, "size limit"):
             self.read(b"{}" * 5, max_bytes=8)
         with self.assertRaisesRegex(HelperProtocolError, "UTF-8"):
             self.read(b"\xff")
 
-    def test_duplicate_and_unknown_fields_are_rejected(self):
+    def test_duplicate_and_unknown_fields_are_rejected(self) -> None:
         duplicate = (
             b'{"schema_version":1,"operation":"status","operation":"status",'
             b'"cluster":"alpha","request_id":"' + REQUEST_ID.encode() + b'","parameters":{}}'
@@ -71,12 +75,12 @@ class HelperProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(HelperProtocolError, "unknown field"):
             self.read(request_bytes(extra=True))
 
-    def test_non_finite_numbers_are_rejected(self):
+    def test_non_finite_numbers_are_rejected(self) -> None:
         raw = request_bytes().replace(b'"parameters": {}', b'"parameters": {"value": NaN}')
         with self.assertRaisesRegex(HelperProtocolError, "non-finite"):
             self.read(raw, allowed_parameter_keys=frozenset({"value"}))
 
-    def test_wrong_schema_operation_cluster_and_request_id_are_rejected(self):
+    def test_wrong_schema_operation_cluster_and_request_id_are_rejected(self) -> None:
         invalid = (
             (request_bytes(schema_version=True), "schema_version"),
             (request_bytes(operation="deploy"), "operation"),
@@ -90,13 +94,13 @@ class HelperProtocolTests(unittest.TestCase):
             ):
                 self.read(raw)
 
-    def test_parameters_are_exact_and_support_operation_validation(self):
+    def test_parameters_are_exact_and_support_operation_validation(self) -> None:
         with self.assertRaisesRegex(HelperProtocolError, "unknown field"):
             self.read(request_bytes(parameters={"path": "/tmp/candidate"}))
 
         seen: list[object] = []
 
-        def validate(parameters):
+        def validate(parameters: Mapping[str, JsonValue]) -> None:
             seen.append(parameters["target"])
 
         result = self.read(
@@ -125,21 +129,21 @@ class RequestFraming(unittest.TestCase):
     out before the interface rather than in lockstep.
     """
 
-    def read(self, raw: bytes, **kwargs: object):
+    def read(self, raw: bytes, **kwargs: Any) -> HelperRequest:
         return read_helper_request(io.BytesIO(raw), expected_operation="status", **kwargs)
 
-    def test_a_line_ended_request_is_accepted(self):
+    def test_a_line_ended_request_is_accepted(self) -> None:
         self.assertEqual(self.read(request_bytes() + b"\n").cluster, "alpha")
 
-    def test_an_eof_ended_request_is_still_accepted(self):
+    def test_an_eof_ended_request_is_still_accepted(self) -> None:
         self.assertEqual(self.read(request_bytes()).cluster, "alpha")
 
-    def test_what_follows_the_line_is_left_on_the_stream(self):
+    def test_what_follows_the_line_is_left_on_the_stream(self) -> None:
         stream = io.BytesIO(request_bytes(lifeline=True) + b"\nthe lifeline")
         read_helper_request(stream, expected_operation="status", lifeline=True)
         self.assertEqual(stream.read(), b"the lifeline")
 
-    def test_a_second_line_is_not_read_as_part_of_the_request(self):
+    def test_a_second_line_is_not_read_as_part_of_the_request(self) -> None:
         stream = io.BytesIO(
             request_bytes(lifeline=True) + b"\n" + request_bytes(lifeline=True) + b"\n"
         )
@@ -147,7 +151,7 @@ class RequestFraming(unittest.TestCase):
         self.assertEqual(first.cluster, "alpha")
         self.assertTrue(stream.read().startswith(b"{"))
 
-    def test_the_limit_counts_the_request_and_not_its_line_ending(self):
+    def test_the_limit_counts_the_request_and_not_its_line_ending(self) -> None:
         exact = b'{"a": 1}'
         with self.assertRaisesRegex(HelperProtocolError, "size limit"):
             self.read(exact + b"x\n", max_bytes=len(exact))
@@ -156,11 +160,11 @@ class RequestFraming(unittest.TestCase):
         with self.assertRaisesRegex(HelperProtocolError, "missing field"):
             self.read(exact + b"\n", max_bytes=len(exact))
 
-    def test_without_a_lifeline_anything_after_the_request_is_refused(self):
+    def test_without_a_lifeline_anything_after_the_request_is_refused(self) -> None:
         with self.assertRaisesRegex(HelperProtocolError, "followed by more input"):
             self.read(request_bytes() + b"\n" + request_bytes())
 
-    def test_a_caller_that_says_nothing_gets_the_old_behaviour(self):
+    def test_a_caller_that_says_nothing_gets_the_old_behaviour(self) -> None:
         """The rollout depends on this one.
 
         A helper that watched stdin without being told would read the immediate
@@ -174,15 +178,15 @@ class RequestFraming(unittest.TestCase):
         )
         self.assertFalse(result.lifeline)
 
-    def test_a_helper_without_a_lifeline_refuses_a_request_that_wants_one(self):
+    def test_a_helper_without_a_lifeline_refuses_a_request_that_wants_one(self) -> None:
         with self.assertRaisesRegex(HelperProtocolError, "does not support a lifeline"):
             self.read(request_bytes(lifeline=True))
 
-    def test_the_lifeline_field_must_be_a_boolean(self):
+    def test_the_lifeline_field_must_be_a_boolean(self) -> None:
         with self.assertRaisesRegex(HelperProtocolError, "must be true or false"):
             self.read(request_bytes(lifeline="yes"))
 
-    def test_an_empty_line_is_an_empty_request(self):
+    def test_an_empty_line_is_an_empty_request(self) -> None:
         with self.assertRaisesRegex(HelperProtocolError, "empty"):
             self.read(b"\n")
 
@@ -196,35 +200,35 @@ class TheLifeline(unittest.TestCase):
     every operation instead of none.
     """
 
-    def lifeline(self, read_fd: int):
+    def lifeline(self, read_fd: int) -> helper_protocol.Lifeline:
         stream = os.fdopen(read_fd, "rb", buffering=0)
         self.addCleanup(stream.close)
         line = helper_protocol.Lifeline(stream.fileno())
         line.watch()
         return line
 
-    def settle(self, line, *, expected: bool) -> None:
+    def settle(self, line: helper_protocol.Lifeline, *, expected: bool) -> None:
         for _ in range(200):
             if line.released == expected:
                 return
             time.sleep(0.005)
         self.fail(f"the lifeline never became released={expected}")
 
-    def test_a_held_lifeline_is_not_released(self):
+    def test_a_held_lifeline_is_not_released(self) -> None:
         read_fd, write_fd = os.pipe()
         self.addCleanup(os.close, write_fd)
         line = self.lifeline(read_fd)
         time.sleep(0.05)
         self.assertFalse(line.released)
 
-    def test_closing_the_write_end_releases_it(self):
+    def test_closing_the_write_end_releases_it(self) -> None:
         read_fd, write_fd = os.pipe()
         line = self.lifeline(read_fd)
         os.close(write_fd)
         self.settle(line, expected=True)
         self.assertEqual(line.reason, "the caller closed the lifeline")
 
-    def test_input_on_the_lifeline_releases_it_too(self):
+    def test_input_on_the_lifeline_releases_it_too(self) -> None:
         read_fd, write_fd = os.pipe()
         self.addCleanup(os.close, write_fd)
         line = self.lifeline(read_fd)
@@ -232,7 +236,7 @@ class TheLifeline(unittest.TestCase):
         self.settle(line, expected=True)
         self.assertEqual(line.reason, "unexpected input arrived on the lifeline")
 
-    def test_asking_why_before_it_is_released_is_a_mistake(self):
+    def test_asking_why_before_it_is_released_is_a_mistake(self) -> None:
         read_fd, write_fd = os.pipe()
         self.addCleanup(os.close, write_fd)
         line = self.lifeline(read_fd)

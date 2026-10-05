@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -293,13 +294,14 @@ class Deleting(ImportFixture):
         policy = load_policy(self.policy_path, require_secure=False)
         deleted: list[list[str]] = []
 
+        def removing(ids: Sequence[str], *_: Any, **__: Any) -> cert_delete.Report:
+            deleted.append(list(ids))
+            return cert_delete.Report((cert_delete.CertificateOutcome(ids[0], "removed"),))
+
         with mock.patch.object(
             cert_delete,
             "delete",
-            side_effect=lambda ids, *a, **k: (
-                deleted.append(list(ids)),
-                cert_delete.Report((cert_delete.CertificateOutcome(ids[0], "removed"),)),
-            )[1],
+            side_effect=removing,
         ):
             kept = cert_delete.retire_displaced_interface(
                 "old.example", served=False, policy=policy, certbot="/bin/false"
@@ -384,6 +386,11 @@ class TheCommandsAndHelpers(ImportFixture):
         from haproxy_mgmt.cli import cert_import as command
 
         installed: list[str] = []
+
+        def installing(material: Any) -> bool:
+            installed.append(material.certificate_id)
+            return True
+
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(cert_delete, "retire_displaced_interface", return_value=None):
             code = command.main(
@@ -405,7 +412,7 @@ class TheCommandsAndHelpers(ImportFixture):
                 require_secure=False,
                 require_root=False,
                 deployer=lambda cluster: 0,
-                installer=lambda material: (installed.append(material.certificate_id), True)[1],
+                installer=installing,
                 live=self.live,
                 store=self.store,
                 lock_path=self.lock,

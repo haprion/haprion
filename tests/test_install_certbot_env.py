@@ -28,7 +28,7 @@ SPEC.loader.exec_module(installer)
 PYTHON_TAG = f"python{sys.version_info[0]}.{sys.version_info[1]}"
 # The interpreter a real installation names is a base one, never a venv's;
 # a venv built on a venv's python finds no standard library.
-BASE_PYTHON = Path(sys._base_executable).resolve()  # noqa: SLF001 - the one honest source
+BASE_PYTHON = Path(sys._base_executable).resolve()  # type: ignore[attr-defined]  # noqa: SLF001 - the one honest source
 
 #
 # A uv that builds a venv the way uv does - interpreter link, lib64 link,
@@ -104,13 +104,14 @@ class InstallCertbotEnvTests(unittest.TestCase):
 
     def install(self, plugins: str) -> str:
         self.uv.with_suffix(".plugins").write_text(plugins)
-        return installer.install_environment(
+        release_id: str = installer.install_environment(
             project=self.project,
             uv=self.uv,
             target=self.target,
             python=BASE_PYTHON,
             require_root=False,
         )
+        return release_id
 
     def test_builds_a_frozen_release_whose_scripts_run_from_their_final_path(self) -> None:
         release_id = self.install("certbot-dns-alpha certbot-dns-beta")

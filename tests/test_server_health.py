@@ -60,8 +60,13 @@ def node_status(**extra: object) -> dict[str, object]:
 
 
 class WhatTheNodeSaidAboutItsServers(unittest.TestCase):
-    def servers(self, **extra: object):
+    def servers(self, **extra: object) -> tuple[ServerHealth, ...] | None:
         return parse_status(envelope(node_status(**extra))).nodes[0].servers
+
+    def first_server(self, **extra: object) -> ServerHealth:
+        servers = self.servers(**extra)
+        assert servers, "the node reported no servers"
+        return servers[0]
 
     def test_a_node_that_said_nothing_is_not_a_node_without_servers(self) -> None:
         """The distinction the whole field exists for.
@@ -124,7 +129,7 @@ class WhatTheNodeSaidAboutItsServers(unittest.TestCase):
                 "last_change_sec": "41",
             }
         ]
-        member = (self.servers(servers=rows) or ())[0]
+        member = self.first_server(servers=rows)
         self.assertIsNone(member.check_duration_ms)
         self.assertIsNone(member.last_change_sec)
 
@@ -139,7 +144,7 @@ class WhatTheNodeSaidAboutItsServers(unittest.TestCase):
                 "counters": {"stot": 7, "econ": 0, "req_tot": None},
             }
         ]
-        self.assertEqual(((self.servers(servers=rows) or ())[0]).counters, {"stot": 7, "econ": 0})
+        self.assertEqual((self.first_server(servers=rows)).counters, {"stot": 7, "econ": 0})
 
 
 class WhatTheNodeSaidAboutItsListeners(unittest.TestCase):
@@ -150,8 +155,13 @@ class WhatTheNodeSaidAboutItsListeners(unittest.TestCase):
     which is exactly how a site answered 503 with everything UP.
     """
 
-    def frontends(self, **extra: object):
+    def frontends(self, **extra: object) -> tuple[FrontendTraffic, ...] | None:
         return parse_status(envelope(node_status(**extra))).nodes[0].frontends
+
+    def first_frontend(self, **extra: object) -> FrontendTraffic:
+        frontends = self.frontends(**extra)
+        assert frontends, "the node reported no listeners"
+        return frontends[0]
 
     def test_a_node_that_said_nothing_is_not_a_node_without_listeners(self) -> None:
         self.assertIsNone(self.frontends())
@@ -169,7 +179,7 @@ class WhatTheNodeSaidAboutItsListeners(unittest.TestCase):
 
     def test_the_counters_arrive_under_haproxys_own_names(self) -> None:
         rows = [{"frontend": "f", "status": "OPEN", "counters": {"req_tot": 41, "hrsp_5xx": 2}}]
-        listener = (self.frontends(frontends=rows) or ())[0]
+        listener = self.first_frontend(frontends=rows)
         self.assertEqual(listener.counters, {"req_tot": 41, "hrsp_5xx": 2})
 
     def test_a_counter_that_is_not_a_number_is_left_out_rather_than_zeroed(self) -> None:
@@ -187,13 +197,13 @@ class WhatTheNodeSaidAboutItsListeners(unittest.TestCase):
                 "counters": {"req_tot": 0, "econ": None, "hrsp_5xx": "2", "scur": True},
             }
         ]
-        counters = ((self.frontends(frontends=rows) or ())[0]).counters
+        counters = (self.first_frontend(frontends=rows)).counters
         self.assertEqual(counters, {"req_tot": 0})
         self.assertIsNone(counters.get("econ"))
 
     def test_counters_that_are_not_a_mapping_are_no_counters_at_all(self) -> None:
         rows = [{"frontend": "f", "counters": ["req_tot", 41]}]
-        self.assertEqual(((self.frontends(frontends=rows) or ())[0]).counters, {})
+        self.assertEqual((self.first_frontend(frontends=rows)).counters, {})
 
 
 class WhetherAMemberIsTakingTraffic(unittest.TestCase):

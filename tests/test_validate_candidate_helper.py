@@ -56,7 +56,7 @@ class ValidateCandidateHelperTests(unittest.TestCase):
             ).encode()
         )
 
-    def test_valid_result_and_cleanup(self):
+    def test_valid_result_and_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path, run_root = self.runtime(Path(raw))
             seen: list[Path] = []
@@ -86,7 +86,7 @@ class ValidateCandidateHelperTests(unittest.TestCase):
         self.assertEqual(result["request_id"], REQUEST_ID)
         self.assertFalse(seen[0].exists())
 
-    def test_argv_and_invalid_candidate_fail_closed(self):
+    def test_argv_and_invalid_candidate_fail_closed(self) -> None:
         stderr = io.StringIO()
         code = main(
             ["--path", "/tmp/candidate"],

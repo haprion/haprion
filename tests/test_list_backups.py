@@ -15,26 +15,30 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-from haproxy_mgmt import backups
+from haproxy_mgmt import backup_retention, backups
 from haproxy_mgmt.cli import list_backups, list_backups_helper
 from haproxy_mgmt.config import ConfigError, Node
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
 SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haproxy-list-backups.schema.json"
 
+# What the command asked the helper: cluster, limit and node.
+type Asked = tuple[str, int | None, str | None]
 
-def _cluster(names: tuple[str, ...]):
+
+def _cluster(names: tuple[str, ...]) -> Any:
     return type(
         "Cluster", (), {"nodes": tuple(Node(name=n, mgmt_host=f"{n}.example") for n in names)}
     )
 
 
-def _config(clusters: dict):
+def _config(clusters: dict[str, Any]) -> Any:
     return type("Config", (), {"clusters": clusters})
 
 
@@ -150,7 +154,7 @@ class HelperTests(unittest.TestCase):
         *,
         cluster: str = "alpha",
         timer: str | None = None,
-    ) -> tuple[dict, int]:
+    ) -> tuple[dict[str, Any], int]:
         request = {
             "schema_version": 1,
             "operation": "list_backups",
@@ -176,11 +180,10 @@ class HelperTests(unittest.TestCase):
                     raise ConfigError(f"unknown cluster '{cluster_id}'", exit_code=64)
                 return type("Cluster", (), {"nodes": NODES})
 
-        original_policy = list_backups_helper.load_policy
-        original_config = list_backups_helper.load_runtime_config
-        list_backups_helper.load_policy = lambda *a, **k: Policy()  # type: ignore[assignment]
-        list_backups_helper.load_runtime_config = lambda *a, **k: Config()  # type: ignore[assignment]
-        try:
+        with (
+            mock.patch.object(list_backups_helper, "load_policy", lambda *a, **k: Policy()),
+            mock.patch.object(list_backups_helper, "load_runtime_config", lambda *a, **k: Config()),
+        ):
             code = list_backups_helper.main(
                 [],
                 input_stream=io.BytesIO(json.dumps(request).encode("utf-8")),
@@ -188,9 +191,6 @@ class HelperTests(unittest.TestCase):
                 error_stream=err,
                 require_root=False,
             )
-        finally:
-            list_backups_helper.load_policy = original_policy  # type: ignore[assignment]
-            list_backups_helper.load_runtime_config = original_config  # type: ignore[assignment]
         return (json.loads(out.getvalue()) if out.getvalue() else {}), code
 
     def test_the_schedule_carries_the_cluster_s_retention(self) -> None:
@@ -210,7 +210,7 @@ class HelperTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as directory,
             mock.patch.object(list_backups_helper, "schedule_result", return_value=dict(timer)),
-            mock.patch.object(list_backups_helper.backup_retention, "read", return_value=60),
+            mock.patch.object(backup_retention, "read", return_value=60),
         ):
             root = Path(directory)
             for node in NODES:
@@ -340,11 +340,13 @@ class CommandTests(unittest.TestCase):
             "error": None,
         }
 
-    def _run(self, argv: list[str]) -> tuple[str, str, int, list[object]]:
-        seen: list[object] = []
+    def _run(self, argv: list[str]) -> tuple[str, str, int, list[Asked]]:
+        seen: list[Asked] = []
         out, err = io.StringIO(), io.StringIO()
 
-        def run_helper(cluster: str, request_id: str, limit: int | None, node: str | None = None):
+        def run_helper(
+            cluster: str, request_id: str, limit: int | None, node: str | None = None
+        ) -> Any:
             seen.append((cluster, limit, node))
             return type(
                 "Completed",
@@ -357,11 +359,13 @@ class CommandTests(unittest.TestCase):
 
     def _run_with(
         self, document: dict[str, object], argv: list[str]
-    ) -> tuple[str, str, int, list[object]]:
-        seen: list[object] = []
+    ) -> tuple[str, str, int, list[Asked]]:
+        seen: list[Asked] = []
         out, err = io.StringIO(), io.StringIO()
 
-        def run_helper(cluster: str, request_id: str, limit: int | None, node: str | None = None):
+        def run_helper(
+            cluster: str, request_id: str, limit: int | None, node: str | None = None
+        ) -> Any:
             seen.append((cluster, limit, node))
             return type(
                 "Completed",
@@ -481,7 +485,9 @@ class CommandTests(unittest.TestCase):
         #
         out, err = io.StringIO(), io.StringIO()
 
-        def run_helper(cluster: str, request_id: str, limit: int | None, node: str | None = None):
+        def run_helper(
+            cluster: str, request_id: str, limit: int | None, node: str | None = None
+        ) -> Any:
             document = {
                 "schema_version": 1,
                 "ok": False,
@@ -511,7 +517,9 @@ class CommandTests(unittest.TestCase):
         self.assertIn("no backup_root", err.getvalue())
         self.assertNotIn("invalid result", err.getvalue())
 
-    def _with_clusters(self, clusters: dict, argv: list[str]):
+    def _with_clusters(
+        self, clusters: dict[str, Any], argv: list[str]
+    ) -> tuple[str, str, int, list[Asked]]:
         with (
             mock.patch.object(list_backups, "load_policy", lambda *a, **k: object()),
             mock.patch.object(

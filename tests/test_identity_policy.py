@@ -19,7 +19,7 @@ class IdentityPolicyTests(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         return path
 
-    def test_generic_example_and_rendered_membership(self):
+    def test_generic_example_and_rendered_membership(self) -> None:
         policy = load_identity_policy(
             BASE / "examples" / "identity-policy.yaml", require_secure=False
         )
@@ -34,7 +34,7 @@ class IdentityPolicyTests(unittest.TestCase):
         self.assertNotIn("m svc-web svc-mgmt", rendered)
         self.assertNotIn("m svc-poller svc-mgmt", rendered)
 
-    def test_optional_collector_is_distinct_and_gets_no_config_membership(self):
+    def test_optional_collector_is_distinct_and_gets_no_config_membership(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             path = self.write_policy(
                 Path(raw),
@@ -49,7 +49,7 @@ class IdentityPolicyTests(unittest.TestCase):
         self.assertIn('u svc-collector - "HAProxy Manager traffic log collector"', rendered)
         self.assertNotIn("m svc-collector", rendered)
 
-    def test_optional_oidc_account_is_distinct_and_gets_no_config_membership(self):
+    def test_optional_oidc_account_is_distinct_and_gets_no_config_membership(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             path = self.write_policy(
                 Path(raw),
@@ -72,14 +72,14 @@ class IdentityPolicyTests(unittest.TestCase):
         self.assertIn('u svc-oidc - "HAProxy Manager OIDC helper"', rendered)
         self.assertNotIn("m svc-oidc", rendered)
 
-    def test_unknown_role_lookup_is_rejected(self):
+    def test_unknown_role_lookup_is_rejected(self) -> None:
         policy = load_identity_policy(
             BASE / "examples" / "identity-policy.yaml", require_secure=False
         )
         with self.assertRaisesRegex(ConfigError, "unknown application role"):
             policy.account("operator")
 
-    def test_missing_unknown_duplicate_and_reserved_accounts_are_rejected(self):
+    def test_missing_unknown_duplicate_and_reserved_accounts_are_rejected(self) -> None:
         invalid = (
             (
                 "schema_version: 1\naccount_prefix: svc-\nconfig_group: svc-mgmt\nroles:\n"
@@ -127,7 +127,7 @@ class IdentityPolicyTests(unittest.TestCase):
                 ):
                     load_identity_policy(path, require_secure=False)
 
-    def test_cli_renders_and_reports_invalid_policy(self):
+    def test_cli_renders_and_reports_invalid_policy(self) -> None:
         stdout = io.StringIO()
         stderr = io.StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):

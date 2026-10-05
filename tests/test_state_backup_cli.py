@@ -3,10 +3,11 @@ from __future__ import annotations
 import io
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from haproxy_mgmt.cli import state_backup
-from haproxy_mgmt.config import DeployIdentity
+from haproxy_mgmt.config import Cluster, DeployIdentity
 from haproxy_mgmt.state_backup import BackupResult, NodeResult
 
 
@@ -23,12 +24,18 @@ class StateBackupCommandTests(unittest.TestCase):
             clusters = {"alpha": selected_cluster, "beta": object()}
 
             @staticmethod
-            def cluster(cluster_id: str):
+            def cluster(cluster_id: str) -> Any:
                 if cluster_id != "alpha":
                     raise AssertionError("unexpected cluster")
                 return selected_cluster
 
-        def runner(cluster_id, selected, identity, root, retention):
+        def runner(
+            cluster_id: str,
+            selected: Cluster,
+            identity: DeployIdentity | None,
+            root: Path | None,
+            retention: int,
+        ) -> BackupResult:
             self.assertIs(selected, selected_cluster)
             self.assertEqual(identity, Policy.backup_identity)
             self.assertEqual(root, Policy.backup_root)
@@ -66,7 +73,13 @@ class StateBackupCommandTests(unittest.TestCase):
         class Runtime:
             clusters = {"alpha": object(), "beta": object()}
 
-        def runner(cluster_id, cluster, identity, root, retention):
+        def runner(
+            cluster_id: str,
+            cluster: Cluster,
+            identity: DeployIdentity | None,
+            root: Path | None,
+            retention: int,
+        ) -> BackupResult:
             del cluster, identity, root, retention
             seen.append(cluster_id)
             return BackupResult(cluster_id, "stamp", ())
@@ -92,7 +105,7 @@ class StateBackupCommandTests(unittest.TestCase):
             clusters = {"alpha": object()}
 
             @staticmethod
-            def cluster(cluster_id: str):
+            def cluster(cluster_id: str) -> Any:
                 return Runtime.clusters[cluster_id]
 
         result = BackupResult(

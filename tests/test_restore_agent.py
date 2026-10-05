@@ -12,7 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest import mock
 
 from haproxy_mgmt import restore_agent
@@ -164,7 +164,11 @@ class FakeHost(Host):
         return subprocess.CompletedProcess(argv, code, out, errors)
 
 
-def payload(items: list[tuple[str, str, int, int, int, bytes | str]]) -> bytes:
+# One archive member: path, kind, mode, uid, gid and its content.
+type Member = tuple[str, str, int, int, int, bytes | str]
+
+
+def payload(items: list[Member]) -> bytes:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:") as archive:
         for path, kind, mode, uid, gid, data in items:
@@ -188,7 +192,7 @@ def request(header: dict[str, Any], body: bytes = b"") -> io.BytesIO:
     return io.BytesIO(json.dumps(header).encode() + b"\n" + body)
 
 
-APPLY_FILES = [
+APPLY_FILES: list[Member] = [
     ("/etc/apt/sources.list.d", "directory", 0o755, 0, 0, b""),
     ("/etc/apt/sources.list.d/ubuntu.sources", "file", 0o644, 0, 0, "archive\n"),
     ("/etc/apt/sources.list.d/haproxy.sources", "file", 0o644, 0, 0, "haproxy\n"),
@@ -418,7 +422,7 @@ class Apply(AgentTest):
 
     def test_an_archived_owner_is_translated_by_name(self) -> None:
         self.host._append("/etc/passwd", "systemd-timesync:x:990:990::/:/usr/sbin/nologin")
-        owned = ("/var/lib/svc-backup/.ssh/known_hosts", "file", 0o600, 990, 990, "k\n")
+        owned: Member = ("/var/lib/svc-backup/.ssh/known_hosts", "file", 0o600, 990, 990, "k\n")
         result = self.serve(APPLY_HEADER, payload([*APPLY_FILES, owned]))
         self.assertTrue(result["ok"], result)
         # Staged beside its name and renamed onto it; the owner is set on the staged file.
@@ -549,7 +553,7 @@ class Apply(AgentTest):
         self.assertEqual(self.host.commands, [])
 
     def test_nothing_else_may_be_placed_in_the_restore_s_own_directory(self) -> None:
-        stray = (f"/var/lib/haproxy-restore/{RUN}/answers.env", "file", 0o600, 0, 0, "x")
+        stray: Member = (f"/var/lib/haproxy-restore/{RUN}/answers.env", "file", 0o600, 0, 0, "x")
         result = self.serve(APPLY_HEADER, payload([*APPLY_FILES, stray]))
         self.assertFalse(result["ok"])
         self.assertIn("own directory", result["error"])
@@ -567,7 +571,9 @@ class Apply(AgentTest):
 
 
 class Network(AgentTest):
-    NETPLAN = [("/etc/netplan/50-cloud-init.yaml", "file", 0o600, 0, 0, "network: {}\n")]
+    NETPLAN: ClassVar[list[Member]] = [
+        ("/etc/netplan/50-cloud-init.yaml", "file", 0o600, 0, 0, "network: {}\n")
+    ]
 
     def header(self, seconds: int = 180) -> dict[str, Any]:
         return {"op": "network", "run": RUN, "rollback_seconds": seconds}
@@ -607,7 +613,9 @@ class Network(AgentTest):
 
 
 class Finish(AgentTest):
-    KEYS = [("/root/.ssh/authorized_keys", "file", 0o600, 0, 0, "operator key\n")]
+    KEYS: ClassVar[list[Member]] = [
+        ("/root/.ssh/authorized_keys", "file", 0o600, 0, 0, "operator key\n")
+    ]
 
     def header(self, keepalived: str = "mask") -> dict[str, Any]:
         return {

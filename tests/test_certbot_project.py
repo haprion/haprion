@@ -13,6 +13,14 @@ LOCK = ROOT / "certbot" / "uv.lock"
 PACKAGE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
+def requirement_name(requirement: str) -> str:
+    """The distribution name a requirement line starts with."""
+
+    found = PACKAGE_NAME.match(requirement)
+    assert found, f"not a requirement: {requirement!r}"
+    return found.group()
+
+
 def normalized(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
@@ -22,7 +30,7 @@ class CertbotProjectTests(unittest.TestCase):
         project = tomllib.loads(PROJECT.read_text())
         lock = tomllib.loads(LOCK.read_text())
         dependencies = project["project"]["dependencies"]
-        direct = [normalized(PACKAGE_NAME.match(item).group()) for item in dependencies]
+        direct = [normalized(requirement_name(item)) for item in dependencies]
         locked = [normalized(package["name"]) for package in lock["package"]]
 
         self.assertEqual(len(direct), len(set(direct)), "duplicate direct dependency")

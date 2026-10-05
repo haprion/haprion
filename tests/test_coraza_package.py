@@ -97,8 +97,8 @@ class Packages(unittest.TestCase):
     def build_coraza(self, source: Any, output: str) -> Path:
         out = self.root / output
         out.mkdir()
-        return self.tool.build_coraza(
-            self.sources, self.root, out, source=source, built=self.binary
+        return Path(
+            self.tool.build_coraza(self.sources, self.root, out, source=source, built=self.binary)
         )
 
     def test_the_engine_package_holds_the_binary_the_unit_and_the_licence(self) -> None:

@@ -15,13 +15,14 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import yaml
 
 from haproxy_mgmt import cert_registry
 from haproxy_mgmt.cert_registry import RegistryError
-from haproxy_mgmt.config import load_policy, load_runtime_config
+from haproxy_mgmt.config import RuntimeConfig, load_policy, load_runtime_config
 from tests.test_cert_publish import Fixture, issue
 
 #
@@ -43,7 +44,7 @@ class RegistryFixture(Fixture):
         registry.chmod(0o640)
         return policy_path, registry
 
-    def runtime(self, policy_path: Path):  # type: ignore[no-untyped-def]
+    def runtime(self, policy_path: Path) -> RuntimeConfig:
         policy = load_policy(policy_path, require_secure=False)
         return load_runtime_config(policy, require_secure=False)
 
@@ -60,7 +61,8 @@ class RegistryFixture(Fixture):
         )
 
     def entries(self, registry: Path) -> dict[str, dict[str, object]]:
-        return yaml.safe_load(registry.read_text())["certificates"]
+        document: dict[str, Any] = yaml.safe_load(registry.read_text())
+        return dict(document["certificates"])
 
 
 class TheRegistryIsWrittenUnderTheLock(RegistryFixture):

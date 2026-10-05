@@ -13,12 +13,14 @@ import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 from unittest.mock import patch
 
-from haproxy_mgmt import history_reset
+from haproxy_mgmt import git_command, history_reset
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.history_reset import (
     ResetError,
+    ResetResult,
     history_path,
     preview,
     reset_history,
@@ -71,15 +73,15 @@ class ResetFixture(unittest.TestCase):
         git(history, "worktree", "add", "-q", str(draft), "main")
         return draft
 
-    def reset(self, draft: Path, recorder: Recorder, **overrides: object):
-        arguments: dict[str, object] = {
+    def reset(self, draft: Path, recorder: Recorder, **overrides: object) -> ResetResult:
+        arguments: dict[str, Any] = {
             "stamp": "20260901-120000",
             "message": "Baseline after the build phase",
             "group_id": os.getgid(),
             "change_owner": recorder,
         }
         arguments.update(overrides)
-        return reset_history(preview("alpha", draft), **arguments)  # type: ignore[arg-type]
+        return reset_history(preview("alpha", draft), **arguments)
 
 
 class PreviewTests(ResetFixture):
@@ -175,7 +177,7 @@ class FailureTests(ResetFixture):
             draft = self.layout(Path(raw))
             before_head = git(draft, "rev-parse", "HEAD")
             before_versions = git(draft, "rev-list", "--first-parent", "--count", "HEAD")
-            real = history_reset.git
+            real = git_command.git
 
             def fail_on_commit(repo: Path, *args: str, **kwargs: object) -> bytes:
                 if args and args[0] == "commit":

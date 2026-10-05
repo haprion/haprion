@@ -164,7 +164,7 @@ class TheRequestBothCallersBuild(unittest.TestCase):
 
         from haproxy_mgmt.cli import probe
 
-        self.assertIs(probe.build_request, build_request)
+        self.assertIs(vars(probe)["build_request"], build_request)
 
 
 if __name__ == "__main__":

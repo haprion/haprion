@@ -14,7 +14,7 @@ import io
 import unittest
 
 from haproxy_mgmt import deploy_run
-from haproxy_mgmt.cluster_status import NodeStatus, parse_status
+from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
 from haproxy_mgmt.deploy_plan import CertificateRef, CertificateTarget, ReleaseTarget
 from haproxy_mgmt.deploy_run import CertificatePreflight, DeployReport
 from tests.node_harness import OLD_HASH, TARGET_HASH, FakeCluster, FakeNode, pair
@@ -35,7 +35,7 @@ def deploy(
 
     out = io.StringIO()
 
-    def read_status():  # type: ignore[no-untyped-def]
+    def read_status() -> ClusterStatus:
         return parse_status(cluster.read_status())
 
     def trigger(node: NodeStatus) -> int:

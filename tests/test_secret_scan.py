@@ -6,13 +6,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 BASE = Path(__file__).resolve().parents[1]
 SCANNER = BASE / "tools" / "secret_scan.py"
 
 
 class SecretScanTests(unittest.TestCase):
-    def scanner(self):
+    def scanner(self) -> Any:
         """The scanner as a module. It is a script, not an installed package."""
 
         spec = importlib.util.spec_from_file_location("secret_scan", SCANNER)
@@ -21,7 +22,7 @@ class SecretScanTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
-    def execute(self, tree: Path, rules: Path):
+    def execute(self, tree: Path, rules: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(SCANNER), "--worktree", str(tree), "--rules", str(rules)],
             text=True,
@@ -29,7 +30,7 @@ class SecretScanTests(unittest.TestCase):
             check=False,
         )
 
-    def test_safe_tree_passes(self):
+    def test_safe_tree_passes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             tree = root / "tree"
@@ -40,7 +41,7 @@ class SecretScanTests(unittest.TestCase):
             result = self.execute(tree, rules)
             self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_generic_and_private_findings_block_without_echoing_values(self):
+    def test_generic_and_private_findings_block_without_echoing_values(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             tree = root / "tree"
@@ -62,7 +63,7 @@ class SecretScanTests(unittest.TestCase):
             self.assertNotIn(denylist_fixture, result.stderr)
             self.assertNotIn("examplevalue", result.stderr)
 
-    def test_loopback_is_allowed_and_other_real_addresses_are_not(self):
+    def test_loopback_is_allowed_and_other_real_addresses_are_not(self) -> None:
         """The exception is narrow, and the narrowness is the point.
 
         127.0.0.0/8 means "this machine" wherever it is read, so it identifies
@@ -102,7 +103,7 @@ class SecretScanTests(unittest.TestCase):
             with self.subTest(address=refused):
                 self.assertTrue(is_forbidden_ip(refused))
 
-    def test_missing_private_rules_fails_closed(self):
+    def test_missing_private_rules_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             tree = root / "tree"

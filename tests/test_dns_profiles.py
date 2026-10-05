@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from typing import Any
 
 from haproxy_mgmt.dns_profile_keys import generate, seal
 from haproxy_mgmt.dns_profiles import (
@@ -62,7 +63,7 @@ class SealingTests(unittest.TestCase):
 
     def test_every_binding_is_held(self) -> None:
         other_private, _ = generate()
-        cases = [
+        cases: list[tuple[str, dict[str, Any], str]] = [
             ("another key", dict(key=other_private), "not sealed against key"),
             ("another profile", dict(profile_id="cf-other"), "another profile"),
             ("another provider", dict(provider_id="hetzner"), "another provider"),
@@ -70,7 +71,11 @@ class SealingTests(unittest.TestCase):
         for label, override, expected in cases:
             with self.subTest(label=label):
                 key = override.pop("key", self.private_key)
-                arguments = {"profile_id": "cf-main", "provider_id": "cloudflare", "revision": 2}
+                arguments: dict[str, Any] = {
+                    "profile_id": "cf-main",
+                    "provider_id": "cloudflare",
+                    "revision": 2,
+                }
                 arguments.update(override)
                 with self.assertRaisesRegex(ProfileError, expected) as caught:
                     open_profile(key, self.ciphertext, **arguments)

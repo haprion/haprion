@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from haproxy_mgmt import tls_policy
 from haproxy_mgmt.candidate_validation import ValidationResult
@@ -52,7 +53,9 @@ class NetworkPublishFixture(PublishFixture):
             ).encode()
         )
 
-    def run_publish(self, policy_path: Path, request: io.BytesIO, *, valid: bool = True):
+    def publish_network(
+        self, policy_path: Path, request: io.BytesIO, *, valid: bool = True
+    ) -> tuple[int, Any, str]:
         out, err = io.StringIO(), io.StringIO()
         self.recorder = Recorder()
 
@@ -82,7 +85,7 @@ class NetworkPublicationTests(NetworkPublishFixture):
             policy = self.runtime(Path(raw))
             before_core = (self.repo / "core/haproxy.cfg").read_bytes()
 
-            code, document, err = self.run_publish(policy, self.request())
+            code, document, err = self.publish_network(policy, self.request())
 
             self.assertEqual((code, err), (0, ""))
             assert_contract("haproxy-network-publish", json.dumps(document))
@@ -109,7 +112,7 @@ class NetworkPublicationTests(NetworkPublishFixture):
             self.stale_core()
             before = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, _err = self.run_publish(policy, self.request())
+            code, document, _err = self.publish_network(policy, self.request())
 
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "tls_defaults_stale")
@@ -118,12 +121,12 @@ class NetworkPublicationTests(NetworkPublishFixture):
     def test_an_unchanged_retry_is_held_to_the_same_policy(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
-            first, _document, _err = self.run_publish(policy, self.request())
+            first, _document, _err = self.publish_network(policy, self.request())
             self.assertEqual(first, 0)
             self.stale_core()
             releases_before = sorted(self.publish_path.rglob("*"))
 
-            code, document, _err = self.run_publish(policy, self.request())
+            code, document, _err = self.publish_network(policy, self.request())
 
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "tls_defaults_stale")
@@ -135,13 +138,13 @@ class NetworkPublicationTests(NetworkPublishFixture):
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
             sent = self.request().getvalue()
-            self.run_publish(policy, io.BytesIO(sent))
+            self.publish_network(policy, io.BytesIO(sent))
             head = git(self.repo, "rev-parse", "HEAD")
             versions = count_versions(self.repo)
             shutil.rmtree(self.publish_path / "releases" / head)
             (self.publish_path / "current").unlink()
 
-            code, document, err = self.run_publish(policy, io.BytesIO(sent))
+            code, document, err = self.publish_network(policy, io.BytesIO(sent))
 
             self.assertEqual((code, err), (0, ""))
             self.assertFalse(document["result"]["changed"])
@@ -155,7 +158,7 @@ class NetworkPublicationTests(NetworkPublishFixture):
             before = git(self.repo, "rev-parse", "HEAD")
             (self.repo / "core/haproxy.cfg").write_bytes(b"human draft\n")
 
-            code, document, err = self.run_publish(policy, self.request())
+            code, document, err = self.publish_network(policy, self.request())
 
             self.assertEqual(code, 75)
             self.assertEqual(document["outcome"], "blocked")
@@ -171,7 +174,7 @@ class NetworkPublicationTests(NetworkPublishFixture):
             git(self.repo, "add", "manual/reservations.yaml")
             git(self.repo, "commit", "-qm", "Human update")
 
-            code, document, err = self.run_publish(policy, self.request(expected_head=before))
+            code, document, err = self.publish_network(policy, self.request(expected_head=before))
 
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "expected_target_changed")
@@ -183,7 +186,7 @@ class NetworkPublicationTests(NetworkPublishFixture):
             policy = self.runtime(Path(raw))
             before = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, _err = self.run_publish(policy, self.request(), valid=False)
+            code, document, _err = self.publish_network(policy, self.request(), valid=False)
 
             self.assertEqual(code, 65)
             self.assertEqual(document["error"]["code"], "candidate_invalid")

@@ -329,7 +329,7 @@ def _generate(*documents: tuple[str, str]) -> dict[str, str]:
     from haproxy_mgmt.proxy_model import load_proxy
 
     proxies = [load_proxy(name, document.encode()) for name, document in documents]
-    return generate(proxies, **golden.arguments(Path("/nonexistent"))).configuration  # type: ignore[arg-type]
+    return generate(proxies, **golden.arguments(Path("/nonexistent"))).configuration
 
 
 class TheGeneratorWritesTheTextWhereThePlacementSays(unittest.TestCase):

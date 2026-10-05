@@ -7,7 +7,7 @@ from haproxy_mgmt.envelope import Message, envelope
 
 
 class EnvelopeTests(unittest.TestCase):
-    def test_done(self):
+    def test_done(self) -> None:
         result = envelope(
             operation="inventory", outcome="done", cluster="alpha", result={"items": []}
         )
@@ -15,7 +15,7 @@ class EnvelopeTests(unittest.TestCase):
         self.assertIsNone(result["error"])
         uuid.UUID(result["request_id"])
 
-    def test_partial_requires_warning(self):
+    def test_partial_requires_warning(self) -> None:
         with self.assertRaises(ValueError):
             envelope(operation="status", outcome="partial", cluster="alpha", result={})
         result = envelope(
@@ -28,7 +28,7 @@ class EnvelopeTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["warnings"][0]["node"], "node-b")
 
-    def test_failed_requires_error(self):
+    def test_failed_requires_error(self) -> None:
         with self.assertRaises(ValueError):
             envelope(operation="inventory", outcome="failed", cluster="alpha", result=None)
         result = envelope(

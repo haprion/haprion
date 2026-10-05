@@ -46,7 +46,7 @@ from haproxy_mgmt.generate import (
     GeneratorError,
     generate,
 )
-from haproxy_mgmt.proxy_model import load_proxy
+from haproxy_mgmt.proxy_model import Proxy, load_proxy
 from haproxy_mgmt.route_match import order_routes, rewrite, select
 from tests import spawned
 from tests.spawned import wait_for
@@ -377,6 +377,7 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
     haproxy: subprocess.Popen[bytes]
     directory: tempfile.TemporaryDirectory[str]
     port: int
+    proxy: Proxy
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -663,6 +664,12 @@ class TlsIsServedTheWayTheObjectAsksFor(unittest.TestCase):
     look identical in the golden file.
     """
 
+    server: ThreadingHTTPServer
+    http_port: int
+    https_port: int
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
@@ -803,6 +810,11 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
     nothing else. The client address and the scheme exist only in the proxy.
     """
 
+    server: ThreadingHTTPServer
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+    port: int
+
     @classmethod
     def setUpClass(cls) -> None:
         backend = free_port()
@@ -896,6 +908,11 @@ class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
     names is the one HAProxy increments.
     """
 
+    server: ThreadingHTTPServer
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+    port: int
+
     @classmethod
     def setUpClass(cls) -> None:
         backend = free_port()
@@ -960,6 +977,11 @@ class HeaderEditsReachTheTraffic(unittest.TestCase):
     Both were measured on 3.4.4 on this machine, and both decided how the
     generator quotes.
     """
+
+    server: ThreadingHTTPServer
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+    port: int
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -1053,6 +1075,11 @@ class ARawPortIsForwardedAsItArrives(unittest.TestCase):
     `mode tcp` rather than refused - measured on 3.4.4 on this machine - so a
     configuration that reads correctly can behave nothing like it reads.
     """
+
+    server: ThreadingHTTPServer
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+    port: int
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -1267,12 +1294,17 @@ class ReachingAPoolOverTls(unittest.TestCase):
     rejects.
     """
 
+    directory: tempfile.TemporaryDirectory[str]
+    root: Path
+    servers: list[ThreadingHTTPServer]
+    running: list[subprocess.Popen[bytes]]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         cls.root = Path(cls.directory.name)
-        cls.servers: list[ThreadingHTTPServer] = []
-        cls.running: list[subprocess.Popen[bytes]] = []
+        cls.servers = []
+        cls.running = []
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -1405,12 +1437,17 @@ class CheckingATlsPoolOnAnotherPort(unittest.TestCase):
     servers come up.
     """
 
+    directory: tempfile.TemporaryDirectory[str]
+    root: Path
+    servers: list[ThreadingHTTPServer]
+    running: list[subprocess.Popen[bytes]]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         cls.root = Path(cls.directory.name)
-        cls.servers: list[ThreadingHTTPServer] = []
-        cls.running: list[subprocess.Popen[bytes]] = []
+        cls.servers = []
+        cls.running = []
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -1652,6 +1689,12 @@ class AnUpgradedConnectionLivesOnTheTunnelTimeout(unittest.TestCase):
     the generator wrote it - it is the value under test.
     """
 
+    backend: int
+    listener: socket.socket
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+    port: int
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.backend = free_port()
@@ -1868,8 +1911,11 @@ class EveryClassThatStartsHaproxySaysSoFirst(unittest.TestCase):
         unguarded = ast.parse(
             "class Bare:\n    def setUp(self):\n        start_haproxy(1, [], 2)\n"
         )
+        (bare,) = unguarded.body
+        if not isinstance(bare, ast.ClassDef):
+            raise AssertionError("the sample did not parse as a class")
 
-        self.assertTrue(self._starts_haproxy(unguarded.body[0]))
+        self.assertTrue(self._starts_haproxy(bare))
 
 
 @unittest.skipUnless(
@@ -1896,11 +1942,15 @@ class HowOldAPoolMayBe(unittest.TestCase):
     floor rather than a line in a file.
     """
 
+    directory: tempfile.TemporaryDirectory[str]
+    root: Path
+    running: list[subprocess.Popen[bytes]]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         cls.root = Path(cls.directory.name)
-        cls.running: list[subprocess.Popen[bytes]] = []
+        cls.running = []
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -1988,11 +2038,17 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
     file cannot say that.
     """
 
+    directory: tempfile.TemporaryDirectory[str]
+    root: Path
+    running: list[subprocess.Popen[bytes]]
+    port: int
+    backend: ThreadingHTTPServer
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         cls.root = Path(cls.directory.name)
-        cls.running: list[subprocess.Popen[bytes]] = []
+        cls.running = []
         cls.port = free_port()
         backend = free_port()
         cls.backend = echo_server("web", backend)
@@ -2210,6 +2266,12 @@ class AdvancedConfigDoesWhatItsPlacementSays(unittest.TestCase):
     counter (which it can only do if it runs after the generated rules), a pool
     written by hand serves, and a tcp object's frontend line takes effect.
     """
+
+    server: ThreadingHTTPServer
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+    port: int
+    raw: int
 
     @classmethod
     def setUpClass(cls) -> None:

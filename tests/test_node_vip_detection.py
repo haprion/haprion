@@ -18,6 +18,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
 PARSING = re.compile(r"^INTERFACE = re\.compile.*?(?=^def owns_vip\()", re.DOTALL | re.MULTILINE)
@@ -62,9 +63,10 @@ class ParsingTheNodeSConfiguration(unittest.TestCase):
         if addresses is not None:
             (self.root / "addresses.conf").write_text(addresses)
 
-        namespace: dict[str, object] = {"re": re, "Path": Path, "KEEPALIVED_CONFIG": path}
+        namespace: dict[str, Any] = {"re": re, "Path": Path, "KEEPALIVED_CONFIG": path}
         exec(self.source, namespace)  # noqa: S102 - the file under test, read from disk
-        return namespace["parse_keepalived"]()  # type: ignore[operator,no-any-return]
+        parsed: tuple[object, object] = namespace["parse_keepalived"]()
+        return parsed
 
     def test_an_address_written_in_the_block_is_still_read(self) -> None:
         """The form every node used before the list was generated."""

@@ -18,7 +18,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
 from haproxy_mgmt import deploy_run
-from haproxy_mgmt.cluster_status import NodeStatus, parse_status
+from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
 from haproxy_mgmt.deploy_plan import CertificateRef, CertificateTarget
 from haproxy_mgmt.deploy_run import CERT_OPERATION, DeployRun
 from tests.node_harness import FakeCluster, FakeNode
@@ -57,7 +57,7 @@ def cluster(**overrides: object) -> FakeCluster:
 
 
 def cert_deploy(fake: FakeCluster, **options: object) -> DeployRun:
-    def read_status():  # type: ignore[no-untyped-def]
+    def read_status() -> ClusterStatus:
         return parse_status(fake.read_status())
 
     def trigger(node: NodeStatus) -> int:

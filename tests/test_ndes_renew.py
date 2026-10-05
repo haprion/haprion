@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest import mock
 
 from haproxy_mgmt import ndes_renew, ndes_state
 from haproxy_mgmt.cert_import import import_certificate
@@ -12,6 +13,15 @@ from haproxy_mgmt.cert_inventory import registry_result
 from haproxy_mgmt.cli import cert_renew, cert_scep
 from haproxy_mgmt.config import load_policy, load_runtime_config
 from tests.test_cert_scep import ScepFixture
+
+
+def answering(answer: tuple[dict[str, Any], int]) -> ndes_renew.Enroller:
+    """An enroller that gives every candidate the same answer."""
+
+    def enroll(_candidate: ndes_renew.Candidate) -> tuple[dict[str, Any], int]:
+        return answer
+
+    return enroll
 
 
 class RenewFixture(ScepFixture):
@@ -108,7 +118,7 @@ class WhatAnAttemptLeaves(RenewFixture):
         ]
         for answer, (outcome, message) in zip(answers, expected, strict=True):
             outcomes = ndes_renew.renew(
-                due, state_root=self.ndes_policy.state_root, enroll=lambda c, a=answer: a, now=now
+                due, state_root=self.ndes_policy.state_root, enroll=answering(answer), now=now
             )
             self.assertEqual((outcomes[0].outcome, outcomes[0].message), (outcome, message))
             record = ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
@@ -158,9 +168,7 @@ class ThePassInCertRenew(RenewFixture):
             return {"outcome": "done", "result": {"state": "issued"}}, 0
 
         errors = io.StringIO()
-        original = cert_scep.enroll
-        cert_scep.enroll = fake_enroll  # type: ignore[assignment]
-        try:
+        with mock.patch.object(cert_scep, "enroll", fake_enroll):
             failed = cert_renew.renew_ndes(
                 self.policy,
                 self.runtime,
@@ -170,8 +178,6 @@ class ThePassInCertRenew(RenewFixture):
                 live=self.live,
                 store=self.store,
             )
-        finally:
-            cert_scep.enroll = original  # type: ignore[assignment]
         self.assertFalse(failed)
         (request,) = asked
         self.assertEqual(request["certificate_id"], "web.example.com")
@@ -192,9 +198,7 @@ class ThePassInCertRenew(RenewFixture):
             asked.append(kwargs)
             return {"outcome": "partial", "result": {"state": "pending"}}, 0
 
-        original = cert_scep.enroll
-        cert_scep.enroll = fake_enroll  # type: ignore[assignment]
-        try:
+        with mock.patch.object(cert_scep, "enroll", fake_enroll):
             cert_renew.renew_ndes(
                 self.policy,
                 self.runtime,
@@ -204,8 +208,6 @@ class ThePassInCertRenew(RenewFixture):
                 live=self.live,
                 store=self.store,
             )
-        finally:
-            cert_scep.enroll = original  # type: ignore[assignment]
         (request,) = asked
         self.assertTrue(request["resume"])
         record = ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
@@ -245,9 +247,7 @@ class ThePassInCertRenew(RenewFixture):
         def refuse(**kwargs: Any) -> tuple[dict[str, Any], int]:
             raise cert_scep.ScepRefusal("busy", "another enrollment is running", 75)
 
-        original = cert_scep.enroll
-        cert_scep.enroll = refuse  # type: ignore[assignment]
-        try:
+        with mock.patch.object(cert_scep, "enroll", refuse):
             failed = cert_renew.renew_ndes(
                 self.policy,
                 self.runtime,
@@ -258,8 +258,6 @@ class ThePassInCertRenew(RenewFixture):
                 live=self.live,
                 store=self.store,
             )
-        finally:
-            cert_scep.enroll = original  # type: ignore[assignment]
         self.assertTrue(failed)
         record = ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
         self.assertEqual((record or {}).get("message"), "another enrollment is running")

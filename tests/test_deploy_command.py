@@ -20,12 +20,14 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
+from unittest import mock
 
 import yaml
 
 from haproxy_mgmt.cli import deploy, deploy_helper
 from haproxy_mgmt.cluster_lock import hold
-from haproxy_mgmt.cluster_status import NodeStatus, parse_status
+from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
 from tests.contract_schema import assert_contract
 from tests.node_harness import TARGET_HASH, pair
 
@@ -135,7 +137,7 @@ class HelperFixture(unittest.TestCase):
     ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
 
-        def read_status():  # type: ignore[no-untyped-def]
+        def read_status() -> ClusterStatus:
             return parse_status(self.cluster.read_status())
 
         def trigger(node: NodeStatus) -> int:
@@ -236,7 +238,7 @@ class HelperBoundaryTests(HelperFixture):
         self.assertEqual(self.triggered, [])
 
     def test_the_helper_refuses_a_non_boolean_option(self) -> None:
-        code, _, err = self.run_helper(request(allow_vip_unknown="yes"))  # type: ignore[arg-type]
+        code, _, err = self.run_helper(request(allow_vip_unknown="yes"))
 
         self.assertEqual(code, 65)
         self.assertIn("allow_vip_unknown must be a boolean", err)
@@ -336,9 +338,7 @@ class HelperBehaviourTests(HelperFixture):
             stdout = "ERROR: the WAF engine could not be started.\n"
             stderr = "Job for coraza-spoa.service failed.\n"
 
-        original = deploy_helper.subprocess.run
-        deploy_helper.subprocess.run = lambda *_, **__: Refused()  # type: ignore[assignment]
-        try:
+        with mock.patch.object(subprocess, "run", lambda *_, **__: Refused()):
             out, err = io.StringIO(), io.StringIO()
             code = deploy_helper.main(
                 [],
@@ -351,8 +351,6 @@ class HelperBehaviourTests(HelperFixture):
                 lock_root=self.root / "locks",
                 status_reader=lambda: parse_status(self.cluster.read_status()),
             )
-        finally:
-            deploy_helper.subprocess.run = original  # type: ignore[assignment]
 
         payload = json.loads(out.getvalue())
         self.assertNotEqual(code, 0)
@@ -386,19 +384,15 @@ class HelperBehaviourTests(HelperFixture):
 
     def test_a_node_that_never_answers_is_a_failed_step_within_the_time(self) -> None:
         # Review 2026-10-03, I3: the call had no end, and the lifeline is read between nodes.
-        asked: dict[str, object] = {}
+        asked: dict[str, Any] = {}
 
-        def silent(argv, **options):  # type: ignore[no-untyped-def]
+        def silent(argv: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
             asked.update(options)
             raise subprocess.TimeoutExpired(argv, options["timeout"], output="Fetching...\n")
 
-        original = deploy_helper.subprocess.run
-        deploy_helper.subprocess.run = silent  # type: ignore[assignment]
-        try:
+        with mock.patch.object(subprocess, "run", silent):
             shown = io.StringIO()
             code = deploy_helper.run_trigger(["ssh", "node-a"], "node-a", shown)
-        finally:
-            deploy_helper.subprocess.run = original  # type: ignore[assignment]
 
         self.assertEqual(asked["timeout"], deploy_helper.TRIGGER_TIMEOUT_SECONDS)
         self.assertEqual(code, deploy_helper.EXIT_TRIGGER_TIMEOUT)
@@ -517,19 +511,17 @@ class CallerTests(unittest.TestCase):
         class Completed:
             returncode = 0
 
-        def fake_run(command, input, check):  # type: ignore[no-untyped-def]
+        def fake_run(command: list[str], input: bytes, check: bool) -> Completed:
             sent.append(input)
             return Completed()
 
-        original = deploy.subprocess.run
-        deploy.subprocess.run = fake_run  # type: ignore[assignment]
-        original_lookup = deploy._config_path
-        deploy._config_path = lambda cluster: Path("/configs/haproxy/alpha")  # type: ignore[assignment]
-        try:
+        with (
+            mock.patch.object(subprocess, "run", fake_run),
+            mock.patch.object(
+                deploy, "_config_path", lambda cluster: Path("/configs/haproxy/alpha")
+            ),
+        ):
             code = deploy.main(["-c", "alpha", "--allow-vip-unknown"])
-        finally:
-            deploy.subprocess.run = original  # type: ignore[assignment]
-            deploy._config_path = original_lookup  # type: ignore[assignment]
 
         payload = json.loads(sent[0])
         self.assertEqual(code, 0)

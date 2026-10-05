@@ -105,7 +105,7 @@ class TheManifestIsPartOfTheVersion(unittest.TestCase):
     release said.
     """
 
-    def snapshot(self, proxy: bytes = PROXY):
+    def snapshot(self, proxy: bytes = PROXY) -> dict[str, bytes]:
         return managed_files(
             {"managed/network.yaml": NETWORK, "managed/proxies/shop.yaml": proxy},
             network_document=NETWORK,

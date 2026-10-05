@@ -14,6 +14,7 @@ import json
 import subprocess
 import time
 import unittest
+from pathlib import Path
 
 from haproxy_mgmt.config import DeployIdentity, Node
 from haproxy_mgmt.health_probe import (
@@ -29,7 +30,7 @@ NODES = (
     Node(name="node-a", mgmt_host="node-a.example.com"),
     Node(name="node-b", mgmt_host="node-b.example.com"),
 )
-IDENTITY = DeployIdentity(user="svc-probe", key="/root/.ssh/id_ed25519_probe")
+IDENTITY = DeployIdentity(user="svc-probe", key=Path("/root/.ssh/id_ed25519_probe"))
 
 
 def completed(stdout: str, code: int = 0) -> subprocess.CompletedProcess[str]:
@@ -164,9 +165,11 @@ class AskingEveryNode(unittest.TestCase):
     def test_both_nodes_are_asked_even_when_the_first_fails(self) -> None:
         """ "Reachable from one node and not the other" is the useful answer."""
 
-        asked = []
+        asked: list[str] = []
 
-        def ask(node, identity, request):
+        def ask(
+            node: Node, identity: DeployIdentity, request: object
+        ) -> subprocess.CompletedProcess[str]:
             asked.append(node.name)
             return completed("", code=255) if node.name == "node-a" else completed(answered())
 
@@ -176,7 +179,9 @@ class AskingEveryNode(unittest.TestCase):
         self.assertTrue(answers[1].results[0].ok)
 
     def test_a_node_that_never_answers_ends_as_a_node_without_an_answer(self) -> None:
-        def ask(node, identity, request):
+        def ask(
+            node: Node, identity: DeployIdentity, request: object
+        ) -> subprocess.CompletedProcess[str]:
             raise subprocess.TimeoutExpired(cmd="ssh", timeout=30)
 
         answers = probe(NODES, IDENTITY, [Target(host="198.51.100.10", port=8080)], ask=ask)

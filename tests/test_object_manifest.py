@@ -15,6 +15,7 @@ from haproxy_mgmt.object_manifest import (
     CHANGED,
     CURRENT,
     Difference,
+    Manifest,
     build,
     compare,
     fingerprint,
@@ -32,7 +33,7 @@ SHOP = {
 INTRANET = {**SHOP, "backends": "backend mgd-intranet-portal\n"}
 
 
-def release(objects):
+def release(objects: dict[str, dict[str, str]]) -> Manifest:
     return build(objects)
 
 

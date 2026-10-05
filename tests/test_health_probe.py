@@ -23,6 +23,7 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from tests import spawned
 
@@ -55,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
         """Silence."""
 
 
-def ask(request: dict[str, object]) -> tuple[int, dict[str, object]]:
+def ask(request: dict[str, object]) -> tuple[int, dict[str, Any]]:
     completed = sp.run(
         [str(SCRIPT)],
         input=json.dumps(request).encode(),
@@ -72,10 +73,14 @@ def target(**fields: object) -> dict[str, object]:
 
 
 class WhatTheProbeAnswers(unittest.TestCase):
+    server: ThreadingHTTPServer
+    port: int
+    thread: threading.Thread
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        cls.port = cls.server.server_address[1]
+        cls.port = int(cls.server.server_address[1])
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
 
@@ -89,7 +94,8 @@ class WhatTheProbeAnswers(unittest.TestCase):
     def probe(self, **fields: object) -> dict[str, object]:
         code, answer = ask({"schema_version": 1, "targets": [target(port=self.port, **fields)]})
         self.assertEqual(code, 0)
-        return answer["results"][0]
+        result: dict[str, object] = answer["results"][0]
+        return result
 
     def test_a_server_that_answers_is_usable(self) -> None:
         result = self.probe()
@@ -244,10 +250,14 @@ class WhichNodeTheQuestionBelongsTo(unittest.TestCase):
     every host, and a TEST-NET-2 address is carried by none.
     """
 
+    server: ThreadingHTTPServer
+    port: int
+    thread: threading.Thread
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        cls.port = cls.server.server_address[1]
+        cls.port = int(cls.server.server_address[1])
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
 
@@ -258,7 +268,7 @@ class WhichNodeTheQuestionBelongsTo(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
 
-    def ask_from(self, source: str) -> dict[str, object]:
+    def ask_from(self, source: str) -> dict[str, Any]:
         code, answer = ask(
             {
                 "schema_version": 1,
@@ -422,18 +432,24 @@ class TheHandshakeIsHAProxys(unittest.TestCase):
     handshake carried.
     """
 
+    server: ThreadingHTTPServer
+    port: int
+    thread: threading.Thread
+    directory: tempfile.TemporaryDirectory[str]
+    names: list[str | None]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         certificate, key = self_signed(Path(cls.directory.name))
-        cls.names: list[str | None] = []
+        cls.names = []
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certificate, key)
         context.sni_callback = lambda _socket, name, _context: cls.names.append(name)
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         cls.server.socket = context.wrap_socket(cls.server.socket, server_side=True)
-        cls.port = cls.server.server_address[1]
+        cls.port = int(cls.server.server_address[1])
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
 
@@ -468,6 +484,10 @@ class HowOldATlsBackendMayBe(unittest.TestCase):
     in how old they are willing to be.
     """
 
+    directory: tempfile.TemporaryDirectory[str]
+    certificate: Path
+    key: Path
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
@@ -488,7 +508,8 @@ class HowOldATlsBackendMayBe(unittest.TestCase):
                 }
             )
             self.assertEqual(code, 0)
-            return answer["results"][0]
+            result: dict[str, object] = answer["results"][0]
+            return result
         finally:
             server.terminate()
             server.wait(timeout=5)
@@ -525,6 +546,10 @@ class AFloorTheObjectChose(unittest.TestCase):
     to send the field means exactly what it used to mean.
     """
 
+    directory: tempfile.TemporaryDirectory[str]
+    certificate: Path
+    key: Path
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
@@ -545,7 +570,8 @@ class AFloorTheObjectChose(unittest.TestCase):
                 }
             )
             self.assertEqual(code, 0)
-            return answer["results"][0]
+            result: dict[str, object] = answer["results"][0]
+            return result
         finally:
             server.terminate()
             server.wait(timeout=5)

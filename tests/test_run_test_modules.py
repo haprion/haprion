@@ -15,11 +15,11 @@ PASSING = """\
 import unittest
 
 class T(unittest.TestCase):
-    def test_ok(self):
+    def test_ok(self) -> None:
         pass
 
     @unittest.skip("not here")
-    def test_skipped(self):
+    def test_skipped(self) -> None:
         pass
 """
 
@@ -27,7 +27,7 @@ FAILING = """\
 import unittest
 
 class T(unittest.TestCase):
-    def test_wrong(self):
+    def test_wrong(self) -> None:
         self.assertEqual("seen", "expected")
 """
 
@@ -42,7 +42,9 @@ class RunTestModulesTests(unittest.TestCase):
             (tests / name).write_text(text, encoding="utf-8")
         return tests
 
-    def execute(self, tests: Path, durations: Path, jobs: int = 2):
+    def execute(
+        self, tests: Path, durations: Path, jobs: int = 2
+    ) -> subprocess.CompletedProcess[str]:
         command = f"{shlex.quote(sys.executable)} -m unittest discover -s tests -v"
         return subprocess.run(
             [sys.executable, str(RUNNER), "--durations", str(durations), "--jobs", str(jobs)]
@@ -52,7 +54,7 @@ class RunTestModulesTests(unittest.TestCase):
             check=False,
         )
 
-    def test_a_failing_module_fails_the_run_and_shows_its_output(self):
+    def test_a_failing_module_fails_the_run_and_shows_its_output(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             tests = self.suite(
@@ -70,7 +72,7 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertIn("failed: demo/test_b.py, demo/test_c.py", result.stderr)
         self.assertIn("demo: 4 tests, 1 skipped, 3 modules", result.stdout)
 
-    def test_every_module_discover_would_find_is_run(self):
+    def test_every_module_discover_would_find_is_run(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             # unittest's default pattern is test*.py, not test_*.py.
@@ -80,7 +82,7 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("demo: 4 tests, 2 skipped, 2 modules", result.stdout)
 
-    def test_the_slowest_module_last_time_starts_first(self):
+    def test_the_slowest_module_last_time_starts_first(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             tests = self.suite(root, {"test_a.py": PASSING, "test_b.py": PASSING})

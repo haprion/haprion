@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-pull-deploy"
 FUNCTIONS = ("validate_waf_candidate", "waf_listening", "waf_journal", "sync_waf_engine")
@@ -283,14 +284,15 @@ class TheStatusReport(unittest.TestCase):
         text = STATUS.read_text()
         found = re.search(r"^def read_waf_engine\(.*?(?=^\S)", text, re.DOTALL | re.MULTILINE)
         assert found, "read_waf_engine is no longer where the test extracts it from"
-        namespace: dict[str, object] = {
+        namespace: dict[str, Any] = {
             "WAF_PACKAGE": "haproxy-manager-coraza-spoa",
             "WAF_UNIT": "coraza-spoa.service",
             "run": lambda *argv: subprocess.CompletedProcess(argv, dpkg[0], dpkg[1], ""),
             "service_active": lambda name: active,
         }
         exec(found.group(0), namespace)  # noqa: S102 - the script's own function, verbatim
-        return namespace["read_waf_engine"]()  # type: ignore[operator]
+        report: dict[str, object] = namespace["read_waf_engine"]()
+        return report
 
     def test_an_installed_engine_reports_its_package_version(self) -> None:
         self.assertEqual(

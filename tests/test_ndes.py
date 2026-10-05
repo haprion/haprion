@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
+import time
 import unittest
 from contextlib import nullcontext
 from pathlib import Path
@@ -47,7 +48,7 @@ class EnrollmentStaging(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def enroll(self, **options: object) -> object:
+    def enroll(self, *, resume: bool = False) -> ndes.Enrollment:
         with ndes.enroll(
             self.policy,
             certificate_id="service.example.com",
@@ -55,7 +56,7 @@ class EnrollmentStaging(unittest.TestCase):
             domains=DOMAINS,
             require_secure=False,
             timeout=0,
-            **options,
+            resume=resume,
         ) as result:
             return result
 
@@ -91,7 +92,7 @@ class EnrollmentStaging(unittest.TestCase):
             mock.patch.object(ndes, "command") as command,
             mock.patch.object(ndes, "status", return_value="CA_WORKING"),
         ):
-            self.assertEqual(self.enroll().state, "pending")  # type: ignore[attr-defined]
+            self.assertEqual(self.enroll().state, "pending")
         self.assertEqual(command.call_args_list[1].args[2][0], "request")
         self.assertTrue((self.directory / "request.json").exists())
 
@@ -313,7 +314,7 @@ class WaitingForTheCa(unittest.TestCase):
             mock.patch.object(
                 ndes, "command", side_effect=lambda p, d, a: next(answers)
             ) as command,
-            mock.patch.object(ndes.time, "sleep"),
+            mock.patch.object(time, "sleep"),
         ):
             ndes.wait_for_ca(mock.Mock(), Path("/nowhere"), timeout=5)
         self.assertEqual(command.call_count, 2)
@@ -321,8 +322,8 @@ class WaitingForTheCa(unittest.TestCase):
 
         with (
             mock.patch.object(ndes, "command", return_value="CA 'ndes':\n"),
-            mock.patch.object(ndes.time, "sleep"),
-            mock.patch.object(ndes.time, "monotonic", side_effect=[0, 0, 100]),
+            mock.patch.object(time, "sleep"),
+            mock.patch.object(time, "monotonic", side_effect=[0, 0, 100]),
             self.assertRaises(ndes.NdesError) as caught,
         ):
             ndes.wait_for_ca(mock.Mock(), Path("/nowhere"), timeout=5)

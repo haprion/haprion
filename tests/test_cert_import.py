@@ -28,6 +28,7 @@ from haproxy_mgmt.cert_import import (
 )
 from haproxy_mgmt.cert_inventory import FULLCHAIN, PRIVKEY
 from haproxy_mgmt.cli import cert_import as command
+from haproxy_mgmt.cli.cert_publish import EXIT_NOT_ROOT
 from haproxy_mgmt.config import load_policy, load_runtime_config
 from tests.test_cert_publish import Fixture
 
@@ -161,6 +162,12 @@ class ImportFixture(Fixture):
         self.policy_path = self.write_config(KEEPERS)
         (self.root / "certificates.yaml").chmod(0o640)
 
+    def deploy(self, cluster: str) -> int:
+        """Stands in for the deploy: records the cluster and succeeds."""
+
+        self.deployed.append(cluster)
+        return 0
+
     def material(self) -> Material:
         return read_material(
             certificate=self.pki.leaf,
@@ -180,7 +187,7 @@ class ImportFixture(Fixture):
             receivers=targets.get("receivers", ()),
             policy=policy,
             runtime=runtime,
-            deployer=lambda cluster: (self.deployed.append(cluster), 0)[1],
+            deployer=self.deploy,
             live=self.live,
             store=self.store,
             lock_path=self.lock,
@@ -188,7 +195,8 @@ class ImportFixture(Fixture):
         )
 
     def registered(self) -> dict[str, Any]:
-        return yaml.safe_load((self.root / "certificates.yaml").read_text())["certificates"]
+        document: dict[str, Any] = yaml.safe_load((self.root / "certificates.yaml").read_text())
+        return dict(document["certificates"])
 
 
 class ReadingTheMaterial(ImportFixture):
@@ -388,7 +396,7 @@ class WhatAnImportIs(ImportFixture):
 
 
 class TheCommand(ImportFixture):
-    def run_command(self, *argv: str, **options: Any) -> tuple[int, str, str]:
+    def run_cli(self, *argv: str, **options: Any) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         code = command.main(
             list(argv),
@@ -397,7 +405,7 @@ class TheCommand(ImportFixture):
             error_stream=err,
             require_secure=False,
             require_root=options.pop("require_root", False),
-            deployer=lambda cluster: (self.deployed.append(cluster), 0)[1],
+            deployer=self.deploy,
             live=self.live,
             store=self.store,
             lock_path=self.lock,
@@ -405,10 +413,10 @@ class TheCommand(ImportFixture):
         return code, out.getvalue(), err.getvalue()
 
     def test_usage_and_root(self) -> None:
-        code, out, _ = self.run_command("--id", "x")
+        code, out, _ = self.run_cli("--id", "x")
         self.assertEqual(code, 64)
         self.assertIn("Usage", out)
-        code, _, err = self.run_command(
+        code, _, err = self.run_cli(
             "--id",
             "x",
             "--certificate",
@@ -417,11 +425,11 @@ class TheCommand(ImportFixture):
             str(self.pki.leaf_key),
             require_root=True,
         )
-        self.assertEqual(code, command.EXIT_NOT_ROOT)
+        self.assertEqual(code, EXIT_NOT_ROOT)
         self.assertIn("not_root", err)
 
     def test_pem_files_with_json(self) -> None:
-        code, out, err = self.run_command(
+        code, out, err = self.run_cli(
             "--id",
             "shop.example",
             "--certificate",
@@ -445,7 +453,7 @@ class TheCommand(ImportFixture):
         bundle = self.pki.pkcs12("pw")
         passphrase_file = self.pki_dir / "passphrase"
         passphrase_file.write_text("pw\n")
-        code, out, err = self.run_command(
+        code, out, err = self.run_cli(
             "--id",
             "shop.example",
             "--pkcs12",
@@ -461,7 +469,7 @@ class TheCommand(ImportFixture):
         self.assertIn("deploy alpha: ok", out)
 
     def test_a_refusal_writes_a_failure_envelope(self) -> None:
-        code, out, err = self.run_command(
+        code, out, err = self.run_cli(
             "--id",
             "shop.example",
             "--certificate",

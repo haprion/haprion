@@ -18,6 +18,7 @@ import dataclasses
 import json
 import os
 import pwd
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -25,9 +26,9 @@ from unittest import mock
 import yaml
 
 from haproxy_mgmt import cert_receiver, cert_registry
-from haproxy_mgmt.cert_receiver import Locations, ReceiverError, Tools
+from haproxy_mgmt.cert_receiver import Locations, ReceiverError, Result, Tools
 from haproxy_mgmt.cli import cert_receiver as command
-from haproxy_mgmt.config import load_policy, load_runtime_config
+from haproxy_mgmt.config import PathPolicy, RuntimeConfig, load_policy, load_runtime_config
 from tests.test_cert_publish import ME, Fixture, issue
 
 KEEPER = {"keeper.example": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
@@ -49,7 +50,7 @@ class Runner:
         # system would once the account exists.
         self.homes: dict[str, Path] = {}
 
-    def __call__(self, argv):  # type: ignore[no-untyped-def]
+    def __call__(self, argv: Sequence[str]) -> tuple[int, str]:
         self.calls.append(tuple(argv))
         for fragment, answer in self.failures.items():
             if fragment in " ".join(argv):
@@ -125,11 +126,11 @@ class ReceiverFixture(Fixture):
         registry_file.chmod(0o640)
         issue(self.live / "keeper.example", "keeper.example")
 
-    def loaded(self):  # type: ignore[no-untyped-def]
+    def loaded(self) -> tuple[PathPolicy, RuntimeConfig]:
         policy = load_policy(self.policy_path, require_secure=False)
         return policy, load_runtime_config(policy, require_secure=False)
 
-    def add(self, receiver_id: str = "lb-02.example.net", **options: Any):  # type: ignore[no-untyped-def]
+    def add(self, receiver_id: str = "lb-02.example.net", **options: Any) -> Result:
         policy, runtime = self.loaded()
         arguments: dict[str, Any] = {
             "transport": "rsync",
@@ -149,7 +150,8 @@ class ReceiverFixture(Fixture):
         )
 
     def registered(self) -> dict[str, Any]:
-        return yaml.safe_load((self.root / "certificates.yaml").read_text())["receivers"]
+        document: dict[str, Any] = yaml.safe_load((self.root / "certificates.yaml").read_text())
+        return dict(document["receivers"])
 
     def keys_file(self, receiver_id: str = "lb-02.example.net") -> Path:
         """The lock, inside the receiver's own directory (B160)."""
@@ -484,7 +486,7 @@ class WhenALayerRefuses(ReceiverFixture):
 
 
 class RemovingAReceiver(ReceiverFixture):
-    def remove(self, receiver_id: str = "lb-02.example.net"):  # type: ignore[no-untyped-def]
+    def remove(self, receiver_id: str = "lb-02.example.net") -> Result:
         policy, runtime = self.loaded()
         return cert_receiver.remove(
             policy,
@@ -597,7 +599,7 @@ class MigratingTheOldOnes(ReceiverFixture):
             encoding="ascii",
         )
 
-    def migrate(self, **options: Any):  # type: ignore[no-untyped-def]
+    def migrate(self, **options: Any) -> Result:
         policy, runtime = self.loaded()
         return cert_receiver.migrate(
             policy,
@@ -764,7 +766,7 @@ class MigratingTheOldOnes(ReceiverFixture):
 
 
 class TheCommand(ReceiverFixture):
-    def run_command(self, *argv: str) -> tuple[int, str, str]:
+    def run_cli(self, *argv: str) -> tuple[int, str, str]:
         import io
 
         out, err = io.StringIO(), io.StringIO()
@@ -782,7 +784,7 @@ class TheCommand(ReceiverFixture):
         return code, out.getvalue(), err.getvalue()
 
     def test_add_then_list_then_remove(self) -> None:
-        code, out, _ = self.run_command(
+        code, out, _ = self.run_cli(
             "add",
             "lb-02.example.net",
             "--transport",
@@ -795,17 +797,17 @@ class TheCommand(ReceiverFixture):
         self.assertEqual(code, 0, out)
         self.assertIn("added lb-02.example.net", out)
 
-        code, out, _ = self.run_command("list")
+        code, out, _ = self.run_cli("list")
         self.assertEqual(code, 0)
         self.assertIn("lb-02.example.net", out)
         self.assertIn("ready", out)
 
-        code, out, _ = self.run_command("remove", "lb-02.example.net")
+        code, out, _ = self.run_cli("remove", "lb-02.example.net")
         self.assertEqual(code, 0, out)
         self.assertNotIn("lb-02.example.net", self.registered())
 
     def test_the_json_envelope_carries_the_layers(self) -> None:
-        code, out, _ = self.run_command(
+        code, out, _ = self.run_cli(
             "add",
             "lb-02.example.net",
             "--transport",
@@ -827,7 +829,7 @@ class TheCommand(ReceiverFixture):
         )
 
     def test_a_refusal_is_an_envelope_too(self) -> None:
-        code, out, err = self.run_command(
+        code, out, err = self.run_cli(
             "add",
             "pve-cluster",
             "--transport",
@@ -842,7 +844,7 @@ class TheCommand(ReceiverFixture):
         self.assertEqual(json.loads(out)["error"]["code"], "bad_input")
 
     def test_usage_is_printed_for_an_action_that_is_not_one(self) -> None:
-        code, out, _ = self.run_command("rename", "lb-02.example.net")
+        code, out, _ = self.run_cli("rename", "lb-02.example.net")
 
         self.assertEqual(code, 64)
         self.assertIn("Usage:", out)

@@ -57,14 +57,19 @@ def sample_values(provider: DNSProvider) -> dict[str, object]:
     return values
 
 
+def requirement_name(requirement: str) -> str:
+    """The distribution name a requirement line starts with."""
+
+    found = re.match(r"^[A-Za-z0-9._-]+", requirement)
+    assert found, f"not a requirement: {requirement!r}"
+    return found.group()
+
+
 class CatalogueContractTests(unittest.TestCase):
     def test_the_lock_is_covered_exactly_by_offered_and_not_offered(self) -> None:
         lock = tomllib.loads((ROOT / "certbot" / "uv.lock").read_text())
         project = tomllib.loads((ROOT / "certbot" / "pyproject.toml").read_text())
-        direct = {
-            re.match(r"^[A-Za-z0-9._-]+", item).group().lower()
-            for item in project["project"]["dependencies"]
-        }
+        direct = {requirement_name(item).lower() for item in project["project"]["dependencies"]}
         locked = {package["name"] for package in lock["package"]}
         catalog = load_full_catalog()
 

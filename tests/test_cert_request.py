@@ -57,6 +57,12 @@ class RequestFixture(Fixture):
         self.deployed: list[str] = []
         self.pki = Pki(self.root / "pki")
 
+    def deploy(self, cluster: str) -> int:
+        """Stands in for the deploy: records the cluster and succeeds."""
+
+        self.deployed.append(cluster)
+        return 0
+
     def loaded(self) -> tuple[Any, Any]:
         policy = load_policy(self.policy_path, require_secure=False)
         return policy, load_runtime_config(policy, require_secure=False)
@@ -142,7 +148,7 @@ class RequestFixture(Fixture):
             formats=targets.get("formats"),
             policy=policy,
             runtime=runtime,
-            deployer=lambda cluster: (self.deployed.append(cluster), 0)[1],
+            deployer=self.deploy,
             live=self.live,
             store=self.store,
             lock_path=self.lock,
@@ -150,7 +156,8 @@ class RequestFixture(Fixture):
         )
 
     def registered(self) -> dict[str, Any]:
-        return yaml.safe_load((self.root / "certificates.yaml").read_text())["certificates"]
+        document: dict[str, Any] = yaml.safe_load((self.root / "certificates.yaml").read_text())
+        return dict(document["certificates"])
 
 
 class WhatARequestIs(RequestFixture):
@@ -352,7 +359,7 @@ class TheRoundTrip(RequestFixture):
             error_stream=err,
             require_secure=False,
             require_root=False,
-            deployer=lambda cluster: (self.deployed.append(cluster), 0)[1],
+            deployer=self.deploy,
             live=self.live,
             store=self.store,
             lock_path=self.lock,
@@ -495,7 +502,7 @@ class TheHelperAndTheCommand(RequestFixture):
         self.assertEqual(code, 65)
         self.assertEqual(document["error"]["code"], "already_exists")
 
-    def run_command(self, *argv: str) -> tuple[int, str, str]:
+    def run_cli(self, *argv: str) -> tuple[int, str, str]:
         output, errors = io.StringIO(), io.StringIO()
         code = command.main(
             list(argv),
@@ -512,7 +519,7 @@ class TheHelperAndTheCommand(RequestFixture):
         return code, output.getvalue(), errors.getvalue()
 
     def test_the_command_prints_the_csr_or_the_envelope(self) -> None:
-        code, output, errors = self.run_command(
+        code, output, errors = self.run_cli(
             "--id",
             "shop.example.net",
             "--domain",
@@ -531,7 +538,7 @@ class TheHelperAndTheCommand(RequestFixture):
         self.assertIn(REQUEST_MARK, output)
 
         shutil.rmtree(self.store / "shop.example.net")
-        code, output, errors = self.run_command(
+        code, output, errors = self.run_cli(
             "--id",
             "rsa.example.net",
             "--domain",
@@ -545,7 +552,7 @@ class TheHelperAndTheCommand(RequestFixture):
         self.assertEqual(document["result"]["key_type"], "rsa-2048")
 
     def test_the_command_refuses_in_the_envelope_shape(self) -> None:
-        code, output, errors = self.run_command(
+        code, output, errors = self.run_cli(
             "--id", "keeper-alpha.example", "--domain", "keeper-alpha.example", "--json"
         )
         self.assertEqual(code, 65)

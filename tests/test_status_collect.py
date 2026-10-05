@@ -13,7 +13,9 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from haproxy_mgmt import status_collect
@@ -27,6 +29,7 @@ from haproxy_mgmt.status_collect import (
     EXIT_PARTIAL,
     EXIT_UNAVAILABLE,
     NodeResponse,
+    StatusReport,
     collect,
     read_manifest,
 )
@@ -98,7 +101,7 @@ def node_status(
     }
 
 
-def answering(**by_name: object):
+def answering(**by_name: object) -> Callable[[Node], NodeResponse]:
     def read(node: Node) -> NodeResponse:
         value = by_name[node.name]
         if isinstance(value, NodeResponse):
@@ -109,7 +112,9 @@ def answering(**by_name: object):
 
 
 class CollectTests(unittest.TestCase):
-    def both(self, *, hash_a: str, hash_b: str, version: object = "18"):
+    def both(
+        self, *, hash_a: str | None, hash_b: str | None, version: object = "18"
+    ) -> StatusReport:
         return collect(
             NODES,
             answering(
@@ -282,7 +287,7 @@ class MoreThanTwoNodes(unittest.TestCase):
 
     THREE = (*NODES, Node(name="node-c", mgmt_host="node-c.example.com"))
 
-    def read(self, **answers: object):
+    def read(self, **answers: object) -> StatusReport:
         return collect(self.THREE, answering(**answers), target=TARGET)
 
     def test_one_owner_among_three_is_a_single_owner_and_converged(self) -> None:
@@ -407,7 +412,13 @@ class WhatEachObjectIsDoingOnTheNodes(unittest.TestCase):
     PUBLISHED = "a" * 40
     OLD = "b" * 40
 
-    def tree(self, raw: str, *, published: dict, releases: dict[str, dict | None]):
+    def tree(
+        self,
+        raw: str,
+        *,
+        published: dict[str, dict[str, str]],
+        releases: dict[str, dict[str, dict[str, str]] | None],
+    ) -> Path:
         """A published tree with a release per commit, `current` on one of them."""
 
         publish = Path(raw) / "alpha"
@@ -419,7 +430,7 @@ class WhatEachObjectIsDoingOnTheNodes(unittest.TestCase):
         (publish / "current").symlink_to(publish / "releases" / self.PUBLISHED)
         return publish
 
-    def states(self, publish: Path, *, hash_a: str | None, hash_b: str | None):
+    def states(self, publish: Path, *, hash_a: str | None, hash_b: str | None) -> Any:
         report = collect(
             NODES,
             answering(

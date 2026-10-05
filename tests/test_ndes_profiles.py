@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -202,7 +203,7 @@ class NdesProfiles(unittest.TestCase):
 
 
 class NdesProfileRemoval(NdesProfiles):
-    def _helper(self, request: str) -> tuple[int, dict, str]:
+    def _helper(self, request: str) -> tuple[int, dict[str, Any], str]:
         output, errors = io.StringIO(), io.StringIO()
         code = ndes_profile_apply_helper.main(
             [],

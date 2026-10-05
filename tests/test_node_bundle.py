@@ -20,6 +20,13 @@ BASE = Path(__file__).resolve().parents[1]
 TOOL = node_bundle
 
 
+def read_member(archive: tarfile.TarFile, member: tarfile.TarInfo) -> bytes:
+    """A member's bytes; a directory or link carries none."""
+
+    extracted = archive.extractfile(member)
+    return b"" if extracted is None else extracted.read()
+
+
 class NodeBundleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -96,7 +103,7 @@ class NodeBundleTests(unittest.TestCase):
         release, _ = self.build()
         changed = self.root / "changed.tar.gz"
         with tarfile.open(self.bundle, "r:gz") as source:
-            held = [(item, source.extractfile(item).read()) for item in source.getmembers()]
+            held = [(item, read_member(source, item)) for item in source.getmembers()]
         with (
             changed.open("wb") as raw,
             gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed,

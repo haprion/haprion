@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from typing import Any
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
 PARSING = re.compile(r"^MAX_STAT_ROWS = .*?(?=^def runtime_stat\()", re.DOTALL | re.MULTILINE)
@@ -43,12 +44,12 @@ class ReadingShowStat(unittest.TestCase):
     def setUp(self) -> None:
         found = PARSING.search(SCRIPT.read_text())
         assert found, "the parsing is no longer where the test extracts it from"
-        namespace: dict[str, object] = {}
+        namespace: dict[str, Any] = {}
         exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
         self.parse = namespace["parse_stat"]
 
-    def stat(self, *rows: str) -> dict:
-        parsed = self.parse("\n".join((HEADER, *rows)) + "\n")
+    def stat(self, *rows: str) -> dict[str, Any]:
+        parsed: dict[str, Any] | None = self.parse("\n".join((HEADER, *rows)) + "\n")
         assert parsed is not None
         return parsed
 

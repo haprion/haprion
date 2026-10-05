@@ -22,7 +22,7 @@ from unittest import mock
 import yaml
 
 from haproxy_mgmt import cert_import, cert_upload
-from haproxy_mgmt.cert_import import ImportError_, read_bytes
+from haproxy_mgmt.cert_import import MAX_UPLOAD_BYTES, ImportError_, read_bytes
 from haproxy_mgmt.cert_inventory import PRIVKEY
 from haproxy_mgmt.cli import cert_import_helper
 from haproxy_mgmt.dns_profile_keys import generate, render_private_key
@@ -37,6 +37,9 @@ PKCS12_PASSWORD = "pw"  # noqa: S105 - the fixture export's passphrase, not a cr
 
 class ReadingOneFile(unittest.TestCase):
     """`read_bytes`: what is in the bytes decides the form, not a file name."""
+
+    _directory: tempfile.TemporaryDirectory[str]
+    pki: Pki
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -76,13 +79,13 @@ class ReadingOneFile(unittest.TestCase):
         real_mkdtemp = tempfile.mkdtemp
 
         def watched(*args: Any, **kwargs: Any) -> str:
-            directory = real_mkdtemp(*args, **kwargs)
+            directory = str(real_mkdtemp(*args, **kwargs))
             written.append(directory)
             return directory
 
         bundle = self.pki.pkcs12(PKCS12_PASSWORD)
         with (
-            mock.patch.object(cert_import.tempfile, "mkdtemp", side_effect=watched),
+            mock.patch.object(tempfile, "mkdtemp", side_effect=watched),
             mock.patch.object(cert_import, "read_pkcs12", wraps=cert_import.read_pkcs12) as spied,
         ):
             read_bytes(bundle.read_bytes(), password=PKCS12_PASSWORD)
@@ -137,7 +140,7 @@ class ReadingOneFile(unittest.TestCase):
             (b"", None, "empty"),
             (b"hello there", None, "not PEM"),
             (b"\x30\x03\x02\x01\x01", None, "not PEM"),
-            (b"x" * (cert_upload.MAX_UPLOAD_BYTES + 1), None, "larger than"),
+            (b"x" * (MAX_UPLOAD_BYTES + 1), None, "larger than"),
         ):
             with self.subTest(words=words), self.assertRaises(ImportError_) as caught:
                 read_bytes(data, password=password)
@@ -248,7 +251,13 @@ class HelperFixture(Fixture):
             separators=(",", ":"),
         )
 
-    def invoke(self, request: str, *, argv: list[str] | None = None) -> tuple[int, dict, str]:
+    def deploy(self, cluster: str) -> int:
+        self.deployed.append(cluster)
+        return 0
+
+    def invoke(
+        self, request: str, *, argv: list[str] | None = None
+    ) -> tuple[int, dict[str, Any], str]:
         output, errors = io.StringIO(), io.StringIO()
         code = cert_import_helper.main(
             argv or [],
@@ -258,7 +267,7 @@ class HelperFixture(Fixture):
             error_stream=errors,
             require_secure=False,
             require_root=False,
-            deployer=lambda cluster: (self.deployed.append(cluster), 0)[1],
+            deployer=self.deploy,
             live=self.live,
             store=self.store,
             lock_path=self.lock,

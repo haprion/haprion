@@ -14,6 +14,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import psycopg
@@ -72,7 +73,7 @@ class TrafficCollectorTests(unittest.TestCase):
             nodes=(self.target,),
         )
 
-    def response(self, wanted: date, offset: int, payload: bytes, **flags: object) -> Response:
+    def response(self, wanted: date, offset: int, payload: bytes, **flags: Any) -> Response:
         return Response(
             size=offset + len(payload),
             offset=offset,
@@ -199,7 +200,7 @@ class TrafficCollectorTests(unittest.TestCase):
             "rule": "crs:deny",
         }
 
-        def waf(**fields: object) -> tuple[object, ...]:
+        def waf(**fields: object) -> tuple[Any, ...]:
             return _database_row("alpha", "node-a", json.dumps(base | fields).encode())[-3:-1]
 
         # As measured from HAProxy 3.4.6 and the engine (2026-10-02).
@@ -717,7 +718,7 @@ class WafJournalCollectorTests(unittest.TestCase):
         )
         self.cursor_file = self.staging / ".alpha--node-a.waf-cursor"
 
-    def row(self, message: str, cursor: str = journal_cursor(1)) -> tuple[object, ...] | None:
+    def row(self, message: str, cursor: str = journal_cursor(1)) -> tuple[Any, ...] | None:
         return _waf_row("alpha", "node-a", WAF_AT, cursor, message)
 
     def test_the_field_and_the_value_are_told_apart_as_the_rule_set_writes_them(self) -> None:
@@ -825,7 +826,7 @@ class WafJournalCollectorTests(unittest.TestCase):
         assert first and again and later and other
         self.assertEqual(first[0], again[0])
         self.assertEqual(len({first[0], later[0], other[0]}), 3)
-        self.assertEqual(len(first[0]), 32)  # type: ignore[arg-type]
+        self.assertEqual(len(first[0]), 32)
 
     def test_the_response_frame_is_the_reader_s_and_must_agree_with_itself(self) -> None:
         good = waf_response(engine_line())

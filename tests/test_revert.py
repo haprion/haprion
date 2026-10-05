@@ -114,6 +114,7 @@ class VersionHistoryTests(RevertFixture):
             self.history(3)
             self.assertEqual(count_versions(self.repo), 3)
             first = version_commit(self.repo, 1)
+            assert first is not None
             self.assertEqual(
                 git(self.repo, "log", "--format=%s", first, "-1"), "Initial example configuration"
             )

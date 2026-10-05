@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from haproxy_mgmt import version_diff
+from haproxy_mgmt.git_command import git_bounded
 from haproxy_mgmt.version_diff import render
 from tests.test_list_helper import git
 
@@ -90,7 +91,7 @@ class WhatAVersionChanged(unittest.TestCase):
 
         with (
             mock.patch.object(version_diff, "MAX_DIFF_BYTES", 19),
-            mock.patch.object(version_diff, "git_bounded", wraps=version_diff.git_bounded) as read,
+            mock.patch.object(version_diff, "git_bounded", wraps=git_bounded) as read,
         ):
             found = version_diff.version_diff(self.repo, second)
 
@@ -104,11 +105,11 @@ class WhatAVersionChanged(unittest.TestCase):
     def test_a_patch_past_the_budget_is_not_read_whole(self) -> None:
         self.commit({"big.cfg": ""})
         second = self.commit({"big.cfg": "line\n" * 250_000})
-        answers: list[object] = []
-        real = version_diff.git_bounded
+        answers: list[bytes | None] = []
+        real = git_bounded
 
-        def bounded(*args: object, **options: object) -> object:
-            answers.append(real(*args, **options))
+        def bounded(repo: Path, *args: str, limit: int) -> bytes | None:
+            answers.append(real(repo, *args, limit=limit))
             return answers[-1]
 
         with mock.patch.object(version_diff, "git_bounded", side_effect=bounded):

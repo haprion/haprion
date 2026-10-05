@@ -4,10 +4,11 @@ import io
 import json
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_mgmt import backup_retention, backup_schedule_write
+from haproxy_mgmt import backup_retention, backup_schedule_write, state_backup
 from haproxy_mgmt.backup_schedule import Schedule
 from haproxy_mgmt.cli import backup_job_helper
 from haproxy_mgmt.config import DeployIdentity
@@ -21,10 +22,10 @@ class BackupJobHelperTests(unittest.TestCase):
 
     class Runtime:
         @staticmethod
-        def cluster(cluster_id: str):
+        def cluster(cluster_id: str) -> Any:
             return type("Cluster", (), {"cluster_id": cluster_id})()
 
-    def execute(self, request: str) -> tuple[dict, int]:
+    def execute(self, request: str) -> tuple[dict[str, Any], int]:
         output, errors = io.StringIO(), io.StringIO()
         with (
             mock.patch.object(backup_job_helper, "load_policy", return_value=self.Policy()),
@@ -52,7 +53,7 @@ class BackupJobHelperTests(unittest.TestCase):
             ),
         )
         with (
-            mock.patch.object(backup_job_helper.state_backup, "run", return_value=report) as run,
+            mock.patch.object(state_backup, "run", return_value=report) as run,
             mock.patch.object(backup_retention, "read", return_value=45),
         ):
             document, code = self.execute(backup_job_helper.build_run_request("alpha", request_id))
@@ -79,9 +80,7 @@ class BackupJobHelperTests(unittest.TestCase):
                 "calendar": "Tue,Thu *-*-* 04:30:00",
             },
         )
-        with mock.patch.object(
-            backup_job_helper.backup_schedule_write, "apply", return_value=result
-        ) as apply:
+        with mock.patch.object(backup_schedule_write, "apply", return_value=result) as apply:
             document, code = self.execute(
                 backup_job_helper.build_schedule_request(
                     "alpha", request_id, schedule=requested, enabled=True

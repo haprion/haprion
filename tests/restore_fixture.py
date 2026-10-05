@@ -195,17 +195,17 @@ def build(
 
     entries: list[dict[str, object]] = []
     for tree in (stage / "rootfs", stage / "meta"):
-        for path in sorted(tree.rglob("*")):
-            info = path.lstat()
+        for member in sorted(tree.rglob("*")):
+            info = member.lstat()
             entry: dict[str, object] = {
-                "path": path.relative_to(stage).as_posix(),
+                "path": member.relative_to(stage).as_posix(),
                 "mode": stat.S_IMODE(info.st_mode),
                 "uid": info.st_uid,
                 "gid": info.st_gid,
-                "type": "directory" if path.is_dir() else "file",
+                "type": "directory" if member.is_dir() else "file",
             }
-            if path.is_file():
-                content = path.read_bytes()
+            if member.is_file():
+                content = member.read_bytes()
                 entry.update(size=len(content), sha256=hashlib.sha256(content).hexdigest())
             entries.append(entry)
     (stage / "meta/manifest.json").write_text(

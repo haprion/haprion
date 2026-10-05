@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.cluster_status import parse_status
+from haproxy_mgmt.cluster_status import NodeStatus, parse_status
 
 PUBLISHED = "a1" * 32
 OTHER = "b2" * 32
@@ -74,7 +74,7 @@ def addresses(**fields: object) -> dict[str, object]:
 
 
 class WhatTheAddressMeasurementsMean(unittest.TestCase):
-    def node(self, keepalived: object):
+    def node(self, keepalived: object) -> NodeStatus:
         return parse_status(envelope(node_status(keepalived))).nodes[0]
 
     def test_the_published_list_carried_by_the_node_is_current(self) -> None:

@@ -60,11 +60,8 @@ class RenewalInvocations(Fixture):
             provider_id="route53",
             revision=1,
         )
-        dns_profiles.materialize(
-            self.policy.acme.dns_profiles,
-            opened,
-            require_secure=False,  # type: ignore[union-attr]
-        )
+        assert self.policy.acme is not None and self.policy.acme.dns_profiles is not None
+        dns_profiles.materialize(self.policy.acme.dns_profiles, opened, require_secure=False)
         self.renewal = self.root / "renewal"
         self.renewal.mkdir()
         for lineage in ("example.com", "legacy.example", "orphan.example"):

@@ -7,11 +7,13 @@ import json
 import stat
 import unittest
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from haproxy_mgmt import dns_profiles
 from haproxy_mgmt.cli import dns_profile_apply_helper
+from haproxy_mgmt.config import PathPolicy
 from haproxy_mgmt.dns_profile_keys import generate, render_private_key
 from tests.test_cert_publish import Fixture
 
@@ -70,7 +72,7 @@ class ApplyFixture(Fixture):
         *,
         argv: list[str] | None = None,
         renewal_directory: Path | None = None,
-    ) -> tuple[int, dict, str]:
+    ) -> tuple[int, dict[str, Any], str]:
         output, errors = io.StringIO(), io.StringIO()
         code = dns_profile_apply_helper.main(
             argv or [],
@@ -98,8 +100,10 @@ class Applying(ApplyFixture):
         self.assertEqual(credentials.read_text(), "dns_cloudflare_api_token = token-example\n")
         self.assertEqual(stat.S_IMODE(credentials.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(metadata.stat().st_mode), 0o600)
+        acme = yaml_policy(self.policy_path).acme
+        assert acme is not None and acme.dns_profiles is not None
         materialized = dns_profiles.read_materialized(
-            yaml_policy(self.policy_path).acme.dns_profiles,
+            acme.dns_profiles,
             require_secure=False,
             profile_id="cf-main",
         )
@@ -221,7 +225,7 @@ def renewal_conf(lineage: str, credentials: Path) -> str:
     )
 
 
-def yaml_policy(path: Path):
+def yaml_policy(path: Path) -> PathPolicy:
     from haproxy_mgmt.config import load_policy
 
     return load_policy(path, require_secure=False)

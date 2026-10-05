@@ -19,6 +19,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
 READING = re.compile(
@@ -48,8 +49,8 @@ class WhatTheNodeReportsAboutItsAddresses(unittest.TestCase):
         self.installed = self.root / "installed.conf"
         self.config = self.root / "keepalived.conf"
 
-    def read(self) -> dict:
-        namespace: dict[str, object] = {
+    def read(self) -> dict[str, Any]:
+        namespace: dict[str, Any] = {
             "Path": Path,
             "hashlib": hashlib,
             "MAX_KEEPALIVED_BYTES": 1024 * 1024,
@@ -59,12 +60,13 @@ class WhatTheNodeReportsAboutItsAddresses(unittest.TestCase):
             "read_config": _read_config,
         }
         exec(self.source, namespace)  # noqa: S102 - the file under test, read from disk
-        return namespace["read_addresses"]()  # type: ignore[operator,no-any-return]
+        addresses: dict[str, Any] = namespace["read_addresses"]()
+        return addresses
 
-    def summary(self, addresses: dict) -> str:
-        namespace: dict[str, object] = {"Path": Path, "hashlib": hashlib}
+    def summary(self, addresses: dict[str, Any]) -> str:
+        namespace: dict[str, Any] = {"Path": Path, "hashlib": hashlib}
         exec(self.source, namespace)  # noqa: S102 - the file under test, read from disk
-        return namespace["address_summary"](addresses)  # type: ignore[operator,no-any-return]
+        return str(namespace["address_summary"](addresses))
 
     def test_a_node_carrying_the_published_list_reports_both_digests_equal(self) -> None:
         self.published.write_text(LIST)
@@ -145,7 +147,7 @@ class WhatTheNodeReportsAboutItsAddresses(unittest.TestCase):
         self.assertEqual(self.summary(addresses), "installed, include unknown")
 
 
-def _read_config(path: Path):
+def _read_config(path: Path) -> str | None:
     """The script's own reader, in the one line this extraction needs of it."""
 
     try:

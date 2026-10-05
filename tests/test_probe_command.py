@@ -27,6 +27,7 @@ from unittest import mock
 import yaml
 
 from haproxy_mgmt.cli import probe, probe_helper
+from haproxy_mgmt.config import DeployIdentity, Node
 from haproxy_mgmt.probe_socket import ask, build_request
 
 BASE = Path(__file__).resolve().parents[1]
@@ -97,7 +98,9 @@ class HelperFixture(unittest.TestCase):
             }
         self.policy.write_text(yaml.safe_dump(document), encoding="utf-8")
 
-    def run_helper(self, parameters: dict[str, object], *, ask=None):
+    def run_helper(
+        self, parameters: dict[str, object], *, ask: object = None
+    ) -> tuple[int, str, str]:
         request = {
             "schema_version": 1,
             "operation": "probe",
@@ -158,7 +161,9 @@ class WhatTheHelperAnswers(HelperFixture):
     def test_every_node_is_asked_and_the_answers_are_carried(self) -> None:
         asked = []
 
-        def ask(node, identity, body):
+        def ask(
+            node: Node, identity: DeployIdentity, body: bytes
+        ) -> subprocess.CompletedProcess[str]:
             asked.append((node.name, json.loads(body)))
             return answer(
                 [
@@ -187,7 +192,9 @@ class WhatTheHelperAnswers(HelperFixture):
     def test_a_server_that_is_down_is_a_finding_and_not_a_failed_command(self) -> None:
         """A red job every time somebody checks a broken pool teaches nothing."""
 
-        def ask(node, identity, body):
+        def ask(
+            node: Node, identity: DeployIdentity, body: bytes
+        ) -> subprocess.CompletedProcess[str]:
             return answer(
                 [
                     {
@@ -208,7 +215,9 @@ class WhatTheHelperAnswers(HelperFixture):
         self.assertFalse(envelope["result"]["nodes"][0]["results"][0]["ok"])
 
     def test_no_node_answering_is_a_failure_of_the_command(self) -> None:
-        def ask(node, identity, body):
+        def ask(
+            node: Node, identity: DeployIdentity, body: bytes
+        ) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(args=["ssh"], returncode=255, stdout="", stderr="")
 
         code, out, _ = self.run_helper({"targets": [self.target()]}, ask=ask)
@@ -267,7 +276,7 @@ class ThePersonsWayIn(unittest.TestCase):
         installation guide said the command goes through the person's own rule.
         """
 
-        with mock.patch.object(probe.subprocess, "run") as run:
+        with mock.patch.object(subprocess, "run") as run:
             probe.run_probe_helper("alpha", "request", [])
         argv = run.call_args.args[0]
         self.assertEqual(argv, [probe.SUDO, "--", probe.HELPER])
@@ -362,7 +371,9 @@ class WhichNodeCouldAnswerAtAll(HelperFixture):
     def test_a_node_without_the_address_is_carried_through_as_such(self) -> None:
         held = iter([False, True])
 
-        def ask(node, identity, body):
+        def ask(
+            node: Node, identity: DeployIdentity, body: bytes
+        ) -> subprocess.CompletedProcess[str]:
             return answer(
                 [
                     {

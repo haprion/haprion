@@ -525,10 +525,11 @@ class WhenCertbotSucceeds(IssueFixture):
         certbot = FakeCertbot(self.live)
         real_mkstemp = tempfile.mkstemp
 
-        def refused(*args: object, **kwargs: object) -> tuple[int, str]:
+        def refused(*args: Any, **kwargs: Any) -> tuple[int, str]:
             if str(kwargs.get("dir")) == str(self.registry_path.parent):
                 raise OSError(30, "Read-only file system")
-            return real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+            made: tuple[int, str] = real_mkstemp(*args, **kwargs)
+            return made
 
         with mock.patch.object(tempfile, "mkstemp", refused):
             code, out, err, deployed = self.run_issue(
@@ -613,6 +614,11 @@ class RenewingALineage(IssueFixture):
         renewal = self.renewal_conf("example.net", "webroot")
         certbot = FakeCertbot(self.live)
         deployed: list[str] = []
+
+        def deploy(cluster: str) -> int:
+            deployed.append(cluster)
+            return 0
+
         policy = load_policy(policy_path, require_secure=False)
         runtime = load_runtime_config(policy, require_secure=False)
 
@@ -621,7 +627,7 @@ class RenewingALineage(IssueFixture):
             policy=policy,
             runtime=runtime,
             certbot=certbot,
-            deployer=lambda cluster: (deployed.append(cluster), 0)[1],
+            deployer=deploy,
             live=self.live,
             store=self.store,
             lock_path=self.lock,

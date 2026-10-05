@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from haproxy_mgmt import tls_policy
@@ -90,14 +91,14 @@ class ObjectsPublishFixture(PublishFixture):
             ).encode()
         )
 
-    def run_publish(
+    def publish_objects(
         self,
         policy_path: Path,
         request: io.BytesIO,
         *,
         valid: bool = True,
         warn_on: str | None = None,
-    ):
+    ) -> tuple[int, Any, str]:
         out, err = io.StringIO(), io.StringIO()
         self.recorder = Recorder()
 
@@ -149,7 +150,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.seed()
             before_core = (self.repo / "core/haproxy.cfg").read_bytes()
 
-            code, document, err = self.run_publish(policy, self.request())
+            code, document, err = self.publish_objects(policy, self.request())
 
             self.assertEqual((code, err), (0, ""))
             assert_contract("haproxy-objects-publish", json.dumps(document))
@@ -189,7 +190,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
                 self.seed()
                 extra = {} if named is None else {"requested_by": named}
                 with mock.patch.dict(os.environ, {"SUDO_USER": sudo_user}):
-                    code, _document, err = self.run_publish(policy, self.request(**extra))
+                    code, _document, err = self.publish_objects(policy, self.request(**extra))
 
                 self.assertEqual((code, err), (0, ""))
                 lines = git(self.repo, "log", "-1", "--format=%B").splitlines()
@@ -205,7 +206,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.seed()
             head = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, _err = self.run_publish(
+            code, document, _err = self.publish_objects(
                 policy, self.request(requested_by="ada\nRequest-Id: forged")
             )
 
@@ -224,7 +225,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             policy = self.runtime(Path(raw))
             self.seed()
 
-            code, document, err = self.run_publish(
+            code, document, err = self.publish_objects(
                 policy,
                 self.request(objects={"web_app": proxy("web_app", "web-app.example.com")}),
             )
@@ -240,7 +241,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             policy = self.runtime(Path(raw))
             self.seed()
 
-            code, document, err = self.run_publish(
+            code, document, err = self.publish_objects(
                 policy, self.request(network="vips: {}\ndefault_vip: main\n")
             )
 
@@ -254,7 +255,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             policy = self.runtime(Path(raw))
             before = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, err = self.run_publish(policy, self.request())
+            code, document, err = self.publish_objects(policy, self.request())
 
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "network_missing")
@@ -268,7 +269,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             before = git(self.repo, "rev-parse", "HEAD")
             (self.repo / "core/haproxy.cfg").write_bytes(b"human draft\n")
 
-            code, document, err = self.run_publish(policy, self.request())
+            code, document, err = self.publish_objects(policy, self.request())
 
             self.assertEqual(code, 75)
             self.assertEqual(document["outcome"], "blocked")
@@ -285,7 +286,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             git(self.repo, "add", "manual/reservations.yaml")
             git(self.repo, "commit", "-qm", "Human update")
 
-            code, document, err = self.run_publish(policy, self.request(expected_head=before))
+            code, document, err = self.publish_objects(policy, self.request(expected_head=before))
 
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "expected_target_changed")
@@ -298,7 +299,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.seed()
             before = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, _err = self.run_publish(policy, self.request(), valid=False)
+            code, document, _err = self.publish_objects(policy, self.request(), valid=False)
 
             self.assertEqual(code, 65)
             self.assertEqual(document["error"]["code"], "candidate_invalid")
@@ -314,7 +315,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
                 "advanced: |\n  # note\n  http-request deny if { path /x }\n"
             )
 
-            code, answer, _err = self.run_publish(
+            code, answer, _err = self.publish_objects(
                 policy,
                 self.request(objects={"shop": document}),
                 warn_on="    http-request deny if { path /x }",
@@ -335,7 +336,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
                 "advanced: |\n  http-request deny if { path /x }\n"
             )
 
-            code, _answer, _err = self.run_publish(
+            code, _answer, _err = self.publish_objects(
                 policy, self.request(objects={"shop": document}), warn_on="    option forwardfor"
             )
 
@@ -357,14 +358,14 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.stale_core()
             before = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, _err = self.run_publish(policy, self.request())
+            code, document, _err = self.publish_objects(policy, self.request())
 
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "tls_defaults_stale")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             self.assertFalse((self.repo / "managed/proxies/shop.yaml").exists())
 
-            again, document, _err = self.run_publish(policy, self.request())
+            again, document, _err = self.publish_objects(policy, self.request())
             self.assertEqual(again, 75)
             self.assertEqual(document["error"]["code"], "tls_defaults_stale")
 
@@ -372,12 +373,12 @@ class ObjectPublicationTests(ObjectsPublishFixture):
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
             self.seed()
-            first, _document, _err = self.run_publish(policy, self.request())
+            first, _document, _err = self.publish_objects(policy, self.request())
             self.assertEqual(first, 0)
             self.stale_core()
             releases_before = sorted(self.publish_path.rglob("*"))
 
-            code, document, _err = self.run_publish(policy, self.request())
+            code, document, _err = self.publish_objects(policy, self.request())
 
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "tls_defaults_stale")
@@ -395,13 +396,13 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             policy = self.runtime(Path(raw))
             self.seed()
             sent = self.request().getvalue()
-            self.run_publish(policy, io.BytesIO(sent))
+            self.publish_objects(policy, io.BytesIO(sent))
             head = git(self.repo, "rev-parse", "HEAD")
             versions = count_versions(self.repo)
             shutil.rmtree(self.publish_path / "releases" / head)
             (self.publish_path / "current").unlink()
 
-            code, document, err = self.run_publish(policy, io.BytesIO(sent))
+            code, document, err = self.publish_objects(policy, io.BytesIO(sent))
 
             self.assertEqual((code, err), (0, ""))
             assert_contract("haproxy-objects-publish", json.dumps(document))
@@ -415,10 +416,10 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             policy = self.runtime(Path(raw))
             self.seed(shop=proxy("shop", "shop.example.com"))
             sent = self.request(objects={"shop": None}).getvalue()
-            self.run_publish(policy, io.BytesIO(sent))
+            self.publish_objects(policy, io.BytesIO(sent))
             head = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, err = self.run_publish(policy, io.BytesIO(sent))
+            code, document, err = self.publish_objects(policy, io.BytesIO(sent))
 
             self.assertEqual((code, err), (0, ""))
             self.assertEqual(document["result"]["hash"], head)
@@ -431,12 +432,12 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             policy = self.runtime(Path(raw))
             self.seed()
             sent = self.request().getvalue()
-            self.run_publish(policy, io.BytesIO(sent))
+            self.publish_objects(policy, io.BytesIO(sent))
             (self.repo / "manual/reservations.yaml").write_text("hostnames: [legacy.example.com]\n")
             git(self.repo, "add", "manual/reservations.yaml")
             git(self.repo, "commit", "-qm", "Human update")
 
-            code, document, _err = self.run_publish(policy, io.BytesIO(sent))
+            code, document, _err = self.publish_objects(policy, io.BytesIO(sent))
 
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "expected_target_changed")
@@ -447,7 +448,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             policy = self.runtime(Path(raw))
             self.seed(shop=proxy("shop", "shop.example.com"))
 
-            code, document, err = self.run_publish(policy, self.request(objects={"shop": None}))
+            code, document, err = self.publish_objects(policy, self.request(objects={"shop": None}))
 
             self.assertEqual((code, err), (0, ""))
             self.assertEqual(document["result"]["removed"], ["shop"])
@@ -463,7 +464,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.seed()
             before = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, err = self.run_publish(policy, self.request(objects={"gone": None}))
+            code, document, err = self.publish_objects(policy, self.request(objects={"gone": None}))
 
             self.assertEqual(code, 65)
             self.assertEqual(document["error"]["code"], "objects_invalid")
@@ -476,7 +477,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.seed(shop=proxy("shop", "shop.example.com"))
             before = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, _err = self.run_publish(
+            code, document, _err = self.publish_objects(
                 policy, self.request(objects={"mirror": proxy("mirror", "shop.example.com")})
             )
 
@@ -491,7 +492,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.seed()
             before = git(self.repo, "rev-parse", "HEAD")
 
-            code, document, err = self.run_publish(
+            code, document, err = self.publish_objects(
                 policy,
                 self.request(objects={"../../core/haproxy": proxy("shop", "shop.example.com")}),
             )
@@ -510,7 +511,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
                 for index in range(managed_objects_publish.MAX_OBJECTS + 1)
             }
 
-            code, document, _err = self.run_publish(policy, self.request(objects=objects))
+            code, document, _err = self.publish_objects(policy, self.request(objects=objects))
 
             self.assertEqual(code, 65)
             self.assertEqual(document["error"]["code"], "bad_input")
@@ -527,7 +528,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
                 comment="Publish the shop",
             )
 
-            code, document, err = self.run_publish(policy, io.BytesIO(request.encode()))
+            code, document, err = self.publish_objects(policy, io.BytesIO(request.encode()))
 
             self.assertEqual((code, err), (0, ""))
             self.assertTrue(document["result"]["changed"])

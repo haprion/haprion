@@ -48,6 +48,7 @@ from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 from haproxy_mgmt.traffic_collector import (
     RETENTION_DAYS,
@@ -314,7 +315,7 @@ class Chain:
             return 0
         return (max(seen) - min(seen) + 1) - len(seen)
 
-    def ui(self, **filters: object) -> object:
+    def ui(self, **filters: object) -> Any:
         return UI.read(self.mirror, (self.target.cluster,), **filters)
 
 

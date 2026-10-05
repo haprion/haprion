@@ -17,6 +17,7 @@ from haproxy_mgmt.proxy_model import (
     NAME,
     PROXY_KEYS,
     TCP_ONLY_KEYS,
+    Health,
     ModelError,
     RateLimit,
     WafException,
@@ -319,7 +320,7 @@ class TheMonitorVariants(unittest.TestCase):
     reasoning that made four path modes two optional fields.
     """
 
-    def health(self, body: str) -> object:
+    def health(self, body: str) -> Health:
         document = with_lines(("    health:\n      type: disabled", f"    health:\n{body}"))
         return load_proxy("shop", document).backends["web"].health
 
@@ -549,6 +550,7 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
                 "backend: pool", "deny_from:\n  mode: deny\n  sources: [office]\nbackend: pool"
             ).encode(),
         )
+        assert denied.deny_from is not None
         self.assertEqual(denied.deny_from.mode, "deny")
         for block in (
             "deny_from:\n  sources: [office]",

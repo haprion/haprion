@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime
+from typing import Any
 
 from haproxy_mgmt.config import Network, Vip
 from haproxy_mgmt.generate import source_of, vip_of
@@ -37,7 +38,9 @@ class ReadingTheStoredObjects(unittest.TestCase):
     def test_an_object_is_returned_as_it_is_written(self) -> None:
         """The document, byte for byte. An editor loads the source, not a rendering."""
 
-        result = objects_result({"managed/proxies/shop.yaml": SHOP}, COMMIT, generated_at=TIME)
+        result: dict[str, Any] = objects_result(
+            {"managed/proxies/shop.yaml": SHOP}, COMMIT, generated_at=TIME
+        )
 
         objects = result["objects"]
         assert isinstance(objects, list)
@@ -49,7 +52,7 @@ class ReadingTheStoredObjects(unittest.TestCase):
         self.assertTrue(objects[0]["readable"])
 
     def test_the_commit_is_returned_so_a_draft_can_record_its_base(self) -> None:
-        result = objects_result({}, COMMIT, generated_at=TIME)
+        result: dict[str, Any] = objects_result({}, COMMIT, generated_at=TIME)
 
         self.assertEqual(result["commit"], COMMIT)
         self.assertEqual(result["generated_at"], "2026-09-02T12:30:00Z")
@@ -57,7 +60,9 @@ class ReadingTheStoredObjects(unittest.TestCase):
     def test_a_repository_with_no_commit_lists_nothing(self) -> None:
         """A new cluster, not a broken one - and never a guess from elsewhere."""
 
-        result = objects_result({"managed/proxies/shop.yaml": SHOP}, None, generated_at=TIME)
+        result: dict[str, Any] = objects_result(
+            {"managed/proxies/shop.yaml": SHOP}, None, generated_at=TIME
+        )
 
         self.assertEqual(result["commit"], None)
         self.assertEqual(result["objects"], [])
@@ -72,7 +77,9 @@ class ReadingTheStoredObjects(unittest.TestCase):
 
         broken = SHOP.replace(b"protocol: http", b"protocol: gopher")
 
-        result = objects_result({"managed/proxies/shop.yaml": broken}, COMMIT, generated_at=TIME)
+        result: dict[str, Any] = objects_result(
+            {"managed/proxies/shop.yaml": broken}, COMMIT, generated_at=TIME
+        )
 
         objects = result["objects"]
         assert isinstance(objects, list)
@@ -81,7 +88,7 @@ class ReadingTheStoredObjects(unittest.TestCase):
         self.assertEqual(objects[0]["document"], broken.decode())
 
     def test_only_the_objects_directory_is_read(self) -> None:
-        result = objects_result(
+        result: dict[str, Any] = objects_result(
             {
                 "managed/proxies/shop.yaml": SHOP,
                 "managed/network.yaml": b"vips: {}\n",
@@ -97,7 +104,9 @@ class ReadingTheStoredObjects(unittest.TestCase):
         self.assertEqual([entry["name"] for entry in objects], ["shop"])
 
     def test_the_placeholder_that_keeps_the_directory_is_not_an_object(self) -> None:
-        result = objects_result({"managed/proxies/.gitkeep": b""}, COMMIT, generated_at=TIME)
+        result: dict[str, Any] = objects_result(
+            {"managed/proxies/.gitkeep": b""}, COMMIT, generated_at=TIME
+        )
 
         self.assertEqual(result["objects"], [])
 
@@ -146,7 +155,7 @@ class ReadingTheStoredObjects(unittest.TestCase):
             ),
         }
 
-        result = objects_result(files, COMMIT, generated_at=TIME)
+        result: dict[str, Any] = objects_result(files, COMMIT, generated_at=TIME)
 
         objects = result["objects"]
         assert isinstance(objects, list)
@@ -165,9 +174,12 @@ class WhatAnEntryCarriesForTheListing(unittest.TestCase):
     whether an object redirects plain HTTP, and both come from here.
     """
 
-    def entry(self, document: bytes) -> dict[str, object]:
-        result = objects_result({"managed/proxies/shop.yaml": document}, COMMIT, generated_at=TIME)
-        return result["objects"][0]
+    def entry(self, document: bytes) -> dict[str, Any]:
+        result: dict[str, Any] = objects_result(
+            {"managed/proxies/shop.yaml": document}, COMMIT, generated_at=TIME
+        )
+        entry: dict[str, Any] = result["objects"][0]
+        return entry
 
     def test_the_backends_are_counted(self) -> None:
         entry = self.entry(SHOP)
@@ -212,10 +224,11 @@ class WhereAnEntryIsServedFrom(unittest.TestCase):
     def entry(self, listen: str = "", health: str = "disabled") -> dict[str, object]:
         document = SHOP.replace(b"  protocol: http\n", b"  protocol: http\n" + listen.encode())
         document = document.replace(b"type: disabled", f"type: {health}".encode())
-        result = objects_result(
+        result: dict[str, Any] = objects_result(
             {"managed/proxies/shop.yaml": document}, COMMIT, network=NETWORK, generated_at=TIME
         )
-        return result["objects"][0]
+        entry: dict[str, object] = result["objects"][0]
+        return entry
 
     def test_the_default_vip_and_its_own_source(self) -> None:
         entry = self.entry()
@@ -266,7 +279,9 @@ class WhereAnEntryIsServedFrom(unittest.TestCase):
                 )
 
     def test_without_a_network_nothing_is_guessed(self) -> None:
-        result = objects_result({"managed/proxies/shop.yaml": SHOP}, COMMIT, generated_at=TIME)
+        result: dict[str, Any] = objects_result(
+            {"managed/proxies/shop.yaml": SHOP}, COMMIT, generated_at=TIME
+        )
 
         self.assertIsNone(result["objects"][0]["vip"])
         self.assertIsNone(result["objects"][0]["source"])
@@ -285,7 +300,7 @@ class WhereAnEntryIsServedFrom(unittest.TestCase):
             )
             + b"advanced: |\n  server a 192.0.2.30:8080 check\n"
         )
-        result = objects_result(
+        result: dict[str, Any] = objects_result(
             {"managed/proxies/shop.yaml": document}, COMMIT, network=NETWORK, generated_at=TIME
         )
 
@@ -293,7 +308,7 @@ class WhereAnEntryIsServedFrom(unittest.TestCase):
         self.assertIs(result["objects"][0]["health_checked"], False)
 
     def test_an_unreadable_object_says_nothing(self) -> None:
-        result = objects_result(
+        result: dict[str, Any] = objects_result(
             {"managed/proxies/shop.yaml": b"schema: 1\nname: shop\n"},
             COMMIT,
             network=NETWORK,

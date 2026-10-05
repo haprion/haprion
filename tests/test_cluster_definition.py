@@ -391,7 +391,9 @@ class RemovingACluster(unittest.TestCase):
             before = site.snapshot()
             real = site.run
 
-            def refusing(argv: Sequence[str], *, input_text: str | None = None):
+            def refusing(
+                argv: Sequence[str], *, input_text: str | None = None
+            ) -> subprocess.CompletedProcess[str]:
                 if "--add" in argv and "safe.directory" in argv:
                     return subprocess.CompletedProcess(
                         list(argv), 1, "", "could not lock config file"

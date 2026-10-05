@@ -15,13 +15,14 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from haproxy_mgmt import cluster_status
 from haproxy_mgmt.cli import status, status_helper
 from haproxy_mgmt.config import Node
-from haproxy_mgmt.status_collect import NodeResponse
+from haproxy_mgmt.status_collect import NodeResponse, ReadNode
 from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
@@ -159,14 +160,14 @@ class HelperFixture(unittest.TestCase):
         policy_path.write_text(yaml.safe_dump(document), encoding="utf-8")
         return policy_path
 
-    def reader(self, **stdout_by_name: str):
+    def reader(self, **stdout_by_name: str) -> ReadNode:
         def read(node: Node) -> NodeResponse:
             self.asked.append(node.name)
             return NodeResponse(exit_code=0, stdout=stdout_by_name[node.name])
 
         return read
 
-    def engines(self, *, b_active: bool) -> object:
+    def engines(self, *, b_active: bool) -> ReadNode:
         return self.reader(
             **{
                 "node-a": node_status(
@@ -185,7 +186,12 @@ class HelperFixture(unittest.TestCase):
         )
 
     def run_helper(
-        self, payload: bytes, *, policy_path: Path | None = None, node_reader=None, **overrides
+        self,
+        payload: bytes,
+        *,
+        policy_path: Path | None = None,
+        node_reader: ReadNode | None = None,
+        **overrides: Any,
     ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         version_reader = overrides.pop("version_reader", lambda: "3.2.9-1")
@@ -410,15 +416,17 @@ def completed(
 
 
 class CallerTests(HelperFixture):
-    def envelope(self, **overrides) -> str:
+    def envelope(self, **overrides: Any) -> str:
         _, out, _ = self.run_helper(request(), **overrides)
         return out
 
-    def run_caller(self, argv: list[str], payload: subprocess.CompletedProcess[str]):
+    def run_caller(
+        self, argv: list[str], payload: subprocess.CompletedProcess[str]
+    ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         self.sent: list[tuple[str, str]] = []
 
-        def run_helper(cluster_id: str, request_id: str):
+        def run_helper(cluster_id: str, request_id: str) -> subprocess.CompletedProcess[str]:
             self.sent.append((cluster_id, request_id))
             return payload
 

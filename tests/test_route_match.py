@@ -10,6 +10,7 @@ that a failure points at a sentence somebody can go and read.
 from __future__ import annotations
 
 import unittest
+from collections.abc import Sequence
 
 from haproxy_mgmt.proxy_model import Route, load_proxy
 from haproxy_mgmt.route_match import (
@@ -29,6 +30,14 @@ def prefix(path: str, backend: str = "web", **fields: str | None) -> Route:
 
 def exact(path: str, backend: str = "web") -> Route:
     return Route(path=path, match="exact", backend=backend)
+
+
+def backend_for(ordered: Sequence[Route], target: str) -> str | None:
+    """The backend of the route that wins, which some route must."""
+
+    route = select(ordered, target)
+    assert route is not None, f"no route takes {target}"
+    return route.backend
 
 
 class APrefixMatchesOnASegmentBoundary(unittest.TestCase):
@@ -153,16 +162,16 @@ class LongestPrefixFirstIsDecidedBySegments(unittest.TestCase):
         )
 
         self.assertEqual([route.path for route in ordered], ["/api/v1", "/api", "/"])
-        self.assertEqual(select(ordered, "/api/v1/orders").backend, "v1")
-        self.assertEqual(select(ordered, "/api/v2/orders").backend, "api")
-        self.assertEqual(select(ordered, "/about").backend, "site")
+        self.assertEqual(backend_for(ordered, "/api/v1/orders"), "v1")
+        self.assertEqual(backend_for(ordered, "/api/v2/orders"), "api")
+        self.assertEqual(backend_for(ordered, "/about"), "site")
 
     def test_an_exact_route_sorts_before_a_prefix_at_the_same_depth(self) -> None:
         ordered = order_routes([prefix("/health", "site"), exact("/health")])
 
         self.assertEqual([route.match for route in ordered], ["exact", "prefix"])
-        self.assertEqual(select(ordered, "/health").backend, "web")
-        self.assertEqual(select(ordered, "/health/live").backend, "site")
+        self.assertEqual(backend_for(ordered, "/health"), "web")
+        self.assertEqual(backend_for(ordered, "/health/live"), "site")
 
     def test_the_order_is_total_so_the_same_object_generates_the_same_file(self) -> None:
         routes = [prefix("/b"), prefix("/a"), prefix("/c")]

@@ -37,7 +37,7 @@ PROFILE = TestProfile(
     vip=ipaddress.IPv4Interface("198.51.100.254/32"),
 )
 
-INSPECTED = {
+INSPECTED: dict[str, Any] = {
     "ok": True,
     "op": "inspect",
     "os_release": {"ID": "ubuntu", "VERSION_ID": "26.04", "VERSION_CODENAME": "resolute"},
@@ -478,10 +478,10 @@ class Run(RestoreTest):
 
     def test_a_change_after_the_preview_refuses_before_writing(self) -> None:
         run = self.previewed()
-        FakeSession.answers["inspect"]["interface"] = dict(
-            INSPECTED["interface"],
-            mac="02:00:00:00:00:98",  # type: ignore[arg-type]
-        )
+        FakeSession.answers["inspect"]["interface"] = {
+            **INSPECTED["interface"],
+            "mac": "02:00:00:00:00:98",
+        }
         with self.assertRaisesRegex(RestoreError, "changed after the preview"):
             self.carry_out(run)
         self.assertEqual([c[1]["op"] for c in FakeSession.calls], ["inspect"])
@@ -532,7 +532,7 @@ class Overwrite(RestoreTest):
         super().setUp()
         source = restore_source.read(self.backups / "node-a" / f"{VERSION}.tar.gz")
         same = Target(
-            os_release=INSPECTED["os_release"],  # type: ignore[arg-type]
+            os_release=INSPECTED["os_release"],
             interface="eth0",
             mac="02:00:00:00:00:0a",
         )

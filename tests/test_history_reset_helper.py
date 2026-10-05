@@ -7,6 +7,7 @@ there should be none, and a caller that is not root.
 
 from __future__ import annotations
 
+import grp
 import io
 import json
 import os
@@ -15,6 +16,7 @@ import unittest
 import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 from unittest import mock
 
 import yaml
@@ -106,9 +108,9 @@ class HelperTests(unittest.TestCase):
         document.update(overrides)
         return json.dumps(document).encode()
 
-    def run_helper(self, policy: Path, request: bytes, **overrides: object):
+    def run_helper(self, policy: Path, request: bytes, **overrides: object) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
-        arguments: dict[str, object] = {
+        arguments: dict[str, Any] = {
             "policy_path": policy,
             "input_stream": io.BytesIO(request),
             "output_stream": out,
@@ -119,7 +121,7 @@ class HelperTests(unittest.TestCase):
             "resolve_group": lambda _name: os.getgid(),
         }
         arguments.update(overrides)
-        code = main([], **arguments)  # type: ignore[arg-type]
+        code = main([], **arguments)
         return code, out.getvalue(), err.getvalue()
 
     # ------------------------------------------------------------------ refusing
@@ -188,7 +190,7 @@ class HelperTests(unittest.TestCase):
         with TemporaryDirectory() as raw:
             policy, draft = self.runtime(Path(raw))
             before = git(draft, "rev-parse", "HEAD")
-            with mock.patch.object(history_reset_helper.grp, "getgrnam", side_effect=KeyError):
+            with mock.patch.object(grp, "getgrnam", side_effect=KeyError):
                 code, out, err = self.run_helper(
                     policy,
                     self.request(),

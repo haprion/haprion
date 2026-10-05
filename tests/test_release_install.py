@@ -12,12 +12,14 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from haproxy_mgmt.release_install import (
     DIRECTORY_MODE,
     FILE_MODE,
     PUBLISH_GROUP,
     InstallError,
+    InstallResult,
     install_release,
 )
 from haproxy_mgmt.release_layout import NODE_DIRECTORIES, ReleaseMetadata
@@ -87,8 +89,8 @@ class InstallFixture(unittest.TestCase):
     """Shared helper only. Kept free of test methods so the classes below do not
     inherit and re-run each other's cases."""
 
-    def install(self, publish: Path, recorder: Recorder, **overrides: object):
-        arguments: dict[str, object] = {
+    def install(self, publish: Path, recorder: Recorder, **overrides: object) -> InstallResult:
+        arguments: dict[str, Any] = {
             "node_path": NODE_PATH,
             "artifact": ARTIFACT,
             "index": {},
@@ -97,7 +99,7 @@ class InstallFixture(unittest.TestCase):
             "change_owner": recorder,
         }
         arguments.update(overrides)
-        return install_release(publish, **arguments)  # type: ignore[arg-type]
+        return install_release(publish, **arguments)
 
 
 class WhatTheReleaseKeepsAndTheNodeNeverSees(InstallFixture):

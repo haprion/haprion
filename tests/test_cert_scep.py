@@ -88,7 +88,7 @@ class ScepFixture(ImportFixture):
             error_stream=errors,
             require_root=False,
             require_secure=False,
-            deployer=lambda cluster: (self.deployed.append(cluster), 0)[1],
+            deployer=self.deploy,
             live=self.live,
             store=self.store,
             lock_path=self.lock,

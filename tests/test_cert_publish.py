@@ -461,8 +461,13 @@ class NothingHalfWritten(Fixture):
             return real_write(path, *args, **kwargs)
 
         deployed: list[str] = []
+
+        def deploy(cluster: str) -> int:
+            deployed.append(cluster)
+            return 0
+
         with mock.patch.object(cert_publish, "write_file", side_effect=write_file):
-            report = self.run_publish(policy, deployer=lambda c: deployed.append(c) or 0)
+            report = self.run_publish(policy, deployer=deploy)
 
         entry = report.certificates[0]
         self.assertEqual(entry.status, "failed")

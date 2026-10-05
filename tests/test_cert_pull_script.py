@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 BASE = Path(__file__).resolve().parents[1]
 PULL = BASE / "install" / "node" / "haproxy-cert-pull"
@@ -229,14 +230,14 @@ class CertPull(unittest.TestCase):
 STATUS = BASE / "install" / "node" / "haproxy-node-status"
 
 
-def status_functions(certs: Path, pending: Path) -> dict:
+def status_functions(certs: Path, pending: Path) -> dict[str, Any]:
     """`read_certificates` and what it calls, out of the status script as installed."""
 
     text = STATUS.read_text(encoding="utf-8")
     start = text.index("PEM = ")
     constants = text[start : text.index("\n\n\n", start)]
     functions = text[text.index("def leaf_fingerprint(") : text.index("def read_validation(")]
-    namespace: dict = {
+    namespace: dict[str, Any] = {
         "base64": __import__("base64"),
         "hashlib": __import__("hashlib"),
         "re": __import__("re"),

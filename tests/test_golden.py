@@ -24,7 +24,6 @@ from haproxy_mgmt.config import TLS_POLICY_NAMES, AbuseProtection, Vip
 from haproxy_mgmt.generate import (
     HTTP_TRAFFIC_LOG_FORMAT,
     NODE_CERTIFICATE_DIR,
-    TLS_POLICIES,
     TRAFFIC_LOG_PROFILE,
     GeneratorError,
     generate,
@@ -42,6 +41,7 @@ from haproxy_mgmt.golden import (
 )
 from haproxy_mgmt.proxy_model import ModelError, Proxy, load_proxy
 from haproxy_mgmt.reservations import Reservations
+from haproxy_mgmt.tls_policy import TLS_POLICIES
 
 #
 # Enough of a configuration for `haproxy -c` to have something to attach the
@@ -167,8 +167,8 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
                 loaded = objects(case)
                 cluster = arguments(case)
                 self.assertEqual(
-                    generate(list(reversed(loaded)), **cluster).configuration,  # type: ignore[arg-type]
-                    generate(loaded, **cluster).configuration,  # type: ignore[arg-type]
+                    generate(list(reversed(loaded)), **cluster).configuration,
+                    generate(loaded, **cluster).configuration,
                 )
 
 

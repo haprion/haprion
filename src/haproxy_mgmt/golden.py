@@ -14,6 +14,7 @@ pass by writing its own expectations.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from haproxy_mgmt import cluster_settings, safe_yaml
 from haproxy_mgmt.config import AbuseProtection, UnknownHost, Vip
@@ -110,7 +111,7 @@ ABUSE_PROTECTION = AbuseProtection(
 )
 
 
-def arguments(case: Path) -> dict[str, object]:
+def arguments(case: Path) -> dict[str, Any]:
     """Everything the generator needs besides the objects themselves.
 
     One place, so the test that compares output and the tool that rewrites it
@@ -141,7 +142,7 @@ def arguments(case: Path) -> dict[str, object]:
 def produced(case: Path) -> dict[str, str]:
     """The configuration half of a case, which is what the golden files are."""
 
-    return generate(objects(case), **arguments(case)).configuration  # type: ignore[arg-type]
+    return generate(objects(case), **arguments(case)).configuration
 
 
 def produced_lists(case: Path) -> dict[str, str]:
@@ -152,4 +153,4 @@ def produced_lists(case: Path) -> dict[str, str]:
     the configuration when a case is validated, in the layout a release has.
     """
 
-    return generate(objects(case), **arguments(case)).certificate_lists  # type: ignore[arg-type]
+    return generate(objects(case), **arguments(case)).certificate_lists

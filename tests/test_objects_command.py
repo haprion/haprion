@@ -11,6 +11,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import yaml
@@ -88,12 +89,12 @@ class ObjectsHelperTests(unittest.TestCase):
     def run_helper(
         self,
         *,
-        tree_reader=None,
-        head_resolver=None,
+        tree_reader: Callable[[Path, str], Mapping[str, bytes]] | None = None,
+        head_resolver: Callable[[Path], tuple[str, str]] | None = None,
         cluster: str = "alpha",
-        parameters=None,
-        waf=None,
-    ):
+        parameters: dict[str, object] | None = None,
+        waf: dict[str, str] | None = None,
+    ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         read = tree_reader or (lambda _repo, _commit: {"managed/proxies/shop.yaml": SHOP})
         resolve = head_resolver or (lambda _repo: ("refs/heads/main", HEAD))
@@ -292,7 +293,9 @@ def answer(**result: object) -> subprocess.CompletedProcess[str]:
 
 
 class ObjectsCommandTests(unittest.TestCase):
-    def run_command(self, argv: list[str], completed: subprocess.CompletedProcess[str]):
+    def run_command(
+        self, argv: list[str], completed: subprocess.CompletedProcess[str]
+    ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         code = objects.main(
             argv,

@@ -16,15 +16,18 @@ import base64
 import hashlib
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
-from haproxy_mgmt.cli import cert_deploy, cert_deploy_helper, deploy_helper
+from haproxy_mgmt.cli import cert_deploy, cert_deploy_helper
 from haproxy_mgmt.cluster_lock import hold
-from haproxy_mgmt.cluster_status import NodeStatus, parse_status
+from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
+from haproxy_mgmt.config import DeployIdentity
 from tests.contract_schema import assert_contract
 from tests.node_harness import FakeCluster, FakeNode
 
@@ -110,7 +113,7 @@ class HelperFixture(unittest.TestCase):
     ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
 
-        def read_status():  # type: ignore[no-untyped-def]
+        def read_status() -> ClusterStatus:
             return parse_status(self.cluster.read_status())
 
         def trigger(node: NodeStatus) -> int:
@@ -228,12 +231,8 @@ class RolloutTests(HelperFixture):
             stdout = "ERROR: the certificate could not be installed.\n"
             stderr = ""
 
-        original = deploy_helper.subprocess.run
-        deploy_helper.subprocess.run = lambda *_, **__: Refused()  # type: ignore[assignment]
-        try:
+        with mock.patch.object(subprocess, "run", lambda *_, **__: Refused()):
             code, out, err = self.run_helper(request(json=True), real_trigger=True)
-        finally:
-            deploy_helper.subprocess.run = original  # type: ignore[assignment]
 
         self.assertNotEqual(code, 0)
         self.assertEqual(json.loads(out)["operation"], "cert_deploy")
@@ -285,13 +284,11 @@ class TriggerTests(unittest.TestCase):
             stdout = ""
             stderr = ""
 
-        def fake_run(argv, **_):  # type: ignore[no-untyped-def]
+        def fake_run(argv: list[str], **_: object) -> FakeCompleted:
             sent.append(argv)
             return FakeCompleted()
 
-        original = deploy_helper.subprocess.run
-        deploy_helper.subprocess.run = fake_run  # type: ignore[assignment]
-        try:
+        with mock.patch.object(subprocess, "run", fake_run):
             cert_deploy_helper.trigger_node(
                 NodeStatus(
                     name="node-a",
@@ -302,14 +299,10 @@ class TriggerTests(unittest.TestCase):
                     release_hash=None,
                     error_code=None,
                 ),
-                cert_deploy_helper.DeployIdentity(
-                    user="svc-app", key=Path("/root/.ssh/id_ed25519")
-                ),
+                DeployIdentity(user="svc-app", key=Path("/root/.ssh/id_ed25519")),
                 target,
                 io.StringIO(),
             )
-        finally:
-            deploy_helper.subprocess.run = original  # type: ignore[assignment]
 
         self.assertEqual(sent[0][-1], "cert-pull example-net example-com")
 

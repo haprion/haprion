@@ -69,7 +69,9 @@ backends:
 """
 
 
-def sni_only_server(port: int, certificate: Path, key: Path, seen: list[str | None]):
+def sni_only_server(
+    port: int, certificate: Path, key: Path, seen: list[str | None]
+) -> ThreadingHTTPServer:
     """A TLS server that refuses a handshake carrying no server name.
 
     The refusal is the measurement. A backend that merely recorded the name
@@ -101,7 +103,7 @@ def sni_only_server(port: int, certificate: Path, key: Path, seen: list[str | No
         #
         return None if name else ssl.ALERT_DESCRIPTION_UNRECOGNIZED_NAME
 
-    context.sni_callback = record  # type: ignore[assignment]
+    context.sni_callback = record
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -115,12 +117,17 @@ def sni_only_server(port: int, certificate: Path, key: Path, seen: list[str | No
 class WhatACheckSendsInItsHandshake(unittest.TestCase):
     """The claim under test: HAProxy's own check sends no server name."""
 
+    directory: tempfile.TemporaryDirectory[str]
+    root: Path
+    servers: list[ThreadingHTTPServer]
+    running: list[subprocess.Popen[bytes]]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         cls.root = Path(cls.directory.name)
-        cls.servers: list[ThreadingHTTPServer] = []
-        cls.running: list[subprocess.Popen[bytes]] = []
+        cls.servers = []
+        cls.running = []
 
     @classmethod
     def tearDownClass(cls) -> None:

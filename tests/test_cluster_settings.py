@@ -29,6 +29,7 @@ from haproxy_mgmt.generate import (
     EXTERNAL_LOG_PROFILE,
     HTTP_TRAFFIC_LOG_FORMAT,
     TRAFFIC_LOG_PROFILE,
+    GeneratedLayer,
     GeneratorError,
     generate,
 )
@@ -100,21 +101,23 @@ class TheDocument(unittest.TestCase):
 
 
 class TheGeneratedLayer(unittest.TestCase):
-    def generate(self, case: str, settings: ClusterSettings, reservations: bytes = b"{}"):  # type: ignore[no-untyped-def]
+    def generate(
+        self, case: str, settings: ClusterSettings, reservations: bytes = b"{}"
+    ) -> GeneratedLayer:
         options = arguments(GOLDEN / case)
         options["settings"] = settings
         return generate(
             objects(GOLDEN / case), reservations=load_reservations(reservations), **options
-        )  # type: ignore[arg-type]
+        )
 
     def test_an_external_record_names_its_node_and_the_local_one_is_unchanged(self) -> None:
         settings = load_document(GRAYLOG)
         options = arguments(GOLDEN / "minimal")
         options["settings"] = settings
-        both = generate(objects(GOLDEN / "minimal"), traffic_logging=True, **options)  # type: ignore[arg-type]
+        both = generate(objects(GOLDEN / "minimal"), traffic_logging=True, **options)
         alone = generate(
             objects(GOLDEN / "minimal"), traffic_logging=True, **arguments(GOLDEN / "minimal")
-        )  # type: ignore[arg-type]
+        )
         frontends = both.configuration["1000-frontends.cfg"]
 
         self.assertIn(f"log-profile {TRAFFIC_LOG_PROFILE}\n", frontends)

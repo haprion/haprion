@@ -4,7 +4,9 @@ import os
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 from haproxy_mgmt import candidate_validation
@@ -13,12 +15,12 @@ from haproxy_mgmt.candidate_validation import (
     parse_candidate,
     sandbox_command,
 )
-from haproxy_mgmt.helper_protocol import HelperProtocolError
+from haproxy_mgmt.helper_protocol import HelperProtocolError, JsonValue
 
 
 class CandidateValidationTests(unittest.TestCase):
-    def test_manifest_is_deterministic_and_materialized_with_rewrites(self):
-        files = {
+    def test_manifest_is_deterministic_and_materialized_with_rewrites(self) -> None:
+        files: dict[str, JsonValue] = {
             "maps/hosts.map": "example.com backend-a\n",
             "conf.d/0074-site.cfg": "bind :443 ssl crt /etc/haproxy/certs/example.com.pem\n",
             "haproxy.cfg": "map(/etc/haproxy/maps/hosts.map)\n",
@@ -40,8 +42,8 @@ class CandidateValidationTests(unittest.TestCase):
             self.assertEqual((root / "certs/example.com.pem").read_bytes(), b"dummy PEM\n")
             self.assertEqual(os.stat(root / "haproxy.cfg").st_mode & 0o777, 0o600)
 
-    def test_invalid_paths_content_and_shape_are_rejected(self):
-        invalid = (
+    def test_invalid_paths_content_and_shape_are_rejected(self) -> None:
+        invalid: tuple[tuple[dict[str, JsonValue], str], ...] = (
             ({"files": {}}, "non-empty"),
             ({"files": {"conf.d/0074-site.cfg": "x"}}, "haproxy.cfg"),
             ({"files": {"haproxy.cfg": "x", "/etc/shadow": "x"}}, "relative path"),
@@ -61,7 +63,7 @@ class CandidateValidationTests(unittest.TestCase):
             ):
                 parse_candidate(parameters)
 
-    def test_the_keepalived_address_list_may_cross_the_boundary(self):
+    def test_the_keepalived_address_list_may_cross_the_boundary(self) -> None:
         #
         # It is not HAProxy configuration and takes no part in the validation
         # the helper runs; it rides along to the node, which checks it with
@@ -75,7 +77,7 @@ class CandidateValidationTests(unittest.TestCase):
 
         self.assertIn("keepalived/addresses.conf", candidate.files)
 
-    def test_sandbox_command_has_fixed_executable_and_denies_private_roots(self):
+    def test_sandbox_command_has_fixed_executable_and_denies_private_roots(self) -> None:
         command = sandbox_command(Path("/run/candidate"), "11111111-1111-4111-8111-111111111111")
         self.assertEqual(command[0], "/usr/bin/systemd-run")
         self.assertEqual(
@@ -126,7 +128,7 @@ class CandidateValidationTests(unittest.TestCase):
 class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
     """B230: the candidate's rules are compiled on the manager, in the same sandbox."""
 
-    FILES = {
+    FILES: ClassVar[dict[str, JsonValue]] = {
         "haproxy.cfg": "global\n",
         "conf.d/1000-frontends.cfg": "filter spoe engine coraza config /etc/haproxy/waf/spoe.conf\n",
         "waf/coraza.yaml": "      Include /etc/haproxy/waf/crs/rules/*.conf\n",
@@ -135,13 +137,13 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
         "waf/crs/rules/REQUEST-901-INITIALIZATION.conf": "# rules\n",
     }
 
-    def test_the_waf_shapes_cross_and_nothing_else_under_waf(self):
+    def test_the_waf_shapes_cross_and_nothing_else_under_waf(self) -> None:
         self.assertIn("waf/coraza.yaml", parse_candidate({"files": self.FILES}).files)
         for path in ("waf/run.sh", "waf/crs/rules/x.sh", "waf/crs/x/y.conf", "waf/../haproxy.cfg"):
             with self.subTest(path), self.assertRaises(HelperProtocolError):
                 parse_candidate({"files": {"haproxy.cfg": "x", path: "x"}})
 
-    def test_the_engine_and_the_frontend_read_the_candidate_s_own_rules(self):
+    def test_the_engine_and_the_frontend_read_the_candidate_s_own_rules(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "candidate"
             materialize_candidate(
@@ -155,7 +157,7 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
             )
             self.assertIn(b"/candidate/waf/crs/rules", (root / "waf/coraza.yaml").read_bytes())
 
-    def test_the_engine_check_runs_in_the_same_sandbox_as_its_own_unit(self):
+    def test_the_engine_check_runs_in_the_same_sandbox_as_its_own_unit(self) -> None:
         command = sandbox_command(
             Path("/run/candidate"),
             "11111111-1111-4111-8111-111111111111",
@@ -171,10 +173,10 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
         self.assertIn("TemporaryFileSystem=/:ro", " ".join(command))
         self.assertNotIn("/usr/sbin/haproxy", command)
 
-    def test_rules_without_the_engine_on_the_manager_are_refused(self):
-        calls = []
+    def test_rules_without_the_engine_on_the_manager_are_refused(self) -> None:
+        calls: list[list[str]] = []
 
-        def ran(command, **_):
+        def ran(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
             calls.append(command)
             return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -183,7 +185,7 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
             (root / "waf").mkdir()
             (root / "waf" / "coraza.yaml").write_text("x")
             with (
-                mock.patch.object(candidate_validation.subprocess, "run", ran),
+                mock.patch.object(subprocess, "run", ran),
                 mock.patch.object(candidate_validation, "WAF_ENGINE", str(root / "absent")),
             ):
                 result = candidate_validation.validate_in_sandbox(root, "1111")
@@ -199,7 +201,9 @@ if __name__ == "__main__":
 class TheValidatorVersion(unittest.TestCase):
     """What `haproxy -v` names on this host, for the status reading (Fas 16 punkt 3b)."""
 
-    def answer(self, stdout: str, code: int = 0):
+    def answer(
+        self, stdout: str, code: int = 0
+    ) -> Callable[[list[str]], subprocess.CompletedProcess[str]]:
         return lambda argv: subprocess.CompletedProcess(argv, code, stdout, "")
 
     def test_the_version_is_the_third_word_of_the_first_line(self) -> None:
@@ -213,7 +217,7 @@ class TheValidatorVersion(unittest.TestCase):
             with self.subTest(stdout=stdout, code=code):
                 self.assertIsNone(candidate_validation.validator_version(self.answer(stdout, code)))
 
-        def missing(_argv):
+        def missing(_argv: list[str]) -> subprocess.CompletedProcess[str]:
             raise FileNotFoundError("/usr/sbin/haproxy")
 
         self.assertIsNone(candidate_validation.validator_version(missing))

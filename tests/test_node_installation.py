@@ -8,6 +8,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install/node/haproxy-node-status"
 INSTALLER = Path(__file__).resolve().parents[1] / "install/04-node-prepare"
@@ -39,8 +40,8 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.sbin.mkdir()
         self.metadata = self.root / "node-installation.json"
 
-    def read(self) -> dict[str, object]:
-        namespace: dict[str, object] = {
+    def read(self) -> dict[str, Any]:
+        namespace: dict[str, Any] = {
             "Path": Path,
             "hashlib": hashlib,
             "json": json,
@@ -52,7 +53,8 @@ class NodeInstallationReadingTests(unittest.TestCase):
             "NODE_SCRIPTS": NODE_SCRIPTS,
         }
         exec(self.source, namespace)  # noqa: S102 - verbatim function from the node script
-        return namespace["read_installation"]()  # type: ignore[operator,no-any-return]
+        result: dict[str, Any] = namespace["read_installation"]()
+        return result
 
     def install(self, content: bytes = b"script\n") -> None:
         for name in NODE_SCRIPTS:

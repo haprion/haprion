@@ -17,6 +17,7 @@ import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 from haproxy_mgmt.cli.history_reset import CONFIRMATION, OPERATION, main
 
@@ -56,8 +57,8 @@ class CommandTests(unittest.TestCase):
 
     def run_command(
         self, draft: Path, answers: str, *, helper_code: int = 0, publish_code: int = 0
-    ):
-        crossed: list[dict[str, object]] = []
+    ) -> tuple[int, str, list[dict[str, Any]], list[str]]:
+        crossed: list[dict[str, Any]] = []
         published: list[str] = []
 
         def run_helper(cluster_id: str, request: bytes) -> tuple[int, str, str]:
@@ -161,7 +162,7 @@ class CommandTests(unittest.TestCase):
         with TemporaryDirectory() as raw:
             draft = self.layout(Path(raw))
             _, _, crossed, _ = self.run_command(draft, f"y\n{CONFIRMATION}\n")
-            self.assertEqual(set(crossed[0]["parameters"]), {"acknowledgement"})  # type: ignore[arg-type]
+            self.assertEqual(set(crossed[0]["parameters"]), {"acknowledgement"})
 
     def test_each_run_has_its_own_request_id(self) -> None:
         with TemporaryDirectory() as raw:

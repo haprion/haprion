@@ -19,11 +19,10 @@ from contextlib import redirect_stderr
 from datetime import timedelta
 from unittest.mock import patch
 
-from haproxy_mgmt.traffic_collector import RETENTION_DAYS
+from haproxy_mgmt.traffic_collector import RETENTION_DAYS, NodeTarget
 from tests.traffic_chain_harness import (
     HOST_KEY_CHANGED,
     ChainTestCase,
-    NodeTarget,
     load_node_prune,
     record,
 )

@@ -15,11 +15,13 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
+from unittest import mock
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-from haproxy_mgmt import cert_inventory
+from haproxy_mgmt import cert_inventory, config
 from haproxy_mgmt.certificates import leaf_fingerprint
 from haproxy_mgmt.cli import cert_list, cert_list_helper
 from haproxy_mgmt.config import ConfigError
@@ -72,7 +74,7 @@ def _pem(common_name: str, *, sans: tuple[str, ...] = (), days: int = 30) -> str
     return completed.stdout
 
 
-def _cluster(ids: tuple[str, ...]):
+def _cluster(ids: tuple[str, ...]) -> Any:
     return type("Cluster", (), {"certificate_ids": ids})
 
 
@@ -177,7 +179,7 @@ class LifecycleTests(unittest.TestCase):
 
 
 class ResultTests(unittest.TestCase):
-    def _result(self, directory: str, ids: tuple[str, ...], **kwargs) -> dict:
+    def _result(self, directory: str, ids: tuple[str, ...], **kwargs: Any) -> dict[str, Any]:
         root = Path(directory)
         return cert_inventory.cert_list_result(
             root, _cluster(ids), letsencrypt_root=Path(directory) / "none", **kwargs
@@ -209,8 +211,6 @@ class ResultTests(unittest.TestCase):
         that is what a certificate published before the registry existed
         looks like, and hiding it would hide exactly the ones to register.
         """
-
-        from haproxy_mgmt import config
 
         registry = config.Registry(
             receivers={
@@ -304,18 +304,22 @@ class RegistryListingTests(unittest.TestCase):
     other half - measured at the source, which is what a renewal writes first.
     """
 
-    def _registry(self, root: Path, **kwargs):
-        from haproxy_mgmt import config
-
+    def _registry(self, root: Path, **kwargs: Any) -> config.Registry:
         receivers = {
             name: config.Receiver(receiver_id=name, path=root / "receivers" / name, owner="svc-app")
             for name in kwargs.pop("receiver_names", ())
         }
         return config.Registry(receivers=receivers, certificates=kwargs["certificates"])
 
-    def _entry(self, identifier: str, *, kind="acme", lineage=None, clusters=(), receivers=()):
-        from haproxy_mgmt import config
-
+    def _entry(
+        self,
+        identifier: str,
+        *,
+        kind: str = "acme",
+        lineage: str | None = None,
+        clusters: tuple[str, ...] = (),
+        receivers: tuple[str, ...] = (),
+    ) -> config.RegisteredCertificate:
         return config.RegisteredCertificate(
             certificate_id=identifier,
             source=config.CertificateSource(kind=kind, lineage=lineage),
@@ -323,7 +327,9 @@ class RegistryListingTests(unittest.TestCase):
             receivers=receivers,
         )
 
-    def _run(self, root: Path, registry, now: datetime | None = None) -> dict:
+    def _run(
+        self, root: Path, registry: config.Registry, now: datetime | None = None
+    ) -> dict[str, Any]:
         return cert_inventory.registry_result(
             registry,
             certificate_root=root / "certdist",
@@ -717,7 +723,7 @@ class EnvelopeTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
-    def _document(self, **overrides) -> dict:
+    def _document(self, **overrides: object) -> dict[str, Any]:
         certificate = {
             "id": "alpha",
             "fingerprint_sha256": "a" * 64,
@@ -745,10 +751,10 @@ class CommandTests(unittest.TestCase):
             "error": None,
         }
 
-    def _run(self, argv: list[str], document: dict) -> tuple[str, str, int]:
+    def _run(self, argv: list[str], document: dict[str, Any]) -> tuple[str, str, int]:
         out, err = io.StringIO(), io.StringIO()
 
-        def run_helper(cluster: str, request_id: str):
+        def run_helper(cluster: str, request_id: str) -> Any:
             return type(
                 "Completed", (), {"stdout": json.dumps(document), "stderr": "", "returncode": 0}
             )
@@ -801,8 +807,8 @@ class RegistryCommandTests(unittest.TestCase):
     the cluster listing's answer rather than in a helper of its own.
     """
 
-    def _document(self, registry: dict | None) -> dict:
-        result: dict = {"certificates": []}
+    def _document(self, registry: dict[str, Any] | None) -> dict[str, Any]:
+        result: dict[str, Any] = {"certificates": []}
         if registry is not None:
             result["registry"] = registry
         return {
@@ -817,8 +823,8 @@ class RegistryCommandTests(unittest.TestCase):
             "error": None,
         }
 
-    def _entry(self, **overrides) -> dict:
-        entry = {
+    def _entry(self, **overrides: object) -> dict[str, Any]:
+        entry: dict[str, Any] = {
             "id": "example.com",
             "source": {"kind": "acme", "lineage": "example.com-wildcard"},
             "targets": {"clusters": ["alpha"], "receivers": []},
@@ -837,10 +843,10 @@ class RegistryCommandTests(unittest.TestCase):
         entry.update(overrides)
         return entry
 
-    def _run(self, argv: list[str], document: dict) -> tuple[str, str, int]:
+    def _run(self, argv: list[str], document: dict[str, Any]) -> tuple[str, str, int]:
         out, err = io.StringIO(), io.StringIO()
 
-        def run_helper(cluster: str, request_id: str):
+        def run_helper(cluster: str, request_id: str) -> Any:
             return type(
                 "Completed", (), {"stdout": json.dumps(document), "stderr": "", "returncode": 0}
             )
@@ -944,7 +950,7 @@ class HelperTests(unittest.TestCase):
     other helpers answer off-contract for months.
     """
 
-    def _run(self, *, cluster: str = "alpha", with_root: bool = True):
+    def _run(self, *, cluster: str = "alpha", with_root: bool = True) -> tuple[int, str, str]:
         request = {
             "schema_version": 1,
             "operation": "cert_list",
@@ -975,11 +981,12 @@ class HelperTests(unittest.TestCase):
 
                 registry = None
 
-            original_policy = cert_list_helper.load_policy
-            original_config = cert_list_helper.load_runtime_config
-            cert_list_helper.load_policy = lambda *a, **k: Policy()  # type: ignore[assignment]
-            cert_list_helper.load_runtime_config = lambda *a, **k: Config()  # type: ignore[assignment]
-            try:
+            with (
+                mock.patch.object(cert_list_helper, "load_policy", lambda *a, **k: Policy()),
+                mock.patch.object(
+                    cert_list_helper, "load_runtime_config", lambda *a, **k: Config()
+                ),
+            ):
                 code = cert_list_helper.main(
                     [],
                     input_stream=io.BytesIO(json.dumps(request).encode("utf-8")),
@@ -987,9 +994,6 @@ class HelperTests(unittest.TestCase):
                     error_stream=err,
                     require_root=False,
                 )
-            finally:
-                cert_list_helper.load_policy = original_policy  # type: ignore[assignment]
-                cert_list_helper.load_runtime_config = original_config  # type: ignore[assignment]
         return code, out.getvalue(), err.getvalue()
 
     def test_a_listing_from_the_helper_matches_the_frozen_schema(self) -> None:

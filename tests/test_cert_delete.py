@@ -16,6 +16,7 @@ import subprocess
 import unittest
 import unittest.mock
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ import yaml
 from haproxy_mgmt import cert_delete
 from haproxy_mgmt.cert_delete import Guards, delete, read_guards
 from haproxy_mgmt.cert_inventory import FULLCHAIN, PRIVKEY
+from haproxy_mgmt.cert_publish import publish_lock
 from haproxy_mgmt.cli import cert_delete_helper
 from haproxy_mgmt.config import load_policy, load_runtime_config
 from tests.test_cert_publish import Fixture
@@ -91,7 +93,7 @@ class DeleteFixture(Fixture):
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         return policy_path
 
-    def certbot(self, command: tuple[str, ...]) -> tuple[int, str]:
+    def certbot(self, command: Sequence[str]) -> tuple[int, str]:
         self.certbot_calls.append(tuple(command))
         conf = self.renewal / f"{command[3]}.conf"
         conf.unlink(missing_ok=True)
@@ -394,9 +396,7 @@ class WhatGoes(DeleteFixture):
         self.addCleanup(os.close, handle)
         fcntl.flock(handle, fcntl.LOCK_EX)
         with (
-            unittest.mock.patch.object(
-                cert_delete, "publish_lock", wraps=cert_delete.publish_lock
-            ) as held,
+            unittest.mock.patch.object(cert_delete, "publish_lock", wraps=publish_lock) as held,
             unittest.mock.patch("haproxy_mgmt.cert_publish.LOCK_WAIT_SECONDS", 0),
             self.assertRaises(cert_delete.DeleteError) as refused,
         ):

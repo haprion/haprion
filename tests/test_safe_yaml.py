@@ -64,7 +64,7 @@ class BothLoadersReadTheSame(unittest.TestCase):
             )
         finally:
             if saved is not None:
-                yaml.CSafeLoader = saved
+                yaml.__dict__["CSafeLoader"] = saved
             importlib.reload(safe_yaml)
 
     def test_every_golden_object_loads_to_the_same_model_either_way(self) -> None:

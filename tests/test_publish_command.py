@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import Any
 
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import publish, publish_helper
@@ -40,7 +41,7 @@ class CallerFixture(PublishFixture):
         valid: bool = True,
         diagnostics: str = "Configuration file is valid\n",
     ) -> tuple[int, str]:
-        self.requests: list[dict[str, object]] = []
+        self.requests: list[dict[str, Any]] = []
 
         def validate(candidate_root: Path, request_id: str) -> ValidationResult:
             return ValidationResult(valid=valid, diagnostics=diagnostics)

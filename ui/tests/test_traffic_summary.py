@@ -130,7 +130,7 @@ class TheClusterHeader(LoginTestCase):
         self.assertIn("<dt>Requests 24 h</dt><dd>1.2M</dd>", page)
         self.assertIn("<dt>In</dt><dd>247 kbit/s</dd>", page)
         self.assertIn("<dt>Out</dt><dd>3.2 Mbit/s</dd>", page)
-        self.assertIn(f"<dt>Response</dt><dd>{traffic_summary.DASH}</dd>", page)
+        self.assertIn(f"<dt>Response 1 h</dt><dd>{traffic_summary.DASH}</dd>", page)
         self.assertNotIn("<span>Requests 24 h</span>", page, "no row of tiles any more")
         self.assertEqual(asked, [("alpha", "beta"), ("alpha", "beta")])
         responses.assert_not_called()

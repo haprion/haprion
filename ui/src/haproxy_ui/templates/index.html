@@ -59,7 +59,7 @@
         <div title="Requests in the last 24 hours{% if flow.request_rate %}; {{ flow.request_rate }} over the last minutes{% endif %}{% if flow.day_partial %}; part of the day was not measured{% endif %}"><dt>Requests 24 h</dt><dd>{{ flow.requests }}</dd></div>
         <div title="Into the VIPs over the last minutes{% if flow.inbound_day %}; {{ flow.inbound_day }} in the last 24 hours{% endif %}"><dt>In</dt><dd>{{ flow.inbound }}</dd></div>
         <div title="Out of the VIPs over the last minutes{% if flow.outbound_day %}; {{ flow.outbound_day }} in the last 24 hours{% endif %}"><dt>Out</dt><dd>{{ flow.outbound }}</dd></div>
-        <div title="Server response time from the traffic log, last hour: median{% if flow.response_p95 %}; 95th percentile {{ flow.response_p95 }}{% endif %}"><dt>Response</dt><dd>{{ flow.response_median }}</dd></div>
+        <div title="Server response time from the traffic log, last hour: median{% if flow.response_p95 %}; 95th percentile {{ flow.response_p95 }}{% endif %}"><dt>Response 1 h</dt><dd>{{ flow.response_median }}</dd></div>
       </dl>
       {% endif %}
       <div class="cluster-state">

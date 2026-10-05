@@ -1856,14 +1856,19 @@ def build_router(config: Config) -> APIRouter:
         for cluster, backends, seen in listed:
             targets = metrics.redirect_targets(_documents(object_rows, cluster))
 
-            def redirect_label(name: str, targets: Mapping[str, str] = targets) -> str:
+            def redirect_label(
+                name: str, targets: Mapping[str, metrics.RedirectTarget] = targets
+            ) -> str:
                 """What it redirects, or the stored name where nothing says.
 
                 A page that invented a name would be worse than one showing
                 an opaque name it could not resolve.
                 """
 
-                return targets.get(name, metrics.without_prefix(name))
+                target = targets.get(name)
+                return target.label if target else metrics.without_prefix(name)
+
+            pools, redirects = metrics.split_redirects(backends, targets)
 
             frontends = [frontend for frontend, _owned in seen]
             drawn.append(
@@ -1894,18 +1899,8 @@ def build_router(config: Config) -> APIRouter:
                     # so letting it into the comparison would size every real
                     # backend against traffic that never reached one.
                     #
-                    "backends": section(
-                        cluster,
-                        "backend",
-                        [name for name in backends if not metrics.is_redirect(name)],
-                        metrics.without_prefix,
-                    ),
-                    "redirects": section(
-                        cluster,
-                        "backend",
-                        [name for name in backends if metrics.is_redirect(name)],
-                        redirect_label,
-                    ),
+                    "backends": section(cluster, "backend", pools, metrics.without_prefix),
+                    "redirects": section(cluster, "backend", redirects, redirect_label),
                 }
             )
 

@@ -25,8 +25,9 @@ from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from haproxy_mgmt.generate import METRICS_FRONTEND, PREFIX, REDIRECT_PREFIX, WAF_BACKEND
-from haproxy_mgmt.guid import redirect_name
+from haproxy_mgmt.generate import METRICS_FRONTEND, PREFIX, WAF_BACKEND
+from haproxy_mgmt.guid import REDIRECT_PREFIX, redirect_name, redirect_suffixes
+from haproxy_mgmt.proxy_model import Proxy
 
 #
 # HAProxy's own `show stat` column names. The same list appears in
@@ -1534,9 +1535,10 @@ GENERATED_PREFIX = f"{PREFIX}-"
 LISTENER_PROTOCOLS = ("https", "http")
 
 #
-# A generated redirect answer, which is a backend to HAProxy but has no servers.
-# `redirect_name` derives eight hex characters from what the route redirects,
-# so this is the shape those names always take.
+# A generated redirect answer as it was named until 2026-10-05: eight hex
+# characters derived from the route. Recognised by shape only where no object
+# accounts for the name - a redirect whose object is gone; the names since then
+# are named from paths and recognised through the objects (`redirect_targets`).
 #
 REDIRECT_SUFFIX = re.compile(r"-redirect-[0-9a-f]{8}$")
 
@@ -1615,32 +1617,66 @@ def is_redirect(backend: str) -> bool:
     return bool(REDIRECT_SUFFIX.search(backend))
 
 
-def redirect_targets(objects: Mapping[str, Any]) -> dict[str, str]:
-    """Generated redirect backends, mapped to what each one actually does.
+@dataclass(frozen=True, slots=True)
+class RedirectTarget:
+    """One generated redirect backend, as a reader should see it.
 
-    The generator names a redirect from a digest of the route that made it -
-    eight hex characters, so that adding a route above one moves neither its
-    name nor its counters. That is right for the configuration and unreadable
-    on a page: `...-redirect-eee20480` tells an operator nothing about which
-    redirect it is.
-
-    Resolved by building rather than by parsing. Every route that redirects is
-    asked what the generator would call it, and the answer is compared against
-    the name the metrics row carries. So no name is split on a hyphen that
-    might belong to somebody's object, and a name nothing accounts for is
-    simply left alone.
+    `current` is the name the generator gives it now. For a name it gave before
+    redirects were named from their paths (2026-10-05) that is the successor,
+    whose counters began when the change was deployed.
     """
 
-    found: dict[str, str] = {}
+    label: str
+    current: str
+
+
+def redirect_targets(objects: Mapping[str, Proxy]) -> dict[str, RedirectTarget]:
+    """Generated redirect backends, mapped to what each one actually does.
+
+    Resolved by building rather than by parsing. Every route that redirects is
+    asked what the generator calls it - and what it called it before 2026-10-05,
+    eight hex characters of a digest, which is the name older history carries -
+    and the answer is compared with the name the metrics row carries. So no
+    name is split on a hyphen that might belong to somebody's object, and a name
+    nothing accounts for is simply left alone.
+    """
+
+    found: dict[str, RedirectTarget] = {}
     for name, proxy in objects.items():
-        for route in getattr(proxy, "routes", ()):
-            redirect = getattr(route, "redirect", None)
+        suffixes = redirect_suffixes(proxy)
+        for route in proxy.routes:
+            redirect = route.redirect
             if redirect is None:
                 continue
-            derived = redirect_name(route.path, route.match, redirect.location)
-            generated = f"{PREFIX}-{name}-{REDIRECT_PREFIX}-{derived}"
-            found[generated] = f"{name} · {route.path} → {redirect.location}"
+            current = f"{PREFIX}-{name}-{suffixes[(route.path, route.match)]}"
+            legacy = f"{PREFIX}-{name}-{REDIRECT_PREFIX}-{redirect_name(route.path, route.match, redirect.location)}"
+            label = f"{name} · {route.path} → {redirect.location}"
+            found[current] = RedirectTarget(label=label, current=current)
+            found.setdefault(legacy, RedirectTarget(label=label, current=current))
     return found
+
+
+def split_redirects(
+    backends: Sequence[str], targets: Mapping[str, RedirectTarget]
+) -> tuple[list[str], list[str]]:
+    """A cluster's backends as (pools, redirects), in their order.
+
+    A redirect's older name is left out once its current name has history of
+    its own: the two are one route, and two cards for it would read as two
+    redirects. Until the change is deployed the older name is the only one, and
+    is drawn.
+    """
+
+    seen = set(backends)
+    pools: list[str] = []
+    redirects: list[str] = []
+    for name in backends:
+        target = targets.get(name)
+        if target is None:
+            (redirects if is_redirect(name) else pools).append(name)
+        elif target.current == name or target.current not in seen:
+            redirects.append(name)
+    return pools, redirects
 
 
 def without_prefix(name: str) -> str:

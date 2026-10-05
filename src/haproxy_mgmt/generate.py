@@ -44,7 +44,7 @@ from haproxy_mgmt.guid import (
     backend_guid,
     frontend_guid,
     listener_guid_prefix,
-    redirect_name,
+    redirect_suffixes,
     server_guid,
 )
 from haproxy_mgmt.proxy_model import (
@@ -88,11 +88,6 @@ PREFIX = "mgd"
 #
 TRUSTED_ACL = f"{PREFIX}-trusted-proxy"
 
-#
-# What a generated redirect backend is called, before the derived part. Named
-# rather than numbered so that reading `show stat` says what the section is.
-#
-REDIRECT_PREFIX = "redirect"
 
 #
 # How many source addresses one frontend keeps counters for. Entries expire
@@ -356,6 +351,7 @@ def generate(
 
     ordered = sorted(proxies, key=lambda proxy: proxy.name)
     _refuse_duplicate_names(ordered)
+    _refuse_shared_backend_names(ordered)
     _refuse_shared_hostnames(ordered)
     _refuse_shared_section_names(ordered)
 
@@ -954,6 +950,31 @@ def _refuse_duplicate_names(proxies: Sequence[Proxy]) -> None:
     duplicates = sorted(name for name, count in counted.items() if count > 1)
     if duplicates:
         raise GeneratorError(f"two objects share a name: {', '.join(duplicates)}")
+
+
+def _refuse_shared_backend_names(proxies: Sequence[Proxy]) -> None:
+    """Every backend the objects produce, under a name no other one has.
+
+    A backend name is the object's name and the pool's or redirect's joined by
+    a hyphen, and hyphens are allowed in both. Object `a` with a redirect for
+    `/x` and object `a-redirect` with a pool `x` are both `mgd-a-redirect-x`.
+    HAProxy would refuse that on `-c`, pointing at a generated file; said here,
+    it names the objects (since 2026-10-05, when redirects began to be named
+    from their paths and such a meeting stopped being a coincidence of hashes).
+    """
+
+    owners: dict[str, list[str]] = {}
+    for proxy in proxies:
+        names = set(proxy.backends) | set(redirect_suffixes(proxy).values())
+        for name in names:
+            owners.setdefault(_backend_name(proxy.name, name), []).append(proxy.name)
+    shared = sorted(
+        f"{name} ({', '.join(sorted(objects))})"
+        for name, objects in owners.items()
+        if len(objects) > 1
+    )
+    if shared:
+        raise GeneratorError(f"two objects produce the same backend name: {'; '.join(shared)}")
 
 
 def _serves_shared(proxy: Proxy, protocol: str) -> bool:
@@ -2088,7 +2109,7 @@ def _frontend_rules(
 
     decisions: list[str] = []
     for index, route in enumerate(order_routes(proxy.routes)):
-        backend = _backend_name(proxy.name, _destination(route))
+        backend = _backend_name(proxy.name, _destination(proxy, route))
         if route.path == "/" and route.match == "prefix":
             #
             # The root prefix matches every path, so a path condition would be
@@ -2137,13 +2158,13 @@ def _tls_sni_guard(proxy: Proxy, host_acl: str, tls_names: Mapping[str, str]) ->
     ]
 
 
-def _destination(route: Route) -> str:
+def _destination(proxy: Proxy, route: Route) -> str:
     """The backend name a route sends to, whether it is a pool or an answer.
 
-    A redirect's name is derived from what it does rather than from where it
-    sits in the list. Adding a route above it then moves no name, and therefore
-    no GUID and no counter - the same reason a server is identified by its
-    address instead of its position.
+    A redirect's name is derived from its path (`redirect_suffixes`) rather
+    than from where it sits in the list. Adding a route above it then moves no
+    name, and therefore no GUID and no counter - the same reason a server is
+    identified by its address instead of its position.
     """
 
     if route.backend is not None:
@@ -2156,8 +2177,7 @@ def _destination(route: Route) -> str:
         # assertion, so it survives the day somebody runs with -O.
         #
         raise GeneratorError(f"a route sends nowhere: {route.path}")
-    name = redirect_name(route.path, route.match, redirect.location)
-    return f"{REDIRECT_PREFIX}-{name}"
+    return redirect_suffixes(proxy)[(route.path, route.match)]
 
 
 def _redirect_backends(proxy: Proxy) -> list[str]:
@@ -2165,7 +2185,7 @@ def _redirect_backends(proxy: Proxy) -> list[str]:
     for route in order_routes(proxy.routes):
         if route.redirect is None:
             continue
-        name = _destination(route)
+        name = _destination(proxy, route)
         lines += [
             "",
             f"backend {_backend_name(proxy.name, name)}",

@@ -23,6 +23,8 @@ from haproxy_mgmt.guid import (
     guid_prefix_is_usable,
     guids_for,
     listener_guid_prefix,
+    redirect_name,
+    redirect_suffixes,
     server_guid,
 )
 from haproxy_mgmt.proxy_model import Server, load_proxy
@@ -151,6 +153,113 @@ class HaproxyWouldAcceptWhatWeGenerate(unittest.TestCase):
         self.assertFalse(guid_is_usable("shop web"))
         self.assertFalse(guid_is_usable(""))
         self.assertFalse(guid_is_usable("a" * (MAX_GUID + 1)))
+
+
+def redirects(name: str, routes: str, pools: str = "web") -> object:
+    """An object whose routes are given, every pool a single server."""
+
+    pool_lines = "".join(
+        f"  {pool}:\n    balance: roundrobin\n    health:\n      type: disabled\n"
+        f"    servers:\n      - host: 198.51.100.10\n        port: 8080\n"
+        for pool in pools.split()
+    )
+    #
+    # The model refuses a pool no route sends to; each extra pool gets one.
+    #
+    used = "".join(
+        f"  - path: /to-{pool}\n    backend: {pool}\n" for pool in pools.split() if pool != "web"
+    )
+    text = (
+        f"schema: 1\nname: {name}\nhostnames: [{name}.example.com]\nlisten:\n  protocol: http\n"
+        f"routes:\n{routes}{used}backends:\n{pool_lines}"
+    )
+    return load_proxy(name, text.encode())
+
+
+def route(path: str, location: str, match: str = "") -> str:
+    exact = f"    match: {match}\n" if match else ""
+    return f"  - path: {path}\n{exact}    redirect:\n      location: {location}\n"
+
+
+ANCHOR = "  - path: /app\n    backend: web\n"
+
+
+class ARedirectIsNamedFromItsPath(unittest.TestCase):
+    """`mgd-shop-redirect-old-app` rather than `mgd-shop-redirect-eee20480` (2026-10-05)."""
+
+    def test_the_root_is_the_plain_word_and_other_paths_follow_it(self) -> None:
+        proxy = redirects(
+            "shop",
+            route("/", "https://example.net/")
+            + route("/Old/App.v2", "https://example.net/new")
+            + route("/old", "https://example.net/", "exact")
+            + ANCHOR,
+        )
+        self.assertEqual(
+            redirect_suffixes(proxy),  # type: ignore[arg-type]
+            {
+                ("/", "prefix"): "redirect",
+                ("/Old/App.v2", "prefix"): "redirect-old-app-v2",
+                ("/old", "exact"): "redirect-old-exact",
+            },
+        )
+
+    def test_the_target_does_not_name_it(self) -> None:
+        one = redirects("shop", route("/old", "https://example.net/a") + ANCHOR)
+        two = redirects("shop", route("/old", "https://example.org/b") + ANCHOR)
+        self.assertEqual(redirect_suffixes(one), redirect_suffixes(two))  # type: ignore[arg-type]
+
+    def test_names_that_would_meet_fall_back_to_the_digest_and_only_those(self) -> None:
+        proxy = redirects(
+            "shop",
+            route("/a.b", "https://example.net/1")
+            + route("/a-b", "https://example.net/2")
+            + route("/exact", "https://example.net/3")
+            + route("/", "https://example.net/4", "exact")
+            + route("/kept", "https://example.net/5")
+            + ANCHOR,
+            pools="web redirect-pool",
+        )
+        found = redirect_suffixes(proxy)  # type: ignore[arg-type]
+        for path, match, location in (
+            ("/a.b", "prefix", "https://example.net/1"),
+            ("/a-b", "prefix", "https://example.net/2"),
+            ("/exact", "prefix", "https://example.net/3"),
+            ("/", "exact", "https://example.net/4"),
+        ):
+            self.assertEqual(
+                found[(path, match)], f"redirect-{redirect_name(path, match, location)}"
+            )
+        self.assertEqual(found[("/kept", "prefix")], "redirect-kept")
+
+    def test_a_pool_of_the_same_name_keeps_its_name(self) -> None:
+        proxy = redirects(
+            "shop", route("/pool", "https://example.net/") + ANCHOR, pools="web redirect-pool"
+        )
+        self.assertEqual(
+            redirect_suffixes(proxy)[("/pool", "prefix")],  # type: ignore[arg-type]
+            f"redirect-{redirect_name('/pool', 'prefix', 'https://example.net/')}",
+        )
+
+    def test_a_long_path_falls_back_to_the_digest(self) -> None:
+        path = "/segment" * 8
+        proxy = redirects("shop", route(path, "https://example.net/") + ANCHOR)
+        self.assertEqual(
+            redirect_suffixes(proxy)[(path, "prefix")],  # type: ignore[arg-type]
+            f"redirect-{redirect_name(path, 'prefix', 'https://example.net/')}",
+        )
+
+    def test_two_objects_that_produce_one_backend_name_are_refused(self) -> None:
+        from haproxy_mgmt.generate import (  # noqa: PLC0415
+            GeneratorError,
+            _refuse_shared_backend_names,
+        )
+
+        first = redirects("a", route("/x", "https://example.net/") + ANCHOR)
+        second = redirects("a-redirect", ANCHOR, pools="web x")
+        with self.assertRaisesRegex(GeneratorError, r"mgd-a-redirect-x \(a, a-redirect\)"):
+            _refuse_shared_backend_names([first, second])  # type: ignore[list-item]
+        _refuse_shared_backend_names([first])  # type: ignore[list-item]
 
 
 TWO_POOLS = b"""

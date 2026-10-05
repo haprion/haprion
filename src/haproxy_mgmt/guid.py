@@ -118,18 +118,70 @@ def listener_guid_prefix(proxy: str) -> str:
 
 
 def redirect_name(path: str, match: str, location: str) -> str:
-    """A stable name for the backend a redirect route becomes.
+    """Eight hex characters derived from a redirect route.
 
-    Derived from what the route is and does, not from where it sits in the
-    list, so adding a route above one moves neither its name nor its GUID. Its
-    counters therefore survive an edit that has nothing to do with it - the
-    same reason `server_guid` is taken from an address instead of a position.
-
-    Short: the name is joined into a backend name that already carries a prefix
-    and the object's name, and HAProxy bounds the whole thing.
+    Until 2026-10-05 this was the whole of the name - `redirect-eee20480` -
+    which kept counters stable and told an operator reading Grafana nothing.
+    It is now the fallback `redirect_suffixes` uses when the readable name
+    cannot be had, and what the interface recognises older history by.
     """
 
     return _digest(REDIRECT, path, match, location)[:8]
+
+
+#
+# What a generated redirect backend is called, before the part taken from its
+# path. Named rather than numbered so that reading `show stat` says what the
+# section is.
+#
+REDIRECT_PREFIX = "redirect"
+
+#
+# What a path keeps in a backend name: lowercase letters and digits, every
+# other run of characters one hyphen. Bounded so that a long path falls back to
+# the digest rather than to a name HAProxy or a reader has to scroll.
+#
+REDIRECT_WORDS = re.compile(r"[^a-z0-9]+")
+MAX_REDIRECT_SUFFIX = 48
+
+
+def redirect_suffixes(proxy: Proxy) -> dict[tuple[str, str], str]:
+    """The backend name each of an object's redirect routes becomes, by path and match.
+
+    Named from the route's path, which with its match is what tells the routes
+    apart (the model refuses the same pair twice): `/` is `redirect`, `/old/app`
+    is `redirect-old-app`, an exact match adds `-exact`. The target is not part
+    of it, so pointing a redirect somewhere else keeps its name and counters,
+    and neither does the route's position.
+
+    A name two routes would share once reduced to letters and digits, one a
+    pool of the object already carries, or one too long, is given the digest
+    instead (`redirect-eee20480`) - only for those routes, so the rest keep the
+    readable form.
+    """
+
+    redirects = [
+        (route.path, route.match, route.redirect.location)
+        for route in proxy.routes
+        if route.redirect is not None
+    ]
+    wanted: dict[tuple[str, str], str] = {}
+    for path, match, _location in redirects:
+        words = REDIRECT_WORDS.sub("-", path.lower()).strip("-")
+        parts = [
+            REDIRECT_PREFIX,
+            *([words] if words else []),
+            *(["exact"] if match == "exact" else []),
+        ]
+        wanted[(path, match)] = "-".join(parts)
+    names = list(wanted.values())
+    found: dict[tuple[str, str], str] = {}
+    for path, match, location in redirects:
+        name = wanted[(path, match)]
+        if names.count(name) > 1 or name in proxy.backends or len(name) > MAX_REDIRECT_SUFFIX:
+            name = f"{REDIRECT_PREFIX}-{redirect_name(path, match, location)}"
+        found[(path, match)] = name
+    return found
 
 
 def backend_guid(proxy: str, backend: str) -> str:

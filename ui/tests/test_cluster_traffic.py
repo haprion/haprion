@@ -20,8 +20,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt.generate import PREFIX, REDIRECT_PREFIX, WAF_BACKEND
-from haproxy_mgmt.guid import redirect_name
+from haproxy_mgmt.generate import PREFIX, WAF_BACKEND
+from haproxy_mgmt.guid import REDIRECT_PREFIX, redirect_name
 from haproxy_mgmt.proxy_model import load_proxy
 
 from haproxy_ui import metrics
@@ -468,25 +468,59 @@ backends:
         port: 8080
 """
 
-    def targets(self) -> dict[str, str]:
+    def targets(self) -> dict[str, metrics.RedirectTarget]:
         return metrics.redirect_targets({"shop": load_proxy("shop", self.DOCUMENT)})
+
+    #
+    # The name the generator gives the route since 2026-10-05, and the one it
+    # gave before, which older history carries.
+    #
+    CURRENT = f"{PREFIX}-shop-{REDIRECT_PREFIX}-old"
+    LEGACY = (
+        f"{PREFIX}-shop-{REDIRECT_PREFIX}-"
+        f"{redirect_name('/old', 'prefix', 'https://shop.example.com/new')}"
+    )
 
     def test_the_generator_and_the_page_agree_on_the_name(self) -> None:
         """Built rather than parsed, so no name is split on somebody's hyphen."""
 
-        derived = redirect_name("/old", "prefix", "https://shop.example.com/new")
-        expected = f"{PREFIX}-shop-{REDIRECT_PREFIX}-{derived}"
+        from haproxy_mgmt.guid import redirect_suffixes  # noqa: PLC0415
 
-        self.assertIn(expected, self.targets())
+        proxy = load_proxy("shop", self.DOCUMENT)
+        self.assertEqual(
+            f"{PREFIX}-shop-{redirect_suffixes(proxy)[('/old', 'prefix')]}", self.CURRENT
+        )
+        self.assertEqual(self.targets()[self.CURRENT].current, self.CURRENT)
+
+    def test_the_older_name_is_the_same_redirect(self) -> None:
+        self.assertEqual(self.targets()[self.LEGACY], self.targets()[self.CURRENT])
 
     def test_it_is_named_by_the_route_and_the_destination(self) -> None:
-        described = next(iter(self.targets().values()))
+        described = self.targets()[self.CURRENT].label
 
         self.assertIn("/old", described)
         self.assertIn("https://shop.example.com/new", described)
 
     def test_a_route_that_sends_to_a_backend_is_not_one(self) -> None:
-        self.assertEqual(len(self.targets()), 1)
+        self.assertEqual(set(self.targets()), {self.CURRENT, self.LEGACY})
+
+    def test_the_older_name_is_drawn_until_the_current_one_has_history(self) -> None:
+        targets = self.targets()
+        pool = f"{PREFIX}-shop-web"
+
+        self.assertEqual(
+            metrics.split_redirects([pool, self.LEGACY], targets), ([pool], [self.LEGACY])
+        )
+        self.assertEqual(
+            metrics.split_redirects([pool, self.LEGACY, self.CURRENT], targets),
+            ([pool], [self.CURRENT]),
+        )
+
+    def test_a_pool_is_not_taken_for_a_redirect_by_its_name(self) -> None:
+        """`mgd-shop-redirect` is a redirect only if a route makes it one."""
+
+        named = f"{PREFIX}-shop-{REDIRECT_PREFIX}"
+        self.assertEqual(metrics.split_redirects([named], self.targets()), ([named], []))
 
 
 class AnAddressNobodyReportedHolding(ReadingACluster):

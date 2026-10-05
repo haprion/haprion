@@ -113,7 +113,7 @@
       <dl class="traffic-figures">
         {% for total in backend.totals %}
         {% if (traffic_redirect and total.label != '2xx') or (not traffic_redirect and total.label != '3xx') %}
-        <div><dt>{{ total.label }}</dt><dd>{% if total.known %}<span class="traffic-value"{% if total.shortened %} data-note="{{ total.label }}: {{ '{:,}'.format(total.value).replace(',', ' ') }} exactly."{% endif %}>{{ total.shown }}</span>{% else %}&mdash;{% endif %}{% if total.known and not total.whole %}<span class="traffic-partial" data-note="Measured over {{ total.coverage }}% of this window. The rest was time nobody counted - a restart, or the address moving - so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
+        <div><dt>{{ total.label }}</dt><dd>{% if total.known %}<span class="traffic-value"{% if total.shortened %} data-note="{{ total.label }}: {{ '{:,}'.format(total.value).replace(',', ' ') }} exactly."{% endif %}>{{ total.shown }}</span>{% else %}&mdash;{% endif %}{% if total.known and not total.whole %}<span class="traffic-partial" data-note="Counted over {{ total.coverage }}% of the window">*</span>{% endif %}</dd></div>
         {% endif %}
         {% endfor %}
       </dl>

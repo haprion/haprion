@@ -54,7 +54,12 @@
         // bucket's numbers the moment the pointer crosses the band takes the
         // answer away exactly where it is being read.
         //
-        if (pick.dataset.selected) {
+        // Once both ends are marked, every bucket answers so (2026-10-05):
+        // the range stays on the card until the next click or `clear`, and a
+        // pointer resting on the line beside the band does not replace it.
+        //
+        const marks = new URLSearchParams(window.location.search);
+        if (pick.dataset.selected || (marks.has("from") && marks.has("to"))) {
           restore();
           return;
         }
@@ -91,12 +96,18 @@
       // and a total large enough to be printed short. Both answer in the note
       // row, where every other reading on this card answers.
       //
-      for (const said of row.querySelectorAll("[data-note]")) {
-        said.addEventListener("pointerenter", () => {
-          if (note) note.textContent = said.dataset.note || "";
-        });
-        said.addEventListener("pointerleave", restore);
-      }
+      // Listened for on the row, not on each figure: `restore` writes the
+      // figures back as markup, which makes new elements - and a listener on
+      // the old star was gone after the first look at the line (2026-10-05).
+      //
+      row.addEventListener("pointerover", (event) => {
+        const said = event.target.closest("[data-note]");
+        if (said && note) note.textContent = said.dataset.note || "";
+      });
+      row.addEventListener("pointerout", (event) => {
+        const said = event.target.closest("[data-note]");
+        if (said && !said.contains(event.relatedTarget)) restore();
+      });
     }
   };
 

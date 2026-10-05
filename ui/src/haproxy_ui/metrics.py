@@ -1157,7 +1157,7 @@ def spark(
                 moment=shown(at).strftime(TIMESTAMP),
                 note=""
                 if measured and share >= COVERAGE_WHOLE
-                else (partial_note(share) if measured else "Nothing was sampled at this time."),
+                else (partial_note(share) if measured else "No samples at this time"),
             )
         )
     if current:
@@ -1256,20 +1256,18 @@ def gap_note(covered: float) -> str:
     """Why a marked-off gap has no figures, in the card's own row."""
 
     if covered <= 0:
-        return "Nothing across this bucket could be measured."
-    return (
-        f"Only {round(covered * 100)}% of this bucket could be measured, "
-        "which is too little to answer for it."
-    )
+        return "Nothing measured in this bucket"
+    return f"Only {round(covered * 100)}% measured, not shown"
 
 
 def partial_note(covered: float) -> str:
-    """Why a figure stands for more time than was watched."""
+    """Why a figure stands for more time than was watched.
 
-    return (
-        f"Measured over {round(covered * 100)}% of this bucket and scaled to it. "
-        "The rest fell in a stretch that could not be measured."
-    )
+    Short enough for the note row beside the bucket's time (2026-10-05): the
+    sentence it replaced was cut off there after five words.
+    """
+
+    return f"Scaled up from {round(covered * 100)}% measured"
 
 
 def reading_at(at: datetime, totals: Mapping[str, int | None], covered: float = 1.0) -> str:

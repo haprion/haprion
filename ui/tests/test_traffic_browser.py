@@ -31,11 +31,12 @@ import unittest
 from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any, ClassVar
+from unittest import mock
 
 import uvicorn
 
 from haproxy_ui.app import create_app
-from tests.test_cluster_traffic import ReadingACluster
+from tests.test_cluster_traffic import ReadingACluster, measurement
 from tests.test_login import PASSWORD, configuration
 
 #
@@ -264,6 +265,61 @@ class WhatAHoverAnswers(TheChartInABrowser):
 
             self.assertEqual(self.figures(page), marked)
             self.assertEqual(self.scope(page), label)
+
+            #
+            # And outside it: a marked range stays until the next click or
+            # `clear`, wherever the pointer rests (2026-10-05).
+            #
+            outside = self.card(page).query_selector_all(".traffic-pick:not([data-selected])")
+            self.assertTrue(outside, "the range marked every bucket")
+            outside[-1].hover()
+            page.wait_for_timeout(150)
+
+            self.assertEqual(self.figures(page), marked)
+            self.assertEqual(self.scope(page), label)
+
+    def test_a_figure_still_explains_itself_after_a_look_at_the_line(self) -> None:
+        """The star's note was lost once a hover had written the figures back (2026-10-05)."""
+
+        half = measurement()
+        half = replace(
+            half,
+            totals=tuple(replace(total, counted_sec=30.0) for total in half.totals),
+            coverage=50,
+        )
+        patch = mock.patch("haproxy_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: half)
+        patch.start()
+        self.addCleanup(patch.stop)
+        with self.signed_in() as page:
+            card = page.query_selector(".traffic-card:has(.traffic-figures [data-note])")
+            self.assertIsNotNone(card, "no card on the demo page carries a figure with a note")
+            card.query_selector_all(".traffic-pick")[3].hover()
+            page.mouse.move(0, 0)
+            said = card.query_selector(".traffic-figures [data-note]")
+            expected = said.get_attribute("data-note")
+            said.hover()
+            self.assertTrue(expected)
+            self.assertEqual(
+                (card.query_selector(".traffic-scope-note").text_content() or "").strip(), expected
+            )
+            #
+            # Whole, not cut off with an ellipsis: the note row is narrow.
+            #
+            self.assertTrue(
+                card.eval_on_selector(".traffic-scope-note", "n => n.scrollWidth <= n.clientWidth")
+            )
+            widths = card.eval_on_selector(
+                ".traffic-scope-note",
+                """(n, texts) => texts.map(t => { n.textContent = t;
+                    return n.scrollWidth <= n.clientWidth; })""",
+                [
+                    "Scaled up from 100% measured",
+                    "Only 49% measured, not shown",
+                    "Nothing measured in this bucket",
+                    "Requests: 1 234 567 890 exactly.",
+                ],
+            )
+            self.assertEqual(widths, [True, True, True, True])
 
 
 if __name__ == "__main__":

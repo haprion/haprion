@@ -49,10 +49,6 @@ class BackendTotalConnection:
             self.owner.arguments = arguments or {}
 
         def fetchone(self) -> tuple[object, ...] | None:
-            if "metric_rollup_state" in self.owner.statement:
-                if self.owner.complete_before is None:
-                    return None
-                return (self.owner.complete_before,)
             return self.owner.row
 
         def fetchall(self) -> list[tuple[object, ...]]:
@@ -70,12 +66,10 @@ class BackendTotalConnection:
         self,
         row: tuple[object, ...],
         *,
-        complete_before: datetime | None = None,
         rows: Sequence[tuple[object, ...]] = (),
     ) -> None:
         self.row = row
         self.rows = rows
-        self.complete_before = complete_before
         self.statement = ""
         self.statements: list[str] = []
         self.arguments: dict[str, object] = {}
@@ -87,14 +81,13 @@ class BackendTotalConnection:
 class ThePoolFiguresQuery(unittest.TestCase):
     """The figure reads the finest stored series, never the graph's buckets."""
 
-    def test_it_combines_raw_samples_with_the_hourly_history_at_one_boundary(self) -> None:
+    def test_a_long_range_is_summed_from_the_hourly_sums_with_its_edges_read_raw(self) -> None:
         at = datetime(2026, 9, 6, 12, tzinfo=UTC)
         pairs: list[object] = []
         for index, _counter in enumerate(CARD_COUNTERS, start=1):
             pairs.extend((index * 100, 60.0))
         connection = BackendTotalConnection(
-            (3, at - timedelta(minutes=1), at, False, False, 60.0, 60.0, *pairs),
-            complete_before=at - timedelta(days=1),
+            (3, at - timedelta(minutes=1), at, False, False, 60.0, 60.0, *pairs)
         )
 
         measured = db.read_backend_totals(
@@ -103,81 +96,98 @@ class ThePoolFiguresQuery(unittest.TestCase):
             backend="mgd-site-web",
             since=at - timedelta(days=30),
             until=at,
-            now=at,
         )
 
+        self.assertEqual(len(connection.statements), 1)
+        self.assertIn("metric_backend_hour_delta", connection.statement)
         self.assertIn("metric_backend_member", connection.statement)
-        self.assertIn("metric_backend_hour", connection.statement)
+        self.assertNotIn('metric_backend_hour"', connection.statement)
+        self.assertNotIn("metric_rollup_state", connection.statement)
         self.assertNotIn("date_bin", connection.statement)
         self.assertNotIn("width", connection.arguments)
-        self.assertEqual(connection.arguments["raw_from"], at - timedelta(days=7))
+        self.assertEqual(connection.arguments["after"], at - timedelta(days=30))
         self.assertEqual(
             [total.value for total in measured.totals], [100, 200, 300, 400, 500, 600, 700]
         )
 
-    def test_a_range_marked_weeks_ago_is_read_from_the_rollup_that_holds_it(self) -> None:
-        """The boundary is a week before now, not a week before the marks.
+    def test_a_range_marked_weeks_ago_is_read_from_the_hourly_sums_that_hold_it(self) -> None:
+        """Nothing about the range depends on today any more.
 
         Seen 2026-10-01: 15-18 Sep marked on the 30-day window read 0 under a
-        visible peak, because the boundary counted from the marks' end put the
-        whole range on the raw side, where its rows had been pruned.
+        visible peak, because a boundary counted from the marks' end put the
+        whole range on the raw side, where its rows had been pruned. The hourly
+        sums keep the whole window, so there is no boundary to misplace.
         """
 
-        now = datetime(2026, 10, 1, 12, tzinfo=UTC)
-        pairs = [value for _counter in CARD_COUNTERS for value in (0, 0.0)]
-        connection = BackendTotalConnection(
-            (0, None, None, False, False, 0.0, 0.0, *pairs),
-            complete_before=now - timedelta(hours=1),
-        )
-
-        db.read_backend_totals(
-            connection,  # type: ignore[arg-type]
-            cluster="alpha",
-            backend="mgd-site-web",
-            since=datetime(2026, 9, 15, 20, tzinfo=UTC),
-            until=datetime(2026, 9, 18, 20, tzinfo=UTC),
-            now=now,
-        )
-
-        self.assertEqual(connection.arguments["raw_from"], now - timedelta(days=7))
-
-    def test_an_incomplete_rollup_moves_the_reader_back_to_retained_raw_data(self) -> None:
-        at = datetime(2026, 9, 6, 12, tzinfo=UTC)
-        complete_before = at - timedelta(days=10)
-        pairs = [value for _counter in CARD_COUNTERS for value in (0, 0.0)]
-        connection = BackendTotalConnection(
-            (0, None, None, False, False, 0.0, 0.0, *pairs),
-            complete_before=complete_before,
-        )
-
-        db.read_backend_totals(
-            connection,  # type: ignore[arg-type]
-            cluster="alpha",
-            backend="mgd-site-web",
-            since=at - timedelta(days=30),
-            until=at,
-            now=at,
-        )
-
-        self.assertIn("metric_rollup_state", connection.statements[0])
-        self.assertEqual(connection.arguments["raw_from"], complete_before)
-
-    def test_a_missing_completion_marker_claims_no_rollup_coverage(self) -> None:
-        at = datetime(2026, 9, 6, 12, tzinfo=UTC)
-        since = at - timedelta(days=30)
         pairs = [value for _counter in CARD_COUNTERS for value in (0, 0.0)]
         connection = BackendTotalConnection((0, None, None, False, False, 0.0, 0.0, *pairs))
+        since = datetime(2026, 9, 15, 20, tzinfo=UTC)
+        until = datetime(2026, 9, 18, 20, tzinfo=UTC)
 
         db.read_backend_totals(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             backend="mgd-site-web",
             since=since,
-            until=at,
-            now=at,
+            until=until,
         )
 
-        self.assertEqual(connection.arguments["raw_from"], since)
+        self.assertIn("metric_backend_hour_delta", connection.statement)
+        self.assertEqual(
+            (connection.arguments["after"], connection.arguments["until"]), (since, until)
+        )
+
+    def test_a_day_or_less_reads_the_raw_samples_only(self) -> None:
+        at = datetime(2026, 9, 6, 12, tzinfo=UTC)
+        pairs = [value for _counter in CARD_COUNTERS for value in (0, 0.0)]
+        for read in (db.read_backend_totals, db.read_frontend_totals):
+            with self.subTest(read.__name__):
+                connection = BackendTotalConnection((0, None, None, False, False, 0.0, 0.0, *pairs))
+                scope = (
+                    {"backend": "mgd-site-web"}
+                    if read is db.read_backend_totals
+                    else {"frontend": "fe"}
+                )
+                read(
+                    connection,  # type: ignore[arg-type]
+                    cluster="alpha",
+                    since=at - timedelta(days=1),
+                    until=at,
+                    **scope,
+                )
+
+                self.assertEqual(len(connection.statements), 1)
+                self.assertNotIn("_hour_delta", connection.statement)
+
+    def test_a_drawing_reads_the_hourly_sums_only_when_its_buckets_are_whole_hours(self) -> None:
+        at = datetime(2026, 9, 6, 12, tzinfo=UTC)
+        cases = (
+            (timedelta(days=30), timedelta(hours=6), True),
+            (timedelta(days=7), timedelta(hours=1), True),
+            (timedelta(days=7), timedelta(minutes=90), False),
+            (timedelta(days=2), timedelta(minutes=10), False),
+            (timedelta(days=1), timedelta(hours=1), False),
+        )
+        for span, width, hourly in cases:
+            for read in (db.read_backend_series, db.read_frontend_series):
+                with self.subTest(read.__name__, span=span, width=width):
+                    connection = BackendTotalConnection(())
+                    scope = (
+                        {"backend": "mgd-site-web"}
+                        if read is db.read_backend_series
+                        else {"frontend": "fe"}
+                    )
+                    read(
+                        connection,  # type: ignore[arg-type]
+                        cluster="alpha",
+                        since=at - span,
+                        until=at,
+                        width=width,
+                        **scope,
+                    )
+
+                    self.assertEqual(len(connection.statements), 1)
+                    self.assertEqual("_hour_delta" in connection.statement, hourly)
 
     def test_the_same_sql_measurement_carries_counter_and_window_coverage(self) -> None:
         at = datetime(2026, 9, 6, 12, tzinfo=UTC)
@@ -194,7 +204,6 @@ class ThePoolFiguresQuery(unittest.TestCase):
             backend="mgd-site-web",
             since=at - timedelta(hours=1),
             until=at,
-            now=at,
         )
 
         self.assertEqual(measured.coverage, 83)

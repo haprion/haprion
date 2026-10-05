@@ -1818,17 +1818,6 @@ WINDOWS: tuple[Window, ...] = (
 #
 DEFAULT_WINDOW = "24h"
 
-#
-# How long the raw samples are normally kept, and therefore the preferred point
-# where the reader changes to the hourly rollup. The retention command's
-# completion marker can move that point further into the past after a missed
-# run, and prevents the corresponding raw partition from being removed.
-#
-# Both halves use the one resulting boundary, so an hour cannot be counted
-# twice. Seven days remains the normal point to preserve recent raw resolution.
-#
-RAW_RETENTION = timedelta(days=7)
-
 
 def window(asked: str | None) -> Window:
     """One of the offered windows, by key, falling back to the default.

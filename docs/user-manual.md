@@ -1706,16 +1706,16 @@ pool partitions be dropped, and only when their complete day is at least one
 further day behind that boundary. Listener metrics have no rollup and keep their
 fixed seven-day raw retention.
 
-The interface normally changes from raw pool samples to the hourly rollup at
-seven days. If maintenance has fallen behind, it moves that boundary back to the
-last continuously completed hour and reads the still-retained raw samples from
-there. An hour with no samples still advances the boundary: the marker says the
-interval was considered, whereas the newest rollup row cannot distinguish an
-empty hour from an unprocessed one. `report` prints the boundary so lag is
-visible without changing the database.
+The rollup keeps one reading per pool and hour for a year. The interface no
+longer reads it: windows longer than a day are read from per-hour sums of the
+samples' stored differences (schema `0055`), which a trigger keeps as samples
+arrive, for frontends and pools alike. Schema `0055` filled the pools' older
+hours from the rollup once. The command deletes those sums when they are older
+than 31 days, one more than the longest window. `report` still prints the rollup
+boundary, which decides when raw pool partitions may go.
 
 The timer is daily because that normally keeps the completed edge six days
-ahead of the preferred reader boundary. The explicit boundary is what keeps a
+ahead of the seven-day raw retention. The explicit boundary is what keeps a
 longer outage correct; the schedule is no longer treated as proof that work
 finished. The installed command also remains usable against revision `0020`
 during a staged upgrade. There it rolls up before age-based pruning but cannot

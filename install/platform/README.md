@@ -317,10 +317,16 @@ record of what happened.
 
 It also creates metric partitions, writes the hourly pool rollup and only then
 prunes raw metric partitions. Revision `0021` records the continuously completed
-rollup boundary. Readers stay on raw rows when that boundary falls behind their
-normal seven-day split, and pool raw data is retained until the boundary plus a
-safety day proves it replaceable. `report` shows the boundary without changing
-it. Listener metrics have no rollup and retain their fixed seven days.
+rollup boundary, and pool raw data is retained until the boundary plus a safety
+day proves it replaceable. `report` shows the boundary without changing it.
+Listener metrics have no rollup and retain their fixed seven days.
+
+The metrics page reads windows longer than a day from per-hour sums
+(`metric_frontend_hour_delta`, `metric_backend_hour_delta`, revision `0055`),
+kept by a trigger as samples arrive and not partitioned. Revision `0055` filled
+the pools' older hours from the rollup once; the page no longer reads the
+rollup. The timer deletes hours older than 31 days, one more than the longest
+window.
 
 Traffic logs follow the separate `[traffic_logs].retention_days` setting. The
 same privileged timer creates upcoming daily partitions and drops only complete

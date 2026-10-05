@@ -120,8 +120,6 @@
   {% for backend in traffic %}
   {% include "_traffic-card.html" %}
   {% endfor %}
-  {% if traffic_truncated %}
-  {% endif %}
 </article>
 {% endif %}
 <article class="cluster-card {{ object.accent | accent_class }}">

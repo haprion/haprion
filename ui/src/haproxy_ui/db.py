@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -2426,60 +2426,6 @@ def _counter_values(counters: Mapping[str, int]) -> dict[str, int | None]:
     return {name: counters.get(name) for name in metrics.METRIC_COUNTERS}
 
 
-def _rolled_up() -> sql.Composed:
-    """The hourly rollup, in the same shape the bucketed raw query returns.
-
-    Same columns and same meaning, so nothing downstream knows which table
-    answered. That is the whole reason a rollup row stores the hour's last
-    cumulative value rather than the hour's delta: a second shape would need a
-    second reader with its own idea of what a restart is.
-    """
-
-    columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
-    return sql.SQL(
-        "select bucket_at as at, observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
-        "  from metric_backend_hour "
-        " where cluster = %(cluster)s and backend = %(backend)s "
-        "   and member = %(member)s and bucket_at >= date_trunc('hour', %(since)s) "
-        "   and bucket_at < %(raw_from)s and observed_at >= %(since)s "
-        "   and observed_at < %(raw_from)s and observed_at <= %(until)s "
-        " order by bucket_at, node"
-    ).format(columns=columns)
-
-
-def _backend_history_boundary(
-    connection: Connection[Any], *, since: datetime, now: datetime | None
-) -> datetime:
-    """Where a backend history changes from completed rollup to retained raw rows.
-
-    Seven days remains the normal boundary and keeps recent views at raw
-    resolution. If maintenance has fallen behind, its continuous completion
-    marker moves the boundary further into the past instead. No marker is the
-    conservative answer: use whatever raw data remains and claim no rollup
-    coverage for this window.
-
-    **Counted from now, not from the end of what is asked.** The raw rows are
-    pruned a week back from today, whatever range a reader marks. Counting from
-    the range's end put a range marked two weeks ago on the raw side of the
-    line, where its rows no longer are, and kept it off the rollup that holds
-    them: the figures beside the drawing read 0 under a visible peak (seen
-    2026-10-01, 15-18 Sep on the 30-day window). The drawing always ends now,
-    which is why it was right.
-    """
-
-    retained_from = (now or datetime.now(UTC)) - metrics.RAW_RETENTION
-    if since >= retained_from:
-        return retained_from
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "select complete_before from metric_rollup_state where rollup_name = 'backend_hour'"
-        )
-        row = cursor.fetchone()
-    if row is None or not isinstance(row[0], datetime):
-        return since
-    return max(since, min(retained_from, row[0]))
-
-
 #
 # The fixed grid every drawing is measured from, stated in UTC. A bare
 # `timestamptz '2000-01-01'` is read in the session's time zone, and the
@@ -2552,7 +2498,6 @@ def read_backend_series(
     until: datetime,
     width: timedelta,
     member: str = "BACKEND",
-    now: datetime | None = None,
 ) -> list[metrics.Interval]:
     """What one backend did, as intervals for its card's drawing, oldest first.
 
@@ -2560,55 +2505,34 @@ def read_backend_series(
     the sum across its servers, counted by the thing doing the balancing rather
     than added up here. A caller that wants one server names it.
 
-    **Two sources, one shape.** The raw samples are normally kept for a week
-    and are read as the changes stored with them; anything older is answered
-    from the hourly rollup, which keeps one cumulative reading per hour and is
-    paired here. Its continuous completion marker may move that boundary
-    further back after missed runs. The raw half begins where the last rollup
-    reading ended, so the two meet at one instant and cannot count an hour
-    twice.
+    A window longer than a day, drawn in whole hours, is read from the hourly
+    sums (migration 0055) with the hours at its edges read raw; anything
+    shorter reads the raw samples. Both hold the same stored differences, so
+    the drawing is the same either way.
     """
 
-    raw_from = _backend_history_boundary(connection, since=since, now=now)
     arguments: dict[str, Any] = {
         "cluster": cluster,
         "backend": backend,
         "member": member,
-        "since": since,
         "width": width,
-        "raw_from": raw_from,
         "until": until,
         "after": since,
     }
-
-    found: list[metrics.Interval] = []
     with connection.cursor() as cursor:
-        if since < raw_from:
-            cursor.execute(_rolled_up(), arguments)
-            hours = [
-                metrics.Sample(
-                    observed_at=row[1],
-                    member=member,
-                    uptime_sec=row[2],
-                    floor_uptime_sec=row[3],
-                    node=row[4],
-                    counters=dict(zip(metrics.METRIC_COUNTERS, row[5:], strict=True)),
-                )
-                for row in cursor.fetchall()
-            ]
-            found.extend(metrics.intervals(hours))
-            if hours:
-                arguments["after"] = max(sample.observed_at for sample in hours)
-        cursor.execute(
-            _bucketed_changes(
-                "metric_backend_member",
-                sql.SQL("cluster = %(cluster)s and backend = %(backend)s and member = %(member)s"),
-            ),
-            arguments,
-        )
-        found.extend(_changed_intervals(cursor.fetchall()))
-    found.sort(key=lambda interval: (interval.ended_at, interval.started_at))
-    return found
+        if _reads_hours(since, until, width):
+            cursor.execute(
+                _hour_series(
+                    "metric_backend_hour_delta",
+                    "metric_backend_member",
+                    BACKEND_SCOPE,
+                    BACKEND_SCOPE,
+                ),
+                arguments,
+            )
+        else:
+            cursor.execute(_bucketed_changes("metric_backend_member", BACKEND_SCOPE), arguments)
+        return _changed_intervals(cursor.fetchall())
 
 
 def read_frontend_series(
@@ -2627,24 +2551,27 @@ def read_frontend_series(
     on it; its peer binds the same ports and sits flat. Only the samples on
     which a node held the address count, and each stored its change from that
     node's previous such sample (0048) - which is also what keeps a failover
-    from being read as one node's lifetime total. Frontends have no rollup;
-    their raw rows are kept for seven days.
+    from being read as one node's lifetime total. Long windows read the hourly
+    sums of the same changes (0055), which keep 31 days.
     """
 
+    arguments = {
+        "cluster": cluster,
+        "frontend": frontend,
+        "width": width,
+        "until": until,
+        "after": since,
+    }
     with connection.cursor() as cursor:
-        cursor.execute(
-            _bucketed_changes(
-                "metric_frontend",
-                sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s and owns_vip"),
-            ),
-            {
-                "cluster": cluster,
-                "frontend": frontend,
-                "width": width,
-                "until": until,
-                "after": since,
-            },
-        )
+        if _reads_hours(since, until, width):
+            cursor.execute(
+                _hour_series(
+                    "metric_frontend_hour_delta", "metric_frontend", FRONTEND_SCOPE, FRONTEND_HELD
+                ),
+                arguments,
+            )
+        else:
+            cursor.execute(_bucketed_changes("metric_frontend", FRONTEND_HELD), arguments)
         return _changed_intervals(cursor.fetchall())
 
 
@@ -2761,97 +2688,170 @@ def _stored_intervals(names: Sequence[str]) -> sql.Composed:
 
 
 def _backend_totals() -> sql.Composed:
-    """One backend's figures, summed from the differences stored per sample.
+    """One backend's figures over raw samples, summed from the stored differences.
 
     Each raw sample carries what every counter did since the series' previous
-    sample on that node, decided when it was written (migration 0048) by the
-    rules this query used to apply on read. An interval belongs to the range
-    when it starts inside it, so the first sample in the range - which has
-    nothing in the range to pair with - adds nothing, as before.
-
-    The completed older half still comes from the hourly rollup, one reading
-    per hour, and is paired here as it always was: a few hundred rows. The
-    first raw sample after the boundary pairs with the last hour before it,
-    as it did when the two halves were one ordered list, so that one interval
-    is paired here too rather than read from storage.
+    sample on that node, decided when it was written (migration 0048). An
+    interval belongs to the range when it starts inside it, so the first
+    sample in the range - which has nothing in the range to pair with - adds
+    nothing. Windows longer than a day are read from the hourly sums instead
+    (`_hour_totals`), which hold the same differences.
     """
 
-    names = metrics.CARD_COUNTERS
-    columns = sql.SQL(", ").join(sql.Identifier(name) for name, _label in names)
-    counters = [name for name, _label in names]
-    previous = sql.SQL(", ").join(
-        sql.SQL("lag({name}) over ordered as {before}").format(
-            name=sql.Identifier(name), before=sql.Identifier(f"before_{name}")
-        )
-        for name in counters
-    )
-    deltas = sql.SQL(", ").join(
-        sql.SQL(
-            "case when handed_over or {before} is null or {after} is null then null "
-            "     when restarted then {after} "
-            "     when {after} < {before} then null "
-            "     else {after} - {before} end as {delta}"
-        ).format(
-            before=sql.Identifier(f"before_{name}"),
-            after=sql.Identifier(name),
-            delta=sql.Identifier(f"delta_{name}"),
-        )
-        for name in counters
-    )
-    series = sql.SQL("cluster = %(cluster)s and backend = %(backend)s and member = %(member)s ")
+    counters = [name for name, _label in metrics.CARD_COUNTERS]
     return sql.SQL(
-        "with readings as ("
-        "    select observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
-        "      from metric_backend_hour "
-        "     where {series} "
-        "       and bucket_at >= date_trunc('hour', %(since)s) "
-        "       and bucket_at < %(raw_from)s and observed_at >= %(since)s "
-        "       and observed_at < %(raw_from)s and observed_at <= %(until)s"
-        "    union all "
-        #
-        # The raw samples whose stored partner lies before the boundary: the
-        # first of each node after it, which pairs with the last hour instead.
-        #
-        "    select observed_at, uptime_sec, uptime_sec, node, {columns} "
-        "      from metric_backend_member "
-        "     where {series} "
-        "       and observed_at >= %(since)s and observed_at >= %(raw_from)s "
-        "       and observed_at <= %(until)s "
-        "       and (previous_at is null or previous_at < %(raw_from)s)"
-        "), paired as ("
-        "    select observed_at as ended_at, "
-        "           lag(observed_at) over ordered as started_at, "
-        "           uptime_sec, floor_uptime_sec, node, {columns}, "
-        "           lag(uptime_sec) over ordered as previous_uptime_sec, "
-        "           lag(node) over ordered as previous_node, {previous} "
-        "      from readings "
-        "    window ordered as (partition by node order by observed_at)"
-        "), marked as ("
-        "    select *, "
-        "           coalesce(floor_uptime_sec < previous_uptime_sec, false) as restarted, "
-        "           (previous_node is not null and node is not null "
-        "            and previous_node <> node) as handed_over, "
-        "           extract(epoch from ended_at - started_at) as span_sec "
-        "      from paired where started_at is not null"
-        "), intervals as ("
-        "    select started_at, ended_at, restarted, handed_over, span_sec, {deltas} from marked"
-        "    union all "
+        "with intervals as ("
         "    select {stored} "
         "      from metric_backend_member "
-        "     where {series} "
-        "       and observed_at >= %(since)s and observed_at >= %(raw_from)s "
-        "       and observed_at <= %(until)s "
-        "       and previous_at >= %(since)s and previous_at >= %(raw_from)s"
+        "     where cluster = %(cluster)s and backend = %(backend)s and member = %(member)s "
+        "       and observed_at >= %(since)s and observed_at <= %(until)s "
+        "       and previous_at >= %(since)s"
         ") "
         "{aggregates} from intervals"
-    ).format(
-        columns=columns,
-        series=series,
-        previous=previous,
-        deltas=deltas,
-        stored=_stored_intervals(counters),
-        aggregates=_interval_aggregates(counters),
+    ).format(stored=_stored_intervals(counters), aggregates=_interval_aggregates(counters))
+
+
+#
+# Windows longer than this are read from the hourly sums (migration 0055) when
+# their buckets are whole hours. A day and shorter keep reading the raw rows:
+# their buckets are minutes, and the rows are few.
+#
+HOURLY_FROM = timedelta(days=1)
+HOUR = timedelta(hours=1)
+
+
+def _reads_hours(since: datetime, until: datetime, width: timedelta | None = None) -> bool:
+    if until - since <= HOURLY_FROM:
+        return False
+    return width is None or (width >= HOUR and width % HOUR == timedelta(0))
+
+
+def _hour_pieces(
+    hours: str, raw: str, scope: sql.Composable, raw_scope: sql.Composable
+) -> sql.Composed:
+    """A range's samples as hour rows where whole, and as raw rows where not.
+
+    An hour row (migration 0055) counts whole when every sample in it lies in
+    the range: its earliest pair at or after the start and its latest sample at
+    or before the end. A crossing row is one sample, so that test is exact for
+    it either way. An ordinary row that is not whole - the hour the range
+    starts or ends in - is read from the raw rows of that hour and node instead,
+    with the raw readers' own filters, which is at most two hours a node.
+
+    Every piece has the hour table's columns, so the series and the figures
+    aggregate pieces exactly as they would aggregate samples.
+    """
+
+    deltas = sql.SQL(", ").join(
+        sql.SQL("{delta}, {span}").format(
+            delta=sql.Identifier(f"delta_{name}"), span=sql.Identifier(f"span_{name}_sec")
+        )
+        for name in STORED_DELTAS
     )
+    return sql.SQL(
+        "with hours as ("
+        "    select node, hour as at, crossing, first_previous_at, last_observed_at, restarted, "
+        "           samples, span_sec, span_clean_sec, {deltas} "
+        "      from {hours} "
+        "     where {scope} and hour >= date_trunc('hour', %(after)s::timestamptz, 'UTC') "
+        "       and hour <= %(until)s"
+        "), pieces as ("
+        "    select * from hours "
+        "     where first_previous_at >= %(after)s and last_observed_at <= %(until)s"
+        "    union all "
+        "    select edge.node, part.observed_at, false, part.previous_at, part.observed_at, "
+        "           part.restarted, 1, extract(epoch from part.observed_at - part.previous_at), "
+        "           case when part.restarted then 0 "
+        "                else extract(epoch from part.observed_at - part.previous_at) end, "
+        "           {raw_deltas_part} "
+        "      from hours as edge "
+        "      cross join lateral ("
+        "          select observed_at, previous_at, restarted, {raw_deltas} "
+        "            from {raw} "
+        "           where {raw_scope} and node = edge.node "
+        "             and observed_at >= edge.at and observed_at < edge.at + interval '1 hour' "
+        "             and previous_at >= edge.at and previous_at >= %(after)s "
+        "             and observed_at > %(after)s and observed_at <= %(until)s"
+        "      ) as part "
+        "     where not edge.crossing "
+        "       and not (edge.first_previous_at >= %(after)s and edge.last_observed_at <= %(until)s)"
+        ") "
+    ).format(
+        deltas=deltas,
+        hours=sql.Identifier(hours),
+        raw=sql.Identifier(raw),
+        scope=scope,
+        raw_scope=raw_scope,
+        raw_deltas=sql.SQL(", ").join(
+            sql.SQL("{delta}, {raw_span} as {span}").format(
+                delta=sql.Identifier(f"delta_{name}"),
+                raw_span=sql.SQL(
+                    "case when {delta} is not null and not restarted "
+                    "then extract(epoch from observed_at - previous_at) else 0 end"
+                ).format(delta=sql.Identifier(f"delta_{name}")),
+                span=sql.Identifier(f"span_{name}_sec"),
+            )
+            for name in STORED_DELTAS
+        ),
+        raw_deltas_part=sql.SQL(", ").join(
+            sql.SQL("part.{delta}, part.{span}").format(
+                delta=sql.Identifier(f"delta_{name}"), span=sql.Identifier(f"span_{name}_sec")
+            )
+            for name in STORED_DELTAS
+        ),
+    )
+
+
+def _hour_series(
+    hours: str, raw: str, scope: sql.Composable, raw_scope: sql.Composable
+) -> sql.Composed:
+    """`_bucketed_changes` over hour pieces: the same groups, the same columns.
+
+    A raw sample is grouped by node, bucket and whether its pair lies in an
+    earlier bucket. Every bucket here is whole hours, so a piece's hour is in
+    the bucket its samples are in, and only a crossing piece - one sample - can
+    have its pair before the bucket.
+    """
+
+    bucket = sql.SQL("date_bin(%(width)s, at, {epoch})").format(epoch=BUCKET_EPOCH_SQL)
+    sums = sql.SQL(", ").join(
+        sql.SQL("sum({delta})::bigint").format(delta=sql.Identifier(f"delta_{name}"))
+        for name in STORED_DELTAS
+    )
+    return sql.SQL(
+        "{pieces}"
+        "select min(first_previous_at), max(last_observed_at), "
+        "       coalesce(bool_or(restarted), false), {sums} "
+        "  from pieces "
+        " group by node, {bucket}, crossing and first_previous_at < {bucket} "
+        " order by {bucket}, node"
+    ).format(pieces=_hour_pieces(hours, raw, scope, raw_scope), sums=sums, bucket=bucket)
+
+
+def _hour_totals(
+    hours: str, raw: str, scope: sql.Composable, raw_scope: sql.Composable
+) -> sql.Composed:
+    """`_interval_aggregates` over hour pieces: the columns `_measurement` reads."""
+
+    per_counter = sql.SQL(", ").join(
+        sql.SQL("coalesce(sum({delta}), 0)::bigint, coalesce(sum({span}), 0)").format(
+            delta=sql.Identifier(f"delta_{name}"), span=sql.Identifier(f"span_{name}_sec")
+        )
+        for name, _label in metrics.CARD_COUNTERS
+    )
+    return sql.SQL(
+        "{pieces}"
+        "select coalesce(sum(samples), 0)::bigint, min(first_previous_at), max(last_observed_at), "
+        "       coalesce(bool_or(restarted), false), false, "
+        "       coalesce(sum(span_clean_sec), 0), coalesce(sum(span_sec), 0), {per_counter} "
+        "  from pieces"
+    ).format(pieces=_hour_pieces(hours, raw, scope, raw_scope), per_counter=per_counter)
+
+
+FRONTEND_SCOPE = sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s")
+# A frontend's raw rows count only where the node held the address (0048).
+FRONTEND_HELD = sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s and owns_vip")
+BACKEND_SCOPE = sql.SQL("cluster = %(cluster)s and backend = %(backend)s and member = %(member)s")
 
 
 def _frontend_totals(
@@ -2941,18 +2941,23 @@ def read_frontend_totals(
     since: datetime,
     until: datetime,
 ) -> metrics.BackendMeasurement:
-    """One VIP frontend's figures at stored resolution, apart from its graph."""
+    """One VIP frontend's figures at stored resolution, apart from its graph.
 
+    A range longer than a day is summed from the hourly sums (0055), with the
+    hours at its edges read raw; the figures are the raw rows' to the digit.
+    """
+
+    arguments = {"cluster": cluster, "frontend": frontend, "since": since, "until": until}
     with connection.cursor() as cursor:
-        cursor.execute(
-            _frontend_totals(),
-            {
-                "cluster": cluster,
-                "frontend": frontend,
-                "since": since,
-                "until": until,
-            },
-        )
+        if _reads_hours(since, until):
+            cursor.execute(
+                _hour_totals(
+                    "metric_frontend_hour_delta", "metric_frontend", FRONTEND_SCOPE, FRONTEND_HELD
+                ),
+                {**arguments, "after": since},
+            )
+        else:
+            cursor.execute(_frontend_totals(), arguments)
         row = cursor.fetchone()
 
     if row is None:
@@ -3083,20 +3088,34 @@ def read_backend_totals(
     since: datetime,
     until: datetime,
     member: str = "BACKEND",
-    now: datetime | None = None,
 ) -> metrics.BackendMeasurement:
-    """One backend's figures at stored resolution, independent of its graph."""
+    """One backend's figures at stored resolution, independent of its graph.
+
+    Read like the frontend's: the hourly sums for a range longer than a day,
+    the raw rows otherwise.
+    """
 
     arguments = {
         "cluster": cluster,
         "backend": backend,
         "member": member,
         "since": since,
-        "raw_from": _backend_history_boundary(connection, since=since, now=now),
         "until": until,
+        "after": since,
     }
     with connection.cursor() as cursor:
-        cursor.execute(_backend_totals(), arguments)
+        if _reads_hours(since, until):
+            cursor.execute(
+                _hour_totals(
+                    "metric_backend_hour_delta",
+                    "metric_backend_member",
+                    BACKEND_SCOPE,
+                    BACKEND_SCOPE,
+                ),
+                arguments,
+            )
+        else:
+            cursor.execute(_backend_totals(), arguments)
         row = cursor.fetchone()
 
     if row is None:

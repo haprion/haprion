@@ -391,10 +391,11 @@ traffic_partitions() {
 }
 
 #
-# The WAF page's counts (0054), kept per hour beside the matches they were
-# counted from. Not partitioned - a trigger that could meet a missing day could
-# fail the collector's import - so they are trimmed here, to the same first day
-# the traffic partitions keep.
+# Counts kept per hour by a trigger beside the rows they were counted from.
+# Not partitioned - a trigger that could meet a missing day could fail the
+# insert it rides on - so they are trimmed here, a row at a time.
+#
+# The WAF page's (0054) keep the same first day the traffic partitions keep.
 #
 WAF_FINDING_TABLES=(waf_finding_path waf_finding_client)
 
@@ -402,13 +403,28 @@ where_waf_finding_expired() {
     echo "hour < (current_date - ${TRAFFIC_KEEP_DAYS} + 1)::timestamptz"
 }
 
-waf_findings() {
-    local table expired removed
-    for table in "${WAF_FINDING_TABLES[@]}"; do
+#
+# The traffic cards' (0055) keep the longest window, 30 days, and an hour more
+# than its start can reach. The migration fills no older hour.
+#
+METRIC_HOUR_TABLES=(metric_frontend_hour_delta metric_backend_hour_delta)
+METRIC_HOUR_KEEP_DAYS=31
+
+where_metric_hour_expired() {
+    echo "hour < statement_timestamp() - interval '${METRIC_HOUR_KEEP_DAYS} days'"
+}
+
+#
+# trim_hours <clause function> <what is kept> <table>...
+#
+trim_hours() {
+    local where="$1" kept="$2" table expired removed
+    shift 2
+    for table in "$@"; do
         [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
-        expired="$(psql_as -c "select count(*) from ${table} where $(where_waf_finding_expired)")"
+        expired="$(psql_as -c "select count(*) from ${table} where $("$where")")"
         if [[ "$command" == "report" ]]; then
-            log "  ${table}: $(psql_as -c "select count(*) from ${table}") row(s), ${expired} before the traffic window"
+            log "  ${table}: $(psql_as -c "select count(*) from ${table}") row(s), ${expired} before ${kept}"
             continue
         fi
         if [[ "$dry_run" -eq 1 ]]; then
@@ -416,11 +432,19 @@ waf_findings() {
             continue
         fi
         removed="$(psql_as -c "with removed as (
-                                  delete from ${table} where $(where_waf_finding_expired)
+                                  delete from ${table} where $("$where")
                                   returning 1
                                ) select count(*) from removed")"
-        log "  ${table}: removed ${removed} row(s) before the traffic window"
+        log "  ${table}: removed ${removed} row(s) before ${kept}"
     done
+}
+
+waf_findings() {
+    trim_hours where_waf_finding_expired "the traffic window" "${WAF_FINDING_TABLES[@]}"
+}
+
+metric_hours() {
+    trim_hours where_metric_hour_expired "the longest metrics window" "${METRIC_HOUR_TABLES[@]}"
 }
 
 metrics_report() {
@@ -767,6 +791,7 @@ main() {
                 traffic_report "$table"
             done
             waf_findings
+            metric_hours
             oidc_logins
             version_diffs
             account_history
@@ -781,6 +806,7 @@ main() {
             metric_partitions_prepare
             traffic_partitions
             waf_findings
+            metric_hours
             if metrics_present; then
                 #
                 # After the partitions and before the pruning, because the

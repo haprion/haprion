@@ -1569,7 +1569,6 @@ def build_router(config: Config) -> APIRouter:
                     since=since,
                     until=now,
                     width=chosen.bucket,
-                    now=now,
                 )
 
             def totals(backend: str) -> Callable[[Any], metrics.BackendMeasurement]:
@@ -1579,7 +1578,6 @@ def build_router(config: Config) -> APIRouter:
                     backend=backend,
                     since=counted_since,
                     until=counted_until,
-                    now=now,
                 )
 
             reads: list[Callable[[Any], Any]] = [
@@ -1634,13 +1632,6 @@ def build_router(config: Config) -> APIRouter:
                 "traffic_windows": metrics.WINDOWS,
                 "traffic_chosen": chosen.key,
                 **_traffic_marks(request, marked),
-                #
-                # Whether the window asks for more history than the raw samples
-                # are kept for. The card says so rather than drawing a month
-                # that is really a week, which would read as a month with very
-                # little traffic in it.
-                #
-                "traffic_truncated": chosen.span > metrics.RAW_RETENTION,
                 #
                 # More than one backend is the only case where naming them helps.
                 # With one, the name is the object's own backend written twice
@@ -1798,7 +1789,6 @@ def build_router(config: Config) -> APIRouter:
                     since=since,
                     until=now,
                     width=chosen.bucket,
-                    now=now,
                 )
 
             def totals(connection: Any) -> metrics.BackendMeasurement:
@@ -1808,7 +1798,6 @@ def build_router(config: Config) -> APIRouter:
                     backend=name,
                     since=counted_since,
                     until=counted_until,
-                    now=now,
                 )
 
             return samples, totals

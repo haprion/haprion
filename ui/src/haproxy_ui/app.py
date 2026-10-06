@@ -21,9 +21,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from haproxy_ui import db, timing, views
 from haproxy_ui.config import DEFAULT_CONFIG_PATH, Config
@@ -85,6 +88,18 @@ def create_app(config: Config | None = None) -> FastAPI:
         )
 
     app.include_router(views.build_router(settings))
+
+    #
+    # A form the framework refuses is answered as a page (CR-06); anything
+    # else keeps FastAPI's JSON answer.
+    #
+    @app.exception_handler(RequestValidationError)
+    async def form_errors(request: Request, exc: RequestValidationError) -> Response:
+        kind = request.headers.get("content-type", "")
+        if not kind.startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
+            return await request_validation_exception_handler(request, exc)
+        return await run_in_threadpool(views.form_refusal, request, settings, exc.errors())
+
     #
     # Each response says where its time went (`timing`): in a header for the
     # browser's network panel and in a line in the service log. The line is

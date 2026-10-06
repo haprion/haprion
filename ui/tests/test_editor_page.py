@@ -1339,6 +1339,35 @@ class ThePublishedDraftWaitsForTheCache(EditorTestCase):
         self.assertEqual(self.discarded, [("alpha", "shop", 1)])
 
 
+class AFormTooLongForTheModel(EditorTestCase):
+    """CR-06: three hundred server lines met pydantic's JSON instead of a page."""
+
+    def test_a_list_longer_than_the_limit_is_answered_with_a_page(self) -> None:
+        client = self.editor()
+        answer = self.submit(
+            client,
+            "/proxies/alpha/shop/edit",
+            action="save",
+            servers="\n".join(["192.0.2.10:8080"] * 300),
+        )
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertIn("text/html", answer.headers["content-type"])
+        self.assertIn("Servers is longer than 4,096 characters", answer.text)
+        self.assertNotIn("192.0.2.10:8080", answer.text)
+        self.assertEqual(self.saved, [])
+
+    def test_an_api_answer_keeps_its_json(self) -> None:
+        client = self.editor()
+        answer = client.post(
+            "/proxies/alpha/shop/edit",
+            json={"servers": "x" * 5000},
+            follow_redirects=False,
+        )
+
+        self.assertNotIn("text/html", answer.headers.get("content-type", ""))
+
+
 class WhichNodeReportsOnThePool(EditorTestCase):
     """The passive card follows the same rule the probe does.
 

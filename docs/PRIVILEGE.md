@@ -1,6 +1,6 @@
 # HAProxy Manager privilege contract v1
 
-This contract defines the target privilege boundary that Phase 1 implements. It is intentionally
+This contract defines the privilege boundary the installation enforces. It is intentionally
 environment-neutral. Production account names, paths selected by runtime configuration, SSH keys,
 and sudoers output remain private deployment data.
 
@@ -8,14 +8,16 @@ and sudoers output remain private deployment data.
 
 | Role | Production config group | sudo helpers | Private keys | Database write scope |
 |---|---|---|---|---|
-| web | no | none | none stored; a key in an upload is sealed before the request ends | validate requests and insert allowlisted jobs only |
-| worker | yes, read-only | exact mutation/completion helpers | none | claim, lease, state, result, audit |
-| poller | no | exact read-only metadata helpers | none | poll/cache/metrics only |
-| traffic collector | no | none | one node-log forced-command key | none |
+| web | no | none | none stored; a key in an upload is sealed before the request ends | allowlisted jobs; the interface's own state (sessions, accounts, sign-in attempts, drafts, profiles, switches, sign-in provider); see [Database boundary](#database-boundary) |
+| worker | yes, read-only | exact mutation/completion helpers | none | claim, lease, state, result, audit; a renamed backend's alias |
+| poller | no | exact read-only metadata helpers | none | poll/cache/metrics and the search index only |
+| traffic collector | no | none | one node-log forced-command key | inserts traffic-log and WAF-match rows only |
 | human operator | deployment policy | explicit wrappers and `sudoedit` policy | none directly | not used by app |
 
-No app identity owns or can read SSH private keys, certificate private keys, validation dummy-key
-material, secret files, or raw backup archives. The one qualification is the certificate upload:
+The traffic collector's key is the one private key an app identity holds: a forced-command key that
+can read a node's logs and do nothing else. Apart from it, no app identity owns or can read SSH
+private keys, certificate private keys, validation dummy-key material, secret files, or raw backup
+archives. The one qualification is the certificate upload:
 the web process receives the file a person chose, seals it against the installation's public key
 inside that request, and hands the ciphertext to a job. The plaintext exists in the web process
 for the duration of the request and nowhere the web can read afterwards - not the job row, not
@@ -44,6 +46,29 @@ Human operator membership is deliberately absent from the generated fragment. It
 administrator action against an already existing human account, avoiding `sysusers.d` semantics
 that could implicitly create a missing local account. Applying the reviewed fragment and changing
 operator membership belong to deployment, not application runtime.
+
+## Database boundary
+
+Each service connects as its own PostgreSQL role and is granted columns, not tables. The grants are
+written by the migrations under `ui/migrations/versions/`, and `install/platform/03-verify` is the
+executable form of this section: it compares every role's column privileges with an expected list
+and tries the writes each role must not make. When the two disagree, the check is right and this
+text is out of date.
+
+| Role | Writes | Reads |
+|---|---|---|
+| web | jobs (insert only, through the queue's allowlist); audit events (insert only); sessions, accounts, sign-in attempts and unlocks, drafts, DNS and NDES provider profiles (ciphertext only), feature switches, the sign-in provider and its pending sign-ins | everything it shows: the caches, metrics, traffic and WAF findings, jobs, audit |
+| worker | a claimed job's state, lease and result; audit events; a renamed backend's alias once its publish is done | jobs, the claim pause, the version listing, the provider profiles it applies |
+| poller | the caches it reads from helpers, metric samples, the search index | the same |
+| traffic collector | traffic-log and WAF-match rows (insert only) | nothing |
+
+Two boundaries are easy to confuse here. An administrator signed in to the interface is held by the
+application's checks: role, write switch, CSRF, and the queue's allowlist of operations. A
+compromised web process is held only by its database role and its account: it could write anything
+in the web column above - accounts and drafts included - but not a job's result, not the audit
+trail's past rows, not a cache, and nothing outside the database that its account cannot reach.
+Everything that changes a cluster still goes through a job that the worker hands to a root helper,
+and the helper validates the request again.
 
 ## Filesystem boundary
 

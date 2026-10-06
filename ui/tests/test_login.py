@@ -663,6 +663,16 @@ class SessionsAndSigningOut(LoginTestCase):
         self.assertEqual(len(self.sessions), 1)
         self.assertEqual(client.get("/", follow_redirects=False).status_code, 200)
 
+    def test_signing_out_with_a_token_outside_ascii_is_a_refusal_not_a_crash(self) -> None:
+        """CR-05, through the route: the review reproduced the 500 here."""
+
+        client = self.client()
+        self.sign_in(client)
+        response = client.post("/logout", data={auth.CSRF_FIELD: "å"}, follow_redirects=False)
+
+        self.assertLess(response.status_code, 500)
+        self.assertEqual(len(self.sessions), 1)
+
     def test_a_session_that_has_gone_inactive_is_not_accepted(self) -> None:
         client = self.client()
         self.sign_in(client)

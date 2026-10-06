@@ -9011,6 +9011,33 @@ def _refusal_page(
     )
 
 
+def form_refusal(request: Request, config: Config, errors: Sequence[Any]) -> Response:
+    """A form the framework could not read, said as a page rather than as JSON (CR-06).
+
+    A field longer than its limit - three hundred server lines - answered with
+    pydantic's error object and no way back. What was typed is not repeated: the
+    page names the field and the limit, and the browser's back button returns to
+    the form as it was.
+
+    No `maxlength` on the form instead: a browser cuts pasted text at it without
+    a word, and a server list cut mid-line can end in an address that is valid
+    and wrong.
+    """
+
+    sentences: list[str] = []
+    for error in errors:
+        location = error.get("loc", ()) if isinstance(error, Mapping) else ()
+        field = str(location[-1]) if location else "a field"
+        label = field.replace("_", " ").capitalize()
+        context = error.get("ctx") or {}
+        if error.get("type") == "string_too_long" and "max_length" in context:
+            sentences.append(f"{label} is longer than {context['max_length']:,} characters.")
+        else:
+            sentences.append(f"{label} could not be read.")
+    message = " ".join(dict.fromkeys(sentences)) + " Nothing was saved; go back to correct it."
+    return _refusal_page(request, config, message, back=request.url.path)
+
+
 def _network_page(request: Request, config: Config) -> Response:
     """Each cluster's addresses, as the poller last read them.
 

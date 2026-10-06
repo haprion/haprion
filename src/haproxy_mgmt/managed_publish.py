@@ -146,7 +146,14 @@ def managed_files(
     # would leave source/VIP/group changes invisible.  Start over every time.
     for path in tuple(result):
         if path.startswith(
-            (GENERATED_PREFIX, KEEPALIVED_PREFIX, MAPS_PREFIX, WAF_PREFIX, DNS_PREFIX)
+            (
+                GENERATED_PREFIX,
+                KEEPALIVED_PREFIX,
+                CRT_LIST_PREFIX,
+                MAPS_PREFIX,
+                WAF_PREFIX,
+                DNS_PREFIX,
+            )
         ):
             del result[path]
 

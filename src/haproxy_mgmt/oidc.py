@@ -462,7 +462,13 @@ def verify_id_token(
     if authorized is not None and authorized != client_id:
         raise OidcError("bad_token", "the id_token was issued to another party (azp)")
     stated = claims.get("nonce")
-    if not isinstance(stated, str) or not hmac.compare_digest(stated, nonce):
+    #
+    # As bytes, for the reason `csrf_token_is_valid` gives: a nonce outside
+    # ASCII made `compare_digest` raise instead of refuse (CR-05).
+    #
+    if not isinstance(stated, str) or not hmac.compare_digest(
+        stated.encode("utf-8", "surrogatepass"), nonce.encode("utf-8", "surrogatepass")
+    ):
         raise OidcError("bad_token", "the id_token's nonce is not this sign-in's")
     if not isinstance(claims.get("sub"), str) or not claims["sub"]:
         raise OidcError("bad_token", "the id_token has no subject")

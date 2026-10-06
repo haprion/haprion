@@ -179,11 +179,18 @@ def csrf_token(session_token: str) -> str:
 
 
 def csrf_token_is_valid(session_token: str, submitted: str | None) -> bool:
-    """Compared in constant time, because the comparison is a secret comparison."""
+    """Compared in constant time, because the comparison is a secret comparison.
+
+    As bytes: `compare_digest` refuses a str with a character outside ASCII by
+    raising, so `å` in the field was a 500 instead of a refusal (review
+    2026-10-04, CR-05). `surrogatepass` encodes whatever the form decoded to.
+    """
 
     if not submitted:
         return False
-    return hmac.compare_digest(csrf_token(session_token), submitted)
+    return hmac.compare_digest(
+        csrf_token(session_token).encode("ascii"), submitted.encode("utf-8", "surrogatepass")
+    )
 
 
 @dataclass(frozen=True, slots=True)

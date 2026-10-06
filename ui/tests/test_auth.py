@@ -87,6 +87,16 @@ class TokenTests(unittest.TestCase):
         self.assertFalse(auth.csrf_token_is_valid(token, None))
         self.assertFalse(auth.csrf_token_is_valid(token, ""))
 
+    def test_a_token_outside_the_format_is_refused_rather_than_raising(self) -> None:
+        """CR-05: `å` made `compare_digest` raise, which was a 500 for a bad field."""
+
+        token = auth.new_session_token()
+        good = auth.csrf_token(token)
+        for submitted in ("å", "x" * 64, good + "x", "å" * 64, "\ud800", good[:-1] + "é"):
+            with self.subTest(submitted=submitted):
+                self.assertFalse(auth.csrf_token_is_valid(token, submitted))
+        self.assertTrue(auth.csrf_token_is_valid(token, good))
+
 
 class SessionPolicyTests(unittest.TestCase):
     def test_a_fresh_session_is_usable(self) -> None:

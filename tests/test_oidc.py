@@ -386,6 +386,8 @@ class SigningIn(ProviderTestCase):
             ({"aud": [CLIENT_ID, "other"]}, "no azp"),
             ({"azp": "other"}, "another party"),
             ({"nonce": "m" * 43}, "nonce"),
+            # CR-05: outside ASCII made the comparison raise rather than refuse.
+            ({"nonce": "å" * 43}, "nonce"),
             ({"exp": now - 3600, "iat": now - 7200}, "expired"),
         ):
             with self.subTest(claims=claims):

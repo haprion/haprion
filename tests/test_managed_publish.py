@@ -280,6 +280,27 @@ class ReservationsReachThePublishPath(unittest.TestCase):
         self.assertIn("managed/generated/1000-frontends.cfg", files)
 
 
+class CertificateListsAreRebuiltEveryTime(unittest.TestCase):
+    """A list for a TLS listener that is gone is not carried into the next release (CR-02)."""
+
+    def test_a_list_without_its_listener_is_gone_from_the_snapshot_and_the_node(self) -> None:
+        base = {"core/haproxy.cfg": b"global\n", "manual/reservations.yaml": b"{}\n"}
+        files = managed_files(
+            {
+                "managed/network.yaml": NETWORK,
+                "managed/proxies/shop.yaml": PROXY,
+                "managed/crt-lists/main-https.list": b"/etc/haproxy/certs/example.com.pem\n",
+                **base,
+            },
+            network_document=NETWORK,
+            cluster=cluster(),
+        )
+
+        self.assertFalse([name for name in files if name.startswith("managed/crt-lists/")])
+        artifact = build_node_artifact({**files, **base})
+        self.assertFalse([name for name in artifact if name.startswith("crt-lists/")])
+
+
 if __name__ == "__main__":
     unittest.main()
 

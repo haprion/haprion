@@ -275,7 +275,6 @@ class GeneratedConfigurationInDnsdist(unittest.TestCase):
         lan = [row for row in parsed["servers"] if row["pool"] == "lan-dns"]
         self.assertEqual([row["server"] for row in lan], ["s1", "s2"])
         self.assertEqual({row["status"] for row in lan}, {"UP"})
-        self.assertGreater(sum(row["latency_us"] for row in lan), 0)
         self.assertIsInstance(parsed["uptime_sec"], int)
 
 

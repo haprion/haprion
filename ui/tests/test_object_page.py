@@ -799,6 +799,36 @@ class OneCardPerBackendAcrossTheRename(DraftReading):
         self.assertEqual(cards, 1)
 
 
+class AMovedServerName(DraftReading):
+    """B253: the warning carries the one action that answers it, on the same line."""
+
+    def page(self, **config: Any) -> str:
+        patch = mock.patch(
+            "haproxy_ui.views.moved_dns_servers",
+            return_value=["ns1.example.com now resolves to 192.0.2.54; publish its object again"],
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+        client = self.client(replace(configuration(), demo_fixture=True, **config))
+        self.sign_in(client)
+        page = client.get("/proxies/edge-demo/public-web")
+        self.assertEqual(page.status_code, 200)
+        return str(page.text)
+
+    def test_an_administrator_may_publish_again_from_the_warning(self) -> None:
+        text = self.page(management_writes=True)
+        notice = text.split('class="preview-notice form-problem notice-with-action"', 1)[1]
+        notice = notice.split("</div>", 1)[0]
+        self.assertIn("now resolves to 192.0.2.54", notice)
+        self.assertIn('action="/proxies/edge-demo/public-web/lookup"', notice)
+        self.assertIn(">Publish again</button>", notice)
+
+    def test_without_management_writes_only_the_warning_is_shown(self) -> None:
+        text = self.page()
+        self.assertIn("now resolves to 192.0.2.54", text)
+        self.assertNotIn("Publish again", text)
+
+
 class ADnsObjectsCard(DraftReading):
     """Fas 19a B4: a dns object's pool is drawn with a resolver's figures and its servers.
 

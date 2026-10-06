@@ -292,14 +292,14 @@
                   "maxItems": 500,
                   "items": {
                     "type": "object",
-                    "required": ["pool", "server", "status", "queries", "answered", "latency_us"],
+                    "required": ["pool", "server", "status", "queries", "answered"],
                     "properties": {
                       "pool": { "type": "string", "minLength": 1, "maxLength": 255 },
                       "server": { "type": "string", "minLength": 1, "maxLength": 255 },
                       "status": { "enum": ["UP", "DOWN", null] },
                       "queries": { "type": ["integer", "null"], "minimum": 0 },
                       "answered": { "type": ["integer", "null"], "minimum": 0 },
-                      "latency_us": { "type": ["integer", "null"], "minimum": 0 }
+                      "latency_us": { "type": ["integer", "null"], "minimum": 0, "description": "Sent by node bundles before 26-10-06 and read by nothing (B253); allowed so an older node still validates." }
                     },
                     "additionalProperties": false
                   }

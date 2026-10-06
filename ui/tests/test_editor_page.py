@@ -859,17 +859,23 @@ class SaveAndPublish(EditorTestCase):
         self.queued.append(values)
         return SimpleNamespace(id=1, request_id=uuid4())
 
-    def test_a_renamed_pool_is_written_down_with_the_publish(self) -> None:
-        """B250: the card under the new name keeps the old one's history."""
+    def test_a_renamed_pool_travels_with_the_publish(self) -> None:
+        """B250: the card under the new name keeps the old one's history.
+
+        Carried by the job for the worker to write once the publish is done
+        (B253), never written by the interface when it queues.
+        """
 
         self.publish(backend="shop-front")
 
-        self.assertEqual(len(self.backend_renames), 1)
+        self.assertEqual(self.backend_renames, [])
         self.assertEqual(
-            self.backend_renames[0]["renamed"],
-            {"web": "shop-front", "mgd-shop-web": "shop-front"},
+            self.queued[-1]["payload"]["backend_renames"],
+            {
+                "renamed": {"web": "shop-front", "mgd-shop-web": "shop-front"},
+                "introduced": ["shop-front"],
+            },
         )
-        self.assertEqual(self.backend_renames[0]["introduced"], ["shop-front"])
 
     def test_an_empty_pool_name_is_the_objects(self) -> None:
         self.publish(backend="")
@@ -903,6 +909,80 @@ class SaveAndPublish(EditorTestCase):
         self.assertIn("Nothing to publish", answer.text)
         self.assertIn("identical to what is already stored", answer.text)
         self.assertEqual(self.saved, [])
+        self.assertEqual(self.queued, [])
+
+    def moved(self) -> Any:
+        """The status saying pool `web` of `shop` was published under a name that has moved."""
+
+        from haproxy_mgmt import status_collect
+
+        from haproxy_ui.db import ClusterStatus
+
+        objects = replace(
+            OBJECTS,
+            result={
+                **OBJECTS.result,
+                "objects": [{**OBJECTS.result["objects"][0], "runtime_backends": ["web"]}],
+            },
+        )
+        name = status_collect.PublishedName(
+            pool="web", host="ns1.example.com", address="192.0.2.53"
+        )
+        row = ClusterStatus(
+            cluster="alpha",
+            observed_at=OBSERVED,
+            outcome="done",
+            result={"nodes": []},
+            warnings=[
+                {
+                    "code": status_collect.DNS_SERVER_MOVED,
+                    "message": status_collect.moved_message(name, "now resolves to 192.0.2.54"),
+                }
+            ],
+            error=None,
+            poll_error=None,
+        )
+        return (
+            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[row]),
+        )
+
+    def test_an_identical_document_is_published_when_a_server_name_moved(self) -> None:
+        """B253: the document is the same, the configuration generated from it is not."""
+
+        objects, statuses = self.moved()
+        with objects, statuses:
+            client = self.editor()
+            answer = self.submit(client, "/proxies/alpha/shop/edit", action="publish")
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(len(self.queued), 1)
+        self.assertEqual(self.queued[0]["payload"]["comment"], "Look up the servers of shop again")
+
+    def test_publish_again_publishes_the_stored_object(self) -> None:
+        objects, statuses = self.moved()
+        with objects, statuses:
+            client = self.editor()
+            answer = client.post(
+                "/proxies/alpha/shop/lookup",
+                data={"csrf_token": self.token(client)},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(self.queued[0]["payload"]["objects"]["shop"].strip(), SHOP.strip())
+        self.assertEqual(self.queued[0]["payload"]["comment"], "Look up the servers of shop again")
+
+    def test_publish_again_without_a_moved_name_is_still_refused(self) -> None:
+        client = self.editor()
+        answer = client.post(
+            "/proxies/alpha/shop/lookup",
+            data={"csrf_token": self.token(client)},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertIn("Nothing to publish", answer.text)
         self.assertEqual(self.queued, [])
 
     def test_an_identical_document_may_still_be_saved(self) -> None:

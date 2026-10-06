@@ -104,7 +104,7 @@ class WhatADnsListenerIsWorthKeeping(unittest.TestCase):
         )
         self.assertEqual(
             dict(members[1].counters),
-            {"dns_queries": 8, "dns_answered": 7, "dns_latency_us": 350},
+            {"dns_queries": 8, "dns_answered": 7},
         )
 
     def test_what_the_node_could_not_count_is_left_out_not_zeroed(self) -> None:
@@ -135,10 +135,11 @@ class WhatADnsListenerIsWorthKeeping(unittest.TestCase):
         statement = db._sample_insert(
             "metric_backend_member",
             ("node", "backend", "member", "check_status", "check_code"),
-            (*metrics.METRIC_COUNTERS, *metrics.DNS_COUNTERS, metrics.DNS_LATENCY),
+            (*metrics.METRIC_COUNTERS, *metrics.DNS_COUNTERS),
         ).as_string(None)
-        for name in (*metrics.DNS_COUNTERS, metrics.DNS_LATENCY):
+        for name in metrics.DNS_COUNTERS:
             self.assertIn(f'"{name}"', statement)
+        self.assertNotIn("dns_latency_us", statement)
 
 
 class WhatOneReadingIsWorthKeeping(unittest.TestCase):

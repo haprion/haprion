@@ -261,7 +261,12 @@ class TheDnsCounterLists(unittest.TestCase):
     def test_the_migration_stores_exactly_what_the_reader_keeps(self) -> None:
         source = DNS_COUNTERS_MIGRATION.read_text()
         self.assertEqual(_tuple_named(source, "DNS_COUNTERS"), metrics.DNS_COUNTERS)
-        self.assertIn(f'LATENCY = "{metrics.DNS_LATENCY}"', source)
+        #
+        # The latency 0057 stored is read by nothing since B253, and kept by
+        # nothing: no reported field is renamed into it.
+        #
+        self.assertIn('LATENCY = "dns_latency_us"', source)
+        self.assertNotIn("dns_latency_us", metrics.DNS_SERVER.values())
 
     def test_the_migration_differences_what_the_readers_sum(self) -> None:
         source = DNS_COUNTERS_MIGRATION.read_text()

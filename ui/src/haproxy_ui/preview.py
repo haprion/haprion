@@ -683,27 +683,12 @@ def build_document(form: dict[str, object]) -> str:
     if protocol in ("tcp", "dns"):
         #
         # A tcp object is an address, a port and one backend, and so is a dns
-        # one. The page keeps one
-        # form for both shapes, so the fields the shape has no use for carry no
-        # document of their own - but anything a person actually typed is sent
-        # along and refused by the engine, in the engine's words. Dropping it
-        # here would leave somebody looking at a preview of an object that
-        # silently lost the name they wrote, and headers already behave this
-        # way; two identical mistakes answered two different ways is the part
-        # that misleads.
+        # one. Hostnames and redirects are http's: the form hides them for
+        # these shapes and `shown_only` has already emptied whatever they held
+        # (26-10-06), so nothing of them reaches the document.
         #
         document["listen"] = listen
         document["backend"] = backend_name
-        if written:
-            document["hostnames"] = written
-        if text("redirect_path") or text("redirect_location"):
-            document["routes"] = _routes(
-                text("redirect_path"),
-                text("redirect_match"),
-                text("redirect_location"),
-                text("redirect_status"),
-                backend_name,
-            )
     else:
         document["hostnames"] = written
         document["listen"] = listen

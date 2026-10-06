@@ -2349,7 +2349,7 @@ def record_metric_samples(
     """
 
     frontends, members = metrics.samples(result)
-    member_columns = (*metrics.METRIC_COUNTERS, *metrics.DNS_COUNTERS, metrics.DNS_LATENCY)
+    member_columns = (*metrics.METRIC_COUNTERS, *metrics.DNS_COUNTERS)
     if not frontends and not members:
         return 0
 

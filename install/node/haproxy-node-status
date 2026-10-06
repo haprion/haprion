@@ -183,8 +183,9 @@ def parse_dns_metrics(text):
     queries are its servers' responses added up - the rules count what came
     in, the servers what went out and came back.
 
-    Latency is dnsdist's own running average for the server, in milliseconds,
-    carried as whole microseconds. None for text that is not dnsdist's.
+    No latency: dnsdist's is a running average that starts at nought with every
+    start, and nothing read it (26-10-06, B253). Its exporter carries it to
+    whoever scrapes dnsdist. None for text that is not dnsdist's.
     """
 
     rules = {}
@@ -213,7 +214,7 @@ def parse_dns_metrics(text):
         if not metric.startswith("dnsdist_server_") or not slash or not pool or not member:
             continue
         field = metric.removeprefix("dnsdist_server_")
-        if field in ("queries", "responses", "latency", "status"):
+        if field in ("queries", "responses", "status"):
             servers.setdefault((pool, member), {})[field] = value
     if not seen:
         return None
@@ -227,7 +228,6 @@ def parse_dns_metrics(text):
             pools.setdefault(pool, {})[part] = hits
     rows = []
     for (pool, member), found in sorted(servers.items())[:MAX_DNS_ROWS]:
-        latency = found.get("latency")
         rows.append(
             {
                 "pool": pool,
@@ -235,7 +235,6 @@ def parse_dns_metrics(text):
                 "status": None if "status" not in found else ("UP" if found["status"] else "DOWN"),
                 "queries": None if "queries" not in found else int(found["queries"]),
                 "answered": None if "responses" not in found else int(found["responses"]),
-                "latency_us": None if latency is None or latency < 0 else round(latency * 1000),
             }
         )
     #

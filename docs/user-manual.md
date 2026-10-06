@@ -127,8 +127,8 @@ a DNS listener. The pool's servers are addresses or host names with a port. dnsd
 takes addresses only, so a name is looked up on the manager when the object is published
 and the address written into the configuration; a name that gives no address, or several
 of one family, refuses the publish. The address is the one the name had then:
-`haproxy-status` and the object's page say when the name has since moved, and publishing
-again picks the new one up. The balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
+`haproxy-status` and the object's page say when the name has since moved, and *Publish again*
+beside that warning publishes the object unchanged, which looks the name up again. The balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
 `firstAvailable` (the first server that is up: active/passive, since dnsdist has no backup
 server) and `chashed` (one name keeps one server) - and the health check asks every
 server a real question, `a.root-servers.net.` for `A` unless another is given, once a
@@ -1875,8 +1875,8 @@ names its backend had before as well: `mgd-<object>-<pool>`, which a pool was
 called until 2026-10-06, and any name a publish renamed. A publish counts as a
 rename when exactly one of an object's pools goes and one comes, and for a
 redirect when its object is renamed; two pools renamed at once are not paired.
-The pair is recorded when the publish is queued (table `metric_backend_alias`),
-and a name given to a backend again stops counting for the one that had it. A
+The pair is recorded when the publish is done (table `metric_backend_alias`) - a
+publish refused or failed renames nothing - and a name given to a backend again stops counting for the one that had it. A
 dashboard reading the exporter sees a new series under the new name - HAProxy's
 counters begin again with it.
 

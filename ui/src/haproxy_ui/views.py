@@ -1252,6 +1252,20 @@ def build_router(config: Config) -> APIRouter:
         return _editor_submit(request, config, cluster, name, form)
 
     #
+    # *Publish again* beside the warning that a dns server's name has moved
+    # (B253): the stored object, published as the editor would publish it, so
+    # the name is looked up again. Nothing here bypasses the editor's checks.
+    #
+    @router.post("/proxies/{cluster}/{name}/lookup", response_class=HTMLResponse)
+    def lookup_object_again(
+        request: Request,
+        cluster: str,
+        name: str,
+        csrf_token: Annotated[str, Form()] = "",
+    ) -> Response:
+        return _lookup_again(request, config, cluster, name, csrf_token)
+
+    #
     # Removing an object. Declared before `/proxies/{cluster}/{name}` for the
     # reason `new` is: the router takes the first route that matches, and both
     # are two segments.
@@ -7716,6 +7730,53 @@ def _editor_page(
     )
 
 
+def _lookup_again(
+    request: Request, config: Config, cluster: str, name: str, csrf_token: str
+) -> Response:
+    """The stored object through the editor's publish, so its server names are looked up again."""
+
+    if current_session(request) is None:
+        return RedirectResponse("/login", status_code=303)
+    if not config.management_writes:
+        return PlainTextResponse("Not found", status_code=404)
+    state = _editor_state(request, config, cluster)
+    stored = next((view for view in state.stored if view.name == name), None)
+    if stored is None:
+        return _refusal_page(
+            request, config, "This cluster has no object of that name.", back="/proxies"
+        )
+    with request.app.state.pool.connection() as connection:
+        draft = _settled_draft(connection, cluster, name, {view.name for view in state.stored})
+    if draft is not None:
+        #
+        # Publishing the stored object would throw the draft's work away.
+        # The draft's own publish looks the names up as well.
+        #
+        return _refusal_page(
+            request,
+            config,
+            f"{name} has a draft. Publish the draft from the editor; that looks the names up too.",
+            back=_proxy_path(cluster, name, "edit"),
+        )
+    try:
+        fields = preview_module.form_from_document(stored.document, networks=state.choices.networks)
+    except preview_module.Unexpressible as exc:
+        return _refusal_page(request, config, str(exc), back=_proxy_path(cluster, name))
+    form = editor_module.ObjectForm(
+        **_form_defaults(fields), action="publish", csrf_token=csrf_token
+    )
+    return _editor_submit(request, config, cluster, name, form)
+
+
+def _moved_servers(
+    request: Request, config: Config, cluster: str, stored: objects.ObjectView
+) -> list[str]:
+    """The status's word that one of this object's dns servers moved (B253)."""
+
+    _, rows, _ = read_source(request, config, STATUS_SOURCE)
+    return moved_dns_servers(rows, cluster=cluster, pools=stored.runtime_backends or ())
+
+
 def moved_dns_servers(rows: Iterable[Any], *, cluster: str, pools: Collection[str]) -> list[str]:
     """The status's word that a pool's server name moved since publishing (B252).
 
@@ -8039,9 +8100,21 @@ def _editor_submit(
     #
     # A rename is a change by definition, whatever the document says.
     #
+    # One exception (B253): a dns server published by name whose name has
+    # moved since. The document is the same, but the configuration generated
+    # from it is not - the name is looked up again - and that is what the
+    # version says it changed.
+    #
+    looked_up = False
     if form.action == "publish" and not renaming:
         stored = next((view for view in state.stored if view.name == object_id), None)
         if stored is not None and editor_module.unchanged(result.document, stored.document):
+            looked_up = bool(_moved_servers(request, config, cluster, stored))
+        if (
+            stored is not None
+            and editor_module.unchanged(result.document, stored.document)
+            and not looked_up
+        ):
             return _refusal_page(
                 request,
                 config,
@@ -8150,6 +8223,7 @@ def _editor_submit(
         username=session.username,
         replaces_published=replaces_published,
         stored=state.stored,
+        comment=f"Look up the servers of {object_id} again" if looked_up else "",
     )
     if isinstance(queued, str):
         return _refusal_page(
@@ -8194,6 +8268,7 @@ def _queue_object_publish(
     username: str,
     replaces_published: str = "",
     stored: Sequence[objects.ObjectView] = (),
+    comment: str = "",
 ) -> db.Job | str:
     """Queue the publish of a draft that has just been saved: the job, or why not.
 
@@ -8219,7 +8294,8 @@ def _queue_object_publish(
     payload = {
         "objects": objects,
         "expected_head": expected_head,
-        "comment": (
+        "comment": comment
+        or (
             f"Rename {replaces_published} to {object_id}"
             if replaces_published and not saved.deleted
             else f"Publish {object_id}"
@@ -8240,6 +8316,17 @@ def _queue_object_publish(
         "requested_by": username,
         **_removal_bookkeeping(stored, objects),
     }
+    #
+    # A pool renamed here, or an object whose redirects are renamed with it,
+    # keeps its history under the new name (`metric_backend_alias`). Carried by
+    # the job and written by the worker once the publish is done (B253): a
+    # publish refused or failed after it was queued renames nothing.
+    #
+    renamed, introduced = _backend_renames(
+        stored, object_id, document, replaces_published or object_id
+    )
+    if renamed or introduced:
+        payload["backend_renames"] = {"renamed": renamed, "introduced": introduced}
     key = _publish_key(cluster, "objects_publish", payload)
     try:
         operations.prepare(
@@ -8279,19 +8366,6 @@ def _queue_object_publish(
             request_id=job.request_id,
             detail={"operation": "objects_publish", "job": job.id, "object": object_id},
         )
-        #
-        # A pool renamed here, or an object whose redirects are renamed with
-        # it, keeps its history under the new name (`metric_backend_alias`).
-        # Written with the job, in the one transaction: a publish that was not
-        # queued renames nothing.
-        #
-        renamed, introduced = _backend_renames(
-            stored, object_id, document, replaces_published or object_id
-        )
-        if renamed or introduced:
-            db.record_backend_renames(
-                connection, cluster=cluster, renamed=renamed, introduced=introduced
-            )
         connection.commit()
     return job
 

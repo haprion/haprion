@@ -4910,8 +4910,10 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
 
         self.assertGreater(open_ - closed, 1000)
 
-    def test_the_web_role_writes_renames_and_reads_them_back_as_a_chain(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+    def test_the_worker_writes_renames_and_the_web_reads_them_back_as_a_chain(self) -> None:
+        """B253: the worker writes them once a publish is done; the web reads them."""
+
+        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
             db.record_backend_renames(
                 connection, cluster="chain", renamed={"a": "b"}, introduced=["b"]
             )
@@ -4919,12 +4921,21 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
                 connection, cluster="chain", renamed={"b": "c"}, introduced=["c"]
             )
             db.record_backend_renames(connection, cluster="chain", renamed={}, introduced=["a"])
+            connection.commit()
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
             found = db.read_backend_aliases(connection, cluster="chain")
 
         names = {item.name: item.until for item in found["c"]}
         self.assertEqual(set(names), {"a", "b"})
         self.assertIsNotNone(names["a"], "a was given out again")
         self.assertIsNone(names["b"])
+
+
+#
+# The latency column 0057 added and sums per hour. Nothing reads it since B253;
+# 0059 takes it away, and these cases hold 0057 to what it did until then.
+#
+LATENCY_0057 = "dns_latency_us"
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
@@ -4984,7 +4995,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
                         {
                             "dns_queries": served[0],
                             "dns_answered": served[1],
-                            metrics.DNS_LATENCY: latency,
+                            LATENCY_0057: latency,
                         },
                     )
                 )
@@ -4992,7 +5003,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
             uptime += 600
             step += 1
         cls.rows = rows
-        columns = (*metrics.DNS_COUNTERS, metrics.DNS_LATENCY)
+        columns = (*metrics.DNS_COUNTERS, LATENCY_0057)
         with cls.connect() as connection, connection.cursor() as cursor:
             day = (cls.now - timedelta(days=4)).date()
             while day <= cls.now.date() + timedelta(days=1):
@@ -5033,17 +5044,6 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
                 continue
             total += value[name] if up < up_before else value[name] - before[name]
         return total
-
-    def latency(self, member: str, since: datetime) -> float:
-        readings = [row for row in self.rows if row[0] == member]
-        found = [
-            value[metrics.DNS_LATENCY]
-            for (_m, at_before, _u, _b), (_n, at, _up, value) in zip(
-                readings, readings[1:], strict=False
-            )
-            if at_before >= since and at <= self.now
-        ]
-        return sum(found) / len(found)
 
     def ranges(self) -> tuple[datetime, ...]:
         # A day or less reads the raw rows; longer reads the hourly sums, and
@@ -5164,7 +5164,11 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
                 " order by observed_at desc, member limit 2"
             )
             self.assertEqual(
-                cursor.fetchall(), [("BACKEND", 15, 13, None, None), ("s1", 15, 13, 420, "UP")]
+                #
+                # An older node still sends its latency; nothing keeps it (B253).
+                #
+                cursor.fetchall(),
+                [("BACKEND", 15, 13, None, None), ("s1", 15, 13, None, "UP")],
             )
 
     def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
@@ -5202,7 +5206,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
                     columns(cursor, "metric_backend_member"),
                     {
                         *metrics.DNS_COUNTERS,
-                        metrics.DNS_LATENCY,
+                        LATENCY_0057,
                         *(f"delta_{name}" for name in metrics.DNS_COUNTERS),
                     },
                 )

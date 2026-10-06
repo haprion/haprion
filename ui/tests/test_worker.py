@@ -163,6 +163,38 @@ class GoodAnswers(WorkerTestCase):
         wrong_table.assert_not_called()
         self.assertEqual(self.audited[0]["detail"]["removed_profile"], "internal-ca")
 
+    def test_a_done_publish_writes_its_renames_in_the_finish_transaction(self) -> None:
+        """B253: the alias is written once the publish is done, and never before."""
+
+        renames = {"renamed": {"web": "shop-front"}, "introduced": ["shop-front"]}
+        for state, written in (("done", True), ("failed", False), ("blocked", False)):
+            with self.subTest(state=state):
+                job = claimed(
+                    operation="objects_publish", payload={"objects": {}, "backend_renames": renames}
+                )
+                with mock.patch.object(db, "record_backend_renames") as record:
+                    finished = worker._finish(
+                        self.connection,
+                        job,
+                        state=state,
+                        outcome=state,
+                        exit_code=0 if state == "done" else 1,
+                        result=result_document(job, state),
+                        stderr_excerpt=None,
+                        worker=WORKER,
+                    )
+
+                self.assertTrue(finished)
+                if written:
+                    record.assert_called_once_with(
+                        self.connection,
+                        cluster=job.cluster,
+                        renamed={"web": "shop-front"},
+                        introduced=["shop-front"],
+                    )
+                else:
+                    record.assert_not_called()
+
     def test_the_envelopes_outcome_becomes_the_jobs_state(self) -> None:
         job = claimed()
         document = result_document(job)

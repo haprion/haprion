@@ -89,7 +89,7 @@ class ReadingDnsdistCounters(unittest.TestCase):
         pools = {row["pool"] for row in self.read()["pools"]}
         self.assertNotIn("a3f1c2d4-e230-4f15-bb39-1f353a1774a8", pools)
 
-    def test_each_server_says_its_pool_its_verdict_and_its_latency(self) -> None:
+    def test_each_server_says_its_pool_its_verdict_and_its_counts(self) -> None:
         servers = self.read()["servers"]
         self.assertEqual(
             [(row["pool"], row["server"], row["status"]) for row in servers],
@@ -97,7 +97,7 @@ class ReadingDnsdistCounters(unittest.TestCase):
         )
         web = {row["server"]: row for row in servers if row["pool"] == "web"}
         self.assertEqual((web["s2"]["queries"], web["s2"]["answered"]), (2, 1))
-        self.assertEqual((web["s1"]["latency_us"], web["s2"]["latency_us"]), (3, 1500))
+        self.assertNotIn("latency_us", web["s1"])
 
     def test_a_server_not_named_by_the_generator_is_left_out(self) -> None:
         self.assertNotIn("unnamed", {row["server"] for row in self.read()["servers"]})

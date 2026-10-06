@@ -72,18 +72,17 @@ METRIC_COUNTERS: tuple[str, ...] = (
 # `DNS_SERVER`.
 #
 DNS_COUNTERS: tuple[str, ...] = ("dns_queries", "dns_tcp", "dns_refused", "dns_answered")
-#
-# A server's latency is dnsdist's running average, a reading rather than a
-# count: kept as read and never differenced.
-#
-DNS_LATENCY = "dns_latency_us"
 DNS_POOL = {
     "queries": "dns_queries",
     "tcp_queries": "dns_tcp",
     "refused": "dns_refused",
     "answered": "dns_answered",
 }
-DNS_SERVER = {"queries": "dns_queries", "answered": "dns_answered", "latency_us": DNS_LATENCY}
+#
+# No latency (B253, 26-10-06): dnsdist's is a running average that starts at
+# nought at every start, and nothing here drew it. Prometheus reads dnsdist.
+#
+DNS_SERVER = {"queries": "dns_queries", "answered": "dns_answered"}
 #
 # Every counter a series is drawn and summed from.
 #

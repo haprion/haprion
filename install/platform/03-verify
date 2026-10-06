@@ -188,6 +188,9 @@ app_worker	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_err
 app_worker	dns_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version
 app_worker	job	SELECT	attempts, claim_token, cluster, created_at, exit_code, finished_at, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt, worker_id
 app_worker	job	UPDATE	attempts, claim_token, exit_code, finished_at, lease_until, outcome, result, started_at, state, stderr_excerpt, worker_id
+app_worker	metric_backend_alias	INSERT	cluster, new_name, old_name
+app_worker	metric_backend_alias	SELECT	cluster, new_name, old_name, renamed_at, reused_at
+app_worker	metric_backend_alias	UPDATE	new_name, renamed_at, reused_at
 app_worker	ndes_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version
 EOF
 )

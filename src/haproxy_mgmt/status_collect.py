@@ -277,7 +277,7 @@ def moved_message(name: PublishedName, now: str) -> str:
 
     return (
         f"{name.host} {now}, not {name.address} as published for pool {name.pool}; "
-        f"publish the cluster again"
+        f"publish its object again"
     )
 
 

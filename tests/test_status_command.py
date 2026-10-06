@@ -463,7 +463,7 @@ class HelperReadingTests(HelperFixture):
                 (
                     "dns_server_moved",
                     "ns1.example.com now resolves to 198.51.100.99, not 198.51.100.53 as "
-                    "published for pool dcs; publish the cluster again",
+                    "published for pool dcs; publish its object again",
                 )
             ],
         )

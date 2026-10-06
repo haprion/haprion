@@ -330,6 +330,29 @@ def _finish(
             return False
         removed_profile = profile
 
+    #
+    # A publish that renamed a pool keeps its history under the new name
+    # (B253). Written here, beside the job's ending, because only a done
+    # publish put the new name in a version; one refused or failed after it
+    # was queued would otherwise have handed the old name's readings to
+    # whatever is given the new name later. A publish that committed and then
+    # failed to install leaves the card starting afresh, which is the loss of a
+    # history and never a wrong one.
+    #
+    renames = job.payload.get("backend_renames")
+    if (
+        state == "done"
+        and job.operation == "objects_publish"
+        and job.cluster is not None
+        and isinstance(renames, dict)
+    ):
+        db.record_backend_renames(
+            connection,
+            cluster=job.cluster,
+            renamed=dict(renames.get("renamed") or {}),
+            introduced=list(renames.get("introduced") or ()),
+        )
+
     db.record_audit_event(
         connection,
         actor=worker,

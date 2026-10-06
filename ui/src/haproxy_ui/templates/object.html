@@ -23,7 +23,7 @@
   worked and a page somebody merely opened would otherwise look identical -
   which is the moment they press save again.
 #}
-{% for message in dns_moved %}<p class="preview-notice form-problem">{{ message }}</p>{% endfor %}
+{% for message in dns_moved %}<div class="preview-notice form-problem notice-with-action"><span>{{ message }}</span>{% if loop.first and role == 'admin' and management_writes %}<form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/lookup"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button">Publish again</button></form>{% endif %}</div>{% endfor %}
 {% if saved %}
 <p class="preview-notice"><strong>Saved as a draft.</strong> It reaches no configuration until it is published.</p>
 {% elif discarded %}

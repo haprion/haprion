@@ -164,6 +164,29 @@ class ARemovalWritesItDown(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(operations.BadPayload):
                 self.prepare(removed_backends=value)
 
+    def test_a_publishs_renames_are_checked_and_never_forwarded(self) -> None:
+        """B253: the worker writes them once the publish is done; the helper never sees them."""
+
+        prepared = self.prepare(
+            backend_renames={"renamed": {"web": "shop-front"}, "introduced": ["shop-front"]}
+        )
+
+        self.assertNotIn("backend_renames", prepared.request)
+        self.assertNotIn("shop-front", str(prepared.request))
+        refused: tuple[object, ...] = (
+            {"renamed": {}, "introduced": []},
+            {"renamed": {"web": "web"}, "introduced": []},
+            {"renamed": {"web": ""}, "introduced": []},
+            {"renamed": {}, "introduced": ["x" * 129]},
+            {"renamed": {}, "introduced": "shop-front"},
+            {"renamed": ["web"], "introduced": []},
+            {"renamed": {}},
+            [],
+        )
+        for value in refused:
+            with self.subTest(value=value), self.assertRaises(operations.BadPayload):
+                self.prepare(backend_renames=value)
+
     def test_the_listing_reads_it_back(self) -> None:
         jobs = [
             publish_job({"objects": {"gone": None}, "removed_backends": {"gone": ["gone-web"]}}),

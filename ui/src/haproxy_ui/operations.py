@@ -65,6 +65,11 @@ KEY_ID = re.compile(r"^[0-9a-f]{16}$")
 #
 MAX_BACKEND_NAME = 128
 
+
+def _backend_name(value: object) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= MAX_BACKEND_NAME
+
+
 #
 # How long an operation may run before the worker stops it. Deliberately
 # generous: a deploy reaches every node in the cluster over SSH, and a timeout
@@ -1123,6 +1128,7 @@ def prepare(
             "draft",
             "requested_by",
             "removed_backends",
+            "backend_renames",
         )
         #
         # `draft` is the interface's own bookkeeping: which draft row this
@@ -1179,6 +1185,26 @@ def prepare(
                     )
                 ):
                     raise BadPayload(f"the removed backends of {name} must be a list of names")
+        #
+        # `backend_renames` is bookkeeping too (B253): what this publish renames
+        # and brings into use, which the worker writes to `metric_backend_alias`
+        # once the publish is done - and only then, so a publish that never
+        # happened renames nothing. Checked, and not passed on.
+        #
+        renames = payload.get("backend_renames")
+        if renames is not None:
+            if not isinstance(renames, Mapping) or set(renames) != {"renamed", "introduced"}:
+                raise BadPayload("backend_renames must say what is renamed and what is introduced")
+            renamed, introduced = renames["renamed"], renames["introduced"]
+            if not isinstance(renamed, Mapping) or not all(
+                _backend_name(old) and _backend_name(new) and old != new
+                for old, new in renamed.items()
+            ):
+                raise BadPayload("backend_renames.renamed must map names to other names")
+            if not isinstance(introduced, list) or not all(map(_backend_name, introduced)):
+                raise BadPayload("backend_renames.introduced must be a list of names")
+            if not renamed and not introduced:
+                raise BadPayload("backend_renames must not be empty")
         if not isinstance(expected_head, str) or not expected_head:
             raise BadPayload("expected_head must be a commit id")
         if not isinstance(comment, str) or not comment:

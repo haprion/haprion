@@ -188,6 +188,28 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             self.assertFalse(submit.is_disabled())
             self.assertEqual(page.locator("[data-delete-count]").inner_text(), "1 selected")
 
+    def test_export_wakes_at_one_external_row_and_no_other(self) -> None:
+        from tests.test_certificates import reading, registered, with_registry
+        from tests.test_external_certificates import external
+
+        rows = [with_registry(reading(), registered(fingerprint="a" * 64), external())]
+        with (
+            mock.patch("haproxy_ui.features.is_on", return_value=True),
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=rows),
+            self.signed_in("?view=registry") as page,
+        ):
+            export = page.get_by_role("button", name="Export…")
+            outside = page.locator("[data-delete-pick]:not([data-exportable])").first
+            inside = page.locator("[data-delete-pick][data-exportable]")
+
+            outside.check()
+            self.assertTrue(export.is_disabled())
+            outside.uncheck()
+            inside.check()
+            self.assertFalse(export.is_disabled())
+            outside.check()
+            self.assertTrue(export.is_disabled())
+
     def test_the_switch_stays_on_screen_while_the_page_scrolls(self) -> None:
         with self.signed_in("?view=registry") as page:
             page.set_viewport_size({"width": 1000, "height": 300})

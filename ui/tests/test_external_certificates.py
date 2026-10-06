@@ -202,9 +202,44 @@ class TheExport(ExternalRowTestCase):
         self.assertIn("The service is not running here. Nothing was exported.", answer.text)
         self.assertNotIn("certificate_export", self.audit)
 
-    def test_the_row_offers_the_downloads_and_the_export_to_an_admin(self) -> None:
+    def test_the_bar_offers_the_export_and_the_row_nothing_of_its_own(self) -> None:
         page = self.writing_client().get(f"/certificates?view=registry&open={DEVICE}").text
 
-        self.assertIn(f"/certificates/{DEVICE}/download?part=fullchain", page)
-        self.assertIn(f'action="/certificates/{DEVICE}/export"', page)
+        self.assertNotIn(f"/certificates/{DEVICE}/download", page)
+        self.assertNotIn(f'action="/certificates/{DEVICE}/export"', page)
+        self.assertIn('formaction="/certificates/export" data-export-submit', page)
+        self.assertIn(
+            f'value="{DEVICE}" form="certificate-selection" data-delete-pick data-exportable', page
+        )
         self.assertIn(">external<", page)
+
+
+class TheExportPage(ExternalRowTestCase):
+    def review(self, client: Any, *chosen: str) -> Any:
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        return client.post(
+            "/certificates/export",
+            data={"certificate": list(chosen), auth.CSRF_FIELD: token},
+            follow_redirects=False,
+        )
+
+    def test_one_external_row_gets_its_files_and_the_key_form(self) -> None:
+        page = self.review(self.writing_client(), DEVICE).text
+
+        self.assertIn(f"Export {DEVICE}", page)
+        self.assertIn(f"/certificates/{DEVICE}/download?part=chain", page)
+        self.assertIn(f'action="/certificates/{DEVICE}/export"', page)
+
+    def test_anything_else_is_a_sentence_and_no_form(self) -> None:
+        for chosen, sentence in (
+            ((), "Choose one certificate to export."),
+            ((DEVICE, "example.com"), "Choose one certificate to export."),
+            (("example.com",), "example.com is not an external certificate."),
+        ):
+            with self.subTest(chosen=chosen):
+                page = self.review(self.writing_client(), *chosen).text
+                self.assertIn(sentence, page)
+                self.assertNotIn('/export"', page)
+
+    def test_a_reader_is_refused(self) -> None:
+        self.assertEqual(self.review(self.writing_client(role="reader"), DEVICE).status_code, 403)

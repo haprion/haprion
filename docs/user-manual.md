@@ -1096,12 +1096,12 @@ can be downloaded. Renewal is the source's as for every certificate - certbot's 
 or the NDES renewal - and keeps the mark; installing the renewed certificate on the
 device is yours.
 
-**Taking it out.** Open the row:
+**Taking it out.** Tick the row and press *Export…* (an admin; the button wakes at one
+external row and no other):
 
-- *Certificate and chain*, *Certificate* and *Chain* download the public half as PEM, for
-  anyone signed in. A device that takes one file wants the first; one that asks for the
+- *Certificate and chain*, *Certificate* and *Chain* download the public half as PEM. A device that takes one file wants the first; one that asks for the
   certificate and the issuer separately, the other two.
-- *Export key*, for an admin: the key alone as PEM (*Key, PEM* - for a device that takes
+- *Export key*: the key alone as PEM (*Key, PEM* - for a device that takes
   certificate and key as two files, Supermicro's BMC for one), or a PKCS#12 bundle of key
   and chain under a password you type (8-128 characters). *PKCS#12, modern* is what
   OpenSSL writes today: AES-256, PBKDF2, a SHA-256 MAC. *PKCS#12, compatible* is 3DES and

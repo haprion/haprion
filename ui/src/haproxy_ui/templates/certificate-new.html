@@ -116,7 +116,7 @@
   {% if form.exportable %}
   <section class="cluster-card">
     <header class="cluster-header certificate-targets-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published.</p></div></div>{{ kind_switch() }}</header>
-    <p class="table-note certificate-kind-note">Published nowhere: downloaded with its key from its row and installed by hand. One name and an RSA key.</p>
+    <p class="table-note certificate-kind-note">Published nowhere: exported with its key from the registry and installed by hand. One name and an RSA key.</p>
     <div class="editor-actions editor-submit">
       <p class="table-note"></p>
       <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Request the certificate</button></div>

@@ -47,11 +47,14 @@
     const picks = Array.from(form.querySelectorAll("[data-delete-pick]"));
     const submits = Array.from(form.querySelectorAll("[data-delete-submit]"));
     const singles = Array.from(form.querySelectorAll("[data-single-submit]"));
+    const exports = Array.from(form.querySelectorAll("[data-export-submit]"));
     const count = form.querySelector("[data-delete-count]");
     const update = () => {
       const chosen = picks.filter((pick) => pick.checked).length;
       submits.forEach((submit) => { submit.disabled = chosen === 0; });
       singles.forEach((submit) => { submit.disabled = chosen !== 1; });
+      const exportable = picks.filter((pick) => pick.checked && pick.hasAttribute("data-exportable")).length;
+      exports.forEach((submit) => { submit.disabled = chosen !== 1 || exportable !== 1; });
       if (count) count.textContent = chosen === 0 ? "Nothing selected" : `${chosen} selected`;
     };
     picks.forEach((pick) => pick.addEventListener("change", update));

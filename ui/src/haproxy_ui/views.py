@@ -2703,6 +2703,53 @@ def build_router(config: Config) -> APIRouter:
         )
 
     #
+    # The page behind *Export…* (B255): one external certificate, its public
+    # files and its key, the way *Renew…* is one row and its renewal. The
+    # export itself posts to the route below.
+    #
+    @router.post("/certificates/export", response_class=HTMLResponse)
+    def certificate_export_review(
+        request: Request,
+        certificate: Sequence[str] = Form(default=()),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        if not features.is_on(features.CERT_RECEIVERS):
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        chosen = tuple(certificate)
+        row = _registry_views(request, config).get(chosen[0]) if len(chosen) == 1 else None
+        problem = ""
+        if len(chosen) != 1:
+            problem = "Choose one certificate to export."
+        elif row is None or not row.exportable:
+            problem = f"{chosen[0]} is not an external certificate."
+            row = None
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-export.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "csrf_token": auth.csrf_token(token),
+                "row": row,
+                "back": f"/certificates?view=registry&open={row.identifier}"
+                if row is not None
+                else "/certificates?view=registry",
+                "problem": problem,
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    #
     # An external certificate's key (B255): an admin, the name typed again,
     # and the export helper - which gives out the key of an exportable entry
     # and of no other. Written into the audit trail, and served without a

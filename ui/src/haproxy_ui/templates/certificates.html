@@ -29,7 +29,7 @@
           (`certificates.js` ignores clicks on inputs and labels), so ticking
           one does not open the detail under it.
         #}
-        {% if selectable %}<td class="select-column" data-label="Select">{% if not certificate.placeholder %}<label class="select-box"><input type="checkbox" name="certificate" value="{{ certificate.identifier }}" form="certificate-selection" data-delete-pick aria-label="Select {{ certificate.identifier }}"></label>{% endif %}</td>{% endif %}
+        {% if selectable %}<td class="select-column" data-label="Select">{% if not certificate.placeholder %}<label class="select-box"><input type="checkbox" name="certificate" value="{{ certificate.identifier }}" form="certificate-selection" data-delete-pick{% if certificate.exportable %} data-exportable{% endif %} aria-label="Select {{ certificate.identifier }}"></label>{% endif %}</td>{% endif %}
         <td data-label="Certificate"><a class="proxy-link" href="{{ href }}" aria-expanded="{{ 'true' if open else 'false' }}"><strong>{{ certificate.identifier }}</strong></a></td>
         <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
         <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ 'acme' if certificate.lifecycle_label == 'Certbot' else 'static' }}">{{ certificate.lifecycle_label }}</span>{% if certificate.wildcard %}<span class="certificate-issuer">wildcard</span>{% endif %}</td>
@@ -52,27 +52,10 @@
             that can be said of one is when the file was written for it.
           #}
           {#
-            An external certificate (B255): no targets, so the detail is where
-            it is taken out - the chain as three files, and the key behind a
-            confirmation, for an admin, through the export helper.
+            An external certificate (B255) has no targets; its files and key
+            are taken out behind *Export…*.
           #}
-          {% if certificate.exportable %}
-          <div class="registry-detail-targets"><strong>Download</strong>
-            {% if certificate.fullchain_pem %}<span class="action-group"><a class="secondary-button" href="/certificates/{{ certificate.identifier }}/download?part=fullchain">Certificate and chain</a><a class="secondary-button" href="/certificates/{{ certificate.identifier }}/download?part=certificate">Certificate</a><a class="secondary-button" href="/certificates/{{ certificate.identifier }}/download?part=chain">Chain</a></span>{% else %}<span class="warning-text">Not readable yet.</span>{% endif %}
-          </div>
-          {% if management_writes and role == 'admin' and certificate.fullchain_pem %}
-          <form method="post" action="/certificates/{{ certificate.identifier }}/export" class="registry-detail-targets certificate-export">
-            <strong>Export key</strong>
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <div class="certificate-export-fields">
-              <label>Format<select name="format"><option value="pem-key">Key, PEM</option><option value="pfx">PKCS#12, modern</option><option value="pfx-compatible">PKCS#12, compatible</option></select></label>
-              <label>Password (PKCS#12)<input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
-              <label>Type the name to confirm<input name="confirm" maxlength="255" placeholder="{{ certificate.identifier }}" autocomplete="off" spellcheck="false" required></label>
-              <button type="submit" class="secondary-button">Export</button>
-            </div>
-          </form>
-          {% endif %}
-          {% else %}
+          {% if not certificate.exportable %}
           <div class="registry-detail-targets"><strong>Published to</strong>
             {% for target in certificate.targets %}
             <span>{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span> · {{ target.published_label }}{% if target.current is false %} <span class="warning-text">(older version)</span>{% endif %}{% else %} <span class="target-kind">cluster</span>{% endif %}</span>
@@ -178,6 +161,11 @@
         the button wakes at exactly one box, not at one or more.
       #}
       <button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/renew" data-single-submit disabled>Renew…</button>
+      {#
+        An external certificate's files and key (B255), on a page of their
+        own like Renew…. Wakes at one box, and only on an external row.
+      #}
+      {% if feature_on('cert_receivers') %}<button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/export" data-export-submit disabled>Export…</button>{% endif %}
       <button class="danger-button" type="submit" form="certificate-selection" data-delete-submit disabled>Delete selected…</button>
     </div>
   </div>

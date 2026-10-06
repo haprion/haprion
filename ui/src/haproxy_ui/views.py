@@ -890,12 +890,11 @@ def build_router(config: Config) -> APIRouter:
             # somebody names, and these are precisely the names the repository
             # no longer has.
             #
-            gone = {
-                view.cluster: objects.removed_names(
-                    db.recent_jobs(connection, cluster=view.cluster)
-                )
+            recent = {
+                view.cluster: db.recent_jobs(connection, cluster=view.cluster)
                 for view in overview.clusters
             }
+        gone = {cluster: objects.removed_names(jobs) for cluster, jobs in recent.items()}
         #
         # Each cluster's objects read out of the cache once per request, not
         # once per use: at ten thousand objects every pass over them cost a
@@ -905,10 +904,23 @@ def build_router(config: Config) -> APIRouter:
             view.cluster: objects.cluster_object_views(rows.get(view.cluster))
             for view in overview.clusters
         }
+        #
+        # Whose each backend the nodes report is, by the objects' own account
+        # and a removal's (B250): a pool's name no longer says.
+        #
+        owners = {
+            view.cluster: health.backend_owners(
+                stored[view.cluster], objects.removed_backends(recent[view.cluster])
+            )
+            for view in overview.clusters
+        }
         for view in overview.clusters:
             names = [obj.name for obj in stored[view.cluster]]
             served[view.cluster] = health.served_objects(
-                health_rows, cluster=view.cluster, names=[*names, *gone[view.cluster]]
+                health_rows,
+                cluster=view.cluster,
+                names=[*names, *gone[view.cluster]],
+                owners=owners[view.cluster],
             )
             listed[view.cluster] = objects.listed_objects(
                 rows.get(view.cluster),
@@ -947,6 +959,7 @@ def build_router(config: Config) -> APIRouter:
             view.cluster: health.object_healths(
                 health_rows,
                 cluster=view.cluster,
+                owners=owners[view.cluster],
                 objects={
                     #
                     # Every listed name is a candidate owner, so a server is
@@ -1548,17 +1561,21 @@ def build_router(config: Config) -> APIRouter:
         #
         counted_since, counted_until = marked.counted(since, now)
         served: list[str] = list(detail.published.backends if detail.published else ())
+        targets: dict[str, metrics.BackendTarget] = {}
         if detail.stored is not None:
             try:
                 proxy = load_proxy(name, detail.stored.document.encode())
             except ModelError:
                 proxy = None
             if proxy is not None:
-                served.extend(
-                    health.backend_name(name, backend)
-                    for backend in proxy.backends
-                    if health.backend_name(name, backend) not in served
-                )
+                #
+                # Every name the generator gives the object's backends, and
+                # every name it gave them before (B250): the history of a pool
+                # is under `mgd-<object>-<pool>` until the cluster is deployed
+                # with the newer engine.
+                #
+                targets = metrics.backend_targets({name: proxy})
+                served.extend(backend for backend in targets if backend not in served)
         if served:
 
             def samples(backend: str) -> Callable[[Any], list[metrics.Interval]]:
@@ -1597,6 +1614,7 @@ def build_router(config: Config) -> APIRouter:
                 )
                 for index, backend in enumerate(served)
             ]
+            traffic = _without_superseded(traffic, served, targets)
         return TEMPLATES.TemplateResponse(
             request,
             "object.html",
@@ -1646,6 +1664,40 @@ def build_router(config: Config) -> APIRouter:
                 "snapshot_age": snapshot_age(captured_at),
             },
         )
+
+    def _without_superseded(
+        traffic: list[metrics.BackendTraffic],
+        names: Sequence[str],
+        targets: Mapping[str, metrics.BackendTarget],
+    ) -> list[metrics.BackendTraffic]:
+        """One card per backend, under the name a reader knows it by.
+
+        A backend renamed by the generator (B250) has readings under one name
+        or the other: the older until the cluster is deployed with the newer
+        engine, the newer after. The card is the one with readings - the newer
+        where both have them - and an empty card under the newer name where
+        neither has. Two cards would read as two backends. Every card is
+        labelled with the object's own account of the backend.
+        """
+
+        read = dict(zip(names, traffic, strict=True))
+        chosen: dict[str, str] = {}
+        for name in names:
+            target = targets.get(name)
+            key = target.current if target is not None else name
+            held = chosen.get(key)
+            if (
+                held is None
+                or (not read[held].measured and read[name].measured)
+                or read[held].measured == read[name].measured
+                and name == key
+            ):
+                chosen[key] = name
+        return [
+            replace(read[name], series=metrics.backend_label(name, targets))
+            for name in names
+            if chosen.get(targets[name].current if name in targets else name) == name
+        ]
 
     def _documents(readings: Iterable[Any], cluster: str) -> dict[str, Any]:
         """One cluster's stored objects, as the engine's own model reads them.
@@ -1854,21 +1906,18 @@ def build_router(config: Config) -> APIRouter:
 
         drawn = []
         for cluster, backends, seen in listed:
-            targets = metrics.redirect_targets(_documents(object_rows, cluster))
+            targets = metrics.backend_targets(_documents(object_rows, cluster))
 
-            def redirect_label(
-                name: str, targets: Mapping[str, metrics.RedirectTarget] = targets
-            ) -> str:
-                """What it redirects, or the stored name where nothing says.
+            def label(name: str, targets: Mapping[str, metrics.BackendTarget] = targets) -> str:
+                """The pool's own name or what it redirects; the stored name where nothing says.
 
                 A page that invented a name would be worse than one showing
                 an opaque name it could not resolve.
                 """
 
-                target = targets.get(name)
-                return target.label if target else metrics.without_prefix(name)
+                return metrics.backend_label(name, targets)
 
-            pools, redirects = metrics.split_redirects(backends, targets)
+            pools, redirects = metrics.split_backends(backends, targets)
 
             frontends = [frontend for frontend, _owned in seen]
             drawn.append(
@@ -1899,8 +1948,8 @@ def build_router(config: Config) -> APIRouter:
                     # so letting it into the comparison would size every real
                     # backend against traffic that never reached one.
                     #
-                    "backends": section(cluster, "backend", pools, metrics.without_prefix),
-                    "redirects": section(cluster, "backend", redirects, redirect_label),
+                    "backends": section(cluster, "backend", pools, label),
+                    "redirects": section(cluster, "backend", redirects, label),
                 }
             )
 
@@ -7981,6 +8030,7 @@ def _editor_submit(
         expected_head=state.commit,
         username=session.username,
         replaces_published=replaces_published,
+        stored=state.stored,
     )
     if isinstance(queued, str):
         return _refusal_page(
@@ -7988,6 +8038,30 @@ def _editor_submit(
         )
 
     return RedirectResponse("/proxies?published=" + quote(object_id), status_code=303)
+
+
+def _removal_bookkeeping(
+    stored: Sequence[objects.ObjectView], published: Mapping[str, str | None]
+) -> dict[str, dict[str, list[str]]]:
+    """`removed_backends` for a publish that removes objects, or nothing (B250).
+
+    A pool is named by itself, so once an object's document is gone the nodes'
+    report of its backends says nothing about whose they were - and between the
+    publish and the deploy the listing has to say the nodes still serve it.
+    Written down here, from the objects helper's own account, as the interface's
+    bookkeeping beside `draft`: checked by `operations.prepare` and never passed
+    to the helper.
+    """
+
+    views = {view.name: view for view in stored}
+    written = {
+        name: list(view.runtime_backends)
+        for name, document in published.items()
+        if document is None
+        and (view := views.get(name)) is not None
+        and view.runtime_backends is not None
+    }
+    return {"removed_backends": written} if written else {}
 
 
 def _queue_object_publish(
@@ -8000,6 +8074,7 @@ def _queue_object_publish(
     expected_head: str,
     username: str,
     replaces_published: str = "",
+    stored: Sequence[objects.ObjectView] = (),
 ) -> db.Job | str:
     """Queue the publish of a draft that has just been saved: the job, or why not.
 
@@ -8044,6 +8119,7 @@ def _queue_object_publish(
         "draft": {"id": str(saved.id), "revision": saved.revision},
         # Who asked, for the version's `Requested-By` (B207).
         "requested_by": username,
+        **_removal_bookkeeping(stored, objects),
     }
     key = _publish_key(cluster, "objects_publish", payload)
     try:
@@ -8165,6 +8241,7 @@ def _removal_submit(
         "comment": f"Remove {name}",
         "draft": {"id": str(saved.id), "revision": saved.revision},
         "requested_by": session.username,
+        **_removal_bookkeeping(state.stored, {name: None}),
     }
     key = _publish_key(cluster, "objects_publish", payload)
     try:

@@ -25,7 +25,13 @@ from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from haproxy_mgmt.generate import METRICS_FRONTEND, PREFIX, WAF_BACKEND
+from haproxy_mgmt.generate import (
+    METRICS_FRONTEND,
+    PREFIX,
+    WAF_BACKEND,
+    backend_name,
+    legacy_backend_name,
+)
 from haproxy_mgmt.guid import REDIRECT_PREFIX, redirect_name, redirect_suffixes
 from haproxy_mgmt.proxy_model import Proxy
 
@@ -1494,65 +1500,82 @@ def is_engine(backend: str) -> bool:
 
 
 def is_redirect(backend: str) -> bool:
-    """Whether this generated backend is a redirect answer rather than one with servers.
+    """Whether a name no object accounts for has the shape of a redirect answer.
 
     It carries counters like any backend and belongs on the page, but not in a
     comparison of backends: it has no servers, it answers 301 itself, and letting
     it into the shared scale would size every real backend against traffic that
-    never reached one.
+    never reached one. Names an object accounts for are told apart by
+    `backend_targets` instead.
     """
 
     return bool(REDIRECT_SUFFIX.search(backend))
 
 
 @dataclass(frozen=True, slots=True)
-class RedirectTarget:
-    """One generated redirect backend, as a reader should see it.
+class BackendTarget:
+    """One generated backend, as a reader should see it.
 
     `current` is the name the generator gives it now. For a name it gave before
-    redirects were named from their paths (2026-10-05) that is the successor,
-    whose counters began when the change was deployed.
+    - `mgd-<object>-<pool>` until 2026-10-06 (B250), and a redirect's digest
+    until 2026-10-05 - that is the successor, whose counters began when the
+    change was deployed.
     """
 
     label: str
     current: str
+    redirect: bool = False
 
 
-def redirect_targets(objects: Mapping[str, Proxy]) -> dict[str, RedirectTarget]:
-    """Generated redirect backends, mapped to what each one actually does.
+def backend_targets(objects: Mapping[str, Proxy]) -> dict[str, BackendTarget]:
+    """Every backend the objects produce, under each name it has had.
 
-    Resolved by building rather than by parsing. Every route that redirects is
-    asked what the generator calls it - and what it called it before 2026-10-05,
-    eight hex characters of a digest, which is the name older history carries -
-    and the answer is compared with the name the metrics row carries. So no
-    name is split on a hyphen that might belong to somebody's object, and a name
-    nothing accounts for is simply left alone.
+    Resolved by building rather than by parsing: every pool and every route
+    that redirects is asked what the generator calls it now and what it called
+    it before, and the answer is compared with the name the metrics row
+    carries. So no name is split on a hyphen that might belong to somebody's
+    object, and a name nothing accounts for is simply left alone.
+
+    A pool is labelled by its own name, which since B250 is also what HAProxy
+    and a dashboard call it; a redirect by what it does.
     """
 
-    found: dict[str, RedirectTarget] = {}
+    found: dict[str, BackendTarget] = {}
     for name, proxy in objects.items():
+        for pool in proxy.backends:
+            current = backend_name(proxy, pool)
+            target = BackendTarget(label=current, current=current)
+            found[current] = target
+            found.setdefault(legacy_backend_name(name, pool), target)
         suffixes = redirect_suffixes(proxy)
         for route in proxy.routes:
             redirect = route.redirect
             if redirect is None:
                 continue
-            current = f"{PREFIX}-{name}-{suffixes[(route.path, route.match)]}"
-            legacy = f"{PREFIX}-{name}-{REDIRECT_PREFIX}-{redirect_name(route.path, route.match, redirect.location)}"
-            label = f"{name} · {route.path} → {redirect.location}"
-            found[current] = RedirectTarget(label=label, current=current)
-            found.setdefault(legacy, RedirectTarget(label=label, current=current))
+            suffix = suffixes[(route.path, route.match)]
+            current = backend_name(proxy, suffix)
+            target = BackendTarget(
+                label=f"{name} · {route.path} → {redirect.location}",
+                current=current,
+                redirect=True,
+            )
+            found[current] = target
+            found.setdefault(legacy_backend_name(name, suffix), target)
+            digest = (
+                f"{REDIRECT_PREFIX}-{redirect_name(route.path, route.match, redirect.location)}"
+            )
+            found.setdefault(legacy_backend_name(name, digest), target)
     return found
 
 
-def split_redirects(
-    backends: Sequence[str], targets: Mapping[str, RedirectTarget]
+def split_backends(
+    backends: Sequence[str], targets: Mapping[str, BackendTarget]
 ) -> tuple[list[str], list[str]]:
     """A cluster's backends as (pools, redirects), in their order.
 
-    A redirect's older name is left out once its current name has history of
-    its own: the two are one route, and two cards for it would read as two
-    redirects. Until the change is deployed the older name is the only one, and
-    is drawn.
+    An older name is left out once its current name has history of its own:
+    the two are one backend, and two cards for it would read as two. Until the
+    change is deployed the older name is the only one, and is drawn.
     """
 
     seen = set(backends)
@@ -1563,19 +1586,21 @@ def split_redirects(
         if target is None:
             (redirects if is_redirect(name) else pools).append(name)
         elif target.current == name or target.current not in seen:
-            redirects.append(name)
+            (redirects if target.redirect else pools).append(name)
     return pools, redirects
 
 
-def without_prefix(name: str) -> str:
-    """A generated name as the operator wrote the thing it was built from.
+def backend_label(name: str, targets: Mapping[str, BackendTarget]) -> str:
+    """What a card calls a backend: its object's account of it, or the name less its prefix.
 
-    Only the prefix comes off. `mgd-<object>-<backend>` cannot be split any
-    further without knowing which hyphen the operator's own names contain, and
-    a page that guessed would relabel a backend whenever somebody used a hyphen.
+    A name no object accounts for loses only the prefix. `mgd-<object>-<backend>`
+    cannot be split any further without knowing which hyphen the operator's own
+    names contain, and a page that guessed would relabel a backend whenever
+    somebody used a hyphen.
     """
 
-    return name.removeprefix(GENERATED_PREFIX)
+    target = targets.get(name)
+    return target.label if target else name.removeprefix(GENERATED_PREFIX)
 
 
 def shared_ceiling(

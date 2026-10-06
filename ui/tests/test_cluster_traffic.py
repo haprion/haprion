@@ -467,18 +467,25 @@ backends:
         port: 8080
 """
 
-    def targets(self) -> dict[str, metrics.RedirectTarget]:
-        return metrics.redirect_targets({"shop": load_proxy("shop", self.DOCUMENT)})
+    def targets(self) -> dict[str, metrics.BackendTarget]:
+        return metrics.backend_targets({"shop": load_proxy("shop", self.DOCUMENT)})
 
     #
-    # The name the generator gives the route since 2026-10-05, and the one it
-    # gave before, which older history carries.
+    # The name the generator gives the route since 2026-10-06 (B250), the one
+    # it gave from 2026-10-05, and the one before that, which older history
+    # carries.
     #
-    CURRENT = f"{PREFIX}-shop-{REDIRECT_PREFIX}-old"
+    CURRENT = f"shop-{REDIRECT_PREFIX}-old"
+    PATHED = f"{PREFIX}-shop-{REDIRECT_PREFIX}-old"
     LEGACY = (
         f"{PREFIX}-shop-{REDIRECT_PREFIX}-"
         f"{redirect_name('/old', 'prefix', 'https://shop.example.com/new')}"
     )
+    #
+    # And the pool: its own name now, `mgd-shop-web` before.
+    #
+    POOL = "web"
+    OLD_POOL = f"{PREFIX}-shop-web"
 
     def test_the_generator_and_the_page_agree_on_the_name(self) -> None:
         """Built rather than parsed, so no name is split on somebody's hyphen."""
@@ -486,13 +493,23 @@ backends:
         from haproxy_mgmt.guid import redirect_suffixes  # noqa: PLC0415
 
         proxy = load_proxy("shop", self.DOCUMENT)
-        self.assertEqual(
-            f"{PREFIX}-shop-{redirect_suffixes(proxy)[('/old', 'prefix')]}", self.CURRENT
-        )
+        self.assertEqual(f"shop-{redirect_suffixes(proxy)[('/old', 'prefix')]}", self.CURRENT)
         self.assertEqual(self.targets()[self.CURRENT].current, self.CURRENT)
 
-    def test_the_older_name_is_the_same_redirect(self) -> None:
+    def test_the_older_names_are_the_same_redirect(self) -> None:
         self.assertEqual(self.targets()[self.LEGACY], self.targets()[self.CURRENT])
+        self.assertEqual(self.targets()[self.PATHED], self.targets()[self.CURRENT])
+        self.assertTrue(self.targets()[self.CURRENT].redirect)
+
+    def test_a_pool_is_labelled_by_its_own_name_under_either(self) -> None:
+        targets = self.targets()
+
+        self.assertEqual(targets[self.OLD_POOL], targets[self.POOL])
+        self.assertEqual(metrics.backend_label(self.OLD_POOL, targets), "web")
+        self.assertFalse(targets[self.POOL].redirect)
+
+    def test_a_name_no_object_accounts_for_loses_only_its_prefix(self) -> None:
+        self.assertEqual(metrics.backend_label("mgd-other-web", self.targets()), "other-web")
 
     def test_it_is_named_by_the_route_and_the_destination(self) -> None:
         described = self.targets()[self.CURRENT].label
@@ -500,26 +517,31 @@ backends:
         self.assertIn("/old", described)
         self.assertIn("https://shop.example.com/new", described)
 
-    def test_a_route_that_sends_to_a_backend_is_not_one(self) -> None:
-        self.assertEqual(set(self.targets()), {self.CURRENT, self.LEGACY})
+    def test_every_name_of_both_backends_is_known(self) -> None:
+        self.assertEqual(
+            set(self.targets()),
+            {self.CURRENT, self.PATHED, self.LEGACY, self.POOL, self.OLD_POOL},
+        )
 
     def test_the_older_name_is_drawn_until_the_current_one_has_history(self) -> None:
         targets = self.targets()
-        pool = f"{PREFIX}-shop-web"
 
         self.assertEqual(
-            metrics.split_redirects([pool, self.LEGACY], targets), ([pool], [self.LEGACY])
+            metrics.split_backends([self.OLD_POOL, self.LEGACY], targets),
+            ([self.OLD_POOL], [self.LEGACY]),
         )
         self.assertEqual(
-            metrics.split_redirects([pool, self.LEGACY, self.CURRENT], targets),
-            ([pool], [self.CURRENT]),
+            metrics.split_backends(
+                [self.OLD_POOL, self.POOL, self.LEGACY, self.PATHED, self.CURRENT], targets
+            ),
+            ([self.POOL], [self.CURRENT]),
         )
 
     def test_a_pool_is_not_taken_for_a_redirect_by_its_name(self) -> None:
-        """`mgd-shop-redirect` is a redirect only if a route makes it one."""
+        """`shop-redirect` is a redirect only if a route makes it one."""
 
-        named = f"{PREFIX}-shop-{REDIRECT_PREFIX}"
-        self.assertEqual(metrics.split_redirects([named], self.targets()), ([named], []))
+        named = f"shop-{REDIRECT_PREFIX}"
+        self.assertEqual(metrics.split_backends([named], self.targets()), ([named], []))
 
 
 class AnAddressNobodyReportedHolding(ReadingACluster):

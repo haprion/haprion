@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from haproxy_mgmt.cluster_status import ServerHealth
-from haproxy_mgmt.generate import PREFIX
+from haproxy_mgmt.generate import PREFIX, legacy_backend_name
 
 #
 # HAProxy's own check codes, as sentences. The codes are the machine's language
@@ -65,14 +65,26 @@ def check_phrase(status: str, code: str = "") -> str:
     return f"{phrase} {code}".strip() if code else phrase
 
 
-def backend_name(obj: str, backend: str) -> str:
-    """What this object's backend is called in the generated configuration.
+def backend_owners(
+    views: Iterable[Any], removed: Mapping[str, Iterable[str]] | None = None
+) -> dict[str, str]:
+    """Which object each backend HAProxy reports belongs to (B250).
 
-    The same rule the generator uses, and the reason a member can be found at
-    all: the runtime knows nothing about objects, only about backends.
+    A pool is named by itself, so its name no longer says whose it is. The
+    objects helper says (`runtime_backends`), and so does a removal's own
+    bookkeeping for an object the repository no longer has but the nodes still
+    serve. A name neither knows is left to `_owner`'s reading of the older
+    `mgd-<object>-<pool>` form, which nodes on an older release still report.
     """
 
-    return f"{PREFIX}-{obj}-{backend}"
+    owners: dict[str, str] = {}
+    for name, backends in (removed or {}).items():
+        for backend in backends:
+            owners.setdefault(backend, name)
+    for view in views:
+        for backend in getattr(view, "runtime_backends", None) or ():
+            owners[backend] = view.name
+    return owners
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +217,12 @@ def backend_health(
     the half of the cluster that is fine.
     """
 
-    name = backend_name(obj, backend)
+    #
+    # The pool's own name since B250; a node still on an older release reports
+    # it as `mgd-<object>-<pool>`, and the two never meet on one node.
+    #
+    name = backend
+    legacy = legacy_backend_name(obj, backend)
     written = tuple(address.strip() for address in addresses if address.strip())
     reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
     if reading is None:
@@ -229,7 +246,7 @@ def backend_health(
                 last_change_sec=_count(row.get("last_change_sec")),
             )
             for row in rows_for_node
-            if row.get("backend") == name and _is_member(row)
+            if row.get("backend") in (name, legacy) and _is_member(row)
         )
         status = entry.get("status")
         vip = status.get("vip") if isinstance(status, dict) else None
@@ -287,10 +304,13 @@ class ObjectHealth:
     total: int
 
 
-def _owner(backend: str, names: Collection[str]) -> str | None:
-    """Which object a generated backend name belongs to, or None.
+def _owner(backend: str, names: Collection[str], owners: Mapping[str, str]) -> str | None:
+    """Which object a backend name belongs to, or None.
 
-    The generator names a backend `mgd-<object>-<backend>`, and both halves may
+    `owners` first (`backend_owners`): since B250 a pool is named by itself,
+    and only the objects can say whose it is. Failing that, the older form.
+
+    The generator named a backend `mgd-<object>-<backend>`, and both halves may
     contain a hyphen - so `mgd-shop-web` is what object `shop` with backend `web`
     is called, and equally what object `shop-web` with a backend called nothing
     would be. A prefix test alone would lend one object's servers to another
@@ -302,6 +322,9 @@ def _owner(backend: str, names: Collection[str]) -> str | None:
     comparison per object (2026-10-01).
     """
 
+    found = owners.get(backend)
+    if found is not None:
+        return found
     prefix = f"{PREFIX}-"
     if not backend.startswith(prefix):
         return None
@@ -380,7 +403,13 @@ def object_states(rows: Iterable[Any], *, cluster: str) -> dict[str, str]:
     return {}
 
 
-def served_objects(rows: Iterable[Any], *, cluster: str, names: Iterable[str]) -> frozenset[str]:
+def served_objects(
+    rows: Iterable[Any],
+    *,
+    cluster: str,
+    names: Iterable[str],
+    owners: Mapping[str, str] | None = None,
+) -> frozenset[str]:
     """The objects some node reports a backend for: what is on the nodes now.
 
     Measured where the traffic is, rather than derived from a release. The
@@ -412,8 +441,8 @@ def served_objects(rows: Iterable[Any], *, cluster: str, names: Iterable[str]) -
             backend = member.get("backend")
             if not isinstance(backend, str) or not _is_member(member):
                 continue
-            owner = _owner(backend, names)
-            if owner is not None:
+            owner = _owner(backend, names, owners or {})
+            if owner is not None and owner in names:
                 served.add(owner)
     return frozenset(served)
 
@@ -426,12 +455,13 @@ def object_health(
     others: Iterable[str] = (),
     checked: bool | None = True,
     sourced: bool = False,
+    owners: Mapping[str, str] | None = None,
 ) -> ObjectHealth:
     """One object's lamp; see `object_healths`, which this asks for one name."""
 
     known: dict[str, tuple[bool | None, bool]] = {name: (True, False) for name in others}
     known[obj] = (checked, sourced)
-    return object_healths(rows, cluster=cluster, objects=known)[obj]
+    return object_healths(rows, cluster=cluster, objects=known, owners=owners)[obj]
 
 
 def object_healths(
@@ -439,6 +469,7 @@ def object_healths(
     *,
     cluster: str,
     objects: Mapping[str, tuple[bool | None, bool]],
+    owners: Mapping[str, str] | None = None,
 ) -> dict[str, ObjectHealth]:
     """Every node's verdict on every backend behind each object, as one lamp each.
 
@@ -486,8 +517,8 @@ def object_healths(
             backend = member.get("backend")
             if not isinstance(backend, str) or not _is_member(member):
                 continue
-            owner = _owner(backend, names)
-            if owner is not None:
+            owner = _owner(backend, names, owners or {})
+            if owner is not None and owner in names:
                 grouped.setdefault(owner, []).append(member)
         #
         # The same rule the editor's card applies, and for the same reason: an

@@ -11,13 +11,13 @@ from __future__ import annotations
 import re
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haproxy_ui import demo
+from haproxy_ui import demo, metrics
 from haproxy_ui.db import ClusterInventory, Job, ProxyDraft
 from haproxy_ui.snapshot import ProductionSnapshot
 from tests.test_cluster_traffic import measurement
@@ -749,5 +749,50 @@ class WhichPoolsTheTrafficCardAsksAbout(unittest.TestCase):
             "if served:", 1
         )[0]
         self.assertIn("detail.published.backends", block)
-        self.assertIn("health.backend_name(name, backend)", block)
+        self.assertIn("metrics.backend_targets({name: proxy})", block)
         self.assertIn("not in served", block)
+
+
+class OneCardPerBackendAcrossTheRename(DraftReading):
+    """B250: a pool's history is under `mgd-<object>-<pool>` until the cluster is
+    deployed with the newer engine, and under the pool's own name after. The
+    page asks for both and draws the one with readings - never two cards for
+    one backend."""
+
+    def cards_with_readings_under(self, name: str) -> tuple[int, list[str]]:
+        asked: list[str] = []
+
+        def series(*_a: Any, backend: str, **_k: Any) -> list[Any]:
+            asked.append(backend)
+            if backend != name:
+                return []
+            moment = datetime.now(UTC)
+            return [
+                metrics.Interval(
+                    started_at=moment - timedelta(minutes=2),
+                    ended_at=moment - timedelta(minutes=1),
+                    counters={"req_tot": 5},
+                    restarted=False,
+                )
+            ]
+
+        patch = mock.patch("haproxy_ui.db.read_backend_series", side_effect=series)
+        patch.start()
+        self.addCleanup(patch.stop)
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        page = client.get("/proxies/edge-demo/public-web")
+        self.assertEqual(page.status_code, 200)
+        return page.text.count('<div class="traffic-card">'), asked
+
+    def test_before_the_deploy_the_older_name_is_the_card(self) -> None:
+        cards, asked = self.cards_with_readings_under("mgd-public-web-web")
+
+        self.assertEqual(cards, 1)
+        self.assertIn("web", asked)
+        self.assertIn("mgd-public-web-web", asked)
+
+    def test_after_the_deploy_the_pools_own_name_is(self) -> None:
+        cards, _asked = self.cards_with_readings_under("web")
+
+        self.assertEqual(cards, 1)

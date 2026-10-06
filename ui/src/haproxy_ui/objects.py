@@ -72,6 +72,12 @@ class ObjectView:
     addresses: ObjectAddresses | None = None
     health_checked: bool | None = None
     sourced: bool = False
+    #
+    # The names HAProxy knows this object's backends by (B250), from the
+    # envelope. `None` is a helper older than the field: a pool's name alone no
+    # longer says whose it is, and nothing here guesses.
+    #
+    runtime_backends: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +191,14 @@ def object_view(value: Any) -> ObjectView | None:
         # decides which node may answer for the backend.
         #
         sourced=isinstance(entry.get("source"), Mapping),
+        runtime_backends=_names(entry.get("runtime_backends")),
     )
+
+
+def _names(value: Any) -> tuple[str, ...] | None:
+    if not isinstance(value, list):
+        return None
+    return tuple(name for name in value if isinstance(name, str) and name)
 
 
 def cluster_object_views(reading: ClusterObjects | None) -> tuple[ObjectView, ...]:
@@ -634,6 +647,31 @@ def removed_names(jobs: Iterable[Job]) -> tuple[str, ...]:
             name for name, document in asked.items() if document is None and isinstance(name, str)
         )
     return tuple(sorted(set(names)))
+
+
+def removed_backends(jobs: Iterable[Job]) -> dict[str, tuple[str, ...]]:
+    """The backends each removed object had, as its removal wrote them down (B250).
+
+    The interface's own bookkeeping on the job, beside the names: a pool is
+    named by itself, so once the document is gone nothing else can say which
+    backends the nodes still serve for it. A removal older than the field says
+    nothing, and the older `mgd-<object>-<pool>` names answer for it instead.
+    """
+
+    found: dict[str, tuple[str, ...]] = {}
+    for job in jobs:
+        if job.operation != "objects_publish" or job.state != "done":
+            continue
+        payload = job.payload if isinstance(job.payload, Mapping) else {}
+        written = payload.get("removed_backends")
+        if not isinstance(written, Mapping):
+            continue
+        for name, backends in written.items():
+            if isinstance(name, str) and isinstance(backends, list):
+                found.setdefault(
+                    name, tuple(item for item in backends if isinstance(item, str) and item)
+                )
+    return found
 
 
 def removed_awaiting_deploy(

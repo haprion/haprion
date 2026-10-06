@@ -60,6 +60,10 @@ from haproxy_mgmt.version_history import UnfitName, trailer_name
 
 # The installation key's identifier as `dns_profile_keys.key_id_of` makes it.
 KEY_ID = re.compile(r"^[0-9a-f]{16}$")
+#
+# The longest backend name the objects helper may report (its schema's bound).
+#
+MAX_BACKEND_NAME = 128
 
 #
 # How long an operation may run before the worker stops it. Deliberately
@@ -1118,6 +1122,7 @@ def prepare(
             "allow_certificate_mismatch",
             "draft",
             "requested_by",
+            "removed_backends",
         )
         #
         # `draft` is the interface's own bookkeeping: which draft row this
@@ -1153,6 +1158,27 @@ def prepare(
                 raise BadPayload(f"{name!r} is not a usable object name")
             if document is not None and (not isinstance(document, str) or not document):
                 raise BadPayload(f"the document for {name} must be a non-empty string or null")
+        #
+        # `removed_backends` is bookkeeping like `draft` (B250): the backends a
+        # removed object had, so the listing can tell the nodes still serve it.
+        # Checked because everything in a payload is, and not passed on.
+        #
+        removed = payload.get("removed_backends")
+        if removed is not None:
+            if not isinstance(removed, Mapping) or not removed:
+                raise BadPayload("removed_backends must be a non-empty mapping")
+            for name, backends in removed.items():
+                if not isinstance(name, str) or name not in objects or objects[name] is not None:
+                    raise BadPayload(f"removed_backends names {name!r}, which is not removed")
+                if (
+                    not isinstance(backends, list)
+                    or not backends
+                    or not all(
+                        isinstance(item, str) and 0 < len(item) <= MAX_BACKEND_NAME
+                        for item in backends
+                    )
+                ):
+                    raise BadPayload(f"the removed backends of {name} must be a list of names")
         if not isinstance(expected_head, str) or not expected_head:
             raise BadPayload("expected_head must be a commit id")
         if not isinstance(comment, str) or not comment:

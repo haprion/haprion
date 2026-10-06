@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from haproxy_mgmt.generate import PREFIX
+from haproxy_mgmt.generate import backend_name, legacy_backend_name
 from haproxy_mgmt.proxy_model import Proxy
 from psycopg import Connection, sql
 from psycopg.rows import class_row
@@ -292,14 +292,21 @@ def configured_server_addresses(
     called ``s1``, the second ``s2``, and so on.  Keep the complete runtime
     backend in the key instead of trying to split it; object and backend names may
     themselves contain hyphens.
+
+    Under the pool's own name (B250) and under the `mgd-<object>-<pool>` it had
+    before 2026-10-06, which older log rows carry.
     """
 
     result: dict[tuple[str, str, str], str] = {}
     for proxy in proxies:
-        for backend_name, backend in proxy.backends.items():
-            runtime_backend = f"{PREFIX}-{proxy.name}-{backend_name}"
-            for index, server in enumerate(backend.servers, start=1):
-                result[(cluster, runtime_backend, f"s{index}")] = f"{server.host}:{server.port}"
+        for pool, backend in proxy.backends.items():
+            for runtime_backend in (
+                backend_name(proxy, pool),
+                legacy_backend_name(proxy.name, pool),
+            ):
+                for index, server in enumerate(backend.servers, start=1):
+                    address = f"{server.host}:{server.port}"
+                    result[(cluster, runtime_backend, f"s{index}")] = address
     return result
 
 

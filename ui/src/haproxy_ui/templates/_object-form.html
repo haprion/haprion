@@ -220,7 +220,7 @@
   <section class="cluster-card object-card {{ accent | accent_class }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Backend</h3></div></div></header>
     <div class="form-grid">
-      <label>Backend name<input name="backend" value="{{ form.backend }}" placeholder="web"></label>
+      <label>Backend name<input name="backend" value="{{ form.backend }}" placeholder="web"><small>Lowercase, such as <code>web</code>. Unique per cluster.<br>This name is used by metrics.</small></label>
       {% if form.handwritten_pool %}
       <div class="field"><span class="field-title">Servers</span><small>Written in the advanced config, with balancing and checks.</small></div>
       {% else %}

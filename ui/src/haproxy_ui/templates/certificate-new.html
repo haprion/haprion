@@ -19,18 +19,6 @@
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
 </section>
 
-{#
-  Which kind of certificate (B255): one this installation publishes, or one
-  downloaded and installed by hand. A switch at the top, where the choice is
-  made, rather than a link inside the targets it takes away.
-#}
-{% if feature_on('cert_receivers') and not form.interface %}
-<nav class="traffic-ranges page-ranges certificate-views certificate-kind" aria-label="Kind of certificate">
-  <a href="/certificates/new"{% if not form.exportable %} class="is-current" aria-current="true"{% endif %}><span>Clusters and receivers</span><span class="segment-reserve" aria-hidden="true">Clusters and receivers</span></a>
-  <a href="/certificates/new?for=external"{% if form.exportable %} class="is-current" aria-current="true"{% endif %}><span>External, installed by hand</span><span class="segment-reserve" aria-hidden="true">External, installed by hand</span></a>
-</nav>
-{% endif %}
-
 {% if problem %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
 {% endif %}
@@ -38,6 +26,16 @@
 {% if certificate_job %}
 <p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; this form can be sent once it has finished. Its row on the <a href="/certificates">certificate list</a> shows how it is going.</p>
 {% endif %}
+
+{#
+  Which kind of certificate (B255): one this installation publishes, or one
+  downloaded and installed by hand. Under Targets, because that is the
+  question it answers - where the certificate goes.
+#}
+{% macro kind_switch() %}{% if feature_on('cert_receivers') %}<nav class="traffic-ranges page-ranges certificate-views certificate-kind" aria-label="Kind of certificate">
+  <a href="/certificates/new"{% if not form.exportable %} class="is-current" aria-current="true"{% endif %}><span>Clusters and receivers</span><span class="segment-reserve" aria-hidden="true">Clusters and receivers</span></a>
+  <a href="/certificates/new?for=external"{% if form.exportable %} class="is-current" aria-current="true"{% endif %}><span>External, installed by hand</span><span class="segment-reserve" aria-hidden="true">External, installed by hand</span></a>
+</nav>{% endif %}{% endmacro %}
 
 <form method="post" action="/certificates/new" class="preview-form certificate-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -116,8 +114,10 @@
   #}
   {% if form.exportable %}
   <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published.</p></div></div></header>
+    <div class="certificate-kind-row">{{ kind_switch() }}<p class="table-note">Published nowhere: downloaded with its key from its row and installed by hand. One name and an RSA key.</p></div>
     <div class="editor-actions editor-submit">
-      <p class="table-note">One name and an RSA key. Download it with its key from its row once issued.</p>
+      <p class="table-note"></p>
       <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Request the certificate</button></div>
     </div>
   </section>
@@ -131,6 +131,7 @@
   {% else %}
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published. At least one.</p></div></div></header>
+    {% if feature_on('cert_receivers') %}<div class="certificate-kind-row">{{ kind_switch() }}</div>{% endif %}
     <div class="form-grid certificate-target-stack">
       <div class="field">
         <div class="receiver-heading"><span class="field-title">{% if feature_on('cert_receivers') %}Clusters and receivers{% else %}Clusters{% endif %}</span>{% if choices.receivers %}<span class="optional" data-receiver-count aria-live="polite">{{ form.receivers | length }} selected</span>{% endif %}</div>

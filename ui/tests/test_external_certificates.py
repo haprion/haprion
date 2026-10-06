@@ -76,7 +76,8 @@ class TheFormsLimits(CertificateFormRouteTestCase):
 
         self.assertIn("External certificate", page)
         self.assertIn('name="exportable" value="1"', page)
-        self.assertNotIn("<h3>Targets</h3>", page)
+        self.assertNotIn('name="cluster"', page)
+        self.assertNotIn('name="receiver"', page)
         self.assertNotIn('value="csr"', page)
 
     def test_a_submission_queues_the_issue_without_targets(self) -> None:

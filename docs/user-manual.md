@@ -1082,8 +1082,8 @@ BMC, a NAS, a printer, a camera, a UPS card. For those the manager is where the
 certificate is ordered and taken out; it is installed by hand (B255). Behind the
 **External certificates** switch, with the receivers.
 
-**Making one.** *New certificate* → *External, installed by hand* (the switch at the
-top): the same form, for one host name and with no targets. DNS-01, HTTP-01 or NDES; not a CSR,
+**Making one.** *New certificate* → *External, installed by hand* (the switch under
+*Targets*): the same form, for one host name and with no targets. DNS-01, HTTP-01 or NDES; not a CSR,
 because the point is a key that can be handed out. The key is RSA 2048, which every
 device takes - several take no EC key. A wildcard is refused: its key would answer for
 every name under it. From the command line, `haproxy-cert-issue --exportable` or

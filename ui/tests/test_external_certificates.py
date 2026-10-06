@@ -69,6 +69,7 @@ class TheFormsLimits(CertificateFormRouteTestCase):
         page = self.writing_client().get("/certificates/new").text
 
         self.assertIn('href="/certificates/new?for=external"', page)
+        self.assertIn('aria-label="Kind of certificate"', page)
 
     def test_the_page_offers_no_targets_and_sends_the_mark(self) -> None:
         page = self.writing_client().get("/certificates/new?for=external").text

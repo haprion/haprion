@@ -630,6 +630,8 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .protocol-http { color: var(--info); background: var(--info-soft); }
 .protocol-https { color: var(--healthy); background: var(--healthy-soft); }
 .protocol-tcp { color: var(--warning); background: var(--warning-soft); }
+/* DNS (Fas 19a B5): served by dnsdist, so a colour of its own and none of the status colours. */
+.protocol-dns { color: var(--muted-strong); background: var(--hover-surface); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .protocol-unknown { color: var(--unknown); background: var(--unknown-soft); }
 .ownership-managed { color: var(--healthy); background: var(--healthy-soft); }
 .ownership-unmanaged { color: var(--warning); background: var(--warning-soft); }

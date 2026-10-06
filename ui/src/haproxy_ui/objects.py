@@ -23,6 +23,7 @@ from haproxy_mgmt.generate import PORTS
 from haproxy_mgmt.object_manifest import ABSENT as ABSENT
 from haproxy_mgmt.object_manifest import CHANGED as CHANGED
 from haproxy_mgmt.object_manifest import CURRENT
+from haproxy_mgmt.proxy_model import ModelError, read_document
 
 from haproxy_ui.addresses import ObjectAddresses, from_entry
 from haproxy_ui.cluster_identity import accent_index
@@ -176,7 +177,7 @@ def object_view(value: Any) -> ObjectView | None:
         protocol=protocol if isinstance(protocol, str) and protocol else None,
         hostnames=_hostnames(entry.get("hostnames")),
         line_count=len(document.splitlines()),
-        ports=(PORTS[protocol],) if isinstance(protocol, str) and protocol in PORTS else (),
+        ports=_ports(protocol, document),
         backend_count=_count(entry.get("backend_count")),
         redirect_http=(
             entry.get("redirect_http") if isinstance(entry.get("redirect_http"), bool) else None
@@ -193,6 +194,25 @@ def object_view(value: Any) -> ObjectView | None:
         sourced=isinstance(entry.get("source"), Mapping),
         runtime_backends=_names(entry.get("runtime_backends")),
     )
+
+
+def _ports(protocol: Any, document: str) -> tuple[int, ...]:
+    """The port an object is served on: the cluster's for a site, its own otherwise.
+
+    A tcp or dns object writes its port in the document, and the envelope does
+    not carry it; it is read there, with the engine's own reader (Fas 19a B5).
+    """
+
+    if isinstance(protocol, str) and protocol in PORTS:
+        return (PORTS[protocol],)
+    if protocol not in ("tcp", "dns"):
+        return ()
+    try:
+        listen = read_document("object", document.encode()).get("listen")
+    except (ModelError, ValueError, UnicodeError):
+        return ()
+    port = listen.get("port") if isinstance(listen, Mapping) else None
+    return (port,) if isinstance(port, int) and not isinstance(port, bool) else ()
 
 
 def _names(value: Any) -> tuple[str, ...] | None:

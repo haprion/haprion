@@ -75,9 +75,14 @@
           <option value="https"{% if form.protocol == 'https' %} selected{% endif %}>HTTPS</option>
           <option value="http"{% if form.protocol == 'http' %} selected{% endif %}>HTTP</option>
           <option value="tcp"{% if form.protocol == 'tcp' %} selected{% endif %}>TCP</option>
+          {#
+            DNS (Fas 19a B5) once every node of the cluster runs dnsdist, and
+            always on an object that already is one, so it opens as what it is.
+          #}
+          {% if dns_offered or form.protocol == 'dns' %}<option value="dns"{% if form.protocol == 'dns' %} selected{% endif %}>DNS</option>{% endif %}
         </select>
       </label>
-      <label class="tcp-only" data-protocol="tcp"{{ when('protocol', 'tcp') }}>TCP port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="5432"{% if form.protocol != 'tcp' %} disabled{% endif %}></label>
+      <label class="tcp-only" data-protocol="tcp dns"{{ when('protocol', 'tcp dns') }}>Port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="{{ '53' if form.protocol == 'dns' else '5432' }}" data-placeholders="tcp:5432 dns:53"{% if form.protocol not in ('tcp', 'dns') %} disabled{% endif %}></label>
       <label>VIP
         <select name="vip" data-default-source="{{ choices.vip_sources.get(choices.default_vip, '') }}">
           <option value="">Default ({{ choices.default_vip }}{% if choices.default_vip_address %} — {{ choices.default_vip_address }}{% endif %})</option>
@@ -128,10 +133,10 @@
         <small>Defined on the <a href="/network">Network</a> page.</small>
       </div>
       <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>
-      <label><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address; new connections for TCP.</small></label>
-      <label><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
+      <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address; new connections for TCP.</small></label>
+      <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
     </div>
-    <div class="form-grid form-grid-pair">
+    <div class="form-grid form-grid-pair"{{ when('protocol', 'http https tcp') }}>
       <label><span class="field-title">Denied — groups <span class="optional">(optional)</span></span>
         <select name="deny_from" multiple size="5">
           <option value="" {% if form.deny_ranges|trim %}hidden{% elif not form.deny_from %}selected{% endif %}>Nobody</option>
@@ -224,10 +229,10 @@
       {% if form.handwritten_pool %}
       <div class="field"><span class="field-title">Servers</span><small>Written in the advanced config, with balancing and checks.</small></div>
       {% else %}
-      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small></label>
+      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small{{ when('protocol', 'http https tcp') }}>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small><small{{ when('protocol', 'dns') }}>One <code>address:port</code> per line.</small></label>
       <label>Balancing
         <select name="balance">
-          {% for algorithm in choices.balances %}<option value="{{ algorithm }}"{% if form.balance == algorithm %} selected{% endif %}>{{ algorithm }}</option>{% endfor %}
+          {% for algorithm, protocols in choices.balances %}<option value="{{ algorithm }}"{{ when('protocol', protocols) }}{% if form.balance == algorithm %} selected{% endif %}>{{ algorithm }}</option>{% endfor %}
         </select>
       </label>
       <label class="keyed-only" data-balances="hdr url_param"{{ when('balance', 'hdr url_param') }}>Balancing key<input name="balance_key" value="{{ form.balance_key }}" placeholder="X-Tenant"{% if form.balance not in ["hdr", "url_param"] %} disabled{% endif %}><small>The header or query parameter that picks the server.</small></label>
@@ -246,7 +251,7 @@
         <small>Which address it connects out from.</small>
       </label>
       {% if not form.handwritten_pool %}
-      <label>Backend TLS
+      <label{{ when('protocol', 'http https tcp') }}>Backend TLS
         <select name="backend_tls">
           <option value=""{% if not form.backend_tls %} selected{% endif %}>Plain HTTP</option>
           <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify the certificate</option>
@@ -262,8 +267,8 @@
         </select>
       </label>
       <label{{ when('protocol', 'http https') }}><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Empty means no persistence.</small></label>
-      <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>The rest queue for 5 s.</small></label>
-      <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; longer than the <span class="slow-start-interval" data-default="{{ check_interval }}">{{ form.health_interval or check_interval }}</span> check interval.</small></label>
+      <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>The rest queue for 5 s.</small></label>
+      <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; longer than the <span class="slow-start-interval" data-default="{{ check_interval }}">{{ form.health_interval or check_interval }}</span> check interval.</small></label>
       {% endif %}
     </div>
     {% endcall %}
@@ -308,12 +313,18 @@
   <section class="cluster-card object-card {{ accent | accent_class }}">
     <header class="cluster-header">
       <div class="cluster-identity"><div class="section-title"><h3>Health check <span class="optional">(optional)</span></h3></div></div>
-      {% if backend_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button">Test health check</button>{% endif %}
+      {% if backend_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button"{{ when('protocol', 'http https tcp') }}>Test health check</button>{% endif %}
     </header>
     <div class="form-grid">
       <label>Type
         <select name="health_type">
-          {% for value, label in choices.health_types %}<option value="{{ value }}"{% if form.health_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+          {% for value, label in choices.health_types %}<option value="{{ value }}"{{ when('protocol', check_protocols.get(value, 'http https tcp')) }}{% if form.health_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label{{ when('health_type', 'dns') }}><span class="field-title">Query name <span class="optional">(optional)</span></span><input name="health_query_name" value="{{ form.health_query_name }}" placeholder="a.root-servers.net."><small>Asked of every server.</small></label>
+      <label{{ when('health_type', 'dns') }}>Query type
+        <select name="health_query_type">
+          {% for value, label in choices.query_types %}<option value="{{ value }}"{% if form.health_query_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
       </label>
       <label{{ when('health_type', 'http https') }}><span class="field-title">Path <span class="optional">(optional)</span></span><input name="health_path" value="{{ form.health_path }}" placeholder="/healthz"></label>
@@ -331,7 +342,7 @@
     </div>
     {% endcall %}
 
-    {% call group(groups.timing, when('health_type', 'http https tcp tcp-tls')) %}
+    {% call group(groups.timing, when('health_type', 'http https tcp tcp-tls dns')) %}
     <div class="form-grid">
       <label><span class="field-title">Check interval <span class="optional">(optional)</span></span><input name="health_interval" value="{{ form.health_interval }}" size="10" placeholder="{{ check_interval }}"></label>
       <label><span class="field-title">Checks to rise <span class="optional">(optional)</span></span><input name="health_rise" value="{{ form.health_rise }}" size="10" placeholder="{{ check_rise }}"><small>Good answers before a server is used again.</small></label>
@@ -341,7 +352,7 @@
       How often the check runs while a server changes state: HAProxy's
       `fastinter` and `downinter`, a pair of their own under the three above.
     #}
-    <div class="form-grid">
+    <div class="form-grid"{{ when('health_type', 'http https tcp tcp-tls') }}>
       <label><span class="field-title">Fast interval <span class="optional">(optional)</span></span><input name="health_fast_interval" value="{{ form.health_fast_interval }}" size="10" placeholder="{{ check_fast_interval }}"><small>While a server goes up or down.</small></label>
       <label><span class="field-title">Down interval <span class="optional">(optional)</span></span><input name="health_down_interval" value="{{ form.health_down_interval }}" size="10" placeholder="{{ check_down_interval }}"><small>While a server is down.</small></label>
     </div>

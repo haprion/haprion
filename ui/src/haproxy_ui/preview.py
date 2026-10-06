@@ -29,6 +29,8 @@ from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, countries_named, generate
 from haproxy_mgmt.proxy_model import (
     BALANCE,
+    DNS_BALANCE,
+    DNS_QUERY_TYPES,
     MAX_DENY_RULES,
     STATUS_RANGE,
     ModelError,
@@ -141,6 +143,13 @@ DEFAULTS = {
     "health_expect_body": "",
     "health_send": "",
     "health_expect": "",
+    #
+    # A dns check's question (Fas 19a B5). Empty means dnsdist's own,
+    # `a.root-servers.net.` asked for A, which the engine writes when the
+    # document says nothing.
+    #
+    "health_query_name": "",
+    "health_query_type": "",
     "health_interval": "",
     "health_fast_interval": "",
     "health_down_interval": "",
@@ -214,7 +223,40 @@ CHECK_TYPES = (
     ("https", "https"),
     ("tcp", "tcp"),
     ("tcp-tls", "tcp, TLS handshake"),
+    ("dns", "dns query"),
 )
+#
+# Which protocols each choice belongs to, so the form offers a dns object a dns
+# check and HAProxy's objects the rest (Fas 19a B5). `disabled` is everybody's.
+#
+CHECK_PROTOCOLS = {
+    "disabled": "http https tcp dns",
+    "dns": "dns",
+}
+HAPROXY_PROTOCOLS = "http https tcp"
+#
+# The balancing choices, each with the protocols it is offered on: HAProxy's for
+# HAProxy's objects, dnsdist's for a dns object. `roundrobin` is both.
+#
+BALANCE_CHOICES = tuple(
+    (
+        name,
+        " ".join(
+            protocol
+            for protocol, offered in (
+                (HAPROXY_PROTOCOLS, name in BALANCE),
+                ("dns", name in DNS_BALANCE),
+            )
+            if offered
+        ),
+    )
+    for name in dict.fromkeys((*BALANCE, *DNS_BALANCE))
+)
+#
+# The question a dns check asks: dnsdist's default first, written as nothing.
+#
+QUERY_TYPES = (("", "default (A)"), *((name, name) for name in DNS_QUERY_TYPES))
+DNS_PORT = 53
 
 
 def check_kind(chosen: str) -> str:
@@ -224,6 +266,8 @@ def check_kind(chosen: str) -> str:
         return "http"
     if chosen in ("tcp-tls", "tcp"):
         return "tcp"
+    if chosen == "dns":
+        return "dns"
     return "disabled"
 
 
@@ -407,6 +451,15 @@ def build_document(form: dict[str, object]) -> str:
         if not port.isdigit():
             raise ValueError("a tcp object must name the port it is served on")
         listen["port"] = int(port)
+    if protocol == "dns":
+        #
+        # DNS's own port unless another is written: the model requires the
+        # number, and a resolver is asked on 53 everywhere but a lab.
+        #
+        port = text("tcp_port") or str(DNS_PORT)
+        if not port.isdigit():
+            raise ValueError("the port must be a number")
+        listen["port"] = int(port)
     if text("vip"):
         listen["vip"] = text("vip")
     if text("source"):
@@ -510,6 +563,11 @@ def build_document(form: dict[str, object]) -> str:
             health["send"] = text("health_send")
         if text("health_expect"):
             health["expect"] = text("health_expect")
+    if kind == "dns":
+        if text("health_query_name"):
+            health["query_name"] = text("health_query_name")
+        if text("health_query_type"):
+            health["query_type"] = text("health_query_type")
 
     backend: dict[str, object] = {
         "balance": text("balance"),
@@ -562,9 +620,10 @@ def build_document(form: dict[str, object]) -> str:
     backend_name = text("backend") or text("name")
     document: dict[str, object] = {"schema": 1, "name": text("name")}
     written = [name for name in hostnames if name]
-    if protocol == "tcp":
+    if protocol in ("tcp", "dns"):
         #
-        # A tcp object is an address, a port and one backend. The page keeps one
+        # A tcp object is an address, a port and one backend, and so is a dns
+        # one. The page keeps one
         # form for both shapes, so the fields the shape has no use for carry no
         # document of their own - but anything a person actually typed is sent
         # along and refused by the engine, in the engine's words. Dropping it
@@ -624,7 +683,7 @@ def build_document(form: dict[str, object]) -> str:
     # and a hidden field still posts, so the shape is decided here as it is for
     # hostnames.
     #
-    if protocol != "tcp":
+    if protocol not in ("tcp", "dns"):
         rules = [_rule_document(rule) for rule in access_rules(form)]
         if rules:
             document["deny_rules"] = rules
@@ -996,8 +1055,9 @@ def choices(cluster: Cluster) -> dict[str, object]:
         "certificates": sorted(cluster.certificate_ids),
         "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
-        "balances": BALANCE,
+        "balances": BALANCE_CHOICES,
         "health_types": CHECK_TYPES,
+        "query_types": QUERY_TYPES,
     }
 
 
@@ -1315,6 +1375,8 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "health_expect_body": str(health.get("expect_body", "") or ""),
         "health_send": str(health.get("send", "") or ""),
         "health_expect": str(health.get("expect", "") or ""),
+        "health_query_name": str(health.get("query_name", "") or ""),
+        "health_query_type": str(health.get("query_type", "") or ""),
         #
         # Empty when the object does not say, rather than filled in with the
         # default. The three carry HAProxy's own values when nobody writes

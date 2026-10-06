@@ -27,15 +27,17 @@ from typing import Annotated
 
 from haproxy_mgmt.config import AbuseProtection, Cluster, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
-from haproxy_mgmt.proxy_model import BALANCE, HTTP_METHODS, ModelError, load_proxy
+from haproxy_mgmt.proxy_model import HTTP_METHODS, ModelError, load_proxy
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from haproxy_ui.advanced_dialog import MAX_TEXT
 from haproxy_ui.certificates import CertificateClusterView
 from haproxy_ui.network import NetworkClusterView
 from haproxy_ui.preview import (
+    BALANCE_CHOICES,
     CHECK_TYPES,
     MAX_RULES,
+    QUERY_TYPES,
     Preview,
     access_rules,
     build_document,
@@ -127,8 +129,9 @@ def choices(cluster: EditorCluster) -> dict[str, object]:
         "certificates": list(cluster.certificate_ids),
         "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
-        "balances": BALANCE,
+        "balances": BALANCE_CHOICES,
         "health_types": CHECK_TYPES,
+        "query_types": QUERY_TYPES,
         "methods": sorted(HTTP_METHODS, key=METHOD_ORDER.index),
     }
 
@@ -302,6 +305,8 @@ class ObjectForm(BaseModel):
     health_expect_body: Annotated[str, StringConstraints(max_length=255)] = ""
     health_send: Annotated[str, StringConstraints(max_length=255)] = ""
     health_expect: Annotated[str, StringConstraints(max_length=255)] = ""
+    health_query_name: Annotated[str, StringConstraints(max_length=254)] = ""
+    health_query_type: Annotated[str, StringConstraints(max_length=8)] = ""
     backend_tls: Annotated[str, StringConstraints(max_length=16)] = ""
     listen_tls_policy: Annotated[str, StringConstraints(max_length=16)] = ""
     """Terms this site's own certificate is held to, overriding its VIP's.

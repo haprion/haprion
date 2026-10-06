@@ -13,6 +13,7 @@ only works with the names used below, that is a bug in the software, not in this
 
 - [Configuration and deployment](#configuration-and-deployment)
   - [Addresses, and what to call them](#addresses-and-what-to-call-them)
+  - [DNS objects](#dns-objects)
 - [Accounts and signing in](#accounts-and-signing-in)
   - [What the two roles see](#what-the-two-roles-see)
   - [How a session works](#how-a-session-works)
@@ -116,6 +117,22 @@ case needs no words; the [`sources` table](#optional-per-cluster-sections) exist
 `unicast_src_ip` is spelled out in full everywhere in this document. It is the node's own address,
 it never moves, and confusing it with a source address produces a cluster that looks correct and
 cannot fail over.
+
+### DNS objects
+
+An object whose protocol is *DNS* is served by dnsdist on the same nodes and VIPs, on
+UDP and TCP, port 53 unless another is written. The form offers DNS once every node of
+the cluster reports dnsdist installed; a node without it refuses a release that carries
+a DNS listener. The pool's servers are addresses with a port (dnsdist does not look up
+server names), the balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
+`firstAvailable` (the first server that is up: active/passive, since dnsdist has no backup
+server) and `chashed` (one name keeps one server) - and the health check asks every
+server a real question, `a.root-servers.net.` for `A` unless another is given, once a
+second by default. *Reachable from* is who may ask; anybody else is answered REFUSED.
+What is HAProxy's - TLS, rate limits, deny lists, the WAF engine, maintenance, headers,
+advanced config - is not offered, and refused if written by hand. The client's address
+reaches the servers behind as EDNS Client Subnet, so a Pi-hole's per-client limits and
+logs see each client rather than the node.
 
 ## Accounts and signing in
 

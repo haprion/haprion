@@ -131,7 +131,7 @@
           hostnames stay where they are, on every row, always.
         #}
         <td data-label="Protocol">{% if object.name in drafts %}{{ draft_badge(drafts[object.name], queued, failed) }}{% elif not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% elif object.name in reconfigured %}<span class="status-badge status-badge-warning waiting-badge">Reconfigured · deploy to activate</span>{% elif object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
-        <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span></td>
+        <td data-label="Hosts / ports"><span class="proxy-hosts">{% if object.protocol in ('tcp', 'dns') and not object.hostnames %}{{ object.ports | join(', ') if object.ports else '—' }}{% else %}{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}{% endif %}</span></td>
         {#
           The addresses rather than their names (B221): an address is what
           somebody has in hand when they come looking. The title repeats them

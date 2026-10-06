@@ -2,15 +2,14 @@
   "use strict";
 
   //
-  // One field on the object form has no meaning outside tcp: the port. It is
-  // greyed out rather than hidden, so choosing a protocol does not change the
-  // page's height under the reader, and the label stays legible as a statement
-  // about what the shape above decided.
+  // One field on the object form has no meaning outside tcp and dns: the port.
+  // It is disabled with its label hidden, and its example follows the protocol
+  // (`5432` for tcp, `53` for dns, which is also what an empty field means there).
   //
   // The browser is a convenience here and never the control. `build_document`
-  // writes a port only for a tcp object and the engine refuses one on http or
-  // https, so a submission with the field re-enabled by hand is answered the
-  // same way as any other object that does not parse.
+  // writes a port only for a tcp or dns object and the engine refuses one on
+  // http or https, so a submission with the field re-enabled by hand is answered
+  // the same way as any other object that does not parse.
   //
   const wire = () => {
     const protocol = document.querySelector("select[name='protocol']");
@@ -18,8 +17,13 @@
     if (!protocol || !port) return;
 
     const label = port.closest(".tcp-only");
+    const shapes = (label.dataset.protocol || "tcp").split(" ");
+    const examples = Object.fromEntries(
+      (port.dataset.placeholders || "").split(" ").filter(Boolean).map((pair) => pair.split(":")),
+    );
     const apply = () => {
-      port.disabled = protocol.value !== (label.dataset.protocol || "tcp");
+      port.disabled = !shapes.includes(protocol.value);
+      if (examples[protocol.value]) port.placeholder = examples[protocol.value];
     };
     protocol.addEventListener("change", apply);
     apply();
@@ -242,6 +246,20 @@
         const choice = document.querySelector(`select[name='${field}']`);
         if (!choice) continue;
         element.hidden = !(values || "").split(" ").includes(choice.value);
+      }
+      //
+      // A choice that has just been hidden is not left chosen: a dns object
+      // offers dnsdist's balancing and a dns check (Fas 19a B5), so a list whose
+      // option went away moves to its first one still offered - and says so to
+      // whatever follows that list in turn.
+      //
+      for (const select of document.querySelectorAll("select")) {
+        const chosen = select.selectedOptions[0];
+        if (!chosen || !chosen.hidden) continue;
+        const offered = Array.from(select.options).find((option) => !option.hidden);
+        if (!offered) continue;
+        select.value = offered.value;
+        select.dispatchEvent(new Event("change"));
       }
     };
     for (const element of shaped) {

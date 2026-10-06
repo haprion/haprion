@@ -158,12 +158,60 @@ class BackendHealth:
 
 
 def _members(status: Any) -> tuple[bool, list[dict[str, Any]]]:
+    """HAProxy's servers, and dnsdist's beside them in the same shape (Fas 19a B5).
+
+    A dns pool's servers are checked by dnsdist and reported with its counters,
+    `UP` or `DOWN` under the pool's name. Read here, every page that reads a
+    backend's servers reads them: the listing's lamp, which objects are served,
+    and the editor's table. Whether the node said anything is HAProxy's answer,
+    as it was.
+    """
+
     if not isinstance(status, dict):
         return False, []
     entries = status.get("servers")
     if not isinstance(entries, list):
-        return False, []
-    return True, [entry for entry in entries if isinstance(entry, dict)]
+        return False, _dns_members(status)
+    return True, [entry for entry in entries if isinstance(entry, dict)] + _dns_members(status)
+
+
+def _dns_members(status: Mapping[str, Any]) -> list[dict[str, Any]]:
+    listener = status.get("dns_listener")
+    counted = listener.get("counters") if isinstance(listener, Mapping) else None
+    entries = counted.get("servers") if isinstance(counted, Mapping) else None
+    return [
+        {"backend": entry["pool"], "server": entry["server"], "status": entry.get("status")}
+        for entry in (entries if isinstance(entries, list) else ())
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("pool"), str)
+        and isinstance(entry.get("server"), str)
+    ]
+
+
+def dns_everywhere(rows: Iterable[Any], *, cluster: str) -> bool:
+    """Whether every node of the cluster reports dnsdist installed (Fas 19a B5).
+
+    The WAF engine's rule (B231): a node from before the field, or one that did
+    not answer, is a node dnsdist cannot be counted on, and a release with a
+    dns listener is refused there.
+    """
+
+    reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
+    result = reading.result if reading is not None and isinstance(reading.result, Mapping) else {}
+    entries = result.get("nodes")
+    nodes = (
+        [entry for entry in entries if isinstance(entry, Mapping)]
+        if isinstance(entries, list)
+        else []
+    )
+    if not nodes:
+        return False
+    for entry in nodes:
+        status = entry.get("status")
+        listener = status.get("dns_listener") if isinstance(status, Mapping) else None
+        if not isinstance(listener, Mapping) or not isinstance(listener.get("version"), str):
+            return False
+    return True
 
 
 #

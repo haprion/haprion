@@ -44,6 +44,9 @@ from haproxy_mgmt import cluster_settings as cluster_settings_module
 from haproxy_mgmt.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
+    DEFAULT_DNS_FALL,
+    DEFAULT_DNS_INTERVAL,
+    DEFAULT_DNS_RISE,
     DEFAULT_DOWN_INTERVAL,
     DEFAULT_FALL,
     DEFAULT_FAST_INTERVAL,
@@ -7638,6 +7641,7 @@ def _editor_page(
         state.choices,
         others=tuple((view.name, view.document) for view in state.stored),
     )
+    dns_form = fields.get("protocol") == "dns"
     return TEMPLATES.TemplateResponse(
         request,
         "editor.html",
@@ -7669,12 +7673,22 @@ def _editor_page(
             # writes carries the default - and a hint that names it has to name
             # the value the engine will actually use.
             #
-            "check_interval": DEFAULT_INTERVAL,
+            #
+            # A dns check's are dnsdist's (Fas 19a B5), which the engine writes
+            # for one when the document says nothing.
+            #
+            "check_interval": DEFAULT_DNS_INTERVAL if dns_form else DEFAULT_INTERVAL,
             "rate_window": DEFAULT_ABUSE_WINDOW,
             "check_fast_interval": DEFAULT_FAST_INTERVAL,
             "check_down_interval": DEFAULT_DOWN_INTERVAL,
-            "check_rise": DEFAULT_RISE,
-            "check_fall": DEFAULT_FALL,
+            "check_rise": DEFAULT_DNS_RISE if dns_form else DEFAULT_RISE,
+            "check_fall": DEFAULT_DNS_FALL if dns_form else DEFAULT_FALL,
+            #
+            # DNS is offered once every node of the cluster runs dnsdist (Fas 19a
+            # B5): a release with a listener is refused by a node without it.
+            #
+            "dns_offered": health.dns_everywhere(status_rows, cluster=cluster),
+            "check_protocols": preview_module.CHECK_PROTOCOLS,
             "result": result,
             "draft": draft,
             "draft_revision": draft_revision,

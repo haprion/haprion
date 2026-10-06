@@ -806,12 +806,6 @@ class WhereTheFormStops(unittest.TestCase):
         self.assertEqual(
             refused,
             [
-                #
-                # A dns object (B249) is served by dnsdist, and the form learns
-                # it in the build's fifth step; until then it stops at the port.
-                #
-                ("dns/iot.yaml", "listen.port"),
-                ("dns/resolver.yaml", "listen.port"),
                 ("monitors/probes.yaml", "routes"),
                 ("routes/shop.yaml", "routes"),
             ],

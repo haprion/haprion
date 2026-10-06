@@ -93,10 +93,14 @@ def _access(form: Mapping[str, Any]) -> str:
     limit = _text(form, "rate_limit")
     window = _text(form, "rate_window") or DEFAULT_ABUSE_WINDOW
     body = _text(form, "max_request_body")
+    #
+    # A dns object has no rate limit to speak of: dnsdist serves it (Fas 19a B5).
+    #
+    dns = _text(form, "protocol") == "dns"
     return _joined(
         [
             f"From {who}" if who else "From everywhere",
-            f"at most {limit} per {window}" if limit else "no rate limit",
+            "" if dns else f"at most {limit} per {window}" if limit else "no rate limit",
             f"body ≤ {body}" if body else "",
         ],
         "",
@@ -172,6 +176,12 @@ def _maintenance(form: Mapping[str, Any]) -> str:
 
 
 def _connections(form: Mapping[str, Any]) -> str:
+    if _text(form, "protocol") == "dns":
+        #
+        # The source address is the one thing here dnsdist takes (Fas 19a B5).
+        #
+        source = _text(form, "source")
+        return f"from {source}" if source else "From the VIP's own address"
     tls = {"system": "HTTPS, verified", "none": "HTTPS, not verified"}.get(
         _text(form, "backend_tls"), "Plain HTTP"
     )
@@ -341,6 +351,8 @@ ALWAYS_SHOWN = (
     "health_expect_status",
     "health_send",
     "health_expect",
+    "health_query_name",
+    "health_query_type",
 )
 
 #

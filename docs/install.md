@@ -182,6 +182,26 @@ every node **before** the release on the management host. The nodes' reader stil
 an older collector; the new collector counts a node whose reader cannot answer it as a
 failed run, rather than showing that node's WAF findings as none.
 
+A dns listener (UDP and TCP, typically port 53) is served by dnsdist rather than HAProxy,
+which listens on UDP only for log forwarding. dnsdist comes from PowerDNS's own
+repository, in its 2.1 series, on Ubuntu 26.04 and Debian 13: `01-manager-prepare`
+installs it on the manager, where it only checks a listener's configuration before it is
+published (the service is masked), and `04-node-prepare` installs it on every node. Both
+write the repository's key, which ships beside the scripts in `install/apt-keys/` and is
+never fetched, its source in `/etc/apt/sources.list.d/pdns.list` and a pin in
+`/etc/apt/preferences.d/dnsdist-21`, so the hosts need to reach `repo.powerdns.com`.
+
+Installing the package starts nothing. On a node, a drop-in
+(`/etc/systemd/system/dnsdist.service.d/haproxy-manager.conf`) points dnsdist at
+`/etc/haproxy/dns/dnsdist.conf`, a link into the release like `waf`, and lets it start only
+when that file exists. The deploy starts dnsdist when a release carries a listener, restarts
+it when the listener's file changed, stops it when a release no longer has one, and refuses
+a release with a listener on a node that has not been prepared for one. dnsdist runs as
+`_dnsdist`; the drop-in gives it the member-less group `haproxy-dns`, which may pass
+through `/etc/haproxy/releases` (`/etc/tmpfiles.d/haproxy-manager-dns.conf`), as the WAF
+engine's group does. A configuration dnsdist warns about is refused like one it cannot
+load: its check ignores a setting it does not know with only a warning.
+
 ## 6. Verify access
 
 Open `https://<SERVER_NAME>` and sign in with the administrator account created during

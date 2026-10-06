@@ -140,14 +140,29 @@ WAF_PACKAGE = "haproxy-manager-coraza-spoa"
 WAF_UNIT = "coraza-spoa.service"
 
 
-def read_waf_engine():
-    r = run("/usr/bin/dpkg-query", "-W", "-f=${Status}\t${Version}", WAF_PACKAGE)
+def package_version(package):
+    r = run("/usr/bin/dpkg-query", "-W", "-f=${Status}\t${Version}", package)
     status, _, version = r.stdout.partition("\t")
     installed = r.returncode == 0 and status.strip() == "install ok installed"
-    return {
-        "version": version.strip() if installed else None,
-        "active": service_active(WAF_UNIT),
-    }
+    return version.strip()[:64] if installed else None
+
+
+def read_waf_engine():
+    return {"version": package_version(WAF_PACKAGE), "active": service_active(WAF_UNIT)}
+
+
+#
+# dnsdist, which serves the cluster's dns listeners (B249): installed by
+# 04-node-prepare from PowerDNS's repository, started by a release that carries
+# a listener and stopped by one that does not - the WAF engine's shape, read
+# the same way.
+#
+DNS_PACKAGE = "dnsdist"
+DNS_UNIT = "dnsdist.service"
+
+
+def read_dns_listener():
+    return {"version": package_version(DNS_PACKAGE), "active": service_active(DNS_UNIT)}
 
 
 #
@@ -805,6 +820,7 @@ result = {
     "installation": read_installation(),
     "architecture": os.uname().machine,
     "waf_engine": read_waf_engine(),
+    "dns_listener": read_dns_listener(),
     "resources": read_resources(),
 }
 
@@ -831,6 +847,11 @@ else:
     print(
         f"WAF engine:        {waf['version'] or 'NOT INSTALLED'}"
         f"{' (ACTIVE)' if waf['active'] else ''}"
+    )
+    dns = result["dns_listener"]
+    print(
+        f"DNS listener:      {dns['version'] or 'NOT INSTALLED'}"
+        f"{' (ACTIVE)' if dns['active'] else ''}"
     )
     #
     # Requests and 5xx per listener, because that is the pair that says whether

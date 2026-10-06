@@ -210,6 +210,22 @@ def read_waf_published(publish_path: Path, node_path: str) -> bool | None:
         return None
 
 
+def read_dns_published(publish_path: Path, node_path: str) -> bool | None:
+    """Whether the published release carries a dns listener; None when it cannot be read.
+
+    `read_waf_published`'s question for dnsdist (B249): stopped is normal on a
+    cluster without a dns object and a fault on one with them.
+    """
+
+    node_root = publish_path / "current" / node_path
+    try:
+        if not (node_root / "RELEASE").is_file():
+            return None
+        return (node_root / "dns" / "dnsdist.conf").is_file()
+    except OSError:
+        return None
+
+
 UNKNOWN = "unknown"
 
 
@@ -514,6 +530,7 @@ def collect(
     target: ReleaseTarget | None,
     publish_path: Path | None = None,
     waf_published: bool | None = None,
+    dns_published: bool | None = None,
 ) -> StatusReport:
     """Ask every node, then say what the pair adds up to.
 
@@ -566,6 +583,22 @@ def collect(
                     )
                 )
 
+    if dns_published:
+        #
+        # The release has a dns listener and the node's dnsdist is not
+        # serving it: while that node holds the VIP, nothing answers on it.
+        #
+        for entry in results:
+            listener = _mapping(_mapping(entry["status"]).get("dns_listener"))
+            if entry["status_ok"] and listener and listener.get("active") is not True:
+                warnings.append(
+                    Message(
+                        code="dns_listener_stopped",
+                        message=f"dnsdist is not running on {entry['name']}",
+                        node=str(entry["name"]),
+                    )
+                )
+
     result = {
         "nodes": results,
         "summary": {
@@ -584,6 +617,7 @@ def collect(
             "target": None if target is None else {"version": target.version, "hash": target.hash},
             "release_state": _release_state(results, target),
             **({} if waf_published is None else {"waf_published": waf_published}),
+            **({} if dns_published is None else {"dns_published": dns_published}),
         },
         #
         # Per object rather than per cluster, and empty when the comparison

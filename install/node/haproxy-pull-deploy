@@ -275,6 +275,95 @@ sync_waf_engine() {
     return 1
 }
 
+#
+# dnsdist, which serves the cluster's dns listeners (Fas 19, B249). Installed
+# by 04-node-prepare with a drop-in that points it at /etc/haproxy/dns; a
+# release with `dns/` turns it on and one without turns it off, as `waf/` does
+# the WAF engine. dnsdist reads its file only when it starts, so a changed
+# file is a restart - and only a changed file: the restart drops the queries
+# in flight, which their clients ask again.
+#
+DNSDIST="/usr/bin/dnsdist"
+DNS_UNIT="dnsdist.service"
+DNS_DROPIN="/etc/systemd/system/dnsdist.service.d/haproxy-manager.conf"
+DNS_WAIT_SECONDS=10
+
+validate_dns_candidate() {
+    local candidate="$1" output
+
+    [[ -e "${candidate}/dns" ]] || return 0
+    if [[ ! -x "$DNSDIST" || ! -f "$DNS_DROPIN" ]]; then
+        log "ERROR: the release carries a dns listener, but this node is not prepared for one."
+        log "ERROR: run 04-node-prepare from the current node bundle, then deploy again."
+        return 1
+    fi
+    log "Validating candidate dns listener..."
+    #
+    # A key dnsdist does not know is ignored with a warning and exit 0
+    # (measured on 2.1.2), so a warning refuses as an error does.
+    #
+    if ! output="$("$DNSDIST" --check-config -C "${candidate}/dns/dnsdist.conf" 2>&1)" \
+        || grep -q -e 'prio="Warning"' -e 'prio="Error"' <<<"$output"; then
+        printf '%s\n' "$output"
+        log "ERROR: dnsdist rejected the candidate dns listener. The existing config is left untouched."
+        return 1
+    fi
+    log "Candidate dns listener OK."
+}
+
+dns_listening() {
+    local endpoint port
+    #
+    # Every listener the file names, by its port; dnsdist's own process must
+    # hold each one for UDP. A port held by something else reads as not
+    # listening, so a dnsdist that failed to bind is never taken for one that
+    # did.
+    #
+    while read -r endpoint; do
+        port="${endpoint##*:}"
+        [[ "$port" =~ ^[0-9]{1,5}$ ]] || return 1
+        ss -Hlunp "sport = :${port}" | grep -q '"dnsdist"' || return 1
+    done < <(sed -n 's/^\(setLocal\|addLocal\)("\([^"]*\)")$/\2/p' "${CURRENT}/dns/dnsdist.conf")
+}
+
+sync_dns_listener() {
+    local other="$1" waited
+
+    if [[ ! -f "${CURRENT}/dns/dnsdist.conf" ]]; then
+        if systemctl is-enabled --quiet "$DNS_UNIT" 2>/dev/null \
+            || systemctl is-active --quiet "$DNS_UNIT" 2>/dev/null; then
+            log "DNS: the release carries no dns listener. Stopping dnsdist."
+            if ! systemctl disable --now "$DNS_UNIT"; then
+                log "ERROR: dnsdist could not be stopped."
+                return 1
+            fi
+        fi
+        return 0
+    fi
+
+    if ! systemctl is-active --quiet "$DNS_UNIT"; then
+        log "DNS: starting dnsdist."
+        systemctl enable --now "$DNS_UNIT" || { log "ERROR: dnsdist could not be started."; return 1; }
+    elif ! cmp -s "${other}/dns/dnsdist.conf" "${CURRENT}/dns/dnsdist.conf"; then
+        log "DNS: restarting dnsdist with the new listener."
+        systemctl restart "$DNS_UNIT" || { log "ERROR: dnsdist could not be restarted."; return 1; }
+    else
+        # Running but not enabled is a node that would lose its listener at reboot.
+        systemctl is-enabled --quiet "$DNS_UNIT" || systemctl enable --quiet "$DNS_UNIT"
+        return 0
+    fi
+    systemctl is-enabled --quiet "$DNS_UNIT" || systemctl enable --quiet "$DNS_UNIT"
+    for (( waited = 0; waited < DNS_WAIT_SECONDS * 5; waited++ )); do
+        if systemctl is-active --quiet "$DNS_UNIT" && dns_listening; then
+            log "DNS: dnsdist listening."
+            return 0
+        fi
+        sleep 0.2
+    done
+    log "ERROR: dnsdist did not start listening within ${DNS_WAIT_SECONDS}s."
+    return 1
+}
+
 OLD_RELEASE="$(readlink -f "$CURRENT")"
 #
 # The release HAProxy is running: `current`, unless an earlier run switched the
@@ -340,6 +429,7 @@ if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
         log "An earlier run switched to this configuration but never reloaded. Finishing..."
         haproxy -c -f "${HAPROXY_DIR}/haproxy.cfg" -f "${HAPROXY_DIR}/conf.d"
         sync_waf_engine 1
+        sync_dns_listener "$RUNNING"
         systemctl reload haproxy
         rm -f "$PENDING"
         sync_keepalived_addresses
@@ -356,6 +446,7 @@ if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
     #
     # And the engine, which a reboot or a person may have stopped.
     sync_waf_engine 0 || exit 1
+    sync_dns_listener "$CURRENT" || exit 1
     sync_keepalived_addresses || exit 1
     exit 0
 fi
@@ -395,6 +486,7 @@ fi
 log "Candidate configuration OK."
 
 validate_waf_candidate "$VALIDATE" || exit 1
+validate_dns_candidate "$VALIDATE" || exit 1
 
 #
 # Create a new immutable release
@@ -456,6 +548,24 @@ if ! sync_waf_engine 1; then
 fi
 
 #
+# The dns listener, after the engine and before HAProxy, for the engine's
+# reason: if dnsdist does not take the new file, nothing has been reloaded.
+#
+if ! sync_dns_listener "$OLD_RELEASE"; then
+    log "ERROR: dnsdist did not take the new dns listener. Rolling back to ${OLD_RELEASE}."
+
+    rm -f "$NEW_LINK"
+    ln -s "$OLD_RELEASE" "$NEW_LINK"
+    mv -Tf "$NEW_LINK" "$CURRENT"
+    settle_pending
+
+    sync_waf_engine 1 || log "ERROR: the WAF engine could not be returned to the previous rules either."
+    sync_dns_listener "$RELEASE" || log "ERROR: dnsdist could not be returned to the previous listener either."
+
+    exit 1
+fi
+
+#
 # Reload
 #
 log "Reloading HAProxy..."
@@ -487,6 +597,7 @@ else
     fi
     settle_pending
     sync_waf_engine 1 || true
+    sync_dns_listener "$RELEASE" || true
 
     exit 1
 fi

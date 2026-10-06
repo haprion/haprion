@@ -63,10 +63,12 @@ def node_status(
     addresses: object = None,
     runtime: str = "3.2.9",
     waf_engine: dict[str, object] | None = None,
+    dns_listener: dict[str, object] | None = None,
 ) -> str:
     return json.dumps(
         {
             **({} if waf_engine is None else {"waf_engine": waf_engine}),
+            **({} if dns_listener is None else {"dns_listener": dns_listener}),
             "schema_version": 1,
             "node": name,
             "cluster": "alpha",
@@ -115,7 +117,12 @@ class HelperFixture(unittest.TestCase):
         self.asked: list[str] = []
 
     def runtime(
-        self, *, published_hash: str | None = TARGET_HASH, identity: bool = True, waf: bool = False
+        self,
+        *,
+        published_hash: str | None = TARGET_HASH,
+        identity: bool = True,
+        waf: bool = False,
+        dns: bool = False,
     ) -> Path:
         config_root = self.root / "config"
         publish_root = self.root / "published"
@@ -143,6 +150,9 @@ class HelperFixture(unittest.TestCase):
             if waf:
                 (release / "waf").mkdir(exist_ok=True)
                 (release / "waf" / "coraza.yaml").write_text("bind: 127.0.0.1:9520\n")
+            if dns:
+                (release / "dns").mkdir(exist_ok=True)
+                (release / "dns" / "dnsdist.conf").write_text('setLocal("192.0.2.10:53")\n')
 
         document: dict[str, object] = {
             "schema_version": 1,
@@ -166,6 +176,19 @@ class HelperFixture(unittest.TestCase):
             return NodeResponse(exit_code=0, stdout=stdout_by_name[node.name])
 
         return read
+
+    def listeners(self, *, b_active: bool) -> ReadNode:
+        return self.reader(
+            **{
+                name: node_status(
+                    name,
+                    owner=name == "node-a",
+                    release_hash=TARGET_HASH,
+                    dns_listener={"version": "2.1.2-1pdns", "active": name == "node-a" or b_active},
+                )
+                for name in ("node-a", "node-b")
+            }
+        )
 
     def engines(self, *, b_active: bool) -> ReadNode:
         return self.reader(
@@ -392,6 +415,25 @@ class HelperReadingTests(HelperFixture):
         self.assertIs(envelope["result"]["summary"]["waf_published"], False)
         self.assertEqual(envelope["warnings"], [])
 
+    def test_a_stopped_dnsdist_under_a_release_with_a_listener_is_a_warning(self) -> None:
+        code, out, _ = self.run_helper(
+            request(), dns=True, node_reader=self.listeners(b_active=False)
+        )
+        self.assertEqual(code, 0)
+        envelope = assert_contract("haproxy-status", out)
+        self.assertIs(envelope["result"]["summary"]["dns_published"], True)
+        self.assertEqual(
+            [(w["code"], w["node"]) for w in envelope["warnings"]],
+            [("dns_listener_stopped", "node-b")],
+        )
+
+    def test_a_stopped_dnsdist_without_a_listener_is_how_it_should_be(self) -> None:
+        code, out, _ = self.run_helper(request(), node_reader=self.listeners(b_active=False))
+        self.assertEqual(code, 0)
+        envelope = assert_contract("haproxy-status", out)
+        self.assertIs(envelope["result"]["summary"]["dns_published"], False)
+        self.assertEqual(envelope["warnings"], [])
+
     def test_nothing_published_says_nothing_about_the_engine(self) -> None:
         code, out, _ = self.run_helper(
             request(), published_hash=None, node_reader=self.engines(b_active=False)
@@ -511,6 +553,17 @@ class CallerTests(HelperFixture):
         self.assertIn("WAF engine:   ACTIVE (0.9.0-4)\n", out)
         self.assertIn("WAF engine:   STOPPED (0.9.0-4)\n", out)
         self.assertIn("WARNING: the WAF engine is not running on node-b\n", out)
+
+    def test_dnsdist_is_read_against_whether_the_release_has_a_listener(self) -> None:
+        stopped = self.listeners(b_active=False)
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(self.envelope(node_reader=stopped)))
+        self.assertIn("DNS listener: not in use (2.1.2-1pdns)\n", out)
+        _, out, _ = self.run_caller(
+            ["-c", "alpha"], completed(self.envelope(dns=True, node_reader=stopped))
+        )
+        self.assertIn("DNS listener: ACTIVE (2.1.2-1pdns)\n", out)
+        self.assertIn("DNS listener: STOPPED (2.1.2-1pdns)\n", out)
+        self.assertIn("WARNING: dnsdist is not running on node-b\n", out)
 
     def test_json_mode_prints_the_envelope_and_nothing_else(self) -> None:
         payload = self.envelope()

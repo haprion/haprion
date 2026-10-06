@@ -40,11 +40,20 @@ NODE_SCRIPTS = (
     "haproxy-traffic-log-enable",
     "haproxy-traffic-log-prune",
 )
+#
+# Data rather than programs, so 0644: the shell library the scripts source,
+# and the repository key `lib.sh` installs dnsdist with (B249).
+#
+NOT_EXECUTABLE = ("install/lib.sh", "install/apt-keys/powerdns-dnsdist.asc")
 PAYLOAD = (
     "install/04-node-prepare",
-    "install/lib.sh",
+    *NOT_EXECUTABLE,
     *(f"install/node/{name}" for name in NODE_SCRIPTS),
 )
+
+
+def payload_mode(relative: str) -> int:
+    return 0o644 if relative in NOT_EXECUTABLE else 0o755
 
 
 class BundleError(RuntimeError):
@@ -109,7 +118,7 @@ def _payload(source: Path, commit: str) -> dict[str, tuple[bytes, int]]:
         if len(fields) != 4 or fields[1] != "blob" or fields[3] != relative:
             raise BundleError(f"payload path is missing or not a regular file: {relative}")
         git_mode = fields[0]
-        expected = 0o755 if relative != "install/lib.sh" else 0o644
+        expected = payload_mode(relative)
         expected_git_mode = "100755" if expected == 0o755 else "100644"
         if git_mode != expected_git_mode:
             raise BundleError(
@@ -238,7 +247,7 @@ def verify_bundle(
             record = files[name]
             if not isinstance(record, dict) or set(record) != {"mode", "sha256"}:
                 raise BundleError(f"invalid manifest record for {name}")
-            expected_mode = 0o644 if name == "install/lib.sh" else 0o755
+            expected_mode = payload_mode(name)
             if (
                 type(record["mode"]) is not int
                 or record["mode"] != expected_mode

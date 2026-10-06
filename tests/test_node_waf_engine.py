@@ -282,7 +282,11 @@ class TheStatusReport(unittest.TestCase):
 
     def report(self, dpkg: tuple[int, str], active: bool) -> dict[str, object]:
         text = STATUS.read_text()
-        found = re.search(r"^def read_waf_engine\(.*?(?=^\S)", text, re.DOTALL | re.MULTILINE)
+        found = re.search(
+            r"^def package_version\(.*?^def read_waf_engine\(.*?(?=^\S)",
+            text,
+            re.DOTALL | re.MULTILINE,
+        )
         assert found, "read_waf_engine is no longer where the test extracts it from"
         namespace: dict[str, Any] = {
             "WAF_PACKAGE": "haproxy-manager-coraza-spoa",

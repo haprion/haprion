@@ -52,7 +52,7 @@ class InstallReleaseTests(unittest.TestCase):
 
     def make_bundle(self, root: Path) -> tuple[Path, str]:
         payload = {
-            name: (f"# {name}\n".encode(), 0o644 if name == "install/lib.sh" else 0o755)
+            name: (f"# {name}\n".encode(), node_bundle.payload_mode(name))
             for name in node_bundle.PAYLOAD
         }
         bundle = root / "node-bundle-build.tar.gz"

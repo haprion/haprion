@@ -160,6 +160,12 @@ def _waf_engine_line(engine: object, published: object) -> str | None:
     return f"STOPPED ({version})"
 
 
+def _dns_listener_line(listener: object, published: object) -> str | None:
+    """The node's dnsdist, read against whether the release has a dns listener (B249)."""
+
+    return _waf_engine_line(listener, published)
+
+
 def _render(envelope: dict[str, Any], writer: TextIO) -> None:
     cluster = envelope.get("cluster")
     result = envelope.get("result") or {}
@@ -208,6 +214,9 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         engine = _waf_engine_line(status.get("waf_engine"), summary.get("waf_published"))
         if engine is not None:
             writer.write(f"  WAF engine:   {engine}\n")
+        listener = _dns_listener_line(status.get("dns_listener"), summary.get("dns_published"))
+        if listener is not None:
+            writer.write(f"  DNS listener: {listener}\n")
         writer.write("\n")
 
     writer.write(f"VIP state:      {summary.get('vip_state')}\n")

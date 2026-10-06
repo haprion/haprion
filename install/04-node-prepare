@@ -226,6 +226,39 @@ install_file "$WAF_ENGINE_DROPIN" root:root 644 "# Installed by install/04-node-
 SupplementaryGroups=${WAF_ENGINE_GROUP}"
 systemctl daemon-reload
 log "  applied  ${WAF_ENGINE_DROPIN}"
+#
+# dnsdist, which serves a cluster's dns listeners (B249), the same way: its
+# package runs it as `_dnsdist`, which the drop-in gives a member-less group
+# of its own that may pass through the releases directory. The drop-in also
+# points it at the release's file - the package's unit looks for dnsdist.yml,
+# and with no configuration at all restarts forever (measured 26-10-06) - and
+# lets it start only when a release carries one, so installing the package
+# below starts nothing. Whether it runs is the deploy's decision, as the WAF
+# engine's is.
+#
+DNS_GROUP="haproxy-dns"
+ensure_group "$DNS_GROUP"
+[[ -z "$(getent group "$DNS_GROUP" | cut -d: -f4)" ]] \
+    || die "${DNS_GROUP} has members; only dnsdist may pass through /etc/haproxy/releases"
+DNS_TMPFILES="/etc/tmpfiles.d/haproxy-manager-dns.conf"
+install_file "$DNS_TMPFILES" root:root 644 "# Installed by install/04-node-prepare.
+a+ /etc/haproxy/releases - - - - group:${DNS_GROUP}:--x"
+systemd-tmpfiles --create "$DNS_TMPFILES"
+log "  applied  ${DNS_TMPFILES}"
+DNS_DROPIN="/etc/systemd/system/dnsdist.service.d/haproxy-manager.conf"
+ensure_dir "${DNS_DROPIN%/*}" root:root 755
+install_file "$DNS_DROPIN" root:root 644 "# Installed by install/04-node-prepare.
+[Unit]
+ConditionPathExists=/etc/haproxy/dns/dnsdist.conf
+
+[Service]
+SupplementaryGroups=${DNS_GROUP}
+ExecStartPre=
+ExecStartPre=/usr/bin/dnsdist --check-config -C /etc/haproxy/dns/dnsdist.conf
+ExecStart=
+ExecStart=/usr/bin/dnsdist --supervised --disable-syslog -C /etc/haproxy/dns/dnsdist.conf"
+systemctl daemon-reload
+log "  applied  ${DNS_DROPIN}"
 # /run/lock is a distribution-owned shared directory, normally mode 1777.
 # The deploy helpers own their root-created lock files, not this directory.
 [[ -d /run/lock ]] || die "/run/lock is missing"
@@ -262,6 +295,10 @@ link_into_current haproxy.cfg
 link_into_current conf.d
 link_into_current maps
 link_into_current waf
+link_into_current dns
+
+step "dnsdist"
+ensure_dnsdist
 
 step "Node scripts"
 

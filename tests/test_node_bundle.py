@@ -37,7 +37,7 @@ class NodeBundleTests(unittest.TestCase):
             path = self.source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"payload:{relative}\n")
-            path.chmod(0o644 if relative == "install/lib.sh" else 0o755)
+            path.chmod(TOOL.payload_mode(relative))
         subprocess.run(["/usr/bin/git", "init", "-q", str(self.source)], check=True)
         subprocess.run(["/usr/bin/git", "-C", str(self.source), "add", "."], check=True)
         self.commit_source("payload")

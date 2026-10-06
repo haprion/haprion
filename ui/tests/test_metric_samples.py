@@ -13,6 +13,7 @@ looks harmless.
 from __future__ import annotations
 
 import ast
+import json
 import re
 import unittest
 from collections.abc import Iterator, Sequence
@@ -20,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from haproxy_ui import db
+from haproxy_ui import db, metrics
 from haproxy_ui.metrics import CARD_COUNTERS, METRIC_COUNTERS, SUMMARY_COUNTERS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -249,6 +250,35 @@ class TheThreeCounterLists(unittest.TestCase):
 
         listed = RETENTION.read_text().split('METRIC_COUNTERS="', 1)[1].split('"', 1)[0]
         self.assertEqual(tuple(name.strip() for name in listed.split(",")), METRIC_COUNTERS)
+
+
+DNS_COUNTERS_MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0057_metric_dns_counters.py"
+
+
+class TheDnsCounterLists(unittest.TestCase):
+    """dnsdist's counters (Fas 19a B4): the node's names, the reader's columns, the migration's."""
+
+    def test_the_migration_stores_exactly_what_the_reader_keeps(self) -> None:
+        source = DNS_COUNTERS_MIGRATION.read_text()
+        self.assertEqual(_tuple_named(source, "DNS_COUNTERS"), metrics.DNS_COUNTERS)
+        self.assertIn(f'LATENCY = "{metrics.DNS_LATENCY}"', source)
+
+    def test_the_migration_differences_what_the_readers_sum(self) -> None:
+        source = DNS_COUNTERS_MIGRATION.read_text()
+        self.assertEqual(_tuple_named(source, "HAPROXY_COUNTERS"), db.STORED_DELTAS)
+        self.assertEqual((*db.STORED_DELTAS, *metrics.DNS_COUNTERS), db.BACKEND_DELTAS)
+        summed = {name for name, _label in metrics.DNS_SUMMED}
+        self.assertLessEqual(summed, set(db.BACKEND_DELTAS))
+
+    def test_the_reader_takes_the_names_the_node_reports(self) -> None:
+        schema = json.loads((ROOT / "schemas" / "v1" / "haproxy-status.schema.json").read_text())
+        counters = schema["$defs"]["node_status"]["properties"]["dns_listener"]["properties"][
+            "counters"
+        ]["properties"]
+        pool = set(counters["pools"]["items"]["required"]) - {"pool"}
+        server = set(counters["servers"]["items"]["required"]) - {"pool", "server", "status"}
+        self.assertEqual(set(metrics.DNS_POOL), pool)
+        self.assertEqual(set(metrics.DNS_SERVER), server)
 
 
 class TheMetricTables(unittest.TestCase):

@@ -1062,3 +1062,71 @@ class OneScaleAcrossSeveralCards(unittest.TestCase):
         plotted = next(point for point in points if point.value == 1)
 
         self.assertGreater(plotted.y, 19.0)
+
+
+class WhatADnsCardWorksOut(unittest.TestCase):
+    """Unanswered is asked less refused less answered (Fas 19a B4), never below zero."""
+
+    def total(self, label: str, value: int, counted: float = 60.0) -> metrics.Total:
+        return metrics.Total(label=label, value=value, counted_sec=counted, span_sec=60.0)
+
+    def test_the_card_s_order_with_unanswered_worked_out(self) -> None:
+        summed = metrics.BackendMeasurement(
+            intervals=3,
+            started_at=None,
+            ended_at=None,
+            totals=(
+                self.total("Queries", 100),
+                self.total("Answered", 90),
+                self.total("Refused", 4),
+                self.total("Over TCP", 7, counted=30.0),
+            ),
+            restarted=False,
+            handed_over=False,
+        )
+        found = metrics.dns_measurement(summed)
+
+        self.assertEqual(
+            [(total.label, total.value) for total in found.totals],
+            [
+                ("Queries", 100),
+                ("Answered", 90),
+                ("Refused", 4),
+                ("Unanswered", 6),
+                ("Over TCP", 7),
+            ],
+        )
+
+    def test_unanswered_is_known_only_as_far_as_its_parts_are(self) -> None:
+        summed = metrics.BackendMeasurement(
+            intervals=1,
+            started_at=None,
+            ended_at=None,
+            totals=(
+                self.total("Queries", 5),
+                self.total("Answered", 9, counted=0.0),
+                self.total("Refused", 0),
+                self.total("Over TCP", 0),
+            ),
+            restarted=False,
+            handed_over=False,
+        )
+        unanswered = metrics.dns_measurement(summed).totals[3]
+
+        self.assertEqual((unanswered.value, unanswered.known), (0, False))
+
+    def test_a_bucket_answered_in_the_next_one_is_not_negative(self) -> None:
+        worked = metrics.derived({"dns_queries": 3, "dns_refused": 0, "dns_answered": 4})
+        self.assertEqual(worked["dns_unanswered"], 0)
+        self.assertNotIn("dns_unanswered", metrics.derived({"req_tot": 3}))
+        self.assertIsNone(
+            metrics.derived({"dns_queries": 3, "dns_refused": None, "dns_answered": 1})[
+                "dns_unanswered"
+            ]
+        )
+
+    def test_latency_is_written_in_milliseconds(self) -> None:
+        def shown(latency: float | None) -> str:
+            return metrics.DnsServer(name="s1", queries=1, answered=1, latency_us=latency).latency
+
+        self.assertEqual([shown(350.0), shown(1250.0), shown(None)], ["0.35 ms", "1.2 ms", "—"])

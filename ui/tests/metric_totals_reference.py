@@ -260,6 +260,6 @@ def backend_series(
             ),
             arguments,
         )
-        found.extend(db._changed_intervals(cursor.fetchall()))
+        found.extend(db._changed_intervals(cursor.fetchall(), db.BACKEND_DELTAS))
     found.sort(key=lambda interval: (interval.ended_at, interval.started_at))
     return found

@@ -11,7 +11,7 @@
   `spark_height`, `traffic_bucket`, `traffic_window`, and the marked range:
   `traffic_marked`, `traffic_range`, `traffic_link` and `traffic_clear`.
 #}
-{% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ backend.series }}</code><span class="traffic-rate">Requests / {{ traffic_rate_unit }}</span></div>{% endif %}
+{% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ backend.series }}</code><span class="traffic-rate">{{ backend.rate }} / {{ traffic_rate_unit }}</span></div>{% endif %}
 <div class="traffic-card">
   {#
     Drawn whole whether or not the window holds samples: an empty line and a
@@ -40,7 +40,7 @@
         with it - otherwise a wide card draws a thick line rather than a
         long one.
       #}
-      <svg viewBox="0 0 {{ spark_width }} {{ spark_height }}" preserveAspectRatio="none" role="img" aria-label="Requests per {{ traffic_bucket }} over {{ traffic_window }}, against a scale of {{ backend.levels[0].label if backend.levels else 0 }}, peaking at {{ backend.peak }}">
+      <svg viewBox="0 0 {{ spark_width }} {{ spark_height }}" preserveAspectRatio="none" role="img" aria-label="{{ backend.rate }} per {{ traffic_bucket }} over {{ traffic_window }}, against a scale of {{ backend.levels[0].label if backend.levels else 0 }}, peaking at {{ backend.peak }}">
         {#
           The guides first, so the line and its hover targets sit above them.
           Stroke named on the element because the base `svg` rule would
@@ -110,4 +110,18 @@
       </dl>
     </div>
   </div>
+  {#
+    A DNS pool's servers, over the same window or range as the figures above,
+    under the whole card (Fas 19a B4).
+  #}
+  {% if backend.servers %}
+  <table class="traffic-servers">
+    <thead><tr><th scope="col">Server</th><th scope="col">Queries</th><th scope="col">Answered</th><th scope="col">Unanswered</th><th scope="col">Latency</th></tr></thead>
+    <tbody>
+      {% for server in backend.servers %}
+      <tr><th scope="row"><code>{{ server.name }}</code></th><td>{{ server.queries }}</td><td>{{ server.answered }}</td><td>{{ server.unanswered }}</td><td>{{ server.latency }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
 </div>

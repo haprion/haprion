@@ -1851,6 +1851,17 @@ and a name given to a backend again stops counting for the one that had it. A
 dashboard reading the exporter sees a new series under the new name - HAProxy's
 counters begin again with it.
 
+**A DNS object's card** is counted by dnsdist rather than HAProxy, under the
+pool's name like any other: Queries (everything that reached the listener),
+Answered (what its servers answered), Refused (refused for `allow_from`),
+Unanswered (asked, less refused, less answered - a server that timed out or no
+server up to ask) and Over TCP; beneath them each server's queries, answers,
+unanswered and dnsdist's running average latency. The metrics page draws DNS
+objects in a section of their own, on a scale of their own. Response codes
+(NXDOMAIN, SERVFAIL) are not shown: dnsdist 2.1 counts them for the whole
+process, not per pool. dnsdist's counters are read on the node and are not part
+of HAProxy's exporter, so a dashboard reading the exporter does not see them.
+
 ## Jobs and status freshness
 
 ### How often status is refreshed

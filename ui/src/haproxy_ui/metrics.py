@@ -63,6 +63,37 @@ METRIC_COUNTERS: tuple[str, ...] = (
     "hrsp_5xx",
 )
 
+#
+# dnsdist's counters for a dns pool (Fas 19a B4), kept in the backend rows
+# beside HAProxy's: on the pool's own row every query reaching its listener,
+# those over TCP, those refused for `allow_from` and those its servers
+# answered; on a server's row its queries and answers. Migration 0057 stores
+# them, and the node reports them under the names in `DNS_POOL` and
+# `DNS_SERVER`.
+#
+DNS_COUNTERS: tuple[str, ...] = ("dns_queries", "dns_tcp", "dns_refused", "dns_answered")
+#
+# A server's latency is dnsdist's running average, a reading rather than a
+# count: kept as read and never differenced.
+#
+DNS_LATENCY = "dns_latency_us"
+DNS_POOL = {
+    "queries": "dns_queries",
+    "tcp_queries": "dns_tcp",
+    "refused": "dns_refused",
+    "answered": "dns_answered",
+}
+DNS_SERVER = {"queries": "dns_queries", "answered": "dns_answered", "latency_us": DNS_LATENCY}
+#
+# Every counter a series is drawn and summed from.
+#
+SERIES_COUNTERS: tuple[str, ...] = (*METRIC_COUNTERS, *DNS_COUNTERS)
+#
+# What a pool's own row is called, HAProxy's word for it, which a dns pool's
+# row borrows so the two are read alike.
+#
+POOL_ROW = "BACKEND"
+
 
 @dataclass(frozen=True, slots=True)
 class FrontendSample:
@@ -198,7 +229,71 @@ def samples(result: Mapping[str, Any]) -> tuple[list[FrontendSample], list[Membe
                 )
             )
 
+        members.extend(_dns_samples(node, status.get("dns_listener")))
+
     return frontends, members
+
+
+def _dns_samples(node: str, listener: object) -> list[MemberSample]:
+    """A node's dns pools and servers as backend rows (Fas 19a B4).
+
+    The holder's only, as for HAProxy, which `samples` has already decided:
+    the standby's dnsdist binds the same address and is asked nothing. The
+    uptime is dnsdist's own, because it restarts whenever its configuration
+    changes and HAProxy does not.
+    """
+
+    counted = listener.get("counters") if isinstance(listener, Mapping) else None
+    if not isinstance(counted, Mapping):
+        return []
+    uptime = _count(counted.get("uptime_sec"))
+    found: list[MemberSample] = []
+    for row in _entries(counted.get("pools")):
+        pool = _text(row.get("pool")) if isinstance(row, Mapping) else None
+        if pool is None:
+            continue
+        found.append(
+            MemberSample(
+                node=node,
+                backend=pool,
+                member=POOL_ROW,
+                uptime_sec=uptime,
+                status=None,
+                check_status=None,
+                check_code=None,
+                counters=_renamed(row, DNS_POOL),
+            )
+        )
+    for row in _entries(counted.get("servers")):
+        if not isinstance(row, Mapping):
+            continue
+        pool, server = _text(row.get("pool")), _text(row.get("server"))
+        if pool is None or server is None or server == POOL_ROW:
+            continue
+        found.append(
+            MemberSample(
+                node=node,
+                backend=pool,
+                member=server,
+                uptime_sec=uptime,
+                status=_text(row.get("status")),
+                check_status=None,
+                check_code=None,
+                counters=_renamed(row, DNS_SERVER),
+            )
+        )
+    return found
+
+
+def _renamed(row: Mapping[str, Any], names: Mapping[str, str]) -> dict[str, int]:
+    """The node's figures under the columns that keep them; unreported ones left out."""
+
+    found = {}
+    for reported, column in names.items():
+        number = _count(row.get(reported))
+        if number is not None and number >= 0:
+            found[column] = number
+    return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,7 +448,7 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
             earlier.node is not None and later.node is not None and earlier.node != later.node
         )
         counters: dict[str, int | None] = {}
-        for name in METRIC_COUNTERS:
+        for name in SERIES_COUNTERS:
             before = earlier.counters.get(name)
             after = later.counters.get(name)
             if handed_over or before is None or after is None:
@@ -425,7 +520,7 @@ def _handovers(series: Mapping[str, Sequence[Sample]]) -> list[Interval]:
             Interval(
                 started_at=earlier_end,
                 ended_at=later_start,
-                counters=dict.fromkeys(METRIC_COUNTERS),
+                counters=dict.fromkeys(SERIES_COUNTERS),
                 restarted=False,
                 handed_over=True,
             )
@@ -785,7 +880,7 @@ def bucketed(
                 continue
             touched.add(index)
             share = overlap / span
-            for name in METRIC_COUNTERS:
+            for name in SERIES_COUNTERS:
                 value = interval.counters.get(name)
                 if value is None:
                     #
@@ -812,7 +907,7 @@ def bucketed(
             )
         totals: dict[str, int | None] = {}
         covered: dict[str, float] = {}
-        for name in METRIC_COUNTERS:
+        for name in SERIES_COUNTERS:
             #
             # Capped at the bucket: consecutive intervals cannot overlap each
             # other, but a rounding of the last fraction of a second should not
@@ -1004,6 +1099,7 @@ def spark(
     bucket: timedelta,
     ceiling: int | None = None,
     chosen: Selection | None = None,
+    figures: Figures | None = None,
 ) -> tuple[list[str], list[Point], int]:
     """A sparkline on an absolute time axis, its hover points, and its peak.
 
@@ -1045,10 +1141,11 @@ def spark(
     if seconds <= 0 or bucket <= timedelta(0):
         return [], [], 0
     chosen = chosen or Selection()
+    figures = figures or HTTP_FIGURES
 
     grid = bucketed(found, start=start, end=end, bucket=bucket)
     peak = max(
-        (value for entry in grid if (value := entry.counters.get("req_tot")) is not None),
+        (value for entry in grid if (value := entry.counters.get(figures.line)) is not None),
         default=0,
     )
     if ceiling is None:
@@ -1061,10 +1158,10 @@ def spark(
 
     for entry in grid:
         at = entry.at
-        totals = entry.counters
+        totals = derived(entry.counters)
         measured = entry.sampled
-        value = totals.get("req_tot")
-        share = entry.covered.get("req_tot", 0.0)
+        value = totals.get(figures.line)
+        share = entry.covered.get(figures.line, 0.0)
         position = min(max((at - start).total_seconds() / seconds, 0.0), 1.0)
         x = position * width
         point_x = min(x + bucket_width / 2, width)
@@ -1082,7 +1179,7 @@ def spark(
                     measured=True,
                     stamp=int(at.timestamp()),
                     selected=chosen.holds(at, bucket),
-                    figures=tuple((label, None) for _name, label in CARD_COUNTERS),
+                    figures=tuple((label, None) for _name, label in figures.counters),
                     moment=shown(at).strftime(TIMESTAMP),
                     note=gap_note(share),
                 )
@@ -1098,12 +1195,13 @@ def spark(
                 x=point_x,
                 y=y,
                 value=value,
-                reading=reading_at(at, totals) if measured else unread_at(at),
+                reading=reading_at(at, totals, figures.counters) if measured else unread_at(at),
                 measured=measured,
                 stamp=int(at.timestamp()),
                 selected=chosen.holds(at, bucket),
                 figures=tuple(
-                    (label, totals.get(name) if measured else None) for name, label in CARD_COUNTERS
+                    (label, totals.get(name) if measured else None)
+                    for name, label in figures.counters
                 ),
                 moment=shown(at).strftime(TIMESTAMP),
                 note="" if measured else "No samples at this time",
@@ -1209,7 +1307,11 @@ def gap_note(covered: float) -> str:
     return f"Only {round(covered * 100)}% measured, not shown"
 
 
-def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:
+def reading_at(
+    at: datetime,
+    totals: Mapping[str, int | None],
+    counters: tuple[tuple[str, str], ...] | None = None,
+) -> str:
     """What one bucket says when the pointer rests on it.
 
     Every figure the card carries, not only the one the line draws, because the
@@ -1225,7 +1327,7 @@ def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:
     when = shown(at).strftime(TIMESTAMP)
     parts = [
         f"{label} {value if (value := totals.get(name)) is not None else 'not measured'}"
-        for name, label in CARD_COUNTERS
+        for name, label in (counters or CARD_COUNTERS)
     ]
     return f"{when} · " + " · ".join(parts)
 
@@ -1257,6 +1359,121 @@ SUMMARY_COUNTERS: tuple[tuple[str, str], ...] = (
     ("bin", "Bytes in"),
     ("bout", "Bytes out"),
 )
+
+#
+# A dns object's card (Fas 19a B4, chosen 26-10-06): what its listener was
+# asked, what its servers answered, what `allow_from` refused, what got no
+# answer at all, and how much came over TCP. No response codes: dnsdist 2.1
+# counts those for the whole process, not per pool.
+#
+# Unanswered is worked out rather than stored - asked, less refused, less
+# answered - so it includes queries no server was up to take, which a
+# server's own count of timeouts would miss.
+#
+DNS_UNANSWERED = "dns_unanswered"
+DNS_CARD_COUNTERS: tuple[tuple[str, str], ...] = (
+    ("dns_queries", "Queries"),
+    ("dns_answered", "Answered"),
+    ("dns_refused", "Refused"),
+    (DNS_UNANSWERED, "Unanswered"),
+    ("dns_tcp", "Over TCP"),
+)
+#
+# The ones summed from the stored differences, in the order a reader returns them.
+#
+DNS_SUMMED: tuple[tuple[str, str], ...] = tuple(
+    (name, label) for name, label in DNS_CARD_COUNTERS if name != DNS_UNANSWERED
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Figures:
+    """What one kind of card draws: the counter its line follows and its figures."""
+
+    line: str
+    counters: tuple[tuple[str, str], ...]
+    rate: str
+
+
+HTTP_FIGURES = Figures(line="req_tot", counters=CARD_COUNTERS, rate="Requests")
+DNS_FIGURES = Figures(line="dns_queries", counters=DNS_CARD_COUNTERS, rate="Queries")
+
+
+def _unanswered(asked: int | None, *answered: int | None) -> int | None:
+    if asked is None or any(part is None for part in answered):
+        return None
+    return max(asked - sum(part for part in answered if part is not None), 0)
+
+
+def derived(counters: Mapping[str, int | None]) -> Mapping[str, int | None]:
+    """A bucket's counters with what is worked out from them added.
+
+    Floored at zero: an answer that arrives in the next bucket leaves its
+    question unanswered in this one for a moment, and a negative count would be
+    a reading nobody made.
+    """
+
+    if "dns_queries" not in counters:
+        return counters
+    return {
+        **counters,
+        DNS_UNANSWERED: _unanswered(
+            counters.get("dns_queries"), counters.get("dns_refused"), counters.get("dns_answered")
+        ),
+    }
+
+
+def dns_measurement(found: BackendMeasurement) -> BackendMeasurement:
+    """A dns pool's summed figures (`DNS_SUMMED`) in the card's order, Unanswered added.
+
+    Unanswered is known only as far as all three it is worked out from are.
+    """
+
+    summed = dict(zip((name for name, _label in DNS_SUMMED), found.totals, strict=True))
+    parts = [summed["dns_queries"], summed["dns_refused"], summed["dns_answered"]]
+    asked, refused, answered = parts
+    missing = Total(
+        label="Unanswered",
+        value=max(asked.value - refused.value - answered.value, 0),
+        counted_sec=min(part.counted_sec for part in parts),
+        span_sec=asked.span_sec,
+    )
+    summed[DNS_UNANSWERED] = missing
+    return BackendMeasurement(
+        intervals=found.intervals,
+        started_at=found.started_at,
+        ended_at=found.ended_at,
+        totals=tuple(summed[name] for name, _label in DNS_CARD_COUNTERS),
+        restarted=found.restarted,
+        handed_over=found.handed_over,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class DnsServer:
+    """One server behind a dns pool, over the window or the marked range."""
+
+    name: str
+    queries: int
+    answered: int
+    #
+    # dnsdist's running average, averaged over the readings in the range;
+    # None where none was read.
+    #
+    latency_us: float | None = None
+    status: str | None = None
+
+    @property
+    def unanswered(self) -> int:
+        return max(self.queries - self.answered, 0)
+
+    @property
+    def latency(self) -> str:
+        if self.latency_us is None:
+            return "—"
+        if self.latency_us < 1000:
+            return f"{self.latency_us / 1000:.2f} ms"
+        return f"{self.latency_us / 1000:.1f} ms"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1361,6 +1578,14 @@ class BackendTraffic:
     #
     drawn_intervals: int = 0
     handed_over: bool = False
+    #
+    # What the line counts, for the heading beside the rate unit.
+    #
+    rate: str = "Requests"
+    #
+    # A dns pool's servers, each with its own figures; empty for HAProxy's.
+    #
+    servers: tuple[DnsServer, ...] = ()
 
     #
     # There was a `quiet` property here, and the sentence it turned on -
@@ -1648,6 +1873,7 @@ def shared_ceiling(
     start: datetime,
     end: datetime,
     bucket: timedelta,
+    figures: Figures | None = None,
 ) -> int:
     """One round ceiling at or above every line's peak.
 
@@ -1664,13 +1890,14 @@ def shared_ceiling(
     serving three requests the same shape as one serving three thousand.
     """
 
+    line = (figures or HTTP_FIGURES).line
     peak = 0
     for found in series:
         grid = bucketed(found, start=start, end=end, bucket=bucket)
         peak = max(
             peak,
             max(
-                (value for entry in grid if (value := entry.counters.get("req_tot")) is not None),
+                (value for entry in grid if (value := entry.counters.get(line)) is not None),
                 default=0,
             ),
         )
@@ -1688,6 +1915,8 @@ def backend_traffic(
     measurement: BackendMeasurement | None = None,
     ceiling: int | None = None,
     chosen: Selection | None = None,
+    figures: Figures | None = None,
+    servers: Sequence[DnsServer] = (),
 ) -> BackendTraffic:
     """One series' card, drawn across the window that was asked for.
 
@@ -1697,12 +1926,23 @@ def backend_traffic(
     two windows of the same backend incomparable, which is the whole use of them.
     """
 
+    figures = figures or HTTP_FIGURES
     if measurement is None:
+        counted = [
+            Interval(
+                started_at=interval.started_at,
+                ended_at=interval.ended_at,
+                counters=derived(interval.counters),
+                restarted=interval.restarted,
+                handed_over=interval.handed_over,
+            )
+            for interval in found
+        ]
         measurement = BackendMeasurement(
             intervals=len(found),
             started_at=found[0].started_at if found else None,
             ended_at=found[-1].ended_at if found else None,
-            totals=tuple(totalled(found, name, label) for name, label in CARD_COUNTERS),
+            totals=tuple(totalled(counted, name, label) for name, label in figures.counters),
             restarted=any(interval.restarted for interval in found),
             handed_over=any(interval.handed_over for interval in found),
         )
@@ -1715,6 +1955,7 @@ def backend_traffic(
         bucket=bucket,
         ceiling=ceiling,
         chosen=chosen,
+        figures=figures,
     )
     buckets = max((end - start) / bucket, 1) if bucket else 1
     drawn = peak if ceiling is None else ceiling
@@ -1743,6 +1984,8 @@ def backend_traffic(
         peak=peak,
         restarted=measurement.restarted,
         handed_over=measurement.handed_over,
+        rate=figures.rate,
+        servers=tuple(servers),
     )
 
 

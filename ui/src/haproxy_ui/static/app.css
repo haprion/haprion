@@ -1850,6 +1850,15 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .traffic-figures dt { color: var(--muted); font-size: 12px; }
 .traffic-figures dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 16px; color: var(--text-strong); }
 /*
+ * A DNS pool's servers under its card (Fas 19a B4): one row each, the figures
+ * right-aligned so they read down a column.
+ */
+.traffic-servers { margin-top: 14px; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.traffic-servers th, .traffic-servers td { min-width: 9ch; padding: 5px 0 5px 28px; border-top: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.traffic-servers thead th { border-top: 0; color: var(--muted); font-weight: 500; }
+.traffic-servers th:first-child { padding-left: 0; text-align: left; }
+.traffic-servers td { color: var(--text-strong); }
+/*
  * The hover targets over the line. Invisible but present: they carry the
  * reading a pointer asks for, and a fill of `none` would let the pointer
  * through them.

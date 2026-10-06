@@ -2349,6 +2349,7 @@ def record_metric_samples(
     """
 
     frontends, members = metrics.samples(result)
+    member_columns = (*metrics.METRIC_COUNTERS, *metrics.DNS_COUNTERS, metrics.DNS_LATENCY)
     if not frontends and not members:
         return 0
 
@@ -2374,6 +2375,7 @@ def record_metric_samples(
                 _sample_insert(
                     "metric_backend_member",
                     ("node", "backend", "member", "check_status", "check_code"),
+                    member_columns,
                 ),
                 [
                     {
@@ -2385,7 +2387,7 @@ def record_metric_samples(
                         "check_code": sample.check_code,
                         "uptime_sec": sample.uptime_sec,
                         "status": sample.status,
-                        **_counter_values(sample.counters),
+                        **_counter_values(sample.counters, member_columns),
                     }
                     for sample in members
                 ],
@@ -2394,7 +2396,11 @@ def record_metric_samples(
     return len(frontends) + len(members)
 
 
-def _sample_insert(table: str, identifying: tuple[str, ...]) -> sql.Composed:
+def _sample_insert(
+    table: str,
+    identifying: tuple[str, ...],
+    counters: tuple[str, ...] = metrics.METRIC_COUNTERS,
+) -> sql.Composed:
     """The insert for one sample table, composed rather than formatted.
 
     Every name here is a literal from this module - the table, the identifying
@@ -2408,7 +2414,7 @@ def _sample_insert(table: str, identifying: tuple[str, ...]) -> sql.Composed:
     named the table alone would silently widen the next time one is added.
     """
 
-    columns = ("cluster", *identifying, "uptime_sec", "status", *metrics.METRIC_COUNTERS)
+    columns = ("cluster", *identifying, "uptime_sec", "status", *counters)
     return sql.SQL("insert into {table} ({columns}) values ({values})").format(
         table=sql.Identifier(table),
         columns=sql.SQL(", ").join(sql.Identifier(name) for name in columns),
@@ -2416,14 +2422,16 @@ def _sample_insert(table: str, identifying: tuple[str, ...]) -> sql.Composed:
     )
 
 
-def _counter_values(counters: Mapping[str, int]) -> dict[str, int | None]:
+def _counter_values(
+    counters: Mapping[str, int], names: tuple[str, ...] = metrics.METRIC_COUNTERS
+) -> dict[str, int | None]:
     """Every counter column, with the ones this row did not report as None.
 
     `executemany` needs every placeholder present in every row, and the missing
     ones must arrive as null rather than be left out or defaulted to zero.
     """
 
-    return {name: counters.get(name) for name in metrics.METRIC_COUNTERS}
+    return {name: counters.get(name) for name in names}
 
 
 #
@@ -2462,7 +2470,7 @@ def _bucketed_changes(table: str, scope: sql.Composable) -> sql.Composed:
     bucket = sql.SQL("date_bin(%(width)s, observed_at, {epoch})").format(epoch=BUCKET_EPOCH_SQL)
     sums = sql.SQL(", ").join(
         sql.SQL("sum({delta})::bigint").format(delta=sql.Identifier(f"delta_{name}"))
-        for name in STORED_DELTAS
+        for name in _deltas(table)
     )
     return sql.SQL(
         "select min(previous_at), max(observed_at), coalesce(bool_or(restarted), false), {sums} "
@@ -2474,14 +2482,16 @@ def _bucketed_changes(table: str, scope: sql.Composable) -> sql.Composed:
     ).format(sums=sums, table=sql.Identifier(table), scope=scope, bucket=bucket)
 
 
-def _changed_intervals(rows: Sequence[Any]) -> list[metrics.Interval]:
+def _changed_intervals(rows: Sequence[Any], names: tuple[str, ...]) -> list[metrics.Interval]:
+    """Rows of `_bucketed_changes` or `_hour_series`; `names` is that table's `_deltas`."""
+
     return [
         metrics.Interval(
             started_at=row[0],
             ended_at=row[1],
             counters={
                 name: None if value is None else int(value)
-                for name, value in zip(STORED_DELTAS, row[3:], strict=True)
+                for name, value in zip(names, row[3:], strict=True)
             },
             restarted=bool(row[2]),
         )
@@ -2621,7 +2631,7 @@ def read_backend_series(
             )
         else:
             cursor.execute(_bucketed_changes("metric_backend_member", BACKEND_SCOPE), arguments)
-        return _changed_intervals(cursor.fetchall())
+        return _changed_intervals(cursor.fetchall(), BACKEND_DELTAS)
 
 
 def read_frontend_series(
@@ -2661,7 +2671,7 @@ def read_frontend_series(
             )
         else:
             cursor.execute(_bucketed_changes("metric_frontend", FRONTEND_HELD), arguments)
-        return _changed_intervals(cursor.fetchall())
+        return _changed_intervals(cursor.fetchall(), STORED_DELTAS)
 
 
 #
@@ -2743,7 +2753,12 @@ def read_cluster_frontends(
 
 
 def read_cluster_backends(
-    connection: Connection[Any], *, cluster: str, since: datetime, until: datetime
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    since: datetime,
+    until: datetime,
+    dns: bool = False,
 ) -> list[str]:
     """Which backends this cluster serves now, by the runtime's own names.
 
@@ -2753,6 +2768,10 @@ def read_cluster_backends(
     `BACKEND` only - HAProxy's aggregate row for each backend, which is what the
     comparison is between. A per-server breakdown is a different question and
     belongs on the backend it is asked about, not on a page comparing backends.
+
+    HAProxy's backends, or with `dns` dnsdist's pools: told apart by the
+    counters on the pool's own row (0057), since the two count different things
+    and are not compared on one scale.
     """
 
     with connection.cursor() as cursor:
@@ -2760,9 +2779,13 @@ def read_cluster_backends(
             sql.SQL(
                 "select distinct backend from metric_backend_member "
                 " where cluster = %(cluster)s and member = 'BACKEND' "
+                "   and dns_queries is {kind} null "
                 "   and observed_at >= %(since)s and observed_at <= %(until)s and {active} "
                 " order by backend"
-            ).format(active=_active("metric_backend_member")),
+            ).format(
+                active=_active("metric_backend_member"),
+                kind=sql.SQL("not" if dns else ""),
+            ),
             {"cluster": cluster, "since": since, "until": until, "newest_poll": NEWEST_POLL},
         )
         return [row[0] for row in cursor.fetchall()]
@@ -2783,6 +2806,16 @@ STORED_DELTAS = (
     "bin",
     "bout",
 )
+#
+# A backend row's differences add dnsdist's (migration 0057); a frontend's do not.
+#
+BACKEND_DELTAS = (*STORED_DELTAS, *metrics.DNS_COUNTERS)
+
+
+def _deltas(table: str) -> tuple[str, ...]:
+    """The differences a metrics table stores: a backend's include dnsdist's."""
+
+    return BACKEND_DELTAS if table.startswith("metric_backend") else STORED_DELTAS
 
 
 def _interval_aggregates(names: Sequence[str], *, by_cluster: bool = False) -> sql.Composed:
@@ -2820,7 +2853,9 @@ def _stored_intervals(names: Sequence[str]) -> sql.Composed:
     ).format(deltas=sql.SQL(", ").join(sql.Identifier(f"delta_{name}") for name in names))
 
 
-def _backend_totals() -> sql.Composed:
+def _backend_totals(
+    counters: tuple[tuple[str, str], ...] = metrics.CARD_COUNTERS,
+) -> sql.Composed:
     """One backend's figures over raw samples, summed from the stored differences.
 
     Each raw sample carries what every counter did since the series' previous
@@ -2831,7 +2866,7 @@ def _backend_totals() -> sql.Composed:
     (`_hour_totals`), which hold the same differences.
     """
 
-    counters = [name for name, _label in metrics.CARD_COUNTERS]
+    names = [name for name, _label in counters]
     return sql.SQL(
         "with intervals as ("
         "    select {stored} "
@@ -2842,8 +2877,8 @@ def _backend_totals() -> sql.Composed:
         ") "
         "{aggregates} from intervals"
     ).format(
-        stored=_stored_intervals(counters),
-        aggregates=_interval_aggregates(counters),
+        stored=_stored_intervals(names),
+        aggregates=_interval_aggregates(names),
         scope=BACKEND_SCOPE,
     )
 
@@ -2884,18 +2919,40 @@ def _hour_pieces(
     would read each of their raw rows once per series.
     """
 
-    key = sql.Identifier("backend" if hours == "metric_backend_hour_delta" else "frontend")
+    backend = hours == "metric_backend_hour_delta"
+    key = sql.Identifier("backend" if backend else "frontend")
+    names = _deltas(hours)
 
     deltas = sql.SQL(", ").join(
         sql.SQL("{delta}, {span}").format(
             delta=sql.Identifier(f"delta_{name}"), span=sql.Identifier(f"span_{name}_sec")
         )
-        for name in STORED_DELTAS
+        for name in names
+    )
+    #
+    # A backend's pieces carry which row they are of - the pool's own or a
+    # server's - and its servers' latency readings (0057), summed and counted,
+    # so the servers of a dns pool can be read in one statement.
+    #
+    extra, edge_extra, raw_extra, edge_match = (
+        (
+            sql.SQL(", member, {latency}_sum, {latency}_samples").format(
+                latency=sql.SQL(metrics.DNS_LATENCY)
+            ),
+            sql.SQL(", edge.member, part.latency_sum, part.latency_samples"),
+            sql.SQL(
+                ", member, coalesce({latency}, 0) as latency_sum, "
+                "({latency} is not null)::int as latency_samples"
+            ).format(latency=sql.Identifier(metrics.DNS_LATENCY)),
+            sql.SQL(" and member = edge.member"),
+        )
+        if backend
+        else (sql.SQL(""), sql.SQL(""), sql.SQL(""), sql.SQL(""))
     )
     return sql.SQL(
         "with hours as ("
         "    select node, hour as at, crossing, first_previous_at, last_observed_at, restarted, "
-        "           samples, span_sec, span_clean_sec, {deltas}, {key} as series "
+        "           samples, span_sec, span_clean_sec, {deltas}, {key} as series{extra} "
         "      from {hours} "
         "     where {scope} and hour >= date_trunc('hour', %(after)s::timestamptz, 'UTC') "
         "       and hour <= %(until)s"
@@ -2907,12 +2964,12 @@ def _hour_pieces(
         "           part.restarted, 1, extract(epoch from part.observed_at - part.previous_at), "
         "           case when part.restarted then 0 "
         "                else extract(epoch from part.observed_at - part.previous_at) end, "
-        "           {raw_deltas_part}, edge.series "
+        "           {raw_deltas_part}, edge.series{edge_extra} "
         "      from hours as edge "
         "      cross join lateral ("
-        "          select observed_at, previous_at, restarted, {raw_deltas} "
+        "          select observed_at, previous_at, restarted, {raw_deltas}{raw_extra} "
         "            from {raw} "
-        "           where {raw_scope} and node = edge.node and {key} = edge.series "
+        "           where {raw_scope} and node = edge.node and {key} = edge.series{edge_match} "
         "             and observed_at >= edge.at and observed_at < edge.at + interval '1 hour' "
         "             and previous_at >= edge.at and previous_at >= %(after)s "
         "             and observed_at > %(after)s and observed_at <= %(until)s"
@@ -2923,6 +2980,10 @@ def _hour_pieces(
     ).format(
         deltas=deltas,
         key=key,
+        extra=extra,
+        edge_extra=edge_extra,
+        raw_extra=raw_extra,
+        edge_match=edge_match,
         hours=sql.Identifier(hours),
         raw=sql.Identifier(raw),
         scope=scope,
@@ -2936,13 +2997,13 @@ def _hour_pieces(
                 ).format(delta=sql.Identifier(f"delta_{name}")),
                 span=sql.Identifier(f"span_{name}_sec"),
             )
-            for name in STORED_DELTAS
+            for name in names
         ),
         raw_deltas_part=sql.SQL(", ").join(
             sql.SQL("part.{delta}, part.{span}").format(
                 delta=sql.Identifier(f"delta_{name}"), span=sql.Identifier(f"span_{name}_sec")
             )
-            for name in STORED_DELTAS
+            for name in names
         ),
     )
 
@@ -2961,7 +3022,7 @@ def _hour_series(
     bucket = sql.SQL("date_bin(%(width)s, at, {epoch})").format(epoch=BUCKET_EPOCH_SQL)
     sums = sql.SQL(", ").join(
         sql.SQL("sum({delta})::bigint").format(delta=sql.Identifier(f"delta_{name}"))
-        for name in STORED_DELTAS
+        for name in _deltas(hours)
     )
     return sql.SQL(
         "{pieces}"
@@ -2974,7 +3035,11 @@ def _hour_series(
 
 
 def _hour_totals(
-    hours: str, raw: str, scope: sql.Composable, raw_scope: sql.Composable
+    hours: str,
+    raw: str,
+    scope: sql.Composable,
+    raw_scope: sql.Composable,
+    counters: tuple[tuple[str, str], ...] = metrics.CARD_COUNTERS,
 ) -> sql.Composed:
     """`_interval_aggregates` over hour pieces: the columns `_measurement` reads."""
 
@@ -2982,7 +3047,7 @@ def _hour_totals(
         sql.SQL("coalesce(sum({delta}), 0)::bigint, coalesce(sum({span}), 0)").format(
             delta=sql.Identifier(f"delta_{name}"), span=sql.Identifier(f"span_{name}_sec")
         )
-        for name, _label in metrics.CARD_COUNTERS
+        for name, _label in counters
     )
     return sql.SQL(
         "{pieces}"
@@ -3004,12 +3069,21 @@ FRONTEND_HELD = sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s and o
 # hour is never drawn into the card that renamed it.
 #
 _HISTORY = (
-    "cluster = %(cluster)s and member = %(member)s and exists ("
+    "cluster = %(cluster)s and {members} and exists ("
     "    select 1 from unnest(%(backends)s::text[], %(cutoffs)s::timestamptz[]) as h(name, cutoff)"
     "     where h.name = backend and {before} coalesce(h.cutoff, 'infinity'))"
 )
-BACKEND_SCOPE = sql.SQL(_HISTORY.format(before="observed_at <"))
-BACKEND_HOUR_SCOPE = sql.SQL(_HISTORY.format(before="hour + interval '1 hour' <="))
+BACKEND_SCOPE = sql.SQL(_HISTORY.format(members="member = %(member)s", before="observed_at <"))
+BACKEND_HOUR_SCOPE = sql.SQL(
+    _HISTORY.format(members="member = %(member)s", before="hour + interval '1 hour' <=")
+)
+#
+# A pool's servers: every row but its own (`metrics.POOL_ROW`).
+#
+SERVERS_SCOPE = sql.SQL(_HISTORY.format(members="member <> 'BACKEND'", before="observed_at <"))
+SERVERS_HOUR_SCOPE = sql.SQL(
+    _HISTORY.format(members="member <> 'BACKEND'", before="hour + interval '1 hour' <=")
+)
 
 
 def _frontend_totals(
@@ -3245,11 +3319,13 @@ def read_backend_totals(
     until: datetime,
     member: str = "BACKEND",
     earlier: Sequence[EarlierName] = (),
+    counters: tuple[tuple[str, str], ...] = metrics.CARD_COUNTERS,
 ) -> metrics.BackendMeasurement:
     """One backend's figures at stored resolution, independent of its graph.
 
     Read like the frontend's: the hourly sums for a range longer than a day,
-    the raw rows otherwise.
+    the raw rows otherwise. `counters` names the figures: HAProxy's card's by
+    default, a dns pool's (`metrics.DNS_SUMMED`) for one.
     """
 
     arguments = {
@@ -3268,16 +3344,106 @@ def read_backend_totals(
                     "metric_backend_member",
                     BACKEND_HOUR_SCOPE,
                     BACKEND_SCOPE,
+                    counters,
                 ),
                 arguments,
             )
         else:
-            cursor.execute(_backend_totals(), arguments)
+            cursor.execute(_backend_totals(counters), arguments)
         row = cursor.fetchone()
 
     if row is None:
         raise RuntimeError("the backend totals aggregate returned no row")
-    return _measurement(row)
+    return _measurement(row, counters)
+
+
+def read_dns_servers(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    backend: str,
+    since: datetime,
+    until: datetime,
+    earlier: Sequence[EarlierName] = (),
+) -> list[metrics.DnsServer]:
+    """A dns pool's servers over a range: queries, answered and latency (Fas 19a B4).
+
+    The servers of the pool's newest poll only, as the page lists only the
+    names that run now. Counted as the pool's own figures are - the stored
+    differences, the hourly sums for a range longer than a day - and the
+    latency is the average of the readings that made those sums.
+    """
+
+    arguments = {
+        "cluster": cluster,
+        "backend": backend,
+        "since": since,
+        "until": until,
+        "after": since,
+        "newest_poll": NEWEST_POLL,
+        **_history(backend, earlier),
+    }
+    with connection.cursor() as cursor:
+        if _reads_hours(since, until):
+            cursor.execute(
+                sql.SQL(
+                    "{pieces}"
+                    "select member, coalesce(sum(delta_dns_queries), 0)::bigint, "
+                    "       coalesce(sum(delta_dns_answered), 0)::bigint, "
+                    "       sum({latency}_sum) / nullif(sum({latency}_samples), 0) "
+                    "  from pieces group by member"
+                ).format(
+                    pieces=_hour_pieces(
+                        "metric_backend_hour_delta",
+                        "metric_backend_member",
+                        SERVERS_HOUR_SCOPE,
+                        SERVERS_SCOPE,
+                    ),
+                    latency=sql.SQL(metrics.DNS_LATENCY),
+                ),
+                arguments,
+            )
+        else:
+            cursor.execute(
+                sql.SQL(
+                    "select member, coalesce(sum(delta_dns_queries), 0)::bigint, "
+                    "       coalesce(sum(delta_dns_answered), 0)::bigint, avg({latency}) "
+                    "  from metric_backend_member "
+                    " where {scope} and observed_at >= %(since)s and observed_at <= %(until)s "
+                    "   and previous_at >= %(since)s "
+                    " group by member"
+                ).format(scope=SERVERS_SCOPE, latency=sql.Identifier(metrics.DNS_LATENCY)),
+                arguments,
+            )
+        found = {
+            row[0]: metrics.DnsServer(
+                name=row[0],
+                queries=int(row[1]),
+                answered=int(row[2]),
+                latency_us=None if row[3] is None else float(row[3]),
+            )
+            for row in cursor.fetchall()
+        }
+        cursor.execute(
+            sql.SQL(
+                "select distinct member from metric_backend_member "
+                " where cluster = %(cluster)s and backend = %(backend)s and member <> 'BACKEND' "
+                "   and observed_at >= %(since)s and observed_at <= %(until)s and {active}"
+            ).format(active=_active("metric_backend_member")),
+            arguments,
+        )
+        running = [row[0] for row in cursor.fetchall()]
+    return [
+        found.get(name, metrics.DnsServer(name=name, queries=0, answered=0))
+        for name in sorted(running, key=_server_order)
+    ]
+
+
+def _server_order(name: str) -> tuple[int, str]:
+    """`s2` before `s10`: the generator numbers servers by position."""
+
+    digits = name.removeprefix("s")
+    return (int(digits), name) if digits.isdigit() else (1 << 30, name)
 
 
 # - DNS provider profiles --------------------------------------------------

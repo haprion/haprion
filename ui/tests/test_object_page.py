@@ -797,3 +797,65 @@ class OneCardPerBackendAcrossTheRename(DraftReading):
         cards, _asked = self.cards_with_readings_under("web")
 
         self.assertEqual(cards, 1)
+
+
+class ADnsObjectsCard(DraftReading):
+    """Fas 19a B4: a dns object's pool is drawn with a resolver's figures and its servers.
+
+    The fixture has no dns object, so the stored document is read as one: the
+    view asks the engine's reader, and that reader is what decides the kind.
+    """
+
+    DOCUMENT = b"""schema: 1
+name: public-web
+listen: {protocol: dns, port: 53}
+backend: resolver
+backends:
+  resolver:
+    balance: roundrobin
+    servers: [{host: 192.0.2.53, port: 53}, {host: 192.0.2.54, port: 53}]
+    health: {type: dns}
+"""
+
+    def page(self) -> str:
+        from haproxy_mgmt.proxy_model import load_proxy
+
+        totals: list[Any] = []
+
+        def read_totals(*_a: Any, **k: Any) -> metrics.BackendMeasurement:
+            totals.append(k.get("counters"))
+            return measurement(counters=k.get("counters", metrics.CARD_COUNTERS))
+
+        for name, answer in (
+            (
+                "haproxy_ui.views.load_proxy",
+                lambda name, _document: load_proxy(name, self.DOCUMENT),
+            ),
+            ("haproxy_ui.db.read_backend_totals", read_totals),
+            (
+                "haproxy_ui.db.read_dns_servers",
+                lambda *_a, **_k: [
+                    metrics.DnsServer(name="s1", queries=5, answered=4, latency_us=1250.0)
+                ],
+            ),
+        ):
+            patch = mock.patch(name, side_effect=answer)
+            patch.start()
+            self.addCleanup(patch.stop)
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        page = client.get("/proxies/edge-demo/public-web")
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(totals, [metrics.DNS_SUMMED])
+        return str(page.text)
+
+    def test_the_figures_are_a_resolver_s(self) -> None:
+        text = self.page()
+        card = text.split('<div class="traffic-card">', 1)[1]
+        figures = [part.split("</dt>")[0] for part in card.split("<dt>")[1:]]
+        self.assertEqual(figures, ["Queries", "Answered", "Refused", "Unanswered", "Over TCP"])
+
+    def test_the_servers_are_listed_with_their_latency(self) -> None:
+        self.assertIn(
+            "<code>s1</code></th><td>5</td><td>4</td><td>1</td><td>1.2 ms</td>", self.page()
+        )

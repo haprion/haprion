@@ -48,6 +48,99 @@ MEMBER = {
 }
 
 
+DNS_LISTENER = {
+    "version": "2.1.2-1pdns.trixie",
+    "active": True,
+    "counters": {
+        "uptime_sec": 40,
+        "pools": [
+            {"pool": "resolver", "queries": 9, "tcp_queries": 2, "refused": 1, "answered": 7},
+            {"pool": "", "queries": 3, "tcp_queries": 0, "refused": 0, "answered": 3},
+        ],
+        "servers": [
+            {
+                "pool": "resolver",
+                "server": "s1",
+                "status": "UP",
+                "queries": 8,
+                "answered": 7,
+                "latency_us": 350,
+            },
+            {
+                "pool": "resolver",
+                "server": "s2",
+                "status": "DOWN",
+                "queries": None,
+                "answered": -1,
+                "latency_us": None,
+            },
+        ],
+    },
+}
+
+
+def dns_node(name: str, *, owner: bool | None, listener: Any = DNS_LISTENER) -> dict[str, Any]:
+    found = node(name, owner=owner, frontends=[], servers=[])
+    found["status"]["dns_listener"] = listener
+    return found
+
+
+class WhatADnsListenerIsWorthKeeping(unittest.TestCase):
+    """dnsdist's counters as backend rows (Fas 19a B4): the pool's own and each server's."""
+
+    def members(self, *nodes: dict[str, Any]) -> list[metrics.MemberSample]:
+        return metrics.samples({"nodes": list(nodes)})[1]
+
+    def test_the_pool_is_its_own_row_and_each_server_one_more(self) -> None:
+        members = self.members(dns_node("node-a", owner=True))
+
+        self.assertEqual(
+            [(sample.backend, sample.member, sample.status) for sample in members],
+            [("resolver", "BACKEND", None), ("resolver", "s1", "UP"), ("resolver", "s2", "DOWN")],
+        )
+        self.assertEqual(
+            dict(members[0].counters),
+            {"dns_queries": 9, "dns_tcp": 2, "dns_refused": 1, "dns_answered": 7},
+        )
+        self.assertEqual(
+            dict(members[1].counters),
+            {"dns_queries": 8, "dns_answered": 7, "dns_latency_us": 350},
+        )
+
+    def test_what_the_node_could_not_count_is_left_out_not_zeroed(self) -> None:
+        self.assertEqual(dict(self.members(dns_node("node-a", owner=True))[2].counters), {})
+
+    def test_the_uptime_is_dnsdists_and_not_haproxys(self) -> None:
+        """dnsdist restarts with its configuration; HAProxy reloads apart from it."""
+
+        members = self.members(dns_node("node-a", owner=True))
+        self.assertEqual({sample.uptime_sec for sample in members}, {40})
+
+    def test_only_the_address_holder_counts_as_for_haproxy(self) -> None:
+        self.assertEqual(self.members(dns_node("node-b", owner=False)), [])
+        self.assertEqual(self.members(dns_node("node-b", owner=None)), [])
+
+    def test_a_listener_that_could_not_be_read_or_an_older_node_gives_nothing(self) -> None:
+        for listener in (
+            {"version": "2.1.2", "active": False, "counters": None},
+            {"version": None, "active": False},
+            None,
+        ):
+            with self.subTest(listener=listener):
+                self.assertEqual(
+                    self.members(dns_node("node-a", owner=True, listener=listener)), []
+                )
+
+    def test_the_columns_written_are_haproxy_s_and_dnsdist_s(self) -> None:
+        statement = db._sample_insert(
+            "metric_backend_member",
+            ("node", "backend", "member", "check_status", "check_code"),
+            (*metrics.METRIC_COUNTERS, *metrics.DNS_COUNTERS, metrics.DNS_LATENCY),
+        ).as_string(None)
+        for name in (*metrics.DNS_COUNTERS, metrics.DNS_LATENCY):
+            self.assertIn(f'"{name}"', statement)
+
+
 class WhatOneReadingIsWorthKeeping(unittest.TestCase):
     def samples(
         self, *nodes: dict[str, Any]

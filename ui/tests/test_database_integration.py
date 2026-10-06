@@ -4354,7 +4354,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                     raw = connection.execute(
                         db._bucketed_changes("metric_backend_member", db.BACKEND_SCOPE), arguments
                     ).fetchall()
-                    expected = ordered(db._changed_intervals(raw))
+                    expected = ordered(db._changed_intervals(raw, db.BACKEND_DELTAS))
                     self.assertTrue(expected)
                     self.assertEqual(
                         ordered(
@@ -4372,7 +4372,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                     raw = connection.execute(
                         db._bucketed_changes("metric_frontend", db.FRONTEND_HELD), arguments
                     ).fetchall()
-                    expected = ordered(db._changed_intervals(raw))
+                    expected = ordered(db._changed_intervals(raw, db.STORED_DELTAS))
                     self.assertTrue(expected)
                     self.assertEqual(
                         ordered(
@@ -4511,7 +4511,13 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                         series=psycopg.sql.Identifier(series),
                     )
                     written = connection.execute(order, (self.CLUSTER, name)).fetchall()
-                    self.assertGreater(len(written), 2 * 33 * 24)
+                    #
+                    # Both nodes write every hour of a backend; a frontend's hour
+                    # only on the node holding the address, which alternates every
+                    # three hours. Its count lands around 2 x 33 x 24 and below it
+                    # depending on the minute the test starts (1571, 26-10-06 15:01).
+                    #
+                    self.assertGreater(len(written), (2 if series == "backend" else 1) * 33 * 24)
                     connection.execute(
                         psycopg.sql.SQL(
                             "delete from {table} where cluster = %s and {series} = %s"
@@ -4919,3 +4925,308 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
         self.assertEqual(set(names), {"a", "b"})
         self.assertIsNotNone(names["a"], "a was given out again")
         self.assertIsNone(names["b"])
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
+    """Migration 0057: dnsdist's counters in the backend rows (Fas 19a B4).
+
+    Three days of a pool's own row and two servers every ten minutes, with a
+    dnsdist restart in the middle, read back over the raw rows (a short range)
+    and over the hourly sums (a long one), against the same differences summed
+    by hand. The poller's own write goes through its grants and the trigger
+    that reads the previous row as the poller.
+    """
+
+    CLUSTER = "resolving"
+    POOL = "resolver"
+    RESTART = 200
+    now: datetime
+    rows: list[tuple[str, datetime, int, dict[str, int]]]
+
+    @staticmethod
+    def connect(role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        rows: list[tuple[str, datetime, int, dict[str, int]]] = []
+        at, uptime, step = cls.now - timedelta(days=3), 100, 0
+        totals = {"BACKEND": [0, 0, 0, 0], "s1": [0, 0], "s2": [0, 0]}
+        while at <= cls.now - timedelta(minutes=10):
+            if step == cls.RESTART:
+                uptime = 5
+                totals = {key: [0] * len(value) for key, value in totals.items()}
+            pool = totals["BACKEND"]
+            for index, step_size in enumerate((10, 2, 1, 8)):
+                pool[index] += step_size
+            rows.append(
+                (
+                    "BACKEND",
+                    at,
+                    uptime,
+                    dict(zip(metrics.DNS_COUNTERS, pool, strict=True)),
+                )
+            )
+            for member, (asked, answered), latency in (
+                ("s1", (6, 5), 300 + step % 7),
+                ("s2", (3, 3), 900),
+            ):
+                served = totals[member]
+                served[0] += asked
+                served[1] += answered
+                rows.append(
+                    (
+                        member,
+                        at,
+                        uptime,
+                        {
+                            "dns_queries": served[0],
+                            "dns_answered": served[1],
+                            metrics.DNS_LATENCY: latency,
+                        },
+                    )
+                )
+            at += timedelta(minutes=10)
+            uptime += 600
+            step += 1
+        cls.rows = rows
+        columns = (*metrics.DNS_COUNTERS, metrics.DNS_LATENCY)
+        with cls.connect() as connection, connection.cursor() as cursor:
+            day = (cls.now - timedelta(days=4)).date()
+            while day <= cls.now.date() + timedelta(days=1):
+                cursor.execute("select metric_partition('metric_backend_member', %s::date)", (day,))
+                day += timedelta(days=1)
+            for member, at, uptime, counted in rows:
+                cursor.execute(
+                    "insert into metric_backend_member (cluster, node, backend, member, "
+                    "observed_at, uptime_sec, dns_queries, dns_tcp, dns_refused, dns_answered, "
+                    "dns_latency_us) values (%s, 'a', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        cls.CLUSTER,
+                        cls.POOL,
+                        member,
+                        at,
+                        uptime,
+                        *(counted.get(name) for name in columns),
+                    ),
+                )
+            #
+            # An HAProxy backend beside it, which must not be listed as dns.
+            #
+            cursor.execute(
+                "insert into metric_backend_member (cluster, node, backend, member, "
+                "observed_at, uptime_sec, req_tot) values (%s, 'a', 'web', 'BACKEND', %s, 1, 1)",
+                (cls.CLUSTER, cls.now - timedelta(minutes=10)),
+            )
+
+    def expected(self, member: str, name: str, since: datetime) -> int:
+        """The stored differences of one counter, summed by hand from the rows."""
+
+        readings = [row for row in self.rows if row[0] == member]
+        total = 0
+        for (_m, at_before, up_before, before), (_n, at, up, value) in zip(
+            readings, readings[1:], strict=False
+        ):
+            if at_before < since or at > self.now:
+                continue
+            total += value[name] if up < up_before else value[name] - before[name]
+        return total
+
+    def latency(self, member: str, since: datetime) -> float:
+        readings = [row for row in self.rows if row[0] == member]
+        found = [
+            value[metrics.DNS_LATENCY]
+            for (_m, at_before, _u, _b), (_n, at, _up, value) in zip(
+                readings, readings[1:], strict=False
+            )
+            if at_before >= since and at <= self.now
+        ]
+        return sum(found) / len(found)
+
+    def ranges(self) -> tuple[datetime, ...]:
+        # A day or less reads the raw rows; longer reads the hourly sums, and
+        # one starting inside an hour reads that hour's raw rows at its edge.
+        return (
+            self.now - timedelta(hours=20),
+            self.now - timedelta(days=3),
+            self.now - timedelta(days=2, minutes=25),
+        )
+
+    def test_the_pool_s_figures_are_its_stored_differences(self) -> None:
+        for since in self.ranges():
+            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+                found = metrics.dns_measurement(
+                    db.read_backend_totals(
+                        connection,
+                        cluster=self.CLUSTER,
+                        backend=self.POOL,
+                        since=since,
+                        until=self.now,
+                        counters=metrics.DNS_SUMMED,
+                    )
+                )
+                figures = {total.label: total.value for total in found.totals}
+                asked = self.expected("BACKEND", "dns_queries", since)
+                refused = self.expected("BACKEND", "dns_refused", since)
+                answered = self.expected("BACKEND", "dns_answered", since)
+                self.assertGreater(asked, 0)
+                self.assertEqual(
+                    figures,
+                    {
+                        "Queries": asked,
+                        "Answered": answered,
+                        "Refused": refused,
+                        "Unanswered": asked - refused - answered,
+                        "Over TCP": self.expected("BACKEND", "dns_tcp", since),
+                    },
+                )
+
+    def test_the_line_is_drawn_from_the_same_differences(self) -> None:
+        for since in self.ranges():
+            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+                drawn = db.read_backend_series(
+                    connection,
+                    cluster=self.CLUSTER,
+                    backend=self.POOL,
+                    since=since,
+                    until=self.now,
+                    width=timedelta(hours=1),
+                )
+                self.assertEqual(
+                    sum(interval.counters.get("dns_queries") or 0 for interval in drawn),
+                    self.expected("BACKEND", "dns_queries", since),
+                )
+
+    def test_each_server_is_counted_and_its_latency_averaged(self) -> None:
+        for since in self.ranges():
+            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+                servers = db.read_dns_servers(
+                    connection,
+                    cluster=self.CLUSTER,
+                    backend=self.POOL,
+                    since=since,
+                    until=self.now,
+                )
+                self.assertEqual([server.name for server in servers], ["s1", "s2"])
+                for server in servers:
+                    self.assertEqual(
+                        (server.queries, server.answered),
+                        (
+                            self.expected(server.name, "dns_queries", since),
+                            self.expected(server.name, "dns_answered", since),
+                        ),
+                    )
+                    self.assertAlmostEqual(
+                        server.latency_us or 0.0, self.latency(server.name, since), places=3
+                    )
+
+    def test_the_pool_is_listed_as_dns_and_not_among_the_backends(self) -> None:
+        since = self.now - timedelta(days=7)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            dns = db.read_cluster_backends(
+                connection, cluster=self.CLUSTER, since=since, until=self.now, dns=True
+            )
+            backends = db.read_cluster_backends(
+                connection, cluster=self.CLUSTER, since=since, until=self.now
+            )
+        self.assertEqual((dns, backends), ([self.POOL], ["web"]))
+
+    def test_the_poller_writes_a_node_s_counters_and_the_trigger_pairs_them(self) -> None:
+        def reading(queries: int, answered: int) -> dict[str, Any]:
+            return {
+                "nodes": [
+                    {
+                        "name": "a",
+                        "status": {
+                            "vip": {"owner": True},
+                            "dns_listener": {
+                                "version": "2.1.2",
+                                "active": True,
+                                "counters": {
+                                    "uptime_sec": 60 + queries,
+                                    "pools": [
+                                        {
+                                            "pool": "polled",
+                                            "queries": queries,
+                                            "tcp_queries": 1,
+                                            "refused": 0,
+                                            "answered": answered,
+                                        }
+                                    ],
+                                    "servers": [
+                                        {
+                                            "pool": "polled",
+                                            "server": "s1",
+                                            "status": "UP",
+                                            "queries": queries,
+                                            "answered": answered,
+                                            "latency_us": 420,
+                                        }
+                                    ],
+                                },
+                            },
+                        },
+                    }
+                ]
+            }
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select metric_partition('metric_backend_member', current_date)")
+        for queries, answered in ((10, 9), (25, 22)):
+            with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+                written = db.record_metric_samples(
+                    connection, cluster="polled", result=reading(queries, answered)
+                )
+                self.assertEqual(written, 2)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select member, delta_dns_queries, delta_dns_answered, dns_latency_us, status "
+                "  from metric_backend_member where cluster = 'polled' "
+                " order by observed_at desc, member limit 2"
+            )
+            self.assertEqual(
+                cursor.fetchall(), [("BACKEND", 15, 13, None, None), ("s1", 15, 13, 420, "UP")]
+            )
+
+    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
+        def columns(cursor: psycopg.Cursor, table: str) -> set[str]:
+            cursor.execute(
+                "select column_name from information_schema.columns "
+                "where table_name = %s and column_name like %s",
+                (table, "%dns%"),
+            )
+            return {row[0] for row in cursor.fetchall()}
+
+        now = datetime.now(UTC).replace(microsecond=0)
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0057_metric_dns_counters.py", cursor)
+                migration.downgrade()
+                self.assertEqual(columns(cursor, "metric_backend_member"), set())
+                self.assertEqual(columns(cursor, "metric_backend_hour_delta"), set())
+                #
+                # HAProxy's rows still pair and sum under 0048's and 0055's functions.
+                #
+                for minutes, total in ((20, 5), (10, 12)):
+                    cursor.execute(
+                        "insert into metric_backend_member (cluster, node, backend, member, "
+                        "observed_at, uptime_sec, req_tot) "
+                        "values ('down', 'a', 'web', 'BACKEND', %s, %s, %s)",
+                        (now - timedelta(minutes=minutes), 100 - minutes, total),
+                    )
+                cursor.execute(
+                    "select sum(delta_req_tot) from metric_backend_hour_delta where cluster = 'down'"
+                )
+                self.assertEqual(cursor.fetchone(), (7,))
+                migration.upgrade()
+                self.assertEqual(
+                    columns(cursor, "metric_backend_member"),
+                    {
+                        *metrics.DNS_COUNTERS,
+                        metrics.DNS_LATENCY,
+                        *(f"delta_{name}" for name in metrics.DNS_COUNTERS),
+                    },
+                )
+            connection.rollback()

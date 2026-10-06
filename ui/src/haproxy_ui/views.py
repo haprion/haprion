@@ -1562,11 +1562,18 @@ def build_router(config: Config) -> APIRouter:
         counted_since, counted_until = marked.counted(since, now)
         served: list[str] = list(detail.published.backends if detail.published else ())
         targets: dict[str, metrics.BackendTarget] = {}
+        #
+        # A dns object's pool is counted by dnsdist (Fas 19a B4) and drawn with
+        # a resolver's figures rather than HAProxy's.
+        #
+        figures = metrics.HTTP_FIGURES
         if detail.stored is not None:
             try:
                 proxy = load_proxy(name, detail.stored.document.encode())
             except ModelError:
                 proxy = None
+            if proxy is not None and proxy.listen.protocol == "dns":
+                figures = metrics.DNS_FIGURES
             if proxy is not None:
                 #
                 # One card per backend the object has now, each reading the
@@ -1596,8 +1603,25 @@ def build_router(config: Config) -> APIRouter:
                     earlier=_earlier_names(backend, targets, aliases),
                 )
 
+            dns = figures is metrics.DNS_FIGURES
+
             def totals(backend: str) -> Callable[[Any], metrics.BackendMeasurement]:
-                return lambda connection: db.read_backend_totals(
+                def read(connection: Any) -> metrics.BackendMeasurement:
+                    found = db.read_backend_totals(
+                        connection,
+                        cluster=cluster,
+                        backend=backend,
+                        since=counted_since,
+                        until=counted_until,
+                        earlier=_earlier_names(backend, targets, aliases),
+                        counters=metrics.DNS_SUMMED if dns else metrics.CARD_COUNTERS,
+                    )
+                    return metrics.dns_measurement(found) if dns else found
+
+                return read
+
+            def servers(backend: str) -> Callable[[Any], list[metrics.DnsServer]]:
+                return lambda connection: db.read_dns_servers(
                     connection,
                     cluster=cluster,
                     backend=backend,
@@ -1606,20 +1630,32 @@ def build_router(config: Config) -> APIRouter:
                     earlier=_earlier_names(backend, targets, aliases),
                 )
 
+            #
+            # Two reads a backend, and a third for a dns pool's servers.
+            #
+            stride = 3 if dns else 2
             reads: list[Callable[[Any], Any]] = [
-                read for backend in served for read in (samples(backend), totals(backend))
+                read
+                for backend in served
+                for read in (
+                    samples(backend),
+                    totals(backend),
+                    *((servers(backend),) if dns else ()),
+                )
             ]
             answers = _read_concurrently(request.app.state.pool, reads)
             traffic = [
                 metrics.backend_traffic(
                     metrics.backend_label(backend, targets),
-                    answers[index * 2],
+                    answers[index * stride],
                     tick_format=chosen.tick,
                     start=since,
                     end=now,
                     bucket=chosen.bucket,
                     chosen=marked,
-                    measurement=answers[index * 2 + 1],
+                    measurement=answers[index * stride + 1],
+                    figures=figures,
+                    servers=answers[index * stride + 2] if dns else (),
                 )
                 for index, backend in enumerate(served)
             ]
@@ -1766,7 +1802,7 @@ def build_router(config: Config) -> APIRouter:
         # The names first, on one connection: they are cheap, and every card's
         # readings depend on them.
         #
-        listed: list[tuple[str, list[str], list[tuple[str, bool]]]] = []
+        listed: list[tuple[str, list[str], list[tuple[str, bool]], list[str]]] = []
         #
         # Each backend's earlier names, so a renamed one keeps its history
         # under the name it has now: the generator's own rename (B250) from the
@@ -1802,6 +1838,14 @@ def build_router(config: Config) -> APIRouter:
                             )
                             if not metrics.is_exporter(seen[0])
                         ],
+                        #
+                        # dnsdist's pools (Fas 19a B4), a section of their own:
+                        # queries are not requests, and one scale for both
+                        # would compare two different things.
+                        #
+                        db.read_cluster_backends(
+                            connection, cluster=cluster, since=since, until=now, dns=True
+                        ),
                     )
                 )
 
@@ -1857,23 +1901,61 @@ def build_router(config: Config) -> APIRouter:
 
             return samples, totals
 
+        def dns_reads(cluster: str, name: str) -> tuple[Callable[[Any], Any], ...]:
+            earlier = _earlier_names(name, targets_of[cluster], aliases[cluster])
+            samples, _totals = backend_reads(cluster, name)
+
+            def totals(connection: Any) -> metrics.BackendMeasurement:
+                return metrics.dns_measurement(
+                    db.read_backend_totals(
+                        connection,
+                        cluster=cluster,
+                        backend=name,
+                        since=counted_since,
+                        until=counted_until,
+                        earlier=earlier,
+                        counters=metrics.DNS_SUMMED,
+                    )
+                )
+
+            def servers(connection: Any) -> list[metrics.DnsServer]:
+                return db.read_dns_servers(
+                    connection,
+                    cluster=cluster,
+                    backend=name,
+                    since=counted_since,
+                    until=counted_until,
+                    earlier=earlier,
+                )
+
+            return samples, totals, servers
+
         #
         # Every card's two readings, asked together, then handed back to the
         # section each card belongs to.
         #
         keys: list[tuple[str, str, str]] = []
         reads: list[Callable[[Any], Any]] = []
-        for cluster, backends, seen in listed:
+        spans: list[int] = []
+        for cluster, backends, seen, pools in listed:
             for frontend, _owned in seen:
                 keys.append((cluster, "frontend", frontend))
                 reads.extend(frontend_reads(cluster, frontend))
+                spans.append(2)
             for backend in backends:
                 keys.append((cluster, "backend", backend))
                 reads.extend(backend_reads(cluster, backend))
+                spans.append(2)
+            for pool_name in pools:
+                keys.append((cluster, "dns", pool_name))
+                reads.extend(dns_reads(cluster, pool_name))
+                spans.append(3)
         answers = _read_concurrently(pool, reads)
-        read_back = {
-            key: (answers[index * 2], answers[index * 2 + 1]) for index, key in enumerate(keys)
-        }
+        read_back: dict[tuple[str, str, str], tuple[Any, ...]] = {}
+        at = 0
+        for key, span in zip(keys, spans, strict=True):
+            read_back[key] = tuple(answers[at : at + span])
+            at += span
 
         def section(
             cluster: str, kind: str, named: Sequence[str], label: Callable[[str], str]
@@ -1885,30 +1967,34 @@ def build_router(config: Config) -> APIRouter:
             of the comparison the section exists to make.
             """
 
-            found = [(name, *read_back[(cluster, kind, name)]) for name in named]
+            figures = metrics.DNS_FIGURES if kind == "dns" else metrics.HTTP_FIGURES
+            found = [(name, read_back[(cluster, kind, name)]) for name in named]
             ceiling = metrics.shared_ceiling(
-                [series for _name, series, _totals in found],
+                [answered[0] for _name, answered in found],
                 start=since,
                 end=now,
                 bucket=chosen.bucket,
+                figures=figures,
             )
             return [
                 metrics.backend_traffic(
                     label(name),
-                    samples,
+                    answered[0],
                     tick_format=chosen.tick,
                     start=since,
                     end=now,
                     bucket=chosen.bucket,
-                    measurement=totals,
+                    measurement=answered[1],
                     ceiling=ceiling,
                     chosen=marked,
+                    figures=figures,
+                    servers=answered[2] if len(answered) > 2 else (),
                 )
-                for name, samples, totals in found
+                for name, answered in found
             ]
 
         drawn = []
-        for cluster, backends, seen in listed:
+        for cluster, backends, seen, pools in listed:
             targets = targets_of[cluster]
 
             def label(name: str, targets: Mapping[str, metrics.BackendTarget] = targets) -> str:
@@ -1920,7 +2006,7 @@ def build_router(config: Config) -> APIRouter:
 
                 return metrics.backend_label(name, targets)
 
-            pools, redirects = metrics.split_backends(backends, targets)
+            served_pools, redirects = metrics.split_backends(backends, targets)
 
             frontends = [frontend for frontend, _owned in seen]
             drawn.append(
@@ -1951,8 +2037,9 @@ def build_router(config: Config) -> APIRouter:
                     # so letting it into the comparison would size every real
                     # backend against traffic that never reached one.
                     #
-                    "backends": section(cluster, "backend", pools, label),
+                    "backends": section(cluster, "backend", served_pools, label),
                     "redirects": section(cluster, "backend", redirects, label),
+                    "dns": section(cluster, "dns", pools, label),
                 }
             )
 

@@ -2992,6 +2992,12 @@ verified `--package-sha256`, the matching signed `--source-description` and veri
 Keep both source archives beside the source description. The bundle retains the package,
 complete corresponding source, license and rebuild instructions; a bit-for-bit rebuild has
 not been demonstrated. Only matching Debian-family distribution packages are supported.
+Before writing the bundle, the tool looks the package version up in the OSV database
+under the distribution's release (`Debian:<release>` or `Ubuntu:<release>`) and refuses
+the build if any advisory affects it, or if the database holds nothing for that release.
+The lookup needs network access to `api.osv.dev` and answers for the day it runs, so
+rebuild to check again. The bundle freezes Certmonger's own programs only; the libraries
+they load are the distribution's and follow its updates.
 Install the reviewed bundle as root with
 `install/platform/16-platform-scep <bundle.zip> <verified-bundle-sha256>`.
 The installer checks hashes, archive paths, OS release and architecture, installs runtime

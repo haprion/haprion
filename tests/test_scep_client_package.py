@@ -25,6 +25,59 @@ def tool(name: str) -> Any:
     return module
 
 
+class FakeOsv:
+    """OSV as the build asks it: the control package, then Certmonger."""
+
+    def __init__(self, *, known: str = "Ubuntu:26.04:LTS", found: list[str] | None = None) -> None:
+        self.known, self.found = known, found or []
+        self.asked: list[dict[str, Any]] = []
+
+    def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
+        self.asked.append(body)
+        package = body["package"]
+        if package["name"] == "openssl":
+            if not self.known.startswith(package["ecosystem"]):
+                return {}
+            return {
+                "vulns": [{"id": "EXAMPLE-1", "affected": [{"package": {"ecosystem": self.known}}]}]
+            }
+        return {"vulns": [{"id": record} for record in self.found]}
+
+
+class Advisories(unittest.TestCase):
+    def setUp(self) -> None:
+        self.builder = tool("build-scep-client")
+
+    def check(self, osv: FakeOsv, distribution: str = "ubuntu", release: str = "26.04") -> str:
+        return str(self.builder.advisories("0.79.21-1", distribution, release, osv))
+
+    def test_a_version_without_advisories_passes_after_the_release_is_proven_known(self) -> None:
+        osv = FakeOsv()
+        self.assertIn("no known advisories", self.check(osv))
+        self.assertEqual(
+            osv.asked[1],
+            {
+                "package": {"name": "certmonger", "ecosystem": "Ubuntu:26.04"},
+                "version": "0.79.21-1",
+            },
+        )
+
+    def test_an_advisory_refuses_the_bundle(self) -> None:
+        with self.assertRaisesRegex(ValueError, "UBUNTU-CVE-2099-0001"):
+            self.check(FakeOsv(found=["UBUNTU-CVE-2099-0001"]))
+
+    def test_a_release_the_database_does_not_know_is_refused_not_passed(self) -> None:
+        # OSV answers an unknown release with an empty list (26-10-06).
+        osv = FakeOsv()
+        with self.assertRaisesRegex(ValueError, "holds nothing for Ubuntu:99.04"):
+            self.check(osv, release="99.04")
+        self.assertEqual(len(osv.asked), 1)
+
+    def test_a_distribution_without_a_database_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no vulnerability database"):
+            self.check(FakeOsv(), distribution="example")
+
+
 class BundleInspection(unittest.TestCase):
     def setUp(self) -> None:
         self.installer = tool("install-scep-client")
@@ -159,8 +212,9 @@ class ReproducibleBuild(unittest.TestCase):
                 "distribution_release": "26.04",
             }
             first, second = root / "first.zip", root / "second.zip"
-            one = builder.build(**arguments, output=first)
-            two = builder.build(**arguments, output=second)
+            one, checked = builder.build(**arguments, output=first, query=FakeOsv())
+            two, _ = builder.build(**arguments, output=second, query=FakeOsv())
+            self.assertEqual(checked, "Ubuntu:26.04: no known advisories for certmonger 0.79.21-1")
             self.assertEqual(one, two)
             self.assertEqual(first.read_bytes(), second.read_bytes())
             installer.inspect_bundle(first, one)

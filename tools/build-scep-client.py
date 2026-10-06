@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Build a deterministic Certmonger bundle from verified distro package and source."""
+"""Build a deterministic Certmonger bundle from verified distro package and source.
+
+The bundle freezes Certmonger's own programs; the libraries they load stay the
+distribution's and follow its updates. Before the bundle is written, the
+package version is looked up in the OSV database under the distribution's
+release (the distribution's own security tracker, as OSV carries it), and the
+build is refused if any advisory affects it. The lookup is made when the
+bundle is built, so rebuild to check again.
+"""
 
 from __future__ import annotations
 
@@ -9,10 +17,14 @@ import io
 import json
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
+import urllib.request
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 NAME = re.compile(r"[A-Za-z0-9_.+-]+")
 DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -23,6 +35,56 @@ PROGRAMS = {
     "bin/scep-submit": "./usr/lib/certmonger/scep-submit",
     "LICENSE": "./usr/share/doc/certmonger/copyright",
 }
+OSV_QUERY = "https://api.osv.dev/v1/query"
+ECOSYSTEMS = {"debian": "Debian", "ubuntu": "Ubuntu"}
+#
+# OSV answers a release it has no data for exactly as a release with no
+# advisories: an empty list (measured 26-10-06, Ubuntu:99.04). A package every
+# release ships and that always has advisories proves the release is known
+# before an empty answer for Certmonger is believed.
+#
+CONTROL_PACKAGE = "openssl"
+
+
+def osv_query(body: dict[str, Any]) -> dict[str, Any]:
+    request = urllib.request.Request(  # noqa: S310 - fixed https endpoint
+        OSV_QUERY,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310 - fixed https endpoint
+        answer = json.loads(response.read(MAX_BYTES))
+    if not isinstance(answer, dict):
+        raise ValueError("the vulnerability database gave an unreadable answer")
+    return answer
+
+
+def advisories(
+    version: str,
+    distribution: str,
+    distribution_release: str,
+    query: Callable[[dict[str, Any]], dict[str, Any]],
+) -> str:
+    """Refuse a Certmonger version with a known advisory; name the ecosystem asked."""
+    if distribution not in ECOSYSTEMS:
+        raise ValueError(f"no vulnerability database is known for {distribution}")
+    ecosystem = f"{ECOSYSTEMS[distribution]}:{distribution_release}"
+    control = query({"package": {"name": CONTROL_PACKAGE, "ecosystem": ecosystem}})
+    known = {
+        str(affected.get("package", {}).get("ecosystem"))
+        for record in control.get("vulns", [])
+        for affected in record.get("affected", [])
+    }
+    if not any(name == ecosystem or name.startswith(ecosystem + ":") for name in known):
+        raise ValueError(f"the vulnerability database holds nothing for {ecosystem}")
+    found = query({"package": {"name": "certmonger", "ecosystem": ecosystem}, "version": version})
+    records = sorted(str(record.get("id")) for record in found.get("vulns", []))
+    if records or found.get("next_page_token"):
+        raise ValueError(
+            f"certmonger {version} has known advisories in {ecosystem}: {', '.join(records)}"
+        )
+    return f"{ecosystem}: no known advisories for certmonger {version}"
 
 
 def verified(path: Path, digest: str) -> bytes:
@@ -53,7 +115,9 @@ def build(
     distribution: str,
     distribution_release: str,
     output: Path,
-) -> str:
+    query: Callable[[dict[str, Any]], dict[str, Any]] = osv_query,
+) -> tuple[str, str]:
+    """The bundle's SHA-256 and the advisory lookup's answer."""
     package_bytes = verified(package, package_sha256)
     source_bytes = verified(source_description, source_sha256)
     with tempfile.TemporaryDirectory(prefix="scep-package-") as directory:
@@ -73,6 +137,7 @@ def build(
     for value in (version, architecture, distribution, distribution_release):
         if NAME.fullmatch(value) is None or value in {".", ".."}:
             raise ValueError("invalid bundle identity")
+    checked = advisories(version, distribution, distribution_release, query)
     source = source_bytes.decode("utf-8")
     if not re.search(r"^Source: certmonger$", source, re.M) or not re.search(
         r"^Version: " + re.escape(version) + "$", source, re.M
@@ -140,7 +205,7 @@ def build(
             entry.external_attr = (0o100555 if name.startswith("bin/") else 0o100444) << 16
             entry.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(entry, data)
-    return hashlib.sha256(output.read_bytes()).hexdigest()
+    return hashlib.sha256(output.read_bytes()).hexdigest(), checked
 
 
 def main() -> int:
@@ -154,7 +219,9 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
-        print(build(**vars(args)))
+        digest, checked = build(**vars(args))
+        print(checked, file=sys.stderr)
+        print(digest)
     except (ValueError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
         parser.exit(1, f"SCEP bundle build failed: {exc}\n")
     return 0

@@ -332,6 +332,7 @@ def run(
                 return blocked
 
         if step.action is Action.FINISHED:
+            _settle(status, report, target)
             return DeployRun(_report(writer, status, step, report), report)
 
         if step.action is Action.SKIP:
@@ -530,6 +531,68 @@ def _verify(status: ClusterStatus, node_name: str, target: Target | None) -> boo
         if node.name == node_name:
             return None if not node.status_ok else target.is_current(node)
     return None
+
+
+def _settle(status: ClusterStatus, report: DeployReport, target: Target | None) -> None:
+    """The node lines from the last reading, as the outcome is (CR-08).
+
+    A deployed node is verified against the same reading the run's outcome is
+    judged on: one that could not be read just after its deploy is verified now
+    if it can be, and one that no longer runs the target is not called updated.
+    A node skipped as current stays as it was found, as the contract has it;
+    a warning says it moved since.
+    """
+
+    if target is None:
+        return
+    observed = {node.name: node for node in status.observation().nodes}
+    for name, entry in report.nodes.items():
+        node = observed.get(name)
+        if node is None or entry.outcome not in ("current", "updated"):
+            continue
+        current = target.is_current(node) if node.status_ok else None
+        if entry.outcome == "updated":
+            if current is True:
+                entry.verified = True
+            elif current is False:
+                entry.outcome, entry.verified = "failed", False
+                entry.error = Message(
+                    code="target_not_reached",
+                    message="the node is not running the target at the end of the run",
+                    node=name,
+                )
+            elif not entry.verified:
+                entry.outcome = "failed"
+                entry.error = Message(
+                    code="node_unverified",
+                    message="the node could not be read after its deploy; whether it runs "
+                    "the target is unknown",
+                    node=name,
+                )
+        if current is False and entry.outcome == "failed":
+            report.warnings.append(
+                Message(
+                    code="target_not_reached",
+                    message=f"{name} is not running the target at the end of the run",
+                    node=name,
+                )
+            )
+        elif current is False:
+            report.warnings.append(
+                Message(
+                    code="target_not_reached",
+                    message=f"{name} was current when it was passed over and is not any more",
+                    node=name,
+                )
+            )
+        elif entry.outcome == "failed":
+            report.warnings.append(
+                Message(
+                    code="node_unverified",
+                    message=f"{name} could not be read after its deploy",
+                    node=name,
+                )
+            )
 
 
 def _record_skip(report: DeployReport, step: Step) -> None:

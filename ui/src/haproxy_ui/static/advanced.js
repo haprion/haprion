@@ -46,7 +46,13 @@
         }
         holder.replaceChildren(document.importNode(answer, true));
       } catch {
-        waiting.textContent = "No answer from the server. Nothing was saved.";
+        //
+        // No answer is not "nothing happened": the server may have saved the
+        // draft and queued the publish before the answer was lost (review
+        // 2026-10-04, CR-11). The text stays in the dialog either way.
+        //
+        waiting.textContent =
+          "No answer from the server. Check the draft and Jobs before trying again.";
       }
     });
   };

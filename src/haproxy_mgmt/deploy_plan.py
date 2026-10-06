@@ -514,17 +514,44 @@ def next_step(
 
         return Step(action=Action.DEPLOY, node=node.name)
 
-    return _finish(observation, progress)
+    return _finish(observation, progress, target)
 
 
-def _finish(observation: ClusterObservation, progress: Progress) -> Step:
+def _finish(
+    observation: ClusterObservation, progress: Progress, target: Target | None = None
+) -> Step:
     """Nothing left to touch: say how it went.
 
     Partial is not failure. It means the cluster was left in a state the run
     could not fully verify - a node that could not be read, or one that was
     passed over earlier - and that someone should run the same command again
     when the missing node is back.
+
+    Judged on the last reading of every node against the target, not on what
+    each node looked like when it was handled (review 2026-10-04, CR-08). A
+    node handled early is never a candidate again, so one that fell back to an
+    older release while a later node was deployed - or that could not be read
+    right after its own deploy - used to end the run as converged.
     """
+
+    if target is not None:
+        behind = sorted(
+            node.name for node in observation.usable if target.is_current(node) is False
+        )
+        if behind:
+            return Step(
+                action=Action.FINISHED,
+                reason=f"{', '.join(behind)} is not on the target at the end of the run",
+                outcome=Outcome.PARTIAL,
+                exit_code=EXIT_INCOMPLETE,
+            )
+        if any(target.is_current(node) is None for node in observation.usable):
+            return Step(
+                action=Action.FINISHED,
+                reason="some nodes could not be verified",
+                outcome=Outcome.PARTIAL,
+                exit_code=EXIT_INCOMPLETE,
+            )
 
     unverified = len(observation.usable) < observation.configured
     if progress.degraded or unverified:

@@ -171,3 +171,25 @@ class TheDialogInABrowser(DraftReading):
         page.wait_for_url("**/proxies?published=public-web")
 
         self.assertEqual([job["operation"] for job in self.queued], ["objects_publish"])
+
+    def test_a_lost_answer_after_the_save_does_not_say_nothing_was_saved(self) -> None:
+        """CR-11: the server saved and queued; only the answer was lost on the way back."""
+
+        page = self.open_page()
+        text = "balance leastconn\nserver app1 192.0.2.30:8080 check\nretries 5\n"
+        page.fill("textarea[name=advanced]", text)
+
+        def lose_the_answer(route: Any) -> None:
+            route.fetch()
+            route.abort("connectionreset")
+
+        page.route("**/advanced", lose_the_answer)
+        page.click("[data-advanced-form] button[value=publish]")
+        page.wait_for_selector("[data-advanced-answer] .advanced-waiting:has-text('No answer')")
+
+        shown = page.inner_text("[data-advanced-answer]")
+        self.assertEqual(len(self.saved), 1)
+        self.assertEqual(len(self.queued), 1)
+        self.assertNotIn("Nothing was saved", shown)
+        self.assertIn("Check the draft and Jobs before trying again", shown)
+        self.assertEqual(page.input_value("textarea[name=advanced]"), text)

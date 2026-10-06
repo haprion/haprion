@@ -10,8 +10,11 @@ Every case below is a state the production pair cannot be put into.
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import unittest
+from pathlib import Path
+from typing import Any
 
 from haproxy_mgmt import deploy_run
 from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
@@ -51,6 +54,100 @@ def deploy(
     )
     LAST_REPORT[:] = [outcome.report]
     return outcome.exit_code, out.getvalue()
+
+
+def reconcile_semantics() -> Any:
+    """The contract's own semantic check, `contract-tests/validate_contracts.py`."""
+
+    path = Path(__file__).resolve().parents[1] / "contract-tests" / "validate_contracts.py"
+    spec = importlib.util.spec_from_file_location("validate_contracts", path)
+    assert spec is not None and spec.loader is not None  # noqa: S101 - a fixed file
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.check_reconcile_semantics
+
+
+class TheEndIsJudgedOnTheLastReading(unittest.TestCase):
+    """CR-08: converged means every node runs the target in the run's last reading."""
+
+    def finish(self, cluster: FakeCluster) -> tuple[int, dict[str, Any]]:
+        code, _ = deploy(cluster, expected_hash=TARGET_HASH)
+        document = LAST_REPORT[0].as_envelope("alpha")
+        reconcile_semantics()(document, Path("deploy"))
+        return code, document
+
+    def test_a_node_that_falls_back_while_the_owner_is_deployed_is_not_converged(self) -> None:
+        """Scenario A: node-b deployed and verified, then back on the old release."""
+
+        def fall_back(cluster: FakeCluster, node: FakeNode) -> None:
+            if node.name == "node-a":
+                cluster.node("node-b").release_hash = OLD_HASH
+
+        code, document = self.finish(pair(on_deploy=fall_back))
+
+        self.assertEqual(code, 69)
+        self.assertEqual(document["outcome"], "partial")
+        self.assertFalse(document["result"]["converged"])
+        rows = {row["name"]: row for row in document["result"]["nodes"]}
+        self.assertEqual(rows["node-b"]["outcome"], "failed")
+        self.assertFalse(rows["node-b"]["verified"])
+        self.assertEqual(rows["node-b"]["error"]["code"], "target_not_reached")
+
+    def test_a_node_unreadable_after_its_deploy_that_returns_behind_is_not_converged(self) -> None:
+        """Scenario B: unreadable right after its trigger, back on the old release later."""
+
+        def flicker(cluster: FakeCluster, node: FakeNode) -> None:
+            other = cluster.node("node-b")
+            if node.name == "node-b":
+                other.reachable = False
+            else:
+                other.reachable, other.release_hash = True, OLD_HASH
+
+        code, document = self.finish(pair(on_deploy=flicker))
+
+        self.assertEqual(code, 69)
+        self.assertFalse(document["result"]["converged"])
+        rows = {row["name"]: row for row in document["result"]["nodes"]}
+        self.assertEqual(rows["node-b"]["outcome"], "failed")
+
+    def test_a_node_unreadable_after_its_deploy_that_returns_right_is_verified(self) -> None:
+        def flicker(cluster: FakeCluster, node: FakeNode) -> None:
+            cluster.node("node-b").reachable = node.name != "node-b"
+
+        code, document = self.finish(pair(on_deploy=flicker))
+
+        self.assertEqual(code, 0)
+        self.assertTrue(document["result"]["converged"])
+        rows = {row["name"]: row for row in document["result"]["nodes"]}
+        self.assertEqual((rows["node-b"]["outcome"], rows["node-b"]["verified"]), ("updated", True))
+
+    def test_a_node_unreadable_at_the_end_is_not_converged_and_not_called_updated(self) -> None:
+        def gone(cluster: FakeCluster, node: FakeNode) -> None:
+            cluster.node("node-b").reachable = False
+
+        code, document = self.finish(pair(on_deploy=gone))
+
+        self.assertEqual(code, 69)
+        self.assertFalse(document["result"]["converged"])
+        rows = {row["name"]: row for row in document["result"]["nodes"]}
+        self.assertEqual(rows["node-b"]["outcome"], "failed")
+        self.assertEqual(rows["node-b"]["error"]["code"], "node_unverified")
+
+    def test_a_node_that_was_current_and_drifts_is_named(self) -> None:
+        cluster = pair()
+        cluster.node("node-b").release_hash = TARGET_HASH
+
+        def drift(cluster: FakeCluster, node: FakeNode) -> None:
+            cluster.node("node-b").release_hash = OLD_HASH
+
+        cluster.on_deploy = drift
+        code, document = self.finish(cluster)
+
+        self.assertEqual(code, 69)
+        self.assertIn(
+            "node-b was current when it was passed over and is not any more",
+            [warning["message"] for warning in document["warnings"]],
+        )
 
 
 class OrderingTests(unittest.TestCase):

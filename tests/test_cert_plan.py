@@ -227,8 +227,25 @@ class OrderAndBlockingTests(unittest.TestCase):
             node("node-b", owner=False, certificates=STALE),
         )
 
+        #
+        # Each node's deploy lands; the run's end is judged on that last reading
+        # (CR-08), so the fixture says it rather than repeating the first one.
+        #
+        b_landed = pair(
+            VipState.UNKNOWN,
+            node("node-a", owner=None, certificates=STALE),
+            node("node-b", owner=False, certificates=CURRENT),
+        )
+        both_landed = pair(
+            VipState.UNKNOWN,
+            node("node-a", owner=None, certificates=CURRENT),
+            node("node-b", owner=False, certificates=CURRENT),
+        )
+
         _, blocked, _ = drive([state], target=BOTH)
-        trace, overridden, _ = drive([state, state, state], target=BOTH, allow_vip_unknown=True)
+        trace, overridden, _ = drive(
+            [state, b_landed, both_landed], target=BOTH, allow_vip_unknown=True
+        )
 
         self.assertIs(blocked, Outcome.BLOCKED)
         self.assertIs(overridden, Outcome.DONE)

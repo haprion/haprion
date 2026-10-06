@@ -16,6 +16,7 @@ from __future__ import annotations
 import unittest
 
 from haproxy_mgmt.deploy_plan import (
+    EXIT_INCOMPLETE,
     Action,
     Outcome,
     ReleaseTarget,
@@ -334,12 +335,49 @@ class CurrentSkipTests(unittest.TestCase):
             node("node-a", owner=True, hash_=TARGET),
             node("node-b", owner=False, hash_=BEHIND),
         )
+        #
+        # The reading after node-b's deploy shows it on the target. Fed the
+        # same state twice, the run ended converged with node-b still behind -
+        # which is the gap CR-08 closed, not a property worth keeping.
+        #
+        landed = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=TARGET),
+            node("node-b", owner=False, hash_=TARGET),
+        )
 
-        trace, outcome, code = drive([state, state], target=ReleaseTarget(version=8, hash=TARGET))
+        trace, outcome, code = drive([state, landed], target=ReleaseTarget(version=8, hash=TARGET))
 
         self.assertEqual(trace, ["deploy:node-b", "skip:node-a"])
         self.assertIs(outcome, Outcome.DONE)
         self.assertEqual(code, 0)
+
+    def test_a_node_that_fell_back_while_another_was_deployed_is_not_converged(self) -> None:
+        """CR-08 scenario A: node-b deployed and verified, then back on the old release."""
+
+        before = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=BEHIND),
+            node("node-b", owner=False, hash_=BEHIND),
+        )
+        b_landed = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=BEHIND),
+            node("node-b", owner=False, hash_=TARGET),
+        )
+        b_fell_back = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=TARGET),
+            node("node-b", owner=False, hash_=BEHIND),
+        )
+
+        trace, outcome, code = drive(
+            [before, b_landed, b_fell_back], target=ReleaseTarget(version=8, hash=TARGET)
+        )
+
+        self.assertEqual(trace, ["deploy:node-b", "deploy:node-a"])
+        self.assertIs(outcome, Outcome.PARTIAL)
+        self.assertEqual(code, EXIT_INCOMPLETE)
 
     def test_skipping_a_current_node_is_success_not_partial(self) -> None:
         #
@@ -372,8 +410,15 @@ class CurrentSkipTests(unittest.TestCase):
             node("node-a", owner=True, hash_=TARGET, addresses=False),
             node("node-b", owner=False, hash_=TARGET, addresses=True),
         )
+        repaired = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=TARGET, addresses=True),
+            node("node-b", owner=False, hash_=TARGET, addresses=True),
+        )
 
-        trace, outcome, code = drive([state, state], target=ReleaseTarget(version=8, hash=TARGET))
+        trace, outcome, code = drive(
+            [state, repaired], target=ReleaseTarget(version=8, hash=TARGET)
+        )
 
         self.assertEqual(trace, ["skip:node-b", "deploy:node-a"])
         self.assertIs(outcome, Outcome.DONE)

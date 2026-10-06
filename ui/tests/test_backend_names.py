@@ -17,7 +17,7 @@ from uuid import UUID
 
 from haproxy_mgmt.proxy_model import load_proxy
 
-from haproxy_ui import health, objects, operations, traffic_logs
+from haproxy_ui import health, metrics, objects, operations, traffic_logs
 from haproxy_ui.db import Job
 
 
@@ -204,3 +204,60 @@ class TheFormSaysWhatTheNameIsFor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def site(name: str, pools: str = "web", redirect: str = "") -> Any:
+    """An http object; the first pool takes `/`, each other one a path of its own."""
+
+    names = pools.split()
+    routes = f"  - path: /\n    backend: {names[0]}\n" + "".join(
+        f"  - path: /to-{pool}\n    backend: {pool}\n" for pool in names[1:]
+    )
+    if redirect:
+        routes += f"  - path: {redirect}\n    redirect:\n      location: https://example.net/\n"
+    backends = "".join(
+        f"  {pool}:\n    balance: roundrobin\n    servers:\n"
+        f"      - host: 198.51.100.10\n        port: 8080\n"
+        for pool in names
+    )
+    return load_proxy(
+        name,
+        (
+            f"schema: 1\nname: {name}\nhostnames: [{name}.example.com]\n"
+            f"listen:\n  protocol: http\nroutes:\n{routes}backends:\n{backends}"
+        ).encode(),
+    )
+
+
+class WhatAPublishRenames(unittest.TestCase):
+    """The history follows a rename only where the publish says which became which."""
+
+    def test_one_pool_for_another_is_a_rename_under_both_older_forms(self) -> None:
+        renamed, introduced = metrics.renamed_backends(
+            site("monitor", "admin-web_80"), site("monitor", "monitor-web")
+        )
+
+        self.assertEqual(
+            renamed,
+            {"admin-web_80": "monitor-web", "mgd-monitor-admin-web_80": "monitor-web"},
+        )
+        self.assertEqual(introduced, ["monitor-web"])
+
+    def test_two_pools_changed_at_once_are_not_guessed_at(self) -> None:
+        renamed, introduced = metrics.renamed_backends(
+            site("shop", "web api"), site("shop", "front back")
+        )
+
+        self.assertEqual(renamed, {})
+        self.assertEqual(introduced, ["back", "front"])
+
+    def test_a_renamed_object_takes_its_redirects_history_along(self) -> None:
+        renamed, _introduced = metrics.renamed_backends(
+            site("shop", "web", redirect="/old"), site("store", "web", redirect="/old")
+        )
+
+        self.assertEqual(renamed["shop-redirect-old"], "store-redirect-old")
+        self.assertNotIn("web", renamed)
+
+    def test_a_new_object_renames_nothing(self) -> None:
+        self.assertEqual(metrics.renamed_backends(None, site("shop")), ({}, ["web"]))

@@ -18,6 +18,7 @@ import unittest
 from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from haproxy_ui import db
 from haproxy_ui.metrics import CARD_COUNTERS, METRIC_COUNTERS, SUMMARY_COUNTERS
@@ -143,7 +144,7 @@ class ThePoolFiguresQuery(unittest.TestCase):
         for read in (db.read_backend_totals, db.read_frontend_totals):
             with self.subTest(read.__name__):
                 connection = BackendTotalConnection((0, None, None, False, False, 0.0, 0.0, *pairs))
-                scope = (
+                scope: dict[str, Any] = (
                     {"backend": "mgd-site-web"}
                     if read is db.read_backend_totals
                     else {"frontend": "fe"}
@@ -172,7 +173,7 @@ class ThePoolFiguresQuery(unittest.TestCase):
             for read in (db.read_backend_series, db.read_frontend_series):
                 with self.subTest(read.__name__, span=span, width=width):
                     connection = BackendTotalConnection(())
-                    scope = (
+                    scope: dict[str, Any] = (
                         {"backend": "mgd-site-web"}
                         if read is db.read_backend_series
                         else {"frontend": "fe"}

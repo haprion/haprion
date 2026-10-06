@@ -21,7 +21,7 @@ below stay a contract rather than whatever the table happens to hold.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -2489,6 +2489,94 @@ def _changed_intervals(rows: Sequence[Any]) -> list[metrics.Interval]:
     ]
 
 
+@dataclass(frozen=True, slots=True)
+class EarlierName:
+    """A name a backend had before, and until when its readings are the backend's.
+
+    `until` is null while nobody has given the name to another backend.
+    """
+
+    name: str
+    until: datetime | None = None
+
+
+def _history(backend: str, earlier: Sequence[EarlierName]) -> dict[str, list[Any]]:
+    """`%(backends)s` and `%(cutoffs)s` for the history scopes: the current name first."""
+
+    names = [backend, *(item.name for item in earlier if item.name != backend)]
+    cutoffs = [None, *(item.until for item in earlier if item.name != backend)]
+    return {"backends": names, "cutoffs": cutoffs}
+
+
+def read_backend_aliases(
+    connection: Connection[Any], *, cluster: str
+) -> dict[str, list[EarlierName]]:
+    """Every backend's earlier names in one cluster, followed through each rename.
+
+    `a` renamed `b` and then `c` gives `c` both. A chain that came back on
+    itself would never end; a name is visited once.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select old_name, new_name, reused_at from metric_backend_alias "
+            " where cluster = %(cluster)s",
+            {"cluster": cluster},
+        )
+        rows = cursor.fetchall()
+    into: dict[str, list[tuple[str, datetime | None]]] = {}
+    for old, new, reused in rows:
+        into.setdefault(new, []).append((old, reused))
+    found: dict[str, list[EarlierName]] = {}
+    for current in into:
+        seen = {current}
+        pending: list[tuple[str, datetime | None]] = [(current, None)]
+        names: list[EarlierName] = []
+        while pending:
+            name, cutoff = pending.pop()
+            for old, reused in into.get(name, ()):
+                if old in seen:
+                    continue
+                seen.add(old)
+                bound = min((at for at in (cutoff, reused) if at is not None), default=None)
+                names.append(EarlierName(old, bound))
+                pending.append((old, bound))
+        found[current] = names
+    return found
+
+
+def record_backend_renames(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    renamed: Mapping[str, str],
+    introduced: Iterable[str],
+) -> None:
+    """Write down a publish's renames, and close the earlier names it gives out again.
+
+    `renamed` maps an old backend name to its new one; `introduced` is every
+    name the publish brings into use. A name that was renamed away and is now
+    given to a backend again stops counting for the renamed card from now on.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update metric_backend_alias set reused_at = statement_timestamp() "
+            " where cluster = %(cluster)s and old_name = any(%(introduced)s) "
+            "   and reused_at is null",
+            {"cluster": cluster, "introduced": list(introduced)},
+        )
+        for old, new in renamed.items():
+            cursor.execute(
+                "insert into metric_backend_alias (cluster, old_name, new_name) "
+                "values (%(cluster)s, %(old)s, %(new)s) "
+                "on conflict (cluster, old_name) do update "
+                "   set new_name = excluded.new_name, renamed_at = statement_timestamp(), "
+                "       reused_at = null",
+                {"cluster": cluster, "old": old, "new": new},
+            )
+
+
 def read_backend_series(
     connection: Connection[Any],
     *,
@@ -2498,6 +2586,7 @@ def read_backend_series(
     until: datetime,
     width: timedelta,
     member: str = "BACKEND",
+    earlier: Sequence[EarlierName] = (),
 ) -> list[metrics.Interval]:
     """What one backend did, as intervals for its card's drawing, oldest first.
 
@@ -2513,11 +2602,11 @@ def read_backend_series(
 
     arguments: dict[str, Any] = {
         "cluster": cluster,
-        "backend": backend,
         "member": member,
         "width": width,
         "until": until,
         "after": since,
+        **_history(backend, earlier),
     }
     with connection.cursor() as cursor:
         if _reads_hours(since, until, width):
@@ -2525,7 +2614,7 @@ def read_backend_series(
                 _hour_series(
                     "metric_backend_hour_delta",
                     "metric_backend_member",
-                    BACKEND_SCOPE,
+                    BACKEND_HOUR_SCOPE,
                     BACKEND_SCOPE,
                 ),
                 arguments,
@@ -2747,12 +2836,16 @@ def _backend_totals() -> sql.Composed:
         "with intervals as ("
         "    select {stored} "
         "      from metric_backend_member "
-        "     where cluster = %(cluster)s and backend = %(backend)s and member = %(member)s "
+        "     where {scope} "
         "       and observed_at >= %(since)s and observed_at <= %(until)s "
         "       and previous_at >= %(since)s"
         ") "
         "{aggregates} from intervals"
-    ).format(stored=_stored_intervals(counters), aggregates=_interval_aggregates(counters))
+    ).format(
+        stored=_stored_intervals(counters),
+        aggregates=_interval_aggregates(counters),
+        scope=BACKEND_SCOPE,
+    )
 
 
 #
@@ -2784,7 +2877,14 @@ def _hour_pieces(
 
     Every piece has the hour table's columns, so the series and the figures
     aggregate pieces exactly as they would aggregate samples.
+
+    An edge row is read back from the raw rows of its own series. A card that
+    reads a renamed backend's earlier names too (`metric_backend_alias`) has
+    several series in one hour on one node, and an edge matched by node alone
+    would read each of their raw rows once per series.
     """
+
+    key = sql.Identifier("backend" if hours == "metric_backend_hour_delta" else "frontend")
 
     deltas = sql.SQL(", ").join(
         sql.SQL("{delta}, {span}").format(
@@ -2795,7 +2895,7 @@ def _hour_pieces(
     return sql.SQL(
         "with hours as ("
         "    select node, hour as at, crossing, first_previous_at, last_observed_at, restarted, "
-        "           samples, span_sec, span_clean_sec, {deltas} "
+        "           samples, span_sec, span_clean_sec, {deltas}, {key} as series "
         "      from {hours} "
         "     where {scope} and hour >= date_trunc('hour', %(after)s::timestamptz, 'UTC') "
         "       and hour <= %(until)s"
@@ -2807,12 +2907,12 @@ def _hour_pieces(
         "           part.restarted, 1, extract(epoch from part.observed_at - part.previous_at), "
         "           case when part.restarted then 0 "
         "                else extract(epoch from part.observed_at - part.previous_at) end, "
-        "           {raw_deltas_part} "
+        "           {raw_deltas_part}, edge.series "
         "      from hours as edge "
         "      cross join lateral ("
         "          select observed_at, previous_at, restarted, {raw_deltas} "
         "            from {raw} "
-        "           where {raw_scope} and node = edge.node "
+        "           where {raw_scope} and node = edge.node and {key} = edge.series "
         "             and observed_at >= edge.at and observed_at < edge.at + interval '1 hour' "
         "             and previous_at >= edge.at and previous_at >= %(after)s "
         "             and observed_at > %(after)s and observed_at <= %(until)s"
@@ -2822,6 +2922,7 @@ def _hour_pieces(
         ") "
     ).format(
         deltas=deltas,
+        key=key,
         hours=sql.Identifier(hours),
         raw=sql.Identifier(raw),
         scope=scope,
@@ -2895,7 +2996,20 @@ def _hour_totals(
 FRONTEND_SCOPE = sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s")
 # A frontend's raw rows count only where the node held the address (0048).
 FRONTEND_HELD = sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s and owns_vip")
-BACKEND_SCOPE = sql.SQL("cluster = %(cluster)s and backend = %(backend)s and member = %(member)s")
+#
+# A backend and its earlier names (`metric_backend_alias`): each name in
+# `%(backends)s` counts only before its own cutoff in `%(cutoffs)s` - null for
+# the current name and for one nobody has taken again. An hour row counts only
+# when the whole hour lies before the cutoff, so a name taken again within the
+# hour is never drawn into the card that renamed it.
+#
+_HISTORY = (
+    "cluster = %(cluster)s and member = %(member)s and exists ("
+    "    select 1 from unnest(%(backends)s::text[], %(cutoffs)s::timestamptz[]) as h(name, cutoff)"
+    "     where h.name = backend and {before} coalesce(h.cutoff, 'infinity'))"
+)
+BACKEND_SCOPE = sql.SQL(_HISTORY.format(before="observed_at <"))
+BACKEND_HOUR_SCOPE = sql.SQL(_HISTORY.format(before="hour + interval '1 hour' <="))
 
 
 def _frontend_totals(
@@ -3130,6 +3244,7 @@ def read_backend_totals(
     since: datetime,
     until: datetime,
     member: str = "BACKEND",
+    earlier: Sequence[EarlierName] = (),
 ) -> metrics.BackendMeasurement:
     """One backend's figures at stored resolution, independent of its graph.
 
@@ -3139,11 +3254,11 @@ def read_backend_totals(
 
     arguments = {
         "cluster": cluster,
-        "backend": backend,
         "member": member,
         "since": since,
         "until": until,
         "after": since,
+        **_history(backend, earlier),
     }
     with connection.cursor() as cursor:
         if _reads_hours(since, until):
@@ -3151,7 +3266,7 @@ def read_backend_totals(
                 _hour_totals(
                     "metric_backend_hour_delta",
                     "metric_backend_member",
-                    BACKEND_SCOPE,
+                    BACKEND_HOUR_SCOPE,
                     BACKEND_SCOPE,
                 ),
                 arguments,

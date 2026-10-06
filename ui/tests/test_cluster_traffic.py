@@ -86,6 +86,7 @@ class ReadingACluster(LoginTestCase):
         for name, value in (
             ("read_cluster_frontends", lambda *_a, **_k: self.frontends),
             ("read_cluster_backends", lambda *_a, **_k: self.backends),
+            ("read_backend_aliases", lambda *_a, **_k: {}),
             ("read_frontend_series", self._frontend_series),
             ("read_backend_series", self._backend_series),
             ("read_frontend_totals", lambda *_a, **_k: measurement()),

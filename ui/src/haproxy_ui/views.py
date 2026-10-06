@@ -1569,14 +1569,21 @@ def build_router(config: Config) -> APIRouter:
                 proxy = None
             if proxy is not None:
                 #
-                # Every name the generator gives the object's backends, and
-                # every name it gave them before (B250): the history of a pool
-                # is under `mgd-<object>-<pool>` until the cluster is deployed
-                # with the newer engine.
+                # One card per backend the object has now, each reading the
+                # names it had before as well: the generator's older form
+                # (B250) and any rename recorded at a publish.
                 #
                 targets = metrics.backend_targets({name: proxy})
-                served.extend(backend for backend in targets if backend not in served)
+                served.extend(
+                    dict.fromkeys(
+                        target.current
+                        for target in targets.values()
+                        if target.current not in served
+                    )
+                )
         if served:
+            with request.app.state.pool.connection() as connection:
+                aliases = db.read_backend_aliases(connection, cluster=cluster)
 
             def samples(backend: str) -> Callable[[Any], list[metrics.Interval]]:
                 return lambda connection: db.read_backend_series(
@@ -1586,6 +1593,7 @@ def build_router(config: Config) -> APIRouter:
                     since=since,
                     until=now,
                     width=chosen.bucket,
+                    earlier=_earlier_names(backend, targets, aliases),
                 )
 
             def totals(backend: str) -> Callable[[Any], metrics.BackendMeasurement]:
@@ -1595,6 +1603,7 @@ def build_router(config: Config) -> APIRouter:
                     backend=backend,
                     since=counted_since,
                     until=counted_until,
+                    earlier=_earlier_names(backend, targets, aliases),
                 )
 
             reads: list[Callable[[Any], Any]] = [
@@ -1603,7 +1612,7 @@ def build_router(config: Config) -> APIRouter:
             answers = _read_concurrently(request.app.state.pool, reads)
             traffic = [
                 metrics.backend_traffic(
-                    backend,
+                    metrics.backend_label(backend, targets),
                     answers[index * 2],
                     tick_format=chosen.tick,
                     start=since,
@@ -1614,7 +1623,6 @@ def build_router(config: Config) -> APIRouter:
                 )
                 for index, backend in enumerate(served)
             ]
-            traffic = _without_superseded(traffic, served, targets)
         return TEMPLATES.TemplateResponse(
             request,
             "object.html",
@@ -1665,39 +1673,20 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
-    def _without_superseded(
-        traffic: list[metrics.BackendTraffic],
-        names: Sequence[str],
+    def _earlier_names(
+        name: str,
         targets: Mapping[str, metrics.BackendTarget],
-    ) -> list[metrics.BackendTraffic]:
-        """One card per backend, under the name a reader knows it by.
+        aliases: Mapping[str, Sequence[db.EarlierName]],
+    ) -> list[db.EarlierName]:
+        """A backend's earlier names: recorded renames, and the generator's older form of each."""
 
-        A backend renamed by the generator (B250) has readings under one name
-        or the other: the older until the cluster is deployed with the newer
-        engine, the newer after. The card is the one with readings - the newer
-        where both have them - and an empty card under the newer name where
-        neither has. Two cards would read as two backends. Every card is
-        labelled with the object's own account of the backend.
-        """
-
-        read = dict(zip(names, traffic, strict=True))
-        chosen: dict[str, str] = {}
-        for name in names:
-            target = targets.get(name)
-            key = target.current if target is not None else name
-            held = chosen.get(key)
-            if (
-                held is None
-                or (not read[held].measured and read[name].measured)
-                or read[held].measured == read[name].measured
-                and name == key
-            ):
-                chosen[key] = name
-        return [
-            replace(read[name], series=metrics.backend_label(name, targets))
-            for name in names
-            if chosen.get(targets[name].current if name in targets else name) == name
+        found = list(aliases.get(name, ()))
+        found += [
+            db.EarlierName(older)
+            for older, target in targets.items()
+            if target.current == name and older != name
         ]
+        return found
 
     def _documents(readings: Iterable[Any], cluster: str) -> dict[str, Any]:
         """One cluster's stored objects, as the engine's own model reads them.
@@ -1778,8 +1767,18 @@ def build_router(config: Config) -> APIRouter:
         # readings depend on them.
         #
         listed: list[tuple[str, list[str], list[tuple[str, bool]]]] = []
+        #
+        # Each backend's earlier names, so a renamed one keeps its history
+        # under the name it has now: the generator's own rename (B250) from the
+        # objects, and a pool somebody renamed from the record of the publish.
+        #
+        targets_of = {
+            cluster: metrics.backend_targets(_documents(object_rows, cluster)) for cluster in wanted
+        }
+        aliases: dict[str, dict[str, list[db.EarlierName]]] = {}
         with pool.connection() as connection:
             for cluster in wanted:
+                aliases[cluster] = db.read_backend_aliases(connection, cluster=cluster)
                 listed.append(
                     (
                         cluster,
@@ -1833,6 +1832,8 @@ def build_router(config: Config) -> APIRouter:
         def backend_reads(
             cluster: str, name: str
         ) -> tuple[Callable[[Any], list[metrics.Interval]], Callable[[Any], Any]]:
+            earlier = _earlier_names(name, targets_of[cluster], aliases[cluster])
+
             def samples(connection: Any) -> list[metrics.Interval]:
                 return db.read_backend_series(
                     connection,
@@ -1841,6 +1842,7 @@ def build_router(config: Config) -> APIRouter:
                     since=since,
                     until=now,
                     width=chosen.bucket,
+                    earlier=earlier,
                 )
 
             def totals(connection: Any) -> metrics.BackendMeasurement:
@@ -1850,6 +1852,7 @@ def build_router(config: Config) -> APIRouter:
                     backend=name,
                     since=counted_since,
                     until=counted_until,
+                    earlier=earlier,
                 )
 
             return samples, totals
@@ -1906,7 +1909,7 @@ def build_router(config: Config) -> APIRouter:
 
         drawn = []
         for cluster, backends, seen in listed:
-            targets = metrics.backend_targets(_documents(object_rows, cluster))
+            targets = targets_of[cluster]
 
             def label(name: str, targets: Mapping[str, metrics.BackendTarget] = targets) -> str:
                 """The pool's own name or what it redirects; the stored name where nothing says.
@@ -8160,8 +8163,48 @@ def _queue_object_publish(
             request_id=job.request_id,
             detail={"operation": "objects_publish", "job": job.id, "object": object_id},
         )
+        #
+        # A pool renamed here, or an object whose redirects are renamed with
+        # it, keeps its history under the new name (`metric_backend_alias`).
+        # Written with the job, in the one transaction: a publish that was not
+        # queued renames nothing.
+        #
+        renamed, introduced = _backend_renames(
+            stored, object_id, document, replaces_published or object_id
+        )
+        if renamed or introduced:
+            db.record_backend_renames(
+                connection, cluster=cluster, renamed=renamed, introduced=introduced
+            )
         connection.commit()
     return job
+
+
+def _backend_renames(
+    stored: Sequence[objects.ObjectView], name: str, document: str, before_name: str
+) -> tuple[dict[str, str], list[str]]:
+    """What a publish renames, and what names it brings into use (`metrics.renamed_backends`).
+
+    Nothing without the stored objects to compare with: every name would look
+    new, and closing them all would cut the history of backends that were
+    never renamed.
+    """
+
+    if not stored:
+        return {}, []
+    views = {view.name: view for view in stored}
+    try:
+        after = load_proxy(name, document.encode())
+    except ModelError:
+        return {}, []
+    previous = views.get(before_name)
+    before = None
+    if previous is not None:
+        try:
+            before = load_proxy(before_name, previous.document.encode())
+        except ModelError:
+            before = None
+    return metrics.renamed_backends(before, after)
 
 
 def _removal_submit(

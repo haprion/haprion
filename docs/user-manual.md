@@ -1840,11 +1840,16 @@ are called (the exporter's frontend, the VIP frontends, the WAF engine). A
 redirect has no pool and is called after its object and path,
 `shop-web-redirect-old`.
 
-Before 2026-10-06 a pool was `mgd-<object>-<pool>`. A series under that name
-stops when the cluster is first published and deployed with a newer engine,
-and the one under the new name starts there; the interface hides the older
-card once the newer one has readings, and HAProxy's counters begin again with
-the new name.
+**A rename keeps its history on the interface's pages.** The metrics page lists
+only the backends the cluster's newest poll reports, and each card reads the
+names its backend had before as well: `mgd-<object>-<pool>`, which a pool was
+called until 2026-10-06, and any name a publish renamed. A publish counts as a
+rename when exactly one of an object's pools goes and one comes, and for a
+redirect when its object is renamed; two pools renamed at once are not paired.
+The pair is recorded when the publish is queued (table `metric_backend_alias`),
+and a name given to a backend again stops counting for the one that had it. A
+dashboard reading the exporter sees a new series under the new name - HAProxy's
+counters begin again with it.
 
 ## Jobs and status freshness
 

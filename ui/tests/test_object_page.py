@@ -85,6 +85,7 @@ class DraftReading(LoginTestCase):
         for name, answer in (
             ("read_backend_series", lambda *_a, **_k: []),
             ("read_backend_totals", lambda *_a, **_k: measurement()),
+            ("read_backend_aliases", lambda *_a, **_k: {}),
         ):
             patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=answer)
             patch.start()
@@ -756,15 +757,15 @@ class WhichPoolsTheTrafficCardAsksAbout(unittest.TestCase):
 class OneCardPerBackendAcrossTheRename(DraftReading):
     """B250: a pool's history is under `mgd-<object>-<pool>` until the cluster is
     deployed with the newer engine, and under the pool's own name after. The
-    page asks for both and draws the one with readings - never two cards for
-    one backend."""
+    page draws one card under the pool's name that reads both."""
 
     def cards_with_readings_under(self, name: str) -> tuple[int, list[str]]:
         asked: list[str] = []
 
-        def series(*_a: Any, backend: str, **_k: Any) -> list[Any]:
-            asked.append(backend)
-            if backend != name:
+        def series(*_a: Any, backend: str, earlier: Any = (), **_k: Any) -> list[Any]:
+            names = [backend, *(item.name for item in earlier)]
+            asked.extend(names)
+            if name not in names:
                 return []
             moment = datetime.now(UTC)
             return [

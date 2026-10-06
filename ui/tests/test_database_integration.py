@@ -3909,6 +3909,7 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
                 arguments = {
                     "cluster": self.CLUSTER,
                     "backend": self.BACKEND,
+                    **db._history(self.BACKEND, ()),
                     "member": "BACKEND",
                     "since": since,
                     "until": until,
@@ -4266,7 +4267,10 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
 
     def backend_hours(self) -> psycopg.sql.Composed:
         return db._hour_totals(
-            "metric_backend_hour_delta", "metric_backend_member", db.BACKEND_SCOPE, db.BACKEND_SCOPE
+            "metric_backend_hour_delta",
+            "metric_backend_member",
+            db.BACKEND_HOUR_SCOPE,
+            db.BACKEND_SCOPE,
         )
 
     def test_the_carried_backend_s_figures_are_the_reader_s_before_0055(self) -> None:
@@ -4277,6 +4281,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                 arguments = {
                     "cluster": self.CLUSTER,
                     "backend": self.CARRIED,
+                    **db._history(self.CARRIED, ()),
                     "member": "BACKEND",
                     "since": since,
                     "after": since,
@@ -4295,6 +4300,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                 backend = {
                     "cluster": self.CLUSTER,
                     "backend": self.GROWN,
+                    **db._history(self.GROWN, ()),
                     "member": "BACKEND",
                     "since": since,
                     "after": since,
@@ -4337,6 +4343,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                 arguments = {
                     "cluster": self.CLUSTER,
                     "backend": self.GROWN,
+                    **db._history(self.GROWN, ()),
                     "member": "BACKEND",
                     "frontend": self.FRONTEND,
                     "width": width,
@@ -4406,6 +4413,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                             {
                                 "cluster": self.CLUSTER,
                                 "backend": self.CARRIED,
+                                **db._history(self.CARRIED, ()),
                                 "member": "BACKEND",
                                 "since": since,
                                 "raw_from": self.pruned_before,
@@ -4763,3 +4771,151 @@ class MetricsListsWhatTheNodesServeNow(unittest.TestCase):
         )
 
         self.assertEqual(self.listed("stopped", now), (["db", "web"], ["fe-db", "fe-web"]))
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class ARenamedBackendKeepsItsHistory(unittest.TestCase):
+    """Migration 0056: the card under a backend's new name reads its earlier names too.
+
+    `old` serves until 10:20 of an hour, `new` from 10:40 of the same hour, on
+    the same node - the hour where an edge read matched by node alone would
+    count each name's raw rows twice. A later `old` is somebody else's backend
+    after the name was given out again, and must not be drawn in.
+    """
+
+    CLUSTER = "aliased"
+    now: datetime
+    rename_hour: datetime
+    reused_at: datetime
+    rows: list[tuple[str, datetime, int, int]]
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        cls.rename_hour = cls.now - timedelta(hours=30)
+        cls.reused_at = cls.now - timedelta(hours=5)
+        rows: list[tuple[str, datetime, int, int]] = []
+        at, uptime, total = cls.now - timedelta(days=3), 100, 0
+        while at <= cls.rename_hour + timedelta(minutes=20):
+            total += 7
+            rows.append(("old", at, uptime, total))
+            at += timedelta(minutes=10)
+            uptime += 600
+        at, uptime, total = cls.rename_hour + timedelta(minutes=40), 5, 0
+        while at <= cls.now - timedelta(minutes=10):
+            total += 3
+            rows.append(("new", at, uptime, total))
+            at += timedelta(minutes=10)
+            uptime += 600
+        at, uptime, total = cls.reused_at + timedelta(minutes=10), 5, 0
+        while at <= cls.now - timedelta(minutes=10):
+            total += 1000
+            rows.append(("old", at, uptime, total))
+            at += timedelta(minutes=10)
+            uptime += 600
+        cls.rows = rows
+        with (
+            psycopg.connect(
+                f"{DSN} user={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}"
+            ) as connection,
+            connection.cursor() as cursor,
+        ):
+            day = (cls.now - timedelta(days=4)).date()
+            while day <= cls.now.date() + timedelta(days=1):
+                cursor.execute("select metric_partition('metric_backend_member', %s::date)", (day,))
+                day += timedelta(days=1)
+            for name, at, uptime, total in rows:
+                cursor.execute(
+                    "insert into metric_backend_member (cluster, node, backend, member, "
+                    "observed_at, uptime_sec, req_tot) values (%s, 'a', %s, 'BACKEND', %s, %s, %s)",
+                    (cls.CLUSTER, name, at, uptime, total),
+                )
+
+    def totals(self, backend: str, since: datetime, earlier: list[db.EarlierName]) -> int:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            measured = db.read_backend_totals(
+                connection,
+                cluster=self.CLUSTER,
+                backend=backend,
+                since=since,
+                until=self.now,
+                earlier=earlier,
+            )
+        return measured.totals[0].value
+
+    def series(self, backend: str, since: datetime, earlier: list[db.EarlierName]) -> int:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            found = db.read_backend_series(
+                connection,
+                cluster=self.CLUSTER,
+                backend=backend,
+                since=since,
+                until=self.now,
+                width=timedelta(hours=1),
+                earlier=earlier,
+            )
+        return sum(interval.counters.get("req_tot") or 0 for interval in found)
+
+    def expected(self, since: datetime, *, names: tuple[str, ...], old_until: datetime) -> int:
+        """Each name's own stored differences, summed by hand from the raw rows."""
+
+        total = 0
+        for name in names:
+            readings = [row for row in self.rows if row[0] == name]
+            for (_n, at_before, up_before, before), (_m, at, up, value) in zip(
+                readings, readings[1:], strict=False
+            ):
+                if at_before < since or at > self.now:
+                    continue
+                if name == "old" and at >= old_until:
+                    continue
+                if at - at_before > timedelta(hours=2):
+                    continue
+                total += value if up < up_before else value - before
+        return total
+
+    def test_the_new_name_reads_the_old_ones_history_and_counts_it_once(self) -> None:
+        earlier = [db.EarlierName("old", self.reused_at)]
+        for since in (
+            self.now - timedelta(days=3),
+            self.rename_hour + timedelta(minutes=5),
+            self.now - timedelta(hours=20),
+        ):
+            with self.subTest(since=since):
+                want = self.expected(since, names=("old", "new"), old_until=self.reused_at)
+                self.assertGreater(want, 0)
+                self.assertEqual(self.totals("new", since, earlier), want)
+                self.assertEqual(self.series("new", since, earlier), want)
+
+    def test_without_the_alias_the_new_name_starts_empty(self) -> None:
+        since = self.now - timedelta(days=3)
+        alone = self.totals("new", since, [])
+
+        self.assertEqual(alone, self.expected(since, names=("new",), old_until=self.now))
+        self.assertLess(alone, self.totals("new", since, [db.EarlierName("old", self.reused_at)]))
+
+    def test_a_name_given_out_again_keeps_its_newcomer_out(self) -> None:
+        since = self.now - timedelta(days=3)
+        closed = self.totals("new", since, [db.EarlierName("old", self.reused_at)])
+        open_ = self.totals("new", since, [db.EarlierName("old")])
+
+        self.assertGreater(open_ - closed, 1000)
+
+    def test_the_web_role_writes_renames_and_reads_them_back_as_a_chain(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            db.record_backend_renames(
+                connection, cluster="chain", renamed={"a": "b"}, introduced=["b"]
+            )
+            db.record_backend_renames(
+                connection, cluster="chain", renamed={"b": "c"}, introduced=["c"]
+            )
+            db.record_backend_renames(connection, cluster="chain", renamed={}, introduced=["a"])
+            found = db.read_backend_aliases(connection, cluster="chain")
+
+        names = {item.name: item.until for item in found["c"]}
+        self.assertEqual(set(names), {"a", "b"})
+        self.assertIsNotNone(names["a"], "a was given out again")
+        self.assertIsNone(names["b"])

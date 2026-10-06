@@ -31,6 +31,7 @@ from haproxy_mgmt.generate import (
     WAF_BACKEND,
     backend_name,
     legacy_backend_name,
+    runtime_backends,
 )
 from haproxy_mgmt.guid import REDIRECT_PREFIX, redirect_name, redirect_suffixes
 from haproxy_mgmt.proxy_model import Proxy
@@ -1566,6 +1567,44 @@ def backend_targets(objects: Mapping[str, Proxy]) -> dict[str, BackendTarget]:
             )
             found.setdefault(legacy_backend_name(name, digest), target)
     return found
+
+
+def renamed_backends(before: Proxy | None, after: Proxy) -> tuple[dict[str, str], list[str]]:
+    """What a publish of `after` renames, old name to new, and the names it brings into use.
+
+    A pool is renamed when exactly one pool goes and one comes: the operator
+    changed the name and kept the backend. Two or more at once cannot be paired
+    without guessing, and a guess would draw one backend's history under
+    another's name, so they are not. A redirect is the same route when its
+    path and match are, and is renamed when its name changed with its object's.
+
+    The names in use afterwards that were not before are returned as well, so a
+    name given out again stops counting for the backend that once had it.
+
+    Each old name is written in the generator's older form too
+    (`mgd-<object>-<name>`, before B250): renamed in the publish that brings the
+    newer engine, the history is still under that one.
+    """
+
+    introduced = sorted(
+        set(runtime_backends(after)) - set(runtime_backends(before) if before else ())
+    )
+    if before is None:
+        return {}, introduced
+    renamed: dict[str, str] = {}
+    gone = sorted(set(before.backends) - set(after.backends))
+    came = sorted(set(after.backends) - set(before.backends))
+    pairs: list[tuple[str, str]] = []
+    if len(gone) == 1 and len(came) == 1:
+        pairs.append((gone[0], came[0]))
+    then, now = redirect_suffixes(before), redirect_suffixes(after)
+    pairs += [(then[route], suffix) for route, suffix in now.items() if route in then]
+    for old, new in pairs:
+        current = backend_name(after, new)
+        for name in (backend_name(before, old), legacy_backend_name(before.name, old)):
+            if name != current:
+                renamed[name] = current
+    return renamed, introduced
 
 
 def split_backends(

@@ -23,6 +23,7 @@
   worked and a page somebody merely opened would otherwise look identical -
   which is the moment they press save again.
 #}
+{% for message in dns_moved %}<p class="preview-notice form-problem">{{ message }}</p>{% endfor %}
 {% if saved %}
 <p class="preview-notice"><strong>Saved as a draft.</strong> It reaches no configuration until it is published.</p>
 {% elif discarded %}

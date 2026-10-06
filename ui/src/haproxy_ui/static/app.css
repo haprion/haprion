@@ -50,6 +50,9 @@
   --info-soft: #e9f3fd;
   --unknown: #778396;
   --unknown-soft: #eef1f5;
+  /* DNS objects' badge (26-10-06): a colour no status uses. */
+  --dns: #7c5cc4;
+  --dns-soft: #f1ecfb;
   --accent-0: #577436;
   --accent-1: #d49bce;
   --accent-2: #62c5b9;
@@ -92,6 +95,8 @@
   --info-soft: #183c5d;
   --unknown: #9aa8ba;
   --unknown-soft: #2a394b;
+  --dns: #b19cf5;
+  --dns-soft: #30284f;
   --accent-0: #739253;
   --accent-1: #f5bbef;
   --accent-2: #83e6d9;
@@ -631,7 +636,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .protocol-https { color: var(--healthy); background: var(--healthy-soft); }
 .protocol-tcp { color: var(--warning); background: var(--warning-soft); }
 /* DNS (Fas 19a B5): served by dnsdist, so a colour of its own and none of the status colours. */
-.protocol-dns { color: var(--muted-strong); background: var(--hover-surface); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.protocol-dns { color: var(--dns); background: var(--dns-soft); }
 .protocol-unknown { color: var(--unknown); background: var(--unknown-soft); }
 .ownership-managed { color: var(--healthy); background: var(--healthy-soft); }
 .ownership-unmanaged { color: var(--warning); background: var(--warning-soft); }

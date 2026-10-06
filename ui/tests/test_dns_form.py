@@ -15,9 +15,10 @@ from typing import Any
 from unittest import mock
 
 import yaml
+from haproxy_mgmt import status_collect
 from haproxy_mgmt.proxy_model import load_proxy
 
-from haproxy_ui import form_groups, health, objects
+from haproxy_ui import form_groups, health, objects, views
 from haproxy_ui.db import ClusterStatus
 from haproxy_ui.preview import DEFAULTS, build_document, form_from_document
 from tests.test_editor_page import EditorTestCase
@@ -66,6 +67,21 @@ class WritingADnsObject(unittest.TestCase):
             )["backends"]["dns"]["health"],
             {"type": "dns", "interval": "5s", "query_name": "example.com.", "query_type": "SOA"},
         )
+
+    def test_hostnames_left_from_another_protocol_are_not_sent(self) -> None:
+        """The field is hidden for dns, so its old text cannot refuse the object (26-10-06)."""
+
+        document = build_document(dns_form(hostnames="ad.example.com", cookie="SRV"))
+
+        self.assertNotIn("hostnames", yaml.safe_load(document))
+        load_proxy("resolver", document.encode())
+
+    def test_a_server_may_be_named(self) -> None:
+        """B252: looked up when published."""
+
+        document = build_document(dns_form(servers="ns1.example.com:53"))
+        proxy = load_proxy("resolver", document.encode())
+        self.assertEqual(proxy.backends["dns"].servers[0].host, "ns1.example.com")
 
     def test_hidden_http_rules_are_not_written_for_it(self) -> None:
         document = built(
@@ -205,12 +221,61 @@ class TheListingShowsTheObjectsPort(unittest.TestCase):
     def test_a_dns_object_s_port_is_read_from_its_document(self) -> None:
         self.assertEqual(self.view((GOLDEN / "iot.yaml").read_text(), "dns").ports, (5353,))
 
+    def test_and_its_servers_as_written(self) -> None:
+        self.assertEqual(
+            self.view((GOLDEN / "iot.yaml").read_text(), "dns").servers,
+            ("192.0.2.61", "192.0.2.62"),
+        )
+
     def test_a_tcp_object_s_too(self) -> None:
         document = "schema: 1\nname: db\nlisten: {protocol: tcp, port: 5432}\n"
         self.assertEqual(self.view(document, "tcp").ports, (5432,))
 
     def test_a_document_that_does_not_read_has_none(self) -> None:
         self.assertEqual(self.view("listen: [", "dns").ports, ())
+
+
+class AMovedServerIsSaidOnItsObjectsPage(unittest.TestCase):
+    """B252: the status names the pool; the page of the object owning it repeats it."""
+
+    def found(self, pool: str) -> list[str]:
+        name = status_collect.PublishedName(
+            pool=pool, host="ns1.example.com", address="198.51.100.53"
+        )
+        warning = {
+            "code": status_collect.DNS_SERVER_MOVED,
+            "message": status_collect.moved_message(name, "now resolves to 198.51.100.9"),
+        }
+        row = moved(status(node("node-a")), warning)
+        return views.moved_dns_servers([row], cluster="alpha", pools=["dns"])
+
+    def test_its_own_pool_is_said(self) -> None:
+        self.assertEqual(len(self.found("dns")), 1)
+        self.assertIn("ns1.example.com now resolves to 198.51.100.9", self.found("dns")[0])
+
+    def test_another_pool_is_not(self) -> None:
+        self.assertEqual(self.found("other"), [])
+
+    def test_the_page_shows_what_it_is_given(self) -> None:
+        template = (Path(views.__file__).parent / "templates" / "object.html").read_text()
+        self.assertIn("{% for message in dns_moved %}", template)
+
+
+PUBLISHED = status_collect.PublishedName(
+    pool="dns", host="ns1.example.com", address="198.51.100.53"
+)
+
+
+def moved(row: ClusterStatus, warning: dict[str, Any]) -> ClusterStatus:
+    return ClusterStatus(
+        cluster=row.cluster,
+        observed_at=row.observed_at,
+        outcome=row.outcome,
+        result=row.result,
+        warnings=[warning],
+        error=None,
+        poll_error=None,
+    )
 
 
 class TheEditorOffersDns(EditorTestCase):

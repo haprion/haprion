@@ -430,6 +430,64 @@ def _servers(raw: str) -> list[dict[str, object]]:
     return servers
 
 
+#
+# Fields the form hides for a shape, by protocol (26-10-06). A hidden field still
+# posts whatever it held, and sending that on had the engine refuse a dns object
+# for hostnames left from before the protocol was changed - a refusal about a
+# field the person could no longer see or clear. What the form hides, it does
+# not send. The template hides the same ones (`_object-form.html`).
+#
+HIDDEN_FOR: Mapping[str, tuple[str, ...]] = {
+    "tcp": (
+        "hostnames",
+        "certificate",
+        "listen_tls_policy",
+        "redirect_http",
+        "hsts",
+        "max_request_body",
+        "cookie",
+        "maintenance",
+        "maintenance_message",
+        "unavailable_message",
+        "request_headers",
+        "response_headers",
+        "redirect_path",
+        "redirect_location",
+        "waf_mode",
+        "waf_exceptions",
+        "waf_large_bodies",
+    ),
+}
+HIDDEN_FOR = {
+    **HIDDEN_FOR,
+    "dns": (
+        *HIDDEN_FOR["tcp"],
+        "rate_limit",
+        "rate_window",
+        "deny_from",
+        "deny_ranges",
+        "backend_tls",
+        "backend_tls_policy",
+        "max_connections",
+        "slow_start",
+        "balance_key",
+        "health_port",
+        "health_fast_interval",
+        "health_down_interval",
+    ),
+}
+
+
+def shown_only(form: Mapping[str, object]) -> dict[str, object]:
+    """The form as the person sees it: what is hidden for its protocol emptied."""
+
+    hidden = HIDDEN_FOR.get(str(form.get("protocol", "") or "").strip(), ())
+    return {
+        key: (() if isinstance(value, (list, tuple)) else "") if key in hidden else value
+        for key, value in form.items()
+    }
+
+
 def build_document(form: dict[str, object]) -> str:
     """The YAML the object would be stored as.
 
@@ -437,6 +495,8 @@ def build_document(form: dict[str, object]) -> str:
     name typed into a form is not trusted to be YAML-safe, and quoting it by
     hand is how an input ends up meaning something structural.
     """
+
+    form = shown_only(form)
 
     def text(key: str) -> str:
         return str(form.get(key, "") or "").strip()

@@ -39,7 +39,7 @@ from uuid import UUID, uuid4, uuid5
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from haproxy_mgmt import backup_retention, backup_schedule, crs, proxy_model
+from haproxy_mgmt import backup_retention, backup_schedule, crs, proxy_model, status_collect
 from haproxy_mgmt import cluster_settings as cluster_settings_module
 from haproxy_mgmt.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
@@ -1662,10 +1662,12 @@ def build_router(config: Config) -> APIRouter:
                 )
                 for index, backend in enumerate(served)
             ]
+        moved = moved_dns_servers(status_rows, cluster=cluster, pools=served)
         return TEMPLATES.TemplateResponse(
             request,
             "object.html",
             {
+                "dns_moved": moved,
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
@@ -7719,6 +7721,24 @@ def _editor_page(
             "snapshot_age": None,
         },
     )
+
+
+def moved_dns_servers(rows: Iterable[Any], *, cluster: str, pools: Collection[str]) -> list[str]:
+    """The status's word that a pool's server name moved since publishing (B252).
+
+    The status names the pool; the page of the object owning it repeats the
+    sentence, since publishing the object again is the answer.
+    """
+
+    return [
+        str(warning.get("message", ""))
+        for row in rows
+        if getattr(row, "cluster", None) == cluster
+        for warning in (getattr(row, "warnings", None) or ())
+        if isinstance(warning, Mapping)
+        and warning.get("code") == status_collect.DNS_SERVER_MOVED
+        and status_collect.moved_pool(str(warning.get("message", ""))) in pools
+    ]
 
 
 def _form_defaults(fields: dict[str, Any]) -> dict[str, Any]:

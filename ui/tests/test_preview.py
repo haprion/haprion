@@ -461,23 +461,23 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
         self.assertIn("mode tcp", result.files["1001-app.cfg"])
         self.assertNotIn("hostnames", result.document)
 
-    def test_a_hostname_left_in_the_form_is_refused_rather_than_dropped(self) -> None:
-        """The same treatment the header box already gets.
+    def test_a_hostname_left_in_the_form_is_not_sent(self) -> None:
+        """The form hides it for a raw port, so it does not send it (26-10-06).
 
-        Two identical mistakes - a field filled in for a shape that has no use
-        for it - must be answered the same way. Dropping the name would show a
-        preview of an object the person did not describe, and they would find
-        out at publish time that it was never there.
+        It used to be sent and refused, so a preview never showed an object the
+        person did not describe. Since the field is hidden rather than greyed,
+        that refusal named a field nobody could see or clear: a dns object was
+        refused for hostnames left from before its protocol was changed.
         """
 
         result = preview(
             form(protocol="tcp", tcp_port="5432", hostnames="db.example.com"), PREVIEW_CLUSTER
         )
 
-        self.assertIsNotNone(result.problem)
-        self.assertIn("hostnames", str(result.problem))
+        self.assertIsNone(result.problem)
+        self.assertNotIn("hostnames", result.document)
 
-    def test_a_redirect_left_in_the_form_is_refused_rather_than_dropped(self) -> None:
+    def test_a_redirect_left_in_the_form_is_not_sent(self) -> None:
         result = preview(
             form(
                 protocol="tcp",
@@ -489,22 +489,23 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
             PREVIEW_CLUSTER,
         )
 
-        self.assertIsNotNone(result.problem)
-        self.assertIn("routes", str(result.problem))
+        self.assertIsNone(result.problem)
+        self.assertNotIn("routes", result.document)
 
     def test_a_tcp_object_without_a_port_is_named_before_the_engine_sees_it(self) -> None:
         result = preview(form(protocol="tcp"), PREVIEW_CLUSTER)
 
         self.assertIsNotNone(result.problem)
 
-    def test_session_persistence_on_a_raw_port_is_refused_by_the_engine(self) -> None:
-        """HAProxy would ignore it with a warning and balance without it."""
+    def test_session_persistence_left_in_the_form_is_not_sent_for_a_raw_port(self) -> None:
+        """Hidden for a raw port, so not sent; the engine still refuses it in a file."""
 
         result = preview(
             form(protocol="tcp", tcp_port="5432", hostnames="", cookie="SRV"), PREVIEW_CLUSTER
         )
 
-        self.assertEqual(result.problem_field, "app.backends.app.cookie")
+        self.assertIsNone(result.problem)
+        self.assertNotIn("cookie", result.document)
 
 
 class TheRateLimitTheObjectAsksFor(unittest.TestCase):

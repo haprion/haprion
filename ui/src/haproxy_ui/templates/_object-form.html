@@ -229,7 +229,7 @@
       {% if form.handwritten_pool %}
       <div class="field"><span class="field-title">Servers</span><small>Written in the advanced config, with balancing and checks.</small></div>
       {% else %}
-      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small{{ when('protocol', 'http https tcp') }}>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small><small{{ when('protocol', 'dns') }}>One <code>address:port</code> per line.</small></label>
+      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small{{ when('protocol', 'http https tcp') }}>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small><small{{ when('protocol', 'dns') }}>One <code>address</code> or <code>hostname:port</code> per line. Names are looked up when published.</small></label>
       <label>Balancing
         <select name="balance">
           {% for algorithm, protocols in choices.balances %}<option value="{{ algorithm }}"{{ when('protocol', protocols) }}{% if form.balance == algorithm %} selected{% endif %}>{{ algorithm }}</option>{% endfor %}

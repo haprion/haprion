@@ -79,6 +79,10 @@ class ObjectView:
     # longer says whose it is, and nothing here guesses.
     #
     runtime_backends: tuple[str, ...] | None = None
+    #
+    # A tcp or dns object's servers as written (26-10-06); empty for a site.
+    #
+    servers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +167,7 @@ def object_view(value: Any) -> ObjectView | None:
         return None
     problem = entry.get("problem")
     protocol = entry.get("protocol")
+    raw = _raw(protocol, document)
     return ObjectView(
         name=name,
         document=document,
@@ -177,7 +182,8 @@ def object_view(value: Any) -> ObjectView | None:
         protocol=protocol if isinstance(protocol, str) and protocol else None,
         hostnames=_hostnames(entry.get("hostnames")),
         line_count=len(document.splitlines()),
-        ports=_ports(protocol, document),
+        ports=_ports(protocol, raw),
+        servers=_servers(raw),
         backend_count=_count(entry.get("backend_count")),
         redirect_http=(
             entry.get("redirect_http") if isinstance(entry.get("redirect_http"), bool) else None
@@ -196,23 +202,44 @@ def object_view(value: Any) -> ObjectView | None:
     )
 
 
-def _ports(protocol: Any, document: str) -> tuple[int, ...]:
+def _raw(protocol: Any, document: str) -> Mapping[str, Any]:
+    """A tcp or dns object's document, read with the engine's own reader; empty otherwise."""
+
+    if protocol not in ("tcp", "dns"):
+        return {}
+    try:
+        return read_document("object", document.encode())
+    except (ModelError, ValueError, UnicodeError):
+        return {}
+
+
+def _ports(protocol: Any, data: Mapping[str, Any]) -> tuple[int, ...]:
     """The port an object is served on: the cluster's for a site, its own otherwise.
 
     A tcp or dns object writes its port in the document, and the envelope does
-    not carry it; it is read there, with the engine's own reader (Fas 19a B5).
+    not carry it; it is read there (Fas 19a B5).
     """
 
     if isinstance(protocol, str) and protocol in PORTS:
         return (PORTS[protocol],)
-    if protocol not in ("tcp", "dns"):
-        return ()
-    try:
-        listen = read_document("object", document.encode()).get("listen")
-    except (ModelError, ValueError, UnicodeError):
-        return ()
-    port = listen.get("port") if isinstance(listen, Mapping) else None
+    port = _mapping(data.get("listen")).get("port")
     return (port,) if isinstance(port, int) and not isinstance(port, bool) else ()
+
+
+def _servers(data: Mapping[str, Any]) -> tuple[str, ...]:
+    """A tcp or dns object's servers as written, which is what its listing names (26-10-06).
+
+    A site is named by its hostnames; a raw port has none, and the servers behind
+    it are what somebody looks for.
+    """
+
+    pool = _mapping(_mapping(data.get("backends")).get(str(data.get("backend", ""))))
+    servers = pool.get("servers")
+    return tuple(
+        str(server["host"])
+        for server in (servers if isinstance(servers, list) else ())
+        if isinstance(server, Mapping) and isinstance(server.get("host"), str)
+    )
 
 
 def _names(value: Any) -> tuple[str, ...] | None:

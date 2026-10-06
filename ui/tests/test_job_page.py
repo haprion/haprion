@@ -124,17 +124,16 @@ class JobPageTests(LoginTestCase):
         ):
             return client.get("/jobs")
 
-    def test_the_follow_up_offers_the_button_rather_than_a_terminal(self) -> None:
+    def test_the_follow_up_is_a_sentence_and_nothing_to_press(self) -> None:
         #
-        # The engine's envelope names the command line, because the command line
-        # is what asks it. A person reading this page has a deploy button; being
-        # told to open an SSH session instead says the interface cannot do the
-        # thing it has a button for.
+        # Jobs is the history (2026-10-06). The deploy is on the dashboard and
+        # Versions, where the cluster's state is; an admin is not sent to a
+        # terminal either.
         #
         page = self.follow_up_page(management_writes=True)
 
         self.assertIn("Published, not deployed", page.text)
-        self.assertIn('name="operation" value="deploy"', page.text)
+        self.assertNotIn('action="/operations"', page.text)
         self.assertNotIn("haproxy-deploy -c", page.text)
 
     def test_where_nobody_may_press_it_the_command_is_still_named(self) -> None:
@@ -718,30 +717,25 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
         #
         self.assertEqual(jobs.certificate_blocks([running, newer, older])["alpha"].job_id, 20)
 
-    def test_the_block_is_captioned_on_its_job_with_the_certificate_deploy_button(self) -> None:
+    def test_the_block_is_captioned_on_its_job(self) -> None:
         overview = jobs.build_job_overview([blocked_deploy(20), blocked_deploy(19)])
 
         newest, older = overview.jobs
-        self.assertEqual(newest.follow_up_operation, "cert_deploy")
-        self.assertEqual(newest.follow_up_label, "Deploy certificates to alpha")
         self.assertEqual(newest.next_command, "haproxy-cert-deploy -c alpha")
         self.assertIn("Deploy blocked: node-b is missing example-net", newest.follow_up or "")
         self.assertEqual(newest.error_code, "certificates_not_deployed")
         self.assertIsNone(older.follow_up)
-        self.assertIsNone(older.follow_up_operation)
 
     def test_a_finished_certificate_deploy_owes_the_configuration_deploy(self) -> None:
         #
         # The plan's order is cert-deploy "followed by a new deploy", and
         # nothing chains the second on. So once the certificates are there and
-        # the cluster is still behind, the button for the second step is
-        # offered on the job that finished the first.
+        # the cluster is still behind, the second step is named on the job
+        # that finished the first.
         #
         rows = [replace(job(state="done", outcome="done", operation="cert_deploy"), id=21)]
 
         captioned = jobs.build_job_overview(rows, awaiting=frozenset({"alpha"})).jobs[0]
-        self.assertEqual(captioned.follow_up_operation, "deploy")
-        self.assertEqual(captioned.follow_up_label, "Deploy alpha")
         self.assertEqual(captioned.next_command, "haproxy-deploy -c alpha")
         self.assertIn("Certificates deployed, configuration not", captioned.follow_up or "")
 
@@ -758,12 +752,11 @@ class TheBlockReachesThePages(LoginTestCase):
         with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
             return str(client.get(path).text)
 
-    def test_the_jobs_page_offers_the_certificate_deploy_on_the_refused_job(self) -> None:
+    def test_the_jobs_page_names_the_block_on_the_refused_job_without_a_button(self) -> None:
         body = self.page("/jobs", [blocked_deploy()])
 
         self.assertIn("Deploy blocked: node-b is missing example-net.", body)
-        self.assertIn('name="operation" value="cert_deploy"', body)
-        self.assertIn("Deploy certificates to alpha", body)
+        self.assertNotIn('action="/operations"', body)
         self.assertIn("certificates_not_deployed", body)
         self.assertNotIn("haproxy-cert-deploy -c", body)
 

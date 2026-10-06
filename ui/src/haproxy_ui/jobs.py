@@ -63,14 +63,6 @@ class JobView:
     follow_up: str | None = None
     next_command: str | None = None
     #
-    # Which operation the follow-up button queues, and what it says. A revert
-    # owes a deploy; a deploy the preflight blocked owes a certificate deploy.
-    # The button is the same form either way, so the template is told which
-    # rather than growing a copy of it per operation.
-    #
-    follow_up_operation: str | None = None
-    follow_up_label: str | None = None
-    #
     # Verbatim, never translated. A table mapping codes to friendlier sentences
     # would be a second place that has to stay in step with the contract - the
     # same drift `EXIT_MEANINGS` already documents one instance of - and the
@@ -544,7 +536,6 @@ def _view(
     *,
     follow_up: str | None,
     next_command: str | None,
-    follow_up_operation: str | None = None,
     diagnostics: bool,
 ) -> JobView:
     label, tone = _state(job.state)
@@ -572,12 +563,6 @@ def _view(
         follow_up=follow_up,
         next_command=next_command,
         link=_link(job),
-        follow_up_operation=follow_up_operation,
-        follow_up_label=(
-            None
-            if follow_up_operation is None
-            else FOLLOW_UP_LABELS[follow_up_operation].format(cluster=job.cluster)
-        ),
         error_code=error_code(job) if ended_badly else None,
         error_message=error_message(job) if diagnostics and ended_badly else None,
         #
@@ -725,7 +710,6 @@ def build_job_overview(
                     if show
                     else None
                 ),
-                follow_up_operation="cert_deploy" if blocked else "deploy" if show else None,
                 diagnostics=diagnostics,
             )
         )
@@ -780,10 +764,6 @@ RUNNING_LABELS = {
 # What the follow-up button says, by the operation it queues. `{cluster}` is
 # the cluster the job belongs to.
 #
-FOLLOW_UP_LABELS = {
-    "deploy": "Deploy {cluster}",
-    "cert_deploy": "Deploy certificates to {cluster}",
-}
 
 
 #

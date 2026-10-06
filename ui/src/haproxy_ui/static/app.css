@@ -753,8 +753,6 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
  * button wider than an exit code overhangs evenly on both sides and stays
  * centred under the heading rather than pressed against the table's edge.
  */
-.follow-up-cell { padding-top: 8px; padding-bottom: 10px; text-align: center; vertical-align: middle; }
-.follow-up-cell .secondary-button { white-space: nowrap; }
 .job-follow-up .status-dot { margin-right: 7px; }
 .job-follow-up code { margin-left: 7px; padding: 1px 6px; border-radius: 4px; background: var(--panel-soft); color: var(--text-primary); font-size: 11px; }
 .job-table tr:has(+ .job-failure) td, .job-table tr:has(+ .job-note) td { border-bottom: 0; }
@@ -1734,7 +1732,6 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * rules inside a table, because it separates two subjects rather than two rows.
  */
 .editor-break { margin: 20px 20px 4px; border: 0; border-top: 2px solid var(--line-strong); }
-.follow-up-action { display: inline-block; margin: 0; }
 /* The note reads from the left; the one control sits at the end of the row. */
 /* No longer `space-between`: the button it used to push to the far end now
  * has a cell of its own, and pushing the note's own code block out there
@@ -2148,7 +2145,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
    * label takes nor the centring that placed the button under a column that
    * no longer exists at this width.
    */
-  .job-follow-up td, .follow-up-cell { padding-left: 8px; text-align: left; }
+  .job-follow-up td { padding-left: 8px; text-align: left; }
   /* The button says what it does; a label beside it would say it twice. */
   .archive-table td.archive-restore { padding-left: 8px; text-align: left; }
   /* Labels longer than the default room: "Hosts / ports", "Default source". */

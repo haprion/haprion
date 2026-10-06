@@ -39,42 +39,16 @@
       {% if job.follow_up %}
       <tr class="job-follow-up">
         {#
-          The note spans the columns it reads across, and the button sits under
-          the last two - the pair the row above ends in. Aligned by the table
-          rather than by a margin measured off a screenshot: the columns are
-          fixed widths, so a button placed there stays under those headings
-          whatever the window does. Two cells rather than one since C5: the
-          certificate deploy's label is wider than an exit column, and a
-          button that overhangs the table's edge is clipped by it.
+          The sentence and nothing to press (2026-10-06): Jobs is the history,
+          and the deploys it used to offer are on the dashboard and Versions,
+          where the cluster's state is. A reader who may press nothing anywhere
+          is still told the command.
         #}
-        <td colspan="6">
+        <td colspan="8">
           <div class="follow-up-line">
             <span><span class="status-dot status-warning" aria-hidden="true"></span>{{ job.follow_up }}</span>
-            {#
-              The command is for a reader, who may not press the button and can
-              still hand the line to somebody who may. It stays in the note
-              because it does not fit a column sized for an exit code.
-            #}
             {% if not (management_writes and role == 'admin') and job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
           </div>
-        </td>
-        <td class="follow-up-cell" colspan="2">
-          {#
-            The button, not the command. The engine's envelope names the
-            terminal one because the command line is what asks it - but a person
-            reading this page has a deploy button two clicks away, and telling
-            them to open an SSH session instead is telling them the interface
-            cannot do the thing it has a button for.
-          #}
-          {% if management_writes and role == 'admin' and job.follow_up_operation %}
-          <form method="post" action="/operations" class="follow-up-action">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="operation" value="{{ job.follow_up_operation }}">
-            <input type="hidden" name="cluster" value="{{ job.cluster }}">
-            <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
-            <button class="secondary-button" type="submit">{{ job.follow_up_label }}</button>
-          </form>
-          {% endif %}
         </td>
       </tr>
       {% endif %}

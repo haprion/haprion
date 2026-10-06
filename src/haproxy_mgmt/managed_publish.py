@@ -53,6 +53,11 @@ MAPS_PREFIX = "managed/maps/"
 # revert. The node's `waf/`; absent when no object uses the engine.
 #
 WAF_PREFIX = "managed/waf/"
+#
+# dnsdist's configuration for the cluster's dns objects (B249). The node's
+# `dns/`; absent when no object is dns, which is what stops dnsdist there.
+#
+DNS_PREFIX = "managed/dns/"
 PLACEHOLDER = ".gitkeep"
 
 
@@ -140,7 +145,9 @@ def managed_files(
     # object deleted in a later UI operation keep serving; carrying all of them
     # would leave source/VIP/group changes invisible.  Start over every time.
     for path in tuple(result):
-        if path.startswith((GENERATED_PREFIX, KEEPALIVED_PREFIX, MAPS_PREFIX, WAF_PREFIX)):
+        if path.startswith(
+            (GENERATED_PREFIX, KEEPALIVED_PREFIX, MAPS_PREFIX, WAF_PREFIX, DNS_PREFIX)
+        ):
             del result[path]
 
     _apply_objects(result, objects or {})
@@ -207,6 +214,12 @@ def managed_files(
             }
         )
         result.update({f"{WAF_PREFIX}crs/{name}": content for name, content in rules.files.items()})
+    result.update(
+        {
+            f"{DNS_PREFIX}{name}": content.encode("utf-8")
+            for name, content in generated.dns_files.items()
+        }
+    )
     result.update(
         {
             f"{GENERATED_PREFIX}{name}": content.encode("utf-8")

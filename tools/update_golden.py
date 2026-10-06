@@ -14,18 +14,20 @@ from __future__ import annotations
 
 import sys
 
-from haproxy_mgmt.golden import GOLDEN, cases, produced
+from haproxy_mgmt.golden import DNS_FILES, GOLDEN, cases, produced, produced_dns
 
 
 def main() -> int:
     for case in cases(GOLDEN):
-        files = produced(case)
+        files = {**produced(case), **produced_dns(case)}
         for name, content in sorted(files.items()):
             path = case / name
             if not path.exists() or path.read_text() != content:
                 print(f"writing {path.relative_to(GOLDEN.parent.parent)}")
             path.write_text(content)
-        for path in sorted(case.glob("*.cfg")):
+        for path in sorted([*case.glob("*.cfg"), *(case / name for name in DNS_FILES)]):
+            if not path.exists():
+                continue
             if path.name not in files:
                 print(f"removing {path.relative_to(GOLDEN.parent.parent)}")
                 path.unlink()

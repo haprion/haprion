@@ -35,7 +35,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from haproxy_mgmt import advanced as advanced_config
-from haproxy_mgmt import geo
+from haproxy_mgmt import dnsdist_config, geo
 from haproxy_mgmt.check_policy import check_speaks_tls
 from haproxy_mgmt.cluster_settings import NOTHING as NO_SETTINGS
 from haproxy_mgmt.cluster_settings import ClusterSettings, LogTarget, Metrics
@@ -282,6 +282,13 @@ class GeneratedLayer:
     set itself is not generated; the publishing path copies it beside these.
     """
 
+    dns_files: dict[str, str] = field(default_factory=dict)
+    """`managed/dns/`, and `dns/` on the node: dnsdist's configuration (B249).
+
+    Empty when no object is dns - and then the release carries no `dns/`,
+    which is what stops dnsdist on the nodes.
+    """
+
     object_parts: dict[str, dict[str, str]] = field(default_factory=dict)
     """Per object, the four pieces its behaviour is spread across.
 
@@ -358,7 +365,7 @@ def generate(
     unsupported = [
         proxy
         for proxy in ordered
-        if proxy.listen.protocol != "tcp" and proxy.listen.protocol not in ports
+        if proxy.listen.protocol not in ("tcp", "dns") and proxy.listen.protocol not in ports
     ]
     if unsupported:
         #
@@ -368,7 +375,7 @@ def generate(
         #
         names = ", ".join(proxy.name for proxy in unsupported)
         raise GeneratorError(
-            f"this version generates http, https and tcp objects; cannot generate: {names}"
+            f"this version generates http, https, tcp and dns objects; cannot generate: {names}"
         )
     _refuse_unknown_certificates(ordered, certificates)
     if certificate_sans is not None and not allow_certificate_mismatch:
@@ -377,15 +384,28 @@ def generate(
     _refuse_unknown_networks(ordered, known_networks)
 
     known_sources = dict(sources or {})
-    placed = [(vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
+    everything = [(vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
     #
     # After placement, not before: a reservation names an address, so the gate
     # cannot ask its question until every object knows which VIP it sits on.
+    # Every object, dns included: dnsdist binds its address and port as firmly
+    # as HAProxy does, on UDP and TCP both.
     #
-    _refuse_reserved(placed, reservations, ports)
-    _refuse_shared_listeners(placed, ports)
+    _refuse_reserved(everything, reservations, ports)
+    _refuse_shared_listeners(everything, ports)
     if settings.metrics is not None:
-        _refuse_metrics_port(settings.metrics, placed, reservations, ports)
+        _refuse_metrics_port(settings.metrics, everything, reservations, ports)
+    placed = [(vip, proxy) for vip, proxy in everything if proxy.listen.protocol != "dns"]
+    resolving = [
+        (vip, proxy, source_of(proxy, vip, known_sources))
+        for vip, proxy in everything
+        if proxy.listen.protocol == "dns"
+    ]
+    if resolving:
+        _refuse_loopback_port(
+            dnsdist_config.STATS_PORT, "the DNS listener's statistics", settings, reservations
+        )
+    dns = dnsdist_config.render(resolving, known_networks)
 
     listings: dict[str, str] = {}
     shared: dict[str, dict[str, list[str]]] = {}
@@ -407,7 +427,7 @@ def generate(
         files[CLUSTER_FILE] = _cluster_file(settings)
     guarded = [proxy for proxy in ordered if proxy.inspected is not None]
     if guarded:
-        _refuse_waf_port(settings, reservations)
+        _refuse_loopback_port(WAF_ENGINE_PORT, "the WAF engine", settings, reservations)
         files[WAF_FILE] = _waf_backend_file()
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
@@ -422,31 +442,34 @@ def generate(
         }
         for _, proxy in placed
     }
+    parts.update(dns.parts)
     return GeneratedLayer(
         configuration=files,
         certificate_lists=listings,
         object_parts=parts,
         map_files=_country_files(ordered, countries),
         waf_files=_waf_files(guarded),
+        dns_files=dns.files,
     )
 
 
-def _refuse_waf_port(settings: ClusterSettings, reservations: Reservations) -> None:
-    """The engine's loopback port, which nothing else on the node may take.
+def _refuse_loopback_port(
+    port: int, what: str, settings: ClusterSettings, reservations: Reservations
+) -> None:
+    """A loopback port an engine beside HAProxy takes, which nothing else may.
 
     The exporter binds its port on every address, loopback included, and a
     reservation is a port the handwritten half binds; either on the engine's
     port would leave one of the two unable to listen.
     """
 
-    port = WAF_ENGINE_PORT
     if settings.metrics is not None and settings.metrics.port == port:
-        raise GeneratorError(f"the metrics port {port} is the port the WAF engine listens on")
+        raise GeneratorError(f"the metrics port {port} is the port {what} listens on")
     if port in reservations.tcp_ports or any(
         reserved == port for _address, reserved in reservations.tcp_listeners
     ):
         raise GeneratorError(
-            f"port {port} is reserved in manual/reservations.yaml, and the WAF engine listens on it"
+            f"port {port} is reserved in manual/reservations.yaml, and {what} listens on it"
         )
 
 
@@ -716,7 +739,7 @@ def _refuse_metrics_port(
             "configuration"
         )
     for _vip, proxy in placed:
-        used = {proxy.listen.port} if proxy.listen.protocol == "tcp" else set()
+        used = {proxy.listen.port} if proxy.listen.protocol in ("tcp", "dns") else set()
         if proxy.listen.protocol in ports:
             used.add(ports[proxy.listen.protocol])
         if proxy.listen.redirect_http:
@@ -1003,23 +1026,26 @@ def _refuse_shared_listeners(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping
     A crash would at least be noticed, which makes this the only place the
     collision can be caught.
 
-    Only tcp objects can collide this way. Two http objects on one address
-    share a frontend by design; a tcp object is a frontend of its own, and its
-    port is written in the object rather than in the cluster.
+    Only tcp and dns objects can collide this way. Two http objects on one
+    address share a frontend by design; a tcp object is a frontend of its own,
+    a dns object a dnsdist listener on UDP and TCP both, and their port is
+    written in the object rather than in the cluster.
     """
 
     taken: dict[tuple[str, int], str] = {}
     for vip, proxy in placed:
-        if proxy.listen.protocol != "tcp":
+        if proxy.listen.protocol not in ("tcp", "dns"):
             continue
         port = proxy.listen.port
         if port is None:
             #
-            # The model requires a port for tcp, so reaching this means the two
-            # layers have drifted. A refusal rather than an assertion, so it
-            # survives running with -O.
+            # The model requires a port for tcp and dns, so reaching this means
+            # the two layers have drifted. A refusal rather than an assertion,
+            # so it survives running with -O.
             #
-            raise GeneratorError(f"{proxy.name} listens on tcp without naming a port")
+            raise GeneratorError(
+                f"{proxy.name} listens on {proxy.listen.protocol} without naming a port"
+            )
         earlier = taken.get((vip.name, port))
         if earlier is not None:
             raise GeneratorError(

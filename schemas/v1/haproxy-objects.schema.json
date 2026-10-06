@@ -86,7 +86,8 @@
               "enum": [
                 "http",
                 "https",
-                "tcp"
+                "tcp",
+                "dns"
               ]
             },
             {

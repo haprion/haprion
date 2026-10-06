@@ -404,3 +404,46 @@ class TheWafLayerTravelsWithTheRelease(unittest.TestCase):
         for name in ("run.sh", "crs/rules/x.sh", "crs/other/x.conf", "coraza.yml"):
             with self.subTest(name), self.assertRaises(LayoutError):
                 build_node_artifact({**base, f"managed/waf/{name}": b"x\n"})
+
+
+RESOLVER = b"""schema: 1
+name: resolver
+listen: {protocol: dns, port: 53}
+backend: dns
+allow_from: [192.0.2.0/24]
+backends:
+  dns:
+    balance: roundrobin
+    servers: [{host: 198.51.100.53, port: 53}]
+"""
+
+
+class TheDnsLayerTravelsWithTheRelease(unittest.TestCase):
+    """B249: `managed/dns/dnsdist.conf` becomes the node's `dns/`, and only while a dns object exists."""
+
+    BASE = {"core/haproxy.cfg": b"global\n", "manual/reservations.yaml": b"{}\n"}
+
+    def publish(self, base: dict[str, bytes]) -> Any:
+        return managed_files(
+            {"managed/network.yaml": NETWORK, **base}, network_document=NETWORK, cluster=cluster()
+        )
+
+    def test_a_dns_object_brings_dnsdists_file_and_no_haproxy_object_file(self) -> None:
+        files = self.publish({"managed/proxies/resolver.yaml": RESOLVER})
+
+        self.assertIn(b'PoolAction("mgd-resolver-dns")', files["managed/dns/dnsdist.conf"])
+        self.assertNotIn("managed/generated/1001-resolver.cfg", files)
+        artifact = build_node_artifact({**files, **self.BASE})
+        self.assertIn("dns/dnsdist.conf", artifact)
+
+    def test_without_a_dns_object_the_layer_is_gone(self) -> None:
+        files = self.publish(
+            {"managed/proxies/shop.yaml": PROXY, "managed/dns/dnsdist.conf": b"stale\n"}
+        )
+
+        self.assertFalse([name for name in files if name.startswith("managed/dns/")])
+
+    def test_the_dns_layer_takes_its_one_file_only(self) -> None:
+        for name in ("dnsdist.yml", "other.conf", "sub/dnsdist.conf"):
+            with self.subTest(name), self.assertRaises(LayoutError):
+                build_node_artifact({**self.BASE, f"managed/dns/{name}": b"x\n"})

@@ -13,6 +13,7 @@ from typing import Any
 
 from haproxy_mgmt.proxy_model import (
     COMMON_KEYS,
+    DNS_REFUSED_KEYS,
     HTTP_ONLY_KEYS,
     NAME,
     PROXY_KEYS,
@@ -1234,6 +1235,138 @@ class ARawPortIsASmallerObject(unittest.TestCase):
             load_proxy("db", self.tcp((b"  port: 5432", b"  port: 5432\n  certificate: example")))
 
         self.assertIn("only meaningful for https", str(raised.exception))
+
+
+DNS = b"""
+schema: 1
+name: resolver
+listen:
+  protocol: dns
+  port: 53
+backend: dns
+allow_from: [office]
+backends:
+  dns:
+    balance: roundrobin
+    health:
+      type: dns
+    servers:
+      - host: 192.0.2.53
+        port: 53
+      - host: 192.0.2.54
+        port: 53
+"""
+
+
+def dns(*replacements: tuple[bytes, bytes]) -> bytes:
+    document = DNS
+    for old, new in replacements:
+        assert old in document, old
+        document = document.replace(old, new)
+    return document
+
+
+class AResolverIsServedByDnsdist(unittest.TestCase):
+    """A dns object (Fas 19, B249): a tcp object's shape, in dnsdist's vocabulary."""
+
+    def refused(self, document: bytes) -> str:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("resolver", document)
+        return str(raised.exception)
+
+    def test_it_loads_with_dnsdist_defaults_for_the_check(self) -> None:
+        proxy = load_proxy("resolver", DNS)
+        health = proxy.backends["dns"].health
+
+        self.assertEqual(
+            (proxy.listen.protocol, proxy.listen.port, proxy.backend), ("dns", 53, "dns")
+        )
+        self.assertEqual(
+            (health.query_name, health.query_type, health.interval, health.rise, health.fall),
+            ("a.root-servers.net.", "A", "1s", 1, 1),
+        )
+
+    def test_a_query_name_is_written_absolute(self) -> None:
+        proxy = load_proxy(
+            "resolver", dns((b"type: dns", b"type: dns\n      query_name: example.com"))
+        )
+
+        self.assertEqual(proxy.backends["dns"].health.query_name, "example.com.")
+
+    def test_every_dns_policy_loads_and_haproxys_are_refused(self) -> None:
+        for balance in ("roundrobin", "leastOutstanding", "firstAvailable", "chashed"):
+            with self.subTest(balance):
+                load_proxy("resolver", dns((b"roundrobin", balance.encode())))
+        self.assertIn("must be one of", self.refused(dns((b"roundrobin", b"leastconn"))))
+
+    def test_a_dns_policy_is_refused_on_a_pool_haproxy_serves(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", with_lines(("roundrobin", "firstAvailable")))
+        self.assertIn("is a dns policy", str(raised.exception))
+
+    def test_a_dns_check_is_refused_on_a_pool_haproxy_serves(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", with_lines(("type: disabled", "type: dns")))
+        self.assertIn("a dns check is for dns objects", str(raised.exception))
+
+    def test_an_interval_finer_than_a_second_is_refused(self) -> None:
+        for interval in (b"500ms", b"1500ms", b"2m"):
+            with self.subTest(interval):
+                message = self.refused(
+                    dns((b"type: dns", b"type: dns\n      interval: " + interval))
+                )
+                self.assertIn("whole seconds", message)
+
+    def test_what_dnsdist_cannot_be_told_is_refused(self) -> None:
+        for field in (b"port: 5353", b"tls: true", b"fast_interval: 1s", b"path: /", b"send: x"):
+            with self.subTest(field):
+                message = self.refused(dns((b"type: dns", b"type: dns\n      " + field)))
+                self.assertIn("means nothing for a dns health check", message)
+
+    def test_a_backup_server_is_refused_with_the_way_to_say_it(self) -> None:
+        message = self.refused(
+            dns(
+                (
+                    b"port: 53\n      - host: 192.0.2.54",
+                    b"port: 53\n        backup: true\n      - host: 192.0.2.54",
+                )
+            )
+        )
+        self.assertIn("firstAvailable", message)
+
+    def test_servers_must_be_addresses(self) -> None:
+        message = self.refused(dns((b"192.0.2.54", b"ns2.example.com")))
+        self.assertIn("ns2.example.com", message)
+
+    def test_pool_settings_dnsdist_has_no_line_for_are_refused(self) -> None:
+        for field in (b"cookie: s", b"max_connections: 10", b"tls: {verify: none}"):
+            with self.subTest(field):
+                self.assertIn(
+                    "means nothing for a dns object",
+                    self.refused(
+                        dns((b"balance: roundrobin", b"balance: roundrobin\n    " + field))
+                    ),
+                )
+
+    def test_haproxys_features_are_refused_by_name(self) -> None:
+        for key in DNS_REFUSED_KEYS:
+            with self.subTest(key):
+                message = self.refused(
+                    dns((b"backend: dns", f"{key}: {{}}\nbackend: dns".encode()))
+                )
+                self.assertIn(f"resolver.{key} means nothing for a dns object", message)
+
+    def test_a_listener_open_to_everybody_is_an_open_resolver(self) -> None:
+        self.assertIn("open resolver", self.refused(dns((b"allow_from: [office]\n", b""))))
+        self.assertIn("open resolver", self.refused(dns((b"[office]", b"[]"))))
+
+    def test_a_country_is_refused(self) -> None:
+        self.assertIn("countries", self.refused(dns((b"[office]", b"[country:SE]"))))
+
+    def test_a_port_is_required(self) -> None:
+        self.assertIn(
+            "port is required for dns", self.refused(dns((b"  port: 53\nbackend", b"backend")))
+        )
 
 
 class WhyANameWasRefused(unittest.TestCase):

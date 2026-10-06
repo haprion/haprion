@@ -76,6 +76,17 @@ def expected(case: Path) -> dict[str, str]:
 
 
 #
+# dnsdist's file (B249), kept apart from the configuration half: every `.cfg`
+# a case produces is loaded by `haproxy -c`, and this is not HAProxy's.
+#
+DNS_FILES = ("dnsdist.conf",)
+
+
+def expected_dns(case: Path) -> dict[str, str]:
+    return {name: (case / name).read_text() for name in DNS_FILES if (case / name).exists()}
+
+
+#
 # What the cluster in a golden case distributes. Certificates are named, never
 # pathed: the path is the node's business and the allowlist is the cluster's.
 #
@@ -143,6 +154,12 @@ def produced(case: Path) -> dict[str, str]:
     """The configuration half of a case, which is what the golden files are."""
 
     return generate(objects(case), **arguments(case)).configuration
+
+
+def produced_dns(case: Path) -> dict[str, str]:
+    """The dnsdist half of a case: empty unless it has a dns object."""
+
+    return generate(objects(case), **arguments(case)).dns_files
 
 
 def produced_lists(case: Path) -> dict[str, str]:

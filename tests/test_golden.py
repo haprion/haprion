@@ -35,8 +35,10 @@ from haproxy_mgmt.golden import (
     arguments,
     cases,
     expected,
+    expected_dns,
     objects,
     produced,
+    produced_dns,
     produced_lists,
 )
 from haproxy_mgmt.proxy_model import ModelError, Proxy, load_proxy
@@ -155,6 +157,7 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
         for case in cases():
             with self.subTest(case.name):
                 self.assertEqual(produced(case), expected(case))
+                self.assertEqual(produced_dns(case), expected_dns(case))
 
     def test_generating_twice_produces_the_same_bytes(self) -> None:
         for case in cases():

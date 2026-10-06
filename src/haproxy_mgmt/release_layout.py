@@ -122,6 +122,14 @@ WAF_NAME = re.compile(
     r"|crs/rules/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.(conf|data))$"
 )
 
+#
+# dnsdist's layer (B249), for the same reason as the WAF engine's: nothing in it
+# is HAProxy configuration. One file, generated whole on every publish.
+#
+DNS_LAYER = "managed/dns"
+DNS_TARGET = "dns"
+DNS_NAME = re.compile(r"^dnsdist\.conf$")
+
 CRT_LIST_LAYER = "managed/crt-lists"
 CRT_LIST_TARGET = "crt-lists"
 CRT_LIST_ALLOWED_SUFFIX = ".list"
@@ -307,6 +315,14 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
             raise LayoutError(f"file not allowed in {WAF_LAYER}: {relative}")
         artifact[f"{WAF_TARGET}/{relative}"] = content
         origin[f"{WAF_TARGET}/{relative}"] = GENERATED_LAYER
+
+    for relative, content in _children(files, DNS_LAYER):
+        if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
+            continue
+        if not DNS_NAME.match(relative):
+            raise LayoutError(f"file not allowed in {DNS_LAYER}: {relative}")
+        artifact[f"{DNS_TARGET}/{relative}"] = content
+        origin[f"{DNS_TARGET}/{relative}"] = GENERATED_LAYER
 
     for prefix, layer in MAP_LAYERS:
         for relative, content in _children(files, prefix):

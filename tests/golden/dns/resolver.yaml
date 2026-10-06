@@ -1,0 +1,17 @@
+schema: 1
+name: resolver
+listen:
+  protocol: dns
+  port: 53
+backend: dns
+allow_from: [office, 203.0.113.0/24]
+backends:
+  dns:
+    balance: firstAvailable
+    health:
+      type: dns
+    servers:
+      - host: 192.0.2.53
+        port: 53
+      - host: "2001:db8::53"
+        port: 53

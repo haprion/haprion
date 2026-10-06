@@ -136,7 +136,13 @@ HOSTNAME = re.compile(
 #
 ROUTE_PATH = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 
-PROTOCOLS = ("http", "https", "tcp")
+#
+# `dns` is served by dnsdist rather than HAProxy (Fas 19, B249): community
+# HAProxy 3.4 listens on UDP only in `log-forward` sections, measured in its
+# own manual on this machine. The object is otherwise a tcp object's shape - a
+# port and one pool - and the generator writes it into a layer of its own.
+#
+PROTOCOLS = ("http", "https", "tcp", "dns")
 #
 # The balancing algorithms an object may choose, read from HAProxy 3.4.4's own
 # documentation on this machine. HAProxy has more - `hash`, `hdr()`,
@@ -194,6 +200,24 @@ BALANCE_NEEDS_KEY = ("hdr", "url_param")
 # 3.4.4 on this machine.
 #
 BALANCE_HTTP_ONLY = ("hdr", "uri", "url_param")
+
+#
+# How a dns pool chooses a server: dnsdist's own policies, read from the 2.1
+# source (`getBuiltInPolicies`). Four of its seven; `wrandom` and `whashed`
+# need a weight per server and `orderedWrandUntag` tags, neither of which an
+# object has. `roundrobin` is the one name HAProxy shares.
+#
+#   roundrobin        in turn. Even, and the default.
+#   leastOutstanding  fewest unanswered queries, then the fastest. dnsdist's
+#                     own default; measured to put 5955 of 6000 queries on the
+#                     quicker of two servers (26-10-06).
+#   firstAvailable    the first server in the list that is up: active/passive,
+#                     which is what `backup` means elsewhere.
+#   chashed           one name keeps one server, and few names move when a
+#                     server comes or goes - what a caching resolver wants.
+#
+DNS_ONLY_BALANCE = ("leastOutstanding", "firstAvailable", "chashed")
+DNS_BALANCE = ("roundrobin", *DNS_ONLY_BALANCE)
 
 #
 # A query parameter name. Deliberately narrower than what a URL may carry: this
@@ -271,7 +295,27 @@ PLACEHOLDER = re.compile(r"%[A-Za-z_]+%")
 # path modes: a combination of fields that each say what they do beats a
 # vocabulary somebody has to look up.
 #
-HEALTH_TYPES = ("disabled", "tcp", "http")
+HEALTH_TYPES = ("disabled", "tcp", "http", "dns")
+
+#
+# A dns check asks a real question and waits for an answer. The name and type
+# are dnsdist's defaults (2.1); `a.root-servers.net.` is answered by any
+# resolver that recurses, and an authoritative server is asked for its own
+# zone instead. dnsdist counts its interval in whole seconds - `std::stoul`
+# in its 2.1 source, so half a second would be read as none - and its own
+# defaults for the rest are what the lab measured (26-10-06): a dead server
+# out within a quarter of a second at a second's interval.
+#
+DNS_QUERY_TYPES = ("A", "AAAA", "SOA", "NS", "MX", "TXT")
+DNS_NAME = re.compile(
+    r"^(?=.{1,254}$)(?:[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?\.)*"
+    r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?\.?$"
+)
+DEFAULT_QUERY_NAME = "a.root-servers.net."
+DEFAULT_QUERY_TYPE = "A"
+DEFAULT_DNS_INTERVAL = "1s"
+DEFAULT_DNS_RISE = 1
+DEFAULT_DNS_FALL = 1
 
 #
 # How often, and how many answers in a row it takes to change a server's mind.
@@ -366,6 +410,20 @@ HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
     }
 )
 
+#
+# What a dns object cannot carry, on top of everything HTTP_ONLY_KEYS refuses.
+# Each is a HAProxy feature: dnsdist serves the object, and a setting no line
+# of its configuration would carry is refused rather than published as a
+# promise nothing keeps.
+#
+DNS_REFUSED_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "advanced": "advanced config is HAProxy text, and dnsdist serves this object",
+        "rate_limit": "the request limit is HAProxy's, and dnsdist serves this object",
+        "deny_from": "refusals by address are HAProxy's; list who may ask in allow_from",
+    }
+)
+
 TCP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
     {
         "backend": "a pool is named by the route that reaches it",
@@ -429,6 +487,8 @@ class Health:
     expect_body: str | None = None
     send: str | None = None
     expect: str | None = None
+    query_name: str | None = None
+    query_type: str | None = None
     interval: str = DEFAULT_INTERVAL
     #
     # HAProxy's `fastinter` and `downinter`: the interval while a server is on
@@ -1001,12 +1061,13 @@ def _server(value: Any, location: str) -> Server:
 
 _HTTP_ONLY = ("path", "host", "expect_status", "expect_body")
 _TCP_ONLY = ("send", "expect")
+_DNS_ONLY = ("query_name", "query_type")
 _TIMING = ("tls", "port", "interval", "fast_interval", "down_interval", "rise", "fall")
 
 
 def _health(value: Any, location: str) -> Health:
     data = _mapping(value, location)
-    _only_keys(data, {"type", *_HTTP_ONLY, *_TCP_ONLY, *_TIMING}, location)
+    _only_keys(data, {"type", *_HTTP_ONLY, *_TCP_ONLY, *_DNS_ONLY, *_TIMING}, location)
     kind = _string(data, "type", location, HEALTH_TYPES)
 
     if kind == "disabled":
@@ -1017,7 +1078,9 @@ def _health(value: Any, location: str) -> Health:
             )
         return Health(type=kind)
 
-    for key in _TCP_ONLY if kind == "http" else _HTTP_ONLY:
+    if kind == "dns":
+        return _dns_health(data, location)
+    for key in (*(_TCP_ONLY if kind == "http" else _HTTP_ONLY), *_DNS_ONLY):
         if data.get(key) is not None:
             raise ModelError(f"{location}.{key} means nothing for a {kind} health check")
 
@@ -1097,6 +1160,45 @@ def _health(value: Any, location: str) -> Health:
     )
 
 
+def _dns_health(data: Mapping[str, Any], location: str) -> Health:
+    """A real question to each server, in what dnsdist can be told.
+
+    No separate port, no TLS and no fast or down interval: dnsdist asks the
+    server on the address it forwards to, over plain DNS, at one interval. A
+    field it cannot be given is refused rather than dropped, so the object never
+    reads as something the node does not do.
+    """
+
+    for key in (*_HTTP_ONLY, *_TCP_ONLY, "tls", "port", "fast_interval", "down_interval"):
+        if data.get(key) is not None:
+            raise ModelError(f"{location}.{key} means nothing for a dns health check")
+    interval = data.get("interval", DEFAULT_DNS_INTERVAL)
+    if (
+        not isinstance(interval, str)
+        or not DURATION.match(interval)
+        or duration_ms(interval) % 1000
+        or duration_ms(interval) > 60_000
+    ):
+        raise ModelError(
+            f"{location}.interval must be whole seconds from 1s to 1m; dnsdist counts no finer"
+        )
+    query_name = data.get("query_name", DEFAULT_QUERY_NAME)
+    if not isinstance(query_name, str) or not DNS_NAME.match(query_name):
+        raise ModelError(f"{location}.query_name must be a DNS name, such as example.com.")
+    return Health(
+        type="dns",
+        query_name=query_name if query_name.endswith(".") else f"{query_name}.",
+        query_type=(
+            _string(data, "query_type", location, DNS_QUERY_TYPES)
+            if "query_type" in data
+            else DEFAULT_QUERY_TYPE
+        ),
+        interval=interval,
+        rise=_count(data, "rise", location, DEFAULT_DNS_RISE),
+        fall=_count(data, "fall", location, DEFAULT_DNS_FALL),
+    )
+
+
 def _duration(data: Mapping[str, Any], key: str, location: str) -> str | None:
     value = data.get(key)
     if value is not None and (not isinstance(value, str) or not DURATION.match(value)):
@@ -1170,7 +1272,11 @@ def _backend(name: str, value: Any, location: str) -> Backend:
         },
         location,
     )
-    balance = _string(data, "balance", location, BALANCE)
+    #
+    # Both vocabularies are read here and each is held to its protocol where
+    # the whole object is known: a pool does not know what it is behind.
+    #
+    balance = _string(data, "balance", location, (*BALANCE, *DNS_ONLY_BALANCE))
     balance_key = _balance_key(data, balance, location)
 
     servers = data.get("servers")
@@ -1482,15 +1588,21 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
 
     hostnames: tuple[str, ...]
     routes: tuple[Route, ...]
-    if listen.protocol == "tcp":
-        _refuse_keys(data, HTTP_ONLY_KEYS, name, "a tcp object")
+    if listen.protocol in ("tcp", "dns"):
+        _refuse_keys(data, HTTP_ONLY_KEYS, name, f"a {listen.protocol} object")
         hostnames = ()
         routes = ()
         backend = _tcp_backend(data, backends, name)
         used = {backend}
-        _refuse_http_only_pools(backends, name)
+        if listen.protocol == "dns":
+            _refuse_keys(data, DNS_REFUSED_KEYS, name, "a dns object")
+            _refuse_non_dns_pools(backends, name)
+            _refuse_open_resolver(data, name)
+        else:
+            _refuse_http_only_pools(backends, name)
     else:
         _refuse_keys(data, TCP_ONLY_KEYS, name, "an http or https object")
+        _refuse_dns_only_pools(backends, name)
         hostnames = _hostnames(data.get("hostnames"), name)
         backend = None
         routes_raw = data.get("routes")
@@ -1698,6 +1810,7 @@ def _refuse_http_only_pools(backends: Mapping[str, Backend], name: str) -> None:
     prove is dead.
     """
 
+    _refuse_dns_only_pools(backends, name)
     for key, pool in backends.items():
         where = f"{name}.backends.{key}"
         if pool.cookie is not None:
@@ -1709,6 +1822,84 @@ def _refuse_http_only_pools(backends: Mapping[str, Backend], name: str) -> None:
             raise ModelError(
                 f"{where}.balance: {pool.balance} hashes something only an HTTP request has; "
                 f"HAProxy falls back to roundrobin in tcp mode without failing"
+            )
+
+
+def _refuse_dns_only_pools(backends: Mapping[str, Backend], name: str) -> None:
+    """dnsdist's vocabulary on a pool HAProxy serves, refused by name."""
+
+    for key, pool in backends.items():
+        where = f"{name}.backends.{key}"
+        if pool.balance in DNS_ONLY_BALANCE:
+            raise ModelError(
+                f"{where}.balance: {pool.balance} is a dns policy; this object is served by HAProxy"
+            )
+        if pool.health.type == "dns":
+            raise ModelError(f"{where}.health: a dns check is for dns objects")
+
+
+def _refuse_non_dns_pools(backends: Mapping[str, Backend], name: str) -> None:
+    """What a dns pool cannot have, because dnsdist has no line to carry it.
+
+    `backup` above all: dnsdist has no standby member, and a pool that read as
+    active/passive while every server took queries would be the silent kind of
+    wrong. `firstAvailable` is how a dns pool says active/passive.
+    """
+
+    for key, pool in backends.items():
+        where = f"{name}.backends.{key}"
+        if pool.balance not in DNS_BALANCE:
+            raise ModelError(
+                f"{where}.balance must be one of {', '.join(DNS_BALANCE)} for a dns object"
+            )
+        for field_name, value in (
+            ("balance_key", pool.balance_key),
+            ("cookie", pool.cookie),
+            ("tls", pool.tls),
+            ("max_connections", pool.max_connections),
+            ("slow_start", pool.slow_start),
+        ):
+            if value is not None:
+                raise ModelError(f"{where}.{field_name} means nothing for a dns object")
+        if any(server.backup for server in pool.servers):
+            raise ModelError(
+                f"{where}: dnsdist has no backup server; use balance: firstAvailable, which "
+                f"sends every query to the first server that is up"
+            )
+        if pool.health.type not in ("dns", "disabled"):
+            raise ModelError(f"{where}.health must be a dns check, or disabled")
+        #
+        # dnsdist takes a server by address; it has no resolver of its own for
+        # the names of the servers it forwards to.
+        #
+        named = sorted({server.host for server in pool.servers if not _is_address(server.host)})
+        if named:
+            raise ModelError(
+                f"{where}.servers must be addresses for a dns object; dnsdist does not look "
+                f"server names up: {', '.join(named)}"
+            )
+
+
+def _refuse_open_resolver(data: Mapping[str, Any], name: str) -> None:
+    """A dns object says who may ask it.
+
+    Empty means everybody elsewhere, and for a site that is an answer. For a
+    resolver it is an open one: anybody who reaches the address can make it ask
+    the servers behind it, and answers far larger than the questions are what
+    reflection attacks are built from. Countries are refused because the
+    networks behind them are HAProxy map files dnsdist does not read.
+    """
+
+    entries = data.get("allow_from")
+    if not isinstance(entries, list) or not entries:
+        raise ModelError(
+            f"{name}.allow_from must name who may ask: a dns listener open to everyone is an "
+            f"open resolver"
+        )
+    for entry in entries:
+        if isinstance(entry, str) and geo.is_country(entry.lower()):
+            raise ModelError(
+                f"{name}.allow_from: countries are not available on a dns object ({entry})"
             )
 
 
@@ -2360,13 +2551,15 @@ def _listen(value: Any, location: str) -> Listen:
         raise ModelError(f"{location}.hsts requires protocol: https")
 
     port = data.get("port")
-    if protocol == "tcp":
+    if protocol in ("tcp", "dns"):
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
-            raise ModelError(f"{location}.port is required for tcp and must be a port number")
+            raise ModelError(
+                f"{location}.port is required for {protocol} and must be a port number"
+            )
     elif port is not None:
         raise ModelError(
-            f"{location}.port is only meaningful for tcp; http and https are served on the "
-            f"cluster's own ports"
+            f"{location}.port is only meaningful for tcp and dns; http and https are served on "
+            f"the cluster's own ports"
         )
 
     return Listen(

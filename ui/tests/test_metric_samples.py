@@ -189,7 +189,7 @@ class ThePoolFiguresQuery(unittest.TestCase):
                     self.assertEqual(len(connection.statements), 1)
                     self.assertEqual("_hour_delta" in connection.statement, hourly)
 
-    def test_the_same_sql_measurement_carries_counter_and_window_coverage(self) -> None:
+    def test_the_same_sql_measurement_carries_figures_and_the_restart(self) -> None:
         at = datetime(2026, 9, 6, 12, tzinfo=UTC)
         pairs: list[object] = []
         for index, _counter in enumerate(CARD_COUNTERS, start=1):
@@ -206,8 +206,8 @@ class ThePoolFiguresQuery(unittest.TestCase):
             until=at,
         )
 
-        self.assertEqual(measured.coverage, 83)
-        self.assertEqual(measured.totals[0].coverage, 66)
+        self.assertEqual([total.value for total in measured.totals][:2], [1, 2])
+        self.assertTrue(all(total.known for total in measured.totals))
         self.assertTrue(measured.restarted)
 
 

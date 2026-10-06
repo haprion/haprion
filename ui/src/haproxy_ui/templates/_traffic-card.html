@@ -56,15 +56,6 @@
         #}
         {% for point in backend.points %}{% if point.selected %}<rect class="traffic-marked" x="{{ '%.1f'|format(point.x - backend.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(backend.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
         {% for level in backend.levels %}<line class="traffic-level" x1="0" y1="{{ level.y }}" x2="{{ spark_width }}" y2="{{ level.y }}" stroke="var(--line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"></line>{% endfor %}
-        {#
-          A faint band behind the buckets that could only be measured over part
-          of themselves - a reload, a failover, a poll that never arrived. The
-          line is drawn across them from what was seen, scaled to the bucket,
-          because a ten-second reload is not an hour of missing traffic; the
-          band is how the reader is told which buckets that was, and the hover
-          says over how much of each.
-        #}
-        {% for point in backend.points %}{% if point.partial %}<rect class="traffic-part" x="{{ '%.1f'|format(point.x - backend.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(backend.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
         {% for path in backend.paths %}<path d="{{ path }}" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>{% endfor %}
         {#
           One hover target per reading, as wide as the bucket it stands for
@@ -113,7 +104,7 @@
       <dl class="traffic-figures">
         {% for total in backend.totals %}
         {% if (traffic_redirect and total.label != '2xx') or (not traffic_redirect and total.label != '3xx') %}
-        <div><dt>{{ total.label }}</dt><dd>{% if total.known %}<span class="traffic-value"{% if total.shortened %} data-note="{{ total.label }}: {{ '{:,}'.format(total.value).replace(',', ' ') }} exactly."{% endif %}>{{ total.shown }}</span>{% else %}&mdash;{% endif %}{% if total.known and not total.whole %}<span class="traffic-partial" data-note="Counted over {{ total.coverage }}% of the window">*</span>{% endif %}</dd></div>
+        <div><dt>{{ total.label }}</dt><dd>{% if total.known %}<span class="traffic-value"{% if total.shortened %} data-note="{{ total.label }}: {{ '{:,}'.format(total.value).replace(',', ' ') }} exactly."{% endif %}>{{ total.shown }}</span>{% else %}&mdash;{% endif %}</dd></div>
         {% endif %}
         {% endfor %}
       </dl>

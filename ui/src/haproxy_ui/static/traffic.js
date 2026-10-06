@@ -36,7 +36,7 @@
       //
       // What the page was rendered with: the window's figures, or a marked
       // range's. A hover is a look at something else and has to be able to put
-      // this back exactly, including the coverage marks beside the numbers.
+      // this back exactly.
       //
       const values = new Map();
       for (const item of row.querySelectorAll("div")) {
@@ -92,13 +92,13 @@
       svg.addEventListener("blur", restore, true);
 
       //
-      // A figure that says its own piece: the star beside a qualified total,
-      // and a total large enough to be printed short. Both answer in the note
-      // row, where every other reading on this card answers.
+      // A figure that says its own piece: a total large enough to be printed
+      // short. It answers in the note row, where every other reading on this
+      // card answers.
       //
       // Listened for on the row, not on each figure: `restore` writes the
       // figures back as markup, which makes new elements - and a listener on
-      // the old star was gone after the first look at the line (2026-10-05).
+      // the old element was gone after the first look at the line (2026-10-05).
       //
       row.addEventListener("pointerover", (event) => {
         const said = event.target.closest("[data-note]");

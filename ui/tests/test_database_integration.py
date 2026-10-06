@@ -1627,7 +1627,6 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(by_label["Bytes in"].value, 10_000 + 100 + 300)
         self.assertEqual(by_label["Bytes out"].value, 100_000 + 300 + 600)
         self.assertTrue(summed.restarted)
-        self.assertFalse(by_label["Requests"].whole, "the restart's minute was not seen whole")
 
     def test_response_times_leave_out_requests_no_server_answered(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)

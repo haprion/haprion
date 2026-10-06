@@ -315,10 +315,10 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
     # an interval - and the active node's series runs through the hour
     # unbroken. A real failover is not lost either: the outgoing node's
     # intervals end where its samples stop, the incoming node's begin where its
-    # own start, and the stretch between them is time nobody observed, which
-    # the coverage already knows how to say. It is the one thing no arithmetic
-    # recovers, and it is now measured as the seconds it actually was rather
-    # than as the two buckets that happened to touch it.
+    # own start, and the stretch between them is time nobody observed. It is
+    # the one thing no arithmetic recovers, and it is now measured as the
+    # seconds it actually was rather than as the two buckets that happened to
+    # touch it.
     #
     series: dict[str, list[Sample]] = {}
     for sample in samples:
@@ -428,39 +428,23 @@ def _handovers(series: Mapping[str, Sequence[Sample]]) -> list[Interval]:
 
 @dataclass(frozen=True, slots=True)
 class Total:
-    """One counter summed over a window, and how much of the window it covers.
+    """One counter summed over a window, and whether any of it could be counted.
 
-    **The coverage is not a footnote, it is half the reading.** An earlier
-    version answered a window with a hole in it with nothing at all, on the
-    grounds that a partial sum reads as the whole window's traffic and would be
-    compared against one that was complete. The danger is real; withholding the
-    number is the wrong answer to it. A month with one reload in it is a month
-    with one reload in it, and refusing to say anything about the other 27 days
-    leaves the operator with an em dash where the data is.
-
-    So the number is given and the coverage travels with it, always, in the same
-    breath. `whole` is what the strict version used to return; what changed is
-    that not-whole now still carries what was counted.
+    **The figure is printed without a coverage mark.** It used to carry a star
+    and "Counted over N% of the window" whenever restarts or a change of node
+    cut into it. The counters are cumulative, so a missed poll costs nothing
+    and a reload only the seconds between the last poll and the reload - and
+    the share was taken against the summed intervals rather than the window,
+    so a node taking the address back after days added those days twice. A
+    7-day card on internal said 64 % with every request counted (measured
+    2026-10-06). The mark cost the reader more than the seconds it stood for,
+    and was removed on the maintainer's call.
     """
 
     label: str
     value: int
     counted_sec: float
     span_sec: float
-
-    @property
-    def whole(self) -> bool:
-        """Whether enough of the window was counted to answer for it plainly.
-
-        Not "every second of it". A reload takes five to eight seconds and this
-        is a traffic card, not an availability monitor: marking an otherwise
-        complete day because a restart cost it eight seconds tells the reader
-        to discount a figure that is right. The threshold is `COVERAGE_WHOLE`,
-        the same 95 % at which the drawing stops qualifying a bucket, so the
-        line and the figures agree about what counts as measured.
-        """
-
-        return self.counted_sec >= self.span_sec * COVERAGE_WHOLE
 
     @property
     def shown(self) -> str:
@@ -499,44 +483,19 @@ class Total:
         Nothing counted is not nought traffic. A window whose every interval
         was refused - one reading each from two nodes, and nothing in between -
         has a sum of zero because there was nothing to add, and printing that
-        as `0` beside a note saying it was counted over 0 % of the window is the
-        card contradicting itself in one line.
+        as `0` would be a measurement nobody made.
         """
 
         return self.counted_sec > 0 or self.span_sec <= 0
 
-    @property
-    def coverage(self) -> int:
-        """How much of the window the figure covers, as a whole percent.
-
-        Rounded down, so a window missing any measurable part of itself cannot
-        round up to a confident 100. An empty window covers nothing and says
-        100 rather than dividing by zero: there is no span to have missed, and
-        `measured` is the property that says the window is empty.
-        """
-
-        if self.span_sec <= 0:
-            return 100
-        return int(self.counted_sec / self.span_sec * 100)
-
 
 def totalled(found: Sequence[Interval], name: str, label: str = "") -> Total:
-    """One counter summed over a run of intervals, with the part it could not see.
+    """One counter summed over a run of intervals.
 
-    Two questions, and they stopped having one answer when a restart began
-    carrying what the new process had counted. What was measured goes into the
-    value; what was *fully* seen decides the time counted. An interval spanning
-    a restart is both: the traffic since the new process started is real and is
-    counted, and the seconds before it belonged to a process that is gone - so
-    the interval still says the window was not seen whole.
-
-    Keying the coverage off "is there a number" was right while the two were
-    the same thing. It is not any more: it would have made a restart vanish
-    from the reading entirely, which is the marker doing the opposite of its
-    job.
-
-    A change of node contributes to neither. Nothing observed that interval at
-    all, so there is no half of it to keep.
+    What was measured goes into the value, including the traffic a new process
+    counted since a restart. The time counted is what `Total.known` reads: a
+    window none of whose intervals could be differenced has no figure, not a
+    zero. A change of node contributes to neither.
     """
 
     value = 0
@@ -646,15 +605,6 @@ class Point:
     #
     measured: bool = True
     #
-    # How much of the bucket's own length the drawn counter could be measured
-    # over, as a whole percent, and whether that was little enough to be worth
-    # marking. A bucket is drawn from what was seen and scaled to its length,
-    # so a reader is owed the size of the part that was not seen - and owed it
-    # on the bucket itself rather than only in the window's total.
-    #
-    covered: int = 100
-    partial: bool = False
-    #
     # The bucket's start as whole seconds, which is what a link to it is
     # written with. Seconds rather than a formatted time: the value travels in
     # a query string and comes back parsed, and every format that reads nicely
@@ -679,9 +629,8 @@ class Point:
     #
     moment: str = ""
     #
-    # What qualifies the figures, where anything does: a gap, an hour nobody
-    # sampled, or a bucket measured over part of itself. Empty when the bucket
-    # answers for itself whole.
+    # What qualifies the figures, where anything does: a gap, or an hour
+    # nobody sampled. Empty when the bucket has figures.
     #
     note: str = ""
 
@@ -706,8 +655,7 @@ def _bucket_of(at: datetime, bucket: timedelta) -> int:
 
 
 #
-# How much of a bucket must be measured before it is drawn at all, and how
-# much before the drawing stops calling it partial.
+# How much of a bucket must be measured before it is drawn at all.
 #
 # A bucket used to be all or nothing: one interval that could not be
 # differenced - a ten-second reload, a failover - made every counter unknown
@@ -724,7 +672,6 @@ def _bucket_of(at: datetime, bucket: timedelta) -> int:
 # at all.
 #
 COVERAGE_DRAWN = 0.5
-COVERAGE_WHOLE = 0.95
 
 
 @dataclass(frozen=True, slots=True)
@@ -1064,15 +1011,14 @@ def spark(
     a continuous line, and a window that only draws where the poller has history
     gives a month-long view a short scribble in one corner. The cost is stated
     rather than hidden - the line cannot then separate "no traffic" from "no
-    poller", so the hover says which of the two each bucket was, and the figures
-    beside the card carry their own coverage.
+    poller", so the hover says which of the two each bucket was.
 
     **A counter that could not be differenced is still a gap.** A restart, a
     change of node, a counter the node did not report: the line breaks there and
     the next known value starts a new run. That is deliberately not the same as
     an empty bucket. Something was measured across it and could not be turned
     into a rate, which is a narrower and more suspicious thing than a stretch
-    nobody sampled - and it is the one the figures' coverage is counted from.
+    nobody sampled.
 
     **Scaled to a round ceiling at or above its peak**, so the height of the
     line means something. Drawn against its own maximum it touched the top of
@@ -1127,7 +1073,6 @@ def spark(
                     value=0,
                     reading=gap_at(at, share),
                     measured=True,
-                    covered=round(share * 100),
                     stamp=int(at.timestamp()),
                     selected=chosen.holds(at, bucket),
                     figures=tuple((label, None) for _name, label in CARD_COUNTERS),
@@ -1146,19 +1091,15 @@ def spark(
                 x=point_x,
                 y=y,
                 value=value,
-                reading=reading_at(at, totals, share) if measured else unread_at(at),
+                reading=reading_at(at, totals) if measured else unread_at(at),
                 measured=measured,
-                covered=round(share * 100) if measured else 0,
-                partial=measured and share < COVERAGE_WHOLE,
                 stamp=int(at.timestamp()),
                 selected=chosen.holds(at, bucket),
                 figures=tuple(
                     (label, totals.get(name) if measured else None) for name, label in CARD_COUNTERS
                 ),
                 moment=shown(at).strftime(TIMESTAMP),
-                note=""
-                if measured and share >= COVERAGE_WHOLE
-                else (partial_note(share) if measured else "No samples at this time"),
+                note="" if measured else "No samples at this time",
             )
         )
     if current:
@@ -1261,17 +1202,7 @@ def gap_note(covered: float) -> str:
     return f"Only {round(covered * 100)}% measured, not shown"
 
 
-def partial_note(covered: float) -> str:
-    """Why a figure stands for more time than was watched.
-
-    Short enough for the note row beside the bucket's time (2026-10-05): the
-    sentence it replaced was cut off there after five words.
-    """
-
-    return f"Scaled up from {round(covered * 100)}% measured"
-
-
-def reading_at(at: datetime, totals: Mapping[str, int | None], covered: float = 1.0) -> str:
+def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:
     """What one bucket says when the pointer rests on it.
 
     Every figure the card carries, not only the one the line draws, because the
@@ -1289,15 +1220,7 @@ def reading_at(at: datetime, totals: Mapping[str, int | None], covered: float = 
         f"{label} {value if (value := totals.get(name)) is not None else 'not measured'}"
         for name, label in CARD_COUNTERS
     ]
-    reading = f"{when} · " + " · ".join(parts)
-    if covered < COVERAGE_WHOLE:
-        #
-        # Said as a share of the bucket rather than as a duration, because the
-        # bucket's own length differs by window and the figure has to mean the
-        # same thing on all four.
-        #
-        reading += f" · measured over {round(covered * 100)}% of this bucket, and scaled to it"
-    return reading
+    return f"{when} · " + " · ".join(parts)
 
 
 #
@@ -1344,7 +1267,6 @@ class BackendMeasurement:
     totals: tuple[Total, ...]
     restarted: bool
     handed_over: bool
-    coverage: int
 
 
 #
@@ -1389,9 +1311,7 @@ class BackendTraffic:
     started_at: datetime | None
     ended_at: datetime | None
     #
-    # One `Total` per `CARD_COUNTERS` entry, in that order. Each carries its
-    # own coverage, so a figure the window could not fully see is printed with
-    # what it did see rather than as an em dash.
+    # One `Total` per `CARD_COUNTERS` entry, in that order.
     #
     totals: tuple[Total, ...]
     paths: tuple[str, ...]
@@ -1434,14 +1354,6 @@ class BackendTraffic:
     #
     drawn_intervals: int = 0
     handed_over: bool = False
-    #
-    # How much of the window's time sits in intervals that could be measured at
-    # all, as a whole percent. A property of the window rather than of any one
-    # counter: a restart and a change of node cost every figure the same
-    # stretch, while a counter the node never reported costs only itself and
-    # says so on its own figure.
-    #
-    coverage: int = 100
 
     #
     # There was a `quiet` property here, and the sentence it turned on -
@@ -1494,30 +1406,6 @@ def spark_ticks(
         at = start + timedelta(seconds=seconds * share)
         ticks.append((share * 100, shown(at).strftime(fmt)))
     return ticks
-
-
-def window_coverage(found: Sequence[Interval]) -> int:
-    """How much of a window's time could be measured at all, as a whole percent.
-
-    Counted from the structural gaps alone - a restart, a change of node -
-    because those are what cost every figure on the card the same stretch of
-    time. A counter the node did not report is a hole in that figure and not in
-    the window, and folding it in here once produced a card that announced 0%
-    coverage beside a figure covering half the window.
-
-    Rounded down, so a window missing a measurable part of itself cannot round
-    up to a confident 100.
-    """
-
-    span = sum(interval.seconds for interval in found)
-    if span <= 0:
-        return 100
-    measured = sum(
-        interval.seconds
-        for interval in found
-        if not interval.restarted and not interval.handed_over
-    )
-    return int(measured / span * 100)
 
 
 #
@@ -1753,7 +1641,6 @@ def backend_traffic(
             totals=tuple(totalled(found, name, label) for name, label in CARD_COUNTERS),
             restarted=any(interval.restarted for interval in found),
             handed_over=any(interval.handed_over for interval in found),
-            coverage=window_coverage(found),
         )
     paths, points, peak = spark(
         found,
@@ -1792,7 +1679,6 @@ def backend_traffic(
         peak=peak,
         restarted=measurement.restarted,
         handed_over=measurement.handed_over,
-        coverage=measurement.coverage,
     )
 
 

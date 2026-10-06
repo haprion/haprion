@@ -192,8 +192,6 @@ class WhatHappenedInBetween(unittest.TestCase):
         self.assertFalse(card.restarted)
         requests = next(total for total in card.totals if total.label == "Requests")
         self.assertEqual(requests.value, 100)
-        self.assertFalse(requests.whole)
-        self.assertEqual(card.coverage, 50)
 
     def test_one_sample_is_no_interval_at_all(self) -> None:
         self.assertEqual(metrics.intervals([sample(0, uptime=100, req_tot=1)]), [])
@@ -213,16 +211,14 @@ class TotallingAWindow(unittest.TestCase):
     def test_a_whole_window_has_a_total(self) -> None:
         total = metrics.totalled(self.window(), "req_tot")
         self.assertEqual(total.value, 10)
-        self.assertTrue(total.whole)
-        self.assertEqual(total.coverage, 100)
+        self.assertTrue(total.known)
 
-    def test_a_window_with_a_gap_still_says_what_it_counted(self) -> None:
-        """The part that was measured is given, and it says how much that was.
+    def test_a_window_with_a_restart_counts_what_the_new_process_counted(self) -> None:
+        """The part that was measured is given, as the window's figure.
 
         Withholding it answers a month containing one reload with nothing at
-        all. What the earlier version was right about is that the bare number
-        would be read as the window's traffic - so the coverage travels with
-        it and the figure is a floor, stated as one.
+        all, and the seconds a reload costs are not worth a mark beside the
+        figure (2026-10-06).
         """
 
         broken = metrics.intervals(
@@ -238,17 +234,9 @@ class TotallingAWindow(unittest.TestCase):
         # before the reading that closed the restart's own interval.
         #
         self.assertEqual(total.value, 9)
-        self.assertFalse(total.whole)
-        self.assertEqual(total.coverage, 50)
+        self.assertTrue(total.known)
 
-    def test_a_counter_the_node_never_reported_does_not_speak_for_the_window(self) -> None:
-        """It stars its own figure; it does not make the card claim a hole.
-
-        An earlier version took the card's coverage as the lowest across every
-        counter, so a column the node does not report announced 0% beside a
-        figure that covered half the window.
-        """
-
+    def test_a_counter_the_node_never_reported_is_unknown_not_zero(self) -> None:
         card = metrics.backend_traffic(
             "be_alpha",
             metrics.intervals(
@@ -261,59 +249,17 @@ class TotallingAWindow(unittest.TestCase):
             end=START + timedelta(seconds=20),
             bucket=timedelta(seconds=10),
         )
-        self.assertEqual(card.coverage, 100)
+        requests = next(total for total in card.totals if total.label == "Requests")
         unreported = next(total for total in card.totals if total.label == "4xx")
-        self.assertFalse(unreported.whole)
-        self.assertEqual(unreported.coverage, 0)
-
-    def test_coverage_is_time_rather_than_a_count_of_intervals(self) -> None:
-        """Two short holes in a long window are not half of it missing."""
-
-        broken = metrics.intervals(
-            [
-                sample(0, uptime=100, req_tot=10),
-                sample(900, uptime=1000, req_tot=910),
-                sample(910, uptime=5, req_tot=3),
-            ]
-        )
-        total = metrics.totalled(broken, "req_tot")
-        self.assertEqual(total.value, 903)
-        self.assertEqual(total.coverage, 98)
-
-    def test_a_reload_does_not_qualify_an_otherwise_complete_window(self) -> None:
-        """A restart costs seconds; a card that flags them tells people to
-        distrust a figure that is right.
-
-        This is a traffic card, not an availability monitor. Below 95 % the
-        figure is qualified - above it, the reader is told nothing, because
-        there is nothing worth saying.
-        """
-
-        readings = [sample(0, uptime=100, req_tot=0)]
-        for step in range(1, 251):
-            readings.append(sample(step * 10, uptime=100 + step * 10, req_tot=step))
-        readings.append(sample(2520, uptime=5, req_tot=1))
-        total = metrics.totalled(metrics.intervals(readings), "req_tot")
-        self.assertEqual(total.coverage, 99)
-        self.assertTrue(total.whole)
-
-    def test_a_window_missing_more_than_a_twentieth_is_still_qualified(self) -> None:
-        """The threshold is a threshold, not an amnesty."""
-
-        readings = [sample(0, uptime=100, req_tot=0)]
-        for step in range(1, 11):
-            readings.append(sample(step * 10, uptime=100 + step * 10, req_tot=step))
-        readings.append(sample(120, uptime=5, req_tot=1))
-        total = metrics.totalled(metrics.intervals(readings), "req_tot")
-        self.assertLess(total.coverage, 95)
-        self.assertFalse(total.whole)
+        self.assertTrue(requests.known)
+        self.assertFalse(unreported.known)
 
     def test_an_empty_window_totals_zero_rather_than_unknown(self) -> None:
         """Nothing to subtract is not the same as something unsubtractable."""
 
         total = metrics.totalled([], "req_tot")
         self.assertEqual(total.value, 0)
-        self.assertTrue(total.whole)
+        self.assertTrue(total.known)
 
 
 class DrawingTheShape(unittest.TestCase):
@@ -598,8 +544,8 @@ class WhatABucketCouldSee(unittest.TestCase):
         self.assertEqual(grid[0].counters["req_tot"], 20)
         self.assertEqual(grid[0].covered["req_tot"], 1.0)
 
-    def test_a_partly_measured_bucket_is_marked_and_says_how_much(self) -> None:
-        """The line stays continuous; the reader is still told which buckets."""
+    def test_a_partly_measured_bucket_is_drawn_scaled_without_a_mark(self) -> None:
+        """The line stays continuous and scaled, without a mark (2026-10-06)."""
 
         _paths, points, _peak = metrics.spark(
             [
@@ -618,9 +564,9 @@ class WhatABucketCouldSee(unittest.TestCase):
             bucket=timedelta(seconds=60),
         )
 
-        self.assertTrue(points[0].partial)
-        self.assertEqual(points[0].covered, 83)
-        self.assertIn("measured over 83%", points[0].reading)
+        self.assertEqual(points[0].value, 60)
+        self.assertEqual(points[0].note, "")
+        self.assertNotIn("of this bucket", points[0].reading)
 
     def test_a_gap_says_whether_anything_at_all_was_seen(self) -> None:
         """ "Nothing" and "not enough" send an operator to different places."""
@@ -815,7 +761,7 @@ class WhetherTheWindowSaysAnything(unittest.TestCase):
         self.assertTrue(card.measured)
 
     def test_a_window_with_a_hole_is_still_a_window(self) -> None:
-        """Measured, and its figures marked rather than withheld."""
+        """Measured, and its figures given rather than withheld."""
 
         card = self.traffic(
             sample(0, uptime=900, fill=0),
@@ -823,13 +769,6 @@ class WhetherTheWindowSaysAnything(unittest.TestCase):
         )
         self.assertTrue(card.measured)
         self.assertTrue(card.restarted)
-        #
-        # Nothing was seen whole here, and the figures say so even though the
-        # new process's own count is carried: coverage is what was seen from
-        # end to end, not whether a number could be produced.
-        #
-        self.assertEqual(card.coverage, 0)
-        self.assertTrue(all(not total.whole for total in card.totals))
 
 
 class TheFiguresAreNotTheDrawing(unittest.TestCase):
@@ -850,7 +789,6 @@ class TheFiguresAreNotTheDrawing(unittest.TestCase):
             ),
             restarted=True,
             handed_over=False,
-            coverage=99,
         )
 
         card = metrics.backend_traffic(
@@ -866,7 +804,6 @@ class TheFiguresAreNotTheDrawing(unittest.TestCase):
         self.assertEqual(card.totals[0].value, 34601)
         self.assertNotEqual(card.totals[0].value, drawn_total.value)
         self.assertEqual(card.intervals, 3269)
-        self.assertEqual(card.coverage, 99)
         self.assertTrue(card.restarted)
 
 
@@ -1056,7 +993,6 @@ class OneScaleAcrossSeveralCards(unittest.TestCase):
                 totals=(),
                 restarted=False,
                 handed_over=False,
-                coverage=100,
             ),
         )
 

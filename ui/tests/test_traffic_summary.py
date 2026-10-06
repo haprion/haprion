@@ -29,7 +29,6 @@ def measured(
         ),
         restarted=False,
         handed_over=False,
-        coverage=100,
     )
 
 
@@ -40,7 +39,6 @@ NOTHING = BackendMeasurement(
     totals=tuple(Total(label, 0, 0.0, 0.0) for _name, label in SUMMARY_COUNTERS),
     restarted=False,
     handed_over=False,
-    coverage=100,
 )
 
 
@@ -76,7 +74,6 @@ class TheFigures(unittest.TestCase):
         self.assertEqual((row.inbound, row.outbound), ("247 kbit/s", "3.2 Mbit/s"))
         self.assertEqual((row.inbound_day, row.outbound_day), ("3.4 GB", "41 GB"))
         self.assertEqual((row.response_median, row.response_p95), ("38 ms", "412 ms"))
-        self.assertFalse(row.day_partial)
 
     def test_no_readings_is_a_dash_not_nought(self) -> None:
         row = traffic_summary.row(NOTHING, NOTHING, None)
@@ -88,10 +85,9 @@ class TheFigures(unittest.TestCase):
         empty_log = traffic_summary.row(NOTHING, NOTHING, (0, None, None))
         self.assertEqual(empty_log.response_median, traffic_summary.DASH)
 
-    def test_a_day_missing_part_of_itself_says_so(self) -> None:
+    def test_a_day_missing_part_of_itself_is_printed_as_counted(self) -> None:
         day = measured(timedelta(hours=24), (100, 1000, 1000), counted=3600.0)
         row = traffic_summary.row(day, NOTHING)
-        self.assertTrue(row.day_partial)
         self.assertEqual(row.requests, "100")
 
     def test_a_slow_poll_gets_three_readings(self) -> None:

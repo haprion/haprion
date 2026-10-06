@@ -279,13 +279,15 @@ class WhatAHoverAnswers(TheChartInABrowser):
             self.assertEqual(self.scope(page), label)
 
     def test_a_figure_still_explains_itself_after_a_look_at_the_line(self) -> None:
-        """The star's note was lost once a hover had written the figures back (2026-10-05)."""
+        """A shortened figure's note was lost once a hover had written the figures back (2026-10-05)."""
 
         half = measurement()
         half = replace(
             half,
-            totals=tuple(replace(total, counted_sec=30.0) for total in half.totals),
-            coverage=50,
+            totals=tuple(
+                replace(total, value=1_234_567_890) if total.label == "Requests" else total
+                for total in half.totals
+            ),
         )
         patch = mock.patch("haproxy_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: half)
         patch.start()
@@ -313,13 +315,12 @@ class WhatAHoverAnswers(TheChartInABrowser):
                 """(n, texts) => texts.map(t => { n.textContent = t;
                     return n.scrollWidth <= n.clientWidth; })""",
                 [
-                    "Scaled up from 100% measured",
                     "Only 49% measured, not shown",
                     "Nothing measured in this bucket",
                     "Requests: 1 234 567 890 exactly.",
                 ],
             )
-            self.assertEqual(widths, [True, True, True, True])
+            self.assertEqual(widths, [True, True, True])
 
 
 if __name__ == "__main__":

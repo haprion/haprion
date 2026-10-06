@@ -2912,7 +2912,6 @@ def _measurement(
     """
 
     span = float(row[6])
-    counted = float(row[5])
     totals = tuple(
         metrics.Total(
             label=label,
@@ -2928,7 +2927,6 @@ def _measurement(
         ended_at=row[2],
         restarted=bool(row[3]),
         handed_over=bool(row[4]),
-        coverage=100 if span <= 0 else int(counted / span * 100),
         totals=totals,
     )
 

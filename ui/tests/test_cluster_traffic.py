@@ -72,7 +72,6 @@ def measurement(intervals: int = 2) -> metrics.BackendMeasurement:
         ),
         restarted=False,
         handed_over=False,
-        coverage=100,
     )
 
 

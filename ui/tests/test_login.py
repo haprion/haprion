@@ -49,7 +49,6 @@ NO_TRAFFIC = metrics.BackendMeasurement(
     totals=tuple(metrics.Total(label, 0, 0.0, 0.0) for _name, label in metrics.SUMMARY_COUNTERS),
     restarted=False,
     handed_over=False,
-    coverage=100,
 )
 
 

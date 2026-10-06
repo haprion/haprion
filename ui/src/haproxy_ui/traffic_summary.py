@@ -81,12 +81,6 @@ class TrafficRow:
     outbound: str
     inbound_day: str
     outbound_day: str
-    #
-    # Whether the day's figures miss part of the day - a reload, a failover,
-    # a poller that stopped. The tile says so rather than presenting a part
-    # as the whole, as every card on the metrics page does.
-    #
-    day_partial: bool
     response_median: str = DASH
     response_p95: str = ""
 
@@ -137,7 +131,6 @@ def row(
         outbound=DASH if rate_out is None else bitrate(rate_out.value, seconds),
         inbound_day="" if inbound_day is None else size(inbound_day.value),
         outbound_day="" if outbound_day is None else size(outbound_day.value),
-        day_partial=any(total is not None and not total.whole for total in (requests, inbound_day)),
         response_median=(
             DASH if responses is None or responses[1] is None else milliseconds(responses[1])
         ),

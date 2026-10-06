@@ -1861,10 +1861,6 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * paths escaped it by setting stroke as an attribute.
  */
 .traffic-hit { fill: transparent; stroke: none; cursor: crosshair; }
-/* A bucket drawn from part of itself. Quiet enough to read as texture behind
-   the line rather than as data of its own - it qualifies a reading, it is not
-   one. */
-.traffic-part { fill: color-mix(in srgb, var(--muted) 16%, transparent); stroke: none; }
 
 .traffic-hit:hover { fill: color-mix(in srgb, var(--info) 14%, transparent); }
 /*
@@ -1918,16 +1914,6 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  */
 .traffic-scope-note { flex: 1 1 auto; min-width: 0; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .traffic-clear { margin-left: auto; color: var(--muted); }
-
-/*
- * The marker on a figure the window could not fully see. Muted and small:
- * it qualifies the number beside it and must not compete with it for the
- * eye, but it has to be there, because a partial sum that looks like a
- * whole one is the thing the coverage note exists to prevent.
- */
-/* Raised by position, not `vertical-align: super`: a superscript grows the line box, and the row of
-   figures was a third of a pixel taller with a star than without - the card moved as the pointer did. */
-.traffic-partial { color: var(--muted); cursor: help; font-size: 11px; position: relative; top: -0.5em; line-height: 0; margin-left: 1px; }
 .traffic-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
 /* The range switch, as one segmented control rather than four loose links:
    they are alternatives to each other, and a shared border is what says so.

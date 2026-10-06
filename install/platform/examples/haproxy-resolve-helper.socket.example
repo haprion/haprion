@@ -1,0 +1,38 @@
+# Where the interface asks for a dns server's address (B253).
+#
+# The web service reaches localhost and nothing else (IPAddressDeny=any), and
+# should not reach more. A dns object's server may be written as a name, which
+# the editor and the preview look up the way the publish will; the lookup goes
+# through this socket to haproxy-resolve-helper, which uses the manager's own
+# resolver and does nothing else.
+#
+# Who may connect
+# ---------------
+# Root-owned, group WEB_USER, mode 0660: the web account and nobody else. The
+# helper is not root - a dynamic account with nothing to read or write - so the
+# socket is narrow for the habit of it rather than to guard a privilege.
+#
+# Production only, as the probe's: the development platform's editor says a
+# name could not be looked up there.
+#
+# Installed by install/platform/07-platform-services as
+# /etc/systemd/system/haproxy-resolve-helper.socket.
+
+[Unit]
+Description=Socket the HAProxy Manager interface looks dns server names up through
+Documentation=file:///opt/haproxy-mgmt/current
+
+[Socket]
+ListenStream=/run/haproxy-mgmt/resolve.sock
+SocketUser=root
+SocketGroup=WEB_USER
+SocketMode=0660
+# One connection is one request, in its own short-lived instance.
+Accept=yes
+# A lookup waits on the resolver for a few seconds at most. This bounds how
+# many can be in flight, so a burst of previews cannot become a queue.
+MaxConnections=16
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

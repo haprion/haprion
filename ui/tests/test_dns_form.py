@@ -8,6 +8,7 @@ hidden on screen and refused by the engine if it is written anyway.
 
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -82,6 +83,36 @@ class WritingADnsObject(unittest.TestCase):
         document = build_document(dns_form(servers="ns1.example.com:53"))
         proxy = load_proxy("resolver", document.encode())
         self.assertEqual(proxy.backends["dns"].servers[0].host, "ns1.example.com")
+
+    def test_a_named_server_is_looked_up_by_the_service_not_by_the_web(self) -> None:
+        """B253: the web reaches nothing past localhost; the lookup service answers."""
+
+        import socket
+
+        from haproxy_mgmt import helper_socket
+
+        from haproxy_ui.preview import PREVIEW_CLUSTER, preview
+
+        answer = json.dumps(
+            {
+                "ok": True,
+                "result": {
+                    "names": [
+                        {"name": "ns1.example.com", "address": "198.51.100.53", "problem": None}
+                    ]
+                },
+            }
+        )
+        with (
+            mock.patch.object(
+                socket, "getaddrinfo", side_effect=AssertionError("the web resolved")
+            ),
+            mock.patch.object(helper_socket, "ask", return_value=answer) as asked,
+        ):
+            result = preview(dns_form(servers="ns1.example.com:53"), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertEqual(asked.call_args.args[0]["parameters"], {"names": ["ns1.example.com"]})
 
     def test_hidden_http_rules_are_not_written_for_it(self) -> None:
         document = built(

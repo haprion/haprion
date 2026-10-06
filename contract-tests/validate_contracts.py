@@ -765,6 +765,22 @@ def check_ui_tls_install_semantics(document: dict[str, object], path: Path) -> N
         raise AssertionError(f"{path}: a {document['outcome']} ui_tls_install carries a result")
 
 
+def check_resolve_semantics(document: dict[str, object], path: Path) -> None:
+    # Each name has an address or a reason it has none, never both: the web
+    # writes the address into a preview, or says the sentence.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done resolve carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} resolve carries a result")
+    if isinstance(result, dict):
+        names = result["names"]
+        assert isinstance(names, list)
+        for entry in names:
+            if (entry["address"] is None) == (entry["problem"] is None):
+                raise AssertionError(f"{path}: {entry['name']} needs an address or a problem")
+
+
 def check_oidc_semantics(document: dict[str, object], path: Path) -> None:
     # An answer or a refusal, never both; and Verify's verdict is its checks',
     # so a page reading `ok` cannot show green over a failed check.
@@ -968,6 +984,7 @@ SEMANTIC_CHECKS = {
     "cluster_list": check_cluster_list_semantics,
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
+    "resolve": check_resolve_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
     "node_restore_preview": check_node_restore_preview_semantics,
     "node_restore": check_node_restore_semantics,
@@ -1051,6 +1068,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
     elif operation == "ui_tls_install":
         invalid["outcome"] = "failed"
+    elif operation == "resolve":
+        result["names"][0]["problem"] = "said beside an address"
     elif operation == "oidc":
         if "checks" in result:
             result["ok"] = not result["ok"]

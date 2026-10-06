@@ -114,6 +114,31 @@ else
     log "  skipped: PROBE_SOCKET is not yes, so this platform cannot probe"
 fi
 
+step "The web service's way to a name lookup"
+#
+# A dns object's server may be a name, and the editor and the preview look it
+# up as the publish will (B252, B253). The web reaches nothing past localhost,
+# so the lookup goes over a socket, group this account, to a helper that runs
+# as a dynamic user with the network and nothing else.
+#
+# Production only, as the probe: the development platform's web account is a
+# different one, and the socket's path is one per host.
+#
+if [[ "${ENVIRONMENT:-prod}" == "prod" ]]; then
+    install_file "/etc/systemd/system/haproxy-resolve-helper@.service" root:root 644 \
+        "$(cat 'examples/haproxy-resolve-helper@.service.example')"
+    install_file "/etc/systemd/system/haproxy-resolve-helper.socket" root:root 644 \
+        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haproxy-resolve-helper.socket.example)"
+    systemctl daemon-reload
+    systemctl enable --quiet haproxy-resolve-helper.socket
+    systemctl restart haproxy-resolve-helper.socket
+    systemctl is-active --quiet haproxy-resolve-helper.socket \
+        || die "haproxy-resolve-helper.socket did not start"
+    log "  listening on /run/haproxy-mgmt/resolve.sock  (group ${WEB_USER})"
+else
+    log "  skipped: ENVIRONMENT is ${ENVIRONMENT}, and names are looked up on production only"
+fi
+
 step "The worker's way to the receiver helper"
 #
 # Not a sudoers rule either, for a different reason (B163). The worker can

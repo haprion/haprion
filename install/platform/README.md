@@ -448,6 +448,13 @@ rollback returns to, so it has to be a state that runs.
 Set `clusters` in `ui.toml` before running this; with an empty list the poller
 has nothing to do and says so instead of starting.
 
+On production the step also installs the web's way to a name lookup (B253):
+`haproxy-resolve-helper.socket` (`/run/haproxy-mgmt/resolve.sock`, group
+`WEB_USER`) and the per-request `haproxy-resolve-helper@.service`, a dynamic
+user with the network and nothing else. The editor and the preview look a dns
+server's name up through it; the web itself reaches only localhost. The CLI
+release must carry `haproxy-resolve-helper`.
+
 ## Step 6 — backups that have been read back
 
 `./06-platform-backup` installs `haproxy-ui-backup`, a daily dump timer and a

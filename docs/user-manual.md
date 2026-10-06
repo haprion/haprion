@@ -126,7 +126,9 @@ the cluster reports dnsdist installed; a node without it refuses a release that 
 a DNS listener. The pool's servers are addresses or host names with a port. dnsdist
 takes addresses only, so a name is looked up on the manager when the object is published
 and the address written into the configuration; a name that gives no address, or several
-of one family, refuses the publish. The address is the one the name had then:
+of one family, refuses the publish - and the editor says so before it is published, by
+asking `haproxy-resolve-helper` over `/run/haproxy-mgmt/resolve.sock` (production only;
+the web service itself reaches nothing past localhost). The address is the one the name had then:
 `haproxy-status` and the object's page say when the name has since moved, and *Publish again*
 beside that warning publishes the object unchanged, which looks the name up again. The balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
 `firstAvailable` (the first server that is up: active/passive, since dnsdist has no backup

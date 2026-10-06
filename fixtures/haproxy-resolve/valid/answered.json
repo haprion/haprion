@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "operation": "resolve",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "names": [
+      { "name": "ns1.example.com", "address": "192.0.2.53", "problem": null },
+      { "name": "ns2.example.com", "address": null, "problem": "ns2.example.com resolves to several addresses (192.0.2.54, 192.0.2.55); write the one dnsdist should use" }
+    ]
+  },
+  "error": null
+}

@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import geo
+from haproxy_mgmt import geo, resolve_socket
 from haproxy_mgmt.advanced import normalise as normalise_advanced
 from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, countries_named, generate
@@ -1033,6 +1033,7 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             abuse_protection=cluster.abuse_protection,
             certificate_sans=PREVIEW_CERTIFICATE_SANS,
             countries=unchecked_countries([proxy]),
+            resolve=resolve_socket.lookup,
         ).configuration
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))

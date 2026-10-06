@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "operation": "resolve",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "names": [
+      { "name": "ns1.example.com", "address": "192.0.2.53", "problem": null, "ttl": 300 }
+    ]
+  },
+  "error": null
+}

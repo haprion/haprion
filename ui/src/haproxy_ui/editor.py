@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
+from haproxy_mgmt import resolve_socket
 from haproxy_mgmt.config import AbuseProtection, Cluster, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
 from haproxy_mgmt.proxy_model import HTTP_METHODS, ModelError, load_proxy
@@ -219,6 +220,7 @@ def check(
             abuse_protection=VALIDATION_ABUSE_PROTECTION,
             certificate_sans=cluster.certificate_sans,
             countries=unchecked_countries([edited, *neighbours]),
+            resolve=resolve_socket.lookup,
         )
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))

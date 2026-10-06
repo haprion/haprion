@@ -7765,7 +7765,11 @@ def _lookup_again(
     form = editor_module.ObjectForm(
         **_form_defaults(fields), action="publish", csrf_token=csrf_token
     )
-    return _editor_submit(request, config, cluster, name, form)
+    #
+    # The stored object's own name from here on, not the address's: the two
+    # are equal, and only the first is something this installation wrote.
+    #
+    return _editor_submit(request, config, cluster, stored.name, form)
 
 
 def _moved_servers(

@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt import dnsdist_config
 from haproxy_mgmt.cluster_status import addresses_current
 from haproxy_mgmt.config import DeployIdentity, Node
 from haproxy_mgmt.deploy_plan import NodeObservation, ReleaseTarget, VipState
@@ -224,6 +225,93 @@ def read_dns_published(publish_path: Path, node_path: str) -> bool | None:
         return (node_root / "dns" / "dnsdist.conf").is_file()
     except OSError:
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedName:
+    """A dns server published by name (B252): the name, and the address it was given."""
+
+    pool: str
+    host: str
+    address: str
+
+
+PUBLISHED_SERVER = re.compile(
+    r'^newServer\(\{address="(?P<address>[^"]+)", name="(?P<pool>[^"/]+)/[^"]+".*\}\) -- '
+    + re.escape(dnsdist_config.NAMED)
+    + r"(?P<host>\S+)$"
+)
+MAX_DNS_CONF_BYTES = 4 * 1024 * 1024
+
+
+def read_dns_names(publish_path: Path, node_path: str) -> tuple[PublishedName, ...]:
+    """The dns servers the published release names, as written beside their addresses."""
+
+    path = publish_path / "current" / node_path / "dns" / dnsdist_config.FILE
+    try:
+        if not path.is_file() or path.stat().st_size > MAX_DNS_CONF_BYTES:
+            return ()
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ()
+    found = []
+    for line in text.splitlines():
+        match = PUBLISHED_SERVER.match(line)
+        if match is None:
+            continue
+        endpoint = match["address"]
+        address = (
+            endpoint[1:].split("]", 1)[0]
+            if endpoint.startswith("[")
+            else endpoint.rsplit(":", 1)[0]
+        )
+        found.append(PublishedName(pool=match["pool"], host=match["host"], address=address))
+    return tuple(found)
+
+
+DNS_SERVER_MOVED = "dns_server_moved"
+
+
+def moved_message(name: PublishedName, now: str) -> str:
+    """What the warning says. `moved_pool` reads the pool back out of it."""
+
+    return (
+        f"{name.host} {now}, not {name.address} as published for pool {name.pool}; "
+        f"publish the cluster again"
+    )
+
+
+MOVED_POOL = re.compile(r" as published for pool (?P<pool>[^;]+);")
+
+
+def moved_pool(message: str) -> str | None:
+    found = MOVED_POOL.search(message)
+    return found["pool"] if found else None
+
+
+def dns_servers_moved(
+    names: tuple[PublishedName, ...], resolve: dnsdist_config.Lookup | None = None
+) -> list[Message]:
+    """A server published by name whose name no longer gives the published address (B252).
+
+    The release keeps the address the name had when it was published, which is
+    the point - dnsdist does not depend on DNS to start - and also the cost: a
+    server that moved is not followed until the cluster is published again.
+    Asked on every status read, with the same resolver the publish used.
+    """
+
+    warnings = []
+    for name in names:
+        try:
+            now = (resolve or dnsdist_config.lookup)(name.host)
+        except dnsdist_config.Unresolved:
+            now = "no longer resolves to one address"
+        else:
+            if now == name.address:
+                continue
+            now = f"now resolves to {now}"
+        warnings.append(Message(code=DNS_SERVER_MOVED, message=moved_message(name, now)))
+    return warnings
 
 
 UNKNOWN = "unknown"
@@ -531,6 +619,8 @@ def collect(
     publish_path: Path | None = None,
     waf_published: bool | None = None,
     dns_published: bool | None = None,
+    dns_names: tuple[PublishedName, ...] = (),
+    resolve: dnsdist_config.Lookup | None = None,
 ) -> StatusReport:
     """Ask every node, then say what the pair adds up to.
 
@@ -598,6 +688,8 @@ def collect(
                         node=str(entry["name"]),
                     )
                 )
+
+    warnings.extend(dns_servers_moved(dns_names, resolve))
 
     result = {
         "nodes": results,

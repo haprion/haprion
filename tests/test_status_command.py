@@ -16,10 +16,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cluster_status
+from haproxy_mgmt import cluster_status, dnsdist_config, status_collect
 from haproxy_mgmt.cli import status, status_helper
 from haproxy_mgmt.config import Node
 from haproxy_mgmt.status_collect import NodeResponse, ReadNode
@@ -123,6 +124,7 @@ class HelperFixture(unittest.TestCase):
         identity: bool = True,
         waf: bool = False,
         dns: bool = False,
+        dns_conf: str = 'setLocal("192.0.2.10:53")\n',
     ) -> Path:
         config_root = self.root / "config"
         publish_root = self.root / "published"
@@ -152,7 +154,7 @@ class HelperFixture(unittest.TestCase):
                 (release / "waf" / "coraza.yaml").write_text("bind: 127.0.0.1:9520\n")
             if dns:
                 (release / "dns").mkdir(exist_ok=True)
-                (release / "dns" / "dnsdist.conf").write_text('setLocal("192.0.2.10:53")\n')
+                (release / "dns" / "dnsdist.conf").write_text(dns_conf)
 
         document: dict[str, object] = {
             "schema_version": 1,
@@ -426,6 +428,51 @@ class HelperReadingTests(HelperFixture):
             [(w["code"], w["node"]) for w in envelope["warnings"]],
             [("dns_listener_stopped", "node-b")],
         )
+
+    def moved(self, now: str | Exception) -> list[tuple[str, str]]:
+        conf = (
+            'setLocal("192.0.2.10:53")\n'
+            'newServer({address="198.51.100.53:53", name="dcs/s1", pool="dcs", '
+            'useClientSubnet=true, healthCheckMode="up"}) -- looked up from ns1.example.com\n'
+            'newServer({address="198.51.100.54:53", name="dcs/s2", pool="dcs", '
+            'useClientSubnet=true, healthCheckMode="up"})\n'
+        )
+        with mock.patch(
+            "haproxy_mgmt.dnsdist_config.lookup",
+            side_effect=now if isinstance(now, Exception) else (lambda host: now),
+        ) as looked:
+            code, out, _ = self.run_helper(
+                request(), dns=True, dns_conf=conf, node_reader=self.listeners(b_active=True)
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual([call.args for call in looked.call_args_list], [("ns1.example.com",)])
+        envelope = assert_contract("haproxy-status", out)
+        return [(w["code"], w["message"]) for w in envelope["warnings"]]
+
+    def test_a_named_server_that_still_resolves_as_published_says_nothing(self) -> None:
+        """B252: the address the release was given, against the name's answer now."""
+
+        self.assertEqual(self.moved("198.51.100.53"), [])
+
+    def test_a_named_server_that_moved_is_a_warning_naming_its_pool(self) -> None:
+        found = self.moved("198.51.100.99")
+
+        self.assertEqual(
+            found,
+            [
+                (
+                    "dns_server_moved",
+                    "ns1.example.com now resolves to 198.51.100.99, not 198.51.100.53 as "
+                    "published for pool dcs; publish the cluster again",
+                )
+            ],
+        )
+        self.assertEqual(status_collect.moved_pool(found[0][1]), "dcs")
+
+    def test_a_named_server_that_no_longer_resolves_is_a_warning_too(self) -> None:
+        found = self.moved(dnsdist_config.Unresolved("ns1.example.com does not resolve"))
+
+        self.assertIn("no longer resolves to one address", found[0][1])
 
     def test_a_stopped_dnsdist_without_a_listener_is_how_it_should_be(self) -> None:
         code, out, _ = self.run_helper(request(), node_reader=self.listeners(b_active=False))

@@ -341,6 +341,7 @@ def generate(
     traffic_logging: bool = False,
     settings: ClusterSettings = NO_SETTINGS,
     countries: geo.Countries | None = None,
+    resolve: dnsdist_config.Lookup = dnsdist_config.lookup,
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
 
@@ -405,7 +406,15 @@ def generate(
         _refuse_loopback_port(
             dnsdist_config.STATS_PORT, "the DNS listener's statistics", settings, reservations
         )
-    dns = dnsdist_config.render(resolving, known_networks)
+    #
+    # A named dns server is looked up here (B252), so a name that gives no
+    # single address refuses the publish as any other object that cannot be
+    # generated - in the editor too, before anything is published.
+    #
+    try:
+        dns = dnsdist_config.render(resolving, known_networks, resolve)
+    except dnsdist_config.Unresolved as exc:
+        raise GeneratorError(str(exc)) from exc
 
     listings: dict[str, str] = {}
     shared: dict[str, dict[str, list[str]]] = {}

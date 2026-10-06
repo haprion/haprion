@@ -7,7 +7,9 @@ object carries no file, and that a dns object leaves HAProxy's files alone.
 
 from __future__ import annotations
 
+import socket
 import unittest
+from unittest import mock
 
 from haproxy_mgmt import dnsdist_config
 from haproxy_mgmt.cluster_settings import ClusterSettings, Metrics
@@ -103,6 +105,75 @@ backends:
 
         self.assertIn("metrics port 53", refusal(resolver(), settings=on_listener))
         self.assertIn("statistics", refusal(resolver(), settings=on_statistics))
+
+
+def named(host: str = "ns1.example.com") -> Proxy:
+    return load_proxy(
+        "resolver",
+        f"""schema: 1
+name: resolver
+listen: {{protocol: dns, port: 53}}
+backend: dns
+backends:
+  dns: {{balance: roundrobin, servers: [{{host: {host}, port: 53}}, {{host: 198.51.100.54, port: 53}}]}}
+""".encode(),
+    )
+
+
+class ANamedServerIsLookedUpWhenPublished(unittest.TestCase):
+    """B252: dnsdist takes addresses; the manager looks the name up and writes one."""
+
+    def conf(self, resolve: dnsdist_config.Lookup) -> str:
+        layer = generate([named()], vips=VIPS, default_vip="main", resolve=resolve)
+        return layer.dns_files[dnsdist_config.FILE]
+
+    def test_the_address_is_written_with_the_name_beside_it(self) -> None:
+        asked: list[str] = []
+
+        def resolve(host: str) -> str:
+            asked.append(host)
+            return "198.51.100.53"
+
+        conf = self.conf(resolve)
+
+        self.assertEqual(asked, ["ns1.example.com"])
+        self.assertIn('newServer({address="198.51.100.53:53", name="dns/s1"', conf)
+        self.assertRegex(conf, r'name="dns/s1".*\) -- looked up from ns1\.example\.com\n')
+        self.assertNotIn("looked up from 198.51.100.54", conf)
+
+    def test_a_name_that_does_not_resolve_refuses_the_publish(self) -> None:
+        def resolve(host: str) -> str:
+            raise dnsdist_config.Unresolved(f"{host} does not resolve on the manager")
+
+        with self.assertRaisesRegex(GeneratorError, "ns1.example.com does not resolve"):
+            self.conf(resolve)
+
+    def test_the_lookup_takes_one_address_and_refuses_a_choice(self) -> None:
+        def answer(*addresses: str) -> list[tuple[object, ...]]:
+            return [(0, 0, 0, "", (address, 0)) for address in addresses]
+
+        cases = (
+            (("198.51.100.53", "2001:db8::53"), "198.51.100.53"),
+            (("2001:db8::53",), "2001:db8::53"),
+        )
+        for addresses, expected in cases:
+            with (
+                self.subTest(addresses),
+                mock.patch("socket.getaddrinfo", return_value=answer(*addresses)),
+            ):
+                self.assertEqual(dnsdist_config.lookup("ns1.example.com"), expected)
+        with (
+            mock.patch("socket.getaddrinfo", return_value=answer("198.51.100.53", "198.51.100.54")),
+            self.assertRaisesRegex(dnsdist_config.Unresolved, "several addresses"),
+        ):
+            dnsdist_config.lookup("ns1.example.com")
+        with (
+            mock.patch(
+                "socket.getaddrinfo", side_effect=socket.gaierror(-2, "Name or service not known")
+            ),
+            self.assertRaisesRegex(dnsdist_config.Unresolved, "does not resolve"),
+        ):
+            dnsdist_config.lookup("ns1.example.com")
 
 
 if __name__ == "__main__":

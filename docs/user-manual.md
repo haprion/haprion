@@ -123,8 +123,12 @@ cannot fail over.
 An object whose protocol is *DNS* is served by dnsdist on the same nodes and VIPs, on
 UDP and TCP, port 53 unless another is written. The form offers DNS once every node of
 the cluster reports dnsdist installed; a node without it refuses a release that carries
-a DNS listener. The pool's servers are addresses with a port (dnsdist does not look up
-server names), the balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
+a DNS listener. The pool's servers are addresses or host names with a port. dnsdist
+takes addresses only, so a name is looked up on the manager when the object is published
+and the address written into the configuration; a name that gives no address, or several
+of one family, refuses the publish. The address is the one the name had then:
+`haproxy-status` and the object's page say when the name has since moved, and publishing
+again picks the new one up. The balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
 `firstAvailable` (the first server that is up: active/passive, since dnsdist has no backup
 server) and `chashed` (one name keeps one server) - and the health check asks every
 server a real question, `a.root-servers.net.` for `A` unless another is given, once a

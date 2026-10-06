@@ -1879,14 +1879,23 @@ def _refuse_non_dns_pools(backends: Mapping[str, Backend], name: str) -> None:
         if pool.health.type not in ("dns", "disabled"):
             raise ModelError(f"{where}.health must be a dns check, or disabled")
         #
-        # dnsdist takes a server by address; it has no resolver of its own for
-        # the names of the servers it forwards to.
+        # A server may be named (B252, 26-10-06): dnsdist takes addresses only,
+        # so the generator looks the name up when the object is published and
+        # writes the address (`dnsdist_config.lookup`). The object keeps the
+        # name; the status says when it no longer resolves to what was published.
+        # A name is held to the hostname pattern: it is written into the file
+        # as a comment beside the address.
         #
-        named = sorted({server.host for server in pool.servers if not _is_address(server.host)})
-        if named:
+        unnamed = sorted(
+            {
+                server.host
+                for server in pool.servers
+                if not _is_address(server.host) and not HOSTNAME.match(server.host)
+            }
+        )
+        if unnamed:
             raise ModelError(
-                f"{where}.servers must be addresses for a dns object; dnsdist does not look "
-                f"server names up: {', '.join(named)}"
+                f"{where}.servers must be addresses or host names: {', '.join(unnamed)}"
             )
 
 

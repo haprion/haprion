@@ -1334,9 +1334,17 @@ class AResolverIsServedByDnsdist(unittest.TestCase):
         )
         self.assertIn("firstAvailable", message)
 
-    def test_servers_must_be_addresses(self) -> None:
-        message = self.refused(dns((b"192.0.2.54", b"ns2.example.com")))
-        self.assertIn("ns2.example.com", message)
+    def test_a_server_may_be_named_and_is_looked_up_when_generated(self) -> None:
+        """B252: the generator writes the address; the model keeps the name."""
+
+        proxy = load_proxy("resolver", dns((b"192.0.2.54", b"ns2.example.com")))
+        self.assertIn("ns2.example.com", [server.host for server in proxy.backends["dns"].servers])
+
+    def test_a_server_that_is_neither_address_nor_name_is_refused(self) -> None:
+        """The name is written into the file as a comment beside its address."""
+
+        message = self.refused(dns((b"192.0.2.54", b"'ns2 example'")))
+        self.assertIn("must be addresses or host names", message)
 
     def test_pool_settings_dnsdist_has_no_line_for_are_refused(self) -> None:
         for field in (b"cookie: s", b"max_connections: 10", b"tls: {verify: none}"):

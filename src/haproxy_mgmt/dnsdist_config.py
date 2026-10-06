@@ -32,6 +32,15 @@ one (FTL's own documentation; the lab showed Pi-hole logging the real client,
 26-10-06). Statistics are served on loopback without a key, for the node's
 status to read; the API stays closed, and no console is configured.
 
+**A server may be named** (B252, 26-10-06). dnsdist takes addresses only and
+looks nothing up, so the name is looked up here, when the object is
+published, with the manager's resolver, and the address is written with the
+name beside it as a comment. Looked up then and not on the node: a node
+that needed DNS to start dnsdist would need the servers dnsdist stands in
+front of, and the release would no longer be the file that was published.
+The cost is that the address is the one the name had at publishing;
+`status_collect` says when the name has moved since.
+
 The output is Lua, and every value written into it has been held to a pattern
 by the model or comes from the cluster's own configuration: addresses parse as
 addresses, names match the model's name pattern, numbers are numbers. Nothing a
@@ -41,11 +50,12 @@ person typed reaches the file as text.
 from __future__ import annotations
 
 import ipaddress
-from collections.abc import Mapping, Sequence
+import socket
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from haproxy_mgmt.config import Vip
-from haproxy_mgmt.proxy_model import Backend, Health, Proxy, duration_ms, is_range
+from haproxy_mgmt.proxy_model import HOSTNAME, Backend, Health, Proxy, duration_ms, is_range
 
 FILE = "dnsdist.conf"
 #
@@ -78,6 +88,49 @@ def pool_name(proxy: Proxy) -> str:
     """
 
     return proxy.backend or ""
+
+
+class Unresolved(ValueError):
+    """A server's name that does not give exactly one address to write."""
+
+
+type Lookup = Callable[[str], str]
+
+
+def is_address(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return True
+
+
+def lookup(host: str) -> str:
+    """The one address a server's name stands for, by the resolver of this host.
+
+    IPv4 first, as the servers behind a resolver are usually reached; IPv6 when
+    the name has only that. A name with no address, or with several of one
+    family, is refused: dnsdist forwards to one address per server, and picking
+    one of several would be a guess that changes with the order of an answer.
+    """
+
+    try:
+        found = socket.getaddrinfo(host, None, type=socket.SOCK_DGRAM)
+    except (socket.gaierror, UnicodeError) as exc:
+        raise Unresolved(f"{host} does not resolve on the manager ({exc})") from exc
+    addresses = sorted({str(entry[4][0]) for entry in found})
+    for version in (4, 6):
+        family = [
+            address for address in addresses if ipaddress.ip_address(address).version == version
+        ]
+        if len(family) == 1:
+            return family[0]
+        if len(family) > 1:
+            raise Unresolved(
+                f"{host} resolves to several addresses ({', '.join(family)}); "
+                f"write the one dnsdist should use"
+            )
+    raise Unresolved(f"{host} has no address on the manager")
 
 
 def server_name(index: int) -> str:
@@ -142,11 +195,15 @@ def _check(health: Health) -> str:
     )
 
 
-def _servers(proxy: Proxy, pool: Backend, source: str | None) -> list[str]:
+def _servers(proxy: Proxy, pool: Backend, source: str | None, resolve: Lookup) -> list[str]:
     lines = []
     for index, server in enumerate(pool.servers):
+        named = not is_address(server.host)
+        if named and not HOSTNAME.match(server.host):
+            raise ValueError(f"refusing to write {server.host!r} into dnsdist configuration")
+        address = resolve(server.host) if named else server.host
         fields = [
-            f"address={_quote(_endpoint(server.host, server.port))}",
+            f"address={_quote(_endpoint(address, server.port))}",
             f"name={_quote(counted_name(pool_name(proxy), server_name(index)))}",
             f"pool={_quote(pool_name(proxy))}",
             "useClientSubnet=true",
@@ -154,7 +211,13 @@ def _servers(proxy: Proxy, pool: Backend, source: str | None) -> list[str]:
         if source is not None:
             fields.append(f"source={_quote(str(ipaddress.ip_address(source)))}")
         fields.append(_check(pool.health))
-        lines.append(f"newServer({{{', '.join(fields)}}})")
+        line = f"newServer({{{', '.join(fields)}}})"
+        #
+        # The name it was looked up from, for a reader and for the status's
+        # comparison (`status_collect.dns_servers_moved`). Held to the model's
+        # hostname pattern, so nothing in it can end the comment early.
+        #
+        lines.append(f"{line} -- {NAMED}{server.host}" if named else line)
     return lines
 
 
@@ -185,9 +248,16 @@ def _rules(proxy: Proxy, vip: Vip, networks: Mapping[str, Sequence[str]]) -> lis
     ]
 
 
+#
+# What precedes a looked-up server's name in its comment.
+#
+NAMED = "looked up from "
+
+
 def render(
     placed: Sequence[tuple[Vip, Proxy, str | None]],
     networks: Mapping[str, Sequence[str]],
+    resolve: Lookup = lookup,
 ) -> DnsLayer:
     """The cluster's dnsdist configuration, from its dns objects and where they sit.
 
@@ -212,7 +282,7 @@ def render(
     rules: list[str] = []
     for vip, proxy, source in placed:
         pool = proxy.backends[proxy.backend or ""]
-        servers = _servers(proxy, pool, source)
+        servers = _servers(proxy, pool, source, resolve)
         policy = f"setPoolServerPolicy({pool.balance}, {_quote(pool_name(proxy))})"
         routing = _rules(proxy, vip, networks)
         pools += [f"-- {proxy.name}", *servers, policy, ""]

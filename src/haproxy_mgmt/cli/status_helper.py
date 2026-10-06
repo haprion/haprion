@@ -55,6 +55,7 @@ from haproxy_mgmt.status_collect import (
     ReadNode,
     ask_node,
     collect,
+    read_dns_names,
     read_dns_published,
     read_target,
     read_waf_published,
@@ -161,6 +162,7 @@ def main(
         publish_path=Path(cluster.publish_path),
         waf_published=read_waf_published(Path(cluster.publish_path), cluster.node_path),
         dns_published=read_dns_published(Path(cluster.publish_path), cluster.node_path),
+        dns_names=read_dns_names(Path(cluster.publish_path), cluster.node_path),
     )
 
     #

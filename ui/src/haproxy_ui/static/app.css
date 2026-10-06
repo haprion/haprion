@@ -121,13 +121,16 @@
 html { min-width: 320px; background: var(--bg); }
 
 /*
- * The scrollbar's room is kept on every page, used or not (2026-10-05): a page
- * short enough to need none was otherwise a few pixels wider, and the whole
- * layout moved sideways when one tab needed a scrollbar and the next did not.
+ * The scrollbar is shown on every page, used or not (2026-10-05): a page short
+ * enough to need none was otherwise a few pixels wider, and the whole layout
+ * moved sideways when one tab needed a scrollbar and the next did not. Shown
+ * rather than its room reserved (2026-10-06): a reserved gutter is painted
+ * with the page's background, and nothing can be drawn into it, so the
+ * header stopped short of the window's edge beside an empty strip.
  * Wide screens only: phones draw the scrollbar over the page and lose nothing,
  * and the narrower layouts are measured to the pixel without it.
  */
-@media (min-width: 1050px) { html { scrollbar-gutter: stable; } }
+@media (min-width: 1050px) { html { overflow-y: scroll; } }
 
 body {
   margin: 0;
@@ -320,7 +323,12 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
    the default button either. */
 .default-submit { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
-.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 29px; }
+/* Four cards across, each as wide as its text wants while the row has room
+   (2026-10-06): equal quarters gave the longest card ("4/4 Nodes online · All
+   reporting") 210px of the 226 it needs at 1280 and broke it in two, while the
+   others had room to spare. `auto` tracks grow to their content and share what
+   is left; only a row too narrow for all four wraps a card's detail. */
+.metric-grid { display: grid; grid-template-columns: repeat(4, auto); gap: 12px; margin-bottom: 29px; }
 /* A page with two cards was still laying them out in a four-column grid, so
    each card got a quarter of the width and ellipsed both of its own labels. A
    card carries a number, a label and a qualifier; if it cannot show all three

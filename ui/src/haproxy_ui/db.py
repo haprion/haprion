@@ -2575,14 +2575,51 @@ def read_frontend_series(
         return _changed_intervals(cursor.fetchall())
 
 
+#
+# What counts as the cluster's newest poll: every row within this of the
+# newest one. A poll writes all of a cluster's rows within a few seconds
+# (measured at 2-3 s for a whole pass), so a minute holds one poll and never the
+# one before it at the shortest interval the poller allows (10 s plus the pass).
+#
+NEWEST_POLL = timedelta(minutes=1)
+
+
+def _active(table: str) -> sql.Composed:
+    """The rows of the cluster's newest poll inside the window (2026-10-06).
+
+    The page shows what HAProxy runs now, as the exporter does: a backend a
+    rename or a removal took away is not listed, whatever history it has. Its
+    readings are the newest poll's rather than the last minute's by the clock,
+    so a poller that has stopped leaves the page as it last was instead of
+    empty - an outage is the moment this page is opened.
+    """
+
+    #
+    # The last ten minutes first, which is where the newest poll is whenever
+    # the poller runs, and a few hundred rows; the whole window only when that
+    # finds nothing. `coalesce` evaluates its second argument only then.
+    #
+    return sql.SQL(
+        "{table}.observed_at >= coalesce("
+        "    (select max(recent.observed_at) from {table} as recent "
+        "      where recent.cluster = %(cluster)s "
+        "        and recent.observed_at >= greatest(%(since)s, %(until)s - interval '10 minutes') "
+        "        and recent.observed_at <= %(until)s), "
+        "    (select max(newest.observed_at) from {table} as newest "
+        "      where newest.cluster = %(cluster)s "
+        "        and newest.observed_at >= %(since)s and newest.observed_at <= %(until)s)"
+        ") - %(newest_poll)s"
+    ).format(table=sql.Identifier(table))
+
+
 def read_cluster_frontends(
     connection: Connection[Any], *, cluster: str, since: datetime, until: datetime
 ) -> list[tuple[str, bool]]:
-    """Which VIP frontends this cluster saw, and whether any node held each.
+    """Which VIP frontends this cluster serves now, and whether any node held each.
 
-    Asked of the samples rather than of the configuration, because the card is
-    history: a frontend removed yesterday still has a window worth reading, and
-    one added this morning has nothing to show whatever the document says.
+    Asked of the samples rather than of the configuration, and of the newest
+    poll's (`_active`): a frontend that is gone is not listed, and one added this
+    morning appears with its first reading whatever the document says.
 
     **Existing and being held are two questions, and asking them as one hid
     rows the table had.** `owns_vip` is `boolean` and nullable: false is "this
@@ -2605,11 +2642,13 @@ def read_cluster_frontends(
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select frontend, coalesce(bool_or(owns_vip), false) from metric_frontend "
-            " where cluster = %(cluster)s "
-            "   and observed_at >= %(since)s and observed_at <= %(until)s "
-            " group by frontend order by frontend",
-            {"cluster": cluster, "since": since, "until": until},
+            sql.SQL(
+                "select frontend, coalesce(bool_or(owns_vip), false) from metric_frontend "
+                " where cluster = %(cluster)s "
+                "   and observed_at >= %(since)s and observed_at <= %(until)s and {active} "
+                " group by frontend order by frontend"
+            ).format(active=_active("metric_frontend")),
+            {"cluster": cluster, "since": since, "until": until, "newest_poll": NEWEST_POLL},
         )
         return [(row[0], bool(row[1])) for row in cursor.fetchall()]
 
@@ -2617,7 +2656,10 @@ def read_cluster_frontends(
 def read_cluster_backends(
     connection: Connection[Any], *, cluster: str, since: datetime, until: datetime
 ) -> list[str]:
-    """Which backends this cluster has readings for, by the runtime's own names.
+    """Which backends this cluster serves now, by the runtime's own names.
+
+    The newest poll's (`_active`): a pool renamed or removed is not listed,
+    though its history is kept until retention takes it.
 
     `BACKEND` only - HAProxy's aggregate row for each backend, which is what the
     comparison is between. A per-server breakdown is a different question and
@@ -2626,11 +2668,13 @@ def read_cluster_backends(
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select distinct backend from metric_backend_member "
-            " where cluster = %(cluster)s and member = 'BACKEND' "
-            "   and observed_at >= %(since)s and observed_at <= %(until)s "
-            " order by backend",
-            {"cluster": cluster, "since": since, "until": until},
+            sql.SQL(
+                "select distinct backend from metric_backend_member "
+                " where cluster = %(cluster)s and member = 'BACKEND' "
+                "   and observed_at >= %(since)s and observed_at <= %(until)s and {active} "
+                " order by backend"
+            ).format(active=_active("metric_backend_member")),
+            {"cluster": cluster, "since": since, "until": until, "newest_poll": NEWEST_POLL},
         )
         return [row[0] for row in cursor.fetchall()]
 

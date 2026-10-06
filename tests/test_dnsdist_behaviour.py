@@ -36,9 +36,23 @@ DNSDIST = shutil.which("dnsdist")
 
 
 def free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
+    """A port free for both UDP and TCP, which dnsdist binds together.
+
+    Asking UDP alone lost one run in the full gate (2026-10-06): another test
+    process held the same number over TCP, dnsdist could not bind its TCP
+    listener, and the answer never came.
+    """
+
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as stream:
+            stream.bind(("127.0.0.1", 0))
+            port = int(stream.getsockname()[1])
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram:
+                try:
+                    datagram.bind(("127.0.0.1", port))
+                except OSError:
+                    continue
+                return port
 
 
 def question(name: str) -> bytes:

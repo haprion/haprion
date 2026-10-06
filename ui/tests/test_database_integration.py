@@ -4695,3 +4695,71 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
         # what is committed), so each adds its own difference from it.
         #
         self.assertEqual(row, (2, (25 - 10) + (47 - 10)))
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class MetricsListsWhatTheNodesServeNow(unittest.TestCase):
+    """2026-10-06: only the names HAProxy runs now, as the exporter shows.
+
+    A pool renamed (B250) or removed keeps its rows until retention, but its card
+    is gone with the deploy that took it away. Measured against the cluster's
+    newest poll rather than the clock, so a stopped poller leaves the page as it
+    last was.
+    """
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def write(self, cluster: str, rows: list[tuple[str, datetime]]) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            for _name, at in rows:
+                cursor.execute("select metric_partition('metric_backend_member', %s::date)", (at,))
+                cursor.execute("select metric_partition('metric_frontend', %s::date)", (at,))
+            for name, at in rows:
+                cursor.execute(
+                    "insert into metric_backend_member (cluster, node, backend, member, "
+                    "observed_at, uptime_sec, req_tot) values (%s, 'a', %s, 'BACKEND', %s, 1, 1)",
+                    (cluster, name, at),
+                )
+                cursor.execute(
+                    "insert into metric_frontend (cluster, node, frontend, observed_at, "
+                    "owns_vip, uptime_sec, req_tot) values (%s, 'a', %s, %s, true, 1, 1)",
+                    (cluster, f"fe-{name}", at),
+                )
+
+    def listed(self, cluster: str, now: datetime) -> tuple[list[str], list[str]]:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            since = now - timedelta(days=7)
+            backends = db.read_cluster_backends(connection, cluster=cluster, since=since, until=now)
+            frontends = db.read_cluster_frontends(
+                connection, cluster=cluster, since=since, until=now
+            )
+        return backends, [name for name, _held in frontends]
+
+    def test_a_renamed_pool_is_gone_once_the_new_name_is_served(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        self.write(
+            "renamed",
+            [
+                ("mgd-shop-web", now - timedelta(hours=2)),
+                ("mgd-shop-web", now - timedelta(minutes=3)),
+                ("web", now - timedelta(seconds=40)),
+                ("web", now - timedelta(seconds=20)),
+                ("db", now - timedelta(seconds=21)),
+            ],
+        )
+
+        self.assertEqual(self.listed("renamed", now), (["db", "web"], ["fe-db", "fe-web"]))
+
+    def test_a_stopped_poller_leaves_the_last_poll_listed(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        self.write(
+            "stopped",
+            [
+                ("old", now - timedelta(days=2)),
+                ("web", now - timedelta(hours=5, seconds=10)),
+                ("db", now - timedelta(hours=5)),
+            ],
+        )
+
+        self.assertEqual(self.listed("stopped", now), (["db", "web"], ["fe-db", "fe-web"]))

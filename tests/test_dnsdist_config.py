@@ -12,7 +12,7 @@ import unittest
 from unittest import mock
 
 from haproxy_mgmt import dnsdist_config
-from haproxy_mgmt.cluster_settings import ClusterSettings, Metrics
+from haproxy_mgmt.cluster_settings import NOTHING, ClusterSettings, Metrics
 from haproxy_mgmt.config import Vip
 from haproxy_mgmt.generate import GeneratorError, generate
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
@@ -174,6 +174,44 @@ class ANamedServerIsLookedUpWhenPublished(unittest.TestCase):
             self.assertRaisesRegex(dnsdist_config.Unresolved, "does not resolve"),
         ):
             dnsdist_config.lookup("ns1.example.com")
+
+
+class PrometheusReadsDnsdist(unittest.TestCase):
+    """B253: with the cluster's exporter, dnsdist's statistics are served to its sources too."""
+
+    def file(self, settings: ClusterSettings = NOTHING) -> str:
+        layer = generate([resolver()], vips=VIPS, default_vip="main", settings=settings)
+        return layer.dns_files[dnsdist_config.FILE]
+
+    def test_without_the_exporter_only_the_node_reads_them(self) -> None:
+        text = self.file()
+        self.assertIn(f'webserver("127.0.0.1:{dnsdist_config.STATS_PORT}")', text)
+        self.assertIn('acl="127.0.0.1/32"', text)
+
+    def test_with_the_exporter_its_sources_read_them_on_every_address(self) -> None:
+        text = self.file(
+            ClusterSettings(
+                metrics=Metrics(port=8405, sources=("198.51.100.0/24", "203.0.113.7/32"))
+            )
+        )
+        self.assertIn(f'webserver("0.0.0.0:{dnsdist_config.STATS_PORT}")', text)
+        self.assertIn('acl="127.0.0.1/32, 198.51.100.0/24, 203.0.113.7/32"', text)
+        self.assertIn("apiRequiresAuthentication=true", text)
+
+    def test_an_object_on_the_statistics_port_is_refused_once_they_are_served(self) -> None:
+        settings = ClusterSettings(metrics=Metrics(port=8405, sources=("198.51.100.0/24",)))
+        tcp = load_proxy(
+            "nine",
+            f"""schema: 1
+name: nine
+listen: {{protocol: tcp, port: {dnsdist_config.STATS_PORT}}}
+backend: nine-pool
+backends:
+  nine-pool: {{balance: roundrobin, servers: [{{host: 198.51.100.9, port: 9}}]}}
+""".encode(),
+        )
+        self.assertIn("Prometheus reads", refusal(resolver(), tcp, settings=settings))
+        generate([resolver(), tcp], vips=VIPS, default_vip="main")
 
 
 if __name__ == "__main__":

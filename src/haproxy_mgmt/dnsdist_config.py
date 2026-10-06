@@ -60,7 +60,10 @@ from haproxy_mgmt.proxy_model import HOSTNAME, Backend, Health, Proxy, duration_
 FILE = "dnsdist.conf"
 #
 # Where the node's status reads the counters, beside the WAF engine's 9520.
-# Loopback only; the generator refuses a cluster that binds it otherwise.
+# Loopback only, unless the cluster runs HAProxy's Prometheus exporter: then
+# on every IPv4 address as the exporter is, for its sources (B253), so the
+# same scraper reads dnsdist at <node>:9521/metrics. The generator refuses
+# anything else on the port either way.
 #
 STATS_PORT = 9521
 HEADER = (
@@ -248,6 +251,27 @@ def _rules(proxy: Proxy, vip: Vip, networks: Mapping[str, Sequence[str]]) -> lis
     ]
 
 
+def _webserver(scrapers: Sequence[str]) -> list[str]:
+    """dnsdist's statistics: the node's status on loopback, and the exporter's scrapers.
+
+    One ACL for every address the web server listens on (2.1's
+    `setWebserverConfig`), so loopback stays in it when the scrapers join. The
+    statistics need no key, as on loopback; the API keeps requiring one, and no
+    key is configured, so it stays shut.
+    """
+
+    allowed = [
+        "127.0.0.1/32",
+        *(str(ipaddress.ip_network(entry, strict=False)) for entry in scrapers),
+    ]
+    listen = f"0.0.0.0:{STATS_PORT}" if scrapers else f"127.0.0.1:{STATS_PORT}"
+    return [
+        f"webserver({_quote(listen)})",
+        f"setWebserverConfig({{acl={_quote(', '.join(dict.fromkeys(allowed)))}, "
+        "statsRequireAuthentication=false, apiRequiresAuthentication=true})",
+    ]
+
+
 #
 # What precedes a looked-up server's name in its comment.
 #
@@ -258,12 +282,17 @@ def render(
     placed: Sequence[tuple[Vip, Proxy, str | None]],
     networks: Mapping[str, Sequence[str]],
     resolve: Lookup = lookup,
+    scrapers: Sequence[str] = (),
 ) -> DnsLayer:
     """The cluster's dnsdist configuration, from its dns objects and where they sit.
 
     `placed` is (VIP, object, source address) per dns object, in name order,
     as `generate` decided them. Empty gives no file at all - the release then
     carries no `dns/`, which is what stops dnsdist on the nodes.
+
+    `scrapers` are the sources of the cluster's Prometheus exporter, and empty
+    when it has none: with them, the statistics are served on every address for
+    them as well as for the node itself.
     """
 
     if not placed:
@@ -320,9 +349,7 @@ def render(
         "-- Whatever reached a listener without matching an object is refused.",
         "addAction(AllRule(), RCodeAction(DNSRCode.REFUSED))",
         "",
-        f'webserver("127.0.0.1:{STATS_PORT}")',
-        'setWebserverConfig({acl="127.0.0.1/32", statsRequireAuthentication=false, '
-        "apiRequiresAuthentication=true})",
+        *_webserver(scrapers),
         "",
     ]
     return DnsLayer(files={FILE: "\n".join(lines)}, parts=parts)

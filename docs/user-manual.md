@@ -1858,6 +1858,14 @@ that `manual/reservations.yaml` reserves. Letting the scraper through the
 nodes' firewall, and letting the nodes reach the log receivers, is part of the
 installation, not of this setting.
 
+**DNS objects are scraped from dnsdist.** A cluster with the exporter and a DNS
+object also has dnsdist answer `GET /metrics` on port 9521 of every IPv4 address,
+for the same sources (and the node itself); without the exporter it answers on
+loopback only. Its metrics are dnsdist's own (`dnsdist_*`), with each server
+named `<pool>/s<n>` and each object's queries counted by the rules `<pool>`,
+`<pool>/tcp` and `<pool>/refused`. A publish refuses a tcp or DNS object on port
+9521 while dnsdist serves them there. Its API stays closed.
+
 **The names a dashboard shows.** The exporter labels every backend metric with
 `proxy="<name>"`, and carries nothing else that could name it - a backend's
 `description` is not exported (HAProxy 3.4). So a pool is called in HAProxy

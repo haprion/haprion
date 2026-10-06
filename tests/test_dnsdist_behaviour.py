@@ -287,6 +287,46 @@ class EveryGoldenDnsdistFileIsAConfiguration(unittest.TestCase):
     the generator misspelt would otherwise be accepted and quietly dropped.
     """
 
+    def test_the_file_with_prometheus_s_sources_is_one_as_well(self) -> None:
+        """B253: a second listen address and a wider ACL, held to the same standard."""
+
+        from haproxy_mgmt import dnsdist_config
+        from haproxy_mgmt.cluster_settings import ClusterSettings, Metrics
+        from haproxy_mgmt.config import Vip
+        from haproxy_mgmt.generate import generate
+        from haproxy_mgmt.proxy_model import load_proxy
+
+        proxy = load_proxy(
+            "resolver",
+            b"""schema: 1
+name: resolver
+listen: {protocol: dns, port: 53}
+backend: resolver
+backends:
+  resolver: {balance: roundrobin, servers: [{host: 198.51.100.53, port: 53}]}
+""",
+        )
+        content = generate(
+            [proxy],
+            vips={"main": Vip("main", "192.0.2.10")},
+            default_vip="main",
+            settings=ClusterSettings(metrics=Metrics(port=8405, sources=("198.51.100.0/24",))),
+        ).dns_files[dnsdist_config.FILE]
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / dnsdist_config.FILE
+            path.write_text(content)
+            result = subprocess.run(  # noqa: S603 - the installed dnsdist, a generated file
+                [str(DNSDIST), "--check-config", "-C", str(path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, output)
+        self.assertNotIn('prio="Warning"', output)
+        self.assertNotIn('prio="Error"', output)
+
     def test_dnsdist_accepts_them_without_a_word(self) -> None:
         checked = 0
         for case in cases():

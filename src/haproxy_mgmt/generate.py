@@ -402,17 +402,20 @@ def generate(
         for vip, proxy in everything
         if proxy.listen.protocol == "dns"
     ]
+    scrapers = settings.metrics.sources if settings.metrics is not None else ()
     if resolving:
         _refuse_loopback_port(
             dnsdist_config.STATS_PORT, "the DNS listener's statistics", settings, reservations
         )
+        if scrapers:
+            _refuse_dns_statistics_port(everything)
     #
     # A named dns server is looked up here (B252), so a name that gives no
     # single address refuses the publish as any other object that cannot be
     # generated - in the editor too, before anything is published.
     #
     try:
-        dns = dnsdist_config.render(resolving, known_networks, resolve)
+        dns = dnsdist_config.render(resolving, known_networks, resolve, scrapers)
     except dnsdist_config.Unresolved as exc:
         raise GeneratorError(str(exc)) from exc
 
@@ -460,6 +463,22 @@ def generate(
         waf_files=_waf_files(guarded),
         dns_files=dns.files,
     )
+
+
+def _refuse_dns_statistics_port(placed: Sequence[tuple[Vip, Proxy]]) -> None:
+    """dnsdist's statistics port, which it takes on every address once Prometheus reads it (B253).
+
+    Every IPv4 address, as the exporter's, so a tcp or dns object on the same
+    port of a VIP would meet it there.
+    """
+
+    port = dnsdist_config.STATS_PORT
+    for _vip, proxy in placed:
+        if proxy.listen.protocol in ("tcp", "dns") and proxy.listen.port == port:
+            raise GeneratorError(
+                f"port {port} is where Prometheus reads the DNS listener's statistics, and "
+                f"{proxy.name} listens on it"
+            )
 
 
 def _refuse_loopback_port(

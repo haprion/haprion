@@ -35,6 +35,11 @@ class RevertControlsTests(LoginTestCase):
         self.assertIn('name="version" value="11"', page.text)
         self.assertIn('name="expected_commit" value="' + "b" * 40 + '"', page.text)
         #
+        # And the newest version it listed, so a version recorded after the
+        # page was read is not reverted away with it (CR-09).
+        #
+        self.assertIn('name="expected_head" value="' + "a" * 40 + '"', page.text)
+        #
         # Publishing and deploying are two steps, and the page has to say so -
         # once, under the table, rather than under every button where it made
         # every row taller to repeat the same sentence.
@@ -80,6 +85,7 @@ class RevertControlsTests(LoginTestCase):
                     "cluster": "alpha",
                     "version": "11",
                     "expected_commit": "b" * 40,
+                    "expected_head": "a" * 40,
                     "idempotency_key": "11111111-1111-4111-8111-111111111111",
                 },
                 follow_redirects=False,
@@ -87,6 +93,7 @@ class RevertControlsTests(LoginTestCase):
 
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(queued[0]["requested_by"], self.account.username)
+        self.assertEqual(queued[0]["expected_head"], "a" * 40)
 
     def test_read_only_and_reader_views_do_not_render_a_revert_control(self) -> None:
         client = self.client(replace(configuration(), clusters=("alpha",)))

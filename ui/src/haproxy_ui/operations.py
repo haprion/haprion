@@ -934,9 +934,10 @@ def prepare(
         # node. It should get a lifeline the same day, because everything above
         # stops being true at that point. Reviewed and decided 2026-08-31 as F4.
         #
-        _only(payload, "version", "expected_commit", "requested_by")
+        _only(payload, "version", "expected_commit", "expected_head", "requested_by")
         version = payload.get("version")
         commit = payload.get("expected_commit")
+        head = payload.get("expected_head")
         #
         # A bool is an int in Python, and `version: true` would otherwise revert
         # to version 1. Checked here rather than trusted to the helper, because
@@ -946,6 +947,8 @@ def prepare(
             raise BadPayload("version must be a positive integer")
         if not isinstance(commit, str) or not commit:
             raise BadPayload("expected_commit must be a commit id")
+        if head is not None and (not isinstance(head, str) or not head):
+            raise BadPayload("expected_head must be a commit id")
         return Prepared(
             argv=(revert.SUDO, *SUDO_FLAGS, revert.HELPER),
             request=revert.build_request(
@@ -953,6 +956,7 @@ def prepare(
                 str(request_id),
                 version=version,
                 expected_commit=commit,
+                expected_head=head,
                 requested_by=_requested_by(payload),
             ),
         )

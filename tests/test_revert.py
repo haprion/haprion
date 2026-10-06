@@ -215,10 +215,9 @@ class WindowTests(RevertFixture):
     def test_a_version_that_moved_after_the_preview_is_refused(self) -> None:
         """The window the privilege split opened, closed on the far side.
 
-        A commit appended at the tip does not invalidate the preview - version 2
-        still names the same commit, and the shell path accepted that too. What
-        must be refused is the history being rewritten under the operator, so
-        that the number they approved now names different content.
+        The history rewritten under the operator, so that the number they
+        approved now names different content. A commit appended at the tip is
+        refused as well since 2026-10-06, below.
         """
 
         with tempfile.TemporaryDirectory() as raw:
@@ -241,6 +240,31 @@ class WindowTests(RevertFixture):
             self.assertEqual(git(self.repo, "log", "-1", "--format=%s"), "Smuggled version 2")
             self.assertNotIn(b"# version 2", (self.repo / "core/haproxy.cfg").read_bytes())
 
+    def test_a_version_recorded_after_the_preview_is_not_reverted_away(self) -> None:
+        """The revert is a decision about the history the operator read (CR-09).
+
+        Accepted until 2026-10-06, because version 2 still named the same
+        commit - and the revert then wrote the appended change away with it.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+
+            def someone_publishes() -> None:
+                (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # later\n")
+                git(self.repo, "add", "-A")
+                git(self.repo, "commit", "-qm", "Later change")
+
+            code, output = self.run_caller(
+                policy_path, "-c", "alpha", "2", before_helper=someone_publishes
+            )
+
+            self.assertEqual(code, 75)
+            self.assertIn("moved since the revert was asked for", output)
+            self.assertEqual(git(self.repo, "log", "-1", "--format=%s"), "Later change")
+            self.assertIn(b"# later", (self.repo / "core/haproxy.cfg").read_bytes())
+
     def test_a_draft_that_became_dirty_after_the_preview_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))
@@ -260,6 +284,77 @@ class WindowTests(RevertFixture):
             # And the edit survived: a refused revert must not eat it.
             #
             self.assertIn(b"# editing", (self.repo / "core/haproxy.cfg").read_bytes())
+
+
+class RetryTests(RevertFixture):
+    """The same request again, as recovery sends it after a worker died (CR-09)."""
+
+    def send(self, policy_path: Path, request: bytes) -> tuple[int, str]:
+        out, err = io.StringIO(), io.StringIO()
+        code = revert_helper.main(
+            [],
+            policy_path=policy_path,
+            run_root=self.run_root,
+            lock_root=self.lock_root,
+            input_stream=io.BytesIO(request),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+            validator=lambda _root, _id: ValidationResult(valid=True, diagnostics=""),
+            group=grp.getgrgid(os.getgid()).gr_name,
+            change_owner=Recorder(),
+        )
+        return code, out.getvalue()
+
+    def revert_request(self, *, head: bool) -> bytes:
+        target = version_commit(self.repo, 2)
+        assert target is not None
+        return revert.build_request(
+            "alpha",
+            REQUEST_ID,
+            version=2,
+            expected_commit=target,
+            expected_head=git(self.repo, "rev-parse", "HEAD") if head else None,
+        ).encode()
+
+    def test_a_retry_after_a_later_version_leaves_that_version_alone(self) -> None:
+        """The review's sequence: revert to 2 is version 4, a publish is 5, the retry comes.
+
+        Without a head in the request, as an older caller or a job queued before
+        the head was carried sends it: the helper finds its own version.
+        """
+
+        for head in (False, True):
+            with self.subTest(head=head), tempfile.TemporaryDirectory() as raw:
+                policy_path = self.runtime(Path(raw))
+                self.history(3)
+                request = self.revert_request(head=head)
+                self.assertEqual(self.send(policy_path, request)[0], 0)
+                self.assertEqual(count_versions(self.repo), 4)
+                (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # later\n")
+                git(self.repo, "add", "-A")
+                git(self.repo, "commit", "-qm", "Later change")
+
+                code, document = self.send(policy_path, request)
+
+                self.assertEqual(code, 75)
+                self.assertIn("recorded as version 4, and version 5", document)
+                self.assertEqual(count_versions(self.repo), 5)
+                self.assertIn(b"# later", (self.repo / "core/haproxy.cfg").read_bytes())
+
+    def test_a_retry_with_nothing_after_it_repairs_rather_than_records(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            request = self.revert_request(head=True)
+            self.assertEqual(self.send(policy_path, request)[0], 0)
+
+            code, document = self.send(policy_path, request)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(document)["result"]["changed"], False)
+            self.assertEqual(count_versions(self.repo), 4)
 
 
 class RefusalTests(RevertFixture):

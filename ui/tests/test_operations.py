@@ -152,6 +152,19 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
 
         self.assertEqual(parameters["version"], 12)
         self.assertEqual(parameters["expected_commit"], "a" * 40)
+        self.assertNotIn("expected_head", parameters)
+
+    def test_a_revert_carries_the_head_its_page_listed(self) -> None:
+        """CR-09: the helper refuses once anything was recorded after it."""
+
+        prepared = operations.prepare(
+            operation="revert",
+            cluster="alpha",
+            request_id=REQUEST,
+            payload={"version": 12, "expected_commit": "a" * 40, "expected_head": "b" * 40},
+        )
+
+        self.assertEqual(json.loads(prepared.request)["parameters"]["expected_head"], "b" * 40)
 
     def test_who_asked_goes_to_every_helper_that_records_a_version(self) -> None:
         #

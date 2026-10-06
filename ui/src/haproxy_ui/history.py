@@ -77,6 +77,11 @@ class HistoryClusterView:
     #
     target_version: int | None = None
     page_count: int = 1
+    #
+    # The newest version's commit: what a revert from this page is made against,
+    # so a version recorded after the page was read is not reverted away (CR-09).
+    #
+    head_commit: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +296,10 @@ def _cluster_view(
         total=total,
         truncated=result.get("truncated") is True,
         versions=versions,
+        head_commit=next(
+            (version.expected_commit for version in versions if version.current),
+            versions[0].expected_commit if versions else "",
+        ),
         target_version=published_version
         if published_version is not None and published_version > 0
         else None,

@@ -28,6 +28,7 @@ from haproxy_mgmt.cli.caller import CallerError, usage
 from haproxy_mgmt.cli.caller import config_path as _config_path
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.repo_health import describe_problem, is_repo_root, unsaved_changes
+from haproxy_mgmt.repo_snapshot import resolve_head
 from haproxy_mgmt.version_history import count_versions, version_commit, version_summary
 
 OPERATION = "revert_version"
@@ -102,6 +103,7 @@ def build_request(
     *,
     version: int,
     expected_commit: str,
+    expected_head: str | None = None,
     requested_by: str | None = None,
 ) -> str:
     """The exact request a revert sends, built in one place.
@@ -114,6 +116,10 @@ def build_request(
     helper refuses if the cluster no longer stands where the caller thought it
     did, so a request that was built from a stale reading fails instead of
     reverting something else.
+
+    `expected_head` is the newest version the caller saw. With it, the helper
+    refuses a revert once anything else has been recorded since, rather than
+    reverting that away too (review 2026-10-04, CR-09).
 
     `requested_by` names the person the interface's worker acts for (B207). It
     is left out rather than sent empty when nobody is named, and the helper
@@ -129,6 +135,7 @@ def build_request(
             "parameters": {
                 "version": version,
                 "expected_commit": expected_commit,
+                **({} if expected_head is None else {"expected_head": expected_head}),
                 **({} if requested_by is None else {"requested_by": requested_by}),
             },
         }
@@ -170,6 +177,7 @@ def main(
         commit = version_commit(repo, version)
         if commit is None:
             raise CallerError(f"could not find version {version}.")
+        _, head = resolve_head(repo)
         summary = version_summary(repo, version, commit)
     except (CallerError, GitError) as exc:
         writer.write(f"ERROR: {exc}\n")
@@ -184,7 +192,7 @@ def main(
     )
 
     request = build_request(
-        cluster_id, str(uuid.uuid4()), version=version, expected_commit=commit
+        cluster_id, str(uuid.uuid4()), version=version, expected_commit=commit, expected_head=head
     ).encode()
 
     code, out, err = run_helper(request)

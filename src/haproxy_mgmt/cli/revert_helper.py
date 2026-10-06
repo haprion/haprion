@@ -87,6 +87,7 @@ from haproxy_mgmt.repo_snapshot import (
 )
 from haproxy_mgmt.version_history import (
     count_versions,
+    recent_versions,
     request_names,
     restore_worktree,
     version_commit,
@@ -101,7 +102,7 @@ from haproxy_mgmt.version_history import (
 #
 OPERATION = "revert_version"
 REVERT_OPERATION = "revert"
-PARAMETERS = frozenset({"version", "expected_commit", "requested_by"})
+PARAMETERS = frozenset({"version", "expected_commit", "expected_head", "requested_by"})
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 #
@@ -124,6 +125,16 @@ def parse_expected_commit(raw: JsonValue) -> str:
         raise HelperProtocolError(
             "parameters.expected_commit must be a full commit ID", exit_code=65
         )
+    return raw
+
+
+def parse_expected_head(raw: JsonValue) -> str | None:
+    """The newest version the caller saw, when it says (CR-09); absent from older callers."""
+
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or len(raw) != 40 or not all(c in "0123456789abcdef" for c in raw):
+        raise HelperProtocolError("parameters.expected_head must be a full commit ID", exit_code=65)
     return raw
 
 
@@ -257,6 +268,7 @@ def main(
     try:
         version = parse_version(request.parameters.get("version"))
         expected_commit = parse_expected_commit(request.parameters.get("expected_commit"))
+        expected_head = parse_expected_head(request.parameters.get("expected_head"))
         policy = load_policy(policy_path, require_secure=require_secure)
         names = request_names(request.parameters, interface_account=policy.interface_account)
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
@@ -287,6 +299,7 @@ def main(
                 cluster=cluster,
                 version=version,
                 expected_commit=expected_commit,
+                expected_head=expected_head,
                 output=output,
                 run_root=run_root,
                 require_secure=require_secure,
@@ -315,6 +328,7 @@ def _revert(
     cluster: Cluster,
     version: int,
     expected_commit: str,
+    expected_head: str | None,
     output: TextIO,
     run_root: Path,
     require_secure: bool,
@@ -344,6 +358,31 @@ def _revert(
     from_version = count_versions(repo, head)
 
     #
+    # A revert is a decision about the history its caller read, and it is
+    # retried after a worker dies (review 2026-10-04, CR-09). Retried blindly,
+    # it reverted again on top of a version somebody recorded in between and
+    # took that change away. So:
+    #
+    # - this request's own version as the newest is the retry of a run that
+    #   committed and stopped: the tree matches below, and the unchanged path
+    #   repairs the release;
+    # - this request's own version with anything after it has been superseded,
+    #   and is left alone;
+    # - otherwise the head has to be the one the caller saw, when it says.
+    #
+    own = next(
+        (summary for summary in recent_versions(repo) if summary.request_id == request.request_id),
+        None,
+    )
+    if own is not None and own.commit != head:
+        return refuse(
+            "expected_target_changed",
+            f"this revert was recorded as version {own.version}, and version {from_version} "
+            "has been recorded since. It is not run again, so the later version stays.",
+            BLOCKED_EXIT,
+        )
+
+    #
     # The same lookup the caller made. A different answer means the repository
     # moved in between, and the preview the human approved is no longer true.
     #
@@ -354,6 +393,15 @@ def _revert(
             f"the repository changed during the revert; version {version} no longer "
             f"points at the same commit. Expected {expected_commit}, "
             f"now {actual or 'missing'}. Check the version list and try again.",
+            BLOCKED_EXIT,
+        )
+
+    if own is None and expected_head is not None and head != expected_head:
+        return refuse(
+            "expected_target_changed",
+            f"the configuration moved since the revert was asked for: version {from_version} "
+            "was recorded after the version list was read. Nothing was changed; check the "
+            "version list and try again.",
             BLOCKED_EXIT,
         )
 

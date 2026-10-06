@@ -101,6 +101,18 @@ def _recorded_version(listing: dict[str, Any], request_id: str) -> dict[str, Any
     return None
 
 
+def _newest_version(listing: dict[str, Any]) -> int | None:
+    versions = listing.get("versions")
+    if not isinstance(versions, list):
+        return None
+    numbers: list[int] = []
+    for entry in versions:
+        number = entry.get("version") if isinstance(entry, dict) else None
+        if isinstance(number, int) and not isinstance(number, bool):
+            numbers.append(number)
+    return max(numbers) if numbers else None
+
+
 def judge(job: db.AbandonedJob, history: db.ClusterHistory | None) -> Judgement:
     """Decide what may be done with one abandoned job, from evidence alone."""
 
@@ -151,6 +163,20 @@ def judge(job: db.AbandonedJob, history: db.ClusterHistory | None) -> Judgement:
 
     listing = history.result
     recorded = _recorded_version(listing, str(job.request_id))
+    newest = _newest_version(listing)
+    if recorded is not None and newest is not None and newest != recorded.get("version"):
+        #
+        # Recorded, and something else since. Not "never published": it was
+        # superseded, and running it again would write the later version away -
+        # a revert retried here reverted on top of it (review 2026-10-04, CR-09).
+        # The helpers refuse that themselves; this says why instead of asking.
+        #
+        return Judgement(
+            "abandon",
+            "superseded",
+            f"version {recorded.get('version')} was recorded for this request and version "
+            f"{newest} has been recorded since, so it is not run again",
+        )
     if recorded is not None:
         #
         # The version exists. Whether its release landed decides nothing here:

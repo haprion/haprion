@@ -114,6 +114,30 @@ class RecordedOperations(unittest.TestCase):
         self.assertEqual(judgement.verdict, "requeue")
         self.assertEqual(judgement.code, "release_incomplete")
 
+    def test_a_recorded_version_with_a_later_one_is_superseded_not_unpublished(self) -> None:
+        """The review's revert: version 4 for this request, version 5 published since (CR-09).
+
+        Requeued, it reverted again on top of 5. Neither "never published" nor a
+        retry: the later version is the configuration, and the job ends saying so.
+        """
+
+        for operation in ("revert", "publish", "objects_publish"):
+            with self.subTest(operation=operation):
+                judgement = recovery.judge(
+                    abandoned(operation),
+                    history(
+                        versions=[
+                            version(None, number=5, commit="b" * 40),
+                            version(number=4, commit="a" * 40),
+                        ],
+                        published_hash="b" * 40,
+                    ),
+                )
+
+                self.assertEqual(judgement.verdict, "abandon")
+                self.assertEqual(judgement.code, "superseded")
+                self.assertIn("version 5 has been recorded since", judgement.reason)
+
     def test_nothing_recorded_in_a_complete_listing_means_it_never_started(self) -> None:
         judgement = recovery.judge(
             abandoned(), history(versions=[version(None)], published_hash="a" * 40)

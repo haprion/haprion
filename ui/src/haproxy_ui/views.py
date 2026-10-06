@@ -6911,6 +6911,11 @@ def build_router(config: Config) -> APIRouter:
                 "version": int(version),
                 "expected_commit": expected_commit,
                 "requested_by": session.username,
+                #
+                # The newest version the page listed (CR-09): a revert is a
+                # decision about that history, not about one recorded since.
+                #
+                **({"expected_head": expected_head} if expected_head else {}),
             }
         elif operation == "network_publish":
             # A changed default silently moves every object that did not name a

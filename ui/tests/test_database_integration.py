@@ -4932,10 +4932,57 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
 
 
 #
-# The latency column 0057 added and sums per hour. Nothing reads it since B253;
-# 0059 takes it away, and these cases hold 0057 to what it did until then.
+# The latency column 0057 added and summed per hour. Nothing read it after
+# B253, and 0059 takes it away; 0057's own downgrade and upgrade still name it.
 #
 LATENCY_0057 = "dns_latency_us"
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheLatencyIsGoneAndTheWorkerAloneRecordsRenames(unittest.TestCase):
+    """Migration 0059 (B253): dnsdist's latency dropped, and the alias table the worker's to write."""
+
+    @staticmethod
+    def connect(role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    @staticmethod
+    def latency_columns(cursor: psycopg.Cursor) -> set[tuple[str, str]]:
+        cursor.execute(
+            "select table_name, column_name from information_schema.columns "
+            "where column_name like 'dns_latency%%' "
+            "  and table_name in ('metric_backend_member', 'metric_backend_hour_delta')"
+        )
+        return {(row[0], row[1]) for row in cursor.fetchall()}
+
+    def test_no_latency_column_is_left(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            self.assertEqual(self.latency_columns(cursor), set())
+
+    def test_the_web_reads_renames_and_may_not_write_them(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            db.read_backend_aliases(connection, cluster="none")
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                db.record_backend_renames(
+                    connection, cluster="web-tries", renamed={"a": "b"}, introduced=[]
+                )
+
+    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0059_drop_dns_latency.py", cursor)
+                migration.downgrade()
+                self.assertEqual(
+                    self.latency_columns(cursor),
+                    {
+                        ("metric_backend_member", "dns_latency_us"),
+                        ("metric_backend_hour_delta", "dns_latency_us_sum"),
+                        ("metric_backend_hour_delta", "dns_latency_us_samples"),
+                    },
+                )
+                migration.upgrade()
+                self.assertEqual(self.latency_columns(cursor), set())
+            connection.rollback()
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
@@ -4980,10 +5027,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
                     dict(zip(metrics.DNS_COUNTERS, pool, strict=True)),
                 )
             )
-            for member, (asked, answered), latency in (
-                ("s1", (6, 5), 300 + step % 7),
-                ("s2", (3, 3), 900),
-            ):
+            for member, (asked, answered) in (("s1", (6, 5)), ("s2", (3, 3))):
                 served = totals[member]
                 served[0] += asked
                 served[1] += answered
@@ -4992,18 +5036,14 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
                         member,
                         at,
                         uptime,
-                        {
-                            "dns_queries": served[0],
-                            "dns_answered": served[1],
-                            LATENCY_0057: latency,
-                        },
+                        {"dns_queries": served[0], "dns_answered": served[1]},
                     )
                 )
             at += timedelta(minutes=10)
             uptime += 600
             step += 1
         cls.rows = rows
-        columns = (*metrics.DNS_COUNTERS, LATENCY_0057)
+        columns = metrics.DNS_COUNTERS
         with cls.connect() as connection, connection.cursor() as cursor:
             day = (cls.now - timedelta(days=4)).date()
             while day <= cls.now.date() + timedelta(days=1):
@@ -5012,8 +5052,8 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
             for member, at, uptime, counted in rows:
                 cursor.execute(
                     "insert into metric_backend_member (cluster, node, backend, member, "
-                    "observed_at, uptime_sec, dns_queries, dns_tcp, dns_refused, dns_answered, "
-                    "dns_latency_us) values (%s, 'a', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    "observed_at, uptime_sec, dns_queries, dns_tcp, dns_refused, dns_answered) "
+                    "values (%s, 'a', %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         cls.CLUSTER,
                         cls.POOL,
@@ -5159,17 +5199,15 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
                 self.assertEqual(written, 2)
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "select member, delta_dns_queries, delta_dns_answered, dns_latency_us, status "
+                "select member, delta_dns_queries, delta_dns_answered, status "
                 "  from metric_backend_member where cluster = 'polled' "
                 " order by observed_at desc, member limit 2"
             )
-            self.assertEqual(
-                #
-                # An older node still sends its latency; nothing keeps it (B253).
-                #
-                cursor.fetchall(),
-                [("BACKEND", 15, 13, None, None), ("s1", 15, 13, None, "UP")],
-            )
+            #
+            # An older node still sends its latency; nothing keeps it (B253),
+            # and since 0059 there is no column to keep it in.
+            #
+            self.assertEqual(cursor.fetchall(), [("BACKEND", 15, 13, None), ("s1", 15, 13, "UP")])
 
     def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
         def columns(cursor: psycopg.Cursor, table: str) -> set[str]:

@@ -161,6 +161,7 @@
     <div class="advanced-dialog-header"><h3>Advanced config</h3></div>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="expected_revision" value="{{ draft.revision if draft else '' }}">
+    <input type="hidden" name="object_fingerprint" value="{{ object_fingerprint }}">
     <textarea name="advanced" class="advanced-text" rows="18" spellcheck="false" aria-label="HAProxy configuration">
 {{ advanced.text }}</textarea>
     {% if advanced.one_pool %}<label class="check"><input type="checkbox" name="handwritten_pool"{% if advanced.handwritten %} checked{% endif %}> The text writes the pool</label>{% endif %}

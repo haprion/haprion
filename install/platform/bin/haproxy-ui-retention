@@ -758,6 +758,21 @@ profile_evidence() {
 SQL
 }
 
+#
+# A draft is cleared by the interface once its publish is done and the objects
+# cache shows it, and the done publish job is the evidence it reads. So that job
+# is kept for as long as its draft exists: pruned first, a published draft read
+# as unpublished work and opened in place of the stored object (review
+# 2026-10-04, CR-04).
+#
+draft_evidence() {
+    cat <<SQL
+    select job.id from job
+      join proxy_draft on job.payload->'draft'->>'id' = proxy_draft.id::text
+     where job.operation = 'objects_publish'
+SQL
+}
+
 where_removable() {
     local applies="and coalesce(payload->>'remove', 'false') <> 'true'"
     cat <<SQL
@@ -768,6 +783,7 @@ where_removable() {
     and id not in ($(profile_evidence dns_profile_apply dns_provider_profile "$applies"))
     and id not in ($(profile_evidence ndes_profile_apply ndes_provider_profile ""))
     and id not in ($(profile_evidence ndes_profile_apply ndes_provider_profile "$applies"))
+    and id not in ($(draft_evidence))
 SQL
 }
 

@@ -21,7 +21,7 @@ below stay a contract rather than whatever the table happens to hold.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -462,6 +462,35 @@ def recent_jobs(
             " order by created_at desc, id desc "
             " limit %(limit)s",
             {"cluster": cluster, "limit": limit},
+        )
+        return cursor.fetchall()
+
+
+def draft_publishes(
+    connection: Connection[Any], *, cluster: str, draft_ids: Collection[str]
+) -> list[Job]:
+    """The finished publishes of these drafts, whichever revision they carried.
+
+    Asked by the drafts' own ids rather than read out of the newest jobs. Until
+    2026-10-06 the evidence was the newest twenty jobs of the cluster, so twenty
+    later jobs of any kind made a published draft look unpublished again - and
+    the editor opens a draft in preference to the stored object (review
+    2026-10-04, CR-04). Retention keeps these rows while their draft exists.
+    """
+
+    if not draft_ids:
+        return []
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts "
+            "  from job "
+            " where operation = 'objects_publish' and state = 'done' "
+            "   and cluster = %(cluster)s "
+            "   and payload->'draft'->>'id' = any(%(ids)s) "
+            " order by created_at desc, id desc",
+            {"cluster": cluster, "ids": sorted(draft_ids)},
         )
         return cursor.fetchall()
 

@@ -20,6 +20,7 @@ from uuid import uuid4
 import yaml
 
 from haproxy_ui import advanced_dialog, db
+from haproxy_ui import editor as editor_module
 from haproxy_ui.db import ProxyDraft
 from tests.test_editor_page import COMMIT, OBSERVED, SHOP, EditorTestCase
 from tests.test_login import configuration
@@ -138,7 +139,12 @@ class AdvancedRouteTestCase(EditorTestCase):
     PATH = "/proxies/alpha/shop/advanced"
 
     def post(self, client: Any, **fields: str) -> Any:
-        data = {"csrf_token": self.token(client), "action": "check", "advanced": ""} | fields
+        data = {
+            "csrf_token": self.token(client),
+            "action": "check",
+            "advanced": "",
+            "object_fingerprint": self.shown(self.PATH),
+        } | fields
         return client.post(self.PATH, data=data, follow_redirects=False)
 
 
@@ -293,6 +299,20 @@ class PublishingFromTheDialog(AdvancedRouteTestCase):
     def _queue(self, _c: object, **values: Any) -> Any:
         self.queued.append(values)
         return SimpleNamespace(id=7, request_id=uuid4())
+
+    def test_a_page_opened_before_another_publish_is_refused(self) -> None:
+        """CR-01, as the editor: the dialog carries the object it was opened on."""
+
+        answer = self.post(
+            self.editor(),
+            action="publish",
+            advanced="retries 5\n",
+            object_fingerprint=editor_module.fingerprint(SHOP.replace("8080", "9090")),
+        )
+
+        self.assertIn("was changed by a publish after this page was opened", answer.text)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.queued, [])
 
     def test_the_draft_is_saved_and_the_same_publish_is_queued(self) -> None:
         answer = self.post(self.editor(), action="publish", advanced="retries 5\n")

@@ -572,6 +572,22 @@ class ADraftOnItsWay(DraftReading):
         self.assertNotIn("Waiting for publish", body)
 
 
+def publishes(jobs: list[Job]) -> Any:
+    """`db.draft_publishes` over these jobs, asking what the statement asks."""
+
+    def read(_c: object, *, cluster: str, draft_ids: Any) -> list[Job]:
+        return [
+            job
+            for job in jobs
+            if job.operation == "objects_publish"
+            and job.state == "done"
+            and job.cluster == cluster
+            and (job.payload.get("draft") or {}).get("id") in draft_ids
+        ]
+
+    return read
+
+
 class ADraftThatWasPublished(DraftReading):
     """Published work is not a draft any more, and a stale row is not tidy-up.
 
@@ -647,6 +663,7 @@ class ADraftThatWasPublished(DraftReading):
         with (
             mock.patch("haproxy_ui.db.cluster_drafts", side_effect=drafts),
             mock.patch("haproxy_ui.db.recent_jobs", side_effect=only),
+            mock.patch("haproxy_ui.db.draft_publishes", side_effect=publishes(jobs)),
             mock.patch(
                 "haproxy_ui.db.discard_draft", side_effect=lambda *a, **k: discarded.append(k)
             ),

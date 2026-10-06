@@ -305,7 +305,8 @@ class ARealDatabase(unittest.TestCase):
                 "/bin/bash",
                 "-c",
                 'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
-                " '/^profile_evidence() {/,/^}/p;/^where_removable() {/,/^}/p'"
+                " '/^profile_evidence() {/,/^}/p;/^draft_evidence() {/,/^}/p;"
+                "/^where_removable() {/,/^}/p'"
                 ' "$0")"; where_removable',
                 str(script),
             ],
@@ -347,6 +348,81 @@ class ARealDatabase(unittest.TestCase):
             removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
             self.assertEqual(removable, {"old-apply", "removed-profile", "deploy"})
             connection.rollback()
+
+    def test_retention_keeps_the_publish_a_draft_is_cleared_by(self) -> None:
+        """A done publish is the evidence a draft is published; it outlives the week (CR-04).
+
+        Kept while its draft exists, and pruned like any job once it does not.
+        The clause is the retention command's own, as above.
+        """
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
+                " '/^profile_evidence() {/,/^}/p;/^draft_evidence() {/,/^}/p;"
+                "/^where_removable() {/,/^}/p'"
+                ' "$0")"; where_removable',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into proxy_draft (cluster, object_id, yaml, base_hash, updated_by) "
+                "values ('alpha', 'shop', 'schema: 1', %s, 'admin') returning id",
+                ("a" * 40,),
+            )
+            kept = str(_first(cursor))
+            named = {}
+            for name, draft in (("kept", kept), ("gone", str(uuid4()))):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values ('objects_publish', 'alpha', %(payload)s, "
+                    "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
+                    "returning id",
+                    {
+                        "payload": json.dumps({"draft": {"id": draft, "revision": 1}}),
+                        "key": uuid4(),
+                    },
+                )
+                named[_first(cursor)] = name
+            cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
+            removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
+            self.assertEqual(removable, {"gone"})
+            connection.rollback()
+
+    def test_the_web_reads_a_draft_s_publishes_by_its_id(self) -> None:
+        """`draft_publishes` as the web runs it: done publishes of these drafts only (CR-04)."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            mine, other = str(uuid4()), str(uuid4())
+            for draft, state in ((mine, "done"), (mine, "failed"), (other, "done")):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values ('objects_publish', 'alpha', %(payload)s, "
+                    "%(key)s, %(state)s, now(), now())",
+                    {
+                        "payload": json.dumps({"draft": {"id": draft, "revision": 1}}),
+                        "key": uuid4(),
+                        "state": state,
+                    },
+                )
+            connection.commit()
+        try:
+            with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+                found = db.draft_publishes(connection, cluster="alpha", draft_ids={mine})
+            self.assertEqual([job.payload["draft"]["id"] for job in found], [mine])
+        finally:
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "delete from job where payload->'draft'->>'id' = any(%s)", ([mine, other],)
+                )
+                connection.commit()
 
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:

@@ -988,7 +988,10 @@ def build_router(config: Config) -> APIRouter:
                     _settled_drafts(
                         connection,
                         view.cluster,
-                        {listing.name for listing in listed[view.cluster]},
+                        _objects_reading(
+                            rows.get(view.cluster),
+                            {listing.name for listing in listed[view.cluster]},
+                        ),
                     )
                 )
                 for view in overview.clusters
@@ -1342,6 +1345,7 @@ def build_router(config: Config) -> APIRouter:
         advanced: Annotated[str, Form()] = "",
         handwritten_pool: Annotated[bool, Form()] = False,
         expected_revision: Annotated[str, Form(max_length=16)] = "",
+        object_fingerprint: Annotated[str, Form(max_length=64)] = "",
         csrf_token: Annotated[str, Form(max_length=128, alias=auth.CSRF_FIELD)] = "",
     ) -> Response:
         return _advanced_submit(
@@ -1353,6 +1357,7 @@ def build_router(config: Config) -> APIRouter:
             text=advanced,
             handwritten=handwritten_pool,
             expected_revision=expected_revision,
+            object_fingerprint=object_fingerprint,
             csrf_token=csrf_token,
         )
 
@@ -1511,7 +1516,15 @@ def build_router(config: Config) -> APIRouter:
             # draft whose publish has finished is kept until that reading shows
             # it. Otherwise the page loses both between the job and the poll.
             #
-            draft = _settled_draft(connection, cluster, name, {name} if detail.stored else set())
+            draft = _settled_draft(
+                connection,
+                cluster,
+                name,
+                _objects_reading(
+                    next((row for row in object_rows if row.cluster == cluster), None),
+                    {name} if detail.stored else set(),
+                ),
+            )
         #
         # A name that is neither stored, nor served, nor drafted is not a page.
         # Rendering an empty detail for any string would make every typo look
@@ -1668,6 +1681,9 @@ def build_router(config: Config) -> APIRouter:
                 "object": detail,
                 "draft": draft,
                 "advanced": advanced,
+                "object_fingerprint": editor_module.fingerprint(
+                    detail.stored.document if detail.stored is not None else None
+                ),
                 "stored_advanced": bool(
                     detail.stored is not None
                     and advanced_dialog.opened(detail.stored.document).text
@@ -7533,6 +7549,12 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
     )
 
 
+def _state_reading(state: EditorState) -> ObjectsReading:
+    """The editor state's objects cache, as `_reflects` reads it."""
+
+    return ObjectsReading({view.name for view in state.stored}, state.commit)
+
+
 def _editor_page(
     request: Request,
     config: Config,
@@ -7546,6 +7568,7 @@ def _editor_page(
     probe_asked: bool = False,
     open_group: str = "",
     answered: bool = True,
+    object_fingerprint: str | None = None,
 ) -> Response:
     """Draw the editor, whether it was reached by a link or by a submission.
 
@@ -7571,11 +7594,7 @@ def _editor_page(
     state = _editor_state(request, config, cluster)
 
     with request.app.state.pool.connection() as connection:
-        draft = (
-            _settled_draft(connection, cluster, name, {view.name for view in state.stored})
-            if name
-            else None
-        )
+        draft = _settled_draft(connection, cluster, name, _state_reading(state)) if name else None
 
     stored = next((view for view in state.stored if view.name == name), None)
     unexpressible = ""
@@ -7605,7 +7624,10 @@ def _editor_page(
             except preview_module.Unexpressible as exc:
                 fields = dict(preview_module.DEFAULTS, name=name)
                 unexpressible = str(exc)
-        form = editor_module.ObjectForm(**_form_defaults(fields))
+        form = editor_module.ObjectForm(
+            **_form_defaults(fields),
+            object_fingerprint=editor_module.fingerprint(stored.document if stored else None),
+        )
         draft_revision = str(draft.revision) if draft is not None else ""
 
     fields = form.fields()
@@ -7701,6 +7723,15 @@ def _editor_page(
             "result": result,
             "draft": draft,
             "draft_revision": draft_revision,
+            #
+            # Carried from the page that was opened, not read again here: a
+            # submission redrawn with the current object's would quietly accept
+            # the change it is there to notice. Only the refusal hands over the
+            # new one (CR-01).
+            #
+            "object_fingerprint": (
+                form.object_fingerprint if object_fingerprint is None else object_fingerprint
+            ),
             "unexpressible": unexpressible,
             "submitted": submitted,
             "waf_offered": features.is_on(features.WAF_ENGINE),
@@ -7746,7 +7777,7 @@ def _lookup_again(
             request, config, "This cluster has no object of that name.", back="/proxies"
         )
     with request.app.state.pool.connection() as connection:
-        draft = _settled_draft(connection, cluster, name, {view.name for view in state.stored})
+        draft = _settled_draft(connection, cluster, name, _state_reading(state))
     if draft is not None:
         #
         # Publishing the stored object would throw the draft's work away.
@@ -7763,7 +7794,10 @@ def _lookup_again(
     except preview_module.Unexpressible as exc:
         return _refusal_page(request, config, str(exc), back=_proxy_path(cluster, name))
     form = editor_module.ObjectForm(
-        **_form_defaults(fields), action="publish", csrf_token=csrf_token
+        **_form_defaults(fields),
+        action="publish",
+        csrf_token=csrf_token,
+        object_fingerprint=editor_module.fingerprint(stored.document),
     )
     #
     # The stored object's own name from here on, not the address's: the two
@@ -8044,6 +8078,32 @@ def _editor_submit(
             "An object of that name already exists in this cluster.",
             back=_proxy_path(cluster, "new"),
         )
+    #
+    # The stored object has to be the one the page showed (CR-01). The draft's
+    # revision only guards the draft, and with none the save and the publish
+    # were made against whatever the cache held now - so a tab opened before
+    # somebody else's publish wrote their change away with its old fields.
+    # Answered with the form as submitted, and with the object as it now is, so
+    # pressing save again is a decision rather than the same accident.
+    #
+    shown = next((view for view in state.stored if view.name == name), None) if name else None
+    current = editor_module.fingerprint(shown.document if shown else None)
+    if form.object_fingerprint != current:
+        return _editor_page(
+            request,
+            config,
+            cluster,
+            name,
+            form,
+            draft_revision=form.expected_revision,
+            notice=(
+                f"{name} was changed by a publish after this page was opened, so nothing "
+                "was saved. Saving this form now replaces that change; to keep it, open the "
+                "object again."
+            ),
+            answered=False,
+            object_fingerprint=current,
+        )
 
     #
     # The rename of an unpublished draft, resolved here where the write is.
@@ -8063,7 +8123,7 @@ def _editor_submit(
     rename_revision = 0
     if renaming:
         with request.app.state.pool.connection() as connection:
-            taken = _settled_draft(connection, cluster, typed, {view.name for view in state.stored})
+            taken = _settled_draft(connection, cluster, typed, _state_reading(state))
         if any(view.name == typed for view in state.stored) or taken is not None:
             return _refusal_page(
                 request,
@@ -8446,7 +8506,7 @@ def _removal_submit(
         )
 
     with request.app.state.pool.connection() as connection:
-        existing = _settled_draft(connection, cluster, name, {name})
+        existing = _settled_draft(connection, cluster, name, _state_reading(state))
         try:
             saved = db.save_draft(
                 connection,
@@ -8576,49 +8636,105 @@ def _publish_key(cluster: str, operation: str, payload: Mapping[str, Any]) -> UU
     return uuid5(PUBLISH_NAMESPACE, sha256(body.encode("utf-8")).hexdigest())
 
 
-def _published_drafts(connection: Any, cluster: str) -> set[tuple[str, int]]:
+@dataclass(frozen=True, slots=True)
+class ObjectsReading:
+    """What the objects cache holds for one cluster: the names, and the commit read."""
+
+    names: Collection[str]
+    commit: str | None = None
+
+
+def _objects_reading(row: Any, names: Collection[str] | None = None) -> ObjectsReading:
+    """One cluster's objects cache row as `_reflects` reads it; `names` overrides the row's."""
+
+    result = getattr(row, "result", None)
+    commit = result.get("commit") if isinstance(result, Mapping) else None
+    if names is None:
+        names = {view.name for view in objects.cluster_object_views(row)} if row else set()
+    return ObjectsReading(names, commit if isinstance(commit, str) and commit else None)
+
+
+@dataclass(frozen=True, slots=True)
+class DraftPublish:
+    """A finished publish of one draft revision: the commit it was made against, and
+    whether it changed anything."""
+
+    base: str | None
+    changed: bool | None
+
+
+def _published_drafts(
+    connection: Any, cluster: str, drafts: Iterable[db.ProxyDraft]
+) -> dict[tuple[str, int], DraftPublish]:
     """Which draft revisions a finished publish has already carried away.
 
     Named by identity - the draft's own id and the revision that was published -
     and never by what the document says. Content matched a draft that had been
     edited back to a text published earlier, which is somebody deliberately
     reverting, and it deleted their work as though it were finished.
+
+    Asked about these drafts and no others (CR-04): the newest twenty jobs were
+    the evidence until 2026-10-06, and twenty later jobs made published work look
+    unpublished.
     """
 
-    settled = set()
-    for job in db.recent_jobs(connection, cluster=cluster):
-        if job.operation != "objects_publish" or job.state != "done":
-            continue
-        draft = job.payload.get("draft") if isinstance(job.payload, Mapping) else None
+    ids = {str(draft.id) for draft in drafts if draft.id is not None}
+    settled: dict[tuple[str, int], DraftPublish] = {}
+    for job in db.draft_publishes(connection, cluster=cluster, draft_ids=ids):
+        payload = job.payload if isinstance(job.payload, Mapping) else {}
+        draft = payload.get("draft")
         if not isinstance(draft, Mapping):
             continue
         identity, revision = draft.get("id"), draft.get("revision")
-        if isinstance(identity, str) and isinstance(revision, int):
-            settled.add((identity, revision))
+        if not isinstance(identity, str) or not isinstance(revision, int):
+            continue
+        base = payload.get("expected_head")
+        changed = job.result.get("changed") if isinstance(job.result, Mapping) else None
+        settled.setdefault(
+            (identity, revision),
+            DraftPublish(
+                base if isinstance(base, str) and base else None,
+                changed if isinstance(changed, bool) else None,
+            ),
+        )
     return settled
 
 
-def _reflects(draft: db.ProxyDraft, stored: Collection[str]) -> bool:
+def _reflects(draft: db.ProxyDraft, publish: DraftPublish, reading: ObjectsReading) -> bool:
     """Whether the objects cache has caught up with what this draft published.
 
     A publish finishes before the poller reads the repository again, so between
-    the two there is a stretch where the job is done and the object is not yet
-    in the cache. Clearing the draft on the job alone made the row vanish for
-    that stretch: the spinner said "waiting for publish", the publish finished,
-    and the work was on no page at all until the next poll.
+    the two there is a stretch where the job is done and the cache still shows
+    the object as it was. Clearing the draft on the job alone made the row
+    vanish for that stretch, and in the editor it opened the old document in
+    place of the published one (review 2026-10-04, CR-03).
 
-    So the draft is what carries the row until the object it published can. An
-    edit is reflected the moment it is published, because the object was
-    already listed; a new object, or a removal, has to be waited for.
+    Decided by the commit. The publish was made against the commit the cache
+    showed when it was queued, and the repository only moves forward, so a
+    cache that has read any other commit has read this publish or a later one.
+    A cache still at that commit has not - unless the publish changed nothing,
+    and then presence is all there is to wait for: a new object, or a removal.
+    A job without a base (before 2026-10-06) is judged by presence as before.
     """
 
-    return (draft.object_id not in stored) if draft.deleted else (draft.object_id in stored)
+    if publish.base is not None:
+        if reading.commit is None:
+            return False
+        if reading.commit != publish.base:
+            return True
+        if publish.changed is not False:
+            return False
+    return (
+        (draft.object_id not in reading.names)
+        if draft.deleted
+        else (draft.object_id in reading.names)
+    )
 
 
 def _settled_draft(
-    connection: Any, cluster: str, object_id: str, stored: Collection[str] = ()
+    connection: Any, cluster: str, object_id: str, reading: ObjectsReading
 ) -> db.ProxyDraft | None:
-    """One draft, cleared away if its own publish has finished.
+    """One draft, cleared away if its own publish has finished and can be read.
 
     The editor reads this rather than the row directly, and that is the case
     that matters most: a draft opens in preference to the stored object, so a
@@ -8629,9 +8745,10 @@ def _settled_draft(
     draft = db.read_draft(connection, cluster, object_id)
     if draft is None:
         return None
-    if (str(draft.id), draft.revision) not in _published_drafts(connection, cluster):
+    publish = _published_drafts(connection, cluster, (draft,)).get((str(draft.id), draft.revision))
+    if publish is None:
         return draft
-    if not _reflects(draft, stored):
+    if not _reflects(draft, publish, reading):
         #
         # Published, but the cache has not caught up. The draft is the only
         # thing that can carry the row until it does.
@@ -8658,9 +8775,7 @@ def _settled_draft(
     return None
 
 
-def _settled_drafts(
-    connection: Any, cluster: str, stored: Collection[str] = ()
-) -> list[db.ProxyDraft]:
+def _settled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> list[db.ProxyDraft]:
     """This cluster's drafts, with the ones already published cleared away.
 
     Published work is not a draft any more. Left behind it is worse than untidy:
@@ -8676,11 +8791,12 @@ def _settled_drafts(
     """
 
     drafts = db.cluster_drafts(connection, cluster)
-    settled = _published_drafts(connection, cluster)
+    settled = _published_drafts(connection, cluster, drafts)
     published = {
         draft.object_id
         for draft in drafts
-        if (str(draft.id), draft.revision) in settled and _reflects(draft, stored)
+        if (publish := settled.get((str(draft.id), draft.revision))) is not None
+        and _reflects(draft, publish, reading)
     }
     if not published:
         return drafts
@@ -9058,6 +9174,7 @@ def _advanced_submit(
     handwritten: bool,
     expected_revision: str,
     csrf_token: str,
+    object_fingerprint: str = "",
 ) -> Response:
     """Check the dialog's text, or save it into the object's draft (Fas 17, B223, B225).
 
@@ -9100,7 +9217,7 @@ def _advanced_submit(
     state = _editor_state(request, config, cluster)
     stored = next((view for view in state.stored if view.name == name), None)
     with request.app.state.pool.connection() as connection:
-        draft = _settled_draft(connection, cluster, name, {view.name for view in state.stored})
+        draft = _settled_draft(connection, cluster, name, _state_reading(state))
     if draft is not None and draft.deleted:
         return answer(advanced_dialog.Answer(problem="The draft removes this object."))
     base = draft.yaml if draft is not None else (stored.document if stored is not None else "")
@@ -9115,6 +9232,17 @@ def _advanced_submit(
         return answer(result)
     if result.problem:
         return answer(result)
+    #
+    # The object the page showed, as the editor checks it (CR-01).
+    #
+    if object_fingerprint != editor_module.fingerprint(stored.document if stored else None):
+        return answer(
+            replace(
+                result,
+                problem=f"{name} was changed by a publish after this page was opened, so "
+                "nothing was saved. Reload the page to see it as it is now.",
+            )
+        )
     #
     # The editor's rules for the two buttons (2026-10-01: a draft and then
     # the editor to publish it was a detour). Saving what the draft already says
@@ -9197,16 +9325,20 @@ def _waf_documents(
 
     _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
     stored: dict[tuple[str, str], str] = {}
+    readings: dict[str, Any] = {}
     for row in object_rows:
         if row.cluster not in clusters:
             continue
+        readings[row.cluster] = row
         for view in objects.cluster_object_views(row):
             if view.readable:
                 stored[(row.cluster, view.name)] = view.document
     drafted: dict[tuple[str, str], str] = {}
     for cluster in clusters:
         names = {name for owner, name in stored if owner == cluster}
-        for draft in _settled_drafts(connection, cluster, names):
+        for draft in _settled_drafts(
+            connection, cluster, _objects_reading(readings.get(cluster), names)
+        ):
             if not draft.deleted:
                 drafted[(cluster, draft.object_id)] = draft.yaml
     return stored, drafted
@@ -9313,7 +9445,7 @@ def _waf_save(
     state = _editor_state(request, config, cluster)
     stored = next((view for view in state.stored if view.name == name), None)
     with request.app.state.pool.connection() as connection:
-        draft = _settled_draft(connection, cluster, name, {view.name for view in state.stored})
+        draft = _settled_draft(connection, cluster, name, _state_reading(state))
     if draft is not None and draft.deleted:
         return f"The draft removes {name}."
     base = draft.yaml if draft is not None else (stored.document if stored is not None else "")

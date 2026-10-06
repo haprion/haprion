@@ -59,6 +59,7 @@
   <button type="submit" name="action" value="check" class="default-submit" tabindex="-1" aria-hidden="true">Validate the object</button>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="expected_revision" value="{{ draft_revision }}">
+  <input type="hidden" name="object_fingerprint" value="{{ object_fingerprint }}">
 
   {#
     Locked by the stored document, because that is what a rename would break:

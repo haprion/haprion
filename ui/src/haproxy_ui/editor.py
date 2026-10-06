@@ -20,6 +20,7 @@ than none.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -242,6 +243,21 @@ def unchanged(document: str, stored: str | None) -> bool:
     return document.strip() == stored.strip()
 
 
+def fingerprint(stored: str | None) -> str:
+    """The stored object as a page showed it, to tell on submit whether it moved since.
+
+    A draft's revision says whether the *draft* changed; nothing said whether
+    the stored object did. With no draft, a tab opened before somebody else's
+    publish submitted the old fields against the new commit, and the publish
+    wrote the other person's change away (review 2026-10-04, CR-01). Empty for
+    an object that is not stored.
+    """
+
+    if stored is None:
+        return ""
+    return hashlib.sha256(stored.strip().encode("utf-8")).hexdigest()
+
+
 def sequence(values: Sequence[str]) -> tuple[str, ...]:
     return tuple(value for value in values if value)
 
@@ -397,6 +413,10 @@ class ObjectForm(BaseModel):
     #
     drop_exception: Annotated[str, StringConstraints(max_length=4)] = ""
     expected_revision: Annotated[str, StringConstraints(max_length=16)] = ""
+    #
+    # The stored object as the page showed it, by `fingerprint` (CR-01).
+    #
+    object_fingerprint: Annotated[str, StringConstraints(max_length=64)] = ""
     csrf_token: Annotated[str, StringConstraints(max_length=128)] = ""
 
     def fields(self) -> dict[str, object]:
@@ -409,7 +429,7 @@ class ObjectForm(BaseModel):
         """
 
         values = self.model_dump()
-        for key in ("action", "expected_revision", "csrf_token"):
+        for key in ("action", "expected_revision", "object_fingerprint", "csrf_token"):
             values.pop(key)
         values["allow_from"] = tuple(entry for entry in self.allow_from if entry)
         values["deny_from"] = tuple(entry for entry in self.deny_from if entry)

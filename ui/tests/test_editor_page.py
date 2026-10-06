@@ -13,13 +13,14 @@ import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 from uuid import uuid4
 
 import yaml
 
 from haproxy_ui import auth, db, health, views
+from haproxy_ui import editor as editor_module
 from haproxy_ui import probe as probe_module
 from haproxy_ui.db import ClusterNetwork, ClusterObjects, DraftConflict, Job, ProxyDraft
 from tests.test_login import LoginTestCase, configuration
@@ -106,6 +107,7 @@ class EditorTestCase(LoginTestCase):
             ("rename_draft", self._rename_draft),
             ("discard_draft", self._discard_draft),
             ("record_backend_renames", self._record_renames),
+            ("draft_publishes", lambda _c, **_kw: []),
         ):
             patch = mock.patch(f"haproxy_ui.db.{target}", side_effect=side_effect)
             patch.start()
@@ -186,9 +188,23 @@ class EditorTestCase(LoginTestCase):
             #
             "backend": "web",
             auth.CSRF_FIELD: self.token(client),
+            "object_fingerprint": self.shown(path),
         }
         data.update(fields)
         return client.post(path, data=data, follow_redirects=False)
+
+    def shown(self, path: str) -> str:
+        """The fingerprint the page at `path` carries: the stored object as the cache holds it."""
+
+        found = re.fullmatch(r"/proxies/alpha/([^/]+)/(?:edit|advanced)", path)
+        if found is None:
+            return ""
+        documents = {
+            entry["name"]: entry["document"]
+            for row in db.cluster_objects(cast(Any, None))
+            for entry in (row.result or {}).get("objects", ())
+        }
+        return editor_module.fingerprint(documents.get(found[1]))
 
 
 class ReachingTheEditor(EditorTestCase):
@@ -1090,6 +1106,237 @@ class SaveAndPublish(EditorTestCase):
         self.assertEqual(answer.status_code, 200)
         self.assertEqual(self.queued, [])
         self.assertEqual(self.saved, [])
+
+
+LATER = "b" * 40
+SHOP_9090 = SHOP.replace("port: 8080", "port: 9090")
+
+
+def objects_at(commit: str, **documents: str) -> ClusterObjects:
+    """The cluster's objects cache as read at `commit`, holding these documents."""
+
+    return replace(
+        OBJECTS,
+        result={
+            "commit": commit,
+            "objects": [
+                {**OBJECTS.result["objects"][0], "name": name, "document": document}
+                for name, document in documents.items()
+            ],
+        },
+    )
+
+
+class WhatThePageShowed(SaveAndPublish):
+    """A tab opened before somebody else's publish must not write it away (CR-01).
+
+    The scenario the review reproduced: no draft, B publishes port 9090, A's
+    tab - opened on 8080 - changes only the address and presses publish.
+    """
+
+    def opened(self, client: Any) -> str:
+        page = client.get("/proxies/alpha/shop/edit")
+        found = re.search(r'name="object_fingerprint" value="([0-9a-f]*)"', page.text)
+        self.assertIsNotNone(found, "the editor carries no fingerprint")
+        return found[1] if found else ""
+
+    def test_the_page_carries_the_stored_object_it_showed(self) -> None:
+        client = self.editor()
+
+        self.assertEqual(self.opened(client), editor_module.fingerprint(SHOP))
+
+    def test_an_old_tab_is_refused_after_somebody_else_published(self) -> None:
+        client = self.editor()
+        shown = self.opened(client)
+        later = objects_at(LATER, shop=SHOP_9090)
+        with mock.patch("haproxy_ui.db.cluster_objects", return_value=[later]):
+            answer = self.submit(
+                client,
+                "/proxies/alpha/shop/edit",
+                action="publish",
+                servers="192.0.2.11:8080",
+                object_fingerprint=shown,
+            )
+
+        self.assertEqual(answer.status_code, 200)
+        self.assertIn("was changed by a publish after this page was opened", answer.text)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.queued, [])
+        # The person's edit is still on the form.
+        self.assertIn("192.0.2.11:8080", answer.text)
+        # And the page now carries the object as it is, so saving again is a choice.
+        self.assertIn(
+            f'name="object_fingerprint" value="{editor_module.fingerprint(SHOP_9090)}"',
+            answer.text,
+        )
+
+    def test_saving_again_after_the_refusal_is_a_decision_and_is_taken(self) -> None:
+        client = self.editor()
+        later = objects_at(LATER, shop=SHOP_9090)
+        with mock.patch("haproxy_ui.db.cluster_objects", return_value=[later]):
+            answer = self.submit(
+                client,
+                "/proxies/alpha/shop/edit",
+                action="save",
+                servers="192.0.2.11:8080",
+                object_fingerprint=editor_module.fingerprint(SHOP_9090),
+            )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(len(self.saved), 1)
+
+    def test_a_save_is_refused_after_somebody_else_published_too(self) -> None:
+        client = self.editor()
+        shown = self.opened(client)
+        with mock.patch(
+            "haproxy_ui.db.cluster_objects", return_value=[objects_at(LATER, shop=SHOP_9090)]
+        ):
+            self.submit(client, "/proxies/alpha/shop/edit", action="save", object_fingerprint=shown)
+
+        self.assertEqual(self.saved, [])
+
+    def test_a_publish_of_another_object_does_not_stop_this_one(self) -> None:
+        """The commit moved, this object did not: nothing of it is overwritten."""
+
+        client = self.editor()
+        shown = self.opened(client)
+        other = SHOP.replace("name: shop", "name: other").replace("shop.example", "other.example")
+        with mock.patch(
+            "haproxy_ui.db.cluster_objects",
+            return_value=[objects_at(LATER, shop=SHOP, other=other)],
+        ):
+            answer = self.submit(
+                client,
+                "/proxies/alpha/shop/edit",
+                action="publish",
+                servers="192.0.2.11:8080",
+                object_fingerprint=shown,
+            )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(len(self.queued), 1)
+        self.assertEqual(self.queued[0]["payload"]["expected_head"], LATER)
+
+    def test_an_object_removed_meanwhile_is_not_written_back(self) -> None:
+        client = self.editor()
+        shown = self.opened(client)
+        with mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects_at(LATER)]):
+            self.submit(
+                client,
+                "/proxies/alpha/shop/edit",
+                action="publish",
+                servers="192.0.2.11:8080",
+                object_fingerprint=shown,
+            )
+
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.queued, [])
+
+
+DRAFT_ID = uuid4()
+
+
+class ThePublishedDraftWaitsForTheCache(EditorTestCase):
+    """A published draft is kept until the cache has read past the publish (CR-03, CR-04)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="shop",
+            yaml=SHOP_9090,
+            base_version=1,
+            base_hash=COMMIT,
+            revision=1,
+            updated_by="admin",
+            updated_at=OBSERVED,
+            deleted=False,
+            id=DRAFT_ID,
+        )
+        self.publishes: list[Job] = [self.done(changed=True)]
+        patch = mock.patch(
+            "haproxy_ui.db.draft_publishes", side_effect=lambda _c, **_kw: self.publishes
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def done(self, *, changed: bool, revision: int = 1) -> Job:
+        return Job(
+            id=1,
+            request_id=uuid4(),
+            operation="objects_publish",
+            cluster="alpha",
+            payload={
+                "objects": {"shop": SHOP_9090},
+                "expected_head": COMMIT,
+                "draft": {"id": str(DRAFT_ID), "revision": revision},
+            },
+            state="done",
+            created_at=OBSERVED,
+            started_at=OBSERVED,
+            finished_at=OBSERVED,
+            exit_code=0,
+            outcome="done",
+            result={"changed": changed},
+            stderr_excerpt=None,
+            idempotency_key=None,
+            attempts=1,
+        )
+
+    def opened(self, objects: ClusterObjects) -> str:
+        with mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects]):
+            return str(self.editor().get("/proxies/alpha/shop/edit").text)
+
+    def test_a_cache_still_at_the_base_keeps_the_published_draft(self) -> None:
+        """The review's case: done job, old cache - the form opened on 8080 and the draft went."""
+
+        page = self.opened(objects_at(COMMIT, shop=SHOP))
+
+        self.assertEqual(self.discarded, [])
+        self.assertIn("192.0.2.10:9090", page)
+        self.assertNotIn("192.0.2.10:8080", page)
+
+    def test_a_cache_past_the_base_clears_it(self) -> None:
+        page = self.opened(objects_at(LATER, shop=SHOP_9090))
+
+        self.assertEqual(self.discarded, [("alpha", "shop", 1)])
+        self.assertIn("192.0.2.10:9090", page)
+
+    def test_a_later_publish_read_first_clears_it_as_well(self) -> None:
+        """Somebody published again before this GET: the cache is past both."""
+
+        later = SHOP_9090.replace("192.0.2.10", "192.0.2.12")
+        page = self.opened(objects_at("c" * 40, shop=later))
+
+        self.assertEqual(self.discarded, [("alpha", "shop", 1)])
+        self.assertIn("192.0.2.12:9090", page)
+
+    def test_a_publish_that_changed_nothing_needs_no_new_commit(self) -> None:
+        self.publishes = [self.done(changed=False)]
+
+        self.opened(objects_at(COMMIT, shop=SHOP_9090))
+
+        self.assertEqual(self.discarded, [("alpha", "shop", 1)])
+
+    def test_a_draft_edited_after_its_publish_is_not_cleared_by_it(self) -> None:
+        self.draft = replace(cast(ProxyDraft, self.draft), revision=2)
+
+        self.opened(objects_at(LATER, shop=SHOP_9090))
+
+        self.assertEqual(self.discarded, [])
+
+    def test_a_new_object_waits_for_the_cache_too(self) -> None:
+        self.opened(objects_at(COMMIT))
+
+        self.assertEqual(self.discarded, [])
+
+    def test_the_evidence_is_asked_for_by_the_draft_not_out_of_recent_jobs(self) -> None:
+        """Twenty later jobs pushed the publish out of the window (CR-04)."""
+
+        with mock.patch("haproxy_ui.db.recent_jobs", side_effect=AssertionError("window")):
+            self.opened(objects_at(LATER, shop=SHOP_9090))
+
+        self.assertEqual(self.discarded, [("alpha", "shop", 1)])
 
 
 class WhichNodeReportsOnThePool(EditorTestCase):

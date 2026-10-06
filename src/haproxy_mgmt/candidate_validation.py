@@ -14,6 +14,8 @@ from haproxy_mgmt.helper_protocol import HelperProtocolError, JsonValue
 from haproxy_mgmt.release_layout import (
     CRT_LIST_ALLOWED_SUFFIX,
     CRT_LIST_TARGET,
+    DNS_NAME,
+    DNS_TARGET,
     KEEPALIVED_ALLOWED_SUFFIX,
     KEEPALIVED_TARGET,
     WAF_NAME,
@@ -31,6 +33,14 @@ HAPROXY = "/usr/sbin/haproxy"
 # publication, rather than on a node.
 #
 WAF_ENGINE = "/usr/sbin/coraza-spoa"
+#
+# dnsdist, from PowerDNS's repository (B249), for the same one purpose: a dns
+# listener's file dnsdist would not load is refused here. Its check exits 0 on
+# a key it does not know and only warns (`Unknown key, ignored`, measured on
+# 2.1.2), so a warning or an error in its output refuses as well.
+#
+DNSDIST = "/usr/bin/dnsdist"
+DNSDIST_REFUSALS = ('prio="Warning"', 'prio="Error"')
 
 
 def validator_version(
@@ -126,6 +136,11 @@ def _allowed_path(raw: str) -> str:
     # not a free tree, for the same reason as the two above.
     #
     if path.parts[0] == WAF_TARGET and WAF_NAME.match(raw.removeprefix(f"{WAF_TARGET}/")):
+        return raw
+    #
+    # dnsdist's one file (B249), and nothing else in its directory.
+    #
+    if len(path.parts) == 2 and path.parts[0] == DNS_TARGET and DNS_NAME.match(path.parts[1]):
         return raw
     raise HelperProtocolError("candidate contains a path outside its allowlist", exit_code=65)
 
@@ -251,7 +266,7 @@ def sandbox_command(
     the same unreviewed candidate, and nothing about it needs more.
     """
 
-    suffix = "" if program is None else "-waf"
+    suffix = "" if program is None else ("-dns" if program[0] == DNSDIST else "-waf")
     unit = f"haproxy-manager-validation-{request_id.replace('-', '')}{suffix}"
     properties = (
         "NoNewPrivileges=yes",
@@ -393,24 +408,56 @@ def sandbox_command(
 
 def validate_in_sandbox(candidate_root: Path, request_id: str) -> ValidationResult:
     result = _sandboxed(sandbox_command(candidate_root, request_id))
-    if not result.valid or not (candidate_root / WAF_TARGET / "coraza.yaml").exists():
-        return result
+    if result.valid and (candidate_root / WAF_TARGET / "coraza.yaml").exists():
+        result = _then(result, _waf_engine(candidate_root, request_id))
+    if result.valid and (candidate_root / DNS_TARGET / "dnsdist.conf").exists():
+        result = _then(result, _dnsdist(candidate_root, request_id))
+    return result
+
+
+def _then(first: ValidationResult, second: ValidationResult) -> ValidationResult:
+    return ValidationResult(
+        valid=second.valid, diagnostics=(first.diagnostics + second.diagnostics)[:16384]
+    )
+
+
+def _waf_engine(candidate_root: Path, request_id: str) -> ValidationResult:
     if not Path(WAF_ENGINE).is_file():
         return ValidationResult(
             valid=False,
             diagnostics="the candidate carries WAF rules, and the WAF engine is not installed "
             "on the manager: install the haproxy-manager-coraza-spoa package",
         )
-    engine = _sandboxed(
+    return _sandboxed(
         sandbox_command(
             candidate_root,
             request_id,
             (WAF_ENGINE, "-validate", "-config", f"/candidate/{WAF_TARGET}/coraza.yaml"),
         )
     )
-    return ValidationResult(
-        valid=engine.valid, diagnostics=(result.diagnostics + engine.diagnostics)[:16384]
+
+
+def _dnsdist(candidate_root: Path, request_id: str) -> ValidationResult:
+    if not Path(DNSDIST).is_file():
+        return ValidationResult(
+            valid=False,
+            diagnostics="the candidate carries a dns listener, and dnsdist is not installed on "
+            "the manager: run the manager's preparation again, which installs it",
+        )
+    checked = _sandboxed(
+        sandbox_command(
+            candidate_root,
+            request_id,
+            (DNSDIST, "--check-config", "-C", f"/candidate/{DNS_TARGET}/dnsdist.conf"),
+        )
     )
+    if checked.valid and any(word in checked.diagnostics for word in DNSDIST_REFUSALS):
+        return ValidationResult(
+            valid=False,
+            diagnostics=checked.diagnostics
+            + "\nrefused: dnsdist warned about the dns listener's configuration\n",
+        )
+    return checked
 
 
 def _sandboxed(command: list[str]) -> ValidationResult:

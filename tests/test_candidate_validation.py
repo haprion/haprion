@@ -194,6 +194,83 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+class TheDnsListenerIsValidatedByDnsdist(unittest.TestCase):
+    """B249: `dns/dnsdist.conf` crosses alone and is checked by dnsdist, warnings refusing."""
+
+    FILES = TheWafLayerIsValidatedByTheEngine.FILES
+
+    def test_dnsdist_checks_the_dns_listener_in_a_unit_of_its_own(self) -> None:
+        command = sandbox_command(
+            Path("/run/candidate"),
+            "11111111-1111-4111-8111-111111111111",
+            ("/usr/bin/dnsdist", "--check-config", "-C", "/candidate/dns/dnsdist.conf"),
+        )
+        self.assertEqual(
+            command[-4:],
+            ["/usr/bin/dnsdist", "--check-config", "-C", "/candidate/dns/dnsdist.conf"],
+        )
+        self.assertIn(
+            "--unit=haproxy-manager-validation-11111111111141118111111111111111-dns", command
+        )
+
+    def dns_validation(
+        self, output: str, code: int = 0, *, installed: bool = True
+    ) -> tuple[candidate_validation.ValidationResult, list[list[str]]]:
+        calls: list[list[str]] = []
+
+        def ran(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            dns = "--check-config" in command
+            return subprocess.CompletedProcess(
+                command, code if dns else 0, output if dns else "", ""
+            )
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "dns").mkdir()
+            (root / "dns" / "dnsdist.conf").write_text("x")
+            binary = root / "dnsdist"
+            if installed:
+                binary.write_text("")
+            with (
+                mock.patch.object(subprocess, "run", ran),
+                mock.patch.object(candidate_validation, "DNSDIST", str(binary)),
+            ):
+                return candidate_validation.validate_in_sandbox(root, "1111"), calls
+
+    def test_a_clean_dnsdist_check_passes(self) -> None:
+        result, calls = self.dns_validation('msg="Configuration OK" prio="Info"')
+        self.assertTrue(result.valid, result.diagnostics)
+        self.assertEqual(len(calls), 2)
+
+    def test_a_dnsdist_warning_refuses_although_it_exits_0(self) -> None:
+        # Measured on 2.1.2: an unknown key is ignored with a warning and exit 0.
+        result, _ = self.dns_validation('msg="Unknown key, ignored" prio="Warning" key="x"')
+        self.assertFalse(result.valid)
+        self.assertIn("dnsdist warned", result.diagnostics)
+
+    def test_a_failed_dnsdist_check_refuses(self) -> None:
+        result, _ = self.dns_validation('msg="Fatal Lua error" prio="Error"', code=1)
+        self.assertFalse(result.valid)
+
+    def test_a_dns_listener_without_dnsdist_on_the_manager_is_refused(self) -> None:
+        result, calls = self.dns_validation("", installed=False)
+        self.assertFalse(result.valid)
+        self.assertIn("dnsdist is not installed", result.diagnostics)
+        self.assertEqual(len(calls), 1)
+
+    def test_only_dnsdists_one_file_crosses_into_its_directory(self) -> None:
+        self.assertEqual(
+            parse_candidate({"files": {**self.FILES, "dns/dnsdist.conf": "x"}}).files[
+                "dns/dnsdist.conf"
+            ],
+            b"x",
+        )
+        for name in ("dns/dnsdist.yml", "dns/sub/dnsdist.conf", "dns/other.conf"):
+            with self.subTest(name), self.assertRaises(HelperProtocolError):
+                parse_candidate({"files": {**self.FILES, name: "x"}})
+
+
 if __name__ == "__main__":
     unittest.main()
 

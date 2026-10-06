@@ -245,6 +245,12 @@ for cluster in $(each_cluster); do
 done
 
 echo
+#
+# Validates a dns listener's configuration before it is published (B249).
+#
+step "dnsdist"
+ensure_dnsdist mask
+
 log "step 1 done"
 echo
 echo "Next: ./02-manager-config answers.env"

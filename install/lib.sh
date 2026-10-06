@@ -178,6 +178,44 @@ install_file() {
     prune_replaced "$path"
 }
 
+#
+# dnsdist, from PowerDNS's own repository (B249): what serves a dns listener on
+# the nodes, and what validates one on the manager. The key ships with the
+# product beside this file and a test holds it to its fingerprint,
+# 9FAA A557 7E8F CF62 093D  036C 1B0C 6205 FD38 0FBB; it is never fetched here.
+# The file names are PowerDNS's own instructions', so a host where someone
+# followed them by hand is taken over rather than given a second source.
+#
+# `mask` keeps the service from ever starting - the manager runs only the
+# binary. Without it the node's drop-in decides (see 04-node-prepare).
+#
+DNSDIST_KEYRING="/etc/apt/keyrings/dnsdist-21-pub.asc"
+ensure_dnsdist() {
+    local hold="${1:-}" id codename version
+    id="$(. /etc/os-release && echo "${ID:-}")"
+    codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-}")"
+    case "${id}/${codename}" in
+        ubuntu/resolute|debian/trixie) ;;
+        *) die "dnsdist: ${id} ${codename} is not a supported distribution (Ubuntu 26.04, Debian 13)" ;;
+    esac
+    install -d -o root -g root -m 755 /etc/apt/keyrings
+    install_file "$DNSDIST_KEYRING" root:root 644 "$(cat ./apt-keys/powerdns-dnsdist.asc)"
+    install_file /etc/apt/sources.list.d/pdns.list root:root 644 \
+        "deb [signed-by=${DNSDIST_KEYRING}] http://repo.powerdns.com/${id} ${codename}-dnsdist-21 main"
+    install_file /etc/apt/preferences.d/dnsdist-21 root:root 644 \
+        "$(printf 'Package: dnsdist*\nPin: origin repo.powerdns.com\nPin-Priority: 600')"
+    if [[ "$hold" == mask ]]; then
+        systemctl mask --quiet dnsdist.service
+        log "  masked   dnsdist.service (the binary validates; nothing here serves dns)"
+    fi
+    apt-get update -q >/dev/null || die "dnsdist: apt-get update failed"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q dnsdist >/dev/null \
+        || die "dnsdist: the package could not be installed"
+    version="$(dnsdist --version 2>/dev/null | head -n 1)"
+    [[ "$version" == "dnsdist 2.1."* ]] || die "dnsdist: expected the 2.1 series, found '${version}'"
+    log "  ok       ${version%% (*}"
+}
+
 each_cluster() {
     local cluster
     for cluster in $CLUSTERS; do

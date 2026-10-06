@@ -391,6 +391,76 @@ class WhatThePageIsToldAfterwards(unittest.TestCase):
         self.assertIn("at least one server", str(report.problem))
 
 
+class ADnsObjectsCheck(unittest.TestCase):
+    """B253: the dns query dnsdist asks, tried from the nodes like any other check."""
+
+    def dns(self, **fields: object) -> dict[str, object]:
+        return form(
+            protocol="dns",
+            hostnames="",
+            tcp_port="",
+            servers="ns1.example.com:53\n198.51.100.54:53",
+            health_type="dns",
+            health_path="",
+            **fields,
+        )
+
+    def test_the_question_travels_with_each_server(self) -> None:
+        asked: list[dict[str, object]] = []
+
+        def call(request: dict[str, object], *_a: object, **_k: object) -> str:
+            asked.append(request)
+            return answered([])
+
+        run(
+            "alpha",
+            self.dns(health_query_name="example.com.", health_query_type="SOA"),
+            CHOICES,
+            call=call,
+        )
+
+        targets = asked[0]["parameters"]["targets"]  # type: ignore[index]
+        self.assertEqual(
+            [(t["host"], t["type"], t["query_name"], t["query_type"]) for t in targets],
+            [
+                ("ns1.example.com", "dns", "example.com.", "SOA"),
+                ("198.51.100.54", "dns", "example.com.", "SOA"),
+            ],
+        )
+
+    def test_the_answer_reads_as_its_response_code(self) -> None:
+        node = {
+            "node": "node-a",
+            "reachable": True,
+            "error": None,
+            "source_held": True,
+            "results": [
+                {
+                    "host": "ns1.example.com",
+                    "port": 53,
+                    "ok": True,
+                    "status": 3,
+                    "error": None,
+                    "ms": 4,
+                },
+                {
+                    "host": "198.51.100.54",
+                    "port": 53,
+                    "ok": False,
+                    "status": 2,
+                    "error": "answered SERVFAIL",
+                    "ms": 4,
+                },
+            ],
+        }
+        report = run("alpha", self.dns(), CHOICES, call=lambda *a, **k: answered([node]))
+
+        rows = report.nodes[0].results
+        self.assertEqual(rows[0].phrase, "answered NXDOMAIN")
+        self.assertEqual(rows[1].phrase, "answered SERVFAIL")
+        self.assertEqual(report.caveats, ())
+
+
 if __name__ == "__main__":
     unittest.main()
 

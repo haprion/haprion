@@ -55,6 +55,13 @@ from haproxy_ui.preview import build_document
 MAX_TARGETS = 20
 
 
+#
+# A dns check's answer is a response code (B253), named as dnsdist and every
+# resolver tool name it.
+#
+RCODES = {0: "NOERROR", 1: "FORMERR", 2: "SERVFAIL", 3: "NXDOMAIN", 4: "NOTIMP", 5: "REFUSED"}
+
+
 @dataclass(frozen=True, slots=True)
 class Reached:
     host: str
@@ -63,6 +70,7 @@ class Reached:
     status: int | None
     error: str | None
     ms: int | None
+    dns: bool = False
 
     @property
     def phrase(self) -> str:
@@ -73,6 +81,8 @@ class Reached:
         translated; here it is what this run actually got.
         """
 
+        if self.status is not None and self.dns:
+            return f"answered {RCODES.get(self.status, f'code {self.status}')}"
         if self.status is not None:
             return f"answered {self.status}"
         if self.error:
@@ -179,6 +189,15 @@ def targets_from(checks: Sequence[EffectiveCheck]) -> list[dict[str, Any]]:
             "path": check.path or "/",
             "host_header": check.host_header or "",
             "min_version": check.min_version,
+            #
+            # A dns check's question (B253); the probe helper looks a named
+            # server up on the manager, as the publish does for dnsdist.
+            #
+            **(
+                {"query_name": check.query_name or "", "query_type": check.query_type or ""}
+                if check.type == "dns"
+                else {}
+            ),
         }
         for check in checks[:MAX_TARGETS]
     ]
@@ -410,6 +429,11 @@ def run(
     source, nodes = _read(payload)
     if any(check.type == "http" for check in checks):
         nodes = _judged(nodes, accepted_status(checks))
+    if any(check.type == "dns" for check in checks):
+        nodes = tuple(
+            replace(node, results=tuple(replace(entry, dns=True) for entry in node.results))
+            for node in nodes
+        )
     return ProbeReport(
         ran=True,
         source=source,

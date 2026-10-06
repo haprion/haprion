@@ -51,7 +51,7 @@ class EffectiveCheck:
     host: str
     port: int
     type: str
-    """`http`, `tcp`, or `disabled` - the check's kind, not the pool's protocol."""
+    """`http`, `tcp`, `dns` or `disabled` - the check's kind, not the pool's protocol."""
 
     encrypted: bool
     """Whether the check opens a TLS connection, whatever the pool does."""
@@ -79,6 +79,12 @@ class EffectiveCheck:
     expect_body: str | None = None
     send: str | None = None
     expect: str | None = None
+    #
+    # A dns check's question (B253): dnsdist asks it of every server, and
+    # whatever stands in for the check asks the same.
+    #
+    query_name: str | None = None
+    query_type: str | None = None
 
     @property
     def runs(self) -> bool:
@@ -131,6 +137,8 @@ def effective_check(backend: Backend, server: Server) -> EffectiveCheck:
         expect_body=health.expect_body,
         send=health.send,
         expect=health.expect,
+        query_name=health.query_name,
+        query_type=health.query_type,
     )
 
 

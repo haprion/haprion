@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haproxy_mgmt import dnsdist_config
 from haproxy_mgmt.config import (
     DEFAULT_POLICY_PATH,
     ConfigError,
@@ -45,7 +46,13 @@ from haproxy_mgmt.helper_protocol import (
     write_document,
     write_failure,
 )
-from haproxy_mgmt.proxy_model import HOSTNAME
+from haproxy_mgmt.proxy_model import (
+    DEFAULT_QUERY_NAME,
+    DEFAULT_QUERY_TYPE,
+    DNS_NAME,
+    DNS_QUERY_TYPES,
+    HOSTNAME,
+)
 from haproxy_mgmt.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 
 OPERATION = "probe"
@@ -55,10 +62,46 @@ EXIT_NOT_ROOT = 77
 EXIT_NO_IDENTITY = 78
 EXIT_BAD_INPUT = 65
 
-TYPES = ("tcp", "http")
+TYPES = ("tcp", "http", "dns")
 
 
-def _targets(parameters: object) -> tuple[list[Target], str, int]:
+def _dns_question(
+    entry: dict[str, object], host: str, lookup: dnsdist_config.Lookup
+) -> dict[str, str]:
+    """A dns check's question, and the address it is asked of (B253).
+
+    The name and type held to what the object model allows, so nothing else
+    reaches the node. A server written as a name is looked up here, with the
+    manager's resolver, as the publish looks it up for dnsdist - asking the
+    node's resolver could reach a different address than dnsdist does.
+    """
+
+    name = entry.get("query_name") or DEFAULT_QUERY_NAME
+    kind = entry.get("query_type") or DEFAULT_QUERY_TYPE
+    if not isinstance(name, str) or not DNS_NAME.match(name):
+        raise HelperProtocolError(
+            "a target's query_name is not a DNS name", exit_code=EXIT_BAD_INPUT
+        )
+    if kind not in DNS_QUERY_TYPES:
+        raise HelperProtocolError(
+            "a target's query_type is not one a dns check may ask", exit_code=EXIT_BAD_INPUT
+        )
+    #
+    # A name that gives no single address raises `Unresolved`, which `main`
+    # answers with an envelope: the sentence is the generator's, and the form
+    # shows it where the check is.
+    #
+    address = host.strip("[]") if dnsdist_config.is_address(host) else lookup(host)
+    return {
+        "query_name": name if name.endswith(".") else f"{name}.",
+        "query_type": str(kind),
+        "address": address,
+    }
+
+
+def _targets(
+    parameters: object, lookup: dnsdist_config.Lookup | None = None
+) -> tuple[list[Target], str, int]:
     """The request's targets, or a refusal naming the field that was wrong."""
 
     if not isinstance(parameters, dict):
@@ -85,7 +128,7 @@ def _targets(parameters: object) -> tuple[list[Target], str, int]:
             raise HelperProtocolError("a target's port is not a port", exit_code=EXIT_BAD_INPUT)
         if kind not in TYPES:
             raise HelperProtocolError(
-                "a target's type must be tcp or http", exit_code=EXIT_BAD_INPUT
+                "a target's type must be tcp, http or dns", exit_code=EXIT_BAD_INPUT
             )
         path = entry.get("path", "/") or "/"
         header = entry.get("host_header", "") or ""
@@ -116,6 +159,11 @@ def _targets(parameters: object) -> tuple[list[Target], str, int]:
                 path=path,
                 host_header=header,
                 min_version=min_version,
+                **(
+                    _dns_question(entry, host, lookup or dnsdist_config.lookup)
+                    if kind == "dns"
+                    else {}
+                ),
             )
         )
 
@@ -155,10 +203,25 @@ def main(
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
         )
+    except HelperProtocolError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+    try:
         targets, source, timeout_ms = _targets(request.parameters)
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+    except dnsdist_config.Unresolved as exc:
+        errors.write(f"ERROR: [dns_unresolved] {exc}\n")
+        return write_failure(
+            writer,
+            operation=OPERATION,
+            cluster=request.cluster,
+            request_id=request.request_id,
+            code="dns_unresolved",
+            message=str(exc),
+            exit_code=EXIT_BAD_INPUT,
+        )
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)

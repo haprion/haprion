@@ -92,6 +92,35 @@ def flag(payload, key):
     return value
 
 
+#
+# A dns check's question (B253), held to the object model's own rules: a name
+# of labels, and one of the types a check may ask.
+#
+DNS_NAME = re.compile(
+    r"^(?=.{1,254}$)(?:[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?\.)*"
+    r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?\.?$"
+)
+DNS_TYPES = {"A": 1, "NS": 2, "SOA": 6, "MX": 15, "TXT": 16, "AAAA": 28}
+RCODES = {0: "NOERROR", 1: "FORMERR", 2: "SERVFAIL", 3: "NXDOMAIN", 4: "NOTIMP", 5: "REFUSED"}
+
+
+def dns_question(entry):
+    """The question and the address it is asked of, refused unless each is exactly that."""
+
+    name = entry.get("query_name")
+    if not isinstance(name, str) or not DNS_NAME.match(name):
+        refuse("a target's query_name is not a DNS name")
+    kind = entry.get("query_type")
+    if kind not in DNS_TYPES:
+        refuse(f"a target's query_type must be one of: {', '.join(DNS_TYPES)}")
+    address = entry.get("address")
+    try:
+        ipaddress.ip_address(address)
+    except (TypeError, ValueError):
+        refuse("a dns target's address must be an IP address")
+    return {"query_name": name, "query_type": kind, "address": address}
+
+
 def read_request(stream):
     raw = stream.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
@@ -167,8 +196,8 @@ def read_request(stream):
         if not isinstance(entry, dict):
             refuse("a target is not an object")
         kind = entry.get("type")
-        if kind not in ("tcp", "http"):
-            refuse("a target's type must be tcp or http")
+        if kind not in ("tcp", "http", "dns"):
+            refuse("a target's type must be tcp, http or dns")
         read.append(
             {
                 "host": text(entry, "host", HOST),
@@ -179,6 +208,7 @@ def read_request(stream):
                 "path": text(entry, "path", PATH, required=False, default="/") or "/",
                 "host_header": text(entry, "host_header", HOST, required=False),
                 "min_version": min_version_of(entry),
+                **(dns_question(entry) if kind == "dns" else {}),
             }
         )
     return {"timeout_ms": timeout, "source": source, "targets": read}
@@ -343,6 +373,46 @@ def http_status(stream, target, timeout, deadline):
     return int(parts[1])
 
 
+def dns_ask(target, timeout, source):
+    """One question, as dnsdist's health check asks it, and the answer's code.
+
+    dnsdist 2.1 (`dnsdist-healthchecks.cc`): a query with RD set and no EDNS,
+    over UDP, class IN; the answer counts when its ID matches, QR is set, the
+    question comes back unchanged and the code is not SERVFAIL - NXDOMAIN and
+    REFUSED count, since no object asks `mustResolve`. Anything else is a
+    sentence. The answer's records are never read or returned.
+    """
+
+    query_id = int.from_bytes(os.urandom(2), "big")
+    labels = [label for label in target["query_name"].rstrip(".").split(".") if label]
+    question = b"".join(bytes([len(label)]) + label.encode("ascii") for label in labels) + b"\0"
+    question += DNS_TYPES[target["query_type"]].to_bytes(2, "big") + (1).to_bytes(2, "big")
+    header = query_id.to_bytes(2, "big") + (0x0100).to_bytes(2, "big") + (1).to_bytes(2, "big")
+    header += bytes(6)
+    family = socket.AF_INET6 if ":" in target["address"] else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_DGRAM)
+    try:
+        sock.settimeout(timeout)
+        if source:
+            sock.bind((source, 0))
+        sock.sendto(header + question, (target["address"], target["port"]))
+        while True:
+            answer, _sender = sock.recvfrom(4096)
+            if len(answer) >= 12 and int.from_bytes(answer[:2], "big") == query_id:
+                break
+    finally:
+        sock.close()
+    flags = int.from_bytes(answer[2:4], "big")
+    rcode = flags & 0x0F
+    if not flags & 0x8000:
+        return rcode, "the answer is not a response"
+    if answer[12 : 12 + len(question)].lower() != question.lower():
+        return rcode, "the answer is about another question"
+    if rcode == 2:
+        return rcode, "answered SERVFAIL"
+    return rcode, None
+
+
 def probe(target, timeout_ms, source):
     timeout = timeout_ms / 1000
     started = time.monotonic()
@@ -361,6 +431,13 @@ def probe(target, timeout_ms, source):
     }
     stream = None
     try:
+        if target["type"] == "dns":
+            rcode, problem = dns_ask(target, timeout, source)
+            result["status"] = rcode
+            result["ok"] = problem is None
+            result["error"] = problem
+            result["ms"] = int((time.monotonic() - started) * 1000)
+            return result
         stream = connect(target, timeout, source)
         if target["type"] == "http":
             status = http_status(stream, target, timeout, deadline)

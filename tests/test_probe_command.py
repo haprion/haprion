@@ -26,6 +26,7 @@ from unittest import mock
 
 import yaml
 
+from haproxy_mgmt import dnsdist_config
 from haproxy_mgmt.cli import probe, probe_helper
 from haproxy_mgmt.config import DeployIdentity, Node
 from haproxy_mgmt.probe_socket import ask, build_request
@@ -144,7 +145,7 @@ class WhatTheHelperRefusesToSend(HelperFixture):
         self.assertIn("port", self.refusal({"targets": [self.target(port=0)]}))
 
     def test_a_type_nobody_asked_for(self) -> None:
-        self.assertIn("tcp or http", self.refusal({"targets": [self.target(type="smtp")]}))
+        self.assertIn("tcp, http or dns", self.refusal({"targets": [self.target(type="smtp")]}))
 
     def test_a_path_that_is_not_a_path(self) -> None:
         self.assertIn(
@@ -155,6 +156,70 @@ class WhatTheHelperRefusesToSend(HelperFixture):
     def test_more_targets_than_a_pool_has(self) -> None:
         many = [self.target(port=port) for port in range(1, 25)]
         self.assertIn("at most", self.refusal({"targets": many}))
+
+
+class ADnsTarget(HelperFixture):
+    """B253: a dns check's question is held to the model, and a name is looked up here."""
+
+    def sent(self, **fields: object) -> dict[str, object]:
+        asked: list[dict[str, object]] = []
+
+        def ask(
+            node: Node, identity: DeployIdentity, body: bytes
+        ) -> subprocess.CompletedProcess[str]:
+            asked.append(json.loads(body))
+            return answer([])
+
+        with mock.patch.object(
+            dnsdist_config,
+            "lookup",
+            side_effect=lambda host: {"ns1.example.com": "192.0.2.53"}[host],
+        ):
+            code, _out, err = self.run_helper(
+                {"targets": [self.target(type="dns", port=53, **fields)]}, ask=ask
+            )
+        self.assertEqual(code, 0, err)
+        sent: dict[str, object] = asked[0]["targets"][0]  # type: ignore[index]
+        return sent
+
+    def test_a_named_server_is_asked_at_the_address_the_manager_gives_it(self) -> None:
+        sent = self.sent(host="ns1.example.com", query_name="example.com", query_type="SOA")
+        self.assertEqual(
+            (sent["host"], sent["address"], sent["query_name"], sent["query_type"]),
+            ("ns1.example.com", "192.0.2.53", "example.com.", "SOA"),
+        )
+
+    def test_dnsdist_s_question_when_none_is_written(self) -> None:
+        sent = self.sent()
+        self.assertEqual(
+            (sent["address"], sent["query_name"], sent["query_type"]),
+            ("198.51.100.10", "a.root-servers.net.", "A"),
+        )
+
+    def test_a_question_the_model_would_refuse_is_refused(self) -> None:
+        for fields in ({"query_name": 'x"y'}, {"query_type": "ANY"}):
+            with self.subTest(fields=fields):
+                code, out, err = self.run_helper({"targets": [self.target(type="dns", **fields)]})
+                self.assertEqual((code, out), (65, ""))
+                self.assertIn("query_", err)
+
+    def test_a_name_that_does_not_resolve_says_so(self) -> None:
+        with mock.patch.object(
+            dnsdist_config,
+            "lookup",
+            side_effect=dnsdist_config.Unresolved("gone.example.com has no address on the manager"),
+        ):
+            code, out, err = self.run_helper(
+                {"targets": [self.target(type="dns", host="gone.example.com")]}
+            )
+        self.assertEqual(code, 65)
+        self.assertIn("gone.example.com has no address", err)
+        #
+        # An envelope, so the form says the sentence rather than "nothing at all".
+        #
+        refusal = json.loads(out)["error"]
+        self.assertEqual(refusal["code"], "dns_unresolved")
+        self.assertEqual(refusal["message"], "gone.example.com has no address on the manager")
 
 
 class WhatTheHelperAnswers(HelperFixture):

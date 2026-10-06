@@ -134,7 +134,10 @@ beside that warning publishes the object unchanged, which looks the name up agai
 `firstAvailable` (the first server that is up: active/passive, since dnsdist has no backup
 server) and `chashed` (one name keeps one server) - and the health check asks every
 server a real question, `a.root-servers.net.` for `A` unless another is given, once a
-second by default. *Reachable from* is who may ask; anybody else is answered REFUSED.
+second by default. *Test health check* asks that question from the nodes before the
+object is saved, as dnsdist does: an answer counts unless it is SERVFAIL (NXDOMAIN and
+REFUSED count), and a named server is asked at the address the manager looks it up to.
+*Reachable from* is who may ask; anybody else is answered REFUSED.
 What is HAProxy's - TLS, rate limits, deny lists, the WAF engine, maintenance, headers,
 advanced config - is not offered, and refused if written by hand. The client's address
 reaches the servers behind as EDNS Client Subnet, so a Pi-hole's per-client limits and

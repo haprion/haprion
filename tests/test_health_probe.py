@@ -343,7 +343,7 @@ class WhatTheProbeRefuses(unittest.TestCase):
 
     def test_a_type_nobody_asked_for(self) -> None:
         self.assertIn(
-            "tcp or http",
+            "tcp, http or dns",
             self.refusal(
                 {
                     "schema_version": 1,
@@ -385,6 +385,113 @@ class WhatTheProbeRefuses(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 64)
         self.assertIn("takes no arguments", json.loads(completed.stdout)["error"])
+
+
+class DnsServer:
+    """A UDP server answering each question as told: the code, or a wrong question, or nothing."""
+
+    def __init__(self, mode: str = "answer", rcode: int = 0) -> None:
+        self.mode, self.rcode = mode, rcode
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(("127.0.0.1", 0))
+        self.port = int(self.sock.getsockname()[1])
+        self.asked: list[bytes] = []
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self) -> None:
+        while True:
+            try:
+                query, sender = self.sock.recvfrom(4096)
+            except OSError:
+                return
+            self.asked.append(query)
+            if self.mode == "silent":
+                continue
+            question = query[12:]
+            if self.mode == "other":
+                question = b"\x05other\x07example\x00" + question[-4:]
+            flags = 0x8180 | self.rcode
+            self.sock.sendto(query[:2] + flags.to_bytes(2, "big") + query[4:12] + question, sender)
+
+    def close(self) -> None:
+        self.sock.close()
+
+
+class ADnsCheck(unittest.TestCase):
+    """B253: the question dnsdist asks, judged as dnsdist judges the answer (2.1's source)."""
+
+    def probe(self, server: DnsServer, **fields: object) -> dict[str, Any]:
+        self.addCleanup(server.close)
+        entry = {
+            "type": "dns",
+            "host": "ns1.example.com",
+            "address": "127.0.0.1",
+            "port": server.port,
+            "query_name": "example.com.",
+            "query_type": "SOA",
+            **fields,
+        }
+        code, answer = ask({"schema_version": 1, "timeout_ms": 300, "targets": [entry]})
+        self.assertEqual(code, 0, answer)
+        result: dict[str, Any] = answer["results"][0]
+        return result
+
+    def test_an_answer_counts_and_reports_the_server_as_written(self) -> None:
+        server = DnsServer()
+        result = self.probe(server)
+        self.assertTrue(result["ok"])
+        self.assertEqual((result["host"], result["status"]), ("ns1.example.com", 0))
+        query = server.asked[0]
+        self.assertEqual(query[2:4], b"\x01\x00", "RD set, nothing else")
+        self.assertEqual(query[12:], b"\x07example\x03com\x00\x00\x06\x00\x01")
+
+    def test_nxdomain_and_refused_count_as_dnsdist_counts_them(self) -> None:
+        for rcode in (3, 5):
+            with self.subTest(rcode=rcode):
+                self.assertTrue(self.probe(DnsServer(rcode=rcode))["ok"])
+
+    def test_servfail_does_not(self) -> None:
+        result = self.probe(DnsServer(rcode=2))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "answered SERVFAIL")
+
+    def test_an_answer_to_another_question_does_not(self) -> None:
+        result = self.probe(DnsServer(mode="other"))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "the answer is about another question")
+
+    def test_silence_is_a_timeout(self) -> None:
+        result = self.probe(DnsServer(mode="silent"))
+        self.assertFalse(result["ok"])
+        self.assertIn("no answer", str(result["error"]))
+
+    def test_the_question_and_address_are_held_to_their_shapes(self) -> None:
+        for fields in (
+            {"query_name": "a b."},
+            {"query_type": "ANY"},
+            {"address": "ns1.example.com"},
+            {"address": None},
+        ):
+            with self.subTest(fields=fields):
+                code, answer = ask(
+                    {
+                        "schema_version": 1,
+                        "targets": [
+                            {
+                                "type": "dns",
+                                "host": "ns1.example.com",
+                                "address": "127.0.0.1",
+                                "port": 53,
+                                "query_name": "example.com.",
+                                "query_type": "A",
+                                **fields,
+                            }
+                        ],
+                    }
+                )
+                self.assertEqual(code, 64)
+                self.assertFalse(answer["ok"])
 
 
 if __name__ == "__main__":

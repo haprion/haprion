@@ -77,8 +77,18 @@ class Target:
     when it is only unreachable from here.
     """
 
+    query_name: str = ""
+    query_type: str = ""
+    address: str = ""
+    """For a dns check, the address the manager's resolver gave `host` (B253).
+
+    dnsdist asks the address the publish looked up, never the name, so the
+    probe asks that address too; `host` is kept so the answer reads as the
+    server the person wrote. Empty when `host` is already an address.
+    """
+
     def request(self) -> dict[str, Any]:
-        return {
+        request: dict[str, Any] = {
             "host": self.host,
             "port": self.port,
             "type": self.type,
@@ -88,6 +98,11 @@ class Target:
             "host_header": self.host_header,
             "min_version": self.min_version,
         }
+        if self.type == "dns":
+            request.update(
+                query_name=self.query_name, query_type=self.query_type, address=self.address
+            )
+        return request
 
 
 @dataclass(frozen=True, slots=True)

@@ -284,6 +284,23 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             self.assertFalse(profile.is_disabled())
             self.assertTrue(page.locator("[data-profile-hint='dns-01']").is_visible())
 
+    def test_changing_kind_keeps_the_name_and_the_ca_and_sits_in_the_targets_header(
+        self,
+    ) -> None:
+        with (
+            mock.patch("haproxy_ui.features.is_on", return_value=True),
+            self.signed_in(path="/certificates/new") as page,
+        ):
+            self.assertEqual(page.locator(".cluster-header .certificate-kind").count(), 1)
+            page.fill("input[name='domain']", "bmc01.example.com")
+            page.check("input[name='method'][value='http-01']")
+            page.click(".certificate-kind a[href$='for=external']")
+            page.wait_for_selector("input[name='exportable']", state="attached")
+
+            self.assertEqual(page.input_value("input[name='domain']"), "bmc01.example.com")
+            self.assertTrue(page.is_checked("input[name='method'][value='http-01']"))
+            self.assertEqual(page.locator(".cluster-header .certificate-kind").count(), 1)
+
     def test_the_challenge_sits_midway_between_its_neighbours(self) -> None:
         with self.signed_in(path="/certificates/new") as page:
             page.set_viewport_size({"width": 1280, "height": 800})

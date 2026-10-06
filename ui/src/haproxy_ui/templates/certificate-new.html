@@ -33,8 +33,8 @@
   question it answers - where the certificate goes.
 #}
 {% macro kind_switch() %}{% if feature_on('cert_receivers') %}<nav class="traffic-ranges page-ranges certificate-views certificate-kind" aria-label="Kind of certificate">
-  <a href="/certificates/new"{% if not form.exportable %} class="is-current" aria-current="true"{% endif %}><span>Clusters and receivers</span><span class="segment-reserve" aria-hidden="true">Clusters and receivers</span></a>
-  <a href="/certificates/new?for=external"{% if form.exportable %} class="is-current" aria-current="true"{% endif %}><span>External, installed by hand</span><span class="segment-reserve" aria-hidden="true">External, installed by hand</span></a>
+  <a href="/certificates/new" data-carry-form{% if not form.exportable %} class="is-current" aria-current="true"{% endif %}><span>Clusters and receivers</span><span class="segment-reserve" aria-hidden="true">Clusters and receivers</span></a>
+  <a href="/certificates/new?for=external" data-carry-form{% if form.exportable %} class="is-current" aria-current="true"{% endif %}><span>External, installed by hand</span><span class="segment-reserve" aria-hidden="true">External, installed by hand</span></a>
 </nav>{% endif %}{% endmacro %}
 
 <form method="post" action="/certificates/new" class="preview-form certificate-form">
@@ -45,7 +45,7 @@
 
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
-    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of the chosen CA.<br>DNS-01: see the provider plugin's documentation. HTTP-01: the domain must already point here.<br>NDES: the profile holds the CA's challenge.{% if not form.exportable %} CSR: any CA signs it; upload the result on {% if form.interface %}Settings{% else %}the row{% endif %}.{% endif %}</span></p>
+    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of the chosen CA.<br>DNS-01: see the provider plugin's documentation. HTTP-01: the domain must already point here.<br>NDES: the profile holds the CA's challenge. CSR: any CA signs it; upload the result on {% if form.interface %}Settings{% else %}the row{% endif %}.</span></p>
     <div class="form-grid">
       <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="{% if form.exportable %}bmc01.example.com{% else %}app.example.com or *.example.com{% endif %}" autocomplete="off" spellcheck="false" required autofocus>{% if form.interface %}<small>Must name <code>{{ choices.manager }}</code>, the name this interface is served on.</small>{% elif form.exportable %}<small>The one host it is for, such as <code>bmc01.example.com</code>. No wildcard.</small>{% else %}<small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does; over NDES the base name is the CN and the wildcard a SAN.</small>{% endif %}</label>
       {#
@@ -71,7 +71,8 @@
             made here and never leaves; the request is downloaded from the
             row, signed elsewhere, and the certificate uploaded back.
           #}
-          {% if not form.exportable %}<label class="check"><input type="radio" name="method" value="csr"{% if form.method == 'csr' %} checked{% endif %}> <span><span class="method-name">CSR</span> <span class="optional">— any CA; key made here, signed elsewhere</span></span></label>{% endif %}
+          {# Greyed for an external certificate, not removed, so the page keeps its shape: its key must stay here to be exported. #}
+          <label class="check"><input type="radio" name="method" value="csr"{% if form.method == 'csr' and not form.exportable %} checked{% endif %}{% if form.exportable %} disabled{% endif %}> <span><span class="method-name">CSR</span> <span class="optional">— any CA; key made here, signed elsewhere</span></span></label>
         </div>
       </div>
       {#
@@ -114,8 +115,8 @@
   #}
   {% if form.exportable %}
   <section class="cluster-card">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published.</p></div></div></header>
-    <div class="certificate-kind-row">{{ kind_switch() }}<p class="table-note">Published nowhere: downloaded with its key from its row and installed by hand. One name and an RSA key.</p></div>
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published.</p></div></div>{{ kind_switch() }}</header>
+    <p class="table-note certificate-kind-note">Published nowhere: downloaded with its key from its row and installed by hand. One name and an RSA key.</p>
     <div class="editor-actions editor-submit">
       <p class="table-note"></p>
       <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Request the certificate</button></div>
@@ -130,8 +131,7 @@
   </section>
   {% else %}
   <section class="cluster-card">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published. At least one.</p></div></div></header>
-    {% if feature_on('cert_receivers') %}<div class="certificate-kind-row">{{ kind_switch() }}</div>{% endif %}
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published. At least one.</p></div></div>{{ kind_switch() }}</header>
     <div class="form-grid certificate-target-stack">
       <div class="field">
         <div class="receiver-heading"><span class="field-title">{% if feature_on('cert_receivers') %}Clusters and receivers{% else %}Clusters{% endif %}</span>{% if choices.receivers %}<span class="optional" data-receiver-count aria-live="polite">{{ form.receivers | length }} selected</span>{% endif %}</div>

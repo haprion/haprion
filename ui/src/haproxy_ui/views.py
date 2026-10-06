@@ -2503,6 +2503,21 @@ def build_router(config: Config) -> APIRouter:
                 config,
                 replace(certificate_form.EMPTY_FORM, domain=manager, interface=True),
             )
+        #
+        # The kind switch carries what is already filled in (2026-10-06) -
+        # the name, the CA and its profile - so changing kind does not empty
+        # the form. Only drawn into the fields; the submission checks them
+        # like any other.
+        #
+        query = request.query_params
+        typed = replace(
+            certificate_form.EMPTY_FORM,
+            domain=query.get("domain", "")[:255],
+            method=query.get("method") or certificate_form.EMPTY_FORM.method,
+            dns_profile=query.get("dns_profile", "")[:255],
+            ndes_profile=query.get("ndes_profile", "")[:255],
+            key_type=query.get("key_type", "")[:255],
+        )
         if request.query_params.get("for") == "external" and features.is_on(
             features.CERT_RECEIVERS
         ):
@@ -2510,10 +2525,12 @@ def build_router(config: Config) -> APIRouter:
             # A certificate to take out and install by hand (B255): one name,
             # no targets, its key downloaded from the row.
             #
+            # No CSR here: the key must stay with the manager to be exported.
+            method = certificate_form.EMPTY_FORM.method if typed.method == "csr" else typed.method
             return _certificate_form_page(
-                request, config, replace(certificate_form.EMPTY_FORM, exportable=True)
+                request, config, replace(typed, method=method, key_type="", exportable=True)
             )
-        return _certificate_form_page(request, config, certificate_form.EMPTY_FORM)
+        return _certificate_form_page(request, config, typed)
 
     @router.post("/certificates/new", response_class=HTMLResponse)
     def new_certificate_submit(

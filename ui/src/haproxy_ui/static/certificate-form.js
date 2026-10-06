@@ -51,5 +51,29 @@
     apply();
   };
 
+  //
+  // The kind switch is a link to the other form; what is already filled in
+  // goes with it (2026-10-06) - the name, the CA and its profile - so
+  // changing kind does not empty the form. Disabled fields stay behind, the
+  // way a submission leaves them.
+  //
+  const CARRIED = ["domain", "method", "dns_profile", "ndes_profile", "key_type"];
+  const carryForm = () => {
+    const form = document.querySelector("input[name='domain']")?.form;
+    if (!form) return;
+    document.querySelectorAll("a[data-carry-form]").forEach((link) => {
+      link.addEventListener("click", () => {
+        const target = new URL(link.getAttribute("href"), window.location.href);
+        const filled = new FormData(form);
+        CARRIED.forEach((name) => {
+          const value = String(filled.get(name) || "").trim();
+          if (value) target.searchParams.set(name, value);
+        });
+        link.href = target.toString();
+      });
+    });
+  };
+
   window.addEventListener("DOMContentLoaded", wire);
+  window.addEventListener("DOMContentLoaded", carryForm);
 })();

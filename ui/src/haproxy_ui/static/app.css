@@ -946,9 +946,8 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    sized to be pressed. */
 .certificate-views { margin: 0 0 18px; }
 /* The kind of certificate, under Targets on New certificate (B255). */
-.certificate-kind-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 16px 20px 0; }
-.certificate-kind-row .certificate-views { margin: 0; }
-.certificate-kind-row .table-note { margin: 0; }
+.cluster-header .certificate-kind { margin: -6px 0; flex: 0 0 auto; }
+.certificate-kind-note { margin: 0; padding: 16px 20px 0; }
 .page-ranges-sticky .certificate-views { margin: 0; }
 /* The switch and the page's buttons share the pinned strip since 2026-09-21:
    one fixed row, not two, and the buttons still there at the bottom of a

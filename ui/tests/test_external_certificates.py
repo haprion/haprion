@@ -71,6 +71,19 @@ class TheFormsLimits(CertificateFormRouteTestCase):
         self.assertIn('href="/certificates/new?for=external"', page)
         self.assertIn('aria-label="Kind of certificate"', page)
 
+    def test_changing_kind_keeps_what_was_filled_in(self) -> None:
+        for path in ("/certificates/new?for=external&", "/certificates/new?"):
+            with self.subTest(path=path):
+                page = self.writing_client().get(f"{path}domain={DEVICE}&method=http-01").text
+                self.assertIn(f'value="{DEVICE}"', page)
+                self.assertIn('value="http-01" checked', page)
+
+    def test_a_csr_choice_becomes_the_default_ca_on_the_external_form(self) -> None:
+        page = self.writing_client().get("/certificates/new?for=external&method=csr").text
+
+        self.assertIn('value="dns-01" checked', page)
+        self.assertIn('value="csr" disabled', page)
+
     def test_the_page_offers_no_targets_and_sends_the_mark(self) -> None:
         page = self.writing_client().get("/certificates/new?for=external").text
 
@@ -78,7 +91,7 @@ class TheFormsLimits(CertificateFormRouteTestCase):
         self.assertIn('name="exportable" value="1"', page)
         self.assertNotIn('name="cluster"', page)
         self.assertNotIn('name="receiver"', page)
-        self.assertNotIn('value="csr"', page)
+        self.assertIn('value="csr" disabled', page)
 
     def test_a_submission_queues_the_issue_without_targets(self) -> None:
         response = self.post(

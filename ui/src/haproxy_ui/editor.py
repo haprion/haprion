@@ -281,7 +281,7 @@ class ObjectForm(BaseModel):
     balance: Annotated[str, StringConstraints(max_length=16)] = "roundrobin"
     balance_key: Annotated[str, StringConstraints(max_length=64)] = ""
     cookie: Annotated[str, StringConstraints(max_length=32)] = ""
-    backend: Annotated[str, StringConstraints(max_length=64)] = "web"
+    backend: Annotated[str, StringConstraints(max_length=64)] = ""
     servers: Annotated[str, StringConstraints(max_length=4096)] = ""
     health_type: Annotated[str, StringConstraints(max_length=16)] = "disabled"
     health_path: Annotated[str, StringConstraints(max_length=1024)] = ""

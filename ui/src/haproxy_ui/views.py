@@ -7520,7 +7520,9 @@ def _editor_page(
         status_rows,
         cluster=cluster,
         obj=str(fields.get("name", "")).strip() or name,
-        backend=str(fields.get("backend", "")).strip() or "web",
+        backend=str(fields.get("backend", "")).strip()
+        or str(fields.get("name", "")).strip()
+        or name,
         #
         # The same address the probe binds, and read the same way. With one set,
         # only the node that carries it can answer for this backend - the other

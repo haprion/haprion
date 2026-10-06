@@ -504,7 +504,7 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
             form(protocol="tcp", tcp_port="5432", hostnames="", cookie="SRV"), PREVIEW_CLUSTER
         )
 
-        self.assertEqual(result.problem_field, "app.backends.web.cookie")
+        self.assertEqual(result.problem_field, "app.backends.app.cookie")
 
 
 class TheRateLimitTheObjectAsksFor(unittest.TestCase):
@@ -859,7 +859,7 @@ class TheAdvancedConfigIsCarriedThrough(unittest.TestCase):
             )
         )
 
-        self.assertEqual(document["backends"], {"web": {"servers": []}})
+        self.assertEqual(document["backends"], {"app": {"servers": []}})
 
     def test_the_line_ends_a_browser_sends_change_nothing(self) -> None:
         document = build_document(form(advanced="timeout server 2m   \r\nretries 5\r\n\r\n"))

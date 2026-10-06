@@ -198,7 +198,7 @@ class TheFormSaysWhatTheNameIsFor(unittest.TestCase):
         ).read_text()
         field = template.split('<input name="backend"', 1)[1].split("</label>", 1)[0]
 
-        self.assertIn("Unique per cluster.", field)
+        self.assertIn("Unique per cluster. Default: the object's name.", field)
         self.assertIn("This name is used by metrics.", field)
 
 

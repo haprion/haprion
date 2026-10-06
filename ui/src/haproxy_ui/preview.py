@@ -122,7 +122,7 @@ DEFAULTS = {
     "hsts": False,
     "hsts_max_age": "31536000",
     "hsts_subdomains": False,
-    "backend": "web",
+    "backend": "",
     "balance": "roundrobin",
     "balance_key": "",
     "cookie": "",
@@ -554,7 +554,12 @@ def build_document(form: dict[str, object]) -> str:
     # `web` would rename somebody's `console` the first time they opened it -
     # which reads in a diff as a backend removed and another added.
     #
-    backend_name = text("backend") or "web"
+    # Left empty it is the object's name (2026-10-06): a pool's name is its
+    # backend's in HAProxy and must be unique in the cluster (B250), and the
+    # object's name already is. `web` was the default and met itself on the
+    # second object of a cluster.
+    #
+    backend_name = text("backend") or text("name")
     document: dict[str, object] = {"schema": 1, "name": text("name")}
     written = [name for name in hostnames if name]
     if protocol == "tcp":

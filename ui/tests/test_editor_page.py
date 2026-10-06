@@ -95,6 +95,7 @@ class EditorTestCase(LoginTestCase):
         self.saved: list[dict[str, Any]] = []
         self.renamed: list[dict[str, Any]] = []
         self.discarded: list[tuple[str, str, int]] = []
+        self.backend_renames: list[dict[str, Any]] = []
         self.draft: ProxyDraft | None = None
         self.conflict = False
         for target, side_effect in (
@@ -104,10 +105,14 @@ class EditorTestCase(LoginTestCase):
             ("save_draft", self._save_draft),
             ("rename_draft", self._rename_draft),
             ("discard_draft", self._discard_draft),
+            ("record_backend_renames", self._record_renames),
         ):
             patch = mock.patch(f"haproxy_ui.db.{target}", side_effect=side_effect)
             patch.start()
             self.addCleanup(patch.stop)
+
+    def _record_renames(self, _c: object, **values: Any) -> None:
+        self.backend_renames.append(values)
 
     def _read_draft(self, _c: object, cluster: str, object_id: str) -> ProxyDraft | None:
         #
@@ -175,6 +180,11 @@ class EditorTestCase(LoginTestCase):
             "health_type": "disabled",
             "servers": "192.0.2.10:8080",
             "redirect_status": "301",
+            #
+            # The stored object's pool, as the page fills it in. Left out, the
+            # pool would take the object's name - a rename nobody asked for.
+            #
+            "backend": "web",
             auth.CSRF_FIELD: self.token(client),
         }
         data.update(fields)
@@ -848,6 +858,23 @@ class SaveAndPublish(EditorTestCase):
     def _queue(self, _c: object, **values: Any) -> Any:
         self.queued.append(values)
         return SimpleNamespace(id=1, request_id=uuid4())
+
+    def test_a_renamed_pool_is_written_down_with_the_publish(self) -> None:
+        """B250: the card under the new name keeps the old one's history."""
+
+        self.publish(backend="shop-front")
+
+        self.assertEqual(len(self.backend_renames), 1)
+        self.assertEqual(
+            self.backend_renames[0]["renamed"],
+            {"web": "shop-front", "mgd-shop-web": "shop-front"},
+        )
+        self.assertEqual(self.backend_renames[0]["introduced"], ["shop-front"])
+
+    def test_an_empty_pool_name_is_the_objects(self) -> None:
+        self.publish(backend="")
+
+        self.assertIn("  shop:\n", self.queued[-1]["payload"]["objects"]["shop"])
 
     def publish(self, **fields: Any) -> Any:
         #

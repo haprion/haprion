@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -63,49 +64,162 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(measured.queries, 2)
         self.assertGreaterEqual(measured.database, 0.01)
 
-    def test_the_release_guard_names_a_running_restore_and_nothing_else(self) -> None:
-        """`update-platform-release` asks this before it restarts the worker.
+    def drain(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        """`haproxy-ui-drain` itself, against this database, as the migration role."""
 
-        The query is read out of the script, so what is proved here is what
-        runs. A running restore with a live lease is named; a finished one, a
-        running deploy, and a restore whose lease has run out are not.
+        directory = Path(tempfile.mkdtemp(prefix="drain-"))
+        self.addCleanup(shutil.rmtree, directory)
+        (directory / "ui-admin-test.conf").write_text(
+            f"DB_NAME={os.environ['HAPROXY_UI_TEST_DATABASE_NAME']}\n"
+            f"DB_ROLE={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}\n"
+        )
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-drain"
+        return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            ["/bin/bash", str(script), "-e", "test", *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "HAPROXY_UI_DRAIN_CONFIG": str(directory),
+                "PGHOST": os.environ["HAPROXY_UI_TEST_DATABASE_SOCKET"],
+            },
+        )
+
+    def running(self, operation: str, lease: str) -> int:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key, state, "
+                "claim_token, worker_id, lease_until, started_at) values (%s, 'alpha', '{}', "
+                "%s, 'running', %s, 'w', now() + %s::interval, now()) returning id",
+                (operation, uuid4(), uuid4(), lease),
+            )
+            job = _first(cursor)
+            connection.commit()
+        self.addCleanup(self.forget_job, job)
+        return int(job)
+
+    def forget_job(self, job: int) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("delete from job where id = %s", (job,))
+            cursor.execute("update job_claim_gate set paused_until = null, paused_by = null")
+            connection.commit()
+
+    def paused_until(self) -> object:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select paused_until from job_claim_gate")
+            return _first(cursor)
+
+    def test_a_release_waits_for_a_running_job_and_refuses_after_its_wait(self) -> None:
+        """CR-12: a running restore holds the restart; the pause is lifted on refusal."""
+
+        job = self.running("node_restore", "10 minutes")
+
+        answer = self.drain("pause", "--wait", "3")
+
+        self.assertEqual(answer.returncode, 75, answer.stderr)
+        self.assertIn(f"node_restore (job {job})", answer.stderr)
+        self.assertIsNone(self.paused_until())
+
+    def test_a_job_whose_lease_ran_out_is_not_waited_for(self) -> None:
+        self.running("backup_run", "-1 minute")
+
+        answer = self.drain("pause", "--wait", "3")
+
+        self.assertEqual(answer.returncode, 0, answer.stderr)
+        self.assertIsNotNone(self.paused_until())
+        self.assertEqual(self.drain("resume").returncode, 0)
+        self.assertIsNone(self.paused_until())
+
+    def test_a_paused_gate_stops_the_worker_s_claim_and_resume_lets_it_go(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key) "
+                "values ('deploy', 'alpha', '{}', %s) returning id",
+                (uuid4(),),
+            )
+            pending = int(_first(cursor))
+            connection.commit()
+        self.addCleanup(self.forget_job, pending)
+        self.assertEqual(self.drain("pause", "--wait", "3").returncode, 0)
+
+        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+            self.assertIsNone(db.claim_job(connection, worker_id="w", lease_seconds=60))
+            connection.rollback()
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("update job_claim_gate set paused_until = null")
+            connection.rollback()
+
+        self.assertEqual(self.drain("resume").returncode, 0)
+        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+            claimed = db.claim_job(connection, worker_id="w", lease_seconds=60)
+            connection.rollback()
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.id if claimed else None, pending)
+
+    def test_a_claim_in_flight_is_either_finished_before_the_pause_or_waited_for(self) -> None:
+        """The race a second SELECT would have left open: the claim that has not committed.
+
+        The pause takes a SHARE lock on the job table, so it waits for the
+        claim's transaction; the claim's job is then running, and is waited for.
         """
 
-        script = Path(__file__).resolve().parents[2] / "install/platform/update-platform-release"
-        text = script.read_text()
-        start = text.index('-c "', text.index("no node restore or backup is running")) + 4
-        query = text[start : text.index('")"', start)]
-        #
-        # One cluster each: a cluster has one active job at a time.
-        #
-        rows = (
-            ("alpha", "node_restore", "running", "10 minutes"),
-            ("beta", "node_restore", "done", None),
-            ("gamma", "deploy", "running", "10 minutes"),
-            ("delta", "backup_run", "running", "-1 minute"),
-        )
         with self.connect() as connection, connection.cursor() as cursor:
-            ids = []
-            for cluster, operation, state, lease in rows:
-                cursor.execute(
-                    "insert into job (operation, cluster, payload, idempotency_key, state, "
-                    "claim_token, worker_id, lease_until, started_at, finished_at) "
-                    "values (%(operation)s, %(cluster)s, '{}', %(key)s, %(state)s, %(token)s, "
-                    "'w', now() + %(lease)s::interval, now(), "
-                    "case when %(state)s = 'running' then null else now() end) returning id",
-                    {
-                        "cluster": cluster,
-                        "operation": operation,
-                        "key": uuid4(),
-                        "state": state,
-                        "token": uuid4() if lease else None,
-                        "lease": lease,
-                    },
-                )
-                ids.append(_first(cursor))
-            cursor.execute(query)
-            self.assertEqual(cursor.fetchone(), (f"node_restore (job {ids[0]})",))
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key) "
+                "values ('backup_run', 'alpha', '{}', %s) returning id",
+                (uuid4(),),
+            )
+            pending = int(_first(cursor))
+            connection.commit()
+        self.addCleanup(self.forget_job, pending)
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-drain"
+        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as worker:
+            claimed = db.claim_job(worker, worker_id="w", lease_seconds=60)
+            self.assertIsNotNone(claimed)
+            directory = Path(tempfile.mkdtemp(prefix="drain-"))
+            self.addCleanup(shutil.rmtree, directory)
+            (directory / "ui-admin-test.conf").write_text(
+                f"DB_NAME={os.environ['HAPROXY_UI_TEST_DATABASE_NAME']}\n"
+                f"DB_ROLE={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}\n"
+            )
+            pausing = subprocess.Popen(  # noqa: S603 - fixed interpreter, the repository's script
+                ["/bin/bash", str(script), "-e", "test", "pause", "--wait", "3"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env={
+                    **os.environ,
+                    "HAPROXY_UI_DRAIN_CONFIG": str(directory),
+                    "PGHOST": os.environ["HAPROXY_UI_TEST_DATABASE_SOCKET"],
+                },
+            )
+            with self.assertRaises(subprocess.TimeoutExpired):
+                pausing.wait(timeout=1.5)
+            worker.commit()
+        _, stderr = pausing.communicate(timeout=30)
+
+        self.assertEqual(pausing.returncode, 75, stderr)
+        self.assertIn(f"backup_run (job {pending})", stderr)
+
+    def test_a_pause_left_behind_by_a_killed_release_runs_out(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key) "
+                "values ('deploy', 'alpha', '{}', %s) returning id",
+                (uuid4(),),
+            )
+            pending = int(_first(cursor))
+            cursor.execute("update job_claim_gate set paused_until = now() - interval '1 second'")
+            connection.commit()
+        self.addCleanup(self.forget_job, pending)
+
+        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+            claimed = db.claim_job(connection, worker_id="w", lease_seconds=60)
             connection.rollback()
+
+        self.assertIsNotNone(claimed)
 
     def test_retention_removes_oidc_sign_ins_older_than_a_day(self) -> None:
         """The clause is printed by the retention command itself, as above."""

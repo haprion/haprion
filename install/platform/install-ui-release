@@ -263,6 +263,21 @@ if [[ "$prepare_only" -eq 1 ]]; then
     exit 0
 fi
 
+#
+# Claims paused, and the running jobs waited for, before anything is switched
+# or restarted (CR-12): a restart ends the job the worker holds, and a node
+# restore or a backup then ends `unknown` while its root helper carries on.
+# Lifted again however this script ends. Only where a worker runs - the
+# development platform has none.
+#
+if [[ -n "${WORKER_USER:-}" ]] && systemctl cat "${WORKER_USER}.service" >/dev/null 2>&1; then
+    step "Holding the worker's claims"
+    drain=(bin/haproxy-ui-drain -e "${ENVIRONMENT:-prod}")
+    "${drain[@]}" pause --wait "${DRAIN_SECONDS:-900}"
+    # shellcheck disable=SC2064 # the command is fixed now, not when the trap runs
+    trap "$(printf '%q ' "${drain[@]}") resume || true" EXIT
+fi
+
 step "Activating"
 link="${PLATFORM_ROOT}/current"
 #
@@ -388,6 +403,13 @@ step "The first account"
 #
 /usr/local/sbin/haproxy-ui-user -e "$ENVIRONMENT" init-admin \
     || warn "no first account was made; after ./migrate, run: haproxy-ui-user -e ${ENVIRONMENT} init-admin"
+
+step "The drain command"
+#
+# What the rollback command holds the worker's claims with. A rendered copy for
+# the reason the rollback command is one.
+#
+install_file /usr/local/sbin/haproxy-ui-drain root:root 755 "$(cat bin/haproxy-ui-drain)"
 
 step "The rollback command"
 #

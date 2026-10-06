@@ -93,13 +93,21 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertLess(database, candidate)
         self.assertLess(candidate, activate)
 
-    def test_a_running_restore_stops_the_release_before_anything_moves(self) -> None:
-        """Activation restarts the worker; a restore behind the socket would be orphaned."""
+    def test_claims_are_held_before_anything_is_switched_or_restarted(self) -> None:
+        """CR-12: the pause and the wait come before `current` moves and the worker restarts.
 
-        guard = self.update.index('step "Checking that no node restore or backup is running"')
-        prepare = self.update.index("install-ui-release --prepare")
-        self.assertLess(guard, prepare)
-        self.assertIn("lease_until > now()", self.update)
+        What the pause does is proved against a database in
+        `test_database_integration`; this holds the order in the scripts.
+        """
+
+        installer = (ROOT / "install/platform/install-ui-release").read_text()
+        pause = installer.index("pause --wait")
+        self.assertLess(pause, installer.index('step "Activating"'))
+        self.assertLess(pause, installer.index("systemctl restart"))
+        self.assertIn('resume || true" EXIT', installer)
+        rollback = (ROOT / "install/platform/bin/haproxy-ui-rollback").read_text()
+        self.assertLess(rollback.index("pause --wait"), rollback.index('step "Switching"'))
+        self.assertNotIn("Checking that no node restore or backup is running", self.update)
 
     def test_both_post_switch_failures_restore_the_previous_release(self) -> None:
         self.assertEqual(self.update.count("restore_previous\n"), 2)

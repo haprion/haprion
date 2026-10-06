@@ -139,6 +139,20 @@ done
   Those services were added after that release. Roll back to a release that has
   them, or stop and disable them first - deliberately, not by surprise."
 
+step "Holding the worker's claims"
+#
+# As a release does (CR-12): the restart below ends the job the worker holds.
+# Installed by install-ui-release since 2026-10-06; older installations go on
+# without it, as they did.
+#
+drain=/usr/local/sbin/haproxy-ui-drain
+if [[ -x "$drain" ]]; then
+    "$drain" -e prod pause --wait "${DRAIN_SECONDS:-900}"
+    trap '"$drain" -e prod resume || true' EXIT
+else
+    warn "  ${drain} is missing; the worker restarts without waiting for its jobs"
+fi
+
 step "Switching"
 ln -sfn "${releases}/${target}" "${link}.new"
 mv -T "${link}.new" "$link"

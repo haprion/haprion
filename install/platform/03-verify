@@ -46,7 +46,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\njob\nlogin_attempt\nlogin_unlock\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\ntraffic_log\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\ntraffic_log\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -186,6 +186,7 @@ app_worker	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_err
 app_worker	dns_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version
 app_worker	job	SELECT	attempts, claim_token, cluster, created_at, exit_code, finished_at, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt, worker_id
 app_worker	job	UPDATE	attempts, claim_token, exit_code, finished_at, lease_until, outcome, result, started_at, state, stderr_excerpt, worker_id
+app_worker	job_claim_gate	SELECT	paused_until
 app_worker	metric_backend_alias	INSERT	cluster, new_name, old_name
 app_worker	metric_backend_alias	SELECT	cluster, new_name, old_name, renamed_at, reused_at
 app_worker	metric_backend_alias	UPDATE	new_name, renamed_at, reused_at

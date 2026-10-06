@@ -725,6 +725,10 @@ def claim_job(
     so its writes are refused by the database rather than by its own good
     manners.
 
+    Nothing is taken while a release has paused claims (`job_claim_gate`,
+    CR-12). The release sets the pause holding a lock on this table that every
+    claim also needs, so a claim either finished before the pause or reads it.
+
     `started_at` keeps its first value, because it records when the work first
     began and not when it was last picked up. `attempts` does the opposite: it
     counts the pickups, which is what the recovery path needs to know before it
@@ -744,6 +748,9 @@ def claim_job(
             " where id = ( "
             "         select id from job "
             "          where state = 'pending' "
+            "            and not exists ( "
+            "                select 1 from job_claim_gate "
+            "                 where paused_until > statement_timestamp()) "
             "          order by created_at, id "
             "            for update skip locked "
             "          limit 1) "

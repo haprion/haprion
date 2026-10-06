@@ -4461,9 +4461,12 @@ excerpt; the helper's own lines are in the journal (`journalctl -u
 
 The restore service needs `AF_NETLINK` besides the usual families: `ip route
 get` names the address the target will see the manager come from, which is what
-the one-time key's `from=` is limited to. `update-platform-release` refuses to
-run while a restore or backup job holds a live lease, because activation
-restarts the worker. Step 07 installs both sockets wherever it installs a
+the one-time key's `from=` is limited to. Activating a UI release, and
+`haproxy-ui-rollback`, restart the worker, so both first pause its claims
+(`haproxy-ui-drain`) and wait until no job is running - fifteen minutes at most
+(`DRAIN_SECONDS`), after which they stop without switching anything and lift
+the pause. A pause left behind by a killed run ends by itself five minutes after
+its wait would have. Step 07 installs both sockets wherever it installs a
 worker; `haproxy-node-restore` and `haproxy-state-backup` at the terminal do not
 go this way, root runs them directly.
 

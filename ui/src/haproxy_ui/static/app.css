@@ -945,8 +945,16 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    is the primary navigation between two quite different answers - so it is
    sized to be pressed. */
 .certificate-views { margin: 0 0 18px; }
-/* The kind of certificate, under Targets on New certificate (B255). */
-.cluster-header .certificate-kind { margin: -6px 0; flex: 0 0 auto; }
+/* The kind of certificate, under Targets' heading on New certificate (B255):
+   two choices drawn as choices - a dot, a frame, the chosen one filled - since
+   a small segmented switch was read past by anyone not looking for it. */
+.certificate-targets-header { flex-direction: column; align-items: stretch; gap: 14px; }
+.certificate-kind { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-width: 640px; }
+.certificate-kind a { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); font-weight: 600; white-space: nowrap; text-decoration: none; }
+.certificate-kind a:hover { background: var(--hover-surface); color: var(--text-strong); }
+.certificate-kind a.is-current { border-color: var(--brand); background: var(--brand-soft); color: var(--text-strong); }
+.certificate-kind .kind-dot { width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid var(--line-strong); border-radius: 50%; }
+.certificate-kind a.is-current .kind-dot { border: 4px solid var(--brand); background: var(--panel); }
 .certificate-kind-note { margin: 0; padding: 16px 20px 0; }
 .page-ranges-sticky .certificate-views { margin: 0; }
 /* The switch and the page's buttons share the pinned strip since 2026-09-21:

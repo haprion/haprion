@@ -235,6 +235,14 @@ class TheListingShowsTheObjectsPort(unittest.TestCase):
 
         self.assertEqual((row.ports, row.servers), ((5353,), ("192.0.2.61", "192.0.2.62")))
 
+    def test_the_cell_reads_like_a_site_s_servers_then_port(self) -> None:
+        """`domaincontroller1.example.com, domaincontroller2.example.com · 53`, as a site is `shop.example.com · 443`."""
+
+        template = (Path(views.__file__).parent / "templates" / "_proxy-rows.html").read_text()
+        self.assertIn(
+            "{{ object.servers | join(', ') }} · {% endif %}{{ object.ports | join(', ')", template
+        )
+
     def test_a_tcp_object_s_too(self) -> None:
         document = "schema: 1\nname: db\nlisten: {protocol: tcp, port: 5432}\n"
         self.assertEqual(self.view(document, "tcp").ports, (5432,))

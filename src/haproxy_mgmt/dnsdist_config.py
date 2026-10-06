@@ -9,8 +9,9 @@ module turns the placed objects into one file.
 
 **One file for the cluster.** dnsdist reads one configuration, so every dns
 object of a cluster is a section of the same `dnsdist.conf`: a listener per
-address and port, a pool per object, and two rules per object - refuse who
-may not ask, send the rest to the pool. A final rule refuses whatever reached a
+address and port, a pool per object, and per object a rule refusing who may
+not ask - when `allow_from` names anyone - and one sending the rest to the
+pool. A final rule refuses whatever reached a
 listener without matching one, so nothing is answered by a pool nobody named.
 
 **What every pool does, whatever the object says.** EDNS Client Subnet carries
@@ -137,11 +138,14 @@ def _rules(proxy: Proxy, vip: Vip, networks: Mapping[str, Sequence[str]]) -> lis
     port = proxy.listen.port
     if port is None:
         raise ValueError(f"{proxy.name} is a dns object without a port")
+    route = f"addAction(AndRule({{{_match(vip, port)}}}), PoolAction({_quote(pool_name(proxy))}))"
+    if not proxy.allow_from:
+        return [route]
     allowed = ", ".join(_quote(cidr) for cidr in _cidrs(proxy.allow_from, networks))
     return [
         f"addAction(AndRule({{{_match(vip, port)}, NotRule(NetmaskGroupRule({{{allowed}}}))}}), "
         "RCodeAction(DNSRCode.REFUSED))",
-        f"addAction(AndRule({{{_match(vip, port)}}}), PoolAction({_quote(pool_name(proxy))}))",
+        route,
     ]
 
 
@@ -192,8 +196,8 @@ def render(
         "-- reported by the node and kept current like every other package.",
         'setSecurityPollSuffix("")',
         "",
-        "-- Every object says who may ask it; the rules below refuse everybody else,",
-        "-- so the global list admits all and decides nothing.",
+        "-- Who may ask is each object's allow_from, refused by the rules below; the",
+        "-- global list admits all and decides nothing.",
         'setACL({"0.0.0.0/0", "::/0"})',
         "",
         "-- The asking client's full address travels to the servers (EDNS Client Subnet).",

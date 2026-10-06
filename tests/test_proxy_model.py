@@ -1356,9 +1356,10 @@ class AResolverIsServedByDnsdist(unittest.TestCase):
                 )
                 self.assertIn(f"resolver.{key} means nothing for a dns object", message)
 
-    def test_a_listener_open_to_everybody_is_an_open_resolver(self) -> None:
-        self.assertIn("open resolver", self.refused(dns((b"allow_from: [office]\n", b""))))
-        self.assertIn("open resolver", self.refused(dns((b"[office]", b"[]"))))
+    def test_without_allow_from_it_answers_everybody_like_any_object(self) -> None:
+        self.assertEqual(
+            load_proxy("resolver", dns((b"allow_from: [office]\n", b""))).allow_from, ()
+        )
 
     def test_a_country_is_refused(self) -> None:
         self.assertIn("countries", self.refused(dns((b"[office]", b"[country:SE]"))))

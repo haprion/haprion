@@ -65,6 +65,22 @@ class WhereADnsObjectMaySit(unittest.TestCase):
         self.assertEqual(alone.configuration, beside.configuration)
         self.assertEqual(sorted(beside.object_parts), ["resolver", "shop"])
 
+    def test_without_allow_from_nobody_is_refused_but_the_listener_still_routes(self) -> None:
+        open_to_all = load_proxy(
+            "resolver",
+            b"""schema: 1
+name: resolver
+listen: {protocol: dns, port: 53}
+backend: dns
+backends:
+  dns: {balance: roundrobin, servers: [{host: 198.51.100.53, port: 53}]}
+""",
+        )
+        conf = generate([open_to_all], vips=VIPS, default_vip="main").dns_files[dnsdist_config.FILE]
+
+        self.assertNotIn("NotRule", conf)
+        self.assertIn('PoolAction("mgd-resolver-dns")', conf)
+
     def test_it_leaves_from_its_vips_source_unless_it_names_another(self) -> None:
         conf = generate([resolver()], vips=VIPS, default_vip="main").dns_files[dnsdist_config.FILE]
 

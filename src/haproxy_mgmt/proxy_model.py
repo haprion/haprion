@@ -1597,7 +1597,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         if listen.protocol == "dns":
             _refuse_keys(data, DNS_REFUSED_KEYS, name, "a dns object")
             _refuse_non_dns_pools(backends, name)
-            _refuse_open_resolver(data, name)
+            _refuse_countries(data, name)
         else:
             _refuse_http_only_pools(backends, name)
     else:
@@ -1880,22 +1880,17 @@ def _refuse_non_dns_pools(backends: Mapping[str, Backend], name: str) -> None:
             )
 
 
-def _refuse_open_resolver(data: Mapping[str, Any], name: str) -> None:
-    """A dns object says who may ask it.
+def _refuse_countries(data: Mapping[str, Any], name: str) -> None:
+    """Countries, which reach the nodes as HAProxy map files dnsdist does not read.
 
-    Empty means everybody elsewhere, and for a site that is an answer. For a
-    resolver it is an open one: anybody who reaches the address can make it ask
-    the servers behind it, and answers far larger than the questions are what
-    reflection attacks are built from. Countries are refused because the
-    networks behind them are HAProxy map files dnsdist does not read.
+    An empty `allow_from` means everybody, as on every other object (decided
+    26-10-06): a resolver that answers the internet is a choice its owner
+    protects in front of it, not one the object refuses.
     """
 
     entries = data.get("allow_from")
-    if not isinstance(entries, list) or not entries:
-        raise ModelError(
-            f"{name}.allow_from must name who may ask: a dns listener open to everyone is an "
-            f"open resolver"
-        )
+    if not isinstance(entries, list):
+        return
     for entry in entries:
         if isinstance(entry, str) and geo.is_country(entry.lower()):
             raise ModelError(

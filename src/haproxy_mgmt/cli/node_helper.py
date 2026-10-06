@@ -11,6 +11,11 @@ as itself, the refusals - is `node_enrollment`'s and `cluster_definition`'s,
 exactly as when the operator types `haproxy-node` or `haproxy-cluster`; this
 helper only carries the request across the privilege boundary.
 
+Before either, under the same locks, a change an earlier run did not finish -
+cut short by a reboot or a kill - is put back from `change_journal` (B247).
+What was put back goes to the journal with the helper's other errors; the
+result describes the request, as the contract says.
+
 Not run through sudo, for the reason the receiver helper gives (B163): it
 writes root's `known_hosts` and git configuration, the pull accounts'
 `authorized_keys` and the operator editing policy, outside anything the
@@ -31,7 +36,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haproxy_mgmt import cert_registry, cluster_definition, node_enrollment
+from haproxy_mgmt import cert_registry, change_journal, cluster_definition, node_enrollment
 from haproxy_mgmt.cert_lock import DEFAULT_LOCK_PATH as CERTIFICATE_LOCK
 from haproxy_mgmt.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haproxy_mgmt.config import (
@@ -290,6 +295,7 @@ def main(
     require_root: bool = True,
     lock_root: Path = DEFAULT_LOCK_ROOT,
     registry_lock: Path = CERTIFICATE_LOCK,
+    journal: Path | None = None,
     locations: Locations | None = None,
     places: cluster_definition.Places | None = None,
     tools: cluster_definition.Tools | None = None,
@@ -358,6 +364,11 @@ def main(
 
         ask = ask_with_status
 
+    journal = journal or (locations or Locations()).journal
+    try:
+        pending = change_journal.read(journal)
+    except change_journal.RecoveryError as exc:
+        return _refuse(request, output, errors, exc.code, str(exc), exc.exit_code)
     try:
         with ExitStack() as locks:
             #
@@ -370,8 +381,27 @@ def main(
             locks.enter_context(
                 hold(CLUSTER_FILE_LOCK, operation=request.operation, root=lock_root)
             )
-            if request.operation == DEFINE and policy.certificate_registry is not None:
+            registry = request.operation == DEFINE and policy.certificate_registry is not None
+            if registry:
                 locks.enter_context(cert_registry.locked(registry_lock))
+            if pending is not None:
+                #
+                # Held as the unfinished change held them: its cluster's lock,
+                # and the registry's, which a cluster's change also wrote.
+                #
+                if pending.cluster != request.cluster:
+                    locks.enter_context(
+                        hold(pending.cluster, operation=request.operation, root=lock_root)
+                    )
+                if not registry and policy.certificate_registry is not None:
+                    locks.enter_context(cert_registry.locked(registry_lock))
+                recovered = change_journal.recover(journal)
+                if recovered is not None:
+                    errors.write(
+                        f"NOTICE: a {recovered.operation} of cluster '{recovered.cluster}' "
+                        f"did not finish and was put back: {', '.join(recovered.files)}\n"
+                    )
+                runtime = load_runtime_config(policy, require_secure=require_secure)
             outcome = work(policy, runtime, ask)
     except LockBusy as exc:
         return _refuse(request, output, errors, "operation_locked", str(exc), exc.exit_code)
@@ -379,6 +409,12 @@ def main(
         return _refuse(request, output, errors, exc.code, str(exc), exc.exit_code)
     except EnrollmentError as exc:
         return _refuse(request, output, errors, exc.code, str(exc), exc.exit_code)
+    except change_journal.RecoveryError as exc:
+        return _refuse(request, output, errors, exc.code, str(exc), exc.exit_code)
+    except ConfigError as exc:
+        return _refuse(
+            request, output, errors, config_error_code(exc.exit_code), str(exc), exc.exit_code
+        )
     except OSError as exc:
         return _refuse(
             request,

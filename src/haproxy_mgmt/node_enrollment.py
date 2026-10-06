@@ -6,8 +6,10 @@ written by hand until now: its line in `clusters.yaml`, its host key in root's
 its two fetch keys in the pull accounts' `authorized_keys`, and - where the
 traffic-log collector is installed - its entry in the collector's node list
 and its host key in the collector's own `known_hosts`. This module changes all
-six as one: every new content is computed first, every file is replaced by a
-rename with its own owner and mode, and any failure puts every file back.
+six as one: every new content is computed first, the whole change is written
+down in `change_journal` before the first file is touched, every file is
+replaced by a rename with its own owner and mode, and any failure - or a run
+cut short, put back by the next one - puts every file back.
 
 Nothing here is taken from the network. The node prints an enrollment block
 (`04-node-prepare`): its name, its cluster, its host key and its two public
@@ -37,14 +39,16 @@ import pwd
 import re
 import secrets
 import tempfile
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from haproxy_mgmt import safe_yaml
+from haproxy_mgmt import change_journal, safe_yaml
+from haproxy_mgmt.change_journal import FileChange as Change
+from haproxy_mgmt.change_journal import Record
 from haproxy_mgmt.config import (
     CLUSTER_ID,
     MAX_NODES,
@@ -303,20 +307,13 @@ def collector_without(text: bytes, cluster: str, name: str) -> bytes:
 
 
 @dataclass(frozen=True, slots=True)
-class Change:
-    path: Path
-    before: bytes
-    after: bytes
-    what: str
-
-
-@dataclass(frozen=True, slots=True)
 class Locations:
     """Where the six files live. Fixed in production; a directory in the tests."""
 
     root_known_hosts: Path = ROOT_KNOWN_HOSTS
     collector_config: Path = COLLECTOR_CONFIG
     collector_known_hosts: Path = COLLECTOR_KNOWN_HOSTS
+    journal: Path = change_journal.JOURNAL
     home: Callable[[str], Path] = field(default=lambda account: Path(pwd.getpwnam(account).pw_dir))
 
     def authorized_keys(self, account: str) -> Path:
@@ -330,43 +327,6 @@ def _read(path: Path) -> bytes:
         raise EnrollmentError(
             "dependency_unavailable", f"{path} does not exist; it is created by the installer", 78
         ) from None
-
-
-def _write_like(path: Path, content: bytes) -> None:
-    """Replace `path` by a rename, keeping its owner and mode."""
-
-    status = path.stat()
-    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, status.st_mode & 0o7777)
-        if os.geteuid() == 0:
-            os.chown(temporary, status.st_uid, status.st_gid)
-        os.replace(temporary, path)
-    except BaseException:
-        Path(temporary).unlink(missing_ok=True)
-        raise
-
-
-def apply(changes: Sequence[Change]) -> None:
-    """Write every change, or none: a failure part-way puts back what was written."""
-
-    written: list[Change] = []
-    try:
-        for change in changes:
-            _write_like(change.path, change.after)
-            written.append(change)
-    except BaseException:
-        restore(written)
-        raise
-
-
-def restore(changes: Iterable[Change]) -> None:
-    for change in reversed(list(changes)):
-        _write_like(change.path, change.before)
 
 
 # -------------------------------------------------------------- the planning
@@ -657,11 +617,13 @@ def add(
         require_secure=require_secure,
     )
     node = Node(name=enrollment.name, mgmt_host=host)
-    apply(changes)
-    problem = verify(node, cluster, ask)
-    if problem is not None:
-        restore(changes)
-        raise EnrollmentError("node_unverified", f"{problem}. Nothing was changed.", 75)
+    with change_journal.transaction(
+        Record("node add", cluster, tuple(changes)), (locations or Locations()).journal
+    ):
+        change_journal.apply(changes)
+        problem = verify(node, cluster, ask)
+        if problem is not None:
+            raise EnrollmentError("node_unverified", f"{problem}. Nothing was changed.", 75)
     return Outcome(
         node=node,
         cluster=cluster,
@@ -700,5 +662,8 @@ def remove(
             f"{name} holds the VIP right now. Move the address to another node first.",
             75,
         )
-    apply(changes)
+    with change_journal.transaction(
+        Record("node removal", cluster, tuple(changes)), (locations or Locations()).journal
+    ):
+        change_journal.apply(changes)
     return Outcome(node=node, cluster=cluster, files=tuple(change.what for change in changes))

@@ -1223,6 +1223,17 @@ certificates. It is refused for the node that reports holding the VIP and below 
 itself is not touched and keeps serving until it is shut down. A cluster has two to eight nodes
 ([Cluster definitions](#cluster-definitions)). Each node's `keepalived.conf` is not written by this project.
 
+A change cut short - a reboot, a killed process, power - cannot leave the files half changed for
+long. Before the first file is touched, the whole change (every file's content before and after, and
+for a cluster the directories it creates or moves) is written to
+`/var/lib/haproxy-mgmt/change-journal.json`, root-only, and synced; it is removed only once the
+change is on disk. While a change runs, the helper holds back SIGTERM, SIGINT and SIGHUP until it
+has finished or put everything back. A record left behind is put back by the next node or cluster
+change, before that change runs, and the helper's journal says so (`NOTICE: a node add of cluster
+'alpha' did not finish and was put back`). A file edited since the interrupted change stops that:
+the request is refused with `change_interrupted` and touches nothing, and the record stays for a
+person to read and remove once the files are right.
+
 Once written by step 2, `clusters.yaml` is the record: a second run of step 2 keeps it unless
 `REWRITE_CLUSTER_FILE=yes` asks for the answers file's version, and step 13 reads the collector's
 nodes from it rather than from the answers file.

@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import cluster_definition, node_enrollment
+from haproxy_mgmt import change_journal, cluster_definition, node_enrollment
 from haproxy_mgmt.cli import cluster as cluster_command
 from haproxy_mgmt.cli import node_helper
 from haproxy_mgmt.cluster_definition import Places, Tools
@@ -158,8 +158,10 @@ class Site:
             root_known_hosts=self.known_hosts,
             collector_config=self.collector,
             collector_known_hosts=self.collector_known,
+            journal=root / ".journal" / "change-journal.json",
             home=lambda account: root / account,
         )
+        (root / ".journal").mkdir()
         self.sudoers = root / "haproxy-config-edit"
         self.sudoers.write_text(SUDOERS.format(root=self.config_root))
         self.gitconfig = root / "gitconfig"
@@ -424,19 +426,19 @@ class RemovingACluster(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             site = self.added(raw)
             before = site.snapshot()
-            real = node_enrollment._write_like
+            real = change_journal.write_like
 
             def failing(path: Path, content: bytes) -> None:
                 if path == site.registry:
                     raise OSError("disk full")
                 real(path, content)
 
-            node_enrollment._write_like = failing
+            change_journal.write_like = failing
             try:
                 with self.assertRaises(OSError):
                     site.remove("alpha")
             finally:
-                node_enrollment._write_like = real
+                change_journal.write_like = real
 
             self.assertEqual(site.snapshot(), before)
             self.assertFalse(

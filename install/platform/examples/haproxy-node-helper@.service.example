@@ -45,7 +45,9 @@ StandardError=journal
 
 # Bounds the start only. What bounds a run is the node's status read, sixty
 # seconds; no RuntimeMaxSec, because a run stopped between writing and putting
-# back would leave the files half-changed.
+# back would leave the files half-changed until the next run puts them back
+# from /var/lib/haproxy-mgmt/change-journal.json, which ProtectSystem=yes
+# leaves writable.
 TimeoutStartSec=180
 TimeoutStopSec=10
 

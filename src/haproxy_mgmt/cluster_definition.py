@@ -17,6 +17,9 @@ from one request, as one change:
   host key checking, as a single added node is;
 * anything short of that removes what was created and puts every file back.
 
+The whole change is written down in `change_journal` before the repository is
+created or anything is moved, so a run cut short is put back by the next one.
+
 Taking a cluster away archives rather than deletes (B211): its repository, its
 release directory and its nodes' backup archives are moved under `.removed/`
 in their own roots, where whatever protects the root today protects them. The
@@ -40,7 +43,9 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import cert_registry, node_enrollment, safe_yaml, tls_policy
+from haproxy_mgmt import cert_registry, change_journal, node_enrollment, safe_yaml, tls_policy
+from haproxy_mgmt.change_journal import FileChange as Change
+from haproxy_mgmt.change_journal import Record
 from haproxy_mgmt.config import (
     CLUSTER_ID,
     NAME,
@@ -54,12 +59,9 @@ from haproxy_mgmt.config import (
 from haproxy_mgmt.git_command import GIT
 from haproxy_mgmt.node_enrollment import (
     AskNode,
-    Change,
     Enrollment,
     EnrollmentError,
     Locations,
-    apply,
-    restore,
 )
 
 ARCHIVE = ".removed"
@@ -617,11 +619,20 @@ def _own_tree(root: Path, like: Path, tools: Tools) -> None:
         del directories
 
 
+def _repository_paths(policy: PathPolicy, cluster: str) -> tuple[Path, Path, Path]:
+    """The bare history, its worktree and the release directory a new cluster gets."""
+
+    return (
+        policy.config_root / f"{cluster}.git",
+        policy.config_root / cluster,
+        policy.publish_root / cluster,
+    )
+
+
 def _create_repository(policy: PathPolicy, spec: Definition, tools: Tools) -> list[Path]:
     """The bare history and its worktree, seeded, as step 1 makes them. Returns what it made."""
 
-    bare = policy.config_root / f"{spec.cluster}.git"
-    work = policy.config_root / spec.cluster
+    bare, work, publish = _repository_paths(policy, spec.cluster)
     made: list[Path] = []
     try:
         _checked(
@@ -671,7 +682,6 @@ def _create_repository(policy: PathPolicy, spec: Definition, tools: Tools) -> li
         made.append(work)
         _own_tree(bare, policy.config_root, tools)
         _own_tree(work, policy.config_root, tools)
-        publish = policy.publish_root / spec.cluster
         _make_directory(publish, policy.publish_root, tools)
         made.append(publish)
         _make_directory(publish / "releases", policy.publish_root, tools)
@@ -803,28 +813,27 @@ def add(
     require_secure: bool = True,
 ) -> Outcome:
     tools = tools or Tools()
+    locations = locations or Locations()
     changes = plan_add(
         policy,
         runtime,
         spec,
-        locations=locations or Locations(),
+        locations=locations,
         places=places or Places(),
         tools=tools,
         require_secure=require_secure,
     )
-    made = _create_repository(policy, spec, tools)
-    try:
-        apply(changes)
-    except BaseException:
-        _remove(made)
-        raise
     nodes = tuple(Node(name=enrollment.name, mgmt_host=host) for enrollment, host in spec.nodes)
-    for node in nodes:
-        problem = node_enrollment.verify(node, spec.cluster, ask)
-        if problem is not None:
-            restore(changes)
-            _remove(made)
-            raise EnrollmentError("node_unverified", f"{problem}. Nothing was changed.", 75)
+    record = Record(
+        "cluster add", spec.cluster, tuple(changes), made=_repository_paths(policy, spec.cluster)
+    )
+    with change_journal.transaction(record, locations.journal):
+        _create_repository(policy, spec, tools)
+        change_journal.apply(changes)
+        for node in nodes:
+            problem = node_enrollment.verify(node, spec.cluster, ask)
+            if problem is not None:
+                raise EnrollmentError("node_unverified", f"{problem}. Nothing was changed.", 75)
     return Outcome(
         cluster=spec.cluster,
         action="added",
@@ -924,30 +933,26 @@ def remove(
     if retention.exists():
         moves.append((retention, retention.parent / ARCHIVE / f"{name}.json"))
 
-    moved: list[tuple[Path, Path]] = []
+    moves = [(source, destination) for source, destination in moves if source.exists()]
+    #
+    # Each directory this makes is recorded, so putting the change back takes
+    # it away again: an empty archive left behind would read as an archived
+    # name, and refuse the next attempt for a removal that never happened.
+    #
     created: list[Path] = []
-    try:
-        for source, destination in moves:
-            if not source.exists():
-                continue
-            #
-            # Each directory this makes is remembered, so a failure takes it
-            # away again: an empty archive left behind would read as an archived
-            # name, and refuse the next attempt for a removal that never happened.
-            #
-            missing = [parent for parent in reversed(destination.parents) if not parent.exists()]
-            for parent in missing:
-                parent.mkdir(mode=0o700)
+    for _source, destination in moves:
+        for parent in reversed(destination.parents):
+            if not parent.exists() and parent not in created:
                 created.append(parent)
+    record = Record(
+        "cluster removal", cluster, tuple(changes), moves=tuple(moves), created=tuple(created)
+    )
+    with change_journal.transaction(record, locations.journal):
+        for directory in created:
+            directory.mkdir(mode=0o700)
+        for source, destination in moves:
             os.replace(source, destination)
-            moved.append((source, destination))
-        apply(changes)
-    except BaseException:
-        for source, destination in reversed(moved):
-            os.replace(destination, source)
-        for directory in reversed(created):
-            directory.rmdir()
-        raise
+        change_journal.apply(changes)
 
     warnings: list[str] = []
     timer = f"haproxy-state-backup@{cluster}.timer"

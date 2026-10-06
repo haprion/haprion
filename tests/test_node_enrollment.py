@@ -16,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from haproxy_mgmt import change_journal
 from haproxy_mgmt import node_enrollment as enrollment
 from haproxy_mgmt.cli import node as node_command
 from haproxy_mgmt.cli import node_helper
@@ -103,8 +104,10 @@ class Installation:
             root_known_hosts=self.known_hosts,
             collector_config=self.collector,
             collector_known_hosts=self.collector_known,
+            journal=root / ".journal" / "change-journal.json",
             home=lambda account: root / account,
         )
+        (root / ".journal").mkdir()
 
     def runtime(self) -> RuntimeConfig:
         return load_runtime_config(self.policy, require_secure=False)
@@ -255,7 +258,7 @@ class AddingANode(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             site = Installation(Path(raw))
             before = site.snapshot()
-            real = enrollment._write_like
+            real = change_journal.write_like
             calls = {"n": 0}
 
             def failing(path: Path, content: bytes) -> None:
@@ -264,12 +267,12 @@ class AddingANode(unittest.TestCase):
                     raise OSError("disk full")
                 real(path, content)
 
-            enrollment._write_like = failing
+            change_journal.write_like = failing
             try:
                 with self.assertRaises(OSError):
                     site.add()
             finally:
-                enrollment._write_like = real
+                change_journal.write_like = real
 
             self.assertEqual(site.snapshot(), before)
 
@@ -435,6 +438,63 @@ class TheHelper(unittest.TestCase):
             self.assertEqual(result["action"], "added")
             self.assertEqual(result["node"], "node-c")
             self.assertEqual(result["host_key_fingerprint"], enrollment.fingerprint(HOST_KEY))
+
+    def interrupted_addition(self, site: Installation) -> None:
+        """An addition killed after its files were written, before the node answered."""
+        changes = enrollment.plan_add(
+            site.policy,
+            site.runtime(),
+            block(),
+            cluster="alpha",
+            host="node-c.example.com",
+            locations=site.locations,
+            require_secure=False,
+        )
+        change_journal._write_record(
+            site.locations.journal, change_journal.Record("node add", "alpha", tuple(changes))
+        )
+        change_journal.apply(changes)
+
+    def test_the_next_request_puts_back_an_interrupted_change_first(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Installation(Path(raw))
+            before = site.snapshot()
+            self.interrupted_addition(site)
+            self.assertNotEqual(site.snapshot(), before)
+            request = node_helper.build_request(
+                "alpha",
+                REQUEST_ID,
+                action="add",
+                block=enrollment.render(block()),
+                host="node-c.example.com",
+            )
+
+            # Without the recovery the node would already be there.
+            code, document, err = self.run_helper(site, request)
+
+            self.assertEqual(code, 0, document)
+            self.assertIn("NOTICE: a node add of cluster 'alpha' did not finish", err)
+            self.assertFalse(site.locations.journal.exists())
+            nodes = [node.name for node in site.runtime().cluster("alpha").nodes]
+            self.assertEqual(nodes.count("node-c"), 1)
+
+    def test_an_interrupted_change_edited_since_refuses_the_next_request(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Installation(Path(raw))
+            self.interrupted_addition(site)
+            site.known_hosts.write_text("edited by hand\n")
+            during = site.snapshot()
+            request = node_helper.build_request("alpha", REQUEST_ID, action="remove", node="node-a")
+
+            code, document, _err = self.run_helper(site, request)
+
+            self.assertEqual(code, 75)
+            assert document is not None
+            error = document["error"]
+            assert isinstance(error, dict)
+            self.assertEqual(error["code"], "change_interrupted")
+            after = {name: data for name, data in site.snapshot().items() if "locks/" not in name}
+            self.assertEqual(after, during)
 
     def test_a_damaged_block_is_refused_before_anything_is_read(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

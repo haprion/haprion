@@ -1124,9 +1124,3 @@ class WhatADnsCardWorksOut(unittest.TestCase):
                 "dns_unanswered"
             ]
         )
-
-    def test_latency_is_written_in_milliseconds(self) -> None:
-        def shown(latency: float | None) -> str:
-            return metrics.DnsServer(name="s1", queries=1, answered=1, latency_us=latency).latency
-
-        self.assertEqual([shown(350.0), shown(1250.0), shown(None)], ["0.35 ms", "1.2 ms", "—"])

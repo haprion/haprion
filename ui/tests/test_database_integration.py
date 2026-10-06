@@ -5099,29 +5099,6 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
                     self.expected("BACKEND", "dns_queries", since),
                 )
 
-    def test_each_server_is_counted_and_its_latency_averaged(self) -> None:
-        for since in self.ranges():
-            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
-                servers = db.read_dns_servers(
-                    connection,
-                    cluster=self.CLUSTER,
-                    backend=self.POOL,
-                    since=since,
-                    until=self.now,
-                )
-                self.assertEqual([server.name for server in servers], ["s1", "s2"])
-                for server in servers:
-                    self.assertEqual(
-                        (server.queries, server.answered),
-                        (
-                            self.expected(server.name, "dns_queries", since),
-                            self.expected(server.name, "dns_answered", since),
-                        ),
-                    )
-                    self.assertAlmostEqual(
-                        server.latency_us or 0.0, self.latency(server.name, since), places=3
-                    )
-
     def test_the_pool_is_listed_as_dns_and_not_among_the_backends(self) -> None:
         since = self.now - timedelta(days=7)
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:

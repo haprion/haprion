@@ -2919,8 +2919,7 @@ def _hour_pieces(
     would read each of their raw rows once per series.
     """
 
-    backend = hours == "metric_backend_hour_delta"
-    key = sql.Identifier("backend" if backend else "frontend")
+    key = sql.Identifier("backend" if hours == "metric_backend_hour_delta" else "frontend")
     names = _deltas(hours)
 
     deltas = sql.SQL(", ").join(
@@ -2929,30 +2928,10 @@ def _hour_pieces(
         )
         for name in names
     )
-    #
-    # A backend's pieces carry which row they are of - the pool's own or a
-    # server's - and its servers' latency readings (0057), summed and counted,
-    # so the servers of a dns pool can be read in one statement.
-    #
-    extra, edge_extra, raw_extra, edge_match = (
-        (
-            sql.SQL(", member, {latency}_sum, {latency}_samples").format(
-                latency=sql.SQL(metrics.DNS_LATENCY)
-            ),
-            sql.SQL(", edge.member, part.latency_sum, part.latency_samples"),
-            sql.SQL(
-                ", member, coalesce({latency}, 0) as latency_sum, "
-                "({latency} is not null)::int as latency_samples"
-            ).format(latency=sql.Identifier(metrics.DNS_LATENCY)),
-            sql.SQL(" and member = edge.member"),
-        )
-        if backend
-        else (sql.SQL(""), sql.SQL(""), sql.SQL(""), sql.SQL(""))
-    )
     return sql.SQL(
         "with hours as ("
         "    select node, hour as at, crossing, first_previous_at, last_observed_at, restarted, "
-        "           samples, span_sec, span_clean_sec, {deltas}, {key} as series{extra} "
+        "           samples, span_sec, span_clean_sec, {deltas}, {key} as series "
         "      from {hours} "
         "     where {scope} and hour >= date_trunc('hour', %(after)s::timestamptz, 'UTC') "
         "       and hour <= %(until)s"
@@ -2964,12 +2943,12 @@ def _hour_pieces(
         "           part.restarted, 1, extract(epoch from part.observed_at - part.previous_at), "
         "           case when part.restarted then 0 "
         "                else extract(epoch from part.observed_at - part.previous_at) end, "
-        "           {raw_deltas_part}, edge.series{edge_extra} "
+        "           {raw_deltas_part}, edge.series "
         "      from hours as edge "
         "      cross join lateral ("
-        "          select observed_at, previous_at, restarted, {raw_deltas}{raw_extra} "
+        "          select observed_at, previous_at, restarted, {raw_deltas} "
         "            from {raw} "
-        "           where {raw_scope} and node = edge.node and {key} = edge.series{edge_match} "
+        "           where {raw_scope} and node = edge.node and {key} = edge.series "
         "             and observed_at >= edge.at and observed_at < edge.at + interval '1 hour' "
         "             and previous_at >= edge.at and previous_at >= %(after)s "
         "             and observed_at > %(after)s and observed_at <= %(until)s"
@@ -2980,10 +2959,6 @@ def _hour_pieces(
     ).format(
         deltas=deltas,
         key=key,
-        extra=extra,
-        edge_extra=edge_extra,
-        raw_extra=raw_extra,
-        edge_match=edge_match,
         hours=sql.Identifier(hours),
         raw=sql.Identifier(raw),
         scope=scope,
@@ -3069,21 +3044,12 @@ FRONTEND_HELD = sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s and o
 # hour is never drawn into the card that renamed it.
 #
 _HISTORY = (
-    "cluster = %(cluster)s and {members} and exists ("
+    "cluster = %(cluster)s and member = %(member)s and exists ("
     "    select 1 from unnest(%(backends)s::text[], %(cutoffs)s::timestamptz[]) as h(name, cutoff)"
     "     where h.name = backend and {before} coalesce(h.cutoff, 'infinity'))"
 )
-BACKEND_SCOPE = sql.SQL(_HISTORY.format(members="member = %(member)s", before="observed_at <"))
-BACKEND_HOUR_SCOPE = sql.SQL(
-    _HISTORY.format(members="member = %(member)s", before="hour + interval '1 hour' <=")
-)
-#
-# A pool's servers: every row but its own (`metrics.POOL_ROW`).
-#
-SERVERS_SCOPE = sql.SQL(_HISTORY.format(members="member <> 'BACKEND'", before="observed_at <"))
-SERVERS_HOUR_SCOPE = sql.SQL(
-    _HISTORY.format(members="member <> 'BACKEND'", before="hour + interval '1 hour' <=")
-)
+BACKEND_SCOPE = sql.SQL(_HISTORY.format(before="observed_at <"))
+BACKEND_HOUR_SCOPE = sql.SQL(_HISTORY.format(before="hour + interval '1 hour' <="))
 
 
 def _frontend_totals(
@@ -3355,95 +3321,6 @@ def read_backend_totals(
     if row is None:
         raise RuntimeError("the backend totals aggregate returned no row")
     return _measurement(row, counters)
-
-
-def read_dns_servers(
-    connection: Connection[Any],
-    *,
-    cluster: str,
-    backend: str,
-    since: datetime,
-    until: datetime,
-    earlier: Sequence[EarlierName] = (),
-) -> list[metrics.DnsServer]:
-    """A dns pool's servers over a range: queries, answered and latency (Fas 19a B4).
-
-    The servers of the pool's newest poll only, as the page lists only the
-    names that run now. Counted as the pool's own figures are - the stored
-    differences, the hourly sums for a range longer than a day - and the
-    latency is the average of the readings that made those sums.
-    """
-
-    arguments = {
-        "cluster": cluster,
-        "backend": backend,
-        "since": since,
-        "until": until,
-        "after": since,
-        "newest_poll": NEWEST_POLL,
-        **_history(backend, earlier),
-    }
-    with connection.cursor() as cursor:
-        if _reads_hours(since, until):
-            cursor.execute(
-                sql.SQL(
-                    "{pieces}"
-                    "select member, coalesce(sum(delta_dns_queries), 0)::bigint, "
-                    "       coalesce(sum(delta_dns_answered), 0)::bigint, "
-                    "       sum({latency}_sum) / nullif(sum({latency}_samples), 0) "
-                    "  from pieces group by member"
-                ).format(
-                    pieces=_hour_pieces(
-                        "metric_backend_hour_delta",
-                        "metric_backend_member",
-                        SERVERS_HOUR_SCOPE,
-                        SERVERS_SCOPE,
-                    ),
-                    latency=sql.SQL(metrics.DNS_LATENCY),
-                ),
-                arguments,
-            )
-        else:
-            cursor.execute(
-                sql.SQL(
-                    "select member, coalesce(sum(delta_dns_queries), 0)::bigint, "
-                    "       coalesce(sum(delta_dns_answered), 0)::bigint, avg({latency}) "
-                    "  from metric_backend_member "
-                    " where {scope} and observed_at >= %(since)s and observed_at <= %(until)s "
-                    "   and previous_at >= %(since)s "
-                    " group by member"
-                ).format(scope=SERVERS_SCOPE, latency=sql.Identifier(metrics.DNS_LATENCY)),
-                arguments,
-            )
-        found = {
-            row[0]: metrics.DnsServer(
-                name=row[0],
-                queries=int(row[1]),
-                answered=int(row[2]),
-                latency_us=None if row[3] is None else float(row[3]),
-            )
-            for row in cursor.fetchall()
-        }
-        cursor.execute(
-            sql.SQL(
-                "select distinct member from metric_backend_member "
-                " where cluster = %(cluster)s and backend = %(backend)s and member <> 'BACKEND' "
-                "   and observed_at >= %(since)s and observed_at <= %(until)s and {active}"
-            ).format(active=_active("metric_backend_member")),
-            arguments,
-        )
-        running = [row[0] for row in cursor.fetchall()]
-    return [
-        found.get(name, metrics.DnsServer(name=name, queries=0, answered=0))
-        for name in sorted(running, key=_server_order)
-    ]
-
-
-def _server_order(name: str) -> tuple[int, str]:
-    """`s2` before `s10`: the generator numbers servers by position."""
-
-    digits = name.removeprefix("s")
-    return (int(digits), name) if digits.isdigit() else (1 << 30, name)
 
 
 # - DNS provider profiles --------------------------------------------------

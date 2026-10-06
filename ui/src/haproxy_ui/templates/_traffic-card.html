@@ -110,18 +110,4 @@
       </dl>
     </div>
   </div>
-  {#
-    A DNS pool's servers, over the same window or range as the figures above,
-    under the whole card (Fas 19a B4).
-  #}
-  {% if backend.servers %}
-  <table class="traffic-servers">
-    <thead><tr><th scope="col">Server</th><th scope="col">Queries</th><th scope="col">Answered</th><th scope="col">Unanswered</th><th scope="col">Latency</th></tr></thead>
-    <tbody>
-      {% for server in backend.servers %}
-      <tr><th scope="row"><code>{{ server.name }}</code></th><td>{{ server.queries }}</td><td>{{ server.answered }}</td><td>{{ server.unanswered }}</td><td>{{ server.latency }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
 </div>

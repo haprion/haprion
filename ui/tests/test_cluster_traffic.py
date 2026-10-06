@@ -14,6 +14,7 @@ cards within a section share one scale so their sizes can be compared.
 
 from __future__ import annotations
 
+import re
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -99,13 +100,6 @@ class ReadingACluster(LoginTestCase):
             (
                 "read_backend_totals",
                 lambda *_a, **k: measurement(counters=k.get("counters", metrics.CARD_COUNTERS)),
-            ),
-            (
-                "read_dns_servers",
-                lambda *_a, **_k: [
-                    metrics.DnsServer(name="s1", queries=40, answered=38, latency_us=350.0),
-                    metrics.DnsServer(name="s2", queries=12, answered=12, latency_us=None),
-                ],
             ),
         ):
             patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=value)
@@ -344,39 +338,37 @@ class OneScalePerSection(ReadingACluster):
         self.assertGreater(len(peaks), 1)
 
 
-class DnsPoolsInASectionOfTheirOwn(ReadingACluster):
-    """dnsdist's pools (Fas 19a B4): a resolver's figures, its servers, its own scale."""
+class DnsPoolsAmongTheBackends(ReadingACluster):
+    """dnsdist's pools (Fas 19a B4) in the backends' list, with a resolver's figures (26-10-06)."""
 
     dns_pools = ["resolver"]
 
     def text(self) -> str:
         return str(self.page().text)  # type: ignore[attr-defined]
 
-    def test_the_pool_is_drawn_under_dns_and_not_among_the_backends(self) -> None:
+    def backend_section(self) -> str:
         text = self.text()
-        self.assertIn('<h4 class="traffic-section">DNS</h4>', text)
-        dns = text.split('<h4 class="traffic-section">DNS</h4>', 1)[1]
-        self.assertIn("resolver", dns)
-        self.assertNotIn("resolver", text.split('<h4 class="traffic-section">DNS</h4>', 1)[0])
+        return text.split('<h4 class="traffic-section">Backends</h4>', 1)[1].split(
+            '<h4 class="traffic-section">Redirect answers</h4>', 1
+        )[0]
 
-    def test_its_figures_are_a_resolver_s(self) -> None:
-        dns = self.text().split('<h4 class="traffic-section">DNS</h4>', 1)[1]
-        figures = [part.split("</dt>")[0] for part in dns.split("<dt>")[1:]]
+    def test_the_pool_is_drawn_among_the_backends_in_name_order(self) -> None:
+        names = re.findall(r'<code class="traffic-backend">([^<]+)</code>', self.backend_section())
+        self.assertEqual(names, sorted(names))
+        self.assertIn("resolver", names)
+        self.assertNotIn('<h4 class="traffic-section">DNS</h4>', self.text())
+
+    def test_its_figures_are_a_resolver_s_and_the_others_keep_theirs(self) -> None:
+        cards = self.backend_section().split('<code class="traffic-backend">')[1:]
+        resolver = next(card for card in cards if card.startswith("resolver<"))
+        figures = [part.split("</dt>")[0] for part in resolver.split("<dt>")[1:]]
         self.assertEqual(figures, ["Queries", "Answered", "Refused", "Unanswered", "Over TCP"])
-        self.assertIn("Queries / ", dns)
-        self.assertIn('aria-label="Queries per', dns)
+        self.assertIn("Queries / ", resolver)
+        other = next(card for card in cards if not card.startswith("resolver<"))
+        self.assertIn("Requests / ", other)
 
-    def test_its_servers_are_listed_under_it(self) -> None:
-        dns = self.text().split('<h4 class="traffic-section">DNS</h4>', 1)[1]
-        self.assertIn('class="traffic-servers"', dns)
-        self.assertIn("<code>s1</code></th><td>40</td><td>38</td><td>2</td><td>0.35 ms</td>", dns)
-        self.assertIn("<code>s2</code></th><td>12</td><td>12</td><td>0</td><td>—</td>", dns)
-
-    def test_a_cluster_without_dns_objects_has_no_such_section(self) -> None:
-        self.dns_pools = []
-        text = self.text()
-        self.assertNotIn('<h4 class="traffic-section">DNS</h4>', text)
-        self.assertNotIn('class="traffic-servers"', text)
+    def test_no_server_table(self) -> None:
+        self.assertNotIn("traffic-servers", self.text())
 
 
 class MarkingARangeOnThePage(ReadingACluster):

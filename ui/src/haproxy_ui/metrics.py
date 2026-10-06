@@ -1450,33 +1450,6 @@ def dns_measurement(found: BackendMeasurement) -> BackendMeasurement:
 
 
 @dataclass(frozen=True, slots=True)
-class DnsServer:
-    """One server behind a dns pool, over the window or the marked range."""
-
-    name: str
-    queries: int
-    answered: int
-    #
-    # dnsdist's running average, averaged over the readings in the range;
-    # None where none was read.
-    #
-    latency_us: float | None = None
-    status: str | None = None
-
-    @property
-    def unanswered(self) -> int:
-        return max(self.queries - self.answered, 0)
-
-    @property
-    def latency(self) -> str:
-        if self.latency_us is None:
-            return "—"
-        if self.latency_us < 1000:
-            return f"{self.latency_us / 1000:.2f} ms"
-        return f"{self.latency_us / 1000:.1f} ms"
-
-
-@dataclass(frozen=True, slots=True)
 class BackendMeasurement:
     """One window measured independently of how its line is drawn.
 
@@ -1582,10 +1555,6 @@ class BackendTraffic:
     # What the line counts, for the heading beside the rate unit.
     #
     rate: str = "Requests"
-    #
-    # A dns pool's servers, each with its own figures; empty for HAProxy's.
-    #
-    servers: tuple[DnsServer, ...] = ()
 
     #
     # There was a `quiet` property here, and the sentence it turned on -
@@ -1916,7 +1885,6 @@ def backend_traffic(
     ceiling: int | None = None,
     chosen: Selection | None = None,
     figures: Figures | None = None,
-    servers: Sequence[DnsServer] = (),
 ) -> BackendTraffic:
     """One series' card, drawn across the window that was asked for.
 
@@ -1985,7 +1953,6 @@ def backend_traffic(
         restarted=measurement.restarted,
         handed_over=measurement.handed_over,
         rate=figures.rate,
-        servers=tuple(servers),
     )
 
 

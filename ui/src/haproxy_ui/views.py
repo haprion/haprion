@@ -1623,42 +1623,21 @@ def build_router(config: Config) -> APIRouter:
 
                 return read
 
-            def servers(backend: str) -> Callable[[Any], list[metrics.DnsServer]]:
-                return lambda connection: db.read_dns_servers(
-                    connection,
-                    cluster=cluster,
-                    backend=backend,
-                    since=counted_since,
-                    until=counted_until,
-                    earlier=_earlier_names(backend, targets, aliases),
-                )
-
-            #
-            # Two reads a backend, and a third for a dns pool's servers.
-            #
-            stride = 3 if dns else 2
             reads: list[Callable[[Any], Any]] = [
-                read
-                for backend in served
-                for read in (
-                    samples(backend),
-                    totals(backend),
-                    *((servers(backend),) if dns else ()),
-                )
+                read for backend in served for read in (samples(backend), totals(backend))
             ]
             answers = _read_concurrently(request.app.state.pool, reads)
             traffic = [
                 metrics.backend_traffic(
                     metrics.backend_label(backend, targets),
-                    answers[index * stride],
+                    answers[index * 2],
                     tick_format=chosen.tick,
                     start=since,
                     end=now,
                     bucket=chosen.bucket,
                     chosen=marked,
-                    measurement=answers[index * stride + 1],
+                    measurement=answers[index * 2 + 1],
                     figures=figures,
-                    servers=answers[index * stride + 2] if dns else (),
                 )
                 for index, backend in enumerate(served)
             ]
@@ -1923,17 +1902,7 @@ def build_router(config: Config) -> APIRouter:
                     )
                 )
 
-            def servers(connection: Any) -> list[metrics.DnsServer]:
-                return db.read_dns_servers(
-                    connection,
-                    cluster=cluster,
-                    backend=name,
-                    since=counted_since,
-                    until=counted_until,
-                    earlier=earlier,
-                )
-
-            return samples, totals, servers
+            return samples, totals
 
         #
         # Every card's two readings, asked together, then handed back to the
@@ -1952,9 +1921,9 @@ def build_router(config: Config) -> APIRouter:
                 reads.extend(backend_reads(cluster, backend))
                 spans.append(2)
             for pool_name in pools:
-                keys.append((cluster, "dns", pool_name))
+                keys.append((cluster, "backend", pool_name))
                 reads.extend(dns_reads(cluster, pool_name))
-                spans.append(3)
+                spans.append(2)
         answers = _read_concurrently(pool, reads)
         read_back: dict[tuple[str, str, str], tuple[Any, ...]] = {}
         at = 0
@@ -1963,23 +1932,39 @@ def build_router(config: Config) -> APIRouter:
             at += span
 
         def section(
-            cluster: str, kind: str, named: Sequence[str], label: Callable[[str], str]
+            cluster: str,
+            kind: str,
+            named: Sequence[str],
+            label: Callable[[str], str],
+            dns: Collection[str] = (),
         ) -> list[metrics.BackendTraffic]:
             """One section: every series read, drawn against one scale.
 
             The ceiling has to be known before any card is drawn, so this is
             two passes over the same list rather than one - which is the price
             of the comparison the section exists to make.
+
+            A dns pool sits among the backends (26-10-06) with a resolver's
+            figures, its line counting queries where the others count
+            requests - each a count per bucket, on the one scale.
             """
 
-            figures = metrics.DNS_FIGURES if kind == "dns" else metrics.HTTP_FIGURES
+            def figures_of(name: str) -> metrics.Figures:
+                return metrics.DNS_FIGURES if name in dns else metrics.HTTP_FIGURES
+
             found = [(name, read_back[(cluster, kind, name)]) for name in named]
-            ceiling = metrics.shared_ceiling(
-                [answered[0] for _name, answered in found],
-                start=since,
-                end=now,
-                bucket=chosen.bucket,
-                figures=figures,
+            ceiling = max(
+                (
+                    metrics.shared_ceiling(
+                        [answered[0]],
+                        start=since,
+                        end=now,
+                        bucket=chosen.bucket,
+                        figures=figures_of(name),
+                    )
+                    for name, answered in found
+                ),
+                default=0,
             )
             return [
                 metrics.backend_traffic(
@@ -1992,8 +1977,7 @@ def build_router(config: Config) -> APIRouter:
                     measurement=answered[1],
                     ceiling=ceiling,
                     chosen=marked,
-                    figures=figures,
-                    servers=answered[2] if len(answered) > 2 else (),
+                    figures=figures_of(name),
                 )
                 for name, answered in found
             ]
@@ -2042,9 +2026,18 @@ def build_router(config: Config) -> APIRouter:
                     # so letting it into the comparison would size every real
                     # backend against traffic that never reached one.
                     #
-                    "backends": section(cluster, "backend", served_pools, label),
+                    "backends": section(
+                        cluster,
+                        "backend",
+                        #
+                        # By the name the card shows, as every list is
+                        # alphabetical by what it reads.
+                        #
+                        sorted([*served_pools, *pools], key=label),
+                        label,
+                        dns=frozenset(pools),
+                    ),
                     "redirects": section(cluster, "backend", redirects, label),
-                    "dns": section(cluster, "dns", pools, label),
                 }
             )
 

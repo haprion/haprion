@@ -1876,9 +1876,9 @@ counters begin again with it.
 pool's name like any other: Queries (everything that reached the listener),
 Answered (what its servers answered), Refused (refused for `allow_from`),
 Unanswered (asked, less refused, less answered - a server that timed out or no
-server up to ask) and Over TCP; beneath them each server's queries, answers,
-unanswered and dnsdist's running average latency. The metrics page draws DNS
-objects in a section of their own, on a scale of their own. Response codes
+server up to ask) and Over TCP. On the metrics page a DNS object's pool is one of
+the backends, in the same list and on the same scale, its line counting queries.
+Per-server figures are left to the logging the nodes send elsewhere. Response codes
 (NXDOMAIN, SERVFAIL) are not shown: dnsdist 2.1 counts them for the whole
 process, not per pool. dnsdist's counters are read on the node and are not part
 of HAProxy's exporter, so a dashboard reading the exporter does not see them.

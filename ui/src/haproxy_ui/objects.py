@@ -605,6 +605,10 @@ class ListedObject:
     # reported them (B222). None where it could not say.
     #
     addresses: ObjectAddresses | None = None
+    #
+    # A tcp or dns object's servers as written (26-10-06), for its Hosts cell.
+    #
+    servers: tuple[str, ...] = ()
 
 
 def listed_objects(
@@ -654,6 +658,7 @@ def listed_objects(
                         else bool(view.hostnames) and set(view.hostnames) <= serving
                     ),
                     addresses=view.addresses,
+                    servers=view.servers,
                 )
                 for view in (cluster_object_views(reading) if views is None else views)
             ),

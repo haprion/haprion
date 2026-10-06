@@ -105,17 +105,6 @@
     {% endfor %}
     {% endif %}
 
-    {#
-      DNS objects, counted by dnsdist rather than HAProxy (Fas 19a B4): queries
-      rather than requests, so a scale of their own.
-    #}
-    {% if view.dns %}
-    <h4 class="traffic-section">DNS</h4>
-    <p class="traffic-note-lede">Every DNS object's pool, against one shared scale.</p>
-    {% for backend in view.dns %}
-    {% include "_traffic-card.html" %}
-    {% endfor %}
-    {% endif %}
   </article>
 {% else %}
   <article class="cluster-card"><p class="traffic-note">No clusters to show.</p></article>

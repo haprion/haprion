@@ -227,6 +227,14 @@ class TheListingShowsTheObjectsPort(unittest.TestCase):
             ("192.0.2.61", "192.0.2.62"),
         )
 
+    def test_the_listing_row_carries_them(self) -> None:
+        """The row the page draws, not only the view it is made from (26-10-06)."""
+
+        view = self.view((GOLDEN / "iot.yaml").read_text(), "dns")
+        (row,) = objects.listed_objects(None, views=[view])
+
+        self.assertEqual((row.ports, row.servers), ((5353,), ("192.0.2.61", "192.0.2.62")))
+
     def test_a_tcp_object_s_too(self) -> None:
         document = "schema: 1\nname: db\nlisten: {protocol: tcp, port: 5432}\n"
         self.assertEqual(self.view(document, "tcp").ports, (5432,))

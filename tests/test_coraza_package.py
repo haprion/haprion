@@ -241,6 +241,50 @@ class Packages(unittest.TestCase):
                 self.sources, self.root, deb.parent, source=source, built=self.binary
             )
 
+    def scanner(self, *, version: str | None = None, exit_code: int = 0) -> Path:
+        """A govulncheck stand-in: answers -version, then the scan with a fixed exit."""
+        version = version or self.tool.GOVULNCHECK_VERSION
+        path = self.root / "govulncheck"
+        path.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = -version ]; then\n'
+            f"    printf 'Scanner: govulncheck@{version}\\nDB updated: example\\n'\n"
+            "    exit 0\n"
+            "fi\n"
+            'echo "scanned $(pwd) $*"\n'
+            f"exit {exit_code}\n"
+        )
+        path.chmod(0o755)
+        return path
+
+    def check(self, scanner: Path) -> str:
+        tree = self.root / "tree"
+        tree.mkdir(exist_ok=True)
+        return str(self.tool.vulnerability_check(tree, self.root, scanner, self.root))
+
+    def test_a_clean_scan_passes_and_names_the_scanner(self) -> None:
+        report = self.check(self.scanner())
+        self.assertIn(f"Scanner: govulncheck@{self.tool.GOVULNCHECK_VERSION}", report)
+        self.assertIn(f"scanned {self.root / 'tree'} ./...", report)
+
+    def test_a_reachable_vulnerability_refuses_the_build(self) -> None:
+        with self.assertRaisesRegex(ValueError, "reaches known vulnerabilities"):
+            self.check(self.scanner(exit_code=3))
+
+    def test_a_scan_that_fails_refuses_the_build(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"govulncheck failed \(exit 1\)"):
+            self.check(self.scanner(exit_code=1))
+
+    def test_a_scanner_other_than_the_pinned_one_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "is not"):
+            self.check(self.scanner(version="v0.0.1"))
+
+    def test_building_the_engine_needs_the_scanner(self) -> None:
+        out = self.root / "out"
+        out.mkdir()
+        with self.assertRaisesRegex(ValueError, "needs govulncheck"):
+            self.tool.build_coraza(self.sources, self.root, out, source=self.coraza_source())
+
     def test_the_pinned_sources_are_well_formed(self) -> None:
         for source in (self.tool.CORAZA, self.tool.CRS):
             self.assertRegex(source.sha256, "^[0-9a-f]{64}$")

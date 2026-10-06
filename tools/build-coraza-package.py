@@ -14,6 +14,11 @@ Every input is pinned by SHA-256 below, the Go toolchain by version, and the Go
 modules by the source's own go.sum. The same inputs give the same package bytes:
 file times are clamped to the newest time in the source archive, owners are
 root, and the Go build drops paths and build IDs. Build twice and compare.
+
+Before the engine is built, govulncheck (pinned by version) reads the source
+against the Go vulnerability database as it stands that day, and the build is
+refused if the engine can reach a known vulnerability in its modules or in the
+pinned Go's standard library.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import hashlib
 import os
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass
@@ -35,6 +41,7 @@ from pathlib import Path
 CORAZA_REVISION = "4"
 CRS_REVISION = "1"
 GO_VERSION = "go1.26.8"
+GOVULNCHECK_VERSION = "v1.8.0"
 MAINTAINER = "haproxy-manager maintainers <maintainers@example.org>"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -258,11 +265,8 @@ def unpack(archive: Path, source: Source, into: Path) -> tuple[Path, int]:
     return into / source.top, epoch
 
 
-def go_build(tree: Path, go_root: Path, work: Path, version: str) -> Path:
-    """Build the engine statically with exactly the pinned Go."""
-    go_root = go_root.resolve()  # the build runs inside the source tree
-    go = go_root / "bin" / "go"
-    environment = {
+def go_environment(go_root: Path, work: Path) -> dict[str, str]:
+    return {
         "PATH": f"{go_root / 'bin'}:/usr/bin:/bin",
         "HOME": str(work / "home"),
         "GOROOT": str(go_root),
@@ -277,6 +281,50 @@ def go_build(tree: Path, go_root: Path, work: Path, version: str) -> Path:
         "GOPROXY": "https://proxy.golang.org",
         "GOSUMDB": "sum.golang.org",
     }
+
+
+def vulnerability_check(tree: Path, go_root: Path, govulncheck: Path, work: Path) -> str:
+    """Refuse a source from which the engine reaches a known vulnerability.
+
+    govulncheck's default reports what the engine's code can call, in its
+    modules and in the standard library of the Go that runs it; a module that
+    is required but never reached is not a finding. Exit 3 means findings,
+    anything else but 0 means the check itself failed - both refuse the build.
+    Returns the report, which names the database's date.
+    """
+    go_root = go_root.resolve()  # the check runs inside the source tree
+    environment = go_environment(go_root, work)
+    scanner = subprocess.run(  # noqa: S603 - pinned scanner, fixed arguments
+        [str(govulncheck.resolve()), "-version"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=120,
+    ).stdout
+    if f"Scanner: govulncheck@{GOVULNCHECK_VERSION}\n" not in scanner:
+        raise ValueError(f"govulncheck is not {GOVULNCHECK_VERSION}")
+    done = subprocess.run(  # noqa: S603 - pinned scanner, fixed arguments
+        [str(govulncheck.resolve()), "./..."],
+        capture_output=True,
+        text=True,
+        cwd=tree,
+        env=environment,
+        timeout=1800,
+    )
+    report = (done.stdout + done.stderr).strip()
+    if done.returncode == 3:
+        raise ValueError(f"the engine reaches known vulnerabilities:\n{report}")
+    if done.returncode != 0:
+        raise ValueError(f"govulncheck failed (exit {done.returncode}):\n{report}")
+    return f"{scanner.strip()}\n{report}"
+
+
+def go_build(tree: Path, go_root: Path, work: Path, version: str) -> Path:
+    """Build the engine statically with exactly the pinned Go."""
+    go_root = go_root.resolve()  # the build runs inside the source tree
+    go = go_root / "bin" / "go"
+    environment = go_environment(go_root, work)
     toolchain = subprocess.run(  # noqa: S603 - pinned toolchain, fixed arguments
         [str(go), "env", "GOVERSION"],
         check=True,
@@ -374,14 +422,19 @@ def build_coraza(
     go_root: Path,
     output_dir: Path,
     *,
+    govulncheck: Path | None = None,
     source: Source = CORAZA,
     built: Path | None = None,
 ) -> Path:
-    """`built` skips the Go build - for tests, which have neither network nor Go."""
+    """`built` skips the check and the Go build - for tests, which have neither network nor Go."""
     archive = verified(source_dir, source)
     with tempfile.TemporaryDirectory(prefix="coraza-package-") as directory:
         work = Path(directory)
         tree, epoch = unpack(archive, source, work / "src")
+        if built is None:
+            if govulncheck is None:
+                raise ValueError("building the engine needs govulncheck")
+            print(vulnerability_check(tree, go_root, govulncheck, work), file=sys.stderr)
         binary = built or go_build(tree, go_root, work, source.version)
         root = work / "root"
         doc = "usr/share/doc/haproxy-manager-coraza-spoa"
@@ -480,13 +533,20 @@ def main() -> int:
         "--source-dir", type=Path, required=True, help="directory holding the pinned archive"
     )
     parser.add_argument("--go-root", type=Path, help=f"a {GO_VERSION} toolchain (coraza only)")
+    parser.add_argument(
+        "--govulncheck",
+        type=Path,
+        help=f"a govulncheck {GOVULNCHECK_VERSION} binary (coraza only)",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.package == "coraza":
-            if args.go_root is None:
-                parser.error("coraza needs --go-root")
-            target = build_coraza(args.source_dir, args.go_root, args.output_dir)
+            if args.go_root is None or args.govulncheck is None:
+                parser.error("coraza needs --go-root and --govulncheck")
+            target = build_coraza(
+                args.source_dir, args.go_root, args.output_dir, govulncheck=args.govulncheck
+            )
         else:
             target = build_crs(args.source_dir, args.output_dir)
     except (ValueError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:

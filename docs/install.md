@@ -136,12 +136,20 @@ installation inputs and follow-up setup.
 
 The WAF engine (Coraza SPOA with the OWASP Core Rule Set) comes as two Debian packages,
 built from pinned upstream sources by `tools/build-coraza-package.py`; building the same
-version twice gives the same bytes. Install both on the manager, where publishing
-compiles the rules before they leave it, and the engine package on every node:
+version twice gives the same bytes. Before the engine is built, the tool runs
+govulncheck (the version it names in `GOVULNCHECK_VERSION`) over the source with the pinned
+Go, and refuses the build if the engine can reach a known vulnerability in its modules or
+in Go's standard library; a vulnerability only in code the engine never calls is reported
+but does not refuse. The database is read when the package is built, so rebuild to
+check again. Install govulncheck with the pinned Go
+(`GOBIN=<dir> <go>/bin/go install golang.org/x/vuln/cmd/govulncheck@<version>`).
+Install both packages on the manager, where publishing compiles the rules before they
+leave it, and the engine package on every node:
 
 ```bash
 python3 tools/build-coraza-package.py crs --source-dir <dir> --output-dir <out>
-python3 tools/build-coraza-package.py coraza --source-dir <dir> --go-root <go> --output-dir <out>
+python3 tools/build-coraza-package.py coraza --source-dir <dir> --go-root <go> \
+    --govulncheck <dir>/govulncheck --output-dir <out>
 sudo apt install ./haproxy-manager-crs_<version>_all.deb ./haproxy-manager-coraza-spoa_<version>_amd64.deb  # manager
 sudo apt install ./haproxy-manager-coraza-spoa_<version>_amd64.deb                                      # each node
 ```

@@ -358,8 +358,8 @@ def generate(
 
     ordered = sorted(proxies, key=lambda proxy: proxy.name)
     _refuse_duplicate_names(ordered)
-    _refuse_shared_backend_names(ordered)
     _refuse_shared_hostnames(ordered)
+    _refuse_shared_backend_names(ordered)
     _refuse_shared_section_names(ordered)
 
     unsupported = [
@@ -978,26 +978,25 @@ def _refuse_duplicate_names(proxies: Sequence[Proxy]) -> None:
 def _refuse_shared_backend_names(proxies: Sequence[Proxy]) -> None:
     """Every backend the objects produce, under a name no other one has.
 
-    A backend name is the object's name and the pool's or redirect's joined by
-    a hyphen, and hyphens are allowed in both. Object `a` with a redirect for
-    `/x` and object `a-redirect` with a pool `x` are both `mgd-a-redirect-x`.
-    HAProxy would refuse that on `-c`, pointing at a generated file; said here,
-    it names the objects (since 2026-10-05, when redirects began to be named
-    from their paths and such a meeting stopped being a coincidence of hashes).
+    A pool is named by itself since 2026-10-06 (B250), so two objects with a
+    pool called `web` meet here, and so do object `a`'s redirect `a-redirect`
+    and somebody's pool of that name. HAProxy would refuse either on `-c`,
+    pointing at a generated file; said here, it names the objects.
     """
 
     owners: dict[str, list[str]] = {}
     for proxy in proxies:
-        names = set(proxy.backends) | set(redirect_suffixes(proxy).values())
-        for name in names:
-            owners.setdefault(_backend_name(proxy.name, name), []).append(proxy.name)
+        for name in runtime_backends(proxy):
+            owners.setdefault(name, []).append(proxy.name)
     shared = sorted(
         f"{name} ({', '.join(sorted(objects))})"
         for name, objects in owners.items()
         if len(objects) > 1
     )
     if shared:
-        raise GeneratorError(f"two objects produce the same backend name: {'; '.join(shared)}")
+        raise GeneratorError(
+            f"a backend name must be unique in the cluster, and two objects use {'; '.join(shared)}"
+        )
 
 
 def _serves_shared(proxy: Proxy, protocol: str) -> bool:
@@ -1073,11 +1072,22 @@ def _refuse_shared_section_names(proxies: Sequence[Proxy]) -> None:
     names the two objects instead.
     """
 
+    #
+    # And not a backend the generator writes: a pool is named by itself since
+    # B250, so object `a`'s text may add `a-cache` while object `b` has a pool
+    # called `a-cache`.
+    #
+    backends = {name: proxy.name for proxy in proxies for name in runtime_backends(proxy)}
     owners: dict[str, str] = {}
     for proxy in proxies:
         if proxy.advanced is None:
             continue
         for section in proxy.advanced.placement.sections:
+            if section.name in backends:
+                raise GeneratorError(
+                    f"{proxy.name}: the advanced config's section {section.name} has the name of "
+                    f"a backend of {backends[section.name]}"
+                )
             if section.name.startswith(f"{PREFIX}-"):
                 raise GeneratorError(
                     f"{proxy.name}: the advanced config's section {section.name} begins with "
@@ -1114,8 +1124,40 @@ def _frontend_name(vip: Vip, protocol: str) -> str:
     return f"{PREFIX}-{vip.name}-{protocol}"
 
 
-def _backend_name(proxy: str, backend: str) -> str:
-    return f"{PREFIX}-{proxy}-{backend}"
+def backend_name(proxy: Proxy, name: str) -> str:
+    """What one of an object's pools or redirects is called in HAProxy (B250).
+
+    A pool is called what the operator named it, and nothing else: the name is
+    the `proxy` label HAProxy's exporter gives every metric, so it is what a
+    dashboard shows, and `mgd-<object>-<pool>` read badly there (2026-10-06).
+    The model refuses a pool name in the generator's own `mgd-` space, and
+    `_refuse_shared_backend_names` makes it unique in the cluster.
+
+    A redirect has no pool to be named after, so it keeps its object's name in
+    front of its suffix (`redirect_suffixes`), which never equals a pool name of
+    the same object.
+    """
+
+    if name in proxy.backends:
+        return name
+    return f"{proxy.name}-{name}"
+
+
+def legacy_backend_name(proxy: str, name: str) -> str:
+    """What the generator called a pool or redirect before 2026-10-06.
+
+    For readers of history only: metrics rows, traffic logs and nodes still
+    running an older release carry these names until they age out.
+    """
+
+    return f"{PREFIX}-{proxy}-{name}"
+
+
+def runtime_backends(proxy: Proxy) -> list[str]:
+    """Every backend the generator writes for one object, pools then redirects."""
+
+    redirects = sorted(set(redirect_suffixes(proxy).values()))
+    return [backend_name(proxy, name) for name in (*proxy.backends, *redirects)]
 
 
 def _acl_name(proxy: str, suffix: str) -> str:
@@ -1369,13 +1411,13 @@ def _tcp_frontend(
         # object's backend, since a section holds one table and this
         # frontend's is the cluster's.
         #
-        table = _backend_name(proxy.name, proxy.backend)
+        table = backend_name(proxy, proxy.backend)
         lines += [
             f"    tcp-request connection track-sc{RATE_COUNTER} src table {table}",
             f"    tcp-request connection reject "
             f"if {{ sc_conn_rate({RATE_COUNTER}) gt {limit.max_new_connections} }}",
         ]
-    lines.append(f"    default_backend {_backend_name(proxy.name, proxy.backend)}")
+    lines.append(f"    default_backend {backend_name(proxy, proxy.backend)}")
     if proxy.advanced is not None:
         lines.extend(advanced_config.block(proxy.name, proxy.advanced.placement.frontend))
     return lines
@@ -2135,7 +2177,7 @@ def _frontend_rules(
 
     decisions: list[str] = []
     for index, route in enumerate(order_routes(proxy.routes)):
-        backend = _backend_name(proxy.name, _destination(proxy, route))
+        backend = backend_name(proxy, _destination(proxy, route))
         if route.path == "/" and route.match == "prefix":
             #
             # The root prefix matches every path, so a path condition would be
@@ -2214,7 +2256,7 @@ def _redirect_backends(proxy: Proxy) -> list[str]:
         name = _destination(proxy, route)
         lines += [
             "",
-            f"backend {_backend_name(proxy.name, name)}",
+            f"backend {backend_name(proxy, name)}",
             f"    guid {backend_guid(proxy.name, name)}",
             "    mode http",
             #
@@ -2309,7 +2351,7 @@ def _rate_lines(
     if limit is None:
         return []
     window = limit.window
-    table = _backend_name(proxy.name, holder)
+    table = backend_name(proxy, holder)
     if limit.max_requests is None:
         if backend != holder:
             return []
@@ -2480,7 +2522,7 @@ def _backend(
     resolvers: str | None = None,
     rate: Sequence[str] = (),
 ) -> list[str]:
-    name = _backend_name(proxy.name, backend.name)
+    name = backend_name(proxy, backend.name)
     raw = proxy.listen.protocol == "tcp"
     #
     # A pool written by hand (B224) is the text's: the balance, the pool's

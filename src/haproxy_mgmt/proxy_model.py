@@ -68,6 +68,12 @@ MAX_MODEL_BYTES = 256 * 1024
 #
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #
+# The start of every name the generator gives a section of its own (`generate.
+# PREFIX`, held equal by a test). A pool is named by itself in HAProxy since
+# B250, so a pool called `mgd-metrics` would meet the exporter's frontend.
+#
+GENERATED_PREFIX = "mgd-"
+#
 # The same rule as a sentence, so a refusal can say what would be accepted.
 # A message that only says a name is unusable leaves the person to guess which
 # character was the problem - and the two most common ones, a dot and an
@@ -1585,6 +1591,10 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     for key in backends:
         if not NAME.match(key):
             raise ModelError(f"{name}.backends.{key} is not a usable backend name")
+        if key.startswith(GENERATED_PREFIX):
+            raise ModelError(
+                f"{name}.backends.{key} begins with {GENERATED_PREFIX}, which is the generator's"
+            )
 
     hostnames: tuple[str, ...]
     routes: tuple[Route, ...]

@@ -209,6 +209,18 @@
             "boolean",
             "null"
           ]
+        },
+        "runtime_backends": {
+          "description": "The names the generator gives this object's backends, pools then redirects (B250); null where the document could not be read. Absent from an older release.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
         }
       },
       "additionalProperties": true

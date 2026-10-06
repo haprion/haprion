@@ -38,7 +38,6 @@ from haproxy_mgmt.config import Vip
 from haproxy_mgmt.proxy_model import Backend, Health, Proxy, duration_ms, is_range
 
 FILE = "dnsdist.conf"
-PREFIX = "mgd"
 #
 # Where the node's status reads the counters, beside the WAF engine's 9520.
 # Loopback only; the generator refuses a cluster that binds it otherwise.
@@ -62,9 +61,13 @@ class DnsLayer:
 
 
 def pool_name(proxy: Proxy) -> str:
-    """The pool's name, as HAProxy names an object's backend, so counters line up."""
+    """The pool's name, as HAProxy names an object's backend (B250): the pool's own.
 
-    return f"{PREFIX}-{proxy.name}-{proxy.backend}"
+    Unique in the cluster by the generator's rule, which holds for dns objects
+    too - two pools of one name would be one pool to dnsdist.
+    """
+
+    return proxy.backend or ""
 
 
 def server_name(index: int) -> str:

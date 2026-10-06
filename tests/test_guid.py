@@ -255,9 +255,13 @@ class ARedirectIsNamedFromItsPath(unittest.TestCase):
             _refuse_shared_backend_names,
         )
 
+        #
+        # A pool is named by itself (B250), so `b`'s pool `a-redirect-x` meets
+        # `a`'s redirect for `/x` - and both objects' `web`.
+        #
         first = redirects("a", route("/x", "https://example.net/") + ANCHOR)
-        second = redirects("a-redirect", ANCHOR, pools="web x")
-        with self.assertRaisesRegex(GeneratorError, r"mgd-a-redirect-x \(a, a-redirect\)"):
+        second = redirects("b", ANCHOR, pools="web a-redirect-x")
+        with self.assertRaisesRegex(GeneratorError, r"a-redirect-x \(a, b\); web \(a, b\)"):
             _refuse_shared_backend_names([first, second])  # type: ignore[list-item]
         _refuse_shared_backend_names([first])  # type: ignore[list-item]
 

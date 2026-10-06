@@ -166,8 +166,11 @@ class OneEditsObjectsReachTheSameSnapshot(unittest.TestCase):
         self.assertNotIn(":8080", files["managed/generated/1001-shop.cfg"].decode())
 
     def test_a_new_object_is_added_without_disturbing_the_others(self) -> None:
-        added = PROXY.replace(b"name: shop", b"name: admin").replace(
-            b"shop.example.com", b"admin.example.com"
+        added = (
+            PROXY.replace(b"name: shop", b"name: admin")
+            .replace(b"shop.example.com", b"admin.example.com")
+            .replace(b"backend: web", b"backend: admin-web")
+            .replace(b"  web:\n", b"  admin-web:\n")
         )
 
         files = managed_files(
@@ -431,7 +434,7 @@ class TheDnsLayerTravelsWithTheRelease(unittest.TestCase):
     def test_a_dns_object_brings_dnsdists_file_and_no_haproxy_object_file(self) -> None:
         files = self.publish({"managed/proxies/resolver.yaml": RESOLVER})
 
-        self.assertIn(b'PoolAction("mgd-resolver-dns")', files["managed/dns/dnsdist.conf"])
+        self.assertIn(b'PoolAction("dns")', files["managed/dns/dnsdist.conf"])
         self.assertNotIn("managed/generated/1001-resolver.cfg", files)
         artifact = build_node_artifact({**files, **self.BASE})
         self.assertIn("dns/dnsdist.conf", artifact)

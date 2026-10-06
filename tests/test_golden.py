@@ -606,7 +606,7 @@ class AnObjectDeliberatelyOutOfService(unittest.TestCase):
 
         frontends = self.frontends()
         rule = frontends.index("http-request return status 503")
-        route = frontends.index("use_backend mgd-shop-web")
+        route = frontends.index("use_backend web")
 
         self.assertLess(rule, route)
 
@@ -987,9 +987,9 @@ name: {name}
 listen:
   protocol: tcp
   port: {port}
-backend: pool
+backend: {name}-pool
 backends:
-  pool:
+  {name}-pool:
     balance: leastconn
     health:
       type: disabled
@@ -1039,8 +1039,8 @@ class OneCertificateMayCarrySeveralNamedPolicies(unittest.TestCase):
             (
                 f"schema: 1\nname: {name}\nhostnames: [{name}.example.com]\n"
                 f"listen:\n  protocol: https\n  certificate: shared\n{policy}"
-                "routes:\n  - path: /\n    backend: web\n"
-                "backends:\n  web:\n    balance: roundrobin\n"
+                f"routes:\n  - path: /\n    backend: {name}-web\n"
+                f"backends:\n  {name}-web:\n    balance: roundrobin\n"
                 "    health:\n      type: disabled\n"
                 "    servers:\n      - host: 198.51.100.10\n        port: 8080\n"
             ).encode(),

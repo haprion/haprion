@@ -1829,6 +1829,23 @@ that `manual/reservations.yaml` reserves. Letting the scraper through the
 nodes' firewall, and letting the nodes reach the log receivers, is part of the
 installation, not of this setting.
 
+**The names a dashboard shows.** The exporter labels every backend metric with
+`proxy="<name>"`, and carries nothing else that could name it - a backend's
+`description` is not exported (HAProxy 3.4). So a pool is called in HAProxy
+exactly what it is called on the object form: pool `web-80` of object
+`shop-web` is the backend `web-80`, on the interface's metrics page and in a
+dashboard alike. That is why a pool's name must be unique in the cluster, and
+why it may not begin with `mgd-`, which is what the generator's own sections
+are called (the exporter's frontend, the VIP frontends, the WAF engine). A
+redirect has no pool and is called after its object and path,
+`shop-web-redirect-old`.
+
+Before 2026-10-06 a pool was `mgd-<object>-<pool>`. A series under that name
+stops when the cluster is first published and deployed with a newer engine,
+and the one under the new name starts there; the interface hides the older
+card once the newer one has readings, and HAProxy's counters begin again with
+the new name.
+
 ## Jobs and status freshness
 
 ### How often status is refreshed

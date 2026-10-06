@@ -318,7 +318,7 @@ def _object(name: str, advanced_text: str, *, source: bool = False, by_hand: boo
     indented = "".join(f"  {line}\n" for line in advanced_text.splitlines())
     return (
         f"schema: 1\nname: {name}\nhostnames: [{name}.example.com]\nlisten:\n{listen}\n"
-        f"backends:\n  web:\n{pool}\nroutes:\n  - path: /\n    backend: web\n"
+        f"backends:\n  web-{name}:\n{pool}\nroutes:\n  - path: /\n    backend: web-{name}\n"
         f"advanced: |\n{indented}"
     )
 

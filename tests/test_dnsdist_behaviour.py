@@ -122,10 +122,10 @@ def dns_object(name: str, port: int, servers: list[Server], allow: str, balance:
     return f"""schema: 1
 name: {name}
 listen: {{protocol: dns, port: {port}}}
-backend: dns
+backend: {name}-dns
 allow_from: [{allow}]
 backends:
-  dns:
+  {name}-dns:
     balance: {balance}
     servers: [{members}]
     health: {{type: dns, query_name: health.example.com}}

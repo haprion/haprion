@@ -68,9 +68,9 @@ listen:
   certificate: example.com
 routes:
   - path: /
-    backend: web
+    backend: secure-web
 backends:
-  web:
+  secure-web:
     balance: roundrobin
     health:
       type: disabled

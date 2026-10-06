@@ -29,7 +29,7 @@ from pathlib import Path, PurePosixPath
 
 from haproxy_mgmt import geo
 from haproxy_mgmt.config import ConfigError, Network
-from haproxy_mgmt.generate import GeneratorError, source_of, vip_of
+from haproxy_mgmt.generate import GeneratorError, runtime_backends, source_of, vip_of
 from haproxy_mgmt.proxy_model import MAX_MODEL_BYTES, ModelError, Proxy, load_proxy
 
 PROXY_PREFIX = "managed/proxies/"
@@ -173,6 +173,12 @@ def _entry(name: str, document: str, network: Network | None = None) -> dict[str
         "source": None,
         "servers": [],
         "health_checked": None,
+        #
+        # Added 2026-10-06 (B250), on the same terms: the names HAProxy knows
+        # this object's backends by. A pool is named by itself, so the
+        # interface cannot tell whose a backend is from its name any more.
+        #
+        "runtime_backends": None,
     }
     try:
         proxy = load_proxy(name, document.encode("utf-8"))
@@ -189,6 +195,7 @@ def _entry(name: str, document: str, network: Network | None = None) -> dict[str
     entry["protocol"] = proxy.listen.protocol
     entry["hostnames"] = sorted(proxy.hostnames)
     entry["backend_count"] = len(proxy.backends)
+    entry["runtime_backends"] = runtime_backends(proxy)
     #
     # A property of this object, not a second object. An https listener that
     # redirects plain HTTP produces routing in two generated frontends - the

@@ -31,11 +31,12 @@ import tempfile
 import threading
 import time
 import unittest
-from dataclasses import replace
 from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from haproxy_mgmt import geo
 from haproxy_mgmt.cluster_settings import ClusterSettings, Metrics
@@ -50,6 +51,26 @@ from haproxy_mgmt.proxy_model import Proxy, load_proxy
 from haproxy_mgmt.route_match import order_routes, rewrite, select
 from tests import spawned
 from tests.spawned import wait_for
+
+
+def load_apart(name: str, document: bytes) -> Proxy:
+    """An object whose pools carry its own name in front (`locked-web`).
+
+    A pool is named by itself in HAProxy since B250 and so must be unique in
+    the cluster; the fixtures below share their templates, and with them the
+    pool name `web`, between several objects of one layer.
+    """
+
+    data = yaml.safe_load(document)
+    renamed = {key: f"{name}-{key}" for key in data["backends"]}
+    data["backends"] = {renamed[key]: value for key, value in data["backends"].items()}
+    if "backend" in data:
+        data["backend"] = renamed[data["backend"]]
+    for route in data.get("routes") or ():
+        if "backend" in route:
+            route["backend"] = renamed[route["backend"]]
+    return load_proxy(name, yaml.safe_dump(data, sort_keys=False).encode())
+
 
 HOSTNAME = "shop.example.com"
 
@@ -392,20 +413,20 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
 
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
-        restricted = load_proxy("locked", RESTRICTED.format(web=ports["web"]).encode())
-        closed = load_proxy("closed", MAINTENANCE.format(web=ports["web"]).encode())
+        restricted = load_apart("locked", RESTRICTED.format(web=ports["web"]).encode())
+        closed = load_apart("closed", MAINTENANCE.format(web=ports["web"]).encode())
         #
         # A pool nothing listens on, so the failure is real rather than
         # simulated: HAProxy has to try the connection and fail it.
         #
-        gone = load_proxy("gone", GONE.format(web=free_port()).encode())
+        gone = load_apart("gone", GONE.format(web=free_port()).encode())
         #
         # Half the pool refuses connections. Health checks are off on purpose:
         # the question is what happens to a request that is already being
         # dispatched, not whether a check would eventually have removed it.
         #
-        pair = load_proxy("pair", PAIR.format(dead=free_port(), web=ports["web"]).encode())
-        limited = load_proxy("limited", LIMITED.format(web=ports["web"], api=ports["api"]).encode())
+        pair = load_apart("pair", PAIR.format(dead=free_port(), web=ports["web"]).encode())
+        limited = load_apart("limited", LIMITED.format(web=ports["web"], api=ports["api"]).encode())
         layer = generate(
             [cls.proxy, restricted, closed, gone, pair, limited],
             vips={"main": Vip(name="main", address="127.0.0.1")},
@@ -832,7 +853,7 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
         layer = generate(
             [
                 load_proxy("gone", document),
-                load_proxy("edited", EDITED.format(web=backend).encode()),
+                load_apart("edited", EDITED.format(web=backend).encode()),
             ],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
@@ -2066,7 +2087,7 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
             ("capped", "capped.example.com", "  tls: tls12only\n"),
         ):
             documents.append(
-                load_proxy(
+                load_apart(
                     name,
                     LISTENER_POLICY.format(
                         name=name, host=host, certificate="shared", policy=policy, web=backend
@@ -2286,8 +2307,8 @@ class AdvancedConfigDoesWhatItsPlacementSays(unittest.TestCase):
         layer = generate(
             [
                 load_proxy("shop", ADVANCED_SHOP.format(web=web).encode()),
-                load_proxy("app", ADVANCED_APP.format(web=web).encode()),
-                load_proxy("raw", ADVANCED_RAW.format(web=web, port=cls.raw).encode()),
+                load_apart("app", ADVANCED_APP.format(web=web).encode()),
+                load_apart("raw", ADVANCED_RAW.format(web=web, port=cls.raw).encode()),
             ],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
@@ -2474,7 +2495,7 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
         layer = generate(
             [
                 load_proxy("guarded", GUARDED.format(web=web).encode()),
-                load_proxy("office", OFFICE_ONLY.format(web=web).encode()),
+                load_apart("office", OFFICE_ONLY.format(web=web).encode()),
             ],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
@@ -2702,7 +2723,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         }
         layer = generate(
             [
-                load_proxy(name, WAF_OBJECT.format(name=name, waf=waf, web=web).encode())
+                load_apart(name, WAF_OBJECT.format(name=name, waf=waf, web=web).encode())
                 for name, waf in objects.items()
             ],
             vips={"main": Vip(name="main", address="127.0.0.1")},
@@ -2903,8 +2924,7 @@ class TwoObjectsMayNotShareAName(unittest.TestCase):
 
     def shop(self, name: str) -> Any:
         document = OBJECT.format(hostname=f"{name}.example.com", web=8080, api=8081, orders=8082)
-        proxy = load_proxy("shop", document.encode())
-        return replace(proxy, name=name)
+        return load_apart(name, document.encode().replace(b"name: shop", f"name: {name}".encode()))
 
     def layer(self, *names: str) -> GeneratedLayer:
         return generate(

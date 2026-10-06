@@ -25,10 +25,10 @@ def resolver(port: int = 53, name: str = "resolver") -> Proxy:
         f"""schema: 1
 name: {name}
 listen: {{protocol: dns, port: {port}}}
-backend: dns
+backend: {name}-dns
 allow_from: [192.0.2.0/24]
 backends:
-  dns:
+  {name}-dns:
     balance: roundrobin
     servers: [{{host: 198.51.100.53, port: 53}}]
 """.encode(),
@@ -79,7 +79,7 @@ backends:
         conf = generate([open_to_all], vips=VIPS, default_vip="main").dns_files[dnsdist_config.FILE]
 
         self.assertNotIn("NotRule", conf)
-        self.assertIn('PoolAction("mgd-resolver-dns")', conf)
+        self.assertIn('PoolAction("dns")', conf)
 
     def test_it_leaves_from_its_vips_source_unless_it_names_another(self) -> None:
         conf = generate([resolver()], vips=VIPS, default_vip="main").dns_files[dnsdist_config.FILE]

@@ -138,6 +138,14 @@ advanced config - is not offered, and refused if written by hand. The client's a
 reaches the servers behind as EDNS Client Subnet, so a Pi-hole's per-client limits and
 logs see each client rather than the node.
 
+**One DNS object per address and port.** dnsdist tells its objects apart by the
+address and port a query arrives on, so two DNS objects cannot share a VIP on port 53,
+and the form refuses the second. Two DNS services - the domain controllers and a pair of
+Pi-holes, say - need a VIP each: add one on the Network page, publish and deploy it,
+and choose it on the second object. No DNS name is needed for it; clients are given a
+resolver by address anyway. Another port on the same VIP works only for clients that
+can be told to ask on it, which few can.
+
 ## Accounts and signing in
 
 The installation creates the first break-glass administrator; see

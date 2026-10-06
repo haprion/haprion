@@ -202,6 +202,11 @@ through `/etc/haproxy/releases` (`/etc/tmpfiles.d/haproxy-manager-dns.conf`), as
 engine's group does. A configuration dnsdist warns about is refused like one it cannot
 load: its check ignores a setting it does not know with only a warning.
 
+dnsdist serves its counters on `127.0.0.1:9521`, without a key and to loopback only; its
+API keeps requiring one, and no console is configured. `haproxy-node-status` reads them
+while dnsdist runs and reports them per pool and server, which is where the interface's
+DNS cards come from. Nothing outside the node can reach them.
+
 ## 6. Verify access
 
 Open `https://<SERVER_NAME>` and sign in with the administrator account created during

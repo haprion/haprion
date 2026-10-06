@@ -264,6 +264,48 @@
             },
             "active": {
               "type": "boolean"
+            },
+            "counters": {
+              "description": "dnsdist's own counters, read from its statistics on loopback, null when it is stopped or did not answer, and absent from a node installed before they were reported. Counted per pool under the pool's name: every query reaching the object's listener, those over TCP, those refused for allow_from, and the pool's servers' responses added up as answered. Per server its queries, responses as answered, dnsdist's running average latency in microseconds, and UP or DOWN. uptime_sec is dnsdist's own, since it restarts apart from HAProxy.",
+              "type": ["object", "null"],
+              "required": ["uptime_sec", "pools", "servers"],
+              "properties": {
+                "uptime_sec": { "type": ["integer", "null"], "minimum": 0 },
+                "pools": {
+                  "type": "array",
+                  "maxItems": 500,
+                  "items": {
+                    "type": "object",
+                    "required": ["pool", "queries", "tcp_queries", "refused", "answered"],
+                    "properties": {
+                      "pool": { "type": "string", "minLength": 1, "maxLength": 255 },
+                      "queries": { "type": "integer", "minimum": 0 },
+                      "tcp_queries": { "type": ["integer", "null"], "minimum": 0 },
+                      "refused": { "type": "integer", "minimum": 0 },
+                      "answered": { "type": ["integer", "null"], "minimum": 0 }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "servers": {
+                  "type": "array",
+                  "maxItems": 500,
+                  "items": {
+                    "type": "object",
+                    "required": ["pool", "server", "status", "queries", "answered", "latency_us"],
+                    "properties": {
+                      "pool": { "type": "string", "minLength": 1, "maxLength": 255 },
+                      "server": { "type": "string", "minLength": 1, "maxLength": 255 },
+                      "status": { "enum": ["UP", "DOWN", null] },
+                      "queries": { "type": ["integer", "null"], "minimum": 0 },
+                      "answered": { "type": ["integer", "null"], "minimum": 0 },
+                      "latency_us": { "type": ["integer", "null"], "minimum": 0 }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

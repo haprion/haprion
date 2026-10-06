@@ -217,11 +217,18 @@ class TheStatusReport(unittest.TestCase):
         helper = re.search(r"^def package_version\(.*?(?=^\S)", text, re.DOTALL | re.MULTILINE)
         reader = re.search(r"^def read_dns_listener\(.*?(?=^\S)", text, re.DOTALL | re.MULTILINE)
         assert helper and reader, "the dns report is no longer where the test extracts it from"  # noqa: S101
+        self.asked = 0
+
+        def counters() -> dict[str, object]:
+            self.asked += 1
+            return {"uptime_sec": 9, "pools": [], "servers": []}
+
         namespace: dict[str, object] = {
             "DNS_PACKAGE": "dnsdist",
             "DNS_UNIT": "dnsdist.service",
             "run": lambda *argv: subprocess.CompletedProcess(argv, dpkg[0], dpkg[1], ""),
             "service_active": lambda name: active,
+            "dns_counters": counters,
         }
         exec(helper.group(0) + reader.group(0), namespace)  # noqa: S102 - the script's own functions
         reading = namespace["read_dns_listener"]
@@ -229,14 +236,28 @@ class TheStatusReport(unittest.TestCase):
         report: dict[str, object] = reading()
         return report
 
-    def test_an_installed_dnsdist_reports_its_package_version(self) -> None:
+    def test_an_installed_dnsdist_reports_its_package_version_and_counters(self) -> None:
         self.assertEqual(
             self.report((0, "install ok installed\t2.1.2-1pdns.debian13"), True),
-            {"version": "2.1.2-1pdns.debian13", "active": True},
+            {
+                "version": "2.1.2-1pdns.debian13",
+                "active": True,
+                "counters": {"uptime_sec": 9, "pools": [], "servers": []},
+            },
         )
+        self.assertEqual(self.asked, 1)
 
     def test_a_missing_package_reports_none(self) -> None:
-        self.assertEqual(self.report((1, ""), False), {"version": None, "active": False})
+        self.assertEqual(
+            self.report((1, ""), False), {"version": None, "active": False, "counters": None}
+        )
+
+    def test_a_stopped_dnsdist_is_not_asked_for_its_counters(self) -> None:
+        """null rather than an empty reading: nothing was counted, nothing was read."""
+
+        report = self.report((0, "install ok installed\t2.1.2-1pdns.debian13"), False)
+        self.assertIsNone(report["counters"])
+        self.assertEqual(self.asked, 0)
 
 
 if __name__ == "__main__":

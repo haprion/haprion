@@ -14,6 +14,16 @@ not ask - when `allow_from` names anyone - and one sending the rest to the
 pool. A final rule refuses whatever reached a
 listener without matching one, so nothing is answered by a pool nobody named.
 
+**Counted per object under the pool's name** (B250's "used by metrics"). Rules
+carry names, and dnsdist reports each rule's hits under it: `<pool>` matches
+every query reaching the object's listener and does nothing else
+(`NoneAction`, so the rules after it still decide), `<pool>/tcp` the ones over
+TCP, `<pool>/refused` the ones refused for `allow_from`. Servers are named
+`<pool>/s<n>`, so their counters say which pool they serve; `/` is outside the
+model's name pattern and splits the two without guessing. Measured on dnsdist
+2.1.2, 26-10-06: a named `NoneAction` counts and lets the next rule act, and a
+rule without a name gets a fresh UUID at every start.
+
 **What every pool does, whatever the object says.** EDNS Client Subnet carries
 the asking client's address to the servers behind (`useClientSubnet`, the
 full address). A Pi-hole needs it to tell its clients apart: its rate limit is
@@ -76,6 +86,21 @@ def server_name(index: int) -> str:
     return f"s{index + 1}"
 
 
+#
+# What separates a pool's name from what is counted of it, in a rule's or a
+# server's name. Not in `proxy_model.NAME`, so the first one splits exactly.
+#
+COUNTED = "/"
+TCP_RULE = "tcp"
+REFUSED_RULE = "refused"
+
+
+def counted_name(pool: str, part: str) -> str:
+    """`<pool>/<part>`: a server's name, or a counting rule's."""
+
+    return f"{pool}{COUNTED}{part}"
+
+
 def _quote(value: str) -> str:
     """A Lua string. The values reaching here hold no quote or backslash."""
 
@@ -122,7 +147,7 @@ def _servers(proxy: Proxy, pool: Backend, source: str | None) -> list[str]:
     for index, server in enumerate(pool.servers):
         fields = [
             f"address={_quote(_endpoint(server.host, server.port))}",
-            f"name={_quote(f'{proxy.name}-{server_name(index)}')}",
+            f"name={_quote(counted_name(pool_name(proxy), server_name(index)))}",
             f"pool={_quote(pool_name(proxy))}",
             "useClientSubnet=true",
         ]
@@ -141,13 +166,21 @@ def _rules(proxy: Proxy, vip: Vip, networks: Mapping[str, Sequence[str]]) -> lis
     port = proxy.listen.port
     if port is None:
         raise ValueError(f"{proxy.name} is a dns object without a port")
-    route = f"addAction(AndRule({{{_match(vip, port)}}}), PoolAction({_quote(pool_name(proxy))}))"
+    pool = pool_name(proxy)
+    match = _match(vip, port)
+    counting = [
+        f"addAction(AndRule({{{match}}}), NoneAction(), {{name={_quote(pool)}}})",
+        f"addAction(AndRule({{{match}, TCPRule(true)}}), NoneAction(), "
+        f"{{name={_quote(counted_name(pool, TCP_RULE))}}})",
+    ]
+    route = f"addAction(AndRule({{{match}}}), PoolAction({_quote(pool)}))"
     if not proxy.allow_from:
-        return [route]
+        return [*counting, route]
     allowed = ", ".join(_quote(cidr) for cidr in _cidrs(proxy.allow_from, networks))
     return [
-        f"addAction(AndRule({{{_match(vip, port)}, NotRule(NetmaskGroupRule({{{allowed}}}))}}), "
-        "RCodeAction(DNSRCode.REFUSED))",
+        *counting,
+        f"addAction(AndRule({{{match}, NotRule(NetmaskGroupRule({{{allowed}}}))}}), "
+        f"RCodeAction(DNSRCode.REFUSED), {{name={_quote(counted_name(pool, REFUSED_RULE))}}})",
         route,
     ]
 

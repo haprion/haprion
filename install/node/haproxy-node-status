@@ -9,6 +9,7 @@ import re
 import socket
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 KEEPALIVED_CONFIG = Path("/etc/keepalived/keepalived.conf")
@@ -161,8 +162,134 @@ DNS_PACKAGE = "dnsdist"
 DNS_UNIT = "dnsdist.service"
 
 
+#
+# Where dnsdist serves its counters: loopback, no key, written by the
+# generator (`dnsdist_config.STATS_PORT`; a test holds the two equal).
+#
+DNS_METRICS = "http://127.0.0.1:9521/metrics"
+MAX_DNS_METRICS_BYTES = 4 * 1024 * 1024
+MAX_DNS_ROWS = 500
+DNS_SAMPLE = re.compile(r"^([a-z_]+)(?:\{(.*)\})? ([0-9.eE+-]+)$")
+DNS_LABEL = re.compile(r'([a-z_]+)="([^"\\]*)"')
+
+
+def parse_dns_metrics(text):
+    """dnsdist's `/metrics` as the cluster's dns pools and their servers.
+
+    Everything is counted under the pool's name, the way the generator names
+    it (`dnsdist_config`): the rule `<pool>` counts every query reaching the
+    object's listener, `<pool>/tcp` those over TCP and `<pool>/refused` those
+    refused for `allow_from`; a server is `<pool>/s<n>`. A pool's answered
+    queries are its servers' responses added up - the rules count what came
+    in, the servers what went out and came back.
+
+    Latency is dnsdist's own running average for the server, in milliseconds,
+    carried as whole microseconds. None for text that is not dnsdist's.
+    """
+
+    rules = {}
+    servers = {}
+    uptime = None
+    seen = False
+    for line in text.splitlines()[: MAX_DNS_ROWS * 64]:
+        found = DNS_SAMPLE.match(line.strip())
+        if found is None:
+            continue
+        metric, labels, raw = found.groups()
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if metric == "dnsdist_uptime":
+            seen = True
+            uptime = int(value) if value >= 0 else None
+            continue
+        named = dict(DNS_LABEL.findall(labels or ""))
+        if metric == "dnsdist_rule_hits" and "id" in named:
+            rules[named["id"]] = int(value)
+            continue
+        server = named.get("server", "")
+        pool, slash, member = server.partition("/")
+        if not metric.startswith("dnsdist_server_") or not slash or not pool or not member:
+            continue
+        field = metric.removeprefix("dnsdist_server_")
+        if field in ("queries", "responses", "latency", "status"):
+            servers.setdefault((pool, member), {})[field] = value
+    if not seen:
+        return None
+
+    pools = {}
+    for name, hits in rules.items():
+        pool, slash, part = name.partition("/")
+        if not slash:
+            pools.setdefault(name, {})["queries"] = hits
+        elif part in ("tcp", "refused"):
+            pools.setdefault(pool, {})[part] = hits
+    rows = []
+    for (pool, member), found in sorted(servers.items())[:MAX_DNS_ROWS]:
+        latency = found.get("latency")
+        rows.append(
+            {
+                "pool": pool,
+                "server": member,
+                "status": None if "status" not in found else ("UP" if found["status"] else "DOWN"),
+                "queries": None if "queries" not in found else int(found["queries"]),
+                "answered": None if "responses" not in found else int(found["responses"]),
+                "latency_us": None if latency is None or latency < 0 else round(latency * 1000),
+            }
+        )
+    #
+    # A pool is one with servers. A rule without a name gets a UUID, which can
+    # look like a pool's name; no server is ever named after one.
+    #
+    served = {row["pool"] for row in rows}
+    listed = []
+    for pool, found in sorted(pools.items())[:MAX_DNS_ROWS]:
+        if "queries" not in found or pool not in served:
+            continue
+        answers = [row["answered"] for row in rows if row["pool"] == pool]
+        listed.append(
+            {
+                "pool": pool,
+                "queries": found["queries"],
+                "tcp_queries": found.get("tcp"),
+                #
+                # No rule is a pool without `allow_from`, which refuses
+                # nobody - zero, not unknown.
+                #
+                "refused": found.get("refused", 0),
+                "answered": None if None in answers else sum(answers),
+            }
+        )
+    return {"uptime_sec": uptime, "pools": listed, "servers": rows}
+
+
+def dns_counters():
+    try:
+        #
+        # No proxy, whatever the environment says: the counters are on loopback.
+        #
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(DNS_METRICS, timeout=2.0) as response:
+            text = response.read(MAX_DNS_METRICS_BYTES + 1)
+    except Exception:
+        return None
+    if len(text) > MAX_DNS_METRICS_BYTES:
+        return None
+    return parse_dns_metrics(text.decode("utf-8", errors="replace"))
+
+
 def read_dns_listener():
-    return {"version": package_version(DNS_PACKAGE), "active": service_active(DNS_UNIT)}
+    active = service_active(DNS_UNIT)
+    return {
+        "version": package_version(DNS_PACKAGE),
+        "active": active,
+        #
+        # null when dnsdist is stopped or did not answer, so a listener that
+        # could not be read is never reported as one that counted nothing.
+        #
+        "counters": dns_counters() if active else None,
+    }
 
 
 #
@@ -853,6 +980,11 @@ else:
         f"DNS listener:      {dns['version'] or 'NOT INSTALLED'}"
         f"{' (ACTIVE)' if dns['active'] else ''}"
     )
+    for pool in (dns["counters"] or {}).get("pools", []):
+        print(
+            f"  {pool['pool']}  queries={pool['queries']}"
+            f"  refused={pool['refused']}  answered={pool['answered']}"
+        )
     #
     # Requests and 5xx per listener, because that is the pair that says whether
     # a request reached this node at all - the question the removed stats page

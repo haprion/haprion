@@ -14,6 +14,7 @@ question.
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import shutil
 import socket
@@ -31,6 +32,7 @@ from haproxy_mgmt.config import Vip
 from haproxy_mgmt.generate import generate
 from haproxy_mgmt.golden import cases, expected_dns
 from haproxy_mgmt.proxy_model import load_proxy
+from tests.test_node_dns_metrics import parse_dns_metrics
 
 DNSDIST = shutil.which("dnsdist")
 
@@ -72,6 +74,16 @@ def ask(port: int, name: str = "www.example.com") -> tuple[int, str | None]:
     if struct.unpack(">H", data[6:8])[0] == 0:
         return rcode, None
     return rcode, str(ipaddress.ip_address(data[-4:]))
+
+
+def ask_tcp(port: int, name: str = "www.example.com") -> None:
+    """One question over TCP. The servers here answer UDP only, so none comes back."""
+
+    query = question(name)
+    with socket.create_connection(("127.0.0.1", port), timeout=3) as client:
+        client.sendall(struct.pack(">H", len(query)) + query)
+        with contextlib.suppress(TimeoutError):
+            client.recv(4096)
 
 
 class Server(threading.Thread):
@@ -216,14 +228,55 @@ class GeneratedConfigurationInDnsdist(unittest.TestCase):
         carried = {subnet for server in self.servers for subnet in server.subnets}
         self.assertEqual(carried, {"127.0.0.1"})
 
-    def test_the_counters_are_readable_on_loopback_without_a_key(self) -> None:
-        ask(self.open_port)
+    def _metrics(self) -> str:
         with urllib.request.urlopen(  # noqa: S310 - loopback, fixed port
             f"http://127.0.0.1:{dnsdist_config.STATS_PORT}/metrics", timeout=5
         ) as response:
-            body = response.read().decode()
-        self.assertIn('dnsdist_server_queries{server="lan-s1"', body)
-        self.assertIn('dnsdist_server_status{server="elsewhere-s2"', body)
+            return str(response.read().decode())
+
+    def test_the_counters_are_readable_on_loopback_without_a_key(self) -> None:
+        ask(self.open_port)
+        body = self._metrics()
+        self.assertIn('dnsdist_server_queries{server="lan-dns/s1"', body)
+        self.assertIn('dnsdist_server_status{server="elsewhere-dns/s2"', body)
+
+    def test_the_node_counts_each_pool_as_the_generator_named_it(self) -> None:
+        """What `haproxy-node-status` reports, read from this dnsdist (B4, 26-10-06).
+
+        Asked, refused, over TCP and answered per pool, and per server: the
+        rules count what came in, the servers what came back. The question over
+        TCP is asked and never answered - the servers here speak UDP only - which
+        is the unanswered query the card shows as asked less answered.
+        """
+
+        parse = parse_dns_metrics()
+        before = parse(self._metrics())
+        for _ in range(4):
+            ask(self.open_port)
+        ask_tcp(self.open_port)
+        for _ in range(3):
+            ask(self.closed_port)
+        parsed = parse(self._metrics())
+        assert before is not None and parsed is not None
+
+        def grown(pool: str, key: str) -> int:
+            then = {row["pool"]: row for row in before["pools"]}
+            now = {row["pool"]: row for row in parsed["pools"]}
+            return int(now[pool][key]) - int(then.get(pool, {}).get(key) or 0)
+
+        self.assertEqual({row["pool"] for row in parsed["pools"]}, {"lan-dns", "elsewhere-dns"})
+        self.assertEqual(
+            [grown("lan-dns", key) for key in ("queries", "tcp_queries", "refused", "answered")],
+            [5, 1, 0, 4],
+        )
+        self.assertEqual(
+            [grown("elsewhere-dns", key) for key in ("queries", "refused", "answered")], [3, 3, 0]
+        )
+        lan = [row for row in parsed["servers"] if row["pool"] == "lan-dns"]
+        self.assertEqual([row["server"] for row in lan], ["s1", "s2"])
+        self.assertEqual({row["status"] for row in lan}, {"UP"})
+        self.assertGreater(sum(row["latency_us"] for row in lan), 0)
+        self.assertIsInstance(parsed["uptime_sec"], int)
 
 
 @unittest.skipUnless(DNSDIST, "dnsdist is not installed here")

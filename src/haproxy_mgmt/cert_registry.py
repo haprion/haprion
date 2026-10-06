@@ -490,6 +490,17 @@ def set_targets(
             "bad_input",
             f"{certificate_id} is the interface certificate and has no targets",
         )
+    if registry.certificates[certificate_id].exportable:
+        #
+        # Exportable (B255): its key may be taken out of the interface, so it
+        # is never given a target - a certificate a cluster or a receiver
+        # carries must be one whose key nobody can download.
+        #
+        raise RegistryError(
+            "bad_input",
+            f"{certificate_id} is exportable and has no targets; issue another certificate "
+            "for a cluster or a receiver",
+        )
     #
     # Both target kinds are checked against what exists rather than against what
     # was asked for. A cluster comes from `clusters.yaml` and a receiver from the

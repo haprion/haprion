@@ -33,7 +33,7 @@
         <td data-label="Certificate"><a class="proxy-link" href="{{ href }}" aria-expanded="{{ 'true' if open else 'false' }}"><strong>{{ certificate.identifier }}</strong></a></td>
         <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
         <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ 'acme' if certificate.lifecycle_label == 'Certbot' else 'static' }}">{{ certificate.lifecycle_label }}</span>{% if certificate.wildcard %}<span class="certificate-issuer">wildcard</span>{% endif %}</td>
-        <td data-label="Used by">{% if certificate.targets %}<span class="certificate-sans">{% for target in certificate.targets %}{% if not loop.first %}, {% endif %}{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span>{% endif %}{% endfor %}</span>{% else %}<span class="warning-text">None</span>{% endif %}</td>
+        <td data-label="Used by">{% if certificate.targets %}<span class="certificate-sans">{% for target in certificate.targets %}{% if not loop.first %}, {% endif %}{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span>{% endif %}{% endfor %}</span>{% elif certificate.exportable %}<span class="target-kind">external</span>{% else %}<span class="warning-text">None</span>{% endif %}</td>
         <td data-label="Valid from"><span class="certificate-date">{{ certificate.valid_from }}</span></td>
         <td data-label="Expires">{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}{% if certificate.expiry_label %}<span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span>{% else %}—{% endif %}</td>
         <td data-label="State"><span class="status-badge status-badge-{{ certificate.state_tone }}">{% if certificate.state_active %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}{{ certificate.state_label }}</span></td>
@@ -51,6 +51,28 @@
             own schedule with its own key and reports nothing back, so the most
             that can be said of one is when the file was written for it.
           #}
+          {#
+            An external certificate (B255): no targets, so the detail is where
+            it is taken out - the chain as three files, and the key behind a
+            confirmation, for an admin, through the export helper.
+          #}
+          {% if certificate.exportable %}
+          <div class="registry-detail-targets"><strong>Download</strong>
+            {% if certificate.fullchain_pem %}<span class="action-group"><a class="secondary-button" href="/certificates/{{ certificate.identifier }}/download?part=fullchain">Certificate and chain</a><a class="secondary-button" href="/certificates/{{ certificate.identifier }}/download?part=certificate">Certificate</a><a class="secondary-button" href="/certificates/{{ certificate.identifier }}/download?part=chain">Chain</a></span>{% else %}<span class="warning-text">Not readable yet.</span>{% endif %}
+          </div>
+          {% if management_writes and role == 'admin' and certificate.fullchain_pem %}
+          <form method="post" action="/certificates/{{ certificate.identifier }}/export" class="registry-detail-targets certificate-export">
+            <strong>Export key</strong>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="certificate-export-fields">
+              <label>Format<select name="format"><option value="pem-key">Key, PEM</option><option value="pfx">PKCS#12, modern</option><option value="pfx-compatible">PKCS#12, compatible</option></select></label>
+              <label>Password (PKCS#12)<input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
+              <label>Type the name to confirm<input name="confirm" maxlength="255" placeholder="{{ certificate.identifier }}" autocomplete="off" spellcheck="false" required></label>
+              <button type="submit" class="secondary-button">Export</button>
+            </div>
+          </form>
+          {% endif %}
+          {% else %}
           <div class="registry-detail-targets"><strong>Published to</strong>
             {% for target in certificate.targets %}
             <span>{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span> · {{ target.published_label }}{% if target.current is false %} <span class="warning-text">(older version)</span>{% endif %}{% else %} <span class="target-kind">cluster</span>{% endif %}</span>
@@ -58,6 +80,7 @@
             <span class="warning-text">No target is registered for this certificate.</span>
             {% endfor %}
           </div>
+          {% endif %}
         </div>
       </td></tr>
       {% endif %}

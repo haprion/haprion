@@ -95,7 +95,13 @@ class ScepFixture(ImportFixture):
         )
         return code, json.loads(output.getvalue()), errors.getvalue()
 
-    def pending(self, certificate_id: str = "web.example.com", *, profile: str = "certserver1") -> None:
+    def pending(
+        self,
+        certificate_id: str = "web.example.com",
+        *,
+        profile: str = "certserver1",
+        wildcard: bool = True,
+    ) -> None:
         """A request the CA is holding, as the engine leaves it on the disk."""
 
         directory = request_directory(self.ndes_policy.state_root, certificate_id)
@@ -106,7 +112,7 @@ class ScepFixture(ImportFixture):
             "revision": 1,
             "key_id": self.public.key_id,
             "endpoint": ENDPOINT,
-            "domains": [certificate_id, "*." + certificate_id],
+            "domains": [certificate_id, *(["*." + certificate_id] if wildcard else [])],
         }
         (directory / "request.json").write_text(json.dumps(record))
         os.chmod(directory / "request.json", 0o600)
@@ -189,6 +195,50 @@ class HelperBoundary(ScepFixture):
         self.assertEqual(self.deployed, ["alpha"])
         # The request is over: its directory goes with it.
         self.assertFalse(directory.exists())
+
+    def test_an_exportable_request_keeps_its_mark_through_the_wait(self) -> None:
+        """B255: decided at the request, registered with it when the CA answers."""
+
+        self.pending("bmc01.example.com", wildcard=False)
+        write_targets(
+            self.ndes_policy.state_root,
+            "bmc01.example.com",
+            clusters=(),
+            receivers=(),
+            exportable=True,
+        )
+        directory = request_directory(self.ndes_policy.state_root, "bmc01.example.com")
+        issued = ndes.Enrollment("issued", directory, self.material())
+        with (
+            mock.patch.object(ndes, "enroll") as engine,
+            mock.patch.object(ndes, "validate_certificate"),
+        ):
+            engine.return_value.__enter__.return_value = issued
+            code, doc, errors = self.helper({"id": "bmc01.example.com", "resume": True})
+
+        self.assertEqual(code, 0, errors)
+        entry = self.registered()["bmc01.example.com"]
+        self.assertTrue(entry["exportable"])
+        self.assertNotIn("clusters", entry)
+        self.assertEqual(self.deployed, [])
+
+    def test_an_exportable_request_names_one_host_and_no_target(self) -> None:
+        for extra in (
+            {"domains": ["bmc01.example.com", "*.bmc01.example.com"]},
+            {"clusters": ["alpha"]},
+        ):
+            with self.subTest(extra=extra), mock.patch.object(ndes, "enroll") as engine:
+                code, doc, _ = self.helper(
+                    {
+                        "id": "bmc01.example.com",
+                        "profile": "certserver1",
+                        "domains": ["bmc01.example.com"],
+                        "exportable": True,
+                        **extra,
+                    }
+                )
+                self.assertEqual(code, 65)
+                engine.assert_not_called()
 
     def test_a_format_waits_beside_the_request_and_is_registered_on_resume(self) -> None:
         """B159: the form chosen at the request survives the CA's wait."""

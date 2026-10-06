@@ -781,6 +781,22 @@ def check_resolve_semantics(document: dict[str, object], path: Path) -> None:
                 raise AssertionError(f"{path}: {entry['name']} needs an address or a problem")
 
 
+def check_cert_export_semantics(document: dict[str, object], path: Path) -> None:
+    # A file only on success, and named and typed after its form: the web
+    # serves it under that name and type, so a key must not leave as a .pfx.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done cert_export carries no file")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} cert_export carries a file")
+    if isinstance(result, dict):
+        key = result["format"] == "pem-key"
+        suffix = ".key.pem" if key else ".pfx"
+        media = "application/x-pem-file" if key else "application/x-pkcs12"
+        if result["filename"] != f"{result['id']}{suffix}" or result["media_type"] != media:
+            raise AssertionError(f"{path}: the file is not named and typed after its format")
+
+
 def check_oidc_semantics(document: dict[str, object], path: Path) -> None:
     # An answer or a refusal, never both; and Verify's verdict is its checks',
     # so a page reading `ok` cannot show green over a failed check.
@@ -985,6 +1001,7 @@ SEMANTIC_CHECKS = {
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
     "resolve": check_resolve_semantics,
+    "cert_export": check_cert_export_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
     "node_restore_preview": check_node_restore_preview_semantics,
     "node_restore": check_node_restore_semantics,
@@ -1070,6 +1087,13 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         invalid["outcome"] = "failed"
     elif operation == "resolve":
         result["names"][0]["problem"] = "said beside an address"
+    elif operation == "cert_export":
+        if result is None:
+            invalid["outcome"] = "done"
+        else:
+            result["filename"] = result["id"] + (
+                ".pfx" if result["format"] == "pem-key" else ".key.pem"
+            )
     elif operation == "oidc":
         if "checks" in result:
             result["ok"] = not result["ok"]

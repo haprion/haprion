@@ -27,6 +27,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [Deleting a certificate](#deleting-a-certificate)
   - [Importing a certificate](#importing-a-certificate)
   - [Enrolling and renewing through NDES](#enrolling-and-renewing-through-ndes)
+  - [External certificates](#external-certificates)
   - [Registering a receiver](#registering-a-receiver)
 - [Nodes and clusters](#nodes-and-clusters)
   - [Adding and removing a node](#adding-and-removing-a-node)
@@ -436,10 +437,13 @@ the capability's tab, pages and operations; a kept URL answers 404. Both are
 off on a new installation, which enables no backup timer either; an
 installation opts in.
 
-- **Certificate receivers** off hides the receivers page, the receiver choices
-  in the certificate forms and in *Publish to…*/*Remove from…*, and the
-  certificates page's second view. Receivers already registered go on getting
-  renewed certificates, and a certificate's *Used by* still names them.
+- **External certificates** (called *Certificate receivers* until 2026-10-06)
+  off hides the receivers page, the receiver choices in the certificate forms
+  and in *Publish to…*/*Remove from…*, the certificates page's second view,
+  and *External certificate* with its downloads and key export (B255).
+  Receivers already registered go on getting renewed certificates, and a
+  certificate's *Used by* still names them; external certificates stay in the
+  registry and are renewed as before.
 - **Node backups** off also stops every cluster's backup timer: one
   `backup_schedule` job per running timer, with its schedule unchanged and
   `enabled: false`. The schedules it stopped are remembered, and turning it on
@@ -1070,6 +1074,51 @@ such a certificate as **NDES** rather than **Imported**. Removing a profile (Cer
 NDES providers → Remove) runs one job that deletes the root-only record and then the row;
 it is refused while the registry still names the profile or an enrollment request under
 `state_root` is still bound to it. A refused removal leaves the profile in effect.
+
+### External certificates
+
+Some places that want a certificate will never be connected to this manager: a server's
+BMC, a NAS, a printer, a camera, a UPS card. For those the manager is where the
+certificate is ordered and taken out; it is installed by hand (B255). Behind the
+**External certificates** switch, with the receivers.
+
+**Making one.** *New certificate* → *external certificate* (the link under
+*Targets*): the same form, for one host name and with no targets. DNS-01, HTTP-01 or NDES; not a CSR,
+because the point is a key that can be handed out. The key is RSA 2048, which every
+device takes - several take no EC key. A wildcard is refused: its key would answer for
+every name under it. From the command line, `haproxy-cert-issue --exportable` or
+`haproxy-cert-scep --exportable` with no `--cluster` and no `--receiver`.
+
+The registry marks the entry `exportable: true`. The mark is set when the entry is made
+and never changes, and an exportable entry can never be given a target: *Publish to…*
+refuses it. A certificate HAProxy or a receiver carries is therefore never one whose key
+can be downloaded. Renewal is the source's as for every certificate - certbot's timer,
+or the NDES renewal - and keeps the mark; installing the renewed certificate on the
+device is yours.
+
+**Taking it out.** Open the row:
+
+- *Certificate and chain*, *Certificate* and *Chain* download the public half as PEM, for
+  anyone signed in. A device that takes one file wants the first; one that asks for the
+  certificate and the issuer separately, the other two.
+- *Export key*, for an admin: the key alone as PEM (*Key, PEM* - for a device that takes
+  certificate and key as two files, Supermicro's BMC for one), or a PKCS#12 bundle of key
+  and chain under a password you type (8-128 characters). *PKCS#12, modern* is what
+  OpenSSL writes today: AES-256, PBKDF2, a SHA-256 MAC. *PKCS#12, compatible* is 3DES and
+  a SHA-1 MAC, for older Windows, Java and embedded readers - not OpenSSL's `-legacy`,
+  whose certificate part is 40-bit RC2. Type the certificate's name to confirm.
+
+The key is read by `haproxy-cert-export-helper`, root, over
+`/run/haproxy-mgmt/cert-export.sock`, which only the web account may connect to. It
+refuses every entry without the mark, writes nothing, and says in the journal what it
+exported for whom (`journalctl -u 'haproxy-cert-export-helper@*'`); the web writes a
+`certificate_export` audit event with the certificate's fingerprint. Nothing keeps a
+copy, and the password is never stored or returned. Root at the terminal can ask the
+helper directly with the same request document.
+
+Not every device can take a key at all. HPE iLO makes its own key and asks for its CSR
+to be signed; that needs a signing request uploaded here, which the manager does not do
+yet.
 
 ### Registering a receiver
 

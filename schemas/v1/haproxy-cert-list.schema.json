@@ -154,6 +154,17 @@
           "description": "Additive (B188): present and true on the one entry that is the manager's own interface certificate. It has no targets and is published to nginx.",
           "const": true
         },
+        "exportable": {
+          "description": "Additive (B255): present and true on an entry to be taken out and installed by hand. It has no targets; its key may be exported through the export helper and is never reported here.",
+          "const": true
+        },
+        "fullchain_pem": {
+          "description": "Additive (B255): the certificate and its chain, PEM, for an exportable entry whose material could be read - public by construction, so the interface can offer it for download. Absent otherwise.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536,
+          "pattern": "^-{5}BEGIN CERTIFICATE-{5}\\n"
+        },
         "readable": { "type": "boolean" },
         "validation_error": { "type": ["string", "null"], "maxLength": 2048 },
         "request_state": {

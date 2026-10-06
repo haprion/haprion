@@ -17,7 +17,12 @@ and sudoers output remain private deployment data.
 The traffic collector's key is the one private key an app identity holds: a forced-command key that
 can read a node's logs and do nothing else. Apart from it, no app identity owns or can read SSH
 private keys, certificate private keys, validation dummy-key material, secret files, or raw backup
-archives. The one qualification is the certificate upload:
+archives - with one exception made on purpose (B255): a certificate the registry marks
+`exportable`, made for a device that is installed by hand and never connected here. Its key is
+read by a root helper on a socket only the web account may reach, handed to the person who asked
+in that one response, and written nowhere; the entry has no cluster and no receiver, and the mark
+is set when it is made, so no key HAProxy or a receiver uses can ever be exported. The other
+qualification is the certificate upload:
 the web process receives the file a person chose, seals it against the installation's public key
 inside that request, and hands the ciphertext to a job. The plaintext exists in the web process
 for the duration of the request and nowhere the web can read afterwards - not the job row, not

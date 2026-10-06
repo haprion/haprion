@@ -39,8 +39,18 @@ from uuid import UUID, uuid4, uuid5
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from haproxy_mgmt import backup_retention, backup_schedule, crs, proxy_model, status_collect
+from haproxy_mgmt import (
+    backup_retention,
+    backup_schedule,
+    cert_export_socket,
+    crs,
+    proxy_model,
+    status_collect,
+)
 from haproxy_mgmt import cluster_settings as cluster_settings_module
+from haproxy_mgmt.cert_export import FORMATS as EXPORT_FORMATS
+from haproxy_mgmt.cert_export import ExportError
+from haproxy_mgmt.certificates import CERTIFICATE_OPENING
 from haproxy_mgmt.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
@@ -684,8 +694,8 @@ def require_session(request: Request) -> AuthenticatedSession:
 # What Settings says after a switch has been flipped, by `?switched=`.
 #
 SWITCHED = {
-    "cert_receivers-off": "Certificate receivers turned off. Registered receivers still get new certificates.",
-    "cert_receivers-on": "Certificate receivers turned on.",
+    "cert_receivers-off": "External certificates turned off. Registered receivers still get new certificates.",
+    "cert_receivers-on": "External certificates turned on.",
     "node_backups-off": "Node backups turned off. The clusters' schedules are being stopped; see Jobs.",
     "node_backups-on": "Node backups turned on. The schedules that were stopped are being started again.",
     "cluster_colours-off": "Cluster colours turned off.",
@@ -2493,6 +2503,16 @@ def build_router(config: Config) -> APIRouter:
                 config,
                 replace(certificate_form.EMPTY_FORM, domain=manager, interface=True),
             )
+        if request.query_params.get("for") == "external" and features.is_on(
+            features.CERT_RECEIVERS
+        ):
+            #
+            # A certificate to take out and install by hand (B255): one name,
+            # no targets, its key downloaded from the row.
+            #
+            return _certificate_form_page(
+                request, config, replace(certificate_form.EMPTY_FORM, exportable=True)
+            )
         return _certificate_form_page(request, config, certificate_form.EMPTY_FORM)
 
     @router.post("/certificates/new", response_class=HTMLResponse)
@@ -2507,6 +2527,7 @@ def build_router(config: Config) -> APIRouter:
         ndes_profile: str = Form(default="", max_length=32),
         key_type: str = Form(default="", max_length=16),
         interface: str = Form(default="", max_length=1),
+        exportable: str = Form(default="", max_length=1),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
@@ -2529,6 +2550,7 @@ def build_router(config: Config) -> APIRouter:
             formats=tuple(format),
             key_type=key_type,
             interface=interface == "1",
+            exportable=exportable == "1",
         )
         session = current_session(request)
         if session is None:
@@ -2545,6 +2567,8 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
 
+        if form.exportable and not features.is_on(features.CERT_RECEIVERS):
+            return PlainTextResponse("Not found", status_code=404)
         choices = _certificate_choices(request, config)
         try:
             payload = certificate_form.payload_from_form(form, choices)
@@ -2623,6 +2647,125 @@ def build_router(config: Config) -> APIRouter:
             row.csr_pem,
             media_type="application/pkcs10",
             headers={"Content-Disposition": f'attachment; filename="{certificate_id}.csr"'},
+        )
+
+    #
+    # An external certificate's public half (B255): the chain as one file, the
+    # leaf alone, or the issuers alone - the three a device asks for. Drawn
+    # from the cached reading, as the CSR is; anyone signed in may have it,
+    # because every client of the device is shown the same bytes.
+    #
+    @router.get("/certificates/{certificate_id}/download")
+    def certificate_download(request: Request, certificate_id: str) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not features.is_on(features.CERT_RECEIVERS) or not CERTIFICATE_ID.fullmatch(
+            certificate_id
+        ):
+            return PlainTextResponse("Not found", status_code=404)
+        row = _registry_views(request, config).get(certificate_id)
+        if row is None or not row.exportable or row.fullchain_pem is None:
+            return PlainTextResponse("No such external certificate", status_code=404)
+        blocks = [
+            CERTIFICATE_OPENING + block
+            for block in row.fullchain_pem.split(CERTIFICATE_OPENING)[1:]
+        ]
+        part = request.query_params.get("part", "fullchain")
+        chosen = {
+            "fullchain": ("".join(blocks), f"{certificate_id}.fullchain.pem"),
+            "certificate": ("".join(blocks[:1]), f"{certificate_id}.crt.pem"),
+            "chain": ("".join(blocks[1:]), f"{certificate_id}.chain.pem"),
+        }.get(part)
+        if chosen is None or not chosen[0]:
+            return PlainTextResponse("No such part", status_code=404)
+        return PlainTextResponse(
+            chosen[0],
+            media_type="application/x-pem-file",
+            headers={"Content-Disposition": f'attachment; filename="{chosen[1]}"'},
+        )
+
+    #
+    # An external certificate's key (B255): an admin, the name typed again,
+    # and the export helper - which gives out the key of an exportable entry
+    # and of no other. Written into the audit trail, and served without a
+    # copy kept anywhere.
+    #
+    @router.post("/certificates/{certificate_id}/export")
+    def certificate_export(
+        request: Request,
+        certificate_id: str,
+        format: str = Form(default="", max_length=32),
+        password: str = Form(default="", max_length=128),
+        confirm: str = Form(default="", max_length=255),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if (
+            not config.management_writes
+            or not features.is_on(features.CERT_RECEIVERS)
+            or not CERTIFICATE_ID.fullmatch(certificate_id)
+        ):
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        back = "/certificates?view=registry"
+        row = _registry_views(request, config).get(certificate_id)
+        if row is None or not row.exportable:
+            return _refusal_page(
+                request, config, f"{certificate_id} is not an external certificate.", back=back
+            )
+        if confirm.strip() != certificate_id:
+            return _refusal_page(
+                request,
+                config,
+                f"Type {certificate_id} to confirm the export. Nothing was exported.",
+                back=back,
+            )
+        if format not in EXPORT_FORMATS:
+            return _refusal_page(request, config, "Choose a format from the list.", back=back)
+        try:
+            exported = cert_export_socket.ask(
+                certificate_id,
+                format,
+                password if format != "pem-key" else None,
+                requested_by=session.username,
+            )
+        except ExportError as refusal:
+            return _refusal_page(request, config, f"{refusal} Nothing was exported.", back=back)
+        with request.app.state.pool.connection() as connection:
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="certificate_export",
+                cluster=None,
+                request_id=uuid4(),
+                detail={
+                    "certificate": certificate_id,
+                    "format": format,
+                    "fingerprint_sha256": exported.fingerprint,
+                },
+            )
+            connection.commit()
+        #
+        # Named and typed here, from the ID this route checked and the format
+        # it chose, rather than taken from the helper's answer into a header.
+        #
+        key = format == "pem-key"
+        return Response(
+            exported.content,
+            media_type="application/x-pem-file" if key else "application/x-pkcs12",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{certificate_id}{".key.pem" if key else ".pfx"}"'
+                ),
+                "Cache-Control": "no-store",
+            },
         )
 
     #

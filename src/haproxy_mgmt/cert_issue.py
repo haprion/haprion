@@ -152,6 +152,8 @@ class IssueRequest:
     """How each receiver is written; a receiver not named here gets `pem` (B159)."""
     interface: bool = False
     """The manager's own interface certificate (B188): no targets, published to nginx."""
+    exportable: bool = False
+    """To be taken out and installed by hand (B255): one name, no targets, an RSA key."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +208,7 @@ class IssueResult:
             "publish": self.publish.as_dict(),
             "renewed": self.renewed,
             "interface": self.request.interface,
+            "exportable": self.request.exportable,
             "retired": dict(self.retired) if self.retired is not None else None,
         }
 
@@ -236,8 +239,12 @@ def build_request(
     dns_profile: str | None = None,
     formats: Mapping[str, str] | None = None,
     interface: bool = False,
+    exportable: bool = False,
 ) -> IssueRequest:
     certificate_id, domains, wildcard = parse_domain(domain)
+    check_exportable(
+        exportable, wildcard=wildcard, targets=bool(clusters or receivers), interface=interface
+    )
     if method not in METHODS:
         raise IssueError("bad_input", f"method must be one of: {', '.join(METHODS)}")
     if wildcard and method != "dns-01":
@@ -255,7 +262,7 @@ def build_request(
         raise IssueError(
             "bad_input", "the interface certificate has no targets; name no cluster or receiver"
         )
-    if not interface and not clusters and not receivers:
+    if not interface and not exportable and not clusters and not receivers:
         raise IssueError("bad_input", "at least one target (cluster or receiver) is required")
 
     registry = runtime.registry
@@ -290,7 +297,29 @@ def build_request(
         dns_profile=dns_profile,
         formats=check_formats(formats, receivers),
         interface=interface,
+        exportable=exportable,
     )
+
+
+def check_exportable(exportable: bool, *, wildcard: bool, targets: bool, interface: bool) -> None:
+    """The limits an exportable certificate is made within (B255), shared by every way to make one.
+
+    One name and no wildcard: its key leaves the manager, and a wildcard's key
+    taken out answers for every name under it. No targets and not the
+    interface's: a certificate this installation serves must not be one whose
+    key can be downloaded.
+    """
+
+    if not exportable:
+        return
+    if wildcard:
+        raise IssueError("bad_input", "an exportable certificate names one host; no wildcard")
+    if targets or interface:
+        raise IssueError(
+            "bad_input",
+            "an exportable certificate has no targets and does not serve the interface; "
+            "name no cluster or receiver",
+        )
 
 
 def check_formats(formats: Mapping[str, str] | None, receivers: Sequence[str]) -> dict[str, str]:
@@ -395,8 +424,15 @@ def certbot_invocation(
         "--no-directory-hooks",
         "--cert-name",
         request.certificate_id,
-        "--key-type",
-        KEY_TYPE,
+        #
+        # RSA for an exportable certificate (B255): it goes to a BMC, a NAS or
+        # a printer, and several of them take no EC key at all.
+        #
+        *(
+            ("--key-type", "rsa", "--rsa-key-size", "2048")
+            if request.exportable
+            else ("--key-type", KEY_TYPE)
+        ),
         *authenticator,
     ]
     for domain in request.domains:
@@ -585,6 +621,8 @@ def _add_entry(
         entry["clusters"] = list(request.clusters)
     if request.receivers:
         entry["receivers"] = cert_registry.receiver_elements(request.receivers, request.formats)
+    if request.exportable:
+        entry["exportable"] = True
     certificates[request.certificate_id] = entry
     displaced = (
         cert_registry.claim_interface(certificates, request.certificate_id)
@@ -615,6 +653,7 @@ def issue(
     dns_profile: str | None = None,
     formats: Mapping[str, str] | None = None,
     interface: bool = False,
+    exportable: bool = False,
     policy: PathPolicy,
     runtime: RuntimeConfig,
     certbot: Certbot = run_certbot,
@@ -636,6 +675,7 @@ def issue(
         dns_profile=dns_profile,
         formats=formats,
         interface=interface,
+        exportable=exportable,
     )
     if (live / request.certificate_id).exists():
         raise IssueError(
@@ -784,6 +824,7 @@ def renew(
         dns_profile=entry.source.dns_profile,
         formats=dict(entry.formats),
         interface=entry.interface,
+        exportable=entry.exportable,
     )
     invocation = renewal_invocation(
         lineage, policy, runtime, force=True, require_secure=require_secure

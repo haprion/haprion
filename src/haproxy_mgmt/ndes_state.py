@@ -78,6 +78,7 @@ def write_targets(
     receivers: tuple[str, ...],
     formats: Mapping[str, str] | None = None,
     interface: bool = False,
+    exportable: bool = False,
 ) -> None:
     """Where the certificate goes once the CA answers, kept beside the request.
 
@@ -101,6 +102,7 @@ def write_targets(
                 "receivers": list(receivers),
                 "formats": dict(formats or {}),
                 **({"interface": True} if interface else {}),
+                **({"exportable": True} if exportable else {}),
             },
             handle,
         )
@@ -125,6 +127,14 @@ def request_is_interface(state_root: Path, certificate_id: str) -> bool:
     directory = request_directory(state_root, certificate_id)
     loaded = _bounded_json(directory / TARGETS_FILE, MAX_RECORD_BYTES)
     return isinstance(loaded, dict) and loaded.get("interface") is True
+
+
+def request_is_exportable(state_root: Path, certificate_id: str) -> bool:
+    """Whether the waiting request is for an exportable certificate (B255)."""
+
+    directory = request_directory(state_root, certificate_id)
+    loaded = _bounded_json(directory / TARGETS_FILE, MAX_RECORD_BYTES)
+    return isinstance(loaded, dict) and loaded.get("exportable") is True
 
 
 def request_formats(state_root: Path, certificate_id: str) -> dict[str, str]:

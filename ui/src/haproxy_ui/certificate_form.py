@@ -57,6 +57,8 @@ class IssueForm:
     """The CSR method's one setting (C9b); empty means the engine's default."""
     interface: bool = False
     """For the manager's own interface certificate (B188): no targets, published to nginx."""
+    exportable: bool = False
+    """To be taken out and installed by hand (B255): one name, no targets, its key exported."""
 
     @property
     def wildcard(self) -> bool:
@@ -183,6 +185,7 @@ def normalise(form: IssueForm) -> IssueForm:
         formats=tuple(value.strip() for value in form.formats if value.strip()),
         key_type=form.key_type.strip(),
         interface=form.interface,
+        exportable=form.exportable,
     )
 
 
@@ -284,7 +287,21 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             raise FormProblem("The chosen DNS provider profile is not in effect.")
     elif form.dns_profile:
         raise FormProblem("A DNS provider profile belongs to DNS-01 only.")
-    if not form.clusters and not form.receivers:
+    if form.exportable:
+        #
+        # B255: one host, no targets, and a CA the manager talks to - the key
+        # is made here and handed out, so a signing request's own key stays
+        # what it is.
+        #
+        if wildcard:
+            raise FormProblem("An exportable certificate names one host; no wildcard.")
+        if form.clusters or form.receivers:
+            raise FormProblem(
+                "An exportable certificate has no targets; it is downloaded and installed by hand."
+            )
+        if form.method == CSR_METHOD:
+            raise FormProblem("An exportable certificate comes from ACME or NDES, not a CSR.")
+    elif not form.clusters and not form.receivers:
         raise FormProblem("Choose at least one target: a cluster or a receiver.")
     #
     # A box that was not offered. The page draws only the targets that exist,
@@ -328,6 +345,8 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
         }
         if formats:
             enrollment["formats"] = formats
+        if form.exportable:
+            enrollment["exportable"] = True
         return enrollment
     payload: dict[str, Any] = {
         "domain": form.domain,
@@ -339,6 +358,8 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
         payload["dns_profile"] = form.dns_profile
     if formats:
         payload["formats"] = formats
+    if form.exportable:
+        payload["exportable"] = True
     return payload
 
 

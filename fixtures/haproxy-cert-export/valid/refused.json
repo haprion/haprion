@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "operation": "cert_export",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": false,
+  "outcome": "failed",
+  "result": null,
+  "error": {
+    "code": "not_exportable",
+    "message": "shop.example.com is not exportable; only a certificate made exportable, with no targets, gives its key out"
+  }
+}

@@ -455,6 +455,13 @@ user with the network and nothing else. The editor and the preview look a dns
 server's name up through it; the web itself reaches only localhost. The CLI
 release must carry `haproxy-resolve-helper`.
 
+And the web's way to an exportable certificate's key (B255):
+`haproxy-cert-export-helper.socket` (`/run/haproxy-mgmt/cert-export.sock`, group
+`WEB_USER`) and the per-request `haproxy-cert-export-helper@.service`, root with a
+read-only sandbox and no network. It gives out the key of a registry entry marked
+`exportable` and of no other, and writes nothing. The CLI release must carry
+`haproxy-cert-export-helper`.
+
 ## Step 6 — backups that have been read back
 
 `./06-platform-backup` installs `haproxy-ui-backup`, a daily dump timer and a

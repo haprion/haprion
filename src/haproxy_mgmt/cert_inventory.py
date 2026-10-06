@@ -27,6 +27,7 @@ See B27.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 from collections.abc import Mapping
@@ -38,6 +39,7 @@ from typing import Any
 from haproxy_mgmt.cert_registry import receiver_in_use
 from haproxy_mgmt.cert_request_state import pending_csrs, request_is_interface
 from haproxy_mgmt.certificates import (
+    CERTIFICATE_OPENING,
     MAX_CERTIFICATE_BYTES,
     CertificateError,
     certificate_path,
@@ -499,6 +501,7 @@ def registry_result(
             # every other row reads exactly as it did.
             #
             **({"interface": True} if entry.interface else {}),
+            **({"exportable": True} if entry.exportable else {}),
             "readable": False,
             "validation_error": None,
             "measured_at": None,
@@ -523,6 +526,24 @@ def registry_result(
                 row["request_state"] = "pending"
         else:
             fingerprint, facts, row["measured_at"] = measured
+            #
+            # The chain an exportable certificate is downloaded as (B255). It
+            # is public - the same bytes any client of the device is shown -
+            # and the web cannot read the store, so it travels here, as a
+            # signing request's CSR does. Only for exportable entries: the
+            # rest would grow the listing by a chain each and nobody reads it.
+            #
+            if entry.exportable:
+                with contextlib.suppress(OSError, UnicodeDecodeError):
+                    chain = (source_directory(entry, live=live, store=store) / FULLCHAIN).read_text(
+                        encoding="ascii"
+                    )
+                    if (
+                        chain.startswith(CERTIFICATE_OPENING + "\n")
+                        and len(chain) <= 65536
+                        and "PRIVATE KEY" not in chain
+                    ):
+                        row["fullchain_pem"] = chain
             #
             # What the scheduled renewal last did to an NDES certificate,
             # if it has tried: the material above is still the measurement,

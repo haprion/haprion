@@ -30,6 +30,7 @@
         "publish": { "$ref": "haproxy-cert-publish.schema.json#/$defs/publish_result" },
         "renewed": { "description": "Additive (C9c): true when the lineage existed and was asked for again now, forced before its time; the entry is what it was.", "type": "boolean" },
         "interface": { "description": "Additive (B188): true when the certificate is the manager's own interface certificate; it then has no targets.", "type": "boolean" },
+        "exportable": { "description": "Additive (B255): true when the certificate is to be taken out and installed by hand; it then has no targets and one name.", "type": "boolean" },
         "retired": { "oneOf": [{ "$ref": "haproxy-cert-publish.schema.json#/$defs/retired_interface" }, { "type": "null" }] }
       },
       "additionalProperties": true

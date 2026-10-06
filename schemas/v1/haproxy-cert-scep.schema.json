@@ -55,6 +55,7 @@
             "replaced": { "type": "boolean" },
             "publish": { "$ref": "haproxy-cert-publish.schema.json#/$defs/publish_result" },
             "interface": { "description": "Additive (B188): present and true when this certificate is the manager's own interface certificate.", "const": true },
+            "exportable": { "description": "Additive (B255): present and true when this certificate is to be taken out and installed by hand.", "const": true },
             "retired": { "$ref": "haproxy-cert-publish.schema.json#/$defs/retired_interface" }
           },
           "additionalProperties": false

@@ -157,6 +157,38 @@ class WhatReachesCertbot(IssueFixture):
         self.assertIn("--webroot", certbot_arguments(http, policy))
         self.assertIn(str(self.root / "webroot"), certbot_arguments(http, policy))
 
+    def test_an_exportable_certificate_is_one_name_no_target_and_an_rsa_key(self) -> None:
+        """B255: it goes to a BMC or a printer, and several take no EC key."""
+
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        policy = load_policy(policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+        request = cert_issue.build_request(
+            domain="bmc01.example.com",
+            method="dns-01",
+            clusters=[],
+            receivers=[],
+            runtime=runtime,
+            exportable=True,
+        )
+        arguments = certbot_arguments(request, policy)
+
+        self.assertTrue(request.exportable)
+        self.assertEqual(arguments[arguments.index("--key-type") + 1], "rsa")
+        self.assertEqual(arguments[arguments.index("--rsa-key-size") + 1], "2048")
+        for domain, clusters in (("*.example.com", []), ("bmc01.example.com", ["alpha"])):
+            with self.subTest(domain=domain, clusters=clusters), self.assertRaises(IssueError):
+                cert_issue.build_request(
+                    domain=domain,
+                    method="dns-01",
+                    clusters=clusters,
+                    receivers=[],
+                    runtime=runtime,
+                    exportable=True,
+                )
+
     def test_the_binary_comes_from_the_policy_and_leads_the_command(self) -> None:
         policy_path = self.policy_with_acme(
             {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}

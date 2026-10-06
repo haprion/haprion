@@ -181,7 +181,7 @@ def _restore(
 
 
 def _targets(
-    payload: Mapping[str, Any], *, interface: bool = False
+    payload: Mapping[str, Any], *, interface: bool = False, exportable: bool = False
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """The two target lists, checked here as well as in the helper.
 
@@ -203,7 +203,13 @@ def _targets(
     #
     if interface and (lists[0] or lists[1]):
         raise BadPayload("the interface certificate has no targets")
-    if not interface and not lists[0] and not lists[1]:
+    #
+    # Nor has an exportable one (B255): its key may be downloaded, so nothing
+    # this installation serves is ever given it.
+    #
+    if exportable and (lists[0] or lists[1] or interface):
+        raise BadPayload("an exportable certificate has no targets")
+    if not interface and not exportable and not lists[0] and not lists[1]:
         raise BadPayload("at least one target (cluster or receiver) is required")
     return lists[0], lists[1]
 
@@ -320,6 +326,7 @@ def _certificate_operation(
             "formats",
             "renew",
             "interface",
+            "exportable",
         )
         domain = payload.get("domain")
         if not isinstance(domain, str) or not domain:
@@ -358,7 +365,10 @@ def _certificate_operation(
             if method != "dns-01":
                 raise BadPayload("dns_profile belongs to dns-01 only")
         interface = _flag(payload, "interface", default=False)
-        clusters, receivers = _targets(payload, interface=interface)
+        exportable = _flag(payload, "exportable", default=False)
+        if exportable and domain.startswith("*."):
+            raise BadPayload("an exportable certificate names one host; no wildcard")
+        clusters, receivers = _targets(payload, interface=interface, exportable=exportable)
         formats = _formats(payload, receivers)
         return Prepared(
             argv=(cert_issue_helper.SUDO, *SUDO_FLAGS, cert_issue_helper.HELPER),
@@ -371,6 +381,7 @@ def _certificate_operation(
                 dns_profile=dns_profile,
                 formats=formats,
                 interface=interface,
+                exportable=exportable,
             ),
             timeout_seconds=CERT_TIMEOUT_SECONDS,
         )
@@ -386,6 +397,7 @@ def _certificate_operation(
             "formats",
             "resume",
             "interface",
+            "exportable",
         )
         certificate_id = payload.get("id")
         if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
@@ -422,7 +434,10 @@ def _certificate_operation(
         if domains[0].startswith("*."):
             raise BadPayload("the first name is the CN and cannot be a wildcard")
         interface = _flag(payload, "interface", default=False)
-        clusters, receivers = _targets(payload, interface=interface)
+        exportable = _flag(payload, "exportable", default=False)
+        if exportable and any(name.startswith("*.") for name in domains):
+            raise BadPayload("an exportable certificate names one host; no wildcard")
+        clusters, receivers = _targets(payload, interface=interface, exportable=exportable)
         formats = _formats(payload, receivers)
         return Prepared(
             argv=(cert_scep_helper.SUDO, *SUDO_FLAGS, cert_scep_helper.HELPER),
@@ -436,6 +451,7 @@ def _certificate_operation(
                 resume=resume,
                 formats=formats,
                 interface=interface,
+                exportable=exportable,
             ),
         )
 

@@ -35,7 +35,7 @@ USAGE = (
     "  haproxy-cert-issue --domain <name> --method dns-01|http-01\n"
     "                     [--dns-profile <id>] [--cluster <id>]...\n"
     "                     [--receiver <id>]... [--format <id>=<form>]...\n"
-    "                     [--interface] [--json]\n"
+    "                     [--interface | --exportable] [--json]\n"
     "\n"
     "Obtains a certificate from the ACME account this host already has, adds it\n"
     "to the certificate registry, publishes it to the named targets and rolls\n"
@@ -57,13 +57,16 @@ USAGE = (
     "  --interface           This manager's own interface certificate: no targets,\n"
     "                        installed with haproxy-ui-tls. Takes the mark from the\n"
     "                        one that had it, which is deleted once this one serves.\n"
+    "  --exportable          For a device never connected to this manager: one name,\n"
+    "                        no targets, an RSA key that may be exported from the\n"
+    "                        interface (B255).\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 
 
 def _parse(
     argv: list[str], writer: TextIO
-) -> tuple[str, str, str | None, list[str], list[str], list[str], bool, bool]:
+) -> tuple[str, str, str | None, list[str], list[str], list[str], bool, bool, bool]:
     domain: str | None = None
     method: str | None = None
     formats: list[str] = []
@@ -72,6 +75,7 @@ def _parse(
     receivers: list[str] = []
     json_mode = False
     interface = False
+    exportable = False
     index = 0
 
     def value() -> str:
@@ -106,13 +110,26 @@ def _parse(
         elif argument == "--interface":
             interface = True
             index += 1
+        elif argument == "--exportable":
+            exportable = True
+            index += 1
         else:
             writer.write(USAGE)
             raise SystemExit(EXIT_USAGE)
     if domain is None or method is None:
         writer.write(USAGE)
         raise SystemExit(EXIT_USAGE)
-    return domain, method, dns_profile, clusters, receivers, formats, json_mode, interface
+    return (
+        domain,
+        method,
+        dns_profile,
+        clusters,
+        receivers,
+        formats,
+        json_mode,
+        interface,
+        exportable,
+    )
 
 
 def _summary(result: IssueResult, writer: TextIO) -> None:
@@ -202,6 +219,7 @@ def main(
             format_flags,
             json_mode,
             interface,
+            exportable,
         ) = _parse(argv, writer)
     except SystemExit as exc:
         return int(exc.code or 0)
@@ -258,6 +276,7 @@ def main(
             dns_profile=dns_profile,
             formats=formats,
             interface=interface,
+            exportable=exportable,
             policy=policy,
             runtime=runtime,
             deployer=deployer or default_deployer(errors),

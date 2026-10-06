@@ -39,7 +39,7 @@ class Feature:
 
 
 FEATURES = (
-    Feature(CERT_RECEIVERS, "Certificate receivers"),
+    Feature(CERT_RECEIVERS, "External certificates"),
     Feature(
         NODE_BACKUPS,
         "Node backups",

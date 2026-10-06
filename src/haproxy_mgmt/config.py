@@ -511,6 +511,15 @@ class RegisteredCertificate:
     # certificate is the application's, not something it distributes.
     #
     interface: bool = False
+    #
+    # A certificate to be taken out and installed by hand (B255): something
+    # that is never connected to this manager - a BMC, a NAS, a printer. It
+    # names no cluster and no receiver, and its key may be exported from the
+    # interface, which no other entry's may. Decided when the entry is made
+    # and never changed: a certificate HAProxy serves must not become one
+    # whose key can be taken away.
+    #
+    exportable: bool = False
 
     def format_for(self, receiver_id: str) -> str:
         """The form this certificate is written in for that receiver."""
@@ -1211,7 +1220,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             raise ConfigError(f"invalid certificate ID in certificate registry: {certificate_id!r}")
         location = f"certificates.{certificate_id}"
         raw = _mapping(raw_value, location)
-        _only_keys(raw, {"source", "clusters", "receivers", "interface"}, location)
+        _only_keys(raw, {"source", "clusters", "receivers", "interface", "exportable"}, location)
 
         raw_source = _mapping(raw.get("source"), f"{location}.source")
         _only_keys(
@@ -1262,6 +1271,14 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             raise ConfigError(
                 f"{location} is the interface certificate and cannot name clusters or receivers"
             )
+        exportable = raw.get("exportable", False)
+        if type(exportable) is not bool:
+            raise ConfigError(f"{location}.exportable must be true or false")
+        if exportable and (clusters or named or interface):
+            raise ConfigError(
+                f"{location} is exportable and cannot name clusters or receivers or serve "
+                "the interface"
+            )
         if interface:
             taken = [e.certificate_id for e in certificates.values() if e.interface]
             if taken:
@@ -1277,6 +1294,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             receivers=named,
             formats=types.MappingProxyType(formats),
             interface=interface,
+            exportable=exportable,
         )
     return Registry(receivers=receivers, certificates=certificates)
 

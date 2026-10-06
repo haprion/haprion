@@ -41,7 +41,17 @@ from haproxy_mgmt.helper_protocol import (
 
 OPERATION = "cert_issue"
 PARAMETERS = frozenset(
-    {"domain", "method", "clusters", "receivers", "formats", "dns_profile", "renew", "interface"}
+    {
+        "domain",
+        "method",
+        "clusters",
+        "receivers",
+        "formats",
+        "dns_profile",
+        "renew",
+        "interface",
+        "exportable",
+    }
 )
 MAX_DOMAIN_BYTES = 255
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper"
@@ -59,6 +69,7 @@ def build_request(
     dns_profile: str | None = None,
     renew: bool = False,
     interface: bool = False,
+    exportable: bool = False,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract.
 
@@ -81,6 +92,8 @@ def build_request(
             parameters["formats"] = dict(formats)
         if interface:
             parameters["interface"] = True
+        if exportable:
+            parameters["exportable"] = True
     return json.dumps(
         {
             "schema_version": 1,
@@ -150,6 +163,7 @@ def main(
         receivers = cert_job.receivers(request.parameters)
         formats = cert_job.formats(request.parameters, receivers)
         interface = cert_job.interface(request.parameters)
+        exportable = cert_job.exportable(request.parameters)
         dns_profile_value = request.parameters.get("dns_profile")
         dns_profile = None
         if dns_profile_value is not None:
@@ -198,6 +212,7 @@ def main(
                 dns_profile=dns_profile,
                 formats=formats,
                 interface=interface,
+                exportable=exportable,
                 policy=policy,
                 runtime=runtime,
                 certbot=certbot,

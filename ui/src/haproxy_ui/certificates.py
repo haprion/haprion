@@ -25,6 +25,8 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_mgmt.certificates import CERTIFICATE_OPENING
+
 from haproxy_ui import certificate_receivers, metrics, sorting
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
@@ -199,6 +201,13 @@ class RegistryCertificateView:
     # page, not in this list: it has no targets and is published to nginx.
     #
     interface: bool = False
+    #
+    # To be taken out and installed by hand (B255): no targets, downloaded
+    # from its row - the chain from this reading, the key from the export
+    # helper. `fullchain_pem` is the public chain the listing carries.
+    #
+    exportable: bool = False
+    fullchain_pem: str | None = None
 
     @property
     def csr_pending(self) -> bool:
@@ -913,6 +922,12 @@ def _registry_state(
 
     clusters = tuple(target.name for target in targets if target.kind == "cluster")
     receivers = tuple(target for target in targets if target.kind == "receiver")
+    if not clusters and not receivers and entry.get("exportable") is True:
+        #
+        # External (B255): nowhere to publish by design. It is downloaded
+        # from the row and installed by hand.
+        #
+        return "External", "Downloaded and installed by hand", "healthy"
     if not clusters and not receivers:
         return "No targets", "Registered, but published nowhere", "warning"
 
@@ -1106,7 +1121,23 @@ def _registry_certificate(
         csr_pem=csr_pem,
         ndes_profile=_text(source.get("ndes_profile"), ""),
         interface=entry.get("interface") is True,
+        exportable=entry.get("exportable") is True,
+        fullchain_pem=_chain(entry.get("fullchain_pem"))
+        if entry.get("exportable") is True
+        else None,
     )
+
+
+def _chain(value: Any) -> str | None:
+    """The listing's public chain, held to what the helper writes: certificates and nothing else."""
+
+    if (
+        isinstance(value, str)
+        and value.startswith(CERTIFICATE_OPENING + "\n")
+        and "PRIVATE KEY" not in value
+    ):
+        return value
+    return None
 
 
 def _served_view(value: Any, *, now: datetime) -> ServedView | None:

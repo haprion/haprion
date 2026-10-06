@@ -222,3 +222,9 @@ def interface(parameters: Mapping[str, JsonValue]) -> bool:
     if not isinstance(value, bool):
         raise HelperProtocolError("parameters.interface must be true or false", exit_code=65)
     return value
+
+
+def exportable(parameters: Mapping[str, JsonValue]) -> bool:
+    """Whether the request is for an exportable certificate (B255); absent is false."""
+
+    return flag(parameters, "exportable")

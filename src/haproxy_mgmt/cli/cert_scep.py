@@ -29,6 +29,7 @@ from haproxy_mgmt.envelope import Message, envelope, failure, new_request_id
 from haproxy_mgmt.helper_protocol import HelperProtocolError
 from haproxy_mgmt.ndes_state import (
     request_formats,
+    request_is_exportable,
     request_is_interface,
     request_record,
     request_targets,
@@ -62,6 +63,7 @@ def enroll(
     request_id: str,
     formats: Mapping[str, str] | None = None,
     interface: bool = False,
+    exportable: bool = False,
     policy_path: Path = DEFAULT_POLICY_PATH,
     require_secure: bool = True,
     deployer: Deployer,
@@ -110,6 +112,18 @@ def enroll(
             formats = request_formats(policy.ndes.state_root, certificate_id)
         if resume:
             interface = interface or request_is_interface(policy.ndes.state_root, certificate_id)
+            exportable = exportable or request_is_exportable(policy.ndes.state_root, certificate_id)
+        if exportable and (clusters or receivers or interface):
+            raise ScepRefusal(
+                "bad_input",
+                "an exportable certificate has no targets and does not serve the interface; "
+                "name no cluster or receiver",
+                65,
+            )
+        if exportable and any(name.startswith("*.") for name in domains):
+            raise ScepRefusal(
+                "bad_input", "an exportable certificate names one host; no wildcard", 65
+            )
         if interface and (clusters or receivers):
             raise ScepRefusal(
                 "bad_input",
@@ -161,6 +175,7 @@ def enroll(
                     receivers=tuple(receivers),
                     formats=formats,
                     interface=interface,
+                    exportable=exportable,
                 )
                 doc = envelope(
                     operation=OPERATION,
@@ -213,6 +228,7 @@ def enroll(
                 formats=formats,
                 interface=interface,
                 installer=installer,
+                exportable=exportable,
             )
             doc, exit_code = result_envelope(imported, request_id=request_id)
             doc["operation"] = OPERATION
@@ -320,6 +336,12 @@ def main(
         help="this manager's own interface certificate: no targets, installed with "
         "haproxy-ui-tls; takes the mark from the one that had it",
     )
+    parser.add_argument(
+        "--exportable",
+        action="store_true",
+        help="for a device never connected to this manager (B255): one name, no targets, "
+        "a key that may be exported from the interface",
+    )
     parser.add_argument("--json", action="store_true")
     try:
         args = parser.parse_args(sys.argv[1:] if argv is None else argv)
@@ -374,6 +396,7 @@ def main(
                 request_id=request_id,
                 formats=formats,
                 interface=args.interface,
+                exportable=args.exportable,
                 policy_path=policy_path,
                 require_secure=require_secure,
                 deployer=deployer or default_deployer(errors),

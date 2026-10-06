@@ -135,6 +135,7 @@ class ImportResult:
 
     publish: Report
     interface: bool = False
+    exportable: bool = False
     #
     # D5: the entry that served the interface before this one, and what
     # became of it. Both fields are absent from the answer for every other
@@ -146,6 +147,8 @@ class ImportResult:
         extra: dict[str, Any] = {}
         if self.interface:
             extra["interface"] = True
+        if self.exportable:
+            extra["exportable"] = True
         if self.retired is not None:
             extra["retired"] = dict(self.retired)
         return {
@@ -567,6 +570,7 @@ def register(
     formats: Mapping[str, str] | None = None,
     lock_path: Path = DEFAULT_LOCK_PATH,
     interface: bool = False,
+    exportable: bool = False,
 ) -> str | None:
     """The entry, through the one writer the registry has, under the certificate lock.
 
@@ -598,6 +602,7 @@ def register(
                 ndes_profile=ndes_profile,
                 formats=formats,
                 interface=interface,
+                exportable=exportable,
             )
     except cert_registry.RegistryError as exc:
         raise ImportError_(
@@ -619,6 +624,7 @@ def _register_entry(
     ndes_profile: str | None,
     formats: Mapping[str, str] | None,
     interface: bool = False,
+    exportable: bool = False,
 ) -> str | None:
     document = cert_registry.read_document(path)
     certificates = dict(document.get("certificates") or {})
@@ -645,6 +651,11 @@ def _register_entry(
         # skip nginx and the listing show it as an ordinary certificate.
         #
         interface = interface or existing.get("interface") is True
+        #
+        # So is an exportable one (B255): the mark is decided once, when the
+        # entry is made, and a renewal arrives here as an import.
+        #
+        exportable = exportable or existing.get("exportable") is True
     all_clusters = kept_clusters + [c for c in clusters if c not in kept_clusters]
     all_receivers = list(kept_receivers) + [r for r in receivers if r not in kept_receivers]
     #
@@ -656,6 +667,8 @@ def _register_entry(
         entry["clusters"] = all_clusters
     if all_receivers:
         entry["receivers"] = cert_registry.receiver_elements(all_receivers, all_formats)
+    if exportable:
+        entry["exportable"] = True
     certificates[certificate_id] = entry
     displaced = cert_registry.claim_interface(certificates, certificate_id) if interface else None
     cert_registry.write(
@@ -686,6 +699,7 @@ def import_certificate(
     formats: Mapping[str, str] | None = None,
     interface: bool = False,
     installer: Installer | None = None,
+    exportable: bool = False,
 ) -> ImportResult:
     """Steps 3-6: check, write, register, publish."""
 
@@ -759,6 +773,26 @@ def import_certificate(
             "import it under an ID no other certificate uses",
         )
     #
+    # Exportable (B255): no targets, now or before, and one host - its key
+    # leaves the manager, and a wildcard's answers for every name under it.
+    # An entry that already carries the mark keeps it; one that does not
+    # never gains it here.
+    #
+    exportable = exportable or bool(existing is not None and existing.exportable)
+    if exportable and (
+        clusters
+        or receivers
+        or interface
+        or (existing is not None and (existing.clusters or existing.receivers))
+    ):
+        raise ImportError_(
+            "bad_input",
+            "an exportable certificate has no targets and does not serve the interface; "
+            "name no cluster or receiver",
+        )
+    if exportable and any(name.startswith("*.") for name in (facts.common_name or "", *facts.sans)):
+        raise ImportError_("bad_input", "an exportable certificate names one host; no wildcard")
+    #
     # A target that has gone since the request was made is simply not one
     # any more; the request may have waited months for its signature.
     #
@@ -781,6 +815,7 @@ def import_certificate(
         formats=formats,
         lock_path=lock_path,
         interface=interface,
+        exportable=exportable,
     )
     try:
         refreshed = load_runtime_config(policy, require_secure=require_secure)
@@ -815,6 +850,7 @@ def import_certificate(
         replaced,
         report,
         interface=marked,
+        exportable=exportable,
         retired=retired,
     )
 

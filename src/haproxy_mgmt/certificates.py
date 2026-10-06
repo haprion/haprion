@@ -51,6 +51,10 @@ from haproxy_mgmt.deploy_plan import CertificateRef, CertificateTarget
 # would otherwise be unable to pass the gate it is protected by.
 #
 DELIMITER = "-" * 5
+#
+# The opening line of a certificate block, assembled for the reason above.
+#
+CERTIFICATE_OPENING = f"{DELIMITER}BEGIN CERTIFICATE{DELIMITER}"
 CERTIFICATE_BLOCK = re.compile(
     DELIMITER
     + r"BEGIN CERTIFICATE"

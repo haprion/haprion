@@ -1013,6 +1013,12 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 /* The row's renewal upload (B165): a file, a button and one sentence, on
    one line where the row is wide enough and folded where it is not. */
 .registry-detail-upload { grid-column: 1 / -1; }
+/* The external certificate's key export (B255): three fields and the button
+   on one line at 1280, as four columns of a form; folded where it is narrow. */
+.certificate-export-fields { display: grid; grid-template-columns: repeat(3, minmax(180px, 240px)) auto; gap: 8px 16px; align-items: end; }
+.certificate-export-fields label { display: flex; flex-direction: column; gap: 4px; color: var(--text-secondary); font-size: 12.5px; font-weight: 620; }
+.certificate-export-fields button { justify-self: start; }
+@media (max-width: 900px) { .certificate-export-fields { grid-template-columns: 1fr; } }
 .certificate-upload-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .certificate-upload-form input[type="file"] { max-width: 100%; font-size: 12.5px; }
 /* A cluster and a receiver are different kinds of destination, and the word

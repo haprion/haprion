@@ -15,7 +15,7 @@
   whose purpose is to be filled in should not lose what was filled in.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>{% if form.interface %}Interface certificate{% else %}New certificate{% endif %}</h1></div>
+  <div class="heading-title"><h1>{% if form.interface %}Interface certificate{% elif form.exportable %}External certificate{% else %}New certificate{% endif %}</h1></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
 </section>
 
@@ -31,12 +31,13 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
   {% if form.interface %}<input type="hidden" name="interface" value="1">{% endif %}
+  {% if form.exportable %}<input type="hidden" name="exportable" value="1">{% endif %}
 
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
-    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of the chosen CA.<br>DNS-01: see the provider plugin's documentation. HTTP-01: the domain must already point here.<br>NDES: the profile holds the CA's challenge. CSR: any CA signs it; upload the result on {% if form.interface %}Settings{% else %}the row{% endif %}.</span></p>
+    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of the chosen CA.<br>DNS-01: see the provider plugin's documentation. HTTP-01: the domain must already point here.<br>NDES: the profile holds the CA's challenge.{% if not form.exportable %} CSR: any CA signs it; upload the result on {% if form.interface %}Settings{% else %}the row{% endif %}.{% endif %}</span></p>
     <div class="form-grid">
-      <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus>{% if form.interface %}<small>Must name <code>{{ choices.manager }}</code>, the name this interface is served on.</small>{% else %}<small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does; over NDES the base name is the CN and the wildcard a SAN.</small>{% endif %}</label>
+      <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="{% if form.exportable %}bmc01.example.com{% else %}app.example.com or *.example.com{% endif %}" autocomplete="off" spellcheck="false" required autofocus>{% if form.interface %}<small>Must name <code>{{ choices.manager }}</code>, the name this interface is served on.</small>{% elif form.exportable %}<small>The one host it is for, such as <code>bmc01.example.com</code>. No wildcard.</small>{% else %}<small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does; over NDES the base name is the CN and the wildcard a SAN.</small>{% endif %}</label>
       {#
         Radios, not a select: the choice has three answers and one of them
         rules the wildcard out, and a reader should see them at once to see
@@ -60,7 +61,7 @@
             made here and never leaves; the request is downloaded from the
             row, signed elsewhere, and the certificate uploaded back.
           #}
-          <label class="check"><input type="radio" name="method" value="csr"{% if form.method == 'csr' %} checked{% endif %}> <span><span class="method-name">CSR</span> <span class="optional">— any CA; key made here, signed elsewhere</span></span></label>
+          {% if not form.exportable %}<label class="check"><input type="radio" name="method" value="csr"{% if form.method == 'csr' %} checked{% endif %}> <span><span class="method-name">CSR</span> <span class="optional">— any CA; key made here, signed elsewhere</span></span></label>{% endif %}
         </div>
       </div>
       {#
@@ -97,7 +98,18 @@
     The interface's own certificate (B188) has no targets: it is installed
     as the pair nginx serves this page with. The submit row alone.
   #}
-  {% if form.interface %}
+  {#
+    An external certificate (B255) has no targets either: it is downloaded
+    with its key from its row and installed by hand.
+  #}
+  {% if form.exportable %}
+  <section class="cluster-card">
+    <div class="editor-actions editor-submit">
+      <p class="table-note">One name and an RSA key. Download it with its key from its row once issued.</p>
+      <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Request the certificate</button></div>
+    </div>
+  </section>
+  {% elif form.interface %}
   <section class="cluster-card">
     <div class="editor-actions editor-submit">
       <p class="table-note">Installed on this manager once issued. A CSR is ready in seconds; download it from Settings.</p>
@@ -106,7 +118,7 @@
   </section>
   {% else %}
   <section class="cluster-card">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published. At least one.</p></div></div></header>
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published. At least one.{% if feature_on('cert_receivers') %} For a device that is installed by hand, make an <a href="/certificates/new?for=external">external certificate</a>.{% endif %}</p></div></div></header>
     <div class="form-grid certificate-target-stack">
       <div class="field">
         <div class="receiver-heading"><span class="field-title">{% if feature_on('cert_receivers') %}Clusters and receivers{% else %}Clusters{% endif %}</span>{% if choices.receivers %}<span class="optional" data-receiver-count aria-live="polite">{{ form.receivers | length }} selected</span>{% endif %}</div>

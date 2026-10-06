@@ -139,6 +139,28 @@ else
     log "  skipped: ENVIRONMENT is ${ENVIRONMENT}, and names are looked up on production only"
 fi
 
+step "The web service's way to an exportable certificate's key"
+#
+# A certificate made exportable (B255) is downloaded with its key from the
+# certificates page. The store is root's and the web cannot read it, so the web
+# asks over a socket, group this account, to a root helper that gives out the
+# key of an exportable entry and of no other, and writes nothing.
+#
+if [[ "${ENVIRONMENT:-prod}" == "prod" ]]; then
+    install_file "/etc/systemd/system/haproxy-cert-export-helper@.service" root:root 644 \
+        "$(cat 'examples/haproxy-cert-export-helper@.service.example')"
+    install_file "/etc/systemd/system/haproxy-cert-export-helper.socket" root:root 644 \
+        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haproxy-cert-export-helper.socket.example)"
+    systemctl daemon-reload
+    systemctl enable --quiet haproxy-cert-export-helper.socket
+    systemctl restart haproxy-cert-export-helper.socket
+    systemctl is-active --quiet haproxy-cert-export-helper.socket \
+        || die "haproxy-cert-export-helper.socket did not start"
+    log "  listening on /run/haproxy-mgmt/cert-export.sock  (group ${WEB_USER})"
+else
+    log "  skipped: ENVIRONMENT is ${ENVIRONMENT}, and certificates are exported on production only"
+fi
+
 step "The worker's way to the receiver helper"
 #
 # Not a sudoers rule either, for a different reason (B163). The worker can

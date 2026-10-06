@@ -31,7 +31,17 @@ from haproxy_mgmt.dns_profiles import ProfileError, check_profile_id
 from haproxy_mgmt.helper_protocol import HelperProtocolError, write_document
 
 PARAMETERS = frozenset(
-    {"id", "profile", "domains", "clusters", "receivers", "formats", "resume", "interface"}
+    {
+        "id",
+        "profile",
+        "domains",
+        "clusters",
+        "receivers",
+        "formats",
+        "resume",
+        "interface",
+        "exportable",
+    }
 )
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper"
 SUDO = "/usr/bin/sudo"
@@ -50,6 +60,7 @@ def build_request(
     resume: bool = False,
     formats: Mapping[str, str] | None = None,
     interface: bool = False,
+    exportable: bool = False,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
@@ -65,6 +76,8 @@ def build_request(
         parameters["formats"] = dict(formats)
     if interface:
         parameters["interface"] = True
+    if exportable:
+        parameters["exportable"] = True
     return json.dumps(
         {
             "schema_version": 1,
@@ -135,6 +148,7 @@ def main(
         receivers = cert_job.receivers(request.parameters)
         formats = cert_job.formats(request.parameters, receivers)
         interface = cert_job.interface(request.parameters)
+        exportable = cert_job.exportable(request.parameters)
     except (HelperProtocolError, ProfileError) as exc:
         return refuse("bad_input", str(exc), 65)
 
@@ -149,6 +163,7 @@ def main(
             request_id=request.request_id,
             formats=formats,
             interface=interface,
+            exportable=exportable,
             policy_path=policy_path,
             require_secure=require_secure,
             deployer=deployer if deployer is not None else default_deployer(errors),

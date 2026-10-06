@@ -1,0 +1,36 @@
+# Where the interface asks for an exportable certificate's key (B255).
+#
+# A certificate made exportable - one host, no targets - is installed by hand
+# somewhere this manager never reaches: a BMC, a NAS, a printer. Its key is in
+# the root-owned certificate store, which the web cannot read and is meant not
+# to; the web asks through this socket, and haproxy-cert-export-helper gives
+# out the key of an exportable entry and of no other.
+#
+# Who may connect
+# ---------------
+# Root-owned, group WEB_USER, mode 0660: the web account and nobody else. The
+# helper is root, because the store is root's - so this socket is the boundary,
+# and the registry's `exportable` mark is what it lets through.
+#
+# Production only, as the other web sockets.
+#
+# Installed by install/platform/07-platform-services as
+# /etc/systemd/system/haproxy-cert-export-helper.socket.
+
+[Unit]
+Description=Socket the HAProxy Manager interface exports a certificate's key through
+Documentation=file:///opt/haproxy-mgmt/current
+
+[Socket]
+ListenStream=/run/haproxy-mgmt/cert-export.sock
+SocketUser=root
+SocketGroup=WEB_USER
+SocketMode=0660
+# One connection is one request, in its own short-lived instance.
+Accept=yes
+# A person downloads one file at a time; a burst is not a use of this.
+MaxConnections=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

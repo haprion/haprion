@@ -2,13 +2,15 @@
 
 The form and the queue are held to the engine's limits - one host, no target -
 so a refusal is a sentence on the page rather than a failed job. The routes are
-tested as HTTP because they are the control: the download is the public chain
-and nothing else, and the export is an admin, the name typed again, and the
-export helper - with an audit row for every key given out.
+tested as HTTP because they are the control: both zips are an admin's, the
+public one is the chain and nothing else, and the one with the key comes from
+the export helper - with an audit row for every key given out.
 """
 
 from __future__ import annotations
 
+import io
+import zipfile
 from typing import Any
 from unittest import mock
 
@@ -68,7 +70,7 @@ class TheFormsLimits(CertificateFormRouteTestCase):
     def test_the_new_certificate_form_leads_to_it(self) -> None:
         page = self.writing_client().get("/certificates/new").text
 
-        self.assertIn('href="/certificates/new?for=external"', page)
+        self.assertIn('data-kind-href="/certificates/new?for=external"', page)
         self.assertIn('aria-label="Kind of certificate"', page)
 
     def test_changing_kind_keeps_what_was_filled_in(self) -> None:
@@ -124,46 +126,100 @@ class ExternalRowTestCase(CertificateFormRouteTestCase):
         self.addCleanup(patch.stop)
 
 
+def members(answer: Any) -> dict[str, tuple[bytes, int]]:
+    """A served zip's files, each with its permission bits."""
+
+    with zipfile.ZipFile(io.BytesIO(answer.content)) as archive:
+        return {
+            item.filename: (archive.read(item), (item.external_attr >> 16) & 0o777)
+            for item in archive.infolist()
+        }
+
+
+def post(client: Any, path: str) -> Any:
+    token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+    return client.post(path, data={auth.CSRF_FIELD: token}, follow_redirects=False)
+
+
 class TheDownload(ExternalRowTestCase):
-    def test_each_part_is_its_own_file(self) -> None:
-        client = self.writing_client(role="reader")
-        for part, body, name in (
-            ("fullchain", LEAF + ISSUER, f"{DEVICE}.fullchain.pem"),
-            ("certificate", LEAF, f"{DEVICE}.crt.pem"),
-            ("chain", ISSUER, f"{DEVICE}.chain.pem"),
-        ):
-            with self.subTest(part=part):
-                answer = client.get(f"/certificates/{DEVICE}/download?part={part}")
-                self.assertEqual(answer.status_code, 200)
-                self.assertEqual(answer.text, body)
-                self.assertIn(name, answer.headers["content-disposition"])
+    def test_the_public_zip_holds_each_part_as_its_own_file(self) -> None:
+        answer = post(self.writing_client(), f"/certificates/{DEVICE}/download")
+
+        self.assertEqual(answer.status_code, 200)
+        self.assertEqual(answer.headers["content-type"], "application/zip")
+        self.assertIn(f'filename="{DEVICE}.zip"', answer.headers["content-disposition"])
+        self.assertEqual(
+            members(answer),
+            {
+                f"{DEVICE}.fullchain.pem": ((LEAF + ISSUER).encode(), 0o644),
+                f"{DEVICE}.crt.pem": (LEAF.encode(), 0o644),
+                f"{DEVICE}.chain.pem": (ISSUER.encode(), 0o644),
+            },
+        )
+
+    def test_a_reader_is_refused(self) -> None:
+        answer = post(self.writing_client(role="reader"), f"/certificates/{DEVICE}/download")
+
+        self.assertEqual(answer.status_code, 403)
+
+    def test_a_get_or_a_missing_token_gives_nothing(self) -> None:
+        client = self.writing_client()
+        self.assertEqual(client.get(f"/certificates/{DEVICE}/download").status_code, 405)
+        answer = client.post(f"/certificates/{DEVICE}/download", follow_redirects=False)
+        self.assertEqual(answer.status_code, 403)
 
     def test_a_certificate_without_the_mark_has_no_download(self) -> None:
-        answer = self.writing_client().get("/certificates/example.com/download")
+        answer = post(self.writing_client(), "/certificates/example.com/download")
 
-        self.assertEqual(answer.status_code, 404)
+        self.assertIn("not an external certificate", answer.text)
+        self.assertNotEqual(answer.headers["content-type"], "application/zip")
+
+
+FINGERPRINT = "c" * 64
+
+
+def helper_file(certificate_id: str, form: str, password: str | None, **_: Any) -> Export:
+    return Export(
+        certificate_id, form, "ignored", "ignored", f"{form}:{password}".encode(), FINGERPRINT
+    )
 
 
 class TheExport(ExternalRowTestCase):
-    def export(self, client: Any, **fields: Any) -> Any:
-        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
-        data = {"format": "pfx", "password": BUNDLE_PASSWORD, "confirm": DEVICE, **fields}
-        data[auth.CSRF_FIELD] = token
-        return client.post(f"/certificates/{DEVICE}/export", data=data, follow_redirects=False)
+    def export(self, client: Any) -> Any:
+        return post(client, f"/certificates/{DEVICE}/export")
 
-    def test_an_admin_who_types_the_name_gets_the_file_and_the_audit_says_so(self) -> None:
-        exported = Export(DEVICE, "pfx", "ignored", "ignored", b"PFXBYTES", "f" * 64)
-        with mock.patch("haproxy_mgmt.cert_export_socket.ask", return_value=exported) as helper:
+    def test_an_admin_gets_every_form_in_one_zip_and_the_audit_says_so(self) -> None:
+        with mock.patch("haproxy_mgmt.cert_export_socket.ask", side_effect=helper_file) as helper:
             answer = self.export(self.writing_client())
 
         self.assertEqual(answer.status_code, 200)
-        self.assertEqual(answer.content, b"PFXBYTES")
-        self.assertEqual(answer.headers["content-type"], "application/x-pkcs12")
-        self.assertIn(f'filename="{DEVICE}.pfx"', answer.headers["content-disposition"])
+        self.assertEqual(answer.headers["content-type"], "application/zip")
+        self.assertIn(f'filename="{DEVICE}.with-key.zip"', answer.headers["content-disposition"])
         self.assertEqual(answer.headers["cache-control"], "no-store")
-        helper.assert_called_once()
-        self.assertEqual(helper.call_args.kwargs["requested_by"], self.account.username)
+        files = members(answer)
+        password = files[f"{DEVICE}.password"][0].decode().strip()
+        self.assertGreaterEqual(len(password), 20)
+        self.assertEqual(files[f"{DEVICE}.key.pem"], (b"pem-key:None", 0o600))
+        self.assertEqual(files[f"{DEVICE}.pfx"], (f"pfx:{password}".encode(), 0o600))
+        self.assertEqual(
+            files[f"{DEVICE}.compatible.pfx"], (f"pfx-compatible:{password}".encode(), 0o600)
+        )
+        self.assertEqual(files[f"{DEVICE}.password"][1], 0o600)
+        self.assertEqual(files[f"{DEVICE}.chain.pem"], (ISSUER.encode(), 0o644))
+        self.assertEqual(len(files), 7)
+        self.assertEqual(helper.call_count, 3)
+        self.assertEqual(
+            {call.kwargs["requested_by"] for call in helper.call_args_list},
+            {self.account.username},
+        )
         self.assertIn("certificate_export", self.audit)
+
+    def test_each_export_draws_its_own_password(self) -> None:
+        drawn = []
+        for _ in range(2):
+            with mock.patch("haproxy_mgmt.cert_export_socket.ask", side_effect=helper_file):
+                drawn.append(members(self.export(self.writing_client()))[f"{DEVICE}.password"][0])
+        self.assertNotEqual(drawn[0], drawn[1])
 
     def test_a_reader_is_refused(self) -> None:
         with mock.patch("haproxy_mgmt.cert_export_socket.ask") as helper:
@@ -172,22 +228,9 @@ class TheExport(ExternalRowTestCase):
         self.assertEqual(answer.status_code, 403)
         helper.assert_not_called()
 
-    def test_the_name_not_typed_exports_nothing(self) -> None:
-        with mock.patch("haproxy_mgmt.cert_export_socket.ask") as helper:
-            answer = self.export(self.writing_client(), confirm="bmc02.example.com")
-
-        self.assertIn("Nothing was exported", answer.text)
-        helper.assert_not_called()
-
     def test_a_certificate_without_the_mark_is_never_asked_for(self) -> None:
-        token_client = self.writing_client()
-        token = auth.csrf_token(token_client.cookies[auth.SESSION_COOKIE])
         with mock.patch("haproxy_mgmt.cert_export_socket.ask") as helper:
-            answer = token_client.post(
-                "/certificates/example.com/export",
-                data={"format": "pem-key", "confirm": "example.com", auth.CSRF_FIELD: token},
-                follow_redirects=False,
-            )
+            answer = post(self.writing_client(), "/certificates/example.com/export")
 
         self.assertIn("not an external certificate", answer.text)
         helper.assert_not_called()
@@ -200,6 +243,17 @@ class TheExport(ExternalRowTestCase):
             answer = self.export(self.writing_client())
 
         self.assertIn("The service is not running here. Nothing was exported.", answer.text)
+        self.assertNotIn("certificate_export", self.audit)
+
+    def test_a_certificate_renewed_since_the_reading_is_not_served(self) -> None:
+        def renewed(certificate_id: str, form: str, password: str | None, **_: Any) -> Export:
+            return Export(certificate_id, form, "ignored", "ignored", b"NEW", "d" * 64)
+
+        with mock.patch("haproxy_mgmt.cert_export_socket.ask", side_effect=renewed):
+            answer = self.export(self.writing_client())
+
+        self.assertIn("changed since the page was read", answer.text)
+        self.assertNotEqual(answer.headers["content-type"], "application/zip")
         self.assertNotIn("certificate_export", self.audit)
 
     def test_the_bar_offers_the_export_and_the_row_nothing_of_its_own(self) -> None:
@@ -223,12 +277,14 @@ class TheExportPage(ExternalRowTestCase):
             follow_redirects=False,
         )
 
-    def test_one_external_row_gets_its_files_and_the_key_form(self) -> None:
+    def test_one_external_row_gets_its_two_zips(self) -> None:
         page = self.review(self.writing_client(), DEVICE).text
 
         self.assertIn(f"Export {DEVICE}", page)
-        self.assertIn(f"/certificates/{DEVICE}/download?part=chain", page)
+        self.assertIn(f'action="/certificates/{DEVICE}/download"', page)
         self.assertIn(f'action="/certificates/{DEVICE}/export"', page)
+        self.assertNotIn('name="confirm"', page)
+        self.assertNotIn('name="password"', page)
 
     def test_anything_else_is_a_sentence_and_no_form(self) -> None:
         for chosen, sentence in (

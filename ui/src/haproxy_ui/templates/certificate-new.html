@@ -32,10 +32,10 @@
   downloaded and installed by hand. Under Targets, because that is the
   question it answers - where the certificate goes.
 #}
-{% macro kind_switch() %}{% if feature_on('cert_receivers') %}<nav class="certificate-kind" aria-label="Kind of certificate">
-  <a href="/certificates/new" data-carry-form{% if not form.exportable %} class="is-current" aria-current="true"{% endif %}><span class="kind-dot" aria-hidden="true"></span>Clusters and receivers</a>
-  <a href="/certificates/new?for=external" data-carry-form{% if form.exportable %} class="is-current" aria-current="true"{% endif %}><span class="kind-dot" aria-hidden="true"></span>External, installed by hand</a>
-</nav>{% endif %}{% endmacro %}
+{% macro kind_switch() %}{% if feature_on('cert_receivers') %}<div class="method-choices certificate-kind" role="radiogroup" aria-label="Kind of certificate">
+  <label class="check"><input type="radio" name="certificate_kind" value="published" data-kind-href="/certificates/new"{% if not form.exportable %} checked{% endif %}> <span><span class="method-name">Clusters and receivers</span> <span class="optional">— published and renewed from here</span></span></label>
+  <label class="check"><input type="radio" name="certificate_kind" value="external" data-kind-href="/certificates/new?for=external"{% if form.exportable %} checked{% endif %}> <span><span class="method-name">External</span> <span class="optional">— exported with its key, installed by hand</span></span></label>
+</div>{% endif %}{% endmacro %}
 
 <form method="post" action="/certificates/new" class="preview-form certificate-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -116,7 +116,7 @@
   {% if form.exportable %}
   <section class="cluster-card">
     <header class="cluster-header certificate-targets-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published.</p></div></div>{{ kind_switch() }}</header>
-    <p class="table-note certificate-kind-note">Published nowhere: exported with its key from the registry and installed by hand. One name and an RSA key.</p>
+    <p class="table-note certificate-kind-note">One name and an RSA key. Downloaded with its key from <em>Export…</em> in the registry.</p>
     <div class="editor-actions editor-submit">
       <p class="table-note"></p>
       <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Request the certificate</button></div>

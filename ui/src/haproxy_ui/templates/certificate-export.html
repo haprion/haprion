@@ -2,49 +2,41 @@
 {% block title %}{% if row %}Export {{ row.identifier }}{% else %}Export certificate{% endif %} — HAProxy Manager{% endblock %}
 {% block content %}
 {#
-  One external certificate taken out (B255): the public files, and the key
-  behind the name typed again. The export posts to its own route, which an
-  admin alone passes and the audit trail records.
+  One external certificate taken out (B255), as two zips (2026-10-07): the
+  public files, and the same with the key. One click each; the click is the
+  confirmation, and the key's route writes the audit row.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>{% if row %}Export {{ row.identifier }}{% else %}Export certificate{% endif %}</h1></div>
+  <div class="heading-title"><h1>{% if row %}Export {{ row.identifier }}{% else %}Export certificate{% endif %}</h1>{% if row %}<p class="page-lede">{{ row.source_label }} · {% if row.sans %}{{ row.sans | join(', ') }}{% else %}{{ row.identifier }}{% endif %} · expires {{ row.expires }}</p>{% endif %}</div>
 </section>
 
 {% if problem %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
 {% endif %}
 
-{% if row %}
-<div class="refusal-card deletion-card">
-  <div class="table-scroll"><table class="node-table deletion-table">
-    <thead><tr><th>Certificate</th><th>Source</th><th>Names</th><th>Expires</th></tr></thead>
-    <tbody><tr class="deletion-row">
-      <td data-label="Certificate"><strong>{{ row.identifier }}</strong></td>
-      <td data-label="Source">{{ row.source_label }}</td>
-      <td data-label="Names">{% if row.sans %}{{ row.sans | join(', ') }}{% else %}—{% endif %}</td>
-      <td data-label="Expires">{{ row.expires }}</td>
-    </tr></tbody>
+{% if row and row.fullchain_pem %}
+<section class="cluster-card certificate-export">
+  <div class="table-scroll"><table class="node-table certificate-export-table">
+    <thead><tr><th>File</th><th>Contains</th><th><span class="visually-hidden">Download</span></th></tr></thead>
+    <tbody>
+      <tr>
+        <td data-label="File"><strong>{{ row.identifier }}.zip</strong></td>
+        <td data-label="Contains">Certificate, chain, and both together, as PEM</td>
+        <td><form method="post" action="/certificates/{{ row.identifier }}/download"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button">Download</button></form></td>
+      </tr>
+      <tr>
+        <td data-label="File"><strong>{{ row.identifier }}.with-key.zip</strong></td>
+        <td data-label="Contains">The same, plus the private key as PEM, PKCS#12 (modern and compatible) and its password</td>
+        <td><form method="post" action="/certificates/{{ row.identifier }}/export"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button deploy-button">Download</button></form></td>
+      </tr>
+    </tbody>
   </table></div>
-  {% if row.fullchain_pem %}
-  <div class="certificate-export-block"><strong>Certificate</strong>
-    <span class="certificate-export-files"><a class="secondary-button" href="/certificates/{{ row.identifier }}/download?part=fullchain">Certificate and chain</a><a class="secondary-button" href="/certificates/{{ row.identifier }}/download?part=certificate">Certificate</a><a class="secondary-button" href="/certificates/{{ row.identifier }}/download?part=chain">Chain</a></span>
-  </div>
-  <form method="post" action="/certificates/{{ row.identifier }}/export" class="preview-form certificate-form certificate-export">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="certificate-export-block"><strong>Key</strong></div>
-    <div class="form-grid certificate-export-grid">
-      <label>Format<select name="format"><option value="pem-key">Key, PEM</option><option value="pfx">PKCS#12, modern</option><option value="pfx-compatible">PKCS#12, compatible</option></select></label>
-      <label>Password (PKCS#12)<input type="password" name="password" minlength="8" maxlength="128" autocomplete="new-password"></label>
-      <label>Type the name to confirm<input name="confirm" maxlength="255" placeholder="{{ row.identifier }}" autocomplete="off" spellcheck="false" required></label>
-    </div>
-    <div class="editor-actions editor-submit">
-      <div class="form-buttons"><a class="secondary-button" href="{{ back }}">Cancel</a><button type="submit" class="secondary-button deploy-button">Export key</button></div>
-    </div>
-  </form>
-  {% else %}
+  <div class="editor-actions editor-submit"><p class="table-note"></p><div class="form-buttons"><a class="secondary-button" href="{{ back }}">Back</a></div></div>
+</section>
+{% elif row %}
+<div class="refusal-card">
   <p class="preview-notice"><strong>Not readable yet.</strong></p>
   <p class="refusal-hint"><a class="secondary-button" href="{{ back }}">Back</a></p>
-  {% endif %}
 </div>
 {% else %}
 <div class="refusal-card">

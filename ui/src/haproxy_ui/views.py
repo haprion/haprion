@@ -21,9 +21,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import io
 import ipaddress
 import json
 import logging
+import secrets
+import zipfile
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
@@ -49,7 +52,7 @@ from haproxy_mgmt import (
 )
 from haproxy_mgmt import cluster_settings as cluster_settings_module
 from haproxy_mgmt.cert_export import FORMATS as EXPORT_FORMATS
-from haproxy_mgmt.cert_export import ExportError
+from haproxy_mgmt.cert_export import Export, ExportError
 from haproxy_mgmt.certificates import CERTIFICATE_OPENING
 from haproxy_mgmt.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
@@ -2667,39 +2670,24 @@ def build_router(config: Config) -> APIRouter:
         )
 
     #
-    # An external certificate's public half (B255): the chain as one file, the
-    # leaf alone, or the issuers alone - the three a device asks for. Drawn
-    # from the cached reading, as the CSR is; anyone signed in may have it,
-    # because every client of the device is shown the same bytes.
+    # An external certificate's public half (B255, as one zip 2026-10-07): the
+    # chain as one file, the leaf alone and the issuers alone - the three a
+    # device asks for. Drawn from the cached reading, as the CSR is. An admin
+    # alone, like the key: a reader reads, and taking a certificate out to
+    # install it somewhere is not reading (2026-10-07).
     #
-    @router.get("/certificates/{certificate_id}/download")
-    def certificate_download(request: Request, certificate_id: str) -> Response:
-        session = current_session(request)
-        if session is None:
-            return RedirectResponse("/login", status_code=303)
-        if not features.is_on(features.CERT_RECEIVERS) or not CERTIFICATE_ID.fullmatch(
-            certificate_id
-        ):
-            return PlainTextResponse("Not found", status_code=404)
-        row = _registry_views(request, config).get(certificate_id)
-        if row is None or not row.exportable or row.fullchain_pem is None:
-            return PlainTextResponse("No such external certificate", status_code=404)
-        blocks = [
-            CERTIFICATE_OPENING + block
-            for block in row.fullchain_pem.split(CERTIFICATE_OPENING)[1:]
-        ]
-        part = request.query_params.get("part", "fullchain")
-        chosen = {
-            "fullchain": ("".join(blocks), f"{certificate_id}.fullchain.pem"),
-            "certificate": ("".join(blocks[:1]), f"{certificate_id}.crt.pem"),
-            "chain": ("".join(blocks[1:]), f"{certificate_id}.chain.pem"),
-        }.get(part)
-        if chosen is None or not chosen[0]:
-            return PlainTextResponse("No such part", status_code=404)
-        return PlainTextResponse(
-            chosen[0],
-            media_type="application/x-pem-file",
-            headers={"Content-Disposition": f'attachment; filename="{chosen[1]}"'},
+    @router.post("/certificates/{certificate_id}/download")
+    def certificate_download(
+        request: Request,
+        certificate_id: str,
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        gate = _external_certificate_gate(request, certificate_id, csrf_token)
+        if not isinstance(gate, tuple):
+            return gate
+        _, row = gate
+        return _zip_response(
+            _public_files(certificate_id, row.fullchain_pem or ""), f"{certificate_id}.zip"
         )
 
     #
@@ -2750,58 +2738,49 @@ def build_router(config: Config) -> APIRouter:
         )
 
     #
-    # An external certificate's key (B255): an admin, the name typed again,
-    # and the export helper - which gives out the key of an exportable entry
-    # and of no other. Written into the audit trail, and served without a
-    # copy kept anywhere.
+    # An external certificate with its key (B255, as one zip 2026-10-07): the
+    # public files, the key as PEM, and both PKCS#12 forms under one password
+    # the manager draws and puts beside them, the way a receiver gets a `.pfx`
+    # and a `.password`. The password guards nothing the zip does not already
+    # hold unencrypted - it is there because devices will not take a bundle
+    # without one. The guard is the admin, the click and the audit row.
+    #
+    # Every form comes from the export helper, which gives out the key of an
+    # exportable entry and of no other, and each must be the certificate the
+    # page was drawn from: a renewal between the reading and the click would
+    # otherwise put a new key beside an old chain. Served without a copy kept.
     #
     @router.post("/certificates/{certificate_id}/export")
     def certificate_export(
         request: Request,
         certificate_id: str,
-        format: str = Form(default="", max_length=32),
-        password: str = Form(default="", max_length=128),
-        confirm: str = Form(default="", max_length=255),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        session = current_session(request)
-        if session is None:
-            return RedirectResponse("/login", status_code=303)
-        if (
-            not config.management_writes
-            or not features.is_on(features.CERT_RECEIVERS)
-            or not CERTIFICATE_ID.fullmatch(certificate_id)
-        ):
-            return PlainTextResponse("Not found", status_code=404)
-        token = request.cookies.get(auth.SESSION_COOKIE, "")
-        if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
-        if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
-        back = "/certificates?view=registry"
-        row = _registry_views(request, config).get(certificate_id)
-        if row is None or not row.exportable:
-            return _refusal_page(
-                request, config, f"{certificate_id} is not an external certificate.", back=back
-            )
-        if confirm.strip() != certificate_id:
+        gate = _external_certificate_gate(request, certificate_id, csrf_token)
+        if not isinstance(gate, tuple):
+            return gate
+        session, row = gate
+        back = f"/certificates?view=registry&open={certificate_id}"
+        password = secrets.token_urlsafe(18)
+        exported: dict[str, Export] = {}
+        try:
+            for form in EXPORT_FORMATS:
+                exported[form] = cert_export_socket.ask(
+                    certificate_id,
+                    form,
+                    None if form == "pem-key" else password,
+                    requested_by=session.username,
+                )
+        except ExportError as refusal:
+            return _refusal_page(request, config, f"{refusal} Nothing was exported.", back=back)
+        if any(item.fingerprint != row.fingerprint for item in exported.values()):
             return _refusal_page(
                 request,
                 config,
-                f"Type {certificate_id} to confirm the export. Nothing was exported.",
+                f"{certificate_id} changed since the page was read. Open it again; "
+                "nothing was exported.",
                 back=back,
             )
-        if format not in EXPORT_FORMATS:
-            return _refusal_page(request, config, "Choose a format from the list.", back=back)
-        try:
-            exported = cert_export_socket.ask(
-                certificate_id,
-                format,
-                password if format != "pem-key" else None,
-                requested_by=session.username,
-            )
-        except ExportError as refusal:
-            return _refusal_page(request, config, f"{refusal} Nothing was exported.", back=back)
         with request.app.state.pool.connection() as connection:
             db.record_audit_event(
                 connection,
@@ -2811,26 +2790,53 @@ def build_router(config: Config) -> APIRouter:
                 request_id=uuid4(),
                 detail={
                     "certificate": certificate_id,
-                    "format": format,
-                    "fingerprint_sha256": exported.fingerprint,
+                    "format": "zip",
+                    "forms": list(EXPORT_FORMATS),
+                    "fingerprint_sha256": row.fingerprint,
                 },
             )
             connection.commit()
         #
-        # Named and typed here, from the ID this route checked and the format
-        # it chose, rather than taken from the helper's answer into a header.
+        # Named here, from the ID this route checked, rather than taken from
+        # the helper's answer into a header or a member name.
         #
-        key = format == "pem-key"
-        return Response(
-            exported.content,
-            media_type="application/x-pem-file" if key else "application/x-pkcs12",
-            headers={
-                "Content-Disposition": (
-                    f'attachment; filename="{certificate_id}{".key.pem" if key else ".pfx"}"'
-                ),
-                "Cache-Control": "no-store",
-            },
-        )
+        files = [
+            *_public_files(certificate_id, row.fullchain_pem or ""),
+            (f"{certificate_id}.key.pem", exported["pem-key"].content, True),
+            (f"{certificate_id}.pfx", exported["pfx"].content, True),
+            (f"{certificate_id}.compatible.pfx", exported["pfx-compatible"].content, True),
+            (f"{certificate_id}.password", (password + "\n").encode("ascii"), True),
+        ]
+        return _zip_response(files, f"{certificate_id}.with-key.zip")
+
+    #
+    # What both routes above check before they give anything out: an admin
+    # where management writes are on, the form's own CSRF token, and a row of
+    # the registry marked external with its chain read. The admin and the
+    # row, or the answer that refuses.
+    #
+    def _external_certificate_gate(
+        request: Request, certificate_id: str, csrf_token: str
+    ) -> tuple[AuthenticatedSession, certificates.RegistryCertificateView] | Response:
+        session = _admin_write_gate(request)
+        if not isinstance(session, AuthenticatedSession):
+            return session
+        if not features.is_on(features.CERT_RECEIVERS) or not CERTIFICATE_ID.fullmatch(
+            certificate_id
+        ):
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        row = _registry_views(request, config).get(certificate_id)
+        if row is None or not row.exportable or not row.fullchain_pem or not row.fingerprint:
+            return _refusal_page(
+                request,
+                config,
+                f"{certificate_id} is not an external certificate that can be read.",
+                back="/certificates?view=registry",
+            )
+        return session, row
 
     #
     # A certificate somebody already has (C9, B165): a file, a name, the
@@ -9160,6 +9166,47 @@ def _password_page(
             "minimum_length": auth.MINIMUM_PASSWORD_LENGTH,
         },
         status_code=status_code,
+    )
+
+
+def _public_files(certificate_id: str, fullchain_pem: str) -> list[tuple[str, bytes, bool]]:
+    """An external certificate's public files: the chain whole, the leaf, the issuers.
+
+    The three a device asks for (B255), named after the certificate, and
+    marked not secret for the zip's permission bits.
+    """
+
+    blocks = [CERTIFICATE_OPENING + block for block in fullchain_pem.split(CERTIFICATE_OPENING)[1:]]
+    files = [
+        (f"{certificate_id}.fullchain.pem", "".join(blocks)),
+        (f"{certificate_id}.crt.pem", "".join(blocks[:1])),
+        (f"{certificate_id}.chain.pem", "".join(blocks[1:])),
+    ]
+    return [(name, text.encode("ascii"), False) for name, text in files if text]
+
+
+def _zip_response(files: Sequence[tuple[str, bytes, bool]], filename: str) -> Response:
+    """Files as one zip, built in memory and served without a copy kept (2026-10-07).
+
+    A secret member is marked owner-only, so an unzip that honours the bits
+    leaves the key as a key file would be left; the rest are world-readable.
+    """
+
+    stamp = datetime.now(UTC).timetuple()[:6]
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content, secret in files:
+            member = zipfile.ZipInfo(name, date_time=stamp)
+            member.compress_type = zipfile.ZIP_DEFLATED
+            member.external_attr = (0o100600 if secret else 0o100644) << 16
+            archive.writestr(member, content)
+    return Response(
+        buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
     )
 
 

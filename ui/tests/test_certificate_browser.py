@@ -316,7 +316,21 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             self.assertEqual(page.locator(".cluster-header .certificate-kind").count(), 1)
             page.fill("input[name='domain']", "bmc01.example.com")
             page.check("input[name='method'][value='http-01']")
-            page.click(".certificate-kind a[href$='for=external']")
+            page.set_viewport_size({"width": 1280, "height": 800})
+            choices = page.locator(".certificate-kind .check")
+            first, second = choices.nth(0).bounding_box(), choices.nth(1).bounding_box()
+            if first is None or second is None:
+                self.fail("both kinds must have layout boxes")
+            self.assertAlmostEqual(first["y"], second["y"], delta=1)
+            self.assertEqual(
+                page.evaluate(
+                    "[...document.querySelectorAll('.certificate-kind .check, "
+                    ".challenge-field .check')].map(e => getComputedStyle(e).fontWeight)"
+                    ".filter((v, i, a) => a.indexOf(v) === i).length"
+                ),
+                1,
+            )
+            page.check("input[name='certificate_kind'][value='external']")
             page.wait_for_selector("input[name='exportable']", state="attached")
 
             self.assertEqual(page.input_value("input[name='domain']"), "bmc01.example.com")

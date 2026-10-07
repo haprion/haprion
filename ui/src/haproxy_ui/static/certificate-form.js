@@ -52,24 +52,26 @@
   };
 
   //
-  // The kind switch is a link to the other form; what is already filled in
-  // goes with it (2026-10-06) - the name, the CA and its profile - so
-  // changing kind does not empty the form. Disabled fields stay behind, the
-  // way a submission leaves them.
+  // The kind is two radios, drawn as the CA's are (2026-10-07); choosing one
+  // opens the other form, and what is already filled in goes with it
+  // (2026-10-06) - the name, the CA and its profile - so changing kind does
+  // not empty the form. Disabled fields stay behind, the way a submission
+  // leaves them.
   //
   const CARRIED = ["domain", "method", "dns_profile", "ndes_profile", "key_type"];
   const carryForm = () => {
     const form = document.querySelector("input[name='domain']")?.form;
     if (!form) return;
-    document.querySelectorAll("a[data-carry-form]").forEach((link) => {
-      link.addEventListener("click", () => {
-        const target = new URL(link.getAttribute("href"), window.location.href);
+    document.querySelectorAll("input[data-kind-href]").forEach((choice) => {
+      choice.addEventListener("change", () => {
+        if (!choice.checked) return;
+        const target = new URL(choice.dataset.kindHref, window.location.href);
         const filled = new FormData(form);
         CARRIED.forEach((name) => {
           const value = String(filled.get(name) || "").trim();
           if (value) target.searchParams.set(name, value);
         });
-        link.href = target.toString();
+        window.location.assign(target.toString());
       });
     });
   };

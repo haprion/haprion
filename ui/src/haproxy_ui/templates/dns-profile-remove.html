@@ -14,11 +14,10 @@
   </ul>
   <p class="refusal-hint">{{ profile.provider_id }} · revision {{ profile.revision }}</p>
   {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before removing this profile.</p>{% endif %}
-  <form method="post" action="/dns-profiles/{{ profile.id }}/remove" class="editor-actions">
+  <form method="post" action="/dns-profiles/{{ profile.id }}/remove" class="editor-actions editor-submit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
-    <button class="danger-button" type="submit"{% if certificate_job %} disabled{% endif %}>Remove profile</button>
-    <a class="secondary-button" href="/dns-profiles">Keep it</a>
+    <div class="form-buttons"><a class="secondary-button" href="/dns-profiles">Keep it</a><button class="danger-button" type="submit"{% if certificate_job %} disabled{% endif %}>Remove profile</button></div>
   </form>
 </div>
 {% endblock %}

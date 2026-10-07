@@ -1764,7 +1764,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 /* The way back from a list page: a button where a form's Cancel would be, not a
    link in the heading the eye has to find (2026-09-19). */
 .list-actions { justify-content: flex-end; padding-top: 12px; }
-.editor-actions .secondary-button { padding: 9px 22px; }
+.editor-actions .secondary-button, .editor-actions .danger-button { padding: 9px 22px; }
 /*
  * The same button in the same place, saying what is actually due. Only the
  * weight changes: deploying is the word that touches traffic, and it is the

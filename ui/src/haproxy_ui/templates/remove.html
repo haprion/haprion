@@ -23,10 +23,9 @@
     <li>It can be brought back: a published version is a version, and <code>haproxy-revert</code> returns to the one before this.</li>
   </ul>
   {% if hostnames %}<p class="refusal-hint">It answers for {{ hostnames | join(', ') }}.</p>{% endif %}
-  <form method="post" action="/proxies/{{ cluster }}/{{ name }}/remove" class="editor-actions">
+  <form method="post" action="/proxies/{{ cluster }}/{{ name }}/remove" class="editor-actions editor-submit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button type="submit" class="danger-button">Publish the removal</button>
-    <a class="secondary-button" href="/proxies/{{ cluster }}/{{ name }}">Keep it</a>
+    <div class="form-buttons"><a class="secondary-button" href="/proxies/{{ cluster }}/{{ name }}">Keep it</a><button type="submit" class="danger-button">Publish the removal</button></div>
   </form>
 </div>
 {% endblock %}

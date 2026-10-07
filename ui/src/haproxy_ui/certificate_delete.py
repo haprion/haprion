@@ -74,6 +74,12 @@ class DeletionRow:
     def deletable(self) -> bool:
         return self.refusal is None
 
+    @property
+    def on_clusters(self) -> bool:
+        """Whether nodes hold a copy to drop - not so for a receiver or an external one."""
+
+        return any(target.endswith(" (cluster)") for target in self.targets)
+
 
 @dataclass(frozen=True, slots=True)
 class Selection:
@@ -128,7 +134,7 @@ def selection(
         lineage = (
             "The Certbot lineage is deleted; it will not renew again."
             if view.source_label == "Certbot"
-            else "The imported material under the manager's import store is removed."
+            else "Its certificate and key are removed from the manager."
         )
         rows.append(
             DeletionRow(

@@ -27,7 +27,7 @@
         <td data-label="Certificate"><strong>{{ row.identifier }}</strong></td>
         <td data-label="Source">{{ row.source_label }}</td>
         <td data-label="Published to">{% if row.targets %}{{ row.targets | join(', ') }}{% else %}—{% endif %}</td>
-        <td data-label="What happens">{% if row.deletable %}Removed from the registry and every target above. {{ row.lineage_note }} Each node of its clusters is asked to drop its copy.{% else %}<span class="warning-text">Kept. {{ row.refusal }}</span>{% endif %}</td>
+        <td data-label="What happens">{% if row.deletable %}Removed from the registry{% if row.targets %} and every target above{% endif %}. {{ row.lineage_note }}{% if row.on_clusters %} Each node of its clusters is asked to drop its copy.{% endif %}{% else %}<span class="warning-text">Kept. {{ row.refusal }}</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody></table></div>
@@ -37,12 +37,11 @@
     <li>Nothing here can be undone. A deleted Certbot lineage has to be issued again.</li>
   </ul>
   {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before deleting.</p>{% endif %}
-  <form method="post" action="/certificates/delete/confirm" class="editor-actions">
+  <form method="post" action="/certificates/delete/confirm" class="editor-actions editor-submit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
     {% for identifier in selection.deletable %}<input type="hidden" name="certificate" value="{{ identifier }}">{% endfor %}
-    <button class="danger-button" type="submit"{% if certificate_job or not selection.deletable %} disabled{% endif %}>Delete {{ selection.deletable | length }} certificate{% if selection.deletable | length != 1 %}s{% endif %}</button>
-    <a class="secondary-button" href="/certificates?view=registry">Keep them</a>
+    <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Keep them</a><button class="danger-button" type="submit"{% if certificate_job or not selection.deletable %} disabled{% endif %}>Delete {{ selection.deletable | length }} certificate{% if selection.deletable | length != 1 %}s{% endif %}</button></div>
   </form>
 </div>
 {% else %}

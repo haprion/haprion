@@ -89,7 +89,8 @@ class TheFormsLimits(CertificateFormRouteTestCase):
     def test_the_page_offers_no_targets_and_sends_the_mark(self) -> None:
         page = self.writing_client().get("/certificates/new?for=external").text
 
-        self.assertIn("External certificate", page)
+        self.assertIn("<h1>New certificate</h1>", page)
+        self.assertNotIn("bmc01", page)
         self.assertIn('name="exportable" value="1"', page)
         self.assertNotIn('name="cluster"', page)
         self.assertNotIn('name="receiver"', page)
@@ -266,6 +267,23 @@ class TheExport(ExternalRowTestCase):
             f'value="{DEVICE}" form="certificate-selection" data-delete-pick data-exportable', page
         )
         self.assertIn(">external<", page)
+
+
+class TheDeletion(ExternalRowTestCase):
+    def test_an_external_certificate_is_not_told_of_targets_or_nodes(self) -> None:
+        client = self.writing_client()
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        with mock.patch("haproxy_ui.db.live_drafts", return_value=[]):
+            page = client.post(
+                "/certificates/delete", data={"certificate": [DEVICE], auth.CSRF_FIELD: token}
+            ).text
+
+        self.assertIn(
+            "Removed from the registry. Its certificate and key are removed from the manager.",
+            page,
+        )
+        self.assertNotIn("every target above", page)
+        self.assertNotIn("drop its copy", page)
 
 
 class TheExportPage(ExternalRowTestCase):

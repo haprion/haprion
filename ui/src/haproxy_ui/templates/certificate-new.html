@@ -15,7 +15,7 @@
   whose purpose is to be filled in should not lose what was filled in.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>{% if form.interface %}Interface certificate{% elif form.exportable %}External certificate{% else %}New certificate{% endif %}</h1></div>
+  <div class="heading-title"><h1>{% if form.interface %}Interface certificate{% else %}New certificate{% endif %}</h1></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
 </section>
 
@@ -47,7 +47,7 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
     <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of the chosen CA.<br>DNS-01: see the provider plugin's documentation. HTTP-01: the domain must already point here.<br>NDES: the profile holds the CA's challenge. CSR: any CA signs it; upload the result on {% if form.interface %}Settings{% else %}the row{% endif %}.</span></p>
     <div class="form-grid">
-      <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="{% if form.exportable %}bmc01.example.com{% else %}app.example.com or *.example.com{% endif %}" autocomplete="off" spellcheck="false" required autofocus>{% if form.interface %}<small>Must name <code>{{ choices.manager }}</code>, the name this interface is served on.</small>{% elif form.exportable %}<small>The one host it is for, such as <code>bmc01.example.com</code>. No wildcard.</small>{% else %}<small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does; over NDES the base name is the CN and the wildcard a SAN.</small>{% endif %}</label>
+      <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus>{% if form.interface %}<small>Must name <code>{{ choices.manager }}</code>, the name this interface is served on.</small>{% elif form.exportable %}<small>Becomes the certificate's name. One name, no wildcard.</small>{% else %}<small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does; over NDES the base name is the CN and the wildcard a SAN.</small>{% endif %}</label>
       {#
         Radios, not a select: the choice has three answers and one of them
         rules the wildcard out, and a reader should see them at once to see

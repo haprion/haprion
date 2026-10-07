@@ -65,9 +65,8 @@
       {% endif %}
     </ul>
     {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish first.</p>{% endif %}
-    <div class="editor-actions">
-      <button class="{{ 'secondary-button deploy-button' if adding else 'danger-button' }}" type="submit" data-target-submit{% if certificate_job or not selection.offered %} disabled{% endif %}>{{ selection.label }} the chosen targets</button>
-      <a class="secondary-button" href="/certificates?view=registry">Cancel</a>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button class="{{ 'secondary-button deploy-button' if adding else 'danger-button' }}" type="submit" data-target-submit{% if certificate_job or not selection.offered %} disabled{% endif %}>{{ selection.label }} the chosen targets</button></div>
     </div>
   </form>
 </div>

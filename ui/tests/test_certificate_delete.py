@@ -309,7 +309,7 @@ class TheConfirmationPage(DeleteRouteTestCase):
         page = self.review(self.writing_client(), "old.example.com", "imported.example").text
         self.assertIn("Delete <strong>2</strong> certificates?", page)
         self.assertIn("Certbot lineage is deleted", page)
-        self.assertIn("import store is removed", page)
+        self.assertIn("Its certificate and key are removed from the manager.", page)
         self.assertIn('name="certificate" value="old.example.com"', page)
         self.assertIn('name="certificate" value="imported.example"', page)
         self.assertIn(">Delete 2 certificates</button>", page)

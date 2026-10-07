@@ -27,6 +27,12 @@ fi
 
 mkdir -p "$output"
 
+# The databases are a step, not a result: 170-270 MB per run, read by nothing
+# once the SARIF is written, and rebuilt from the commit if a question ever
+# needs one again. Left behind they grew to 38 GB over 222 runs (2026-10-07).
+# Removed on every exit, the failed and the interrupted run as well.
+trap 'rm -rf -- "$output/database"' EXIT
+
 # Two languages, one run. The engine is Python and the interface ships four
 # hand-written scripts under ui/src/haproxy_ui/static - no build step, no
 # dependencies, and until now nothing looking at them at all. They are the only

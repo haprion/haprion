@@ -3316,6 +3316,12 @@ before another node is touched.
 
 This section explains what they do and why; run the script rather than following it by hand.
 
+**Size.** One vCPU and 1 GB of memory per node carries HAProxy and keepalived. **With the WAF engine,
+start from 2 GB per node.** The engine is allowed up to 40 % of the node's memory (see
+[The WAF engine](#the-waf-engine)), its rules take about 50 MB for the first object
+and a few MB for each further one, and HAProxy keeps the rest. The DNS listener adds about 85 MB.
+The dashboard shows each node's memory in use and marks a cluster at 85 %.
+
 
 #### HAProxy and keepalived baseline
 

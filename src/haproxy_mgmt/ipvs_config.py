@@ -39,6 +39,14 @@ from haproxy_mgmt.config import Vip
 from haproxy_mgmt.proxy_model import Backend, Health, Proxy, duration_ms
 
 FILE = "ipvs.conf"
+#
+# The line above each virtual server, which the node's status reads back to
+# name the kernel's services: IPVS knows an address and a port, the metrics
+# keep a pool and its servers. The receivers are `s1`, `s2`, ... in the order
+# they are written, as HAProxy's and dnsdist's members are. Both names hold to
+# the model's name pattern, so the line has one reading.
+#
+NAMES = "# object {object}, pool {pool}"
 
 HEADER = """\
 #
@@ -150,7 +158,7 @@ def _virtual_server(vip: Vip, proxy: Proxy) -> tuple[str, list[str]]:
         head.append(f"delay_loop {_seconds(pool.health.interval)}")
     servers = _real_servers(vip, proxy, pool)
     block = [
-        f"# {proxy.name}",
+        NAMES.format(object=proxy.name, pool=proxy.backend),
         f"virtual_server {listener} {{",
         *(f"    {line}" for line in [*head, *servers]),
         "}",

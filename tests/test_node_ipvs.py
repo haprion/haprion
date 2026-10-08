@@ -10,6 +10,7 @@ and every counter right-aligned with at least one space before it.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import unittest
@@ -19,15 +20,20 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from haproxy_mgmt import ipvs_config
+from haproxy_mgmt.config import Vip
+from haproxy_mgmt.generate import generate
+from haproxy_mgmt.proxy_model import load_proxy
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "install" / "node" / "haproxy-node-status"
-READING = re.compile(r"^KEEPALIVED_IPVS = .*?(?=^def ipvs_summary\()", re.DOTALL | re.MULTILINE)
+READING = re.compile(r"^KEEPALIVED_IPVS = .*?(?=^def read_ipvs\()", re.DOTALL | re.MULTILINE)
 
 
 def reading() -> dict[str, Any]:
     found = READING.search(SCRIPT.read_text())
     assert found, "the reading is no longer where the test extracts it from"  # noqa: S101
-    namespace: dict[str, Any] = {"re": re, "Path": Path}
+    namespace: dict[str, Any] = {"re": re, "Path": Path, "ipaddress": ipaddress}
     exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
     return namespace
 
@@ -129,11 +135,105 @@ class ReadingTheKernelsTable(unittest.TestCase):
             "installed": True,
             "installed_sha256": "0" * 64,
             "included": True,
-            "services": self.parse(TABLE),
+            "services": reading()["name_ipvs"](self.parse(TABLE), reading()["ipvs_names"](FILE)),
         }
 
         Draft202012Validator(section).validate(document)
         Draft202012Validator(section).validate({**document, "services": None, "ipvsadm": False})
+
+
+#
+# The generator's own file for two objects on the table's addresses, so the
+# names are read from what a release really carries.
+#
+FILE = generate(
+    [
+        load_proxy(
+            name,
+            f"""schema: 1
+name: {name}
+listen: {{protocol: syslog, vip: {vip}, port: 514}}
+backend: {pool}
+backends:
+  {pool}:
+    balance: roundrobin
+    health: {{type: udp}}
+    servers: [{servers}]
+""".encode(),
+        )
+        for name, vip, pool, servers in (
+            (
+                "logs",
+                "main",
+                "receivers",
+                "{host: 192.0.2.71, port: 514}, {host: 192.0.2.73, port: 514}, "
+                "{host: 192.0.2.72, port: 1514}",
+            ),
+            ("six", "v6", "relays", '{host: "2001:db8::71", port: 514}'),
+        )
+    ],
+    vips={"main": Vip("main", "192.0.2.20"), "v6": Vip("v6", "2001:db8::20")},
+    default_vip="main",
+).ipvs
+
+
+class NamingTheKernelsServices(unittest.TestCase):
+    """The installed file's names on the kernel's table: object, pool, `s1`... and DOWN."""
+
+    def setUp(self) -> None:
+        namespace = reading()
+        self.names = namespace["ipvs_names"](FILE)
+        self.named = namespace["name_ipvs"](namespace["parse_ipvs_stats"](TABLE), self.names)
+
+    def test_the_file_is_read_as_the_generator_wrote_it(self) -> None:
+        self.assertIn(ipvs_config.NAMES.format(object="logs", pool="receivers"), FILE)
+        self.assertEqual(
+            self.names[("192.0.2.20", 514)],
+            ("logs", "receivers", [("192.0.2.71", 514), ("192.0.2.73", 514), ("192.0.2.72", 1514)]),
+        )
+        self.assertEqual(self.names[("2001:db8::20", 514)][:2], ("six", "relays"))
+
+    def test_a_receiver_the_kernel_holds_is_up_with_its_counters(self) -> None:
+        logs = self.named[0]
+
+        self.assertEqual((logs["object"], logs["pool"]), ("logs", "receivers"))
+        self.assertEqual(
+            logs["receivers"][0],
+            {
+                "address": "192.0.2.71",
+                "port": 514,
+                "server": "s1",
+                "status": "UP",
+                "packets": 3514,
+                "bytes": 808780,
+            },
+        )
+        self.assertEqual(logs["receivers"][2]["server"], "s3")
+
+    def test_one_keepalived_took_out_is_down_and_counts_nothing(self) -> None:
+        down = self.named[0]["receivers"][1]
+
+        self.assertEqual(
+            down,
+            {
+                "address": "192.0.2.73",
+                "port": 514,
+                "server": "s2",
+                "status": "DOWN",
+                "packets": None,
+                "bytes": None,
+            },
+        )
+
+    def test_a_service_the_file_does_not_name_is_reported_as_the_kernel_holds_it(self) -> None:
+        web = self.named[2]
+
+        self.assertEqual((web["protocol"], web["object"], web["pool"]), ("tcp", None, None))
+        self.assertEqual([r["server"] for r in web["receivers"]], [])
+
+    def test_ipv6_is_matched_in_its_canonical_form(self) -> None:
+        self.assertEqual(self.named[1]["object"], "six")
+        self.assertEqual(self.named[1]["receivers"][0]["status"], "UP")
 
 
 class TheIncludeAtTheTop(unittest.TestCase):

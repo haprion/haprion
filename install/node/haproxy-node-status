@@ -3,6 +3,7 @@
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -395,6 +396,93 @@ def ipvs_summary(ipvs):
     return "installed and in use"
 
 
+IPVS_NAMES = re.compile(r"^# object (\S+), pool (\S+)$")
+IPVS_BLOCK = re.compile(r"^\s*(virtual_server|real_server)\s+(\S+)\s+(\d+)\s*\{")
+
+
+def ipvs_key(address, port):
+    try:
+        return str(ipaddress.ip_address(address.strip("[]"))), port
+    except ValueError:
+        return None
+
+
+def ipvs_names(text):
+    """The installed file's names: (address, port) -> (object, pool, receivers in order).
+
+    The generator writes `# object <name>, pool <pool>` above each virtual
+    server (`ipvs_config.NAMES`); the receivers are the pool's servers in the
+    order written, `s1` first. A virtual server without the line is not ours
+    to name.
+    """
+
+    names = {}
+    pending = None
+    current = None
+    for line in text.splitlines():
+        named = IPVS_NAMES.match(line.strip())
+        if named:
+            pending = named.groups()
+            continue
+        block = IPVS_BLOCK.match(line)
+        if not block:
+            continue
+        kind, address, port = block.group(1), block.group(2), int(block.group(3))
+        key = ipvs_key(address, port)
+        if kind == "virtual_server":
+            current = None
+            if pending is not None and key is not None:
+                current = []
+                names[key] = (pending[0], pending[1], current)
+            pending = None
+        elif current is not None and key is not None:
+            current.append(key)
+    return names
+
+
+def name_ipvs(services, names):
+    """The kernel's services under the objects and pools the installed file names.
+
+    Each named service lists every receiver the file gives it, `s1` first: UP
+    with its counters when the kernel holds it, DOWN with none when keepalived
+    took it out after a failed check. A service the file does not name is
+    reported as the kernel holds it, with no names.
+    """
+
+    named = []
+    for service in services:
+        entry = dict(service, object=None, pool=None)
+        found = names.get(ipvs_key(service["address"], service["port"]))
+        held = {
+            ipvs_key(receiver["address"], receiver["port"]): receiver
+            for receiver in service["receivers"]
+        }
+        if found is None or service["protocol"] != "udp":
+            entry["receivers"] = [
+                dict(receiver, server=None, status="UP") for receiver in service["receivers"]
+            ]
+            named.append(entry)
+            continue
+        entry["object"], entry["pool"], order = found
+        receivers = []
+        for index, key in enumerate(order):
+            receiver = held.pop(key, None)
+            receivers.append(
+                {
+                    "address": key[0],
+                    "port": key[1],
+                    "server": f"s{index + 1}",
+                    "status": "DOWN" if receiver is None else "UP",
+                    "packets": None if receiver is None else receiver["packets"],
+                    "bytes": None if receiver is None else receiver["bytes"],
+                }
+            )
+        receivers.extend(dict(receiver, server=None, status="UP") for receiver in held.values())
+        entry["receivers"] = receivers
+        named.append(entry)
+    return named
+
+
 def read_ipvs():
     published, published_digest = address_list(PUBLISHED_IPVS)
     installed, installed_digest = address_list(KEEPALIVED_IPVS)
@@ -408,6 +496,9 @@ def read_ipvs():
         # read is never reported as one holding nothing.
         #
         services = parse_ipvs_stats(r.stdout) if r.returncode == 0 else None
+    installed_text = read_config(KEEPALIVED_IPVS) if installed else None
+    if services is not None:
+        services = name_ipvs(services, ipvs_names(installed_text or ""))
     return {
         "ipvsadm": present,
         "published": published,

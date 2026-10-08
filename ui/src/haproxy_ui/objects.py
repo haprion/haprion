@@ -197,7 +197,11 @@ def object_view(value: Any) -> ObjectView | None:
         # the VIP's own. Only the node holding the VIP can bind it, which
         # decides which node may answer for the backend.
         #
-        sourced=isinstance(entry.get("source"), Mapping),
+        #
+        # A syslog object has none, but its messages pass only the node holding
+        # the VIP, so its lamp is that node's, as the others' are (Fas 19b B5).
+        #
+        sourced=isinstance(entry.get("source"), Mapping) or protocol == "syslog",
         runtime_backends=_names(entry.get("runtime_backends")),
     )
 

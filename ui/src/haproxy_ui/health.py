@@ -311,6 +311,7 @@ def backend_health(
     backend: str,
     source: str = "",
     addresses: Iterable[str] = (),
+    held_only: bool = False,
 ) -> BackendHealth:
     """The nodes' verdict on one object's backend, from the poller's newest reading.
 
@@ -372,7 +373,12 @@ def backend_health(
     # A node that did not say whether it owns the VIP is kept. Hiding a node on
     # a fact nobody stated is worse than one row too many.
     #
-    if source:
+    #
+    # A syslog object (`held_only`, Fas 19b B5) leaves from no address, but its
+    # messages pass only the node holding the VIP, and the page answers for
+    # that node as it does for every other object (26-10-08).
+    #
+    if source or held_only:
         nodes = [node for node in nodes if node.vip_owner is not False]
 
     return BackendHealth(

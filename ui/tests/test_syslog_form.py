@@ -259,7 +259,7 @@ class KeepalivedsVerdictLightsTheLamp(unittest.TestCase):
         return health.object_healths(
             [status(*nodes)],
             cluster="alpha",
-            objects={"logs": (checked, False)},
+            objects={"logs": (checked, True)},
             owners={"receivers": "logs"},
         )["logs"]
 
@@ -279,16 +279,28 @@ class KeepalivedsVerdictLightsTheLamp(unittest.TestCase):
 
         self.assertEqual((lamp.tone, lamp.label), ("healthy", "1/1 up"))
 
-    def test_down_on_the_standby_is_said_too(self) -> None:
-        """Every node runs keepalived's checks; the standby's is a verdict, not a binding."""
+    def test_the_lamp_is_the_vip_holder_s_as_every_other_object_s(self) -> None:
+        """B5 (26-10-08): the messages pass the holder; the standby is not counted."""
 
         lamp = self.lamp(
             node("node-a", services=[service("receivers", receiver("s1", "UP"))]),
             node("node-b", owner=False, services=[service("receivers", receiver("s1", "DOWN"))]),
         )
 
-        self.assertEqual(lamp.tone, "warning")
-        self.assertIn("node-b", lamp.detail)
+        self.assertEqual((lamp.tone, lamp.label), ("healthy", "1/1 up"))
+
+    def test_the_listing_marks_it_so(self) -> None:
+        view = objects.object_view(
+            {
+                "name": "logs",
+                "document": (GOLDEN / "logs.yaml").read_text(),
+                "readable": True,
+                "protocol": "syslog",
+                "source": None,
+            }
+        )
+
+        self.assertTrue(view is not None and view.sourced)
 
     def test_an_unchecked_pool_is_unlit_although_it_reads_up(self) -> None:
         lamp = self.lamp(
@@ -307,6 +319,18 @@ class KeepalivedsVerdictLightsTheLamp(unittest.TestCase):
         unread["status"]["ipvs"]["services"] = None
 
         self.assertEqual(self.lamp(unread).label, "")
+
+    def test_the_editor_s_table_is_the_vip_holder_s(self) -> None:
+        up = service("receivers", receiver("s1", "UP"))
+        found = health.backend_health(
+            [status(node("node-a", services=[up]), node("node-b", owner=False, services=[up]))],
+            cluster="alpha",
+            obj="logs",
+            backend="receivers",
+            held_only=True,
+        )
+
+        self.assertEqual([entry.node for entry in found.nodes], ["node-a"])
 
     def test_the_editor_s_table_lists_them_by_address(self) -> None:
         both = service(
@@ -497,6 +521,49 @@ class TheEditorOffersSyslog(EditorTestCase):
         ):
             with self.subTest(hidden=hidden[:60]):
                 self.assertRegex(text, hidden)
+
+    def test_a_test_shows_the_vip_holder_s_rows_only(self) -> None:
+        def tried(name: str) -> probe.NodeReport:
+            return probe.NodeReport(
+                node=name,
+                reachable=True,
+                error=None,
+                source_held=True,
+                results=(
+                    probe.Reached(
+                        host="192.0.2.71",
+                        port=514,
+                        ok=True,
+                        status=None,
+                        error=None,
+                        ms=5000,
+                        udp=True,
+                    ),
+                ),
+            )
+
+        report = probe.ProbeReport(ran=True, source="", nodes=(tried("node-a"), tried("node-b")))
+        rows = [status(node("node-a"), node("node-b", owner=False))]
+        client = self.editor()
+        with (
+            mock.patch("haproxy_ui.probe.run", return_value=report),
+            mock.patch("haproxy_ui.db.wake_poller"),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=rows),
+        ):
+            text = str(
+                self.submit(
+                    client,
+                    "/proxies/alpha/shop/edit",
+                    action="recheck",
+                    protocol="syslog",
+                    hostnames="",
+                    servers="192.0.2.71:514",
+                    health_type="udp",
+                ).text
+            )
+
+        self.assertIn("<td>node-a</td>", text)
+        self.assertNotIn("<td>node-b</td>", text)
 
     def test_its_check_can_be_tested(self) -> None:
         self.assertIn(

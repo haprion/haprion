@@ -7904,6 +7904,7 @@ def _editor_page(
         # in the logs somebody will read next.
         #
         addresses=str(fields.get("servers", "")).splitlines(),
+        held_only=fields.get("protocol") == "syslog",
     )
     #
     # Only when somebody pressed the button. A page that probed on every open
@@ -7915,6 +7916,15 @@ def _editor_page(
         if probe_asked
         else None
     )
+    #
+    # A syslog check is tried from every node's own address, as keepalived
+    # runs it, and shown for the node holding the VIP, as the rows above it
+    # are (Fas 19b B5).
+    #
+    if report is not None and fields.get("protocol") == "syslog" and backend.held_by:
+        report = replace(
+            report, nodes=tuple(node for node in report.nodes if node.node in backend.held_by)
+        )
     result = editor_module.check(
         fields,
         state.choices,

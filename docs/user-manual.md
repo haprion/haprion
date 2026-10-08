@@ -196,13 +196,15 @@ fifteen seconds; *tcp* connects to a port of the receiver's, its own unless anot
 given, and nothing more. With no check, a receiver is never taken out. There is an
 interval and *Checks to fall*, but no *Checks to rise*: one passing check puts a
 receiver back. The form suggests *udp* when the protocol is chosen. *Test health
-check* tries the check from every node's own address, as keepalived does: *udp*
+check* tries the check from the nodes' own addresses, as keepalived does, and shows the
+answer of the node holding the VIP: *udp*
 sends one empty datagram and waits five seconds for a refusal - keepalived's own wait -
 and says *not refused* when none came; *tcp* connects and closes. On the command line,
 `haproxy-probe -c <cluster> -t <address:port>[,...] --udp` asks the same.
 
 The editor's *What the nodes report* and the lamp in the object list show each
-receiver up or down, as each node's keepalived sees it. The object's metrics are
+receiver up or down, as keepalived on the node holding the VIP sees it - the node the
+messages pass, as for every other object. The object's metrics are
 messages and bytes, per pool and per receiver, counted by IPVS on the node that holds
 the address; a receiver taken out and put back starts counting from nought, and the
 interval it happened in has no figure rather than a wrong one. No message is stored.

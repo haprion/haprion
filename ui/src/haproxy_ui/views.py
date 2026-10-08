@@ -6969,6 +6969,7 @@ def build_router(config: Config) -> APIRouter:
         cluster: str,
         comment: str = Form(default="", max_length=4096),
         expected_head: str = Form(default="", max_length=64),
+        shown: str = Form(default="", alias="package", max_length=64),
         then: str = Form(default="", max_length=8),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
@@ -6978,10 +6979,11 @@ def build_router(config: Config) -> APIRouter:
         the worker deploys the version it has just recorded, in the same job,
         and the answer goes back to the dashboard, where the job is shown.
 
-        The package is built again here rather than carried by the form, so
-        what is published is what is saved now. `expected_head` is the version
-        the page was drawn at: a newer one means the list the person read is
-        not the list that would go, and the page is shown again instead.
+        The package is built again here rather than carried by the form, and
+        the form carries back what it was shown: `expected_head`, the version
+        the page was drawn at, and `package`, the list itself (R1). Either one
+        moved means the list the person read is not the list that would go,
+        and the page is shown again instead.
         """
 
         gate = _admin_write_gate(request)
@@ -7004,6 +7006,18 @@ def build_router(config: Config) -> APIRouter:
                 request,
                 config,
                 "A newer version was recorded after this page was opened. Read the list again "
+                "before publishing.",
+                back=back,
+            )
+        if shown != package.identity:
+            #
+            # Saved again, added or taken away in another tab since the list
+            # was drawn (R1): what would go is not what was confirmed.
+            #
+            return _refusal_page(
+                request,
+                config,
+                "The saved changes changed after this page was opened. Read the list again "
                 "before publishing.",
                 back=back,
             )
@@ -8892,6 +8906,31 @@ class Package:
     rows: tuple[PendingRow, ...]
     payload: dict[str, Any]
     problem: str
+
+    @property
+    def identity(self) -> str:
+        """The list as it was shown, as one value the publish form carries back (R1, 2026-10-08).
+
+        The version it was saved against, and every saved row and document by
+        its identity and revision: a row saved in another tab, saved again or
+        removed since the page was drawn gives another value, while the head
+        alone stays the same until something is published. Revisions and not
+        content, as the clearing reads them, so the value says nothing a
+        reader of the page could not already see.
+        """
+
+        def carried(key: str) -> list[list[Any]]:
+            entries = self.payload.get(key) or []
+            return sorted([entry["id"], entry["revision"]] for entry in entries)
+
+        shown = {
+            "cluster": self.cluster,
+            "head": self.head,
+            "drafts": carried("drafts"),
+            "changes": carried("changes"),
+        }
+        encoded = json.dumps(shown, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
 
 def _pending_count(request: Request, config: Config, cluster: str) -> int:

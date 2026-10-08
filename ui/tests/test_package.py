@@ -57,14 +57,63 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
     def page(self, client: Any) -> str:
         return str(client.get("/history").text)
 
+    def shown(self, client: Any) -> str:
+        """The list Versions draws now, as its publish form carries it back."""
+
+        found = re.search(r'name="package" value="([0-9a-f]{64})"', self.page(client))
+        return found.group(1) if found else ""
+
     def publish(self, client: Any, **fields: Any) -> Any:
         data = {
             auth.CSRF_FIELD: self.token(client),
             "expected_head": COMMIT,
             "comment": "Move the shop",
         }
+        if "package" not in fields:
+            data["package"] = self.shown(client)
         data.update(fields)
         return client.post("/history/alpha/publish", data=data, follow_redirects=False)
+
+    def test_what_is_published_is_the_list_that_was_shown(self) -> None:
+        # R1 (2026-10-08): a row saved in another tab, saved again or taken
+        # away between reading the list and confirming it stops the publish.
+        self.rows = [row()]
+        client = self.editor()
+        before = self.shown(client)
+        for changed in (
+            [row(), row("console", id=uuid4())],
+            [row(revision=4)],
+            [],
+        ):
+            with self.subTest(rows=[(r.object_id, r.revision) for r in changed]):
+                self.rows = changed
+                answer = self.publish(client, package=before, then="deploy")
+                self.assertEqual(answer.status_code, 400)
+                self.assertEqual(self.queued, [])
+        self.rows = [row()]
+        answer = self.publish(client, package=before)
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(sorted(self.queued[0]["payload"]["objects"]), ["shop"])
+
+    def test_the_refusal_says_the_list_changed(self) -> None:
+        self.rows = [row()]
+        client = self.editor()
+        before = self.shown(client)
+        self.rows = [row(), row("console", id=uuid4())]
+
+        answer = self.publish(client, package=before)
+
+        self.assertIn("The saved changes changed after this page was opened", answer.text)
+
+    def test_the_same_list_twice_is_the_same_request(self) -> None:
+        self.rows = [row()]
+        client = self.editor()
+
+        self.publish(client)
+        self.publish(client)
+
+        self.assertEqual(len(self.queued), 2)
+        self.assertEqual(self.queued[0]["idempotency_key"], self.queued[1]["idempotency_key"])
 
     def test_saved_changes_are_listed_and_drafts_are_not(self) -> None:
         self.rows = [row(), row("console", stage="draft")]

@@ -166,6 +166,7 @@
           <form method="post" action="/history/{{ cluster.cluster }}/publish" class="form-grid" data-keep="publish-{{ cluster.cluster }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="expected_head" value="{{ package.head }}">
+            <input type="hidden" name="package" value="{{ package.identity }}">
             <input type="hidden" name="then" value="deploy">
             <label><span class="field-title">Comment</span><input name="comment" maxlength="4096" required placeholder="What these changes are for"></label>
             <div class="form-actions"><button type="button" class="secondary-button" data-close-dialog>Close</button><button type="submit" class="primary-button">Publish &amp; deploy</button></div>

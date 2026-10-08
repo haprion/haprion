@@ -52,6 +52,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [Releasing a change](#releasing-a-change)
   - [CLI rollback](#cli-rollback)
   - [Rolling a release back](#rolling-a-release-back)
+- [What it does not do](#what-it-does-not-do)
 - [Environment reference](#environment-reference)
   - [The shape of a deployment](#the-shape-of-a-deployment)
   - [Prerequisites](#prerequisites)
@@ -1200,8 +1201,8 @@ copy, and the password is never stored or returned. Root at the terminal can ask
 helper directly with the same request document.
 
 Not every device can take a key at all. HPE iLO makes its own key and asks for its CSR
-to be signed; that needs a signing request uploaded here, which the manager does not do
-yet.
+to be signed; the manager does not sign an uploaded request - see
+[What it does not do](#what-it-does-not-do).
 
 ### Registering a receiver
 
@@ -2259,6 +2260,36 @@ pruning the rest only after the update has been proved, and always keeping the
 release just activated and the one it replaced. A release is reproducible from
 its commit, so nothing older is lost with the directory. `RELEASES_KEPT` in the
 answers file changes the number (at least two).
+
+## What it does not do
+
+Gaps that are not on the way to being filled: each one is either impossible without
+changing something the manager does not own, or left out because the alternative is
+better done elsewhere. The details are in the section linked.
+
+- **A UDP service whose server answers - RADIUS, NTP, SNMP - is not balanced.** A
+  server answers the address it sees. To let it see the client's own, the answer must
+  either pass back through the node, which then has to be the servers' gateway or be
+  made one by a route in the network, or come from the VIP itself, which then has to be
+  configured on every server. Both change the servers or the network; the manager does
+  neither. Letting the servers see the node instead would work, but makes the node
+  their only client, with one shared secret for every device behind it. DNS is
+  balanced because dnsdist understands it and passes the client on inside the query
+  ([DNS objects](#dns-objects)); syslog because it is never answered
+  ([Syslog objects](#syslog-objects)).
+- **Syslog over TCP or TLS is not forwarded**, and nothing restricts who may send to a
+  syslog object; the network between the nodes and the receivers must let the senders'
+  addresses through ([Syslog objects](#syslog-objects)).
+- **Two DNS objects cannot share an address and port**: dnsdist tells them apart by
+  where a query arrives ([DNS objects](#dns-objects)).
+- **A signing request made elsewhere is not signed here.** A device that makes its own
+  key and takes only a certificate for its own CSR - HPE iLO, for one - gets it from the
+  CA directly: for an internal name, the Microsoft CA's own web enrollment signs an
+  uploaded CSR. Every other device takes an
+  [external certificate](#external-certificates) with its key.
+- **Certificate renewal is the CA client's**: certbot and the NDES run renew on their
+  own timers, and the manager publishes what they renew
+  ([Certificates](#certificates)).
 
 
 ## Environment reference

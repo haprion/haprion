@@ -53,6 +53,9 @@
   /* DNS objects' badge (26-10-06): a colour no status uses. */
   --dns: #7c5cc4;
   --dns-soft: #f1ecfb;
+  /* Syslog objects' badge (26-10-08): another colour no status uses. */
+  --syslog: #0c6e74;
+  --syslog-soft: #e2f4f5;
   --accent-0: #577436;
   --accent-1: #d49bce;
   --accent-2: #62c5b9;
@@ -97,6 +100,8 @@
   --unknown-soft: #2a394b;
   --dns: #b19cf5;
   --dns-soft: #30284f;
+  --syslog: #5cd0d6;
+  --syslog-soft: #173e44;
   --accent-0: #739253;
   --accent-1: #f5bbef;
   --accent-2: #83e6d9;
@@ -645,6 +650,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .protocol-tcp { color: var(--warning); background: var(--warning-soft); }
 /* DNS (Fas 19a B5): served by dnsdist, so a colour of its own and none of the status colours. */
 .protocol-dns { color: var(--dns); background: var(--dns-soft); }
+.protocol-syslog { color: var(--syslog); background: var(--syslog-soft); }
 .protocol-unknown { color: var(--unknown); background: var(--unknown-soft); }
 .ownership-managed { color: var(--healthy); background: var(--healthy-soft); }
 .ownership-unmanaged { color: var(--warning); background: var(--warning-soft); }

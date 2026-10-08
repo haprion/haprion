@@ -131,6 +131,14 @@ def _addresses(
         vip = vip_of(proxy, network.vips, network.default_vip)
     except GeneratorError:
         return {"name": name, "address": None, "default": default}, None
+    #
+    # A syslog object leaves from no address of the cluster's: IPVS forwards
+    # each message with its sender's (B256), which is the point of it. Naming
+    # the VIP's source here would also have the interface hold the receivers'
+    # verdict to the node carrying that address, while every node checks them.
+    #
+    if proxy.listen.protocol == "syslog":
+        return {"name": name, "address": vip.address, "default": default}, None
     try:
         address = source_of(proxy, vip, network.sources)
     except GeneratorError:

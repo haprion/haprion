@@ -264,6 +264,13 @@ def source_address(form: Mapping[str, Any], choices: Mapping[str, Any]) -> str:
     wrong address answers a question nobody asked.
     """
 
+    #
+    # A syslog object leaves from none (Fas 19b B4): IPVS forwards with the
+    # sender's address, and keepalived on every node checks from its own. Empty
+    # here, so the editor's table is not held to the node carrying the VIP.
+    #
+    if str(form.get("protocol", "") or "").strip() == "syslog":
+        return ""
     named = str(form.get("source", "") or "").strip()
     if named:
         for entry in choices.get("sources", ()):
@@ -373,6 +380,19 @@ def run(
             source="",
             nodes=(),
             problem=f"This object cannot be read as written, so its check cannot be run: {refusal}",
+        )
+
+    #
+    # keepalived checks a syslog pool from every node, with checks the probe
+    # does not have (Fas 19b B4). The form offers no button for one; a post
+    # that asks anyway is told so, rather than answered by a different check.
+    #
+    if proxy.listen.protocol == "syslog":
+        return ProbeReport(
+            ran=False,
+            source="",
+            nodes=(),
+            problem="A syslog pool is checked by keepalived on the nodes, and cannot be tested here.",
         )
 
     checks = effective_checks(proxy)

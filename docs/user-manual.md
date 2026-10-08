@@ -14,6 +14,7 @@ only works with the names used below, that is a bug in the software, not in this
 - [Configuration and deployment](#configuration-and-deployment)
   - [Addresses, and what to call them](#addresses-and-what-to-call-them)
   - [DNS objects](#dns-objects)
+  - [Syslog objects](#syslog-objects)
 - [Accounts and signing in](#accounts-and-signing-in)
   - [What the two roles see](#what-the-two-roles-see)
   - [How a session works](#how-a-session-works)
@@ -151,6 +152,56 @@ Pi-holes, say - need a VIP each: add one on the Network page, publish and deploy
 and choose it on the second object. No DNS name is needed for it; clients are given a
 resolver by address anyway. Another port on the same VIP works only for clients that
 can be told to ask on it, which few can.
+
+### Syslog objects
+
+**What a syslog object cannot do, first:**
+
+- **UDP only.** Syslog over TCP or TLS is not forwarded; senders that use it send
+  straight to the receivers.
+- **No list of who may send.** Every packet that reaches the address and port is
+  forwarded. Protect the address in front of the nodes, with the firewall that guards
+  the network it is on.
+- **The network has to let the senders' addresses through.** A message leaves the node
+  with the node's own MAC address and the *sender's* IP address, so the receivers see
+  who sent it. Anything that filters on a source IP address between the nodes and the
+  receivers drops it: the Proxmox firewall's *IP filter* on the node's network card,
+  a switch's *IP Source Guard*, and uRPF or anti-spoofing on a router when the
+  receivers are in another network. Filters on the MAC address - VMware's *forged
+  transmits*, Proxmox's MAC filter - are not affected. Nothing has to route back
+  through the nodes: syslog over UDP is never answered.
+- **The receivers are addresses**, in the VIP's address family, with a port. There is
+  no standby receiver; *firstAvailable* is how a pool says active/passive.
+
+An object whose protocol is *Syslog (UDP)* is forwarded by the kernel's IPVS,
+configured by keepalived on the same nodes and VIPs, on port 514 unless another is
+written. The form offers it once every node of the cluster reports that
+`keepalived.conf` includes `/etc/keepalived/ipvs.conf` at its top level - see
+[Installing HAProxy Manager](install.md#5-install-optional-components); until then a
+node installs the file and forwards nothing. A syslog object shares a port number
+with tcp objects and the cluster's own ports, which are TCP, but not with a DNS object
+or another syslog object on the same VIP.
+
+The balancing is one of three: *roundrobin* (message by message, in turn), *source*
+(one sender keeps one receiver, and when a receiver goes only its senders move) and
+*firstAvailable* (every message to the first receiver in the list that is up). The
+health check is keepalived's: *udp* sends a datagram to the receiver's port and counts
+it down when the receiver's host answers that nothing listens there - a host that is
+gone altogether is noticed when the node stops finding it on the network, about
+fifteen seconds; *tcp* connects to a port of the receiver's, its own unless another is
+given, and nothing more. With no check, a receiver is never taken out. There is an
+interval and *Checks to fall*, but no *Checks to rise*: one passing check puts a
+receiver back. The form suggests *udp* when the protocol is chosen. *Test health
+check* is not offered: keepalived checks from every node.
+
+The editor's *What the nodes report* and the lamp in the object list show each
+receiver up or down, as each node's keepalived sees it. The object's metrics are
+messages and bytes, per pool and per receiver, counted by IPVS on the node that holds
+the address; a receiver taken out and put back starts counting from nought, and the
+interval it happened in has no figure rather than a wrong one. No message is stored.
+What is HAProxy's - TLS, rate limits, deny lists, a source address, the WAF engine,
+maintenance, headers, advanced config, cookies and connection limits - is not offered,
+and refused if written by hand.
 
 ## Accounts and signing in
 

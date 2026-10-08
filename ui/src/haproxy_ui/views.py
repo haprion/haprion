@@ -7967,6 +7967,12 @@ def _editor_page(
             # B5): a release with a listener is refused by a node without it.
             #
             "dns_offered": health.dns_everywhere(status_rows, cluster=cluster),
+            #
+            # Syslog once every node's keepalived reads the file its virtual
+            # servers are written to (Fas 19b B4); until then a node installs
+            # the file and forwards nothing.
+            #
+            "syslog_offered": health.syslog_everywhere(status_rows, cluster=cluster),
             "check_protocols": preview_module.CHECK_PROTOCOLS,
             "result": result,
             "draft": draft,

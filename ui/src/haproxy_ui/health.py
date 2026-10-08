@@ -12,7 +12,7 @@ it, and the page says so rather than implying the numbers are from now.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -158,10 +158,12 @@ class BackendHealth:
 
 
 def _members(status: Any) -> tuple[bool, list[dict[str, Any]]]:
-    """HAProxy's servers, and dnsdist's beside them in the same shape (Fas 19a B5).
+    """HAProxy's servers, and dnsdist's and IPVS's beside them in the same shape.
 
     A dns pool's servers are checked by dnsdist and reported with its counters,
-    `UP` or `DOWN` under the pool's name. Read here, every page that reads a
+    `UP` or `DOWN` under the pool's name (Fas 19a B5), and a syslog pool's
+    receivers by keepalived, under the pool the node's file names (Fas 19b B4).
+    Read here, every page that reads a
     backend's servers reads them: the listing's lamp, which objects are served,
     and the editor's table. Whether the node said anything is HAProxy's answer,
     as it was.
@@ -169,10 +171,11 @@ def _members(status: Any) -> tuple[bool, list[dict[str, Any]]]:
 
     if not isinstance(status, dict):
         return False, []
+    others = _dns_members(status) + _ipvs_members(status)
     entries = status.get("servers")
     if not isinstance(entries, list):
-        return False, _dns_members(status)
-    return True, [entry for entry in entries if isinstance(entry, dict)] + _dns_members(status)
+        return False, others
+    return True, [entry for entry in entries if isinstance(entry, dict)] + others
 
 
 def _dns_members(status: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -188,12 +191,39 @@ def _dns_members(status: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def dns_everywhere(rows: Iterable[Any], *, cluster: str) -> bool:
-    """Whether every node of the cluster reports dnsdist installed (Fas 19a B5).
+def _ipvs_members(status: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """A syslog pool's receivers, as IPVS holds them (Fas 19b B4).
+
+    keepalived checks them and takes a receiver whose check fails out of the
+    kernel; the node reports it `DOWN` under its pool then, and `UP` while the
+    kernel holds it. A pool with no check is never taken out, and reads `UP`
+    as an unchecked HAProxy server does - the lamp asks whether there is a
+    check before it believes either.
+    """
+
+    section = status.get("ipvs")
+    services = section.get("services") if isinstance(section, Mapping) else None
+    members: list[dict[str, Any]] = []
+    for service in services if isinstance(services, list) else ():
+        if not isinstance(service, Mapping) or not isinstance(service.get("pool"), str):
+            continue
+        receivers = service.get("receivers")
+        members += [
+            {"backend": service["pool"], "server": entry["server"], "status": entry.get("status")}
+            for entry in (receivers if isinstance(receivers, list) else ())
+            if isinstance(entry, Mapping) and isinstance(entry.get("server"), str)
+        ]
+    return members
+
+
+def _every_node(
+    rows: Iterable[Any], cluster: str, ready: Callable[[Mapping[str, Any]], bool]
+) -> bool:
+    """Whether every node of the cluster answered, and said `ready` of its status.
 
     The WAF engine's rule (B231): a node from before the field, or one that did
-    not answer, is a node dnsdist cannot be counted on, and a release with a
-    dns listener is refused there.
+    not answer, is a node the feature cannot be counted on, and a release that
+    needs it is refused there.
     """
 
     reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
@@ -208,10 +238,35 @@ def dns_everywhere(rows: Iterable[Any], *, cluster: str) -> bool:
         return False
     for entry in nodes:
         status = entry.get("status")
-        listener = status.get("dns_listener") if isinstance(status, Mapping) else None
-        if not isinstance(listener, Mapping) or not isinstance(listener.get("version"), str):
+        if not isinstance(status, Mapping) or not ready(status):
             return False
     return True
+
+
+def dns_everywhere(rows: Iterable[Any], *, cluster: str) -> bool:
+    """Whether every node of the cluster reports dnsdist installed (Fas 19a B5)."""
+
+    def ready(status: Mapping[str, Any]) -> bool:
+        listener = status.get("dns_listener")
+        return isinstance(listener, Mapping) and isinstance(listener.get("version"), str)
+
+    return _every_node(rows, cluster, ready)
+
+
+def syslog_everywhere(rows: Iterable[Any], *, cluster: str) -> bool:
+    """Whether every node's keepalived reads the syslog objects' file (Fas 19b B4).
+
+    Until `keepalived.conf` includes it at its top level, the node installs
+    the file and nothing forwards: a syslog object published then is one the
+    node accepts and no message reaches. The include is a person's line, one
+    node at a time (B57's order), so the form waits for the last of them.
+    """
+
+    def ready(status: Mapping[str, Any]) -> bool:
+        section = status.get("ipvs")
+        return isinstance(section, Mapping) and section.get("included") is True
+
+    return _every_node(rows, cluster, ready)
 
 
 #

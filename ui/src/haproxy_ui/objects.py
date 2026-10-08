@@ -23,7 +23,7 @@ from haproxy_mgmt.generate import PORTS
 from haproxy_mgmt.object_manifest import ABSENT as ABSENT
 from haproxy_mgmt.object_manifest import CHANGED as CHANGED
 from haproxy_mgmt.object_manifest import CURRENT
-from haproxy_mgmt.proxy_model import ModelError, read_document
+from haproxy_mgmt.proxy_model import OWN_PORT, ModelError, read_document
 
 from haproxy_ui.addresses import ObjectAddresses, from_entry
 from haproxy_ui.cluster_identity import accent_index
@@ -80,7 +80,7 @@ class ObjectView:
     #
     runtime_backends: tuple[str, ...] | None = None
     #
-    # A tcp or dns object's servers as written (26-10-06); empty for a site.
+    # A raw port's servers as written (26-10-06); empty for a site.
     #
     servers: tuple[str, ...] = ()
 
@@ -203,9 +203,9 @@ def object_view(value: Any) -> ObjectView | None:
 
 
 def _raw(protocol: Any, document: str) -> Mapping[str, Any]:
-    """A tcp or dns object's document, read with the engine's own reader; empty otherwise."""
+    """A raw port's document - tcp, dns or syslog - read with the engine's own reader."""
 
-    if protocol not in ("tcp", "dns"):
+    if protocol not in OWN_PORT:
         return {}
     try:
         return read_document("object", document.encode())
@@ -216,7 +216,7 @@ def _raw(protocol: Any, document: str) -> Mapping[str, Any]:
 def _ports(protocol: Any, data: Mapping[str, Any]) -> tuple[int, ...]:
     """The port an object is served on: the cluster's for a site, its own otherwise.
 
-    A tcp or dns object writes its port in the document, and the envelope does
+    A tcp, dns or syslog object writes its port in the document, and the envelope does
     not carry it; it is read there (Fas 19a B5).
     """
 
@@ -227,7 +227,7 @@ def _ports(protocol: Any, data: Mapping[str, Any]) -> tuple[int, ...]:
 
 
 def _servers(data: Mapping[str, Any]) -> tuple[str, ...]:
-    """A tcp or dns object's servers as written, which is what its listing names (26-10-06).
+    """A raw port's servers as written, which is what its listing names (26-10-06).
 
     A site is named by its hostnames; a raw port has none, and the servers behind
     it are what somebody looks for.
@@ -606,7 +606,7 @@ class ListedObject:
     #
     addresses: ObjectAddresses | None = None
     #
-    # A tcp or dns object's servers as written (26-10-06), for its Hosts cell.
+    # A raw port's servers as written (26-10-06), for its Hosts cell.
     #
     servers: tuple[str, ...] = ()
 

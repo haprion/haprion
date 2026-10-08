@@ -32,7 +32,9 @@ from haproxy_mgmt.proxy_model import (
     DNS_BALANCE,
     DNS_QUERY_TYPES,
     MAX_DENY_RULES,
+    OWN_PORT,
     STATUS_RANGE,
+    SYSLOG_BALANCE,
     ModelError,
     Proxy,
     dump_document,
@@ -224,19 +226,24 @@ CHECK_TYPES = (
     ("tcp", "tcp"),
     ("tcp-tls", "tcp, TLS handshake"),
     ("dns", "dns query"),
+    ("udp", "udp"),
 )
 #
 # Which protocols each choice belongs to, so the form offers a dns object a dns
 # check and HAProxy's objects the rest (Fas 19a B5). `disabled` is everybody's.
+# A syslog pool is checked by keepalived (Fas 19b B4): a datagram, or a tcp
+# connect to a port of the receiver's and nothing more - no TLS handshake.
 #
 CHECK_PROTOCOLS = {
-    "disabled": "http https tcp dns",
+    "disabled": "http https tcp dns syslog",
+    "tcp": "http https tcp syslog",
     "dns": "dns",
+    "udp": "syslog",
 }
 HAPROXY_PROTOCOLS = "http https tcp"
 #
 # The balancing choices, each with the protocols it is offered on: HAProxy's for
-# HAProxy's objects, dnsdist's for a dns object. `roundrobin` is both.
+# HAProxy's objects, dnsdist's for a dns object and IPVS's for a syslog one.
 #
 BALANCE_CHOICES = tuple(
     (
@@ -246,17 +253,22 @@ BALANCE_CHOICES = tuple(
             for protocol, offered in (
                 (HAPROXY_PROTOCOLS, name in BALANCE),
                 ("dns", name in DNS_BALANCE),
+                ("syslog", name in SYSLOG_BALANCE),
             )
             if offered
         ),
     )
-    for name in dict.fromkeys((*BALANCE, *DNS_BALANCE))
+    for name in dict.fromkeys((*BALANCE, *DNS_BALANCE, *SYSLOG_BALANCE))
 )
 #
 # The question a dns check asks: dnsdist's default first, written as nothing.
 #
 QUERY_TYPES = (("", "default (A)"), *((name, name) for name in DNS_QUERY_TYPES))
-DNS_PORT = 53
+#
+# The port an empty field means, for the shapes that name their own: a resolver
+# is asked on 53 and syslog over UDP is sent to 514 everywhere but a lab.
+#
+OWN_PORTS = {"dns": 53, "syslog": 514}
 
 
 def check_kind(chosen: str) -> str:
@@ -266,8 +278,8 @@ def check_kind(chosen: str) -> str:
         return "http"
     if chosen in ("tcp-tls", "tcp"):
         return "tcp"
-    if chosen == "dns":
-        return "dns"
+    if chosen in ("dns", "udp"):
+        return chosen
     return "disabled"
 
 
@@ -305,7 +317,11 @@ def check_type_of(health: Mapping[str, Any], backend_tls: str) -> str:
     would be the form telling somebody something untrue.
     """
 
-    kind = str(health.get("type", "") or "")
+    #
+    # A pool that names no check has the model's own, which the box calls
+    # `disabled` (`_with_an_unwritten_check_said`).
+    #
+    kind = str(health.get("type", "") or "disabled")
     if kind not in ("http", "tcp"):
         return kind
     written = health.get("tls")
@@ -476,6 +492,26 @@ HIDDEN_FOR = {
         "health_down_interval",
     ),
 }
+HIDDEN_FOR = {
+    **HIDDEN_FOR,
+    #
+    # IPVS forwards packets and keepalived checks the receivers (Fas 19b B4):
+    # no list of who may send, no address to leave from, and a check that is a
+    # datagram or a bare tcp connect, with no rise and no second pace.
+    #
+    "syslog": (
+        #
+        # Not the check's own port: keepalived's tcp check connects to one.
+        #
+        *(field for field in HIDDEN_FOR["dns"] if field != "health_port"),
+        "allow_from",
+        "allow_ranges",
+        "source",
+        "health_rise",
+        "health_send",
+        "health_expect",
+    ),
+}
 
 
 def shown_only(form: Mapping[str, object]) -> dict[str, object]:
@@ -511,12 +547,12 @@ def build_document(form: dict[str, object]) -> str:
         if not port.isdigit():
             raise ValueError("a tcp object must name the port it is served on")
         listen["port"] = int(port)
-    if protocol == "dns":
+    if protocol in OWN_PORTS:
         #
-        # DNS's own port unless another is written: the model requires the
-        # number, and a resolver is asked on 53 everywhere but a lab.
+        # The protocol's own port unless another is written: the model
+        # requires the number, and the usual one is what an empty field means.
         #
-        port = text("tcp_port") or str(DNS_PORT)
+        port = text("tcp_port") or str(OWN_PORTS[protocol])
         if not port.isdigit():
             raise ValueError("the port must be a number")
         listen["port"] = int(port)
@@ -553,7 +589,12 @@ def build_document(form: dict[str, object]) -> str:
     #
     kind = check_kind(text("health_type"))
     health: dict[str, object] = {"type": kind}
-    if kind != "disabled" and text("health_port"):
+    #
+    # The check's own port is an http or tcp check's. The field sits in a
+    # group drawn for those alone, and a udp check left with one typed before
+    # the type was changed would otherwise be refused for a field nobody sees.
+    #
+    if kind in ("http", "tcp") and text("health_port"):
         port = text("health_port")
         if not port.isdigit():
             raise ValueError("the health check port must be a number")
@@ -680,10 +721,10 @@ def build_document(form: dict[str, object]) -> str:
     backend_name = text("backend") or text("name")
     document: dict[str, object] = {"schema": 1, "name": text("name")}
     written = [name for name in hostnames if name]
-    if protocol in ("tcp", "dns"):
+    if protocol in OWN_PORT:
         #
         # A tcp object is an address, a port and one backend, and so is a dns
-        # one. Hostnames and redirects are http's: the form hides them for
+        # or syslog one. Hostnames and redirects are http's: the form hides them for
         # these shapes and `shown_only` has already emptied whatever they held
         # (26-10-06), so nothing of them reaches the document.
         #
@@ -728,7 +769,7 @@ def build_document(form: dict[str, object]) -> str:
     # and a hidden field still posts, so the shape is decided here as it is for
     # hostnames.
     #
-    if protocol not in ("tcp", "dns"):
+    if protocol not in OWN_PORT:
         rules = [_rule_document(rule) for rule in access_rules(form)]
         if rules:
             document["deny_rules"] = rules
@@ -1343,7 +1384,11 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
     except (ModelError, ValueError) as exc:
         raise Unexpressible(str(exc)) from exc
     difference = _first_difference(
-        _with_normalised_waf(_with_normalised_advanced(_without_a_redundant_check_protocol(data))),
+        _with_normalised_waf(
+            _with_normalised_advanced(
+                _without_a_redundant_check_protocol(_with_an_unwritten_check_said(data))
+            )
+        ),
         rebuilt,
     )
     if difference:
@@ -1492,6 +1537,34 @@ def _with_normalised_advanced(data: Any) -> Any:
     if not isinstance(data, Mapping) or not isinstance(data.get("advanced"), str):
         return data
     return {**data, "advanced": normalise_advanced(data["advanced"])}
+
+
+def _with_an_unwritten_check_said(data: Any) -> Any:
+    """The stored object with a pool that names no check given the model's own, `disabled`.
+
+    The form always writes the check, and a pool written by hand without one -
+    a syslog pool whose receivers nobody checks, say (Fas 19b B4) - is the same
+    pool to the engine. Read as the same, so the form opens it; the next save
+    writes `type: disabled` out, and the object means what it meant.
+
+    Not a pool the advanced config writes (B224): that is `servers: []` and
+    nothing else, on both sides.
+    """
+
+    if not isinstance(data, Mapping):
+        return data
+    backends = data.get("backends")
+    if not isinstance(backends, Mapping):
+        return data
+    said = {
+        name: (
+            {**backend, "health": {"type": "disabled"}}
+            if isinstance(backend, Mapping) and "health" not in backend and backend.get("servers")
+            else backend
+        )
+        for name, backend in backends.items()
+    }
+    return {**data, "backends": said}
 
 
 def _without_a_redundant_check_protocol(data: Any) -> Any:

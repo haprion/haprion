@@ -249,6 +249,25 @@ class WhereAnEntryIsServedFrom(unittest.TestCase):
     def test_a_vip_without_a_source_leaves_from_no_fixed_address(self) -> None:
         self.assertIsNone(self.entry("  vip: dmz\n")["source"])
 
+    def test_a_syslog_object_leaves_from_no_address_of_the_clusters(self) -> None:
+        """IPVS forwards each message with its sender's address (B256)."""
+
+        document = (
+            b"schema: 1\nname: logs\nlisten:\n  protocol: syslog\n  port: 514\nbackend: logs\n"
+            b"backends:\n  logs:\n    balance: roundrobin\n    health:\n      type: udp\n"
+            b"    servers:\n      - host: 198.51.100.10\n        port: 514\n"
+        )
+        result: dict[str, Any] = objects_result(
+            {"managed/proxies/logs.yaml": document}, COMMIT, network=NETWORK, generated_at=TIME
+        )
+        entry = result["objects"][0]
+
+        self.assertTrue(entry["readable"], entry["problem"])
+        self.assertEqual(
+            entry["vip"], {"name": "internal", "address": "192.0.2.20", "default": True}
+        )
+        self.assertIsNone(entry["source"])
+
     def test_names_the_network_lacks_are_reported_without_an_address(self) -> None:
         self.assertEqual(
             self.entry("  vip: gone\n")["vip"], {"name": "gone", "address": None, "default": False}

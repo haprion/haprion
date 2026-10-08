@@ -809,13 +809,6 @@ class WhereTheFormStops(unittest.TestCase):
             [
                 ("monitors/probes.yaml", "routes"),
                 ("routes/shop.yaml", "routes"),
-                #
-                # A syslog object (B256) is served by IPVS, and the form learns
-                # it in 19b's fourth step; until then it stops at the port.
-                #
-                ("syslog/audit.yaml", "listen.port"),
-                ("syslog/logs.yaml", "listen.port"),
-                ("syslog/relay.yaml", "listen.port"),
             ],
         )
 

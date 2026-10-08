@@ -24,7 +24,11 @@
   withholds nothing: the engine decides what a field means for each shape, and
   refuses what it cannot use.
 #}
-{% macro when(field, values) %} data-show-when="{{ field }}:{{ values }}"{% if form[field] not in values.split() %} hidden{% endif %}{% endmacro %}
+{#
+  Two conditions where one field depends on both choices - a tcp check's send and
+  expect, which keepalived's check on a syslog pool cannot carry (Fas 19b B4).
+#}
+{% macro when(field, values, also=none, also_values='') %} data-show-when="{{ field }}:{{ values }}{% if also %};{{ also }}:{{ also_values }}{% endif %}"{% if form[field] not in values.split() or (also and form[also] not in also_values.split()) %} hidden{% endif %}{% endmacro %}
 
 {#
   Carried, not shown (Fas 17): the advanced config is edited in the object's own
@@ -80,9 +84,14 @@
             always on an object that already is one, so it opens as what it is.
           #}
           {% if dns_offered or form.protocol == 'dns' %}<option value="dns"{% if form.protocol == 'dns' %} selected{% endif %}>DNS</option>{% endif %}
+          {#
+            Syslog (Fas 19b B4) once every node's keepalived reads the file the
+            syslog objects are written to, and always on an object that already is one.
+          #}
+          {% if syslog_offered or form.protocol == 'syslog' %}<option value="syslog"{% if form.protocol == 'syslog' %} selected{% endif %}>Syslog (UDP)</option>{% endif %}
         </select>
       </label>
-      <label class="tcp-only" data-protocol="tcp dns"{{ when('protocol', 'tcp dns') }}>Port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="{{ '53' if form.protocol == 'dns' else '5432' }}" data-placeholders="tcp:5432 dns:53"{% if form.protocol not in ('tcp', 'dns') %} disabled{% endif %}></label>
+      <label class="tcp-only" data-protocol="tcp dns syslog"{{ when('protocol', 'tcp dns syslog') }}>Port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="{{ {'dns': '53', 'syslog': '514'}.get(form.protocol, '5432') }}" data-placeholders="tcp:5432 dns:53 syslog:514"{% if form.protocol not in ('tcp', 'dns', 'syslog') %} disabled{% endif %}></label>
       <label>VIP
         <select name="vip" data-default-source="{{ choices.vip_sources.get(choices.default_vip, '') }}">
           <option value="">Default ({{ choices.default_vip }}{% if choices.default_vip_address %} — {{ choices.default_vip_address }}{% endif %})</option>
@@ -117,7 +126,7 @@
     </div>
     {% endcall %}
 
-    {% call group(groups.access) %}
+    {% call group(groups.access, when('protocol', 'http https tcp dns')) %}
     <div class="form-grid form-grid-pair">
       {#
         The hint sits outside the label so its link is a link: inside one, a
@@ -229,7 +238,7 @@
       {% if form.handwritten_pool %}
       <div class="field"><span class="field-title">Servers</span><small>Written in the advanced config, with balancing and checks.</small></div>
       {% else %}
-      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small{{ when('protocol', 'http https tcp') }}>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small><small{{ when('protocol', 'dns') }}>One <code>address</code> or <code>hostname:port</code> per line. Names are looked up when published.</small></label>
+      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small{{ when('protocol', 'http https tcp') }}>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small><small{{ when('protocol', 'dns') }}>One <code>address</code> or <code>hostname:port</code> per line. Names are looked up when published.</small><small{{ when('protocol', 'syslog') }}>One <code>address:port</code> per line.</small></label>
       <label>Balancing
         <select name="balance">
           {% for algorithm, protocols in choices.balances %}<option value="{{ algorithm }}"{{ when('protocol', protocols) }}{% if form.balance == algorithm %} selected{% endif %}>{{ algorithm }}</option>{% endfor %}
@@ -240,7 +249,7 @@
     </div>
 
     <div class="form-groups">
-    {% call group(groups.connections) %}
+    {% call group(groups.connections, when('protocol', 'http https tcp dns')) %}
     <div class="form-grid">
       <label>Source address
         <select name="source">
@@ -313,7 +322,7 @@
   <section class="cluster-card object-card {{ accent | accent_class }}">
     <header class="cluster-header">
       <div class="cluster-identity"><div class="section-title"><h3>Health check <span class="optional">(optional)</span></h3></div></div>
-      {% if backend_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button">Test health check</button>{% endif %}
+      {% if backend_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button"{{ when('protocol', 'http https tcp dns') }}>Test health check</button>{% endif %}
     </header>
     <div class="form-grid">
       <label>Type
@@ -329,8 +338,8 @@
       </label>
       <label{{ when('health_type', 'http https') }}><span class="field-title">Path <span class="optional">(optional)</span></span><input name="health_path" value="{{ form.health_path }}" placeholder="/healthz"></label>
       <label{{ when('health_type', 'http https') }}><span class="field-title">Expected status <span class="optional">(optional)</span></span><input name="health_expect_status" value="{{ form.health_expect_status }}" size="10" placeholder="any 2xx or 3xx"><small>Such as <code>204</code>.</small></label>
-      <label{{ when('health_type', 'tcp tcp-tls') }}><span class="field-title">Send <span class="optional">(optional)</span></span><input name="health_send" value="{{ form.health_send }}" placeholder="PING\r\n"><small>Written once the connection is up.</small></label>
-      <label{{ when('health_type', 'tcp tcp-tls') }}><span class="field-title">Expect <span class="optional">(optional)</span></span><input name="health_expect" value="{{ form.health_expect }}" placeholder="PONG"><small>Text the answer must contain.</small></label>
+      <label{{ when('health_type', 'tcp tcp-tls', 'protocol', 'http https tcp') }}><span class="field-title">Send <span class="optional">(optional)</span></span><input name="health_send" value="{{ form.health_send }}" placeholder="PING\r\n"><small>Written once the connection is up.</small></label>
+      <label{{ when('health_type', 'tcp tcp-tls', 'protocol', 'http https tcp') }}><span class="field-title">Expect <span class="optional">(optional)</span></span><input name="health_expect" value="{{ form.health_expect }}" placeholder="PONG"><small>Text the answer must contain.</small></label>
     </div>
 
     <div class="form-groups">
@@ -342,17 +351,17 @@
     </div>
     {% endcall %}
 
-    {% call group(groups.timing, when('health_type', 'http https tcp tcp-tls dns')) %}
+    {% call group(groups.timing, when('health_type', 'http https tcp tcp-tls dns udp')) %}
     <div class="form-grid">
       <label><span class="field-title">Check interval <span class="optional">(optional)</span></span><input name="health_interval" value="{{ form.health_interval }}" size="10" placeholder="{{ check_interval }}"></label>
-      <label><span class="field-title">Checks to rise <span class="optional">(optional)</span></span><input name="health_rise" value="{{ form.health_rise }}" size="10" placeholder="{{ check_rise }}"><small>Good answers before a server is used again.</small></label>
+      <label{{ when('protocol', 'http https tcp dns') }}><span class="field-title">Checks to rise <span class="optional">(optional)</span></span><input name="health_rise" value="{{ form.health_rise }}" size="10" placeholder="{{ check_rise }}"><small>Good answers before a server is used again.</small></label>
       <label><span class="field-title">Checks to fall <span class="optional">(optional)</span></span><input name="health_fall" value="{{ form.health_fall }}" size="10" placeholder="{{ check_fall }}"><small>Failures before a server is taken out.</small></label>
     </div>
     {#
       How often the check runs while a server changes state: HAProxy's
       `fastinter` and `downinter`, a pair of their own under the three above.
     #}
-    <div class="form-grid"{{ when('health_type', 'http https tcp tcp-tls') }}>
+    <div class="form-grid"{{ when('health_type', 'http https tcp tcp-tls', 'protocol', 'http https tcp') }}>
       <label><span class="field-title">Fast interval <span class="optional">(optional)</span></span><input name="health_fast_interval" value="{{ form.health_fast_interval }}" size="10" placeholder="{{ check_fast_interval }}"><small>While a server goes up or down.</small></label>
       <label><span class="field-title">Down interval <span class="optional">(optional)</span></span><input name="health_down_interval" value="{{ form.health_down_interval }}" size="10" placeholder="{{ check_down_interval }}"><small>While a server is down.</small></label>
     </div>

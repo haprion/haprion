@@ -2,14 +2,15 @@
   "use strict";
 
   //
-  // One field on the object form has no meaning outside tcp and dns: the port.
-  // It is disabled with its label hidden, and its example follows the protocol
-  // (`5432` for tcp, `53` for dns, which is also what an empty field means there).
+  // One field on the object form has no meaning outside tcp, dns and syslog: the
+  // port. It is disabled with its label hidden, and its example follows the
+  // protocol (`5432` for tcp; `53` for dns and `514` for syslog, which is also
+  // what an empty field means there).
   //
   // The browser is a convenience here and never the control. `build_document`
-  // writes a port only for a tcp or dns object and the engine refuses one on
-  // http or https, so a submission with the field re-enabled by hand is answered
-  // the same way as any other object that does not parse.
+  // writes a port only for those three and the engine refuses one on http or
+  // https, so a submission with the field re-enabled by hand is answered the
+  // same way as any other object that does not parse.
   //
   const wire = () => {
     const protocol = document.querySelector("select[name='protocol']");
@@ -235,17 +236,26 @@
   // choice and the values it holds for, such as `protocol:http https`. The page
   // arrives already right, rendered by the same rule; this follows the choice as
   // it is changed. One rule for all of them, so a new field that belongs to one
-  // shape needs an attribute and not a function here.
+  // shape needs an attribute and not a function here. A field that depends on
+  // two choices names both, separated by `;`, and is shown when both hold.
   //
+  const conditions = (element) =>
+    element.dataset.showWhen.split(";").map((condition) => {
+      const [field, values] = condition.split(":");
+      return [field, (values || "").split(" ")];
+    });
+
   const wireShownWhen = () => {
     const shaped = Array.from(document.querySelectorAll("[data-show-when]"));
     const watched = new Set();
     const apply = () => {
       for (const element of shaped) {
-        const [field, values] = element.dataset.showWhen.split(":");
-        const choice = document.querySelector(`select[name='${field}']`);
-        if (!choice) continue;
-        element.hidden = !(values || "").split(" ").includes(choice.value);
+        let shown = true;
+        for (const [field, values] of conditions(element)) {
+          const choice = document.querySelector(`select[name='${field}']`);
+          if (choice && !values.includes(choice.value)) shown = false;
+        }
+        element.hidden = !shown;
       }
       //
       // A choice that has just been hidden is not left chosen: a dns object
@@ -263,14 +273,35 @@
       }
     };
     for (const element of shaped) {
-      const field = element.dataset.showWhen.split(":")[0];
-      const choice = document.querySelector(`select[name='${field}']`);
-      if (choice && !watched.has(choice)) {
-        watched.add(choice);
-        choice.addEventListener("change", apply);
+      for (const [field] of conditions(element)) {
+        const choice = document.querySelector(`select[name='${field}']`);
+        if (choice && !watched.has(choice)) {
+          watched.add(choice);
+          choice.addEventListener("change", apply);
+        }
       }
     }
     apply();
+  };
+
+  //
+  // A syslog object is offered a check as it becomes one (Fas 19b B4). Without
+  // one keepalived never takes a receiver out, and nothing answers a datagram
+  // to say it went nowhere: a receiver that is gone is sent its share of the
+  // messages until somebody notices the gap in its logs. Only on the change,
+  // so an object opened as it was written keeps what it says, and only from
+  // `disabled`, so a check somebody chose stays chosen.
+  //
+  const wireSyslogCheck = () => {
+    const protocol = document.querySelector("select[name='protocol']");
+    const check = document.querySelector("select[name='health_type']");
+    if (!protocol || !check || !check.querySelector("option[value='udp']")) return;
+
+    protocol.addEventListener("change", () => {
+      if (protocol.value !== "syslog" || check.value !== "disabled") return;
+      check.value = "udp";
+      check.dispatchEvent(new Event("change"));
+    });
   };
 
   //
@@ -424,6 +455,7 @@
     wireRules();
     wireRecheck();
     wireShownWhen();
+    wireSyslogCheck();
     wireGroupSummaries();
     wire();
     wireBalanceKey();

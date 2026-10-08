@@ -114,9 +114,17 @@
     });
   };
 
+  //
+  // An open dialog is a decision being made - the dashboard's Publish & deploy
+  // lists what goes out and takes a comment (B257). Swapping the page would
+  // close it under the reader, so the swap waits for it as it waits for a
+  // field.
+  //
+  const deciding = () => Boolean(document.querySelector("main dialog[open]"));
+
   const settled = () =>
     new Promise((resolve) => {
-      const check = () => (typing() ? window.setTimeout(check, WAIT) : resolve());
+      const check = () => (typing() || deciding() ? window.setTimeout(check, WAIT) : resolve());
       check();
     });
 

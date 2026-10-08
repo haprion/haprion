@@ -806,14 +806,17 @@ def build_router(config: Config) -> APIRouter:
             }
         running = jobs.in_flight(recent)
         #
-        # How much is saved and not published, per cluster (B257): where there
-        # is any, the card's deploy becomes Publish & deploy, which goes to
-        # Versions to show what goes out and to take the comment.
+        # What is saved and not published, per cluster (B257): where there is
+        # any, the card's deploy becomes Publish & deploy, a dialog that lists
+        # what goes out and takes the comment. The count is asked first and the
+        # package built only where there is one - it reads the cluster's
+        # objects, which a card without saved changes has no use for.
         #
         pending = (
             {
-                cluster: _pending_count(request, config, cluster)
+                cluster: _package(request, config, cluster)
                 for cluster in listed_clusters(request, config)
+                if _pending_count(request, config, cluster)
             }
             if config.management_writes and session.role == "admin"
             else {}
@@ -6969,8 +6972,9 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Publish everything saved for one cluster as one version (B257).
 
-        `then=deploy` is Publish & deploy: the worker deploys the version it
-        has just recorded, in the same job.
+        `then=deploy` is Publish & deploy, asked from the dashboard's dialog:
+        the worker deploys the version it has just recorded, in the same job,
+        and the answer goes back to the dashboard, where the job is shown.
 
         The package is built again here rather than carried by the form, so
         what is published is what is saved now. `expected_head` is the version
@@ -6986,28 +6990,30 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Refused", status_code=403)
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
+        deploy = then == "deploy"
+        back = "/" if deploy else "/history"
         package = _package(request, config, cluster)
         if package.problem:
-            return _refusal_page(request, config, package.problem, back="/history")
+            return _refusal_page(request, config, package.problem, back=back)
         if not package.rows:
-            return _refusal_page(request, config, "Nothing is saved to publish.", back="/history")
+            return _refusal_page(request, config, "Nothing is saved to publish.", back=back)
         if expected_head != package.head:
             return _refusal_page(
                 request,
                 config,
                 "A newer version was recorded after this page was opened. Read the list again "
                 "before publishing.",
-                back="/history",
+                back=back,
             )
         if not comment.strip():
             return _refusal_page(
-                request, config, "A comment is needed: it is the version's.", back="/history"
+                request, config, "A comment is needed: it is the version's.", back=back
             )
         payload = {
             **package.payload,
             "comment": comment.strip(),
             "requested_by": gate.username,
-            **({"deploy": True} if then == "deploy" else {}),
+            **({"deploy": True} if deploy else {}),
         }
         key = _publish_key(cluster, "changes_publish", payload)
         try:
@@ -7019,7 +7025,7 @@ def build_router(config: Config) -> APIRouter:
                 request,
                 config,
                 "This interface could not build a publish from what is saved.",
-                back="/history",
+                back=back,
             )
         with request.app.state.pool.connection() as connection:
             try:
@@ -7036,7 +7042,7 @@ def build_router(config: Config) -> APIRouter:
                     request,
                     config,
                     "This cluster is already running a job. Publish when it has finished.",
-                    back="/history",
+                    back=back,
                 )
             except db.RequestConflict:
                 connection.rollback()
@@ -7044,7 +7050,7 @@ def build_router(config: Config) -> APIRouter:
                     request,
                     config,
                     "That publish was already asked for with different content.",
-                    back="/history",
+                    back=back,
                 )
             db.record_audit_event(
                 connection,
@@ -7059,6 +7065,8 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
+        if deploy:
+            return RedirectResponse("/", status_code=303)
         return RedirectResponse(f"/history?published={cluster}", status_code=303)
 
     @router.get("/jobs", response_class=HTMLResponse)
@@ -8352,7 +8360,7 @@ def _lookup_again(
             detail={"object": stored.name, "revision": saved.revision, "lookup": True},
         )
         connection.commit()
-    return RedirectResponse("/history", status_code=303)
+    return RedirectResponse("/proxies", status_code=303)
 
 
 def _moved_servers(
@@ -8819,11 +8827,16 @@ def _editor_submit(
     # refresh of this response must not save a second time under a revision
     # that has since moved.
     #
-    # Back to the editor, which is where the work is, under the name it was
-    # saved as - saving a new object lands on the object it just created
-    # rather than back on the empty form.
+    # A draft is unfinished work, so it goes back to the editor, under the
+    # name it was saved as - a new object lands on the object it just created
+    # rather than back on the empty form. A save is finished: back to the list,
+    # as *Save and publish* went before B257, where the row says it is waiting.
     #
-    return RedirectResponse(_proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303)
+    if form.action == "draft":
+        return RedirectResponse(
+            _proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303
+        )
+    return RedirectResponse("/proxies", status_code=303)
 
 
 def _removal_bookkeeping(
@@ -8926,6 +8939,7 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
         changes = _settled_changes(connection, cluster, _reading_head(network_row) or head)
     rows: list[PendingRow] = []
     objects: dict[str, str | None] = {}
+    published = {view.name for view in state.stored}
     for row in saved:
         objects[row.object_id] = None if row.deleted else row.yaml
         if row.replaces and not row.deleted:
@@ -8940,6 +8954,8 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
                     else f"Renamed from {row.replaces}"
                     if row.replaces
                     else "Changed"
+                    if row.object_id in published
+                    else "New"
                 ),
                 updated_by=row.updated_by,
                 updated_at=row.updated_at,
@@ -9110,10 +9126,11 @@ def _removal_submit(
         )
         connection.commit()
     #
-    # Saved, not published (B257): the removal goes out with the next publish
-    # from Versions, and the object's page says so until then.
+    # Saved, not published (B257): the removal goes out with the next publish,
+    # and the listing says so on the object's row until then. Back to the list,
+    # as every finished save is.
     #
-    return RedirectResponse(_proxy_path(cluster, name) + "?saved=1", status_code=303)
+    return RedirectResponse("/proxies", status_code=303)
 
 
 #

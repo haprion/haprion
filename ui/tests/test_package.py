@@ -206,16 +206,35 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertEqual(self.queued, [])
 
     #
-    # Publish & deploy: one button publishes what is saved and deploys it, in
-    # one job (B257).
+    # Publish & deploy: from the dashboard's dialog, one job that publishes what
+    # is saved and deploys it (B257). Versions publishes only.
     #
 
-    def test_the_second_button_asks_for_the_deploy(self) -> None:
+    def test_versions_offers_publish_alone(self) -> None:
         self.rows = [row()]
 
-        self.publish(self.editor(), then="deploy")
+        text = self.page(self.editor())
+
+        self.assertIn(">Publish 1 change</button>", text)
+        self.assertNotIn("Publish &amp; deploy", text)
+        self.assertNotIn('name="then"', text)
+
+    def test_the_dialog_asks_for_the_deploy_and_goes_back_to_the_dashboard(self) -> None:
+        self.rows = [row()]
+
+        answer = self.publish(self.editor(), then="deploy")
 
         self.assertIs(self.queued[0]["payload"]["deploy"], True)
+        self.assertEqual((answer.status_code, answer.headers["location"]), (303, "/"))
+
+    def test_a_refusal_from_the_dialog_leads_back_to_the_dashboard(self) -> None:
+        self.rows = [row()]
+
+        answer = self.publish(self.editor(), then="deploy", comment=" ")
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertIn('href="/"', answer.text)
+        self.assertEqual(self.queued, [])
 
     def test_publish_alone_asks_for_no_deploy(self) -> None:
         self.rows = [row()]
@@ -224,17 +243,53 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
 
         self.assertNotIn("deploy", self.queued[0]["payload"])
 
-    def test_the_dashboard_offers_it_only_while_something_is_saved(self) -> None:
+    def dashboard(self) -> tuple[str, str]:
         client = self.editor()
         with mock.patch("haproxy_ui.db.cluster_statuses", return_value=list(demo_statuses())):
             empty = client.get("/").text
-            self.rows = [row(), row("console", id=uuid4())]
+            self.rows = [row(), row("console", id=uuid4(), stage="saved")]
             waiting = client.get("/").text
+        return empty, waiting
+
+    def test_the_dashboard_offers_it_only_while_something_is_saved(self) -> None:
+        empty, waiting = self.dashboard()
 
         self.assertNotIn("Publish &amp; deploy", empty)
         self.assertIn(">Deploy configuration</button>", empty)
-        self.assertIn('href="/history">Publish &amp; deploy · 2</a>', waiting)
+        self.assertIn(
+            'data-open-dialog="publish-alpha">Publish &amp; deploy 2 changes</button>', waiting
+        )
         self.assertNotIn(">Deploy configuration</button>", waiting)
+
+    def test_the_dialog_lists_what_goes_out_and_takes_the_comment(self) -> None:
+        _empty, waiting = self.dashboard()
+        dialog = waiting.split('<dialog class="publish-dialog" id="publish-alpha"', 1)[1]
+        dialog = dialog.split("</dialog>", 1)[0]
+
+        self.assertIn("<strong>shop</strong>", dialog)
+        self.assertIn("<strong>console</strong>", dialog)
+        self.assertIn('action="/history/alpha/publish"', dialog)
+        self.assertIn('name="then" value="deploy"', dialog)
+        self.assertIn(f'name="expected_head" value="{COMMIT}"', dialog)
+        self.assertIn('name="comment"', dialog)
+
+    def test_a_stale_row_holds_the_dialog_too(self) -> None:
+        self.rows = [row(base_hash=LATER)]
+        client = self.editor()
+        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=list(demo_statuses())):
+            text = client.get("/").text
+        dialog = text.split('<dialog class="publish-dialog"', 1)[1].split("</dialog>", 1)[0]
+
+        self.assertIn("Saved against an older version", dialog)
+        self.assertNotIn('type="submit"', dialog)
+
+    def test_a_published_object_is_changed_and_an_unpublished_one_is_new(self) -> None:
+        self.rows = [row(), row("console", id=uuid4())]
+
+        text = self.page(self.editor())
+
+        self.assertIn('data-label="What">Changed</td>', text)
+        self.assertIn('data-label="What">New</td>', text)
 
 
 def demo_statuses() -> Any:

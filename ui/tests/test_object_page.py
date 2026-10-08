@@ -416,7 +416,14 @@ class ADraftInTheListing(DraftReading):
         with mock.patch("haproxy_ui.db.cluster_drafts", return_value=drafts):
             return str(client.get("/proxies").text)
 
-    def drafted(self, name: str, *, deleted: bool = False) -> ProxyDraft:
+    def drafted(
+        self,
+        name: str,
+        *,
+        deleted: bool = False,
+        stage: str = "draft",
+        replaces: str | None = None,
+    ) -> ProxyDraft:
         return ProxyDraft(
             cluster="edge-demo",
             object_id=name,
@@ -427,6 +434,8 @@ class ADraftInTheListing(DraftReading):
             updated_by="operator",
             updated_at=CAPTURED,
             deleted=deleted,
+            stage=stage,
+            replaces=replaces,
         )
 
     def test_a_draft_is_listed_and_says_it_is_one(self) -> None:
@@ -460,6 +469,26 @@ class ADraftInTheListing(DraftReading):
         self.assertIn("ownership-managed", row)
         self.assertEqual(body.count('href="/proxies/edge-demo/public-web"><strong>'), 1)
         self.assertIn('<td data-label="Hosts / ports"><span class="table-empty">', new_row)
+
+    def test_a_saved_change_says_what_it_does_and_that_it_is_not_published(self) -> None:
+        """B257: a saved change goes out with the next publish, and says so."""
+
+        def badge(row: ProxyDraft) -> str:
+            body = self.listing([row])
+            cell = body.split(f'data-href="/proxies/edge-demo/{row.object_id}"', 1)[1]
+            return cell.split('<td data-label="Protocol">', 1)[1].split("</td>", 1)[0]
+
+        for row, expected in (
+            (self.drafted("public-web", stage="saved"), "Changed · not published"),
+            (self.drafted("brand-new", stage="saved"), "New · not published"),
+            (self.drafted("public-web", stage="saved", deleted=True), "Removal · not published"),
+            (
+                self.drafted("front", stage="saved", replaces="public-web"),
+                "Renamed · not published",
+            ),
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(f">{expected}<", badge(row))
 
     def test_without_drafts_the_listing_says_nothing_about_them(self) -> None:
         self.assertNotIn(">Draft<", self.listing([]))

@@ -3,6 +3,7 @@
 {% block head_extra %}{% if live_seconds %}<meta name="haproxy-live" content="{{ live_seconds }}">{% endif %}{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
+<script defer src="{{ url_for('static', path='/dialogs.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div>
     <h1>Dashboard</h1>
@@ -144,11 +145,34 @@
         {#
           Saved changes waiting (B257): deploying alone would roll out the
           published version without them, so the button says what is due and
-          leads to Versions, where the list is shown and the comment taken.
+          opens a dialog that lists it and takes the version's comment. The
+          decision is made here, and the job is watched here.
         #}
-        {% set waiting = pending.get(cluster.cluster, 0) if pending else 0 %}
-        {% if waiting %}<a class="secondary-button" href="/history">Publish &amp; deploy · {{ waiting }}</a>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if cluster.target_version %}<input type="hidden" name="expected_version" value="{{ cluster.target_version }}">{% endif %}<input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy configuration</button></form>{% endif %}
+        {% set package = pending.get(cluster.cluster) if pending else none %}
+        {% if package and package.rows %}{% set count = package.rows | length %}<button type="button" class="secondary-button" data-open-dialog="publish-{{ cluster.cluster }}">Publish &amp; deploy {{ count }} change{% if count != 1 %}s{% endif %}</button>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if cluster.target_version %}<input type="hidden" name="expected_version" value="{{ cluster.target_version }}">{% endif %}<input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy configuration</button></form>{% endif %}
       </div>
+      {% if package and package.rows %}
+      <dialog class="publish-dialog" id="publish-{{ cluster.cluster }}" aria-label="Publish and deploy {{ cluster.cluster }}">
+        <div class="publish-dialog-body">
+          <h3>Publish &amp; deploy {{ cluster.cluster }}</h3>
+          <ul class="publish-list">
+            {% for row in package.rows %}<li{% if row.stale %} class="pending-stale"{% endif %}><a class="proxy-link" href="{{ row.link }}"><strong>{{ row.name }}</strong></a><span>{% if row.stale %}<span class="status-badge status-badge-critical">Saved against an older version</span>{% else %}{{ row.what }}{% endif %}</span></li>{% endfor %}
+          </ul>
+          {% if package.problem %}
+          <p class="preview-notice form-problem"><strong>{{ package.problem }}</strong></p>
+          <div class="form-actions"><button type="button" class="secondary-button" data-close-dialog>Close</button></div>
+          {% else %}
+          <form method="post" action="/history/{{ cluster.cluster }}/publish" class="form-grid" data-keep="publish-{{ cluster.cluster }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="expected_head" value="{{ package.head }}">
+            <input type="hidden" name="then" value="deploy">
+            <label><span class="field-title">Comment</span><input name="comment" maxlength="4096" required placeholder="What these changes are for"></label>
+            <div class="form-actions"><button type="button" class="secondary-button" data-close-dialog>Close</button><button type="submit" class="primary-button">Publish &amp; deploy</button></div>
+          </form>
+          {% endif %}
+        </div>
+      </dialog>
+      {% endif %}
       {% endif %}
     </footer>
     {% endif %}

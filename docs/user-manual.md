@@ -68,13 +68,15 @@ Editing produces a draft; saving it makes a saved change; publishing produces an
 release; deploying brings nodes to that release. Saved changes are published from *Versions*:
 each cluster lists what is saved there, by whom, and publishes all of it with one comment as
 one version (`changes_publish`, up to 64 objects). A change saved against an older version than
-the newest holds the list until it is saved again. *Publish & deploy* there does both in one
-job: the worker runs the deploy helper for the version the publish recorded, and the job ends
-as the deploy ends, with the publish's answer kept beside it. The dashboard names that button,
-with the number of saved changes, wherever something is saved, and *Deploy configuration*
-otherwise. A draft is unfinished work and is never
+the newest holds the list until it is saved again. Where something is saved, the dashboard's
+card offers *Publish & deploy N changes* instead of *Deploy configuration*: a dialog lists the
+changes and takes the comment, and one job publishes and deploys - the worker runs the deploy
+helper for the version the publish recorded, and the job ends as the deploy ends, with the
+publish's answer kept beside it. A draft is unfinished work and is never
 published. A saved change goes out with the next publish, and a draft may be started on top of
-one without taking it out. *Save as draft* and *Save* in the editor are the two; the advanced
+one without taking it out. *Save as draft* and *Save* in the editor are the two; *Save as
+draft* returns to the editor and *Save* to the proxy list, where the row says *New*,
+*Changed*, *Renamed* or *Removal* · *not published* until it is. The advanced
 config dialog, a WAF exception and *Remove* save directly, and refuse while the object has a
 draft. A rename that is saved records the published name it replaces, so the publish that
 carries it removes the old name as well. The network description and a cluster's logs and

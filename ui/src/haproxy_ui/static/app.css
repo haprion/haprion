@@ -1641,6 +1641,17 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .pending-publish .action-buttons { display: flex; flex-wrap: nowrap; gap: 10px; align-items: stretch; }
 .pending-publish .action-buttons button { white-space: nowrap; }
 @media (max-width: 720px) { .pending-publish { grid-template-columns: 1fr; } }
+/* The dashboard's Publish & deploy (B257): the saved changes, one per line, and the comment. */
+.publish-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-raised); color: var(--text-primary); box-shadow: var(--shadow-menu); }
+.publish-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.publish-dialog-body { display: grid; gap: 12px; padding: 16px 20px 20px; }
+.publish-dialog-body h3 { margin: 0; overflow-wrap: anywhere; }
+.publish-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 0; border-top: 1px solid var(--line); }
+.publish-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 12px; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+.publish-list li > a { min-width: 0; overflow-wrap: anywhere; }
+.publish-list li > span { flex: none; color: var(--text-secondary); }
+.publish-dialog .form-grid { grid-template-columns: minmax(0, 1fr); padding: 0; }
+.publish-dialog .form-actions { flex-wrap: wrap; }
 .network-subhead {
   margin: 0; padding: 16px 20px 6px; color: var(--muted); font-size: 11px; font-weight: 700;
   letter-spacing: 0.055em; text-transform: uppercase;

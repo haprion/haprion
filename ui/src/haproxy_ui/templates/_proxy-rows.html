@@ -4,14 +4,19 @@
   its way. A second copy of this markup would drift from the first, and the
   drift would show as a row that changes shape when it updates.
 #}
-{% macro draft_badge(draft, queued, failed) %}{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
+{#
+  A saved change says what it does and that it has not gone out yet, in the
+  shape of "Reconfigured · deploy to activate" (B257). `stored` is whether the
+  object is published already: a saved object that is not is new.
+#}
+{% macro draft_badge(draft, queued, failed, stored=true) %}{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
         A publish that was refused used to leave this row saying "Draft" and
         nothing else. The row stopped spinning, the work stayed, and the reason
         was on the jobs page behind a click nobody had a reason to make - so
         what it looked like was that publishing had quietly turned the object
         back into a draft. The reason is named here; the full text is one click
         away, where it has room.
-      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.stage == 'saved' %}{% if draft.deleted %}Saved: removal{% else %}Saved{% endif %}{% elif draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endmacro %}
+      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.stage == 'saved' %}{% if draft.deleted %}Removal · not published{% elif draft.replaces %}Renamed · not published{% elif stored %}Changed · not published{% else %}New · not published{% endif %}{% elif draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endmacro %}
 
 {% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}, unforwarded=()) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
@@ -47,7 +52,7 @@
 {% set page = [[paging.get(cluster, 1), 1] | max, pages] | min %}
 {% for _name, kind, item in (ordered[(page - 1) * proxy_page_size : page * proxy_page_size] if total > proxy_page_size else ordered) %}
 {% if kind == 'draft' %}{% set draft = item %}
-      <tr class="proxy-draft" data-href="/proxies/{{ cluster }}/{{ draft.object_id }}"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol">{{ draft_badge(draft, queued, failed) }}</td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Created by"><span class="table-empty">—</span></td></tr>
+      <tr class="proxy-draft" data-href="/proxies/{{ cluster }}/{{ draft.object_id }}"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol">{{ draft_badge(draft, queued, failed, stored=false) }}</td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Created by"><span class="table-empty">—</span></td></tr>
 {#
   What a finished removal took out of the repository and the nodes have
   not stopped serving. The object is gone, so there is nothing to link to and

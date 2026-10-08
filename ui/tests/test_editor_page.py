@@ -1357,14 +1357,28 @@ class SavingSaysSo(EditorTestCase):
     written, had two readers, and was never shown to anybody.
     """
 
-    def save(self, url: str, **fields: str) -> Any:
-        return self.submit(self.editor(), url, action="save", **fields)
+    def save(self, url: str, action: str = "draft", **fields: str) -> Any:
+        return self.submit(self.editor(), url, action=action, **fields)
 
     def test_a_saved_draft_returns_to_the_editor_and_says_it_was_saved(self) -> None:
         answer = self.save("/proxies/alpha/shop/edit")
 
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(answer.headers["location"], "/proxies/alpha/shop/edit?saved=1")
+
+    def test_a_finished_save_goes_back_to_the_list(self) -> None:
+        """As *Save and publish* did before B257: the row says what waits."""
+
+        for url, fields in (
+            ("/proxies/alpha/shop/edit", {}),
+            ("/proxies/alpha/new", {"name": "console"}),
+        ):
+            with self.subTest(url=url):
+                answer = self.save(url, action="save", **fields)
+
+                self.assertEqual(
+                    (answer.status_code, answer.headers["location"]), (303, "/proxies")
+                )
 
     def test_the_editor_shows_the_notice_that_url_asks_for(self) -> None:
         client = self.editor()
@@ -1430,6 +1444,23 @@ class RemovingAnObject(EditorTestCase):
         self.assertEqual(self.queued, [])
         self.assertEqual(self.saved, [])
 
+    def test_looking_up_again_saves_the_object_and_goes_back_to_the_list(self) -> None:
+        """B257: saved as it is stored, for the next publish; nothing queued."""
+
+        client = self.editor()
+
+        answer = client.post(
+            "/proxies/alpha/shop/lookup",
+            data={auth.CSRF_FIELD: self.token(client)},
+            follow_redirects=False,
+        )
+
+        self.assertEqual((answer.status_code, answer.headers["location"]), (303, "/proxies"))
+        self.assertEqual(self.queued, [])
+        (change,) = self.changes
+        self.assertEqual(change["object_id"], "shop")
+        self.assertFalse(change.get("deleted", False))
+
     def test_an_object_that_is_not_there_is_a_refusal_and_not_a_form(self) -> None:
         page = self.editor().get("/proxies/alpha/nothing-here/remove")
 
@@ -1437,7 +1468,7 @@ class RemovingAnObject(EditorTestCase):
         self.assertIn("no object of that name", page.text)
 
     def test_confirming_saves_the_removal_and_queues_nothing(self) -> None:
-        """B257: the removal goes out with the next publish from Versions."""
+        """B257: the removal goes out with the next publish; back to the list."""
 
         client = self.editor()
 
@@ -1448,7 +1479,7 @@ class RemovingAnObject(EditorTestCase):
         )
 
         self.assertEqual(answer.status_code, 303)
-        self.assertEqual(answer.headers["location"], "/proxies/alpha/shop?saved=1")
+        self.assertEqual(answer.headers["location"], "/proxies")
         self.assertEqual(self.queued, [])
         (change,) = self.changes
         self.assertTrue(change["deleted"])

@@ -113,5 +113,65 @@ class TypedValuesStayWithTheirForm(unittest.TestCase):
         self.assertEqual(values, {"alpha": "30", "beta": "7"})
 
 
+def dialog_page(drawn: str) -> str:
+    return (
+        "<!doctype html><title>Dashboard</title><main>"
+        f'<p id="drawn">{drawn}</p>'
+        '<button type="button" data-open-dialog="publish-alpha">Publish &amp; deploy</button>'
+        '<dialog id="publish-alpha"><form method="post" action="/history/alpha/publish">'
+        '<input name="comment"><button type="button" data-close-dialog>Close</button>'
+        "</form></dialog></main>"
+    )
+
+
+class AnOpenDialogHoldsTheRedraw(unittest.TestCase):
+    """The dashboard's Publish & deploy dialog survives the page keeping itself current (B257)."""
+
+    playwright: ClassVar[Any]
+    browser: ClassVar[Any]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.playwright = sync_playwright().start()
+        cls.browser = cls.playwright.chromium.launch()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.browser.close()
+        cls.playwright.stop()
+
+    def test_the_swap_waits_until_the_dialog_is_closed(self) -> None:
+        context = self.browser.new_context()
+        self.addCleanup(context.close)
+        tab = context.new_page()
+        served = iter((dialog_page("first"), dialog_page("second"), dialog_page("third")))
+        tab.route(
+            f"{ORIGIN}/",
+            lambda route: route.fulfill(content_type="text/html", body=next(served)),
+        )
+        tab.goto(f"{ORIGIN}/")
+        tab.add_script_tag(path=str(STATIC_DIRECTORY / "live.js"))
+        tab.add_script_tag(path=str(STATIC_DIRECTORY / "dialogs.js"))
+
+        tab.click("[data-open-dialog]")
+        self.assertTrue(tab.evaluate("document.getElementById('publish-alpha').open"))
+        tab.fill("input[name=comment]", "Move the shop")
+        tab.evaluate("document.activeElement.blur()")
+        tab.evaluate("() => { window.haproxyUi.redraw(); }")
+        tab.wait_for_timeout(2500)
+
+        self.assertEqual(tab.text_content("#drawn"), "first")
+        self.assertTrue(tab.evaluate("document.getElementById('publish-alpha').open"))
+        self.assertEqual(tab.input_value("input[name=comment]"), "Move the shop")
+
+        tab.click("[data-close-dialog]")
+        tab.wait_for_function("document.getElementById('drawn').textContent === 'second'")
+        #
+        # The buttons drawn by the swap are new ones, and open their dialog too.
+        #
+        tab.click("[data-open-dialog]")
+        self.assertTrue(tab.evaluate("document.getElementById('publish-alpha').open"))
+
+
 if __name__ == "__main__":
     unittest.main()

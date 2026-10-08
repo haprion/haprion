@@ -1295,7 +1295,14 @@ def prepare(
             "changes",
             "removed_backends",
             "backend_renames",
+            "deploy",
         )
+        #
+        # `deploy` asks the worker to deploy the version once it is recorded,
+        # in the same job (B257). Read by the worker, never passed on.
+        #
+        if not isinstance(payload.get("deploy", False), bool):
+            raise BadPayload("deploy must be true or false")
         #
         # `drafts` and `changes` are the interface's bookkeeping (B257): which
         # saved rows this publish carries, so each can be recognised as

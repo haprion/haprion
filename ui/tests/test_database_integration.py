@@ -660,6 +660,23 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(removable, {"gone"})
             found = db.draft_publishes(connection, cluster="alpha", draft_ids={draft})
             self.assertEqual([named[job.id] for job in found], ["objects"])
+            #
+            # Publish & deploy whose deploy failed: the job is `failed`, and
+            # the publish under `publish` still recorded the version.
+            #
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key, state, result, "
+                "started_at, finished_at) values ('changes_publish', 'alpha', %(payload)s, "
+                "%(key)s, 'failed', %(result)s, now(), now()) returning id",
+                {
+                    "payload": json.dumps({"drafts": [{"id": draft, "revision": 1}]}),
+                    "key": uuid4(),
+                    "result": json.dumps({"outcome": "failed", "publish": {"outcome": "done"}}),
+                },
+            )
+            named[_first(cursor)] = "deploy failed"
+            found = db.draft_publishes(connection, cluster="alpha", draft_ids={draft})
+            self.assertEqual(sorted(named[job.id] for job in found), ["deploy failed", "objects"])
             found = db.change_publishes(connection, cluster="alpha", change_ids={change})
             self.assertEqual([named[job.id] for job in found], ["settings"])
             connection.rollback()

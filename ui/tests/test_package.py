@@ -205,6 +205,43 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertEqual(self.publish(client).status_code, 403)
         self.assertEqual(self.queued, [])
 
+    #
+    # Publish & deploy: one button publishes what is saved and deploys it, in
+    # one job (B257).
+    #
+
+    def test_the_second_button_asks_for_the_deploy(self) -> None:
+        self.rows = [row()]
+
+        self.publish(self.editor(), then="deploy")
+
+        self.assertIs(self.queued[0]["payload"]["deploy"], True)
+
+    def test_publish_alone_asks_for_no_deploy(self) -> None:
+        self.rows = [row()]
+
+        self.publish(self.editor())
+
+        self.assertNotIn("deploy", self.queued[0]["payload"])
+
+    def test_the_dashboard_offers_it_only_while_something_is_saved(self) -> None:
+        client = self.editor()
+        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=list(demo_statuses())):
+            empty = client.get("/").text
+            self.rows = [row(), row("console", id=uuid4())]
+            waiting = client.get("/").text
+
+        self.assertNotIn("Publish &amp; deploy", empty)
+        self.assertIn(">Deploy configuration</button>", empty)
+        self.assertIn('href="/history">Publish &amp; deploy · 2</a>', waiting)
+        self.assertNotIn(">Deploy configuration</button>", waiting)
+
+
+def demo_statuses() -> Any:
+    from haproxy_ui import demo
+
+    return [replace(status, cluster="alpha") for status in demo.status_rows()[:1]]
+
 
 class TheMenuPutsVersionsSecond(EditorTestCase):
     def test_dashboard_then_versions_then_proxies(self) -> None:

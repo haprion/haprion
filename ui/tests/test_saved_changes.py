@@ -11,7 +11,7 @@ from unittest import mock
 from uuid import UUID
 
 from haproxy_ui import db, demo, views
-from tests.test_editor_page import EditorTestCase
+from tests.test_editor_page import EditorTestCase, published
 from tests.test_login import configuration
 from tests.test_queue_route import QueueRouteTestCase
 from tests.test_settings_cluster import SettingsClusterTestCase
@@ -171,7 +171,7 @@ class ASavedChangeIsClearedByItsPublish(unittest.TestCase):
     def job(self, *, base: str, changed: bool = True, revision: int = 2) -> Any:
         return mock.Mock(
             payload={"change": {"id": str(SAVED_ID), "revision": revision}, "expected_head": base},
-            result={"changed": changed},
+            result=published(changed),
         )
 
     def settle(self, head: str | None, jobs: list[Any]) -> tuple[dict[str, Any], mock.Mock]:

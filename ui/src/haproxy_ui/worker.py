@@ -27,8 +27,10 @@ import logging
 import os
 import socket
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID, uuid5
 
 from haproxy_ui import db, diagnostics, execution, operations, recovery, service
 from haproxy_ui.config import DEFAULT_CONFIG_PATH
@@ -198,7 +200,9 @@ def _message(value: Any) -> bool:
     )
 
 
-def _envelope(stdout: str, job: db.ClaimedJob) -> dict[str, Any] | None:
+def _envelope(
+    stdout: str, job: db.ClaimedJob, *, operation: str | None = None, request_id: str | None = None
+) -> dict[str, Any] | None:
     """Accept only the common v1 envelope bound to this exact claimed job.
 
     The operation helpers own their operation-specific result schemas. The
@@ -222,15 +226,16 @@ def _envelope(stdout: str, job: db.ClaimedJob) -> dict[str, Any] | None:
         return None
     if type(envelope["schema_version"]) is not int or envelope["schema_version"] != 1:
         return None
-    if envelope["operation"] != job.operation:
+    expected = operation or job.operation
+    if envelope["operation"] != expected:
         return None
     if envelope["cluster"] != job.cluster:
         return None
-    if envelope["request_id"] != str(job.request_id):
+    if envelope["request_id"] != (request_id or str(job.request_id)):
         return None
 
     outcome = envelope["outcome"]
-    allowed = _OPERATION_OUTCOMES.get(job.operation, frozenset())
+    allowed = _OPERATION_OUTCOMES.get(expected, frozenset())
     if not isinstance(outcome, str) or outcome not in allowed:
         return None
     if not isinstance(envelope["ok"], bool):
@@ -341,8 +346,16 @@ def _finish(
     # history and never a wrong one.
     #
     renames = job.payload.get("backend_renames")
+    #
+    # A publish followed by a deploy in the same job (B257) published even
+    # when the deploy did not; its own answer is under `publish`.
+    #
+    embedded = (result or {}).get("publish")
+    published = state == "done" or (
+        isinstance(embedded, dict) and embedded.get("outcome") == "done"
+    )
     if (
-        state == "done"
+        published
         and job.operation in ("objects_publish", "changes_publish")
         and job.cluster is not None
         and isinstance(renames, dict)
@@ -524,16 +537,91 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
         state = outcome if outcome in {"done", "partial", "failed", "blocked"} else "unknown"
         result = envelope
 
+    exit_code = completed.exit_code
+    stderr = completed.stderr
+    if state == "done" and job.operation == "changes_publish" and job.payload.get("deploy") is True:
+        deployed = _deploy_after(connection, job, cast(dict[str, Any], result), lease_is_ours)
+        if deployed is None:
+            return
+        state, outcome, result, exit_code, stderr = deployed
+
     _finish(
         connection,
         job,
         state=state,
         outcome=outcome,
-        exit_code=completed.exit_code,
+        exit_code=exit_code,
         result=result,
-        stderr_excerpt=diagnostics.safe_excerpt(completed.stderr) or None,
+        stderr_excerpt=diagnostics.safe_excerpt(stderr) or None,
         worker=worker,
     )
+
+
+#
+# The deploy that follows a publish asked for with Publish & deploy (B257) is
+# its own request to the deploy helper, so it has its own ID - derived from the
+# job's, so the retry of an interrupted job asks the same question again.
+#
+DEPLOY_AFTER = UUID("4f6c1d2e-8b7a-4c3d-9e1f-2a5b6c7d8e9f")
+
+
+def _deploy_after(
+    connection: Any,
+    job: db.ClaimedJob,
+    published: dict[str, Any],
+    still_ours: Callable[[], bool],
+) -> tuple[str, str, dict[str, Any] | None, int | None, str] | None:
+    """Deploy the version a publish of saved changes just recorded, in the same job (B257).
+
+    Asked for with Publish & deploy. The worker may not queue a job of its own -
+    only the web role inserts into the queue - and the cluster takes one job at
+    a time, so the deploy is a second helper run inside this one. Both halves
+    are safe to repeat: a publish retried finds its own version, and a deploy is
+    a reconcile. So a job interrupted between them is requeued like any other.
+
+    The job ends as the deploy ends, with the deploy's answer as its result and
+    the publish's beside it under `publish`: the version is recorded either way,
+    and what a person needs from a failure is why the nodes did not take it.
+    None when the lease was lost and nothing may be written.
+    """
+
+    body = published.get("result")
+    version = body.get("version") if isinstance(body, dict) else None
+    request_id = uuid5(DEPLOY_AFTER, str(job.request_id))
+    try:
+        prepared = operations.prepare(
+            operation="deploy",
+            cluster=job.cluster,
+            request_id=request_id,
+            payload={"allow_vip_unknown": False, "expected_version": version},
+        )
+    except (operations.UnknownOperation, operations.BadPayload) as refusal:
+        logger.error("job %s published but its deploy was refused: %s", job.id, refusal)
+        return "blocked", "blocked", {**_internal_error(), "publish": published}, None, ""
+    logger.info("job %s: deploy of version %s on %s", job.id, version, job.cluster)
+    completed = execution.run(
+        prepared.argv,
+        request=prepared.request,
+        timeout_seconds=prepared.timeout_seconds,
+        still_ours=still_ours,
+        lifeline=prepared.lifeline,
+    )
+    if completed.ending == "lease_lost":
+        logger.error("job %s was taken over while it deployed; writing nothing", job.id)
+        return None
+    envelope = (
+        _envelope(completed.stdout, job, operation="deploy", request_id=str(request_id))
+        if completed.stdout_error is None
+        else None
+    )
+    if envelope is None or completed.ending == "timeout":
+        state = outcome = "unknown"
+        answer: dict[str, Any] = {} if completed.ending == "timeout" else _internal_error()
+    else:
+        outcome = str(envelope.get("outcome", "unknown"))
+        state = outcome if outcome in {"done", "partial", "failed", "blocked"} else "unknown"
+        answer = envelope
+    return state, outcome, {**answer, "publish": published}, completed.exit_code, completed.stderr
 
 
 def _wait_for_work(listener: Any, stopping: StopRequest, seconds: int) -> None:

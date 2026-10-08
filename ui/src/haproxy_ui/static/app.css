@@ -1638,6 +1638,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .pending-stale td { background: var(--critical-soft); }
 .pending-publish { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 12px 20px 18px; }
 .pending-changes > .form-problem { margin: 12px 20px 18px; }
+.pending-publish .action-buttons { display: flex; flex-wrap: nowrap; gap: 10px; align-items: stretch; }
+.pending-publish .action-buttons button { white-space: nowrap; }
 @media (max-width: 720px) { .pending-publish { grid-template-columns: 1fr; } }
 .network-subhead {
   margin: 0; padding: 16px 20px 6px; color: var(--muted); font-size: 11px; font-weight: 700;

@@ -811,6 +811,8 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("backup_schedule", "haproxy-backup-schedule.schema.json"),
             ("network_publish", "haproxy-network-publish.schema.json"),
             ("objects_publish", "haproxy-objects-publish.schema.json"),
+            ("cluster_settings_publish", "haproxy-cluster-settings-publish.schema.json"),
+            ("changes_publish", "haproxy-changes-publish.schema.json"),
             ("cert_issue", "haproxy-cert-issue.schema.json"),
             ("dns_profile_apply", "haproxy-dns-profile-apply.schema.json"),
             ("ndes_profile_apply", "haproxy-ndes-profile-apply.schema.json"),

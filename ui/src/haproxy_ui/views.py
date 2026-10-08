@@ -805,10 +805,24 @@ def build_router(config: Config) -> APIRouter:
                 for name in traffic_clusters
             }
         running = jobs.in_flight(recent)
+        #
+        # How much is saved and not published, per cluster (B257): where there
+        # is any, the card's deploy becomes Publish & deploy, which goes to
+        # Versions to show what goes out and to take the comment.
+        #
+        pending = (
+            {
+                cluster: _pending_count(request, config, cluster)
+                for cluster in listed_clusters(request, config)
+            }
+            if config.management_writes and session.role == "admin"
+            else {}
+        )
         return TEMPLATES.TemplateResponse(
             request,
             "index.html",
             {
+                "pending": pending,
                 "traffic": traffic,
                 "username": session.username,
                 "role": session.role,
@@ -6950,9 +6964,13 @@ def build_router(config: Config) -> APIRouter:
         cluster: str,
         comment: str = Form(default="", max_length=4096),
         expected_head: str = Form(default="", max_length=64),
+        then: str = Form(default="", max_length=8),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         """Publish everything saved for one cluster as one version (B257).
+
+        `then=deploy` is Publish & deploy: the worker deploys the version it
+        has just recorded, in the same job.
 
         The package is built again here rather than carried by the form, so
         what is published is what is saved now. `expected_head` is the version
@@ -6989,6 +7007,7 @@ def build_router(config: Config) -> APIRouter:
             **package.payload,
             "comment": comment.strip(),
             "requested_by": gate.username,
+            **({"deploy": True} if then == "deploy" else {}),
         }
         key = _publish_key(cluster, "changes_publish", payload)
         try:
@@ -8860,6 +8879,23 @@ class Package:
     problem: str
 
 
+def _pending_count(request: Request, config: Config, cluster: str) -> int:
+    """How many saved changes one cluster has, each cleared once its publish is read (B257)."""
+
+    _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
+    _, network_rows, _ = read_source(request, config, NETWORK_SOURCE, cluster=cluster)
+    objects_row = next((row for row in object_rows if row.cluster == cluster), None)
+    network_row = next((row for row in network_rows if row.cluster == cluster), None)
+    with request.app.state.pool.connection() as connection:
+        saved = [
+            row
+            for row in _settled_drafts(connection, cluster, _objects_reading(objects_row))
+            if row.stage == db.SAVED
+        ]
+        changes = _settled_changes(connection, cluster, _reading_head(network_row))
+    return len(saved) + len(changes)
+
+
 def _package(request: Request, config: Config, cluster: str) -> Package:
     """Everything saved for one cluster, as rows and as one `changes_publish` payload.
 
@@ -9168,7 +9204,7 @@ def _published_drafts(
     for job in db.draft_publishes(connection, cluster=cluster, draft_ids=ids):
         payload = job.payload if isinstance(job.payload, Mapping) else {}
         base = payload.get("expected_head")
-        changed = job.result.get("changed") if isinstance(job.result, Mapping) else None
+        changed = _publish_changed(job.result)
         for identity, revision in _carried(payload, "draft", "drafts"):
             settled.setdefault(
                 (identity, revision),
@@ -9178,6 +9214,25 @@ def _published_drafts(
                 ),
             )
     return settled
+
+
+def _publish_changed(result: Any) -> bool | None:
+    """Whether a finished publish recorded a new version: the helper's `result.changed`.
+
+    Read from inside the envelope, where the helper writes it. It was read from
+    the envelope's top level until 2026-10-08, where it never is - so a publish
+    that changed nothing kept its draft until some later commit moved the
+    cache, and the tests built their jobs in the same wrong shape. A publish
+    followed by a deploy in one job (B257) keeps its own answer under `publish`.
+    """
+
+    if not isinstance(result, Mapping):
+        return None
+    embedded = result.get("publish")
+    envelope: Mapping[str, Any] = embedded if isinstance(embedded, Mapping) else result
+    body = envelope.get("result")
+    changed = body.get("changed") if isinstance(body, Mapping) else None
+    return changed if isinstance(changed, bool) else None
 
 
 def _carried(payload: Mapping[str, Any], one: str, many: str) -> list[tuple[str, int]]:
@@ -9341,7 +9396,7 @@ def _settled_changes(
     for job in db.change_publishes(connection, cluster=cluster, change_ids=ids):
         payload = job.payload if isinstance(job.payload, Mapping) else {}
         base = payload.get("expected_head")
-        changed = job.result.get("changed") if isinstance(job.result, Mapping) else None
+        changed = _publish_changed(job.result)
         for identity, revision in _carried(payload, "change", "changes"):
             evidence.setdefault(
                 (identity, revision),

@@ -9,9 +9,11 @@ that must not become a saved draft.
 from __future__ import annotations
 
 import html
+import json
 import re
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest import mock
@@ -1052,6 +1054,20 @@ class WhatThePageShowed(EditorTestCase):
         self.assertEqual(self.saved, [])
 
 
+def published(changed: bool) -> dict[str, Any]:
+    """A finished publish's answer as the helper writes it: the contract's own fixture.
+
+    Built by hand as `{"changed": ...}` until 2026-10-08, the shape the
+    interface wrongly read - so the test agreed with the bug. Taken from the
+    contract instead, the two cannot drift apart again.
+    """
+
+    path = Path(__file__).resolve().parents[2] / "fixtures/haproxy-objects-publish/valid/done.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["result"]["changed"] = changed
+    return cast(dict[str, Any], document)
+
+
 DRAFT_ID = uuid4()
 
 
@@ -1096,7 +1112,7 @@ class ThePublishedDraftWaitsForTheCache(EditorTestCase):
             finished_at=OBSERVED,
             exit_code=0,
             outcome="done",
-            result={"changed": changed},
+            result=published(changed),
             stderr_excerpt=None,
             idempotency_key=None,
             attempts=1,

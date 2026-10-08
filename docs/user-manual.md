@@ -68,7 +68,11 @@ Editing produces a draft; saving it makes a saved change; publishing produces an
 release; deploying brings nodes to that release. Saved changes are published from *Versions*:
 each cluster lists what is saved there, by whom, and publishes all of it with one comment as
 one version (`changes_publish`, up to 64 objects). A change saved against an older version than
-the newest holds the list until it is saved again. A draft is unfinished work and is never
+the newest holds the list until it is saved again. *Publish & deploy* there does both in one
+job: the worker runs the deploy helper for the version the publish recorded, and the job ends
+as the deploy ends, with the publish's answer kept beside it. The dashboard names that button,
+with the number of saved changes, wherever something is saved, and *Deploy configuration*
+otherwise. A draft is unfinished work and is never
 published. A saved change goes out with the next publish, and a draft may be started on top of
 one without taking it out. *Save as draft* and *Save* in the editor are the two; the advanced
 config dialog, a WAF exception and *Remove* save directly, and refuse while the object has a

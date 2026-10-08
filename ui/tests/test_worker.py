@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar, cast
 from unittest import mock
 from uuid import uuid4
 
@@ -600,3 +600,114 @@ class TheWorkerKeepsOutOfTheDraftTable(unittest.TestCase):
         source = Path(worker.__file__).read_text(encoding="utf-8")
         self.assertNotIn("draft_references", source)
         self.assertNotIn("live_drafts", source)
+
+
+class PublishAndDeploy(WorkerTestCase):
+    """B257: a publish of saved changes asked to deploy runs the deploy in the same job."""
+
+    PAYLOAD: ClassVar[dict[str, Any]] = {
+        "objects": {"shop": "schema: 1\n"},
+        "expected_head": "a" * 40,
+        "comment": "Move the shop",
+        "deploy": True,
+    }
+
+    def run_job(self, job: db.ClaimedJob, answers: list[Any]) -> list[Any]:
+        calls: list[Any] = []
+
+        def run(argv: Any, **kwargs: Any) -> execution.Completed:
+            calls.append((argv, kwargs["request"]))
+            produced = answers.pop(0)
+            if callable(produced):
+                return cast(execution.Completed, produced(json.loads(kwargs["request"])))
+            return cast(execution.Completed, produced)
+
+        with mock.patch.object(execution, "run", side_effect=run):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+        return calls
+
+    def published(self, job: db.ClaimedJob, outcome: str = "done") -> execution.Completed:
+        document = result_document(job, outcome)
+        if outcome == "done":
+            document["result"] = {"version": 27, "changed": True}
+        return completed(stdout=json.dumps(document))
+
+    @staticmethod
+    def deployed(outcome: str = "done") -> Any:
+        def answer_for(request: dict[str, Any]) -> execution.Completed:
+            document = {
+                **result_document(claimed(), outcome),
+                "request_id": request["request_id"],
+            }
+            return completed(stdout=json.dumps(document), exit_code=0 if outcome == "done" else 1)
+
+        return answer_for
+
+    def test_the_deploy_follows_the_publish_and_ends_the_job(self) -> None:
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+
+        calls = self.run_job(job, [self.published(job), self.deployed()])
+
+        self.assertEqual(len(calls), 2)
+        deploy = json.loads(calls[1][1])
+        self.assertEqual(deploy["operation"], "deploy_cluster")
+        self.assertEqual(deploy["parameters"]["expected_version"], 27)
+        self.assertNotEqual(deploy["request_id"], str(job.request_id))
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "done")
+        self.assertEqual(finished["result"]["operation"], "deploy")
+        self.assertEqual(finished["result"]["publish"]["result"]["version"], 27)
+
+    def test_a_failed_deploy_keeps_the_publish_beside_it(self) -> None:
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+
+        self.run_job(job, [self.published(job), self.deployed("failed")])
+
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "failed")
+        self.assertEqual(finished["result"]["error"]["code"], "synthetic_failure")
+        self.assertEqual(finished["result"]["publish"]["outcome"], "done")
+
+    def test_a_refused_publish_deploys_nothing(self) -> None:
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+
+        calls = self.run_job(job, [self.published(job, "blocked")])
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.finished[0]["state"], "blocked")
+
+    def test_without_the_flag_only_the_publish_runs(self) -> None:
+        payload = {key: value for key, value in self.PAYLOAD.items() if key != "deploy"}
+        job = claimed(operation="changes_publish", payload=payload)
+
+        calls = self.run_job(job, [self.published(job)])
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.finished[0]["result"]["operation"], "changes_publish")
+
+    def test_a_retry_asks_the_deploy_under_the_same_id(self) -> None:
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+        first = self.run_job(job, [self.published(job), self.deployed()])
+        second = self.run_job(job, [self.published(job), self.deployed()])
+
+        self.assertEqual(
+            json.loads(first[1][1])["request_id"], json.loads(second[1][1])["request_id"]
+        )
+
+    def test_a_deploy_answer_for_another_request_is_not_accepted(self) -> None:
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+        wrong = completed(stdout=json.dumps(result_document(claimed())))
+
+        self.run_job(job, [self.published(job), wrong])
+
+        self.assertEqual(self.finished[0]["state"], "unknown")
+
+    def test_renames_are_written_when_the_publish_was_done_and_the_deploy_was_not(self) -> None:
+        renames = {"renamed": {"web": "shop-front"}, "introduced": ["shop-front"]}
+        job = claimed(
+            operation="changes_publish", payload={**self.PAYLOAD, "backend_renames": renames}
+        )
+        with mock.patch.object(db, "record_backend_renames") as record:
+            self.run_job(job, [self.published(job), self.deployed("failed")])
+
+        record.assert_called_once()

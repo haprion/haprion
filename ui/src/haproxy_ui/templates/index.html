@@ -141,7 +141,13 @@
       #}
       <div class="action-buttons">
         {% if block %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy certificates</button></form>{% endif %}
-        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if cluster.target_version %}<input type="hidden" name="expected_version" value="{{ cluster.target_version }}">{% endif %}<input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy configuration</button></form>
+        {#
+          Saved changes waiting (B257): deploying alone would roll out the
+          published version without them, so the button says what is due and
+          leads to Versions, where the list is shown and the comment taken.
+        #}
+        {% set waiting = pending.get(cluster.cluster, 0) if pending else 0 %}
+        {% if waiting %}<a class="secondary-button" href="/history">Publish &amp; deploy · {{ waiting }}</a>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if cluster.target_version %}<input type="hidden" name="expected_version" value="{{ cluster.target_version }}">{% endif %}<input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy configuration</button></form>{% endif %}
       </div>
       {% endif %}
     </footer>

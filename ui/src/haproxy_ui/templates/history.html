@@ -43,7 +43,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="expected_head" value="{{ package.head }}">
         <label><span class="field-title">Comment</span><input name="comment" maxlength="4096" required placeholder="What these changes are for"></label>
-        <button type="submit" class="primary-button">Publish {{ package.rows | length }} change{% if package.rows | length != 1 %}s{% endif %}</button>
+        <div class="action-buttons"><button type="submit" class="secondary-button">Publish {{ package.rows | length }} change{% if package.rows | length != 1 %}s{% endif %}</button><button type="submit" name="then" value="deploy" class="primary-button">Publish &amp; deploy</button></div>
       </form>
       {% endif %}
     </section>

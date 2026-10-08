@@ -121,6 +121,17 @@ def dns_question(entry):
     return {"query_name": name, "query_type": kind, "address": address}
 
 
+def udp_receiver(entry):
+    """A udp check's receiver: an address, as keepalived and IPVS take it (Fas 19b B5)."""
+
+    host = entry.get("host")
+    try:
+        ipaddress.ip_address(host)
+    except (TypeError, ValueError):
+        refuse("a udp target's host must be an IP address")
+    return host
+
+
 def read_request(stream):
     raw = stream.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
@@ -196,11 +207,11 @@ def read_request(stream):
         if not isinstance(entry, dict):
             refuse("a target is not an object")
         kind = entry.get("type")
-        if kind not in ("tcp", "http", "dns"):
-            refuse("a target's type must be tcp, http or dns")
+        if kind not in ("tcp", "http", "dns", "udp"):
+            refuse("a target's type must be tcp, http, dns or udp")
         read.append(
             {
-                "host": text(entry, "host", HOST),
+                "host": udp_receiver(entry) if kind == "udp" else text(entry, "host", HOST),
                 "port": port_of(entry, "port"),
                 "type": kind,
                 "tls": flag(entry, "tls"),
@@ -413,6 +424,38 @@ def dns_ask(target, timeout, source):
     return rcode, None
 
 
+def udp_refused(target, timeout, source):
+    """Whether the receiver's host says nothing listens there, as keepalived's `UDP_CHECK` asks.
+
+    One empty datagram from this node's own address, and then a wait for the
+    ICMP error that a closed port or a host that is gone sends back, which the
+    kernel reports on the connected socket (Fas 19b B5). Silence is not
+    refusal, and keepalived counts it as up; so does this, and the page says
+    what that cannot tell apart - a receiver from a path that drops the
+    datagram. An answer of any kind counts as up too: something listens.
+
+    Empty, so a receiver that does take it has no message to store.
+    """
+
+    family = socket.AF_INET6 if ":" in target["host"] else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_DGRAM)
+    try:
+        sock.settimeout(timeout)
+        if source:
+            sock.bind((source, 0))
+        sock.connect((target["host"], target["port"]))
+        sock.send(b"")
+        try:
+            sock.recv(1)
+        except socket.timeout:
+            return None
+        except ConnectionRefusedError:
+            return "refused: nothing listens on the port"
+        return None
+    finally:
+        sock.close()
+
+
 def probe(target, timeout_ms, source):
     timeout = timeout_ms / 1000
     started = time.monotonic()
@@ -431,6 +474,12 @@ def probe(target, timeout_ms, source):
     }
     stream = None
     try:
+        if target["type"] == "udp":
+            problem = udp_refused(target, timeout, source)
+            result["ok"] = problem is None
+            result["error"] = problem
+            result["ms"] = int((time.monotonic() - started) * 1000)
+            return result
         if target["type"] == "dns":
             rcode, problem = dns_ask(target, timeout, source)
             result["status"] = rcode

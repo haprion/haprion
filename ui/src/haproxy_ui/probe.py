@@ -37,6 +37,7 @@ from typing import Any
 from uuid import uuid4
 
 from haproxy_mgmt.check_policy import EffectiveCheck, effective_checks
+from haproxy_mgmt.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS
 from haproxy_mgmt.probe_socket import ProbeUnavailable, ask, build_request
 from haproxy_mgmt.proxy_model import (
     DEFAULT_EXPECT_STATUS,
@@ -71,6 +72,11 @@ class Reached:
     error: str | None
     ms: int | None
     dns: bool = False
+    #
+    # A udp check hears only a refusal (Fas 19b B5): silence is what a
+    # receiver that is up sends, and is said as what it is.
+    #
+    udp: bool = False
 
     @property
     def phrase(self) -> str:
@@ -81,6 +87,8 @@ class Reached:
         translated; here it is what this run actually got.
         """
 
+        if self.udp and self.ok:
+            return "not refused"
         if self.status is not None and self.dns:
             return f"answered {RCODES.get(self.status, f'code {self.status}')}"
         if self.status is not None:
@@ -247,6 +255,11 @@ def caveats_for(checks: Sequence[EffectiveCheck]) -> tuple[str, ...]:
             "The send and expect exchange is not run here. This opens the connection "
             "and stops there, so a server that answers the wrong thing still reads as reached."
         )
+    if any(check.type == "udp" for check in checks):
+        notes.append(
+            "A udp check hears only a refusal. A receiver whose datagrams are dropped on the "
+            "way - by a firewall, say - reads as not refused, here and in keepalived."
+        )
     if any(check.type == "http" and check.expect_body for check in checks):
         notes.append(
             "The expected body is not checked here. The node reads the status line and "
@@ -382,19 +395,6 @@ def run(
             problem=f"This object cannot be read as written, so its check cannot be run: {refusal}",
         )
 
-    #
-    # keepalived checks a syslog pool from every node, with checks the probe
-    # does not have (Fas 19b B4). The form offers no button for one; a post
-    # that asks anyway is told so, rather than answered by a different check.
-    #
-    if proxy.listen.protocol == "syslog":
-        return ProbeReport(
-            ran=False,
-            source="",
-            nodes=(),
-            problem="A syslog pool is checked by keepalived on the nodes, and cannot be tested here.",
-        )
-
     checks = effective_checks(proxy)
     #
     # Nothing to trigger. The button runs the object's check early, and an
@@ -421,6 +421,13 @@ def run(
         str(uuid4()),
         targets,
         source=source_address(form, choices),
+        #
+        # keepalived's wait for a refusal, so a host that is gone is said
+        # here as it will be there (Fas 19b B5).
+        #
+        timeout_ms=(
+            UDP_WAIT_MS if any(check.type == "udp" for check in checks) else DEFAULT_TIMEOUT_MS
+        ),
     )
     caller = call if call is not None else ask
     try:
@@ -449,6 +456,11 @@ def run(
     source, nodes = _read(payload)
     if any(check.type == "http" for check in checks):
         nodes = _judged(nodes, accepted_status(checks))
+    if any(check.type == "udp" for check in checks):
+        nodes = tuple(
+            replace(node, results=tuple(replace(entry, udp=True) for entry in node.results))
+            for node in nodes
+        )
     if any(check.type == "dns" for check in checks):
         nodes = tuple(
             replace(node, results=tuple(replace(entry, dns=True) for entry in node.results))

@@ -23,6 +23,7 @@ whoever holds the key.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import sys
 from pathlib import Path
@@ -62,7 +63,11 @@ EXIT_NOT_ROOT = 77
 EXIT_NO_IDENTITY = 78
 EXIT_BAD_INPUT = 65
 
-TYPES = ("tcp", "http", "dns")
+#
+# `udp` is keepalived's check on a syslog pool (Fas 19b B5): its receivers are
+# addresses, IPv6 among them, which the host-name rule does not take.
+#
+TYPES = ("tcp", "http", "dns", "udp")
 
 
 def _dns_question(
@@ -99,6 +104,16 @@ def _dns_question(
     }
 
 
+def _is_address(host: str) -> bool:
+    """An address as the node's probe reads one: no brackets, no name."""
+
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
 def _targets(
     parameters: object, lookup: dnsdist_config.Lookup | None = None
 ) -> tuple[list[Target], str, int]:
@@ -122,13 +137,18 @@ def _targets(
         host = entry.get("host")
         port = entry.get("port")
         kind = entry.get("type", "tcp")
-        if not isinstance(host, str) or not HOSTNAME.match(host):
+        if kind == "udp":
+            if not isinstance(host, str) or not _is_address(host):
+                raise HelperProtocolError(
+                    "a udp target's host must be an IP address", exit_code=EXIT_BAD_INPUT
+                )
+        elif not isinstance(host, str) or not HOSTNAME.match(host):
             raise HelperProtocolError("a target's host is not usable", exit_code=EXIT_BAD_INPUT)
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
             raise HelperProtocolError("a target's port is not a port", exit_code=EXIT_BAD_INPUT)
         if kind not in TYPES:
             raise HelperProtocolError(
-                "a target's type must be tcp, http or dns", exit_code=EXIT_BAD_INPUT
+                "a target's type must be tcp, http, dns or udp", exit_code=EXIT_BAD_INPUT
             )
         path = entry.get("path", "/") or "/"
         header = entry.get("host_header", "") or ""

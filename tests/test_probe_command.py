@@ -18,6 +18,7 @@ import io
 import json
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -145,7 +146,9 @@ class WhatTheHelperRefusesToSend(HelperFixture):
         self.assertIn("port", self.refusal({"targets": [self.target(port=0)]}))
 
     def test_a_type_nobody_asked_for(self) -> None:
-        self.assertIn("tcp, http or dns", self.refusal({"targets": [self.target(type="smtp")]}))
+        self.assertIn(
+            "tcp, http, dns or udp", self.refusal({"targets": [self.target(type="smtp")]})
+        )
 
     def test_a_path_that_is_not_a_path(self) -> None:
         self.assertIn(
@@ -156,6 +159,104 @@ class WhatTheHelperRefusesToSend(HelperFixture):
     def test_more_targets_than_a_pool_has(self) -> None:
         many = [self.target(port=port) for port in range(1, 25)]
         self.assertIn("at most", self.refusal({"targets": many}))
+
+
+class AUdpTarget(HelperFixture):
+    """Fas 19b B5: keepalived's check on a syslog pool, whose receivers are addresses."""
+
+    def sent(self, **fields: object) -> dict[str, object]:
+        asked: list[dict[str, object]] = []
+
+        def ask(
+            node: Node, identity: DeployIdentity, body: bytes
+        ) -> subprocess.CompletedProcess[str]:
+            asked.append(json.loads(body))
+            return answer([])
+
+        code, _out, err = self.run_helper(
+            {"targets": [self.target(type="udp", port=514, **fields)], "timeout_ms": 5000},
+            ask=ask,
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(asked[0]["timeout_ms"], 5000)
+        sent: dict[str, object] = asked[0]["targets"][0]  # type: ignore[index]
+        return sent
+
+    def test_an_address_is_asked_as_written(self) -> None:
+        for host in ("198.51.100.10", "2001:db8::71"):
+            with self.subTest(host=host):
+                sent = self.sent(host=host)
+                self.assertEqual((sent["host"], sent["type"]), (host, "udp"))
+
+    def test_a_name_or_a_bracketed_address_is_refused(self) -> None:
+        for host in ("logs.example.com", "[2001:db8::71]"):
+            with self.subTest(host=host):
+                code, _out, err = self.run_helper(
+                    {"targets": [self.target(type="udp", port=514, host=host)]}
+                )
+                self.assertEqual(code, 65)
+                self.assertIn("udp target's host must be an IP address", err)
+
+
+class ThePersonsUdpCheck(unittest.TestCase):
+    """`haproxy-probe --udp`, the command's half of the form's button (Fas 19b B5)."""
+
+    def sent(self, argv: list[str]) -> tuple[list[dict[str, object]], int]:
+        with mock.patch.object(probe, "run_probe_helper") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            with mock.patch.object(sys, "stderr", io.StringIO()):
+                probe.main(argv, writer=io.StringIO())
+        targets: list[dict[str, object]] = run.call_args.args[2]
+        return targets, run.call_args.kwargs["timeout_ms"]
+
+    def test_receivers_are_asked_as_udp_with_keepalived_s_wait(self) -> None:
+        targets, timeout = self.sent(
+            ["-c", "alpha", "-t", "198.51.100.10:514,[2001:db8::71]:514", "--udp"]
+        )
+
+        self.assertEqual(
+            [(t["host"], t["port"], t["type"]) for t in targets],
+            [("198.51.100.10", 514, "udp"), ("2001:db8::71", 514, "udp")],
+        )
+        self.assertEqual(timeout, 5000)
+
+    def test_http_or_tls_beside_it_is_a_usage_error(self) -> None:
+        for extra in (["--http", "/"], ["--tls"], ["--host", "logs.example.com"]):
+            with (
+                self.subTest(extra=extra),
+                self.assertRaises(SystemExit),
+                mock.patch.object(sys, "stdout", io.StringIO()),
+            ):
+                probe._parse(["-c", "alpha", "-t", "198.51.100.10:514", "--udp", *extra])
+
+    def test_verify_and_min_version_are_each_read_once(self) -> None:
+        """`--verify` never moved on, and the command never returned (found 26-10-08)."""
+
+        parsed: list[dict[str, object]] = []
+        argv = [
+            "-c",
+            "alpha",
+            "-t",
+            "198.51.100.10:8443",
+            "--tls",
+            "--verify",
+            "--min-version",
+            "TLSv1.3",
+            "--json",
+        ]
+        #
+        # In a thread, so a parser that loops again fails this test instead of
+        # holding the whole run.
+        #
+        reader = threading.Thread(target=lambda: parsed.append(probe._parse(argv)), daemon=True)
+        reader.start()
+        reader.join(5)
+        self.assertFalse(reader.is_alive(), "the parser did not return")
+        options = parsed[0]
+
+        self.assertEqual(
+            (options["verify"], options["min_version"], options["json"]), (True, "TLSv1.3", True)
+        )
 
 
 class ADnsTarget(HelperFixture):

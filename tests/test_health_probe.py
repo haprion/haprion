@@ -343,7 +343,7 @@ class WhatTheProbeRefuses(unittest.TestCase):
 
     def test_a_type_nobody_asked_for(self) -> None:
         self.assertIn(
-            "tcp, http or dns",
+            "tcp, http, dns or udp",
             self.refusal(
                 {
                     "schema_version": 1,
@@ -385,6 +385,62 @@ class WhatTheProbeRefuses(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 64)
         self.assertIn("takes no arguments", json.loads(completed.stdout)["error"])
+
+
+class AUdpCheck(unittest.TestCase):
+    """Fas 19b B5: keepalived's `UDP_CHECK` - a datagram, and a refusal back or none."""
+
+    def probe(self, port: int, host: str = "127.0.0.1") -> dict[str, Any]:
+        entry = {"type": "udp", "host": host, "port": port}
+        code, answer = ask({"schema_version": 1, "timeout_ms": 300, "targets": [entry]})
+        self.assertEqual(code, 0, answer)
+        result: dict[str, Any] = answer["results"][0]
+        return result
+
+    def test_a_port_something_listens_on_is_not_refused(self) -> None:
+        receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(receiver.close)
+        receiver.bind(("127.0.0.1", 0))
+
+        result = self.probe(int(receiver.getsockname()[1]))
+
+        self.assertEqual((result["ok"], result["error"], result["status"]), (True, None, None))
+        receiver.settimeout(1)
+        self.assertEqual(receiver.recvfrom(64)[0], b"", "one empty datagram, nothing to store")
+
+    def test_a_port_nothing_listens_on_is_refused(self) -> None:
+        result = self.probe(free_port())
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "refused: nothing listens on the port")
+
+    def test_an_ipv6_receiver_is_asked_over_ipv6(self) -> None:
+        if not socket.has_ipv6:
+            self.skipTest("no IPv6 here")
+        receiver = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        self.addCleanup(receiver.close)
+        try:
+            receiver.bind(("::1", 0))
+        except OSError:
+            self.skipTest("no IPv6 loopback here")
+
+        self.assertTrue(self.probe(int(receiver.getsockname()[1]), host="::1")["ok"])
+
+    def test_a_receiver_is_an_address_and_never_a_name(self) -> None:
+        completed = sp.run(
+            [str(SCRIPT)],
+            input=json.dumps(
+                {
+                    "schema_version": 1,
+                    "targets": [{"type": "udp", "host": "logs.example.com", "port": 514}],
+                }
+            ).encode(),
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 64)
+        self.assertIn("must be an IP address", json.loads(completed.stdout)["error"])
 
 
 class DnsServer:

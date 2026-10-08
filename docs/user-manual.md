@@ -170,6 +170,10 @@ can be told to ask on it, which few can.
   receivers are in another network. Filters on the MAC address - VMware's *forged
   transmits*, Proxmox's MAC filter - are not affected. Nothing has to route back
   through the nodes: syslog over UDP is never answered.
+- **A udp check cannot see such a filter.** It counts a receiver down only when the
+  receiver's host answers that nothing listens; a datagram dropped on the way gets no
+  answer, so a receiver behind a firewall that drops it reads as up. Use a *tcp* check
+  where the receiver also listens on TCP, or send a test message and look for it.
 - **The receivers are addresses**, in the VIP's address family, with a port. There is
   no standby receiver; *firstAvailable* is how a pool says active/passive.
 
@@ -192,7 +196,10 @@ fifteen seconds; *tcp* connects to a port of the receiver's, its own unless anot
 given, and nothing more. With no check, a receiver is never taken out. There is an
 interval and *Checks to fall*, but no *Checks to rise*: one passing check puts a
 receiver back. The form suggests *udp* when the protocol is chosen. *Test health
-check* is not offered: keepalived checks from every node.
+check* tries the check from every node's own address, as keepalived does: *udp*
+sends one empty datagram and waits five seconds for a refusal - keepalived's own wait -
+and says *not refused* when none came; *tcp* connects and closes. On the command line,
+`haproxy-probe -c <cluster> -t <address:port>[,...] --udp` asks the same.
 
 The editor's *What the nodes report* and the lamp in the object list show each
 receiver up or down, as each node's keepalived sees it. The object's metrics are

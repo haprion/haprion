@@ -21,6 +21,7 @@ from haproxy_mgmt.proxy_model import ModelError, load_proxy
 
 from haproxy_ui import health, objects, probe
 from haproxy_ui.db import ClusterStatus
+from haproxy_ui.health_rows import health_rows
 from haproxy_ui.preview import (
     BALANCE_CHOICES,
     CHECK_PROTOCOLS,
@@ -29,6 +30,7 @@ from haproxy_ui.preview import (
     form_from_document,
 )
 from tests.test_editor_page import EditorTestCase
+from tests.test_probe_from_the_form import answered
 
 GOLDEN = Path(__file__).resolve().parents[2] / "tests" / "golden" / "syslog"
 
@@ -358,13 +360,76 @@ class EveryNodeAnswersForItsReceivers(unittest.TestCase):
         self.assertEqual(probe.source_address(syslog_form(protocol="tcp"), choices), "192.0.2.25")
 
 
-class ItsCheckIsNotTestedFromTheForm(unittest.TestCase):
-    def test_the_probe_says_why_and_asks_no_node(self) -> None:
-        with mock.patch.object(probe, "build_request", side_effect=AssertionError("asked")):
-            report = probe.run("alpha", syslog_form(), {})
+class ItsCheckIsTestedFromTheNodes(unittest.TestCase):
+    """B5: keepalived's checks, tried from each node's own address before a save."""
 
-        self.assertFalse(report.ran)
-        self.assertIn("keepalived", report.problem or "")
+    CHOICES = {"default_vip": "main", "vip_sources": {"main": "192.0.2.25"}}
+
+    def asked(self, **fields: Any) -> dict[str, Any]:
+        requests: list[dict[str, Any]] = []
+
+        def call(request: dict[str, Any], *_a: object, **_k: object) -> str:
+            requests.append(request)
+            return answered([])
+
+        probe.run("alpha", syslog_form(**fields), self.CHOICES, call=call)
+        parameters: dict[str, Any] = requests[0]["parameters"]
+        return parameters
+
+    def test_a_udp_check_asks_each_receiver_and_waits_as_keepalived_does(self) -> None:
+        parameters = self.asked()
+
+        self.assertEqual(
+            [(t["host"], t["port"], t["type"]) for t in parameters["targets"]],
+            [("192.0.2.71", 514, "udp"), ("192.0.2.72", 514, "udp")],
+        )
+        self.assertEqual(parameters["timeout_ms"], 5000)
+        self.assertEqual(parameters["source"], "")
+
+    def test_a_tcp_check_connects_to_its_own_port(self) -> None:
+        parameters = self.asked(health_type="tcp", health_port="601")
+
+        self.assertEqual(
+            {(t["port"], t["type"], t["tls"]) for t in parameters["targets"]}, {(601, "tcp", False)}
+        )
+        self.assertEqual(parameters["timeout_ms"], 2000)
+
+    def test_not_refused_is_said_as_that_with_what_it_cannot_tell(self) -> None:
+        node = {
+            "node": "node-a",
+            "reachable": True,
+            "error": None,
+            "source_held": True,
+            "results": [
+                {
+                    "host": "192.0.2.71",
+                    "port": 514,
+                    "ok": True,
+                    "status": None,
+                    "error": None,
+                    "ms": 5003,
+                },
+                {
+                    "host": "192.0.2.72",
+                    "port": 514,
+                    "ok": False,
+                    "status": None,
+                    "error": "refused: nothing listens on the port",
+                    "ms": 2,
+                },
+            ],
+        }
+        report = probe.run(
+            "alpha", syslog_form(), self.CHOICES, call=lambda *a, **k: answered([node])
+        )
+
+        first, second = report.nodes[0].results
+        self.assertEqual(first.phrase, "not refused")
+        self.assertEqual(second.phrase, "refused: nothing listens on the port")
+        self.assertTrue(any("firewall" in caveat for caveat in report.caveats))
+        rows = health_rows(None, report)
+        self.assertEqual(rows[0].last, "not refused · tested")
+        self.assertEqual(rows[1].last, "refused: nothing listens on the port · 2 ms · tested")
 
 
 class TheEditorOffersSyslog(EditorTestCase):
@@ -429,11 +494,14 @@ class TheEditorOffersSyslog(EditorTestCase):
             r'<span class="field-title">Send',
             r'<div class="form-grid" data-show-when="health_type:http https tcp tcp-tls;'
             r'protocol:http https tcp" hidden>',
-            r'value="recheck" class="secondary-button" data-show-when="protocol:http https tcp dns"'
-            r" hidden>",
         ):
             with self.subTest(hidden=hidden[:60]):
                 self.assertRegex(text, hidden)
+
+    def test_its_check_can_be_tested(self) -> None:
+        self.assertIn(
+            'value="recheck" class="secondary-button">Test health check', self.syslog_page()
+        )
 
     def test_a_tcp_check_s_port_stays_on_screen(self) -> None:
         text = self.syslog_page()

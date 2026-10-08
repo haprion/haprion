@@ -22,6 +22,7 @@ from typing import Any, TextIO
 
 from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.envelope import new_request_id
+from haproxy_mgmt.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS
 from haproxy_mgmt.probe_socket import build_request
 from haproxy_mgmt.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 
@@ -35,10 +36,12 @@ USAGE = (
     "  haproxy-probe -c <cluster> -t <host:port>[,<host:port>...] "
     "[--http <path>] [--host <name>] [--tls [--verify] [--min-version <version>]] "
     "[--source <address>] [--json]\n"
+    "  haproxy-probe -c <cluster> -t <address:port>[,...] --udp [--json]\n"
     "\n"
     "Examples:\n"
     "  haproxy-probe -c alpha -t 198.51.100.10:8080\n"
     "  haproxy-probe -c alpha -t 198.51.100.10:8443 --tls --http /healthz --json\n"
+    "  haproxy-probe -c alpha -t 198.51.100.20:514 --udp\n"
 )
 
 
@@ -72,7 +75,14 @@ def run_probe_helper(
 
 
 def _targets(
-    written: str, *, path: str, host: str, tls: bool, verify: bool, min_version: str
+    written: str,
+    *,
+    path: str,
+    host: str,
+    tls: bool,
+    verify: bool,
+    min_version: str,
+    udp: bool = False,
 ) -> list[dict[str, Any]]:
     targets = []
     for entry in written.split(","):
@@ -84,9 +94,13 @@ def _targets(
             usage(USAGE)
         targets.append(
             {
-                "host": host_part,
+                #
+                # A udp check's receiver is an address, and an IPv6 one may be
+                # written in brackets to set its port apart.
+                #
+                "host": host_part.strip("[]") if udp else host_part,
                 "port": int(port),
-                "type": "http" if path else "tcp",
+                "type": "udp" if udp else "http" if path else "tcp",
                 "tls": tls,
                 "verify": verify,
                 "min_version": min_version,
@@ -109,6 +123,7 @@ def _parse(argv: list[str]) -> dict[str, Any]:
         "verify": False,
         "min_version": DEFAULT_MIN_VERSION,
         "source": "",
+        "udp": False,
         "json": False,
     }
     index = 0
@@ -134,6 +149,14 @@ def _parse(argv: list[str]) -> dict[str, Any]:
             index += 1
         elif argument == "--verify":
             options["verify"] = True
+            index += 1
+        #
+        # keepalived's check on a syslog pool (Fas 19b B5): a datagram, and a
+        # refusal back or none. Nothing else of a check applies to it.
+        #
+        elif argument == "--udp":
+            options["udp"] = True
+            index += 1
         #
         # The same floor an object may name, so the command a person runs and
         # the button in the form ask the nodes the same question. A pool the
@@ -145,14 +168,15 @@ def _parse(argv: list[str]) -> dict[str, Any]:
             if asked not in ALLOWED_MIN_VERSIONS:
                 usage(USAGE)
             options["min_version"] = asked
-            index += 1
-            index += 1
+            index += 2
         elif argument == "--json":
             options["json"] = True
             index += 1
         else:
             usage(USAGE)
     if not options["cluster"] or not options["targets"]:
+        usage(USAGE)
+    if options["udp"] and (options["path"] or options["host"] or options["tls"]):
         usage(USAGE)
     return options
 
@@ -206,8 +230,10 @@ def main(argv: list[str] | None = None, *, writer: TextIO | None = None) -> int:
             tls=options["tls"],
             verify=options["verify"],
             min_version=options["min_version"],
+            udp=options["udp"],
         ),
         source=options["source"],
+        timeout_ms=UDP_WAIT_MS if options["udp"] else DEFAULT_TIMEOUT_MS,
     )
     if not completed.stdout.strip():
         sys.stderr.write(completed.stderr or "ERROR: the helper produced no answer\n")

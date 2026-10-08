@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from haproxy_mgmt.config import DeployIdentity, Node
+from haproxy_mgmt.ipvs_config import UDP_CONNECT_TIMEOUT
 from haproxy_mgmt.tls_policy import DEFAULT_MIN_VERSION
 
 SCHEMA_VERSION = 1
@@ -55,6 +56,12 @@ SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
 MAX_TARGETS = 20
 MAX_ANSWER_BYTES = 256 * 1024
 DEFAULT_TIMEOUT_MS = 2000
+#
+# How long a udp check waits for a refusal: keepalived's `connect_timeout` for
+# `UDP_CHECK`, which `ipvs_config` writes (Fas 19b B5). Shorter, and a host
+# that is gone - reported only once the node's own ARP gives up - reads as up.
+#
+UDP_WAIT_MS = int(UDP_CONNECT_TIMEOUT) * 1000
 
 
 @dataclass(frozen=True, slots=True)

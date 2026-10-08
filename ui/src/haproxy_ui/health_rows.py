@@ -90,7 +90,12 @@ def health_rows(backend: BackendHealth | None, probe: ProbeReport | None) -> lis
                     up=entry.ok,
                     tone="healthy" if entry.ok else "critical",
                     state="UP" if entry.ok else "DOWN",
-                    last=f"{entry.phrase}{_duration(entry.ms)} · tested",
+                    #
+                    # A udp check that was not refused waited out its whole time
+                    # for a refusal that did not come; the time says nothing.
+                    #
+                    last=f"{entry.phrase}{_duration(None if entry.udp and entry.ok else entry.ms)}"
+                    " · tested",
                     tested=True,
                 )
     return list(rows.values())

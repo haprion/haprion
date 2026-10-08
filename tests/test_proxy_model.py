@@ -17,6 +17,7 @@ from haproxy_mgmt.proxy_model import (
     HTTP_ONLY_KEYS,
     NAME,
     PROXY_KEYS,
+    SYSLOG_REFUSED_KEYS,
     TCP_ONLY_KEYS,
     Health,
     ModelError,
@@ -1375,6 +1376,143 @@ class AResolverIsServedByDnsdist(unittest.TestCase):
     def test_a_port_is_required(self) -> None:
         self.assertIn(
             "port is required for dns", self.refused(dns((b"  port: 53\nbackend", b"backend")))
+        )
+
+
+SYSLOG = b"""
+schema: 1
+name: logs
+listen:
+  protocol: syslog
+  port: 514
+backend: receivers
+backends:
+  receivers:
+    balance: roundrobin
+    health:
+      type: udp
+    servers:
+      - host: 192.0.2.71
+        port: 514
+      - host: 192.0.2.72
+        port: 514
+"""
+
+
+def syslog(*replacements: tuple[bytes, bytes]) -> bytes:
+    document = SYSLOG
+    for old, new in replacements:
+        assert old in document, old
+        document = document.replace(old, new)
+    return document
+
+
+class SyslogIsForwardedByIpvs(unittest.TestCase):
+    """A syslog object (Fas 19b, B256): a port and a pool, in what keepalived can be told."""
+
+    def refused(self, document: bytes) -> str:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("logs", document)
+        return str(raised.exception)
+
+    def test_it_loads_with_a_udp_check_and_haproxys_timing(self) -> None:
+        proxy = load_proxy("logs", SYSLOG)
+        health = proxy.backends["receivers"].health
+
+        self.assertEqual(
+            (proxy.listen.protocol, proxy.listen.port, proxy.backend),
+            ("syslog", 514, "receivers"),
+        )
+        self.assertEqual((health.type, health.interval, health.fall), ("udp", "2s", 3))
+
+    def test_the_three_schedulers_load_and_the_rest_are_refused(self) -> None:
+        for balance in ("roundrobin", "source", "firstAvailable"):
+            with self.subTest(balance):
+                load_proxy("logs", syslog((b"roundrobin", balance.encode())))
+        for refused in (b"leastconn", b"chashed", b"leastOutstanding"):
+            with self.subTest(refused):
+                self.assertIn("for a syslog object", self.refused(syslog((b"roundrobin", refused))))
+
+    def test_a_tcp_check_may_name_a_port(self) -> None:
+        proxy = load_proxy(
+            "logs", syslog((b"type: udp", b"type: tcp\n      port: 601\n      interval: 500ms"))
+        )
+        health = proxy.backends["receivers"].health
+
+        self.assertEqual((health.type, health.port, health.interval), ("tcp", 601, "500ms"))
+
+    def test_what_keepalived_cannot_check_with_is_refused(self) -> None:
+        for check in (b"type: http\n      path: /", b"type: dns"):
+            with self.subTest(check):
+                self.assertIn(
+                    "must be a udp or tcp check", self.refused(syslog((b"type: udp", check)))
+                )
+        for field in (b"send: x\n      expect: y", b"rise: 2", b"fast_interval: 1s", b"tls: true"):
+            with self.subTest(field):
+                message = self.refused(syslog((b"type: udp", b"type: tcp\n      " + field)))
+                self.assertIn("keepalived's tcp check connects to a port", message)
+
+    def test_a_udp_check_says_nothing_but_how_often_and_how_many(self) -> None:
+        for field in (b"port: 601", b"send: x", b"tls: true", b"query_name: a."):
+            with self.subTest(field):
+                message = self.refused(syslog((b"type: udp", b"type: udp\n      " + field)))
+                self.assertIn("means nothing for a udp health check", message)
+        for field in (b"rise: 2", b"down_interval: 1s"):
+            with self.subTest(field):
+                message = self.refused(syslog((b"type: udp", b"type: udp\n      " + field)))
+                self.assertIn("keepalived checks this pool", message)
+
+    def test_a_udp_check_is_refused_where_haproxy_or_dnsdist_checks(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", with_lines(("type: disabled", "type: udp")))
+        self.assertIn("a udp check is for syslog objects", str(raised.exception))
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("resolver", dns((b"type: dns", b"type: udp")))
+        self.assertIn("must be a dns check", str(raised.exception))
+
+    def test_a_receiver_is_an_address(self) -> None:
+        message = self.refused(syslog((b"192.0.2.72", b"logs.example.com")))
+        self.assertIn("must be addresses for IPVS: logs.example.com", message)
+
+    def test_a_backup_receiver_is_refused_with_the_way_to_say_it(self) -> None:
+        message = self.refused(
+            syslog(
+                (
+                    b"port: 514\n      - host: 192.0.2.72",
+                    b"port: 514\n        backup: true\n      - host: 192.0.2.72",
+                )
+            )
+        )
+        self.assertIn("firstAvailable", message)
+
+    def test_pool_settings_ipvs_has_no_line_for_are_refused(self) -> None:
+        for field in (b"cookie: s", b"max_connections: 10", b"slow_start: 10s"):
+            with self.subTest(field):
+                self.assertIn(
+                    "means nothing for a syslog object",
+                    self.refused(
+                        syslog((b"balance: roundrobin", b"balance: roundrobin\n    " + field))
+                    ),
+                )
+
+    def test_haproxys_features_and_the_sender_lists_are_refused_by_name(self) -> None:
+        for key in SYSLOG_REFUSED_KEYS:
+            with self.subTest(key):
+                message = self.refused(
+                    syslog((b"backend: receivers", f"{key}: {{}}\nbackend: receivers".encode()))
+                )
+                self.assertIn(f"logs.{key} means nothing for a syslog object", message)
+
+    def test_the_messages_leave_with_the_senders_address(self) -> None:
+        message = self.refused(
+            syslog((b"  port: 514\nbackend", b"  port: 514\n  source: out\nbackend"))
+        )
+        self.assertIn("the sender's own address", message)
+
+    def test_a_port_is_required(self) -> None:
+        self.assertIn(
+            "port is required for syslog",
+            self.refused(syslog((b"  port: 514\nbackend", b"backend"))),
         )
 
 

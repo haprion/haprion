@@ -35,7 +35,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from haproxy_mgmt import advanced as advanced_config
-from haproxy_mgmt import dnsdist_config, geo
+from haproxy_mgmt import dnsdist_config, geo, ipvs_config
 from haproxy_mgmt.check_policy import check_speaks_tls
 from haproxy_mgmt.cluster_settings import NOTHING as NO_SETTINGS
 from haproxy_mgmt.cluster_settings import ClusterSettings, LogTarget, Metrics
@@ -50,6 +50,8 @@ from haproxy_mgmt.guid import (
 from haproxy_mgmt.proxy_model import (
     DEFAULT_DOWN_INTERVAL,
     DEFAULT_FAST_INTERVAL,
+    OUTSIDE_HAPROXY,
+    OWN_PORT,
     URL_PLACEHOLDER,
     Backend,
     Health,
@@ -289,6 +291,13 @@ class GeneratedLayer:
     which is what stops dnsdist on the nodes.
     """
 
+    ipvs: str = ipvs_config.HEADER
+    """`managed/keepalived/ipvs.conf`: the syslog objects' IPVS virtual servers (B256).
+
+    Always a file, with no virtual server when no object is syslog - which is
+    what removes the previous release's from the nodes.
+    """
+
     object_parts: dict[str, dict[str, str]] = field(default_factory=dict)
     """Per object, the four pieces its behaviour is spread across.
 
@@ -366,7 +375,7 @@ def generate(
     unsupported = [
         proxy
         for proxy in ordered
-        if proxy.listen.protocol not in ("tcp", "dns") and proxy.listen.protocol not in ports
+        if proxy.listen.protocol not in OWN_PORT and proxy.listen.protocol not in ports
     ]
     if unsupported:
         #
@@ -376,7 +385,8 @@ def generate(
         #
         names = ", ".join(proxy.name for proxy in unsupported)
         raise GeneratorError(
-            f"this version generates http, https, tcp and dns objects; cannot generate: {names}"
+            f"this version generates http, https, tcp, dns and syslog objects; cannot generate: "
+            f"{names}"
         )
     _refuse_unknown_certificates(ordered, certificates)
     if certificate_sans is not None and not allow_certificate_mismatch:
@@ -396,7 +406,9 @@ def generate(
     _refuse_shared_listeners(everything, ports)
     if settings.metrics is not None:
         _refuse_metrics_port(settings.metrics, everything, reservations, ports)
-    placed = [(vip, proxy) for vip, proxy in everything if proxy.listen.protocol != "dns"]
+    placed = [
+        (vip, proxy) for vip, proxy in everything if proxy.listen.protocol not in OUTSIDE_HAPROXY
+    ]
     resolving = [
         (vip, proxy, source_of(proxy, vip, known_sources))
         for vip, proxy in everything
@@ -417,6 +429,12 @@ def generate(
     try:
         dns = dnsdist_config.render(resolving, known_networks, resolve, scrapers)
     except dnsdist_config.Unresolved as exc:
+        raise GeneratorError(str(exc)) from exc
+    try:
+        ipvs = ipvs_config.render(
+            [(vip, proxy) for vip, proxy in everything if proxy.listen.protocol == "syslog"]
+        )
+    except ValueError as exc:
         raise GeneratorError(str(exc)) from exc
 
     listings: dict[str, str] = {}
@@ -455,6 +473,7 @@ def generate(
         for _, proxy in placed
     }
     parts.update(dns.parts)
+    parts.update(ipvs.parts)
     return GeneratedLayer(
         configuration=files,
         certificate_lists=listings,
@@ -462,6 +481,7 @@ def generate(
         map_files=_country_files(ordered, countries),
         waf_files=_waf_files(guarded),
         dns_files=dns.files,
+        ipvs=ipvs.file,
     )
 
 
@@ -855,9 +875,17 @@ def _refuse_reserved(
     # address and port nothing generated listens on is a person writing down
     # what the handwritten side uses, which is the file's whole purpose.
     #
+    #
+    # Not a syslog object's: a reservation is a TCP port (`tcp_ports`), and
+    # IPVS takes the address and port on UDP alone.
+    #
     for vip, proxy in placed:
         port = proxy.listen.port
-        if port is not None and reservations.claims(vip.address, port):
+        if (
+            port is not None
+            and proxy.listen.protocol != "syslog"
+            and reservations.claims(vip.address, port)
+        ):
             raise GeneratorError(
                 f"{proxy.name} listens on {vip.name} port {port}, which "
                 f"manual/reservations.yaml reserves for handwritten configuration"
@@ -1053,15 +1081,22 @@ def _refuse_shared_listeners(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping
     A crash would at least be noticed, which makes this the only place the
     collision can be caught.
 
-    Only tcp and dns objects can collide this way. Two http objects on one
-    address share a frontend by design; a tcp object is a frontend of its own,
-    a dns object a dnsdist listener on UDP and TCP both, and their port is
-    written in the object rather than in the cluster.
+    Only tcp, dns and syslog objects can collide this way. Two http objects on
+    one address share a frontend by design; a tcp object is a frontend of its
+    own, a dns object a dnsdist listener on UDP and TCP both, a syslog object
+    an IPVS virtual server on UDP, and their port is written in the object
+    rather than in the cluster.
+
+    Per transport: a syslog object takes the port on UDP only, so it may
+    share a number with a tcp object or a cluster's http port, and meets a dns
+    object - whose UDP the kernel would hand to IPVS before dnsdist ever saw
+    it - and another syslog object.
     """
 
     taken: dict[tuple[str, int], str] = {}
+    datagrams: dict[tuple[str, int], str] = {}
     for vip, proxy in placed:
-        if proxy.listen.protocol not in ("tcp", "dns"):
+        if proxy.listen.protocol not in OWN_PORT:
             continue
         port = proxy.listen.port
         if port is None:
@@ -1073,6 +1108,15 @@ def _refuse_shared_listeners(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping
             raise GeneratorError(
                 f"{proxy.name} listens on {proxy.listen.protocol} without naming a port"
             )
+        if proxy.listen.protocol in ("dns", "syslog"):
+            earlier = datagrams.get((vip.name, port))
+            if earlier is not None:
+                raise GeneratorError(
+                    f"{earlier} and {proxy.name} both listen on {vip.name} port {port}/udp"
+                )
+            datagrams[(vip.name, port)] = proxy.name
+        if proxy.listen.protocol == "syslog":
+            continue
         earlier = taken.get((vip.name, port))
         if earlier is not None:
             raise GeneratorError(

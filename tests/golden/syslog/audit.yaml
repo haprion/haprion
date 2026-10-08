@@ -1,0 +1,21 @@
+schema: 1
+name: audit
+listen:
+  protocol: syslog
+  port: 5514
+backend: siem
+backends:
+  siem:
+    balance: source
+    health:
+      type: tcp
+      port: 601
+      interval: 500ms
+      fall: 1
+    servers:
+      - host: 192.0.2.81
+        port: 514
+      - host: 192.0.2.82
+        port: 514
+      - host: 192.0.2.83
+        port: 514

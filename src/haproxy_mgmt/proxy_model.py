@@ -148,7 +148,21 @@ ROUTE_PATH = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 # own manual on this machine. The object is otherwise a tcp object's shape - a
 # port and one pool - and the generator writes it into a layer of its own.
 #
-PROTOCOLS = ("http", "https", "tcp", "dns")
+# `syslog` is served by the kernel's IPVS through keepalived (Fas 19b, B256):
+# UDP only, forwarded with the sender's own address (NAT, one packet at a
+# time), so the receivers see who sent each message. A port and one pool,
+# like dns, in a layer of its own - `managed/keepalived/ipvs.conf`.
+#
+PROTOCOLS = ("http", "https", "tcp", "dns", "syslog")
+#
+# The objects HAProxy does not serve, and which therefore get no HAProxy
+# configuration of their own.
+#
+OUTSIDE_HAPROXY = ("dns", "syslog")
+#
+# The objects that name their own port rather than sharing the cluster's.
+#
+OWN_PORT = ("tcp", "dns", "syslog")
 #
 # The balancing algorithms an object may choose, read from HAProxy 3.4.4's own
 # documentation on this machine. HAProxy has more - `hash`, `hdr()`,
@@ -226,6 +240,23 @@ DNS_ONLY_BALANCE = ("leastOutstanding", "firstAvailable", "chashed")
 DNS_BALANCE = ("roundrobin", *DNS_ONLY_BALANCE)
 
 #
+# How a syslog pool chooses a receiver: three of IPVS's schedulers, under the
+# names the other protocols already use (B256). Each message is scheduled on
+# its own (`ops`), so there is no connection to count, and the schedulers
+# that count them (`lc`, `wlc`, `sed`, `nq`, `lblc`, `lblcr`, `twos`, `ovf`)
+# would decide nothing.
+#
+#   roundrobin      `rr`: message by message, in turn. Measured in the lab
+#                   (26-10-07): 3514/3513 of 7027 from one sender.
+#   source          `mh`, Maglev hashing of the sender's address: one sender
+#                   keeps one receiver, and when a receiver goes only its own
+#                   senders move - which `sh` does not promise.
+#   firstAvailable  `fo`: the first receiver in the list that is up, as a
+#                   dns pool's of the same name. Active/passive.
+#
+SYSLOG_BALANCE = ("roundrobin", "source", "firstAvailable")
+
+#
 # A query parameter name. Deliberately narrower than what a URL may carry: this
 # value is written into a configuration line, and a name needing escaping there
 # is a name worth refusing where somebody can still change it.
@@ -301,7 +332,17 @@ PLACEHOLDER = re.compile(r"%[A-Za-z_]+%")
 # path modes: a combination of fields that each say what they do beats a
 # vocabulary somebody has to look up.
 #
-HEALTH_TYPES = ("disabled", "tcp", "http", "dns")
+HEALTH_TYPES = ("disabled", "tcp", "http", "dns", "udp")
+
+#
+# A udp check is keepalived's `UDP_CHECK`, for a syslog pool: a datagram to
+# the receiver's port, and an ICMP "port unreachable" back means it is down.
+# Measured in the lab (26-10-07): a stopped receiver out after one try, back
+# within about six seconds.
+#
+# keepalived has no `rise`: one passing check puts a receiver back. `fall` is
+# written as its `retry`, the checks after the first failing one.
+#
 
 #
 # A dns check asks a real question and waits for an answer. The name and type
@@ -427,6 +468,21 @@ DNS_REFUSED_KEYS: Mapping[str, str] = MappingProxyType(
         "advanced": "advanced config is HAProxy text, and dnsdist serves this object",
         "rate_limit": "the request limit is HAProxy's, and dnsdist serves this object",
         "deny_from": "refusals by address are HAProxy's; list who may ask in allow_from",
+    }
+)
+
+#
+# What a syslog object cannot carry, on top of everything HTTP_ONLY_KEYS
+# refuses. IPVS forwards packets and decides nothing about them: there is no
+# list of who may send, and no HAProxy to carry the rest (B256).
+#
+SYSLOG_REFUSED_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "allow_from": "IPVS forwards every packet that reaches the address and has no list of "
+        "senders; protect the address in front of it",
+        "deny_from": "IPVS forwards every packet that reaches the address and refuses no sender",
+        "advanced": "advanced config is HAProxy text, and the kernel's IPVS serves this object",
+        "rate_limit": "the request limit is HAProxy's, and the kernel's IPVS serves this object",
     }
 )
 
@@ -1086,6 +1142,8 @@ def _health(value: Any, location: str) -> Health:
 
     if kind == "dns":
         return _dns_health(data, location)
+    if kind == "udp":
+        return _udp_health(data, location)
     for key in (*(_TCP_ONLY if kind == "http" else _HTTP_ONLY), *_DNS_ONLY):
         if data.get(key) is not None:
             raise ModelError(f"{location}.{key} means nothing for a {kind} health check")
@@ -1202,6 +1260,33 @@ def _dns_health(data: Mapping[str, Any], location: str) -> Health:
         interval=interval,
         rise=_count(data, "rise", location, DEFAULT_DNS_RISE),
         fall=_count(data, "fall", location, DEFAULT_DNS_FALL),
+    )
+
+
+def _udp_health(data: Mapping[str, Any], location: str) -> Health:
+    """A datagram to each receiver, as keepalived's `UDP_CHECK` sends it.
+
+    On the receiver's own port and nothing else to say: no payload, no answer
+    to wait for (a syslog receiver sends none), and no rise - see
+    `HEALTH_TYPES`.
+    """
+
+    for key in (*_HTTP_ONLY, *_TCP_ONLY, *_DNS_ONLY, "tls", "port"):
+        if data.get(key) is not None:
+            raise ModelError(f"{location}.{key} means nothing for a udp health check")
+    for key in ("fast_interval", "down_interval", "rise"):
+        if data.get(key) is not None:
+            raise ModelError(
+                f"{location}.{key} is HAProxy's, and keepalived checks this pool; it puts a "
+                f"receiver back after one passing check"
+            )
+    interval = data.get("interval", DEFAULT_INTERVAL)
+    if not isinstance(interval, str) or not DURATION.match(interval):
+        raise ModelError(f"{location}.interval must be a duration such as 5s or 500ms")
+    return Health(
+        type="udp",
+        interval=interval,
+        fall=_count(data, "fall", location, DEFAULT_FALL),
     )
 
 
@@ -1598,7 +1683,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
 
     hostnames: tuple[str, ...]
     routes: tuple[Route, ...]
-    if listen.protocol in ("tcp", "dns"):
+    if listen.protocol in OWN_PORT:
         _refuse_keys(data, HTTP_ONLY_KEYS, name, f"a {listen.protocol} object")
         hostnames = ()
         routes = ()
@@ -1608,6 +1693,9 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
             _refuse_keys(data, DNS_REFUSED_KEYS, name, "a dns object")
             _refuse_non_dns_pools(backends, name)
             _refuse_countries(data, name)
+        elif listen.protocol == "syslog":
+            _refuse_keys(data, SYSLOG_REFUSED_KEYS, name, "a syslog object")
+            _refuse_non_syslog_pools(backends, backends_raw, name)
         else:
             _refuse_http_only_pools(backends, name)
     else:
@@ -1836,7 +1924,7 @@ def _refuse_http_only_pools(backends: Mapping[str, Backend], name: str) -> None:
 
 
 def _refuse_dns_only_pools(backends: Mapping[str, Backend], name: str) -> None:
-    """dnsdist's vocabulary on a pool HAProxy serves, refused by name."""
+    """dnsdist's and keepalived's vocabulary on a pool HAProxy serves, refused by name."""
 
     for key, pool in backends.items():
         where = f"{name}.backends.{key}"
@@ -1846,6 +1934,63 @@ def _refuse_dns_only_pools(backends: Mapping[str, Backend], name: str) -> None:
             )
         if pool.health.type == "dns":
             raise ModelError(f"{where}.health: a dns check is for dns objects")
+        if pool.health.type == "udp":
+            raise ModelError(f"{where}.health: a udp check is for syslog objects")
+
+
+#
+# What a syslog pool's tcp check may say: keepalived's `TCP_CHECK` connects to
+# a port and nothing more. Held against the written keys, because the parsed
+# check has HAProxy's defaults filled in and cannot tell `rise: 2` written from
+# `rise` left out.
+#
+_SYSLOG_TCP_CHECK = frozenset({"type", "port", "interval", "fall"})
+
+
+def _refuse_non_syslog_pools(
+    backends: Mapping[str, Backend], written: Mapping[str, Any], name: str
+) -> None:
+    """What a syslog pool cannot have, because keepalived has no line to carry it (B256).
+
+    `backup` and weights above all: IPVS has neither a standby receiver nor,
+    under `rr`, a use for a weight. `firstAvailable` is how a syslog pool says
+    active/passive, as a dns pool does. A receiver is an address: IPVS takes
+    nothing else, and the name a person meant would be a lookup on the node.
+    """
+
+    for key, pool in backends.items():
+        where = f"{name}.backends.{key}"
+        if pool.balance not in SYSLOG_BALANCE:
+            raise ModelError(
+                f"{where}.balance must be one of {', '.join(SYSLOG_BALANCE)} for a syslog object"
+            )
+        for field_name, value in (
+            ("balance_key", pool.balance_key),
+            ("cookie", pool.cookie),
+            ("tls", pool.tls),
+            ("max_connections", pool.max_connections),
+            ("slow_start", pool.slow_start),
+        ):
+            if value is not None:
+                raise ModelError(f"{where}.{field_name} means nothing for a syslog object")
+        if any(server.backup for server in pool.servers):
+            raise ModelError(
+                f"{where}: IPVS has no backup receiver; use balance: firstAvailable, which "
+                f"sends every message to the first receiver that is up"
+            )
+        if pool.health.type not in ("udp", "tcp", "disabled"):
+            raise ModelError(f"{where}.health must be a udp or tcp check, or disabled")
+        if pool.health.type == "tcp":
+            health = written.get(key, {}).get("health", {})
+            extra = sorted(set(health) - _SYSLOG_TCP_CHECK)
+            if extra:
+                raise ModelError(
+                    f"{where}.health: keepalived's tcp check connects to a port and nothing "
+                    f"more, so it cannot carry {', '.join(extra)}"
+                )
+        named = sorted({server.host for server in pool.servers if not _is_address(server.host)})
+        if named:
+            raise ModelError(f"{where}.servers must be addresses for IPVS: {', '.join(named)}")
 
 
 def _refuse_non_dns_pools(backends: Mapping[str, Backend], name: str) -> None:
@@ -2565,15 +2710,26 @@ def _listen(value: Any, location: str) -> Listen:
         raise ModelError(f"{location}.hsts requires protocol: https")
 
     port = data.get("port")
-    if protocol in ("tcp", "dns"):
+    if protocol in OWN_PORT:
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
             raise ModelError(
                 f"{location}.port is required for {protocol} and must be a port number"
             )
     elif port is not None:
         raise ModelError(
-            f"{location}.port is only meaningful for tcp and dns; http and https are served on "
-            f"the cluster's own ports"
+            f"{location}.port is only meaningful for tcp, dns and syslog; http and https are "
+            f"served on the cluster's own ports"
+        )
+
+    #
+    # A syslog object forwards each message with the sender's own address -
+    # that is why it is IPVS and not HAProxy (B256) - so there is no address
+    # it leaves from to choose.
+    #
+    if protocol == "syslog" and source is not None:
+        raise ModelError(
+            f"{location}.source means nothing for syslog: messages reach the receivers with "
+            f"the sender's own address"
         )
 
     return Listen(

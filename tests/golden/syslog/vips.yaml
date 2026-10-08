@@ -1,0 +1,7 @@
+default_vip: internal
+vips:
+  internal:
+    address: 192.0.2.20
+    source: 192.0.2.25
+  v6:
+    address: "2001:db8::20"

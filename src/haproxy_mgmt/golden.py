@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import cluster_settings, safe_yaml
+from haproxy_mgmt import cluster_settings, ipvs_config, safe_yaml
 from haproxy_mgmt.config import AbuseProtection, UnknownHost, Vip
 from haproxy_mgmt.generate import generate
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
@@ -84,6 +84,18 @@ DNS_FILES = ("dnsdist.conf",)
 
 def expected_dns(case: Path) -> dict[str, str]:
     return {name: (case / name).read_text() for name in DNS_FILES if (case / name).exists()}
+
+
+#
+# keepalived's IPVS file (B256), apart for the same reason. Every publish
+# writes it, but a case holds it only when it has a syslog object: the others'
+# would all be the same header.
+#
+IPVS_FILES = (ipvs_config.FILE,)
+
+
+def expected_ipvs(case: Path) -> dict[str, str]:
+    return {name: (case / name).read_text() for name in IPVS_FILES if (case / name).exists()}
 
 
 #
@@ -160,6 +172,15 @@ def produced_dns(case: Path) -> dict[str, str]:
     """The dnsdist half of a case: empty unless it has a dns object."""
 
     return generate(objects(case), **arguments(case)).dns_files
+
+
+def produced_ipvs(case: Path) -> dict[str, str]:
+    """The IPVS half of a case: empty unless it has a syslog object."""
+
+    proxies = objects(case)
+    if not any(proxy.listen.protocol == "syslog" for proxy in proxies):
+        return {}
+    return {ipvs_config.FILE: generate(proxies, **arguments(case)).ipvs}
 
 
 def produced_lists(case: Path) -> dict[str, str]:

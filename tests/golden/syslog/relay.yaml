@@ -1,0 +1,15 @@
+schema: 1
+name: relay
+listen:
+  protocol: syslog
+  vip: v6
+  port: 514
+backend: relays
+backends:
+  relays:
+    balance: firstAvailable
+    servers:
+      - host: "2001:db8::71"
+        port: 514
+      - host: "2001:db8::72"
+        port: 514

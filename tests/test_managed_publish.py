@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import crs, geo
+from haproxy_mgmt import crs, geo, ipvs_config
 from haproxy_mgmt.config import Cluster, ConfigError, Node, UnknownHost
 from haproxy_mgmt.managed_publish import managed_files
 from haproxy_mgmt.object_manifest import REPOSITORY_PATH as MANIFEST_PATH
@@ -471,3 +471,44 @@ class TheDnsLayerTravelsWithTheRelease(unittest.TestCase):
         for name in ("dnsdist.yml", "other.conf", "sub/dnsdist.conf"):
             with self.subTest(name), self.assertRaises(LayoutError):
                 build_node_artifact({**self.BASE, f"managed/dns/{name}": b"x\n"})
+
+
+LOGS = b"""schema: 1
+name: logs
+listen: {protocol: syslog, port: 514}
+backend: receivers
+backends:
+  receivers:
+    balance: roundrobin
+    health: {type: udp}
+    servers: [{host: 198.51.100.71, port: 514}]
+"""
+
+
+class TheIpvsLayerTravelsWithTheRelease(unittest.TestCase):
+    """B256: `managed/keepalived/ipvs.conf` becomes the node's, with or without a syslog object."""
+
+    BASE = {"core/haproxy.cfg": b"global\n", "manual/reservations.yaml": b"{}\n"}
+
+    def publish(self, base: dict[str, bytes]) -> Any:
+        return managed_files(
+            {"managed/network.yaml": NETWORK, **base}, network_document=NETWORK, cluster=cluster()
+        )
+
+    def test_a_syslog_object_brings_its_virtual_server_and_no_haproxy_object_file(self) -> None:
+        files = self.publish({"managed/proxies/logs.yaml": LOGS})
+
+        self.assertIn(b"real_server 198.51.100.71 514 {", files["managed/keepalived/ipvs.conf"])
+        self.assertNotIn("managed/generated/1001-logs.cfg", files)
+        artifact = build_node_artifact({**files, **self.BASE})
+        self.assertIn("keepalived/ipvs.conf", artifact)
+        self.assertIn("keepalived/addresses.conf", artifact)
+
+    def test_without_one_the_file_is_there_and_empty_of_virtual_servers(self) -> None:
+        """A missing file would leave the previous release's forwarding on the nodes."""
+
+        files = self.publish(
+            {"managed/proxies/shop.yaml": PROXY, "managed/keepalived/ipvs.conf": b"stale\n"}
+        )
+
+        self.assertEqual(files["managed/keepalived/ipvs.conf"], ipvs_config.HEADER.encode())

@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import PurePosixPath
 
-from haproxy_mgmt import cluster_settings, crs, geo
+from haproxy_mgmt import cluster_settings, crs, geo, ipvs_config
 from haproxy_mgmt.config import Cluster, ConfigError
 from haproxy_mgmt.generate import countries_named, generate
 from haproxy_mgmt.keepalived_fragment import NAME as KEEPALIVED_NAME
@@ -257,6 +257,12 @@ def managed_files(
         prefix=cluster.address_prefix,
         interface=cluster.address_interface,
     ).encode("utf-8")
+    #
+    # Beside it, and always: the syslog objects' virtual servers (B256). A file
+    # with none removes the previous release's from the nodes, where a missing
+    # file would leave them forwarding.
+    #
+    result[f"{KEEPALIVED_PREFIX}{ipvs_config.FILE}"] = generated.ipvs.encode("utf-8")
     #
     # What each object in this version amounts to, so a later reading can ask
     # whether one object reached the nodes without asking who published it or

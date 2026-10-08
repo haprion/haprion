@@ -1,0 +1,14 @@
+schema: 1
+name: stream
+listen:
+  protocol: tcp
+  port: 514
+backend: stream
+backends:
+  stream:
+    balance: roundrobin
+    health:
+      type: tcp
+    servers:
+      - host: 192.0.2.71
+        port: 601

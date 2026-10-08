@@ -1,0 +1,16 @@
+schema: 1
+name: logs
+listen:
+  protocol: syslog
+  port: 514
+backend: receivers
+backends:
+  receivers:
+    balance: roundrobin
+    health:
+      type: udp
+    servers:
+      - host: 192.0.2.71
+        port: 514
+      - host: 192.0.2.72
+        port: 1514

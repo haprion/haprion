@@ -72,6 +72,11 @@ copy_path /etc/keepalived/keepalived.conf
 # question a restore is usually trying to answer.
 #
 copy_path /etc/keepalived/addresses.conf
+#
+# The syslog objects' IPVS virtual servers (B256), for the same reason, and
+# absent on a node without them.
+#
+copy_path /etc/keepalived/ipvs.conf
 copy_path /etc/default/keepalived
 
 copy_path /etc/netplan

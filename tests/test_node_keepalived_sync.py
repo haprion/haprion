@@ -21,7 +21,14 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-pull-deploy"
-FUNCTION = re.compile(r"^sync_keepalived_addresses\(\) \{.*?^\}$", re.DOTALL | re.MULTILINE)
+#
+# From the include tests through `sync_keepalived`: the shared step and both
+# files' wrappers (B256), as one piece of the script.
+#
+FUNCTION = re.compile(
+    r"^keepalived_includes_anywhere\(\) \{.*?^sync_keepalived\(\) \{.*?^\}$",
+    re.DOTALL | re.MULTILINE,
+)
 
 STUB = """#!/bin/sh
 echo "$(basename "$0") $*" >> "$RECORD"
@@ -47,7 +54,9 @@ eval exec /usr/bin/install ${kept}
 """
 
 
-class TheKeepalivedStep(unittest.TestCase):
+class Step(unittest.TestCase):
+    """The extracted step in a scratch root, with recording stubs. No tests of its own."""
+
     def setUp(self) -> None:
         found = FUNCTION.search(SCRIPT.read_text())
         assert found, "the function is no longer where the test extracts it from"
@@ -68,7 +77,9 @@ class TheKeepalivedStep(unittest.TestCase):
         self.installed = self.root / "etc" / "addresses.conf"
         self.record = self.root / "record"
 
-    def run_step(self, **environment: str) -> tuple[int, str]:
+    def run_step(
+        self, step: str = "sync_keepalived_addresses", **environment: str
+    ) -> tuple[int, str]:
         script = self.root / "step.sh"
         script.write_text(
             "set -Eeuo pipefail\n"
@@ -76,8 +87,9 @@ class TheKeepalivedStep(unittest.TestCase):
             f'CURRENT="{self.root / "release"}"\n'
             f'KEEPALIVED_CONF="{self.conf}"\n'
             f'KEEPALIVED_ADDRESSES="{self.installed}"\n'
+            f'KEEPALIVED_IPVS="{self.root / "etc" / "ipvs.conf"}"\n'
             f"{self.function}\n"
-            "sync_keepalived_addresses\n"
+            f"{step}\n"
         )
         finished = subprocess.run(
             ["/bin/bash", str(script)],
@@ -95,6 +107,8 @@ class TheKeepalivedStep(unittest.TestCase):
     def calls(self) -> str:
         return self.record.read_text() if self.record.exists() else ""
 
+
+class TheKeepalivedStep(Step):
     def test_a_release_without_an_address_list_is_not_an_error(self) -> None:
         # Every cluster is in this state until its repository has been through
         # a publish that writes one.
@@ -187,3 +201,115 @@ class TheKeepalivedStep(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(self.installed.read_text(), "    192.0.2.21\n")
         self.assertIn("keepalived reload failed", output)
+
+
+class TheIpvsFile(Step):
+    """The syslog objects' virtual servers (B256): the same step, included at the top level."""
+
+    SERVER = "virtual_server 192.0.2.20 514 {\n}\n"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.published = self.root / "release" / "keepalived" / "ipvs.conf"
+        self.installed = self.root / "etc" / "ipvs.conf"
+
+    def ipvs(self, **environment: str) -> tuple[int, str]:
+        return self.run_step("sync_keepalived_ipvs", **environment)
+
+    def test_a_release_without_the_file_leaves_the_node_alone(self) -> None:
+        """A release from before B256: absent means not managed from here."""
+
+        self.installed.write_text(self.SERVER)
+
+        code, _ = self.ipvs()
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.installed.read_text(), self.SERVER)
+        self.assertEqual(self.calls(), "")
+
+    def test_included_at_the_top_level_it_is_tested_and_reloaded(self) -> None:
+        self.published.write_text(self.SERVER)
+        self.conf.write_text(
+            "vrrp_instance alpha {\n    virtual_ipaddress {\n    }\n}\n"
+            f"include {self.installed}  # syslog objects\n"
+        )
+
+        code, output = self.ipvs()
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.installed.read_text(), self.SERVER)
+        self.assertIn("--config-test", self.calls())
+        self.assertIn("systemctl reload keepalived", self.calls())
+        self.assertIn("IPVS file active", output)
+
+    def test_included_inside_a_block_is_not_in_use(self) -> None:
+        """keepalived reads a virtual_server only at the top level."""
+
+        self.published.write_text(self.SERVER)
+        self.conf.write_text(f"vrrp_instance alpha {{\n    include {self.installed}\n}}\n")
+
+        code, output = self.ipvs()
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.installed.read_text(), self.SERVER)
+        self.assertEqual(self.calls(), "")
+        self.assertIn("NOT in use on this node", output)
+
+    def test_a_commented_include_is_not_an_include(self) -> None:
+        self.published.write_text(self.SERVER)
+        for line in (f"# include {self.installed}", f"! include {self.installed}"):
+            with self.subTest(line):
+                self.installed.unlink(missing_ok=True)
+                self.conf.write_text(f"{line}\n")
+
+                code, output = self.ipvs()
+
+                self.assertEqual(code, 0)
+                self.assertIn("NOT in use on this node", output)
+        self.assertEqual(self.calls(), "")
+
+    def test_a_rejected_file_is_restored_and_never_reloaded(self) -> None:
+        self.published.write_text("virtual_server broken\n")
+        self.installed.write_text(self.SERVER)
+        self.conf.write_text(f"include {self.installed}\n")
+
+        code, output = self.ipvs(TEST_EXIT="5")
+
+        self.assertEqual(code, 1)
+        self.assertEqual(self.installed.read_text(), self.SERVER)
+        self.assertNotIn("reload", self.calls())
+        self.assertIn("previous IPVS file restored", output)
+
+    def test_both_files_are_tried_when_the_first_fails(self) -> None:
+        """One broken file does not hold the other back, and the step still fails."""
+
+        addresses = self.root / "release" / "keepalived" / "addresses.conf"
+        addresses.write_text("    not-an-address\n")
+        self.published.write_text(self.SERVER)
+        self.conf.write_text(
+            "vrrp_instance alpha {\n    virtual_ipaddress {\n"
+            f"        include {self.root / 'etc' / 'addresses.conf'}\n    }}\n}}\n"
+            f"include {self.installed}\n"
+        )
+
+        code, output = self.run_step("sync_keepalived", TEST_EXIT="5")
+
+        self.assertEqual(code, 1)
+        self.assertIn("rejected the published address list", output)
+        self.assertIn("rejected the published IPVS file", output)
+
+
+class OneReadingOfTheTopLevelInclude(unittest.TestCase):
+    """`04-node-prepare` warns with the deploy's own awk program, not a second reading of it."""
+
+    PROGRAM = re.compile(r"awk -v wanted=\"\$\w+\" '(.*?)'", re.DOTALL)
+
+    def program(self, path: Path) -> str:
+        found = self.PROGRAM.findall(path.read_text())
+        self.assertEqual(len(found), 1, path)
+        return " ".join(found[0].split())
+
+    def test_the_two_are_the_same(self) -> None:
+        prepare = SCRIPT.parents[1] / "04-node-prepare"
+
+        self.assertEqual(self.program(prepare), self.program(SCRIPT))

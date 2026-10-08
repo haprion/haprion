@@ -210,6 +210,33 @@ class TestMode(Planning):
         self.assertNotIn("include /etc/keepalived/addresses.conf", conf)
         self.assertEqual(self.data(plan, "/etc/keepalived/addresses.conf"), "198.51.100.254/32\n")
 
+    def test_the_syslog_objects_virtual_servers_are_emptied(self) -> None:
+        """B256: the production receivers are never checked or fed from a test node."""
+
+        ipvs = (
+            "# Generated.\n# virtual_server in a comment\n"
+            "virtual_server 192.0.2.20 514 {\n    real_server 192.0.2.71 514 {\n    }\n}\n"
+            "virtual_server 192.0.2.20 5514 {\n}\n"
+        )
+        files = {**FILES, "/etc/keepalived/ipvs.conf": (ipvs, 0o644)}
+        plan = restore_plan.build(self.source(files), "test", TARGET, PROFILE)
+
+        self.assertEqual(self.data(plan, "/etc/keepalived/ipvs.conf"), "")
+        rewrite = next(r for r in plan.rewrites if r.path == "/etc/keepalived/ipvs.conf")
+        self.assertEqual(
+            (rewrite.field, rewrite.old, rewrite.new),
+            ("virtual_server", "2 virtual server(s)", "(none)"),
+        )
+
+    def test_a_new_vm_gets_the_file_as_it_was(self) -> None:
+        files = {
+            **FILES,
+            "/etc/keepalived/ipvs.conf": ("virtual_server 192.0.2.20 514 {\n}\n", 0o644),
+        }
+        plan = restore_plan.build(self.source(files), "new_vm", TARGET)
+
+        self.assertTrue(self.untouched(plan, "/etc/keepalived/ipvs.conf"))
+
     def test_an_include_inside_the_address_block_is_said_as_removed(self) -> None:
         conf = (
             "vrrp_instance VI_1 {\n"

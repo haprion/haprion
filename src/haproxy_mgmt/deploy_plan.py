@@ -89,6 +89,11 @@ class NodeObservation:
     # publishes. None means nobody measured it, which is not the same as False.
     #
     addresses_current: bool | None = None
+    #
+    # The same for the syslog objects' IPVS file (B256). True where the node
+    # does not report it: its bundle predates the file.
+    #
+    ipvs_current: bool | None = True
     certificates: tuple[tuple[str, str], ...] | None = None
 
 
@@ -148,9 +153,10 @@ class Target(Protocol):
 class ReleaseTarget:
     """The published configuration release this deploy is for.
 
-    A release activates two things on a node, and they can end up in different
-    states. The node installs and reloads HAProxy first and the keepalived
-    address list second; when the second step fails the address file is
+    A release activates three things on a node, and they can end up in
+    different states. The node installs and reloads HAProxy first, then the
+    keepalived address list and the IPVS virtual servers (B256); when a later
+    step fails its file is
     restored while the new configuration stays live, so the node reports the
     new release hash and the old addresses. The hash alone would then call that
     node current and skip the very node that needs the repair - and the node
@@ -173,7 +179,12 @@ class ReleaseTarget:
             return None
         if node.release_hash != self.hash:
             return False
-        return node.addresses_current
+        parts = (node.addresses_current, node.ipvs_current)
+        if False in parts:
+            return False
+        if None in parts:
+            return None
+        return True
 
     def skip_reason(self, node: NodeObservation) -> str:
         return f"{node.name} already runs this version; nothing to do"

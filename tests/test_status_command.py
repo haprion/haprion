@@ -55,6 +55,25 @@ ADDRESSES: dict[str, object] = {
     "included": True,
 }
 
+IPVS: dict[str, object] = {
+    "ipvsadm": True,
+    "published": True,
+    "published_sha256": "c3" * 32,
+    "installed": True,
+    "installed_sha256": "c3" * 32,
+    "included": True,
+    "services": [
+        {
+            "protocol": "udp",
+            "address": "192.0.2.10",
+            "port": 514,
+            "packets": 10,
+            "bytes": 2300,
+            "receivers": [{"address": "198.51.100.71", "port": 514, "packets": 10, "bytes": 2300}],
+        }
+    ],
+}
+
 
 def node_status(
     name: str,
@@ -65,11 +84,13 @@ def node_status(
     runtime: str = "3.2.9",
     waf_engine: dict[str, object] | None = None,
     dns_listener: dict[str, object] | None = None,
+    ipvs: dict[str, object] | None = None,
 ) -> str:
     return json.dumps(
         {
             **({} if waf_engine is None else {"waf_engine": waf_engine}),
             **({} if dns_listener is None else {"dns_listener": dns_listener}),
+            **({} if ipvs is None else {"ipvs": ipvs}),
             "schema_version": 1,
             "node": name,
             "cluster": "alpha",
@@ -376,6 +397,46 @@ class HelperReadingTests(HelperFixture):
         self.assertEqual(result["summary"]["release_state"], "behind")
         self.assertIs(result["nodes"][1]["current"], False)
 
+    def test_a_node_with_the_release_but_not_its_ipvs_file_is_behind(self) -> None:
+        """B256: the syslog objects' file is a component of the release like the address list."""
+
+        stale = dict(IPVS, installed_sha256="b2" * 32)
+        code, out, _ = self.run_helper(
+            request(),
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a", owner=True, release_hash=TARGET_HASH, ipvs=IPVS
+                    ),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=TARGET_HASH, ipvs=stale
+                    ),
+                }
+            ),
+        )
+
+        self.assertEqual(code, 0)
+        result = json.loads(out)["result"]
+        self.assertEqual(result["summary"]["release_state"], "behind")
+        self.assertIs(result["nodes"][0]["current"], True)
+        self.assertIs(result["nodes"][1]["current"], False)
+
+    def test_a_node_from_before_the_ipvs_file_is_not_held_to_it(self) -> None:
+        """Its bundle neither installs nor reports the file; a deploy would not change that."""
+
+        code, out, _ = self.run_helper(
+            request(),
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET_HASH),
+                    "node-b": node_status("node-b", owner=False, release_hash=TARGET_HASH),
+                }
+            ),
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["result"]["summary"]["release_state"], "converged")
+
     def test_a_node_that_said_nothing_about_addresses_is_not_compared(self) -> None:
         """An older status script. Unknown, and never reported as converged."""
 
@@ -553,6 +614,49 @@ class CallerTests(HelperFixture):
 
         self.assertIn("Addresses:    in use", out)
         self.assertIn("Addresses:    BEHIND the release - run haproxy-deploy", out)
+
+    def test_the_ipvs_file_has_a_line_of_its_own(self) -> None:
+        stale = dict(IPVS, installed_sha256="b2" * 32)
+        outside = dict(IPVS, included=False)
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a", owner=True, release_hash=TARGET_HASH, ipvs=outside
+                    ),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=TARGET_HASH, ipvs=stale
+                    ),
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertIn("Syslog IPVS:  installed, not included at the top of keepalived.conf", out)
+        self.assertIn("Syslog IPVS:  BEHIND the release - run haproxy-deploy", out)
+
+    def test_the_ipvs_line_counts_the_kernels_virtual_servers(self) -> None:
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a", owner=True, release_hash=TARGET_HASH, ipvs=IPVS
+                    ),
+                    "node-b": node_status(
+                        "node-b",
+                        owner=False,
+                        release_hash=TARGET_HASH,
+                        ipvs=dict(IPVS, services=None),
+                    ),
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertIn("Syslog IPVS:  in use, 1 virtual server\n", out)
+        self.assertIn("Syslog IPVS:  in use, not counted (ipvsadm missing or failed)", out)
 
     def test_a_node_behind_is_told_what_to_do_about_it(self) -> None:
         payload = self.envelope(

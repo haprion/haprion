@@ -70,18 +70,50 @@ trap cleanup EXIT
 #
 KEEPALIVED_CONF="/etc/keepalived/keepalived.conf"
 KEEPALIVED_ADDRESSES="/etc/keepalived/addresses.conf"
+#
+# The syslog objects' IPVS virtual servers (Fas 19b, B256), beside it and by
+# the same rules. Included at the top level of keepalived.conf rather than
+# inside the vrrp_instance, since that is where keepalived reads a
+# virtual_server.
+#
+KEEPALIVED_IPVS="/etc/keepalived/ipvs.conf"
 
-sync_keepalived_addresses() {
-    local published="${CURRENT}/keepalived/addresses.conf"
-    local backup included=0
+#
+# Whether keepalived.conf includes a file. The address list is included inside
+# virtual_ipaddress, so any line naming it is the include; the IPVS file only
+# counts at the top level, outside every block, with keepalived's comments (`#`
+# and `!`) left out - the reading `haproxy-node-status` reports.
+#
+keepalived_includes_anywhere() {
+    [[ -f "$KEEPALIVED_CONF" ]] && grep -q "$1" "$KEEPALIVED_CONF"
+}
+
+keepalived_includes_at_top() {
+    [[ -f "$KEEPALIVED_CONF" ]] || return 1
+    awk -v wanted="$1" '
+        { sub(/[#!].*/, ""); words = split($0, word, " ") }
+        depth == 0 && words == 2 && word[1] == "include" && word[2] == wanted { found = 1 }
+        { depth += gsub(/\{/, "{") - gsub(/\}/, "}") }
+        END { exit !found }
+    ' "$KEEPALIVED_CONF"
+}
+
+#
+# One file of keepalived's from the release: install it, and when keepalived
+# reads it, test and reload. $1 the release's file, $2 where it is installed,
+# $3 what it is called in the log, $4 the test for the include.
+#
+sync_keepalived_file() {
+    local published="$1" installed="$2" what="$3" includes="$4"
+    local backup
 
     #
-    # A cluster whose repository predates B57 publishes no address list, and a
+    # A cluster whose repository predates the file publishes none, and a
     # release without one is not a release that empties the node's: an absent
-    # file means "not managed from here", never "no addresses".
+    # file means "not managed from here", never "nothing".
     #
     [[ -f "$published" ]] || return 0
-    if [[ -f "$KEEPALIVED_ADDRESSES" ]] && cmp -s "$published" "$KEEPALIVED_ADDRESSES"; then
+    if [[ -f "$installed" ]] && cmp -s "$published" "$installed"; then
         return 0
     fi
 
@@ -93,20 +125,17 @@ sync_keepalived_addresses() {
     # the deploy delivers the file first, inert, and a person adds the include
     # afterwards as one deliberate step on one node at a time.
     #
-    log "keepalived: the address list changed."
+    log "keepalived: the ${what} changed."
     backup=""
-    if [[ -f "$KEEPALIVED_ADDRESSES" ]]; then
-        backup="${KEEPALIVED_ADDRESSES}.rollback"
-        cp -a "$KEEPALIVED_ADDRESSES" "$backup"
+    if [[ -f "$installed" ]]; then
+        backup="${installed}.rollback"
+        cp -a "$installed" "$backup"
     fi
-    install -o root -g root -m 644 "$published" "$KEEPALIVED_ADDRESSES"
+    install -o root -g root -m 644 "$published" "$installed"
 
-    if [[ -f "$KEEPALIVED_CONF" ]] && grep -q "$KEEPALIVED_ADDRESSES" "$KEEPALIVED_CONF"; then
-        included=1
-    fi
-    if (( ! included )); then
-        log "keepalived: ${KEEPALIVED_CONF} does not include ${KEEPALIVED_ADDRESSES}."
-        log "keepalived: the list is installed but NOT in use on this node."
+    if ! "$includes" "$installed"; then
+        log "keepalived: ${KEEPALIVED_CONF} does not include ${installed}."
+        log "keepalived: the ${what} is installed but NOT in use on this node."
         [[ -z "$backup" ]] || rm -f "$backup"
         return 0
     fi
@@ -121,23 +150,45 @@ sync_keepalived_addresses() {
     if keepalived --config-test -f "$KEEPALIVED_CONF"; then
         log "keepalived: configuration test passed. Reloading..."
         if systemctl reload keepalived; then
-            log "keepalived: address list active."
+            log "keepalived: ${what} active."
             [[ -z "$backup" ]] || rm -f "$backup"
             return 0
         fi
         log "ERROR: keepalived reload failed."
     else
-        log "ERROR: keepalived rejected the published address list."
+        log "ERROR: keepalived rejected the published ${what}."
     fi
 
     if [[ -n "$backup" ]]; then
-        mv -f "$backup" "$KEEPALIVED_ADDRESSES"
-        log "keepalived: previous address list restored. keepalived was NOT reloaded."
+        mv -f "$backup" "$installed"
+        log "keepalived: previous ${what} restored. keepalived was NOT reloaded."
     else
-        rm -f "$KEEPALIVED_ADDRESSES"
-        log "keepalived: the published address list was removed again."
+        rm -f "$installed"
+        log "keepalived: the published ${what} was removed again."
     fi
     return 1
+}
+
+sync_keepalived_addresses() {
+    sync_keepalived_file "${CURRENT}/keepalived/addresses.conf" "$KEEPALIVED_ADDRESSES" \
+        "address list" keepalived_includes_anywhere
+}
+
+sync_keepalived_ipvs() {
+    sync_keepalived_file "${CURRENT}/keepalived/ipvs.conf" "$KEEPALIVED_IPVS" \
+        "IPVS file" keepalived_includes_at_top
+}
+
+#
+# Both, the address list first: an address must be on the node before a
+# virtual server on it can take a packet. Each is tried even when the other
+# failed, so one broken file does not hold the other back.
+#
+sync_keepalived() {
+    local failed=0
+    sync_keepalived_addresses || failed=1
+    sync_keepalived_ipvs || failed=1
+    return "$failed"
 }
 
 #
@@ -432,7 +483,7 @@ if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
         sync_dns_listener "$RUNNING"
         systemctl reload haproxy
         rm -f "$PENDING"
-        sync_keepalived_addresses
+        sync_keepalived
         log "Deploy complete."
         exit 0
     fi
@@ -447,7 +498,7 @@ if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
     # And the engine, which a reboot or a person may have stopped.
     sync_waf_engine 0 || exit 1
     sync_dns_listener "$CURRENT" || exit 1
-    sync_keepalived_addresses || exit 1
+    sync_keepalived || exit 1
     exit 0
 fi
 
@@ -578,10 +629,10 @@ if systemctl reload haproxy; then
     # failure, and it is a different failure from the ones above. HAProxy is
     # live and correct; what is missing is the address it was told to bind.
     #
-    if sync_keepalived_addresses; then
+    if sync_keepalived; then
         log "Deploy complete."
     else
-        log "ERROR: the configuration is live, but the keepalived address list is not."
+        log "ERROR: the configuration is live, but keepalived's address list or IPVS file is not."
         exit 1
     fi
 else

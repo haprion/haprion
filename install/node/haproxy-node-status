@@ -292,6 +292,134 @@ def read_dns_listener():
 
 
 #
+# The syslog objects' IPVS virtual servers (Fas 19b, B256): a file the release
+# carries, the deploy installs as /etc/keepalived/ipvs.conf, and a person
+# includes at the top level of keepalived.conf - the address list's three
+# measurements - and the kernel's counters per virtual server and receiver.
+# keepalived takes a receiver its check failed out of the table, so one the
+# release names and the kernel does not hold is down.
+#
+KEEPALIVED_IPVS = Path("/etc/keepalived/ipvs.conf")
+PUBLISHED_IPVS = Path("/etc/haproxy/current/keepalived/ipvs.conf")
+IPVSADM = Path("/usr/sbin/ipvsadm")
+MAX_IPVS_ROWS = 500
+IPVS_PROTOCOLS = {"TCP": "tcp", "UDP": "udp", "SCTP": "sctp"}
+
+
+def top_level_include(text, path):
+    """Whether keepalived.conf includes `path` outside every block.
+
+    keepalived reads `virtual_server` only at the top level; the same line
+    inside a `vrrp_instance` is a different and broken configuration. Comments
+    start with `#` or `!`, as keepalived's own reader takes them.
+    """
+
+    depth = 0
+    for line in text.splitlines():
+        content = re.split(r"[#!]", line, maxsplit=1)[0]
+        if depth == 0 and content.split() == ["include", str(path)]:
+            return True
+        depth += content.count("{") - content.count("}")
+    return False
+
+
+def ipvs_endpoint(text):
+    """`192.0.2.1:514` or `[2001:db8::1]:514`, as ipvsadm -n prints one."""
+
+    host, _, port = text.rpartition(":")
+    if not host or not port.isdigit():
+        return None
+    return host.strip("[]"), int(port)
+
+
+def parse_ipvs_stats(text):
+    """`ipvsadm -Ln --stats --exact` as virtual servers and their receivers.
+
+    The shape is ipvsadm 1.31's own (`print_service_entry`): a service line is
+    the protocol, the address and port, and five counters - connections,
+    packets and bytes in and out - and each receiver below it is `->`, its
+    address and port, and the same five. `--exact` prints every counter as a
+    whole number. Messages travel one way, so in is what counts. A firewall
+    mark service has no address and is passed over.
+    """
+
+    services = []
+    current = None
+    for line in text.splitlines():
+        fields = line.split()
+        readable = len(fields) == 7 and all(value.isdigit() for value in fields[2:])
+        endpoint = ipvs_endpoint(fields[1]) if readable else None
+        if endpoint is None:
+            #
+            # A service line that cannot be read ends the one before it, so
+            # its receivers are never counted under somebody else's service.
+            #
+            if fields and fields[0] != "->":
+                current = None
+            continue
+        address, port = endpoint
+        packets, data = int(fields[3]), int(fields[5])
+        if fields[0] in IPVS_PROTOCOLS:
+            if len(services) >= MAX_IPVS_ROWS:
+                break
+            current = {
+                "protocol": IPVS_PROTOCOLS[fields[0]],
+                "address": address,
+                "port": port,
+                "packets": packets,
+                "bytes": data,
+                "receivers": [],
+            }
+            services.append(current)
+        elif fields[0] == "->" and current is not None:
+            if len(current["receivers"]) < MAX_IPVS_ROWS:
+                current["receivers"].append(
+                    {"address": address, "port": port, "packets": packets, "bytes": data}
+                )
+    return services
+
+
+def ipvs_summary(ipvs):
+    """The IPVS file in one line, in the address list's order of questions."""
+
+    if ipvs["published"] is False:
+        return "none published by this release"
+    if ipvs["published_sha256"] is None or ipvs["installed_sha256"] is None:
+        return "published, not installed" if ipvs["installed"] is False else "UNKNOWN"
+    if ipvs["published_sha256"] != ipvs["installed_sha256"]:
+        return "installed file differs from the release"
+    if ipvs["included"] is not True:
+        return "installed, not included at the top of keepalived.conf"
+    if ipvs["services"] is None:
+        return "in use, not counted (ipvsadm missing or failed)"
+    return "installed and in use"
+
+
+def read_ipvs():
+    published, published_digest = address_list(PUBLISHED_IPVS)
+    installed, installed_digest = address_list(KEEPALIVED_IPVS)
+    text = read_config(KEEPALIVED_CONFIG)
+    present = IPVSADM.is_file()
+    services = None
+    if present:
+        r = run(str(IPVSADM), "-Ln", "--stats", "--exact")
+        #
+        # null when ipvsadm could not be asked, so a table that could not be
+        # read is never reported as one holding nothing.
+        #
+        services = parse_ipvs_stats(r.stdout) if r.returncode == 0 else None
+    return {
+        "ipvsadm": present,
+        "published": published,
+        "published_sha256": published_digest,
+        "installed": installed,
+        "installed_sha256": installed_digest,
+        "included": None if text is None else top_level_include(text, KEEPALIVED_IPVS),
+        "services": services,
+    }
+
+
+#
 # What the dashboard shows as a node's CPU and memory (B239). Counters, not a
 # percentage: CPU use is a rate, and a rate needs two readings. The poller
 # keeps the previous one and works out the share between them, so nothing here
@@ -947,6 +1075,7 @@ result = {
     "architecture": os.uname().machine,
     "waf_engine": read_waf_engine(),
     "dns_listener": read_dns_listener(),
+    "ipvs": read_ipvs(),
     "resources": read_resources(),
 }
 
@@ -983,6 +1112,13 @@ else:
         print(
             f"  {pool['pool']}  queries={pool['queries']}"
             f"  refused={pool['refused']}  answered={pool['answered']}"
+        )
+    ipvs = result["ipvs"]
+    print(f"Syslog IPVS:       {ipvs_summary(ipvs)}")
+    for service in ipvs["services"] or []:
+        print(
+            f"  {service['protocol']} {service['address']}:{service['port']}"
+            f"  messages={service['packets']}  receivers={len(service['receivers'])}"
         )
     #
     # Requests and 5xx per listener, because that is the pair that says whether

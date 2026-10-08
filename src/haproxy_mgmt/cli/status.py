@@ -141,6 +141,37 @@ def _addresses_line(status: dict[str, Any]) -> str | None:
     return "in use"
 
 
+def _ipvs_line(status: dict[str, Any]) -> str | None:
+    """The syslog objects' IPVS virtual servers on this node (B256), or None from an older node.
+
+    The address list's reading, plus what only this file has: whether
+    `ipvsadm` is there to count with, and how many virtual servers the kernel
+    holds.
+    """
+
+    reported = status.get("ipvs")
+    if not isinstance(reported, dict):
+        return None
+    if reported.get("published") is False:
+        return "not managed from here"
+    published = reported.get("published_sha256")
+    installed = reported.get("installed_sha256")
+    if not isinstance(published, str) or not isinstance(installed, str):
+        if reported.get("installed") is False:
+            return "MISSING - run haproxy-deploy"
+        return "unknown"
+    if published != installed:
+        return "BEHIND the release - run haproxy-deploy"
+    if reported.get("included") is False:
+        return "installed, not included at the top of keepalived.conf"
+    if reported.get("included") is not True:
+        return "installed, include unknown"
+    services = reported.get("services")
+    if reported.get("ipvsadm") is not True or not isinstance(services, list):
+        return "in use, not counted (ipvsadm missing or failed)"
+    return f"in use, {len(services)} virtual server{'' if len(services) == 1 else 's'}"
+
+
 def _waf_engine_line(engine: object, published: object) -> str | None:
     """The node's WAF engine, read against whether the release has rules (review 2026-10-04 F3).
 
@@ -217,6 +248,9 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         listener = _dns_listener_line(status.get("dns_listener"), summary.get("dns_published"))
         if listener is not None:
             writer.write(f"  DNS listener: {listener}\n")
+        ipvs = _ipvs_line(status)
+        if ipvs is not None:
+            writer.write(f"  Syslog IPVS:  {ipvs}\n")
         writer.write("\n")
 
     writer.write(f"VIP state:      {summary.get('vip_state')}\n")

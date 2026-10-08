@@ -133,6 +133,12 @@ class NodeStatus:
     # a time, and the node deploy exits 0 without it.
     #
     addresses_included: bool | None = None
+    #
+    # The same two for the syslog objects' IPVS file (B256). Current is True
+    # on a node that does not report the file - see `ipvs_current`.
+    #
+    ipvs_current: bool | None = True
+    ipvs_included: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +168,7 @@ class ClusterStatus:
                     owns_vip=node.owns_vip,
                     release_hash=node.release_hash,
                     addresses_current=node.addresses_current,
+                    ipvs_current=node.ipvs_current,
                     certificates=node.certificates,
                 )
                 for node in self.nodes
@@ -305,6 +312,12 @@ def addresses_current(status: Mapping[str, Any]) -> bool | None:
     data = _addresses(status)
     if data is None:
         return None
+    return _carried(data)
+
+
+def _carried(data: Mapping[str, Any]) -> bool | None:
+    """Published, installed, sha256 of each: does the node carry what the release publishes?"""
+
     if data.get("published") is False:
         return True
 
@@ -323,6 +336,36 @@ def addresses_current(status: Mapping[str, Any]) -> bool | None:
 
 def addresses_included(status: Mapping[str, Any]) -> bool | None:
     data = _addresses(status)
+    if data is None:
+        return None
+    included = data.get("included")
+    return included if isinstance(included, bool) else None
+
+
+def _ipvs(status: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    data = status.get("ipvs")
+    return data if isinstance(data, Mapping) else None
+
+
+def ipvs_current(status: Mapping[str, Any]) -> bool | None:
+    """Does the node carry the IPVS virtual servers its release publishes (B256)?
+
+    The address list's measurements and rule, for the syslog objects' file. A
+    node whose bundle predates the file says nothing and is not held to it:
+    it neither installs nor reports it, a deploy would not change that, and
+    the interface offers syslog only where every node reports it - as dnsdist.
+    """
+
+    data = _ipvs(status)
+    if data is None:
+        return True
+    return _carried(data)
+
+
+def ipvs_included(status: Mapping[str, Any]) -> bool | None:
+    """Whether keepalived.conf includes the installed file at its top level."""
+
+    data = _ipvs(status)
     if data is None:
         return None
     included = data.get("included")
@@ -351,6 +394,8 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         release_hash=_text(_mapping(status.get("release")).get("hash")),
         addresses_current=addresses_current(status),
         addresses_included=addresses_included(status),
+        ipvs_current=ipvs_current(status),
+        ipvs_included=ipvs_included(status),
         certificates=_certificates(status),
         servers=_servers(status),
         frontends=_frontends(status),

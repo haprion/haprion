@@ -300,6 +300,20 @@ link_into_current dns
 step "dnsdist"
 ensure_dnsdist
 
+step "IPVS for syslog objects"
+
+#
+# keepalived programs the kernel's IPVS table itself (B256); ipvsadm is only
+# how the node's status reads the counters. Its own service is masked first:
+# Debian's package enables it, and it restores and clears the table at boot
+# and shutdown - a second owner of what keepalived holds (lab, 26-10-07).
+#
+systemctl mask --quiet ipvsadm.service
+log "  masked   ipvsadm.service (keepalived owns the IPVS table)"
+DEBIAN_FRONTEND=noninteractive apt-get install -y -q ipvsadm >/dev/null \
+    || die "ipvsadm: the package could not be installed"
+log "  ok       $(/usr/sbin/ipvsadm --version 2>/dev/null | head -n 1)"
+
 step "Node scripts"
 
 missing=0
@@ -490,6 +504,30 @@ else
     else
         warn "nopreempt is not set. A recovered node will take the address back,"
         warn "  moving live traffic for no reason - typically mid-rebuild."
+    fi
+
+    #
+    # The syslog objects' file, read by keepalived only from the top level -
+    # the reading `haproxy-pull-deploy` and `haproxy-node-status` make. Written
+    # by a person, as the address list's include is: a deploy installs the
+    # file and reloads only once keepalived.conf includes it.
+    #
+    KA_IPVS="/etc/keepalived/ipvs.conf"
+    if awk -v wanted="$KA_IPVS" '
+        { sub(/[#!].*/, ""); words = split($0, word, " ") }
+        depth == 0 && words == 2 && word[1] == "include" && word[2] == wanted { found = 1 }
+        { depth += gsub(/\{/, "{") - gsub(/\}/, "}") }
+        END { exit !found }
+    ' "$KA_CONF"; then
+        log "  ok       ${KA_IPVS} is included"
+    else
+        warn "keepalived.conf does not include ${KA_IPVS} at its top level."
+        warn "  Syslog objects are not offered on this cluster until every node does."
+        warn "  After a deploy has installed the file, add this line at the end of"
+        warn "  keepalived.conf - outside every block - one node at a time:"
+        echo
+        echo "include ${KA_IPVS}"
+        echo
     fi
 
     #

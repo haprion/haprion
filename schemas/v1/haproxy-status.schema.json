@@ -310,6 +310,59 @@
           },
           "additionalProperties": false
         },
+        "ipvs": {
+          "description": "The syslog objects' IPVS virtual servers (B256): the file the release publishes, the one installed as /etc/keepalived/ipvs.conf, each present or not with its sha256, and whether keepalived.conf includes it at its top level - the address list's measurements. ipvsadm says whether the counting tool is installed; services are the kernel's virtual servers and receivers from ipvsadm -Ln --stats --exact, packets and bytes in, null when ipvsadm is missing or failed. A receiver keepalived's check took out is absent from its service. Absent from nodes installed before it was reported, which are not held to the file.",
+          "type": "object",
+          "required": [
+            "ipvsadm",
+            "published",
+            "published_sha256",
+            "installed",
+            "installed_sha256",
+            "included",
+            "services"
+          ],
+          "properties": {
+            "ipvsadm": { "type": "boolean" },
+            "published": { "type": ["boolean", "null"] },
+            "published_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+            "installed": { "type": ["boolean", "null"] },
+            "installed_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+            "included": { "type": ["boolean", "null"] },
+            "services": {
+              "type": ["array", "null"],
+              "maxItems": 500,
+              "items": {
+                "type": "object",
+                "required": ["protocol", "address", "port", "packets", "bytes", "receivers"],
+                "properties": {
+                  "protocol": { "enum": ["tcp", "udp", "sctp"] },
+                  "address": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+                  "packets": { "type": "integer", "minimum": 0 },
+                  "bytes": { "type": "integer", "minimum": 0 },
+                  "receivers": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                      "type": "object",
+                      "required": ["address", "port", "packets", "bytes"],
+                      "properties": {
+                        "address": { "type": "string", "minLength": 1, "maxLength": 64 },
+                        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+                        "packets": { "type": "integer", "minimum": 0 },
+                        "bytes": { "type": "integer", "minimum": 0 }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "resources": {
           "description": "The node's CPU and memory (B239): the running CPU counters from /proc/stat (all time and idle time, in ticks since boot), MemTotal and MemAvailable in kB, the one-minute load average and the number of CPUs. Each part is null when it could not be read. CPU use is a rate and needs two readings, so it is worked out by whoever keeps the previous one. Absent from nodes installed before it was reported.",
           "type": "object",

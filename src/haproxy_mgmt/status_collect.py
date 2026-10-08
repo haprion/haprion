@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt import dnsdist_config
-from haproxy_mgmt.cluster_status import addresses_current
+from haproxy_mgmt.cluster_status import addresses_current, ipvs_current
 from haproxy_mgmt.config import DeployIdentity, Node
 from haproxy_mgmt.deploy_plan import NodeObservation, ReleaseTarget, VipState
 from haproxy_mgmt.envelope import Message, envelope
@@ -515,6 +515,7 @@ def _node_result(
                 status_ok=True,
                 release_hash=observed if isinstance(observed, str) else None,
                 addresses_current=addresses_current(_mapping(entry["status"])),
+                ipvs_current=ipvs_current(_mapping(entry["status"])),
             )
         )
 

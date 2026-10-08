@@ -207,6 +207,26 @@ API keeps requiring one, and no console is configured. `haproxy-node-status` rea
 while dnsdist runs and reports them per pool and server, which is where the interface's
 DNS cards come from. Nothing outside the node can reach them.
 
+A syslog listener (UDP only) is served by the kernel's IPVS through keepalived rather than
+by HAProxy, so the receivers see each message's sender. Every release carries
+`keepalived/ipvs.conf`, the cluster's virtual servers - empty of them on a cluster without
+a syslog listener - and the deploy installs it as `/etc/keepalived/ipvs.conf` beside the
+address list, by the same rules: inert until `keepalived.conf` includes it, and once it
+does, a `keepalived --config-test` and a reload only when the test passes, the previous
+file restored otherwise. The include goes **at the top level** of `keepalived.conf`, outside
+every block, since that is where keepalived reads a virtual server:
+
+```text
+include /etc/keepalived/ipvs.conf
+```
+
+Add it after the first deploy has installed the file, one node at a time, with
+`keepalived --config-test -f /etc/keepalived/keepalived.conf` before the reload;
+`04-node-prepare` warns while it is missing. `04-node-prepare` also installs `ipvsadm`, which
+`haproxy-node-status` reads the counters with, and masks `ipvsadm.service` first: Debian's
+package enables it, and it restores and clears the IPVS table at boot and shutdown, which
+keepalived owns. The nodes need no `ip_forward`: the receivers never answer through them.
+
 ## 6. Verify access
 
 Open `https://<SERVER_NAME>` and sign in with the administrator account created during

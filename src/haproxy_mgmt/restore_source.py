@@ -41,6 +41,7 @@ EXPORT_ROOTS = (
     "/etc/hosts",
     "/etc/keepalived/keepalived.conf",
     "/etc/keepalived/addresses.conf",
+    "/etc/keepalived/ipvs.conf",
     "/etc/default/keepalived",
     "/etc/netplan",
     "/etc/sysctl.d",

@@ -46,6 +46,7 @@ NETPLAN_DIR = "/etc/netplan"
 ROOT_KEYS = "/root/.ssh/authorized_keys"
 KEEPALIVED_CONF = "/etc/keepalived/keepalived.conf"
 KEEPALIVED_ADDRESSES = "/etc/keepalived/addresses.conf"
+KEEPALIVED_IPVS = "/etc/keepalived/ipvs.conf"
 HOST_KEY_PREFIX = "/etc/ssh/ssh_host_"
 
 #
@@ -498,6 +499,22 @@ def build(
                 )
                 data = f"{profile.vip}\n".encode()
                 rewrites.append(Rewrite(entry.path, "addresses", old, str(profile.vip)))
+            elif entry.path == KEEPALIVED_IPVS:
+                #
+                # The production cluster's virtual servers (B256): emptied, as
+                # the address list is replaced, so the test node never checks
+                # or forwards to the production receivers. keepalived is masked
+                # there anyway; this is what the file says if it is unmasked.
+                #
+                servers = sum(
+                    1
+                    for line in _text(source, entry).splitlines()
+                    if line.split("#", 1)[0].split()[:1] == ["virtual_server"]
+                )
+                data = b""
+                rewrites.append(
+                    Rewrite(entry.path, "virtual_server", f"{servers} virtual server(s)", "(none)")
+                )
         files.append(_planned(entry, data))
 
     if root_keys is None:

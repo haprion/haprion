@@ -1165,7 +1165,8 @@ base name as CN with the wildcard as a SAN. The submission is one `cert_scep` jo
 its installation). A pending request shows **Resume enrollment** in its registry row, which
 queues the same job with only the ID. Migration `0027` adds provider storage and apply jobs,
 `0028` the profile's plain endpoint column and worker deletion, `0029` the `cert_scep` job.
-A compatible UI bridge is required before each migration.
+A compatible UI bridge was required before each migration (until `0065`; see
+[Verifying it](#verifying-it)).
 
 A certificate the CLI enrolls is registered as `source.kind: import` with
 `source.ndes_profile` naming the profile whose challenge enrolled it; the interface shows
@@ -4064,12 +4065,26 @@ sudo ./update-platform-release /path/to/answers.env /path/to/source-tree
 ```
 
 The CLI and node scripts remain independent installations; the command checks
-them and stops before migration when either is too old. It also requires the
-currently running UI to accept the candidate's declared database head. When a
-new revision would not be safe for the old process and for rollback, first ship
-a bridge UI release whose compatibility metadata accepts both revisions, then
-ship the migration release. A failure after activation runs the installed UI
-rollback command and checks the restored processes before returning failure.
+them and stops before migration when either is too old. It also requires that
+the currently running UI keeps working on the candidate's database head - both
+while the migration runs under it and as the rollback target afterwards. Since
+migration `0065` every migration says so itself:
+
+```python
+ROLLBACK_SAFE = True
+ROLLBACK_SAFE_BECAUSE = "adds a table nothing older reads; no column is changed"
+```
+
+The release's metadata names the oldest revision from which every migration
+after it is declared safe (`rollback_safe_from`), and the check accepts a
+running UI whose own head is at or after it. A migration that changes what
+older code reads - a column dropped or renamed, a constraint older code would
+break - says `ROLLBACK_SAFE = False`; then first ship a bridge UI release whose
+compatibility metadata accepts both revisions, and the migration release after
+it. The repository's tests refuse a new migration without the declaration and
+metadata that disagrees with the migrations. A failure after activation runs the
+installed UI rollback command and checks the restored processes before
+returning failure.
 
 #### HTTPS and the certificate
 

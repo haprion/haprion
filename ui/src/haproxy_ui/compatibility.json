@@ -2,6 +2,7 @@
   "schema_version": 1,
   "requires": {
     "database_head": "0064",
+    "rollback_safe_from": "0064",
     "database_revisions": [
       "0028",
       "0029",

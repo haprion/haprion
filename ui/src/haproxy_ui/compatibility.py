@@ -50,6 +50,15 @@ class Requirements:
     # to exist instead is the socket, and that is checked where sudoers is.
     #
     socket_helpers: dict[str, str]
+    #
+    # The oldest schema revision a running UI may stand at for this release's
+    # migrations to run under it, and for a rollback to it to work afterwards
+    # (B262). Declared by the migrations themselves - every one after it says
+    # it only adds - and derived from them by the test that holds this file.
+    # None in metadata from before 2026-10-08: such a release needs the running
+    # UI to accept its head, as every release did then (the bridge).
+    #
+    rollback_safe_from: str | None = None
 
 
 class Report:
@@ -111,6 +120,13 @@ def load_requirements(path: Path, *, allow_legacy_database_head: bool = False) -
         raise CompatibilityError("database_head must be a non-empty string")
     if database_head not in revisions:
         raise CompatibilityError("database_head must be one of database_revisions")
+    rollback_safe_from = required.get("rollback_safe_from")
+    if rollback_safe_from is not None and (
+        not isinstance(rollback_safe_from, str)
+        or not rollback_safe_from.isdigit()
+        or rollback_safe_from > database_head
+    ):
+        raise CompatibilityError("rollback_safe_from must be a revision no later than the head")
 
     return Requirements(
         engine_api=_positive_int(required.get("engine_api"), "engine_api"),
@@ -120,6 +136,7 @@ def load_requirements(path: Path, *, allow_legacy_database_head: bool = False) -
         worker_helpers=strings("worker_helpers"),
         poller_helpers=strings("poller_helpers"),
         socket_helpers=sockets("socket_helpers"),
+        rollback_safe_from=rollback_safe_from,
     )
 
 
@@ -200,9 +217,25 @@ def schema_upgrade_failures(
     failures = []
     if current_revision not in active.database_revisions:
         failures.append(f"running UI does not accept current revision {current_revision}")
-    if candidate.database_head not in active.database_revisions:
+    if candidate.database_head not in active.database_revisions and not declared_safe(
+        active, candidate
+    ):
         failures.append(f"running UI does not accept candidate head {candidate.database_head}")
     return tuple(failures)
+
+
+def declared_safe(active: Requirements, candidate: Requirements) -> bool:
+    """Whether the candidate's migrations say the running UI keeps working over them (B262).
+
+    The running UI's own head at or after the revision the candidate declares
+    rollback-safe from, and not past the candidate's head: every migration in
+    between only adds, by its own declaration, so the running UI serves while
+    they run and is a rollback target after. Revisions are numbered and
+    zero-padded, so their text orders as their numbers do.
+    """
+
+    safe_from = candidate.rollback_safe_from
+    return safe_from is not None and safe_from <= active.database_head <= candidate.database_head
 
 
 def active_sudo_rules(text: str) -> tuple[str, ...]:
@@ -551,7 +584,11 @@ def main(argv: list[str] | None = None) -> int:
                     if not any("candidate head" in failure for failure in transition_failures):
                         report.pass_(
                             "rollback schema",
-                            f"{requirements.database_head}, accepted by {active_release.name}",
+                            f"{requirements.database_head}, accepted by {active_release.name}"
+                            if requirements.database_head in active_requirements.database_revisions
+                            else f"{requirements.database_head}, rollback-safe from "
+                            f"{requirements.rollback_safe_from} by its migrations; "
+                            f"{active_release.name} stands at {active_requirements.database_head}",
                         )
                     else:
                         report.fail(

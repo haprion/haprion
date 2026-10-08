@@ -4,6 +4,7 @@ import json
 import re
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from haproxy_mgmt.cli import (
@@ -113,6 +114,7 @@ class CompatibilityMetadataTests(unittest.TestCase):
             path = Path(raw) / "compatibility.json"
             document = json.loads(MANIFEST.read_text())
             document["requires"].pop("database_head")
+            document["requires"].pop("rollback_safe_from")
             document["requires"]["database_revisions"] = ["0020"]
             path.write_text(json.dumps(document))
 
@@ -202,6 +204,27 @@ class UpgradeFailureTests(unittest.TestCase):
         self.assertEqual(
             compatibility.schema_upgrade_failures(active, candidate, "0020"),
             ("running UI does not accept candidate head 0021",),
+        )
+
+    def test_migrations_declared_rollback_safe_need_no_bridge(self) -> None:
+        """B262: the candidate's migrations say a UI from their base keeps working."""
+
+        running = self.requirements(head="0064", accepts=("0063", "0064"))
+        candidate = replace(
+            self.requirements(head="0066", accepts=("0064", "0065", "0066")),
+            rollback_safe_from="0064",
+        )
+        self.assertEqual(compatibility.schema_upgrade_failures(running, candidate, "0064"), ())
+
+        older = self.requirements(head="0063", accepts=("0063",))
+        self.assertEqual(
+            compatibility.schema_upgrade_failures(older, candidate, "0063"),
+            ("running UI does not accept candidate head 0066",),
+        )
+        undeclared = replace(candidate, rollback_safe_from=None)
+        self.assertEqual(
+            compatibility.schema_upgrade_failures(running, undeclared, "0064"),
+            ("running UI does not accept candidate head 0066",),
         )
 
     def test_a_bridge_release_makes_both_live_migration_and_rollback_safe(self) -> None:
@@ -347,6 +370,44 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
         heads = sorted(set(found) - parents)
         self.assertEqual(len(heads), 1, f"expected one head, found {heads}")
         return heads[0]
+
+    #
+    # The last migration written before migrations declared their own rollback
+    # safety (B262). Every later one says whether a UI from before it keeps
+    # working over it, and why.
+    #
+    UNDECLARED_UNTIL = "0064"
+
+    def declarations(self) -> dict[str, bool]:
+        found: dict[str, bool] = {}
+        for path in self.VERSIONS.glob("[0-9]*.py"):
+            text = path.read_text()
+            revision = re.search(r'^revision = "([^"]+)"', text, re.MULTILINE)
+            if revision is None or revision.group(1) <= self.UNDECLARED_UNTIL:
+                continue
+            safe = re.search(r"^ROLLBACK_SAFE = (True|False)$", text, re.MULTILINE)
+            because = re.search(
+                r'^ROLLBACK_SAFE_BECAUSE = \(?\s*"([^"]+)"', text, re.MULTILINE | re.DOTALL
+            )
+            with self.subTest(migration=path.name):
+                self.assertIsNotNone(safe, "declares no ROLLBACK_SAFE = True or False")
+                self.assertIsNotNone(because, "says no ROLLBACK_SAFE_BECAUSE")
+            if safe is not None:
+                found[revision.group(1)] = safe.group(1) == "True"
+        return found
+
+    def test_every_new_migration_declares_whether_a_rollback_over_it_is_safe(self) -> None:
+        self.declarations()
+
+    def test_rollback_safe_from_is_what_the_migrations_declare(self) -> None:
+        """Back from the head while each migration says it only adds (B262)."""
+
+        found, declared = self.revisions(), self.declarations()
+        safe_from = self.head()
+        while declared.get(safe_from) is True and found[safe_from] is not None:
+            safe_from = str(found[safe_from])
+
+        self.assertEqual(self.declared().get("rollback_safe_from"), safe_from)
 
     def declared(self) -> dict[str, object]:
         requires: dict[str, object] = json.loads(self.DECLARED.read_text())["requires"]

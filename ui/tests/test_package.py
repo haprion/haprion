@@ -11,7 +11,7 @@ from unittest import mock
 from uuid import UUID, uuid4
 
 from haproxy_ui import auth, db
-from tests.test_editor_page import COMMIT, OBSERVED, SHOP, EditorTestCase
+from tests.test_editor_page import COMMIT, NETWORK, OBSERVED, SHOP, EditorTestCase
 from tests.test_saved_changes import WIDER, saved
 
 LATER = "b" * 40
@@ -145,6 +145,25 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(self.queued, [])
 
+    def test_a_network_reading_behind_the_objects_waits_rather_than_calls_it_stale(self) -> None:
+        # The network is read by its own helper run; saved over a page that
+        # still stands at an older version, it cannot be told stale from
+        # current until the reading catches up (review 26-10-08, F3).
+        older = "c" * 40
+        self.cluster_changes = {
+            "network": replace(saved("network", WIDER, cluster="alpha"), base_hash=older)
+        }
+        lagging = replace(NETWORK, result={**NETWORK.result, "head": older})
+        client = self.editor()
+        with mock.patch("haproxy_ui.db.cluster_networks", return_value=[lagging]):
+            text = self.page(client)
+            answer = self.publish(client)
+
+        self.assertIn("Network description is still being read at the newest version", text)
+        self.assertNotIn("Saved against an older version", text)
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(self.queued, [])
+
     def test_more_objects_than_one_publish_carries_are_refused(self) -> None:
         self.rows = [row(f"site-{index}", id=uuid4()) for index in range(65)]
 
@@ -273,15 +292,21 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertIn(f'name="expected_head" value="{COMMIT}"', dialog)
         self.assertIn('name="comment"', dialog)
 
-    def test_a_stale_row_holds_the_dialog_too(self) -> None:
-        self.rows = [row(base_hash=LATER)]
+    def test_what_cannot_go_out_yet_is_reviewed_on_versions(self) -> None:
+        # One button that says what is due (2026-10-08): a package held by
+        # a stale row is reviewed on Versions, which also deploys what is
+        # published; no dialog that can only be closed, no second button.
+        self.rows = [row(base_hash=LATER), row("console", id=uuid4())]
         client = self.editor()
         with mock.patch("haproxy_ui.db.cluster_statuses", return_value=list(demo_statuses())):
             text = client.get("/").text
-        dialog = text.split('<dialog class="publish-dialog"', 1)[1].split("</dialog>", 1)[0]
 
-        self.assertIn("Saved against an older version", dialog)
-        self.assertNotIn('type="submit"', dialog)
+        self.assertIn(
+            '<a class="secondary-button" href="/history">Review 2 saved changes</a>', text
+        )
+        self.assertNotIn("Publish &amp; deploy", text)
+        self.assertNotIn('<dialog class="publish-dialog"', text)
+        self.assertNotIn(">Deploy configuration</button>", text)
 
     def test_a_published_object_is_changed_and_an_unpublished_one_is_new(self) -> None:
         self.rows = [row(), row("console", id=uuid4())]

@@ -24,7 +24,14 @@ import yaml
 from haproxy_ui import auth, db, health, views
 from haproxy_ui import editor as editor_module
 from haproxy_ui import probe as probe_module
-from haproxy_ui.db import ClusterNetwork, ClusterObjects, DraftConflict, Job, ProxyDraft
+from haproxy_ui.db import (
+    ClusterNetwork,
+    ClusterObjects,
+    ClusterSettingsRow,
+    DraftConflict,
+    Job,
+    ProxyDraft,
+)
 from tests.test_login import LoginTestCase, configuration
 
 OBSERVED = datetime(2026, 9, 2, 9, 0, tzinfo=UTC)
@@ -86,6 +93,19 @@ NETWORK = ClusterNetwork(
     error=None,
     poll_error=None,
 )
+#
+# The settings reading at the same commit as the objects and the network, as a
+# poll pass that read all three after the last version leaves them.
+#
+SETTINGS = ClusterSettingsRow(
+    cluster="alpha",
+    observed_at=OBSERVED,
+    outcome="done",
+    result={"cluster": "alpha", "head": COMMIT, "stored": True, "log_targets": []},
+    warnings=[],
+    error=None,
+    poll_error=None,
+)
 
 
 def writing_configuration() -> Any:
@@ -105,6 +125,7 @@ class EditorTestCase(LoginTestCase):
         for target, side_effect in (
             ("cluster_objects", lambda _c, **_kw: [OBJECTS]),
             ("cluster_networks", lambda _c, **_kw: [NETWORK]),
+            ("cluster_settings", lambda _c, **_kw: [SETTINGS]),
             ("read_draft", self._read_draft),
             ("save_draft", self._save_draft),
             ("save_change", self._save_change),

@@ -446,6 +446,22 @@ class WhatTheLastJobLeftBehind(unittest.TestCase):
         self.assertEqual(set(verdicts), {"beta"})
         self.assertEqual(verdicts["beta"].label, "Publish failed")
 
+    def test_a_publish_and_deploy_that_published_failed_its_deploy(self) -> None:
+        published = replace(
+            self.job("alpha", "changes_publish", "failed", "node_unreachable"),
+            payload={"deploy": True},
+            result={"error": {"code": "node_unreachable"}, "publish": {"outcome": "done"}},
+        )
+        refused = replace(
+            self.job("beta", "changes_publish", "blocked", "changes_invalid"),
+            payload={"deploy": True},
+        )
+
+        verdicts = jobs.last_failure([published, refused])
+
+        self.assertEqual(verdicts["alpha"], jobs.Failure("Deploy failed", "node_unreachable"))
+        self.assertEqual(verdicts["beta"].label, "Publish failed")
+
 
 class WhatAFailureIsAllowedToSay(unittest.TestCase):
     """The most important refusal in the system carries the compiler's answer."""

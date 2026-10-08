@@ -866,9 +866,17 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
             continue
         if job.operation in RESTORE_OPERATIONS:
             continue
+        #
+        # A Publish & deploy whose publish recorded its version and whose
+        # deploy did not finish is a deploy that failed (review 26-10-08, F2):
+        # the version is there, and publishing again finds nothing saved.
+        #
+        operation = (
+            "deploy" if job.operation == "changes_publish" and published(job) else job.operation
+        )
         verdicts[job.cluster] = (
             Failure(
-                label=FAILURE_LABELS.get(job.operation, job.operation),
+                label=FAILURE_LABELS.get(operation, operation),
                 code=error_code(job),
             )
             if job.state in ATTENTION

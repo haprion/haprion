@@ -168,43 +168,91 @@ class AnObjectIsCheckedAgainstTheSavedNetwork(EditorTestCase):
 
 
 class ASavedChangeIsClearedByItsPublish(unittest.TestCase):
-    def job(self, *, base: str, changed: bool = True, revision: int = 2) -> Any:
+    """Cleared once its own page's reading stands at the publish's version or later (F3)."""
+
+    #
+    # The cached listing: the base the package was published against (10),
+    # the version the publish recorded (11), one before and one after.
+    #
+    VERSIONS = {"c" * 40: 9, "a" * 40: 10, "d" * 40: 11, "e" * 40: 12}
+
+    def job(self, *, commit: str = "d" * 40, version: int = 11, revision: int = 2) -> Any:
+        answer = published(True)
+        answer["result"] = {**answer["result"], "hash": commit, "version": version}
         return mock.Mock(
-            payload={"change": {"id": str(SAVED_ID), "revision": revision}, "expected_head": base},
-            result=published(changed),
+            payload={
+                "change": {"id": str(SAVED_ID), "revision": revision},
+                "expected_head": "a" * 40,
+            },
+            result=answer,
         )
 
-    def settle(self, head: str | None, jobs: list[Any]) -> tuple[dict[str, Any], mock.Mock]:
+    def settle(
+        self, head: str | None, jobs: list[Any], *, kind: str = "network"
+    ) -> tuple[dict[str, Any], mock.Mock]:
+        listing = mock.Mock(
+            result={"versions": [{"hash": c, "version": v} for c, v in self.VERSIONS.items()]}
+        )
         with (
             mock.patch(
                 "haproxy_ui.db.cluster_changes",
-                return_value={"network": saved("network", WIDER)},
+                return_value={kind: saved(kind, WIDER)},
             ),
             mock.patch("haproxy_ui.db.change_publishes", return_value=jobs),
+            mock.patch("haproxy_ui.db.cluster_history", return_value=listing),
             mock.patch("haproxy_ui.db.discard_cluster_change") as discard,
         ):
-            kept = views._settled_changes(mock.Mock(), "edge-demo", head)
+            kept = views._settled_changes(mock.Mock(), "edge-demo", {kind: head})
         return kept, discard
 
-    def test_a_reading_past_the_publish_clears_it(self) -> None:
-        kept, discard = self.settle("b" * 40, [self.job(base="a" * 40)])
+    def test_a_reading_at_the_publish_clears_it(self) -> None:
+        kept, discard = self.settle("d" * 40, [self.job()])
 
         self.assertEqual(kept, {})
         self.assertEqual(discard.call_args.kwargs["expected_revision"], 2)
 
+    def test_a_reading_at_a_later_version_clears_it(self) -> None:
+        kept, _discard = self.settle("e" * 40, [self.job()])
+
+        self.assertEqual(kept, {})
+
     def test_a_reading_still_at_the_base_keeps_it(self) -> None:
-        kept, discard = self.settle("a" * 40, [self.job(base="a" * 40)])
+        kept, discard = self.settle("a" * 40, [self.job()])
 
         self.assertIn("network", kept)
         discard.assert_not_called()
 
+    def test_a_reading_that_lags_behind_the_base_keeps_it(self) -> None:
+        # The network is read by another helper run than the objects the base
+        # came from, and can stand at an older version (review 26-10-08, F3).
+        kept, discard = self.settle("c" * 40, [self.job()])
+
+        self.assertIn("network", kept)
+        discard.assert_not_called()
+
+    def test_a_reading_the_listing_does_not_know_keeps_it(self) -> None:
+        kept, _discard = self.settle("f" * 40, [self.job()])
+
+        self.assertIn("network", kept)
+
+    def test_a_kind_without_its_reading_is_kept(self) -> None:
+        kept, _discard = self.settle(None, [self.job()])
+
+        self.assertIn("network", kept)
+
     def test_a_publish_that_changed_nothing_clears_it_at_once(self) -> None:
-        kept, _discard = self.settle("a" * 40, [self.job(base="a" * 40, changed=False)])
+        # It recorded the commit that was already there, which the reading shows.
+        kept, _discard = self.settle("a" * 40, [self.job(commit="a" * 40, version=10)])
+
+        self.assertEqual(kept, {})
+
+    def test_settings_are_judged_by_their_own_reading(self) -> None:
+        kept, _discard = self.settle("d" * 40, [self.job()], kind="settings")
 
         self.assertEqual(kept, {})
 
     def test_a_save_after_the_publish_is_not_cleared_by_it(self) -> None:
-        kept, discard = self.settle("b" * 40, [self.job(base="a" * 40, revision=1)])
+        kept, discard = self.settle("e" * 40, [self.job(revision=1)])
 
         self.assertIn("network", kept)
         discard.assert_not_called()

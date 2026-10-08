@@ -143,25 +143,26 @@
       <div class="action-buttons">
         {% if block %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy certificates</button></form>{% endif %}
         {#
-          Saved changes waiting (B257): deploying alone would roll out the
-          published version without them, so the button says what is due and
-          opens a dialog that lists it and takes the version's comment. The
-          decision is made here, and the job is watched here.
+          One button, saying what is due (B257, 2026-10-08). Saved
+          changes that can go out: Publish & deploy them - deploying alone
+          would roll out the published version without them - in a dialog
+          that lists them and takes the version's comment, watched here.
+          Saved changes that cannot go out yet - a row saved against an older
+          version, a reading still catching up: they are reviewed on Versions,
+          which says why at the row and deploys the published version too.
+          Nothing saved: Deploy configuration.
         #}
         {% set package = pending.get(cluster.cluster) if pending else none %}
-        {% if package and package.rows %}{% set count = package.rows | length %}<button type="button" class="secondary-button" data-open-dialog="publish-{{ cluster.cluster }}">Publish &amp; deploy {{ count }} change{% if count != 1 %}s{% endif %}</button>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if cluster.target_version %}<input type="hidden" name="expected_version" value="{{ cluster.target_version }}">{% endif %}<input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy configuration</button></form>{% endif %}
+        {% set count = package.rows | length if package else 0 %}
+        {% if count and not package.problem %}<button type="button" class="secondary-button" data-open-dialog="publish-{{ cluster.cluster }}">Publish &amp; deploy {{ count }} change{% if count != 1 %}s{% endif %}</button>{% elif count %}<a class="secondary-button" href="/history">Review {{ count }} saved change{% if count != 1 %}s{% endif %}</a>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if cluster.target_version %}<input type="hidden" name="expected_version" value="{{ cluster.target_version }}">{% endif %}<input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy configuration</button></form>{% endif %}
       </div>
-      {% if package and package.rows %}
+      {% if count and not package.problem %}
       <dialog class="publish-dialog" id="publish-{{ cluster.cluster }}" aria-label="Publish and deploy {{ cluster.cluster }}">
         <div class="publish-dialog-body">
           <h3>Publish &amp; deploy {{ cluster.cluster }}</h3>
           <ul class="publish-list">
-            {% for row in package.rows %}<li{% if row.stale %} class="pending-stale"{% endif %}><a class="proxy-link" href="{{ row.link }}"><strong>{{ row.name }}</strong></a><span>{% if row.stale %}<span class="status-badge status-badge-critical">Saved against an older version</span>{% else %}{{ row.what }}{% endif %}</span></li>{% endfor %}
+            {% for row in package.rows %}<li><a class="proxy-link" href="{{ row.link }}"><strong>{{ row.name }}</strong></a><span>{{ row.what }}</span></li>{% endfor %}
           </ul>
-          {% if package.problem %}
-          <p class="preview-notice form-problem"><strong>{{ package.problem }}</strong></p>
-          <div class="form-actions"><button type="button" class="secondary-button" data-close-dialog>Close</button></div>
-          {% else %}
           <form method="post" action="/history/{{ cluster.cluster }}/publish" class="form-grid" data-keep="publish-{{ cluster.cluster }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="expected_head" value="{{ package.head }}">
@@ -169,7 +170,6 @@
             <label><span class="field-title">Comment</span><input name="comment" maxlength="4096" required placeholder="What these changes are for"></label>
             <div class="form-actions"><button type="button" class="secondary-button" data-close-dialog>Close</button><button type="submit" class="primary-button">Publish &amp; deploy</button></div>
           </form>
-          {% endif %}
         </div>
       </dialog>
       {% endif %}

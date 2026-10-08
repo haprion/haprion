@@ -4310,7 +4310,9 @@ def build_router(config: Config) -> APIRouter:
 
     def _saved_settings(request: Request, cluster: str, row: Any) -> db.ClusterChange | None:
         with request.app.state.pool.connection() as connection:
-            return _settled_changes(connection, cluster, _reading_head(row)).get("settings")
+            return _settled_changes(connection, cluster, {"settings": _reading_head(row)}).get(
+                "settings"
+            )
 
     def _settings_reading(request: Request, cluster: str) -> Any:
         """This cluster's cached reading, or None when it is not listed or not read."""
@@ -8896,16 +8898,15 @@ def _pending_count(request: Request, config: Config, cluster: str) -> int:
     """How many saved changes one cluster has, each cleared once its publish is read (B257)."""
 
     _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
-    _, network_rows, _ = read_source(request, config, NETWORK_SOURCE, cluster=cluster)
     objects_row = next((row for row in object_rows if row.cluster == cluster), None)
-    network_row = next((row for row in network_rows if row.cluster == cluster), None)
+    heads = _reading_heads(request, config, cluster)
     with request.app.state.pool.connection() as connection:
         saved = [
             row
             for row in _settled_drafts(connection, cluster, _objects_reading(objects_row))
             if row.stage == db.SAVED
         ]
-        changes = _settled_changes(connection, cluster, _reading_head(network_row))
+        changes = _settled_changes(connection, cluster, heads)
     return len(saved) + len(changes)
 
 
@@ -8920,23 +8921,14 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
 
     state = _editor_state(request, config, cluster)
     head = state.commit
+    heads = _reading_heads(request, config, cluster)
     with request.app.state.pool.connection() as connection:
         saved = [
             row
             for row in _settled_drafts(connection, cluster, _state_reading(state))
             if row.stage == db.SAVED
         ]
-        network_row = next(
-            (
-                row
-                for row in read_source(
-                    request, config, NETWORK_SOURCE, cluster=cluster, clusters=(cluster,)
-                )[1]
-                if row.cluster == cluster
-            ),
-            None,
-        )
-        changes = _settled_changes(connection, cluster, _reading_head(network_row) or head)
+        changes = _settled_changes(connection, cluster, heads)
     rows: list[PendingRow] = []
     objects: dict[str, str | None] = {}
     published = {view.name for view in state.stored}
@@ -8963,12 +8955,22 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
                 stale=row.base_hash != head,
             )
         )
+    #
+    # A network description or settings saved over its own page's reading,
+    # which another helper run makes than the objects' (review 26-10-08, F3).
+    # While that reading stands at another version than the objects', the save
+    # cannot be told stale from current, and the package waits for it rather
+    # than send somebody to save again over the same lagging page.
+    #
+    lagging: list[str] = []
     for kind, label, link in (
         ("network", "Network description", "/network"),
         ("settings", "Logs & metrics", f"/settings/clusters/{cluster}"),
     ):
         change = changes.get(kind)
         if change is not None:
+            if heads.get(kind) != head:
+                lagging.append(label)
             rows.append(
                 PendingRow(
                     kind=kind,
@@ -8977,7 +8979,7 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
                     updated_by=change.updated_by,
                     updated_at=change.updated_at,
                     link=link,
-                    stale=change.base_hash != head,
+                    stale=heads.get(kind) == head and change.base_hash != head,
                 )
             )
     payload: dict[str, Any] = {"expected_head": head or ""}
@@ -9012,6 +9014,9 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
         else f"{', '.join(stale)} {'was' if len(stale) == 1 else 'were'} saved against an "
         "older version. Open and save again before publishing."
         if stale
+        else f"{' and '.join(lagging)} {'is' if len(lagging) == 1 else 'are'} still being read "
+        "at the newest version. Publish again in a minute."
+        if lagging
         else f"{len(objects)} objects; at most {changes_publish.MAX_OBJECTS} go in one publish."
         if len(objects) > changes_publish.MAX_OBJECTS
         else ""
@@ -9321,19 +9326,48 @@ def _settled_row(
 ) -> db.ProxyDraft | None:
     """One row, cleared away if its own publish has finished and can be read."""
 
-    publish = _published_drafts(connection, cluster, (row,)).get((str(row.id), row.revision))
-    if publish is None or not _reflects(row, publish, reading):
+    if not _shown_rows(connection, cluster, (row,), reading):
         #
         # Unpublished, or published and the cache has not caught up. The row
         # is the only thing that can carry the object until it does.
         #
         return row
-    #
-    # A conflict here is somebody saving in another tab between the read and
-    # the delete, and their row is the newer one - so it stays, and the page
-    # shows it. Uncaught it took the whole listing down with it, which is a
-    # 500 for a tidying step that was allowed to change nothing.
-    #
+    if not _discard_shown(connection, cluster, row):
+        return db.read_draft(connection, cluster, row.object_id, row.stage)
+    connection.commit()
+    return None
+
+
+def _shown_rows(
+    connection: Any, cluster: str, rows: Sequence[db.ProxyDraft], reading: ObjectsReading
+) -> set[tuple[str, str]]:
+    """The rows - by object and stage - whose own publish is done and the reading shows.
+
+    The one rule for clearing an object's draft or saved change, asked of one
+    row by the editor and of a cluster's rows by the listings (review 26-10-08,
+    F5): written twice, a fix to one copy left the other behind.
+    """
+
+    settled = _published_drafts(connection, cluster, rows)
+    return {
+        (row.object_id, row.stage)
+        for row in rows
+        if (publish := settled.get((str(row.id), row.revision))) is not None
+        and _reflects(row, publish, reading)
+    }
+
+
+def _discard_shown(connection: Any, cluster: str, row: db.ProxyDraft) -> bool:
+    """Delete one row its publish has carried; False when it was saved again since it was read.
+
+    That row is the newer one and stays. The conflict is not caught by
+    rolling back: it is a delete that matched no row, not a failed statement,
+    so the transaction is still good - and a rollback would throw away the
+    deletes a caller clearing several rows has already made. Uncaught, it took
+    the whole listing down with it, a 500 for a tidying step that was allowed
+    to change nothing.
+    """
+
     try:
         db.discard_draft(
             connection,
@@ -9343,14 +9377,8 @@ def _settled_row(
             stage=row.stage,
         )
     except db.DraftConflict:
-        #
-        # No rollback: the conflict is a delete that matched no row, not a
-        # failed statement, so the transaction is still good - and rolling it
-        # back here would throw away work the caller had already done.
-        #
-        return db.read_draft(connection, cluster, row.object_id, row.stage)
-    connection.commit()
-    return None
+        return False
+    return True
 
 
 def _settled_work(
@@ -9395,40 +9423,47 @@ def _top_layers(rows: Iterable[db.ProxyDraft]) -> list[db.ProxyDraft]:
 
 
 def _settled_changes(
-    connection: Any, cluster: str, head: str | None
+    connection: Any, cluster: str, heads: Mapping[str, str | None]
 ) -> dict[str, db.ClusterChange]:
-    """This cluster's saved network and settings, each cleared once its publish can be read (B257).
+    """This cluster's saved network and settings, each cleared once its own reading shows it (B257).
 
-    The rule a proxy object's saved change follows (`_reflects`), by the head
-    of the reading the document is shown over: a reading past the commit the
-    publish was made against has read it, and a publish that changed nothing
-    needs no new commit.
+    `heads` holds the commit each kind's reading stands at - the network page's
+    and the settings page's, the readings the document is drawn over. A kind
+    not named there is kept as it is. Shown means the reading stands at the
+    commit the publish recorded, or at a later version by the cached listing.
+    Not "at another commit than the publish's base": the network, the settings
+    and the objects are read by separate helper runs, and a reading that lags
+    stands at an older commit than the base the package was published against
+    (review 26-10-08, F3). A publish that changed nothing recorded the commit
+    that was already there, so a reading at it has shown it.
     """
 
     changes = db.cluster_changes(connection, cluster)
     if not changes:
         return changes
-    evidence: dict[tuple[str, int], DraftPublish] = {}
+    recorded: dict[tuple[str, int], tuple[str, int | None]] = {}
     ids = {str(change.id) for change in changes.values()}
     for job in db.change_publishes(connection, cluster=cluster, change_ids=ids):
         payload = job.payload if isinstance(job.payload, Mapping) else {}
-        base = payload.get("expected_head")
-        changed = _publish_changed(job.result)
+        answer = _publish_recorded(job.result)
+        if answer is None:
+            continue
         for identity, revision in _carried(payload, "change", "changes"):
-            evidence.setdefault(
-                (identity, revision),
-                DraftPublish(
-                    base if isinstance(base, str) and base else None,
-                    changed if isinstance(changed, bool) else None,
-                ),
-            )
+            recorded.setdefault((identity, revision), answer)
+    versions: dict[str, int] | None = None
     kept = dict(changes)
     for kind, change in changes.items():
-        publish = evidence.get((str(change.id), change.revision))
-        if publish is None or head is None:
+        answer = recorded.get((str(change.id), change.revision))
+        head = heads.get(kind)
+        if answer is None or head is None:
             continue
-        if head == publish.base and publish.changed is not False:
-            continue
+        commit, version = answer
+        if head != commit:
+            if versions is None:
+                versions = _listed_versions(connection, cluster)
+            shown = versions.get(head)
+            if shown is None or version is None or shown <= version:
+                continue
         try:
             db.discard_cluster_change(
                 connection, cluster=cluster, kind=kind, expected_revision=change.revision
@@ -9436,12 +9471,56 @@ def _settled_changes(
         except db.DraftConflict:
             #
             # Saved again between the read and the delete: that one is newer
-            # and stays. No rollback, for the reason `_settled_row` gives.
+            # and stays. No rollback, for the reason `_discard_shown` gives.
             #
             continue
         del kept[kind]
     connection.commit()
     return kept
+
+
+def _publish_recorded(result: Any) -> tuple[str, int | None] | None:
+    """The commit and version a finished publish recorded, from inside its envelope."""
+
+    if not isinstance(result, Mapping):
+        return None
+    embedded = result.get("publish")
+    envelope: Mapping[str, Any] = embedded if isinstance(embedded, Mapping) else result
+    body = envelope.get("result")
+    if not isinstance(body, Mapping):
+        return None
+    commit, version = body.get("hash"), body.get("version")
+    if not isinstance(commit, str) or not COMMIT_ID.fullmatch(commit):
+        return None
+    return commit, version if isinstance(version, int) and not isinstance(version, bool) else None
+
+
+def _listed_versions(connection: Any, cluster: str) -> dict[str, int]:
+    """Commit to version number, from the cluster's cached version listing."""
+
+    history = db.cluster_history(connection, cluster)
+    entries = history.result.get("versions") if history is not None else None
+    numbers: dict[str, int] = {}
+    for entry in entries if isinstance(entries, list) else ():
+        if not isinstance(entry, Mapping):
+            continue
+        commit, number = entry.get("hash"), entry.get("version")
+        if isinstance(commit, str) and isinstance(number, int) and not isinstance(number, bool):
+            numbers[commit] = number
+    return numbers
+
+
+def _reading_heads(request: Request, config: Config, cluster: str) -> dict[str, str | None]:
+    """The commit the network and the settings readings of one cluster stand at."""
+
+    _, network_rows, _ = read_source(request, config, NETWORK_SOURCE, cluster=cluster)
+    _, settings_rows, _ = read_source(request, config, SETTINGS_SOURCE)
+    return {
+        "network": _reading_head(next((r for r in network_rows if r.cluster == cluster), None)),
+        "settings": _reading_head(
+            next((r for r in settings_rows if r.cluster == cluster and r.outcome == "done"), None)
+        ),
+    }
 
 
 def _reading_head(row: Any) -> str | None:
@@ -9457,7 +9536,9 @@ def _saved_network_rows(
 
     saved: dict[str, db.ClusterChange] = {}
     for row in rows:
-        change = _settled_changes(connection, row.cluster, _reading_head(row)).get("network")
+        change = _settled_changes(connection, row.cluster, {"network": _reading_head(row)}).get(
+            "network"
+        )
         if change is not None:
             saved[row.cluster] = change
     return (
@@ -9482,38 +9563,19 @@ def _settled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> l
     """
 
     drafts = db.cluster_drafts(connection, cluster)
-    settled = _published_drafts(connection, cluster, drafts)
-    published = {
-        (draft.object_id, draft.stage)
-        for draft in drafts
-        if (publish := settled.get((str(draft.id), draft.revision))) is not None
-        and _reflects(draft, publish, reading)
-    }
+    published = _shown_rows(connection, cluster, drafts, reading)
     if not published:
         return drafts
     #
-    # As above: a draft saved between the read and the delete is the newer one
-    # and is kept. Counted rather than assumed, because the rows returned below
-    # have to match what the table now holds.
+    # Counted rather than assumed, because the rows returned below have to
+    # match what the table now holds.
     #
-    kept: set[tuple[str, str]] = set()
-    for draft in drafts:
-        if (draft.object_id, draft.stage) not in published:
-            continue
-        try:
-            db.discard_draft(
-                connection,
-                cluster=cluster,
-                object_id=draft.object_id,
-                expected_revision=draft.revision,
-                stage=draft.stage,
-            )
-        except db.DraftConflict:
-            #
-            # As above, and it matters more here: a rollback would undo the
-            # deletes this loop has already made.
-            #
-            kept.add((draft.object_id, draft.stage))
+    kept = {
+        (draft.object_id, draft.stage)
+        for draft in drafts
+        if (draft.object_id, draft.stage) in published
+        and not _discard_shown(connection, cluster, draft)
+    }
     connection.commit()
     return [
         draft

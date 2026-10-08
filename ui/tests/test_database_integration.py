@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
 import io
@@ -537,6 +538,151 @@ class ARealDatabase(unittest.TestCase):
                     "delete from job where payload->'draft'->>'id' = any(%s)", ([mine, other],)
                 )
                 connection.commit()
+
+    def test_every_column_the_interface_writes_is_granted_to_one_of_its_roles(self) -> None:
+        """A write no role may make is a refusal waiting for its first use.
+
+        `rename_draft` set `object_id`, and no migration granted that column:
+        every test of the rename imitated the cursor, so the first real rename
+        of an unpublished draft was refused by the database (found
+        2026-10-08). Read here from the statements themselves, so the next
+        such column fails this test and not a person's save.
+        """
+
+        source = (Path(__file__).resolve().parents[1] / "src/haproxy_ui/db.py").read_text()
+        statements = [
+            node.value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ]
+        written: set[tuple[str, str, str]] = set()
+        for statement in statements:
+            text = " ".join(statement.split())
+            for table, assignments in re.findall(
+                r"\bupdate (\w+) set (.+?) (?:where|returning|$)", text
+            ):
+                for column in re.findall(r"(?:^|,)\s*(\w+)\s*=", assignments):
+                    written.add(("UPDATE", table, column))
+            for table, columns in re.findall(r"\binsert into (\w+) ?\(([^)]*)\)", text):
+                for column in columns.split(","):
+                    written.add(("INSERT", table, column.strip()))
+        self.assertIn(("UPDATE", "proxy_draft", "object_id"), written)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select privilege_type, table_name, column_name "
+                "  from information_schema.column_privileges "
+                " where grantee in ('app_web', 'app_worker', 'app_poller', 'app_collector')"
+            )
+            granted = set(cursor.fetchall())
+        self.assertEqual(sorted(written - granted), [])
+
+    def test_the_web_can_rename_a_draft_it_wrote(self) -> None:
+        """The rename moves the key, so the web needs `update` on `object_id` too.
+
+        Every editor test imitated the cursor, and the grant left the column
+        out: a rename of an unpublished draft was refused by the database.
+        """
+
+        try:
+            with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+                draft = db.save_draft(
+                    connection,
+                    cluster="alpha",
+                    object_id="console",
+                    yaml="name: console\n",
+                    base_version=None,
+                    base_hash="a" * 40,
+                    updated_by="admin",
+                    expected_revision=None,
+                )
+                moved = db.rename_draft(
+                    connection,
+                    cluster="alpha",
+                    object_id="console",
+                    new_object_id="terminal",
+                    yaml="name: terminal\n",
+                    base_version=None,
+                    base_hash="a" * 40,
+                    updated_by="admin",
+                    expected_revision=draft.revision,
+                )
+                connection.commit()
+            self.assertEqual((moved.object_id, moved.id), ("terminal", draft.id))
+        finally:
+            with self.connect() as connection:
+                connection.execute("delete from proxy_draft where cluster = 'alpha'")
+                connection.commit()
+
+    def test_saving_finishes_the_draft_in_one_transaction(self) -> None:
+        """B257: the saved change is written and the draft dropped, or neither."""
+
+        common: dict[str, Any] = {
+            "cluster": "alpha",
+            "object_id": "shop",
+            "base_version": None,
+            "base_hash": "a" * 40,
+            "updated_by": "admin",
+        }
+        try:
+            with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+                saved = db.save_change(
+                    connection,
+                    **common,
+                    yaml="name: shop\n",
+                    saved_revision=None,
+                    draft_revision=None,
+                )
+                draft = db.save_draft(
+                    connection, **common, yaml="name: shop # wip\n", expected_revision=None
+                )
+                #
+                # Both at once: a draft over saved changes.
+                #
+                self.assertEqual(
+                    [(row.stage, row.revision) for row in db.cluster_drafts(connection, "alpha")],
+                    [("draft", 1), ("saved", 1)],
+                )
+                with self.assertRaises(db.DraftConflict):
+                    db.save_change(
+                        connection,
+                        **common,
+                        yaml="name: shop # done\n",
+                        saved_revision=saved.revision + 5,
+                        draft_revision=draft.revision,
+                    )
+                self.assertIsNotNone(db.read_draft(connection, "alpha", "shop", db.DRAFT))
+                finished = db.save_change(
+                    connection,
+                    **common,
+                    yaml="name: shop # done\n",
+                    replaces="market",
+                    saved_revision=saved.revision,
+                    draft_revision=draft.revision,
+                )
+                connection.commit()
+                rows = db.cluster_drafts(connection, "alpha")
+            self.assertEqual([(row.stage, row.id) for row in rows], [("saved", saved.id)])
+            self.assertEqual((finished.revision, finished.replaces), (2, "market"))
+        finally:
+            with self.connect() as connection:
+                connection.execute("delete from proxy_draft where cluster = 'alpha'")
+                connection.commit()
+
+    def test_an_object_cannot_replace_itself(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.save_draft(
+                    connection,
+                    cluster="alpha",
+                    object_id="shop",
+                    yaml="name: shop\n",
+                    base_version=None,
+                    base_hash="a" * 40,
+                    updated_by="admin",
+                    replaces="shop",
+                    expected_revision=None,
+                )
+            connection.rollback()
 
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:

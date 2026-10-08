@@ -52,7 +52,7 @@
         // 2026-10-04, CR-11). The text stays in the dialog either way.
         //
         waiting.textContent =
-          "No answer from the server. Check the draft and Jobs before trying again.";
+          "No answer from the server. Check the object and Jobs before trying again.";
       }
     });
   };

@@ -70,10 +70,11 @@ class TheDialogInABrowser(DraftReading):
             updated_by="operator",
             updated_at=OBSERVED,
             deleted=False,
+            stage="saved",
         )
         self.saved: list[dict[str, Any]] = []
         self.queued: list[dict[str, Any]] = []
-        for name, effect in (("save_draft", self._save), ("queue_job", self._queue)):
+        for name, effect in (("save_change", self._save), ("queue_job", self._queue)):
             patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=effect)
             patch.start()
             self.addCleanup(patch.stop)
@@ -102,7 +103,7 @@ class TheDialogInABrowser(DraftReading):
         drafted = replace(
             self.draft or self.stored_draft,
             yaml=values["yaml"],
-            revision=values["expected_revision"] + 1,
+            revision=values["saved_revision"] + 1,
         )
         self.draft = drafted
         return drafted
@@ -145,8 +146,8 @@ class TheDialogInABrowser(DraftReading):
         page.wait_for_url("**/proxies/edge-demo/public-web?saved=1")
 
         self.assertEqual(len(self.saved), 1)
-        self.assertEqual(self.saved[0]["expected_revision"], 4)
-        self.assertIn("Saved as a draft", page.inner_text("main"))
+        self.assertEqual(self.saved[0]["saved_revision"], 4)
+        self.assertIn("Saved. It goes out with the next publish.", page.inner_text("main"))
 
     def test_the_buttons_are_the_editors(self) -> None:
         page = self.open_page()
@@ -154,9 +155,7 @@ class TheDialogInABrowser(DraftReading):
         labels = page.eval_on_selector_all(
             "[data-advanced-form] .form-actions button", "buttons => buttons.map(b => b.innerText)"
         )
-        self.assertEqual(
-            labels, ["Close", "Validate the object", "Save as draft", "Save and publish"]
-        )
+        self.assertEqual(labels, ["Close", "Validate the object", "Save", "Save and publish"])
         page.click("[data-advanced-close]")
         self.assertFalse(page.is_visible("[data-advanced-dialog]"))
 
@@ -191,5 +190,5 @@ class TheDialogInABrowser(DraftReading):
         self.assertEqual(len(self.saved), 1)
         self.assertEqual(len(self.queued), 1)
         self.assertNotIn("Nothing was saved", shown)
-        self.assertIn("Check the draft and Jobs before trying again", shown)
+        self.assertIn("Check the object and Jobs before trying again", shown)
         self.assertEqual(page.input_value("textarea[name=advanced]"), text)

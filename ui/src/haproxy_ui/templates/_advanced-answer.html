@@ -13,7 +13,7 @@
 #}
 {% set refused = answer.lines | selectattr('fate', 'equalto', 'refused') | list %}
 {% if published %}<p class="advanced-saved"><strong>Saved and sent to publish.</strong> Close to follow it.</p>
-{% elif saved %}<p class="advanced-saved"><strong>Saved as a draft.</strong> Close to see it on the page.</p>{% endif %}
+{% elif saved %}<p class="advanced-saved"><strong>Saved.</strong> Close to see it on the page.</p>{% endif %}
 {% if answer.problem and not refused %}<p class="advanced-problem">{{ answer.problem }}</p>{% endif %}
 {% if answer.lines %}
 <table class="advanced-lines">

@@ -64,8 +64,13 @@ only works with the names used below, that is a bug in the software, not in this
 
 ## Configuration and deployment
 
-Editing produces a draft; publishing produces an immutable release; deploying brings nodes
-to that release. Publishing and deploying are separate operations. On the dashboard,
+Editing produces a draft; saving it makes a saved change; publishing produces an immutable
+release; deploying brings nodes to that release. A draft is unfinished work and is never
+published. A saved change goes out with the next publish, and a draft may be started on top of
+one without taking it out. *Save as draft* and *Save* in the editor are the two; the advanced
+config dialog, a WAF exception and *Remove* save directly, and refuse while the object has a
+draft. A rename that is saved records the published name it replaces, so the publish that
+carries it removes the old name as well. Publishing and deploying are separate operations. On the dashboard,
 *Deploy certificates* installs the certificates and *Deploy configuration* installs the
 published configuration. A rollout deploys the nodes that do not own the VIP first and
 the owner last - also when another node cannot be read, and a node whose ownership is
@@ -2083,7 +2088,8 @@ rollback rather than a pause.
 publishes from the job payload, never from the table, which is why a draft that has been published
 is cleared by the interface on its next read rather than by the worker as it finishes. The clearing
 matches on the publish's idempotency key, which carries the draft revision — so a draft edited after
-the publish was asked for has a different key and is left alone.
+the publish was asked for has a different key and is left alone. A draft and a saved change of the
+same object are two rows (`stage`), each cleared by its own publish.
 
 ## Maintenance
 

@@ -94,6 +94,7 @@ class EditorTestCase(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.saved: list[dict[str, Any]] = []
+        self.changes: list[dict[str, Any]] = []
         self.renamed: list[dict[str, Any]] = []
         self.discarded: list[tuple[str, str, int]] = []
         self.backend_renames: list[dict[str, Any]] = []
@@ -104,6 +105,7 @@ class EditorTestCase(LoginTestCase):
             ("cluster_networks", lambda _c, **_kw: [NETWORK]),
             ("read_draft", self._read_draft),
             ("save_draft", self._save_draft),
+            ("save_change", self._save_change),
             ("rename_draft", self._rename_draft),
             ("discard_draft", self._discard_draft),
             ("record_backend_renames", self._record_renames),
@@ -116,7 +118,9 @@ class EditorTestCase(LoginTestCase):
     def _record_renames(self, _c: object, **values: Any) -> None:
         self.backend_renames.append(values)
 
-    def _read_draft(self, _c: object, cluster: str, object_id: str) -> ProxyDraft | None:
+    def _read_draft(
+        self, _c: object, cluster: str, object_id: str, stage: str = "draft"
+    ) -> ProxyDraft | None:
         #
         # Keyed by the object asked for, as the table is. It used to answer
         # with the one draft whatever was asked, which was harmless until
@@ -124,9 +128,41 @@ class EditorTestCase(LoginTestCase):
         # a fixture that answers yes to every question cannot measure that.
         #
         del cluster
-        if self.draft is not None and self.draft.object_id == object_id:
+        if (
+            self.draft is not None
+            and self.draft.object_id == object_id
+            and self.draft.stage == stage
+        ):
             return self.draft
         return None
+
+    def _save_change(self, _c: object, **values: Any) -> ProxyDraft:
+        """`save_change`, recorded beside the drafts as what was written (B257).
+
+        Recorded under the name it lands on and the revision it was held to,
+        so a test about what a save wrote reads the same either way.
+        """
+
+        if self.conflict:
+            raise DraftConflict("the changes to shop changed since they were read")
+        target = values.get("new_object_id") or values["object_id"]
+        self.changes.append(values)
+        self.saved.append(
+            dict(values, object_id=target, expected_revision=values["saved_revision"])
+        )
+        return ProxyDraft(
+            cluster=values["cluster"],
+            object_id=target,
+            yaml=values["yaml"],
+            base_version=values["base_version"],
+            base_hash=values["base_hash"],
+            revision=(values["saved_revision"] or 0) + 1,
+            updated_by=values["updated_by"],
+            updated_at=OBSERVED,
+            deleted=values.get("deleted", False),
+            stage="saved",
+            replaces=values.get("replaces"),
+        )
 
     def _save_draft(self, _c: object, **values: Any) -> ProxyDraft:
         if self.conflict:
@@ -161,8 +197,15 @@ class EditorTestCase(LoginTestCase):
         )
 
     def _discard_draft(
-        self, _c: object, *, cluster: str, object_id: str, expected_revision: int
+        self,
+        _c: object,
+        *,
+        cluster: str,
+        object_id: str,
+        expected_revision: int,
+        stage: str = "draft",
     ) -> None:
+        del stage
         self.discarded.append((cluster, object_id, expected_revision))
 
     def editor(self) -> Any:
@@ -282,7 +325,7 @@ class SavingADraft(EditorTestCase):
     def test_a_saved_draft_records_the_commit_it_was_made_against(self) -> None:
         client = self.editor()
 
-        answer = self.submit(client, "/proxies/alpha/shop/edit", action="save")
+        answer = self.submit(client, "/proxies/alpha/shop/edit", action="draft")
 
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(self.saved[0]["base_hash"], COMMIT)
@@ -302,7 +345,7 @@ class SavingADraft(EditorTestCase):
 
         client = self.editor()
 
-        answer = self.submit(client, "/proxies/alpha/shop/edit", action="save", servers="")
+        answer = self.submit(client, "/proxies/alpha/shop/edit", action="draft", servers="")
 
         self.assertEqual(answer.status_code, 200)
         self.assertEqual(self.saved, [])
@@ -315,7 +358,7 @@ class SavingADraft(EditorTestCase):
         answer = self.submit(
             client,
             "/proxies/alpha/new",
-            action="save",
+            action="draft",
             name="other",
             hostnames="shop.example.com",
         )
@@ -336,7 +379,7 @@ class SavingADraft(EditorTestCase):
         client = self.editor()
 
         answer = self.submit(
-            client, "/proxies/alpha/new", action="save", name="console", expected_revision="1"
+            client, "/proxies/alpha/new", action="draft", name="console", expected_revision="1"
         )
 
         self.assertEqual(answer.status_code, 303)
@@ -379,7 +422,7 @@ class SavingADraft(EditorTestCase):
 
         client = self.editor()
 
-        answer = self.submit(client, "/proxies/alpha/shop/edit", action="save", name="bazaar")
+        answer = self.submit(client, "/proxies/alpha/shop/edit", action="draft", name="bazaar")
 
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(answer.headers["location"], "/proxies/alpha/bazaar/edit?saved=1")
@@ -414,7 +457,7 @@ class SavingADraft(EditorTestCase):
         answer = self.submit(
             client,
             "/proxies/alpha/console/edit",
-            action="save",
+            action="draft",
             name="terminal",
             expected_revision="3",
         )
@@ -452,7 +495,7 @@ class SavingADraft(EditorTestCase):
         answer = self.submit(
             client,
             "/proxies/alpha/shop/edit",
-            action="save",
+            action="draft",
             name="bazaar",
             expected_revision="4",
         )
@@ -479,7 +522,7 @@ class SavingADraft(EditorTestCase):
         answer = self.submit(
             client,
             "/proxies/alpha/console/edit",
-            action="save",
+            action="draft",
             name="shop",
             expected_revision="3",
         )
@@ -512,7 +555,7 @@ class SavingADraft(EditorTestCase):
         answer = self.submit(
             client,
             "/proxies/alpha/console/edit",
-            action="save",
+            action="draft",
             name="terminal",
             expected_revision="3",
         )
@@ -533,7 +576,7 @@ class SavingADraft(EditorTestCase):
 
         client = self.editor()
 
-        answer = self.submit(client, "/proxies/alpha/new", action="save", name="Shop.One")
+        answer = self.submit(client, "/proxies/alpha/new", action="draft", name="Shop.One")
 
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(self.saved, [])
@@ -542,7 +585,7 @@ class SavingADraft(EditorTestCase):
     def test_a_new_object_may_not_take_a_name_that_exists(self) -> None:
         client = self.editor()
 
-        answer = self.submit(client, "/proxies/alpha/new", action="save", name="shop")
+        answer = self.submit(client, "/proxies/alpha/new", action="draft", name="shop")
 
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(self.saved, [])
@@ -552,7 +595,7 @@ class SavingADraft(EditorTestCase):
         client = self.editor()
 
         answer = self.submit(
-            client, "/proxies/alpha/shop/edit", action="save", expected_revision="1"
+            client, "/proxies/alpha/shop/edit", action="draft", expected_revision="1"
         )
 
         self.assertEqual(answer.status_code, 400)
@@ -593,7 +636,8 @@ class WorkingFromADraft(EditorTestCase):
     def test_the_page_says_a_draft_is_unpublished(self) -> None:
         page = self.editor().get("/proxies/alpha/shop/edit")
 
-        self.assertIn("unpublished draft", page.text)
+        self.assertIn("A draft", page.text)
+        self.assertIn("It is not published until it is saved", page.text)
 
     def test_a_discard_names_the_revision_it_was_looking_at(self) -> None:
         client = self.editor()
@@ -1028,7 +1072,7 @@ class SaveAndPublish(EditorTestCase):
 
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(len(self.saved), 1)
-        self.assertIn("<h1>Draft saved, not published</h1>", answer.text)
+        self.assertIn("<h1>Saved, not published</h1>", answer.text)
         self.assertNotIn("Nothing was written", answer.text)
 
     def test_the_object_is_published_under_its_own_name(self) -> None:
@@ -1536,8 +1580,8 @@ class SavingSaysSo(EditorTestCase):
 
         page = client.get("/proxies/alpha/shop/edit?saved=1")
 
-        self.assertIn("Saved as a draft", page.text)
-        self.assertNotIn("Saved as a draft", client.get("/proxies/alpha/shop/edit").text)
+        self.assertIn("<strong>Saved.</strong>", page.text)
+        self.assertNotIn("<strong>Saved.</strong>", client.get("/proxies/alpha/shop/edit").text)
 
     def test_a_new_object_lands_on_the_object_it_just_created(self) -> None:
         #
@@ -1740,3 +1784,128 @@ class TheAdvancedConfigSurvivesTheForm(EditorTestCase):
         self.assertEqual(self.carried(page, "advanced"), "")
         self.assertIsNone(self.carried(page, "handwritten_pool"))
         self.assertIn('name="servers"', page)
+
+
+class SavedChangesAndDrafts(EditorTestCase):
+    """B257: a draft is unfinished and never published; a saved change is."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.queued: list[dict[str, Any]] = []
+        patch = mock.patch("haproxy_ui.db.queue_job", side_effect=self._queue)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def _queue(self, _c: object, **values: Any) -> Any:
+        self.queued.append(values)
+        return SimpleNamespace(id=1, request_id=uuid4())
+
+    def row(self, stage: str, revision: int, **overrides: Any) -> ProxyDraft:
+        return ProxyDraft(
+            cluster="alpha",
+            object_id=overrides.pop("object_id", "shop"),
+            yaml=overrides.pop("yaml", SHOP),
+            base_version=12,
+            base_hash=COMMIT,
+            revision=revision,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+            stage=stage,
+            **overrides,
+        )
+
+    def test_save_writes_the_saved_change_and_drops_the_draft_it_came_from(self) -> None:
+        self.draft = self.row("draft", 4)
+        client = self.editor()
+
+        answer = self.submit(
+            client, "/proxies/alpha/shop/edit", action="save", expected_revision="4"
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        (change,) = self.changes
+        self.assertEqual((change["draft_revision"], change["saved_revision"]), (4, None))
+
+    def test_save_as_draft_leaves_the_saved_change_alone(self) -> None:
+        self.draft = self.row("saved", 2)
+        client = self.editor()
+        page = client.get("/proxies/alpha/shop/edit").text
+        self.assertIn('name="saved_revision" value="2"', page)
+
+        self.submit(client, "/proxies/alpha/shop/edit", action="draft", saved_revision="2")
+
+        self.assertEqual(self.changes, [])
+        self.assertEqual(self.saved[0]["expected_revision"], None)
+
+    def test_a_saved_rename_is_published_with_the_removal_later(self) -> None:
+        """Renamed and saved first, the publish from the new name still removes the old.
+
+        Worked out at the moment of publishing, the old name was lost once the
+        rename had been saved: the editor then sat on the new name, and its
+        publish added the new object beside the old one.
+        """
+
+        client = self.editor()
+        self.submit(client, "/proxies/alpha/shop/edit", action="save", name="bazaar")
+        self.assertEqual(self.changes[0]["replaces"], "shop")
+
+        self.draft = self.row(
+            "saved", 1, object_id="bazaar", yaml=SHOP.replace("shop", "bazaar"), replaces="shop"
+        )
+        self.submit(
+            client,
+            "/proxies/alpha/bazaar/edit",
+            action="publish",
+            name="bazaar",
+            saved_revision="1",
+            servers="192.0.2.11:8080",
+        )
+
+        payload = self.queued[-1]["payload"]
+        self.assertEqual(sorted(payload["objects"]), ["bazaar", "shop"])
+        self.assertIsNone(payload["objects"]["shop"])
+
+    def test_renamed_back_it_replaces_nothing(self) -> None:
+        self.draft = self.row(
+            "saved", 1, object_id="bazaar", yaml=SHOP.replace("shop", "bazaar"), replaces="shop"
+        )
+        client = self.editor()
+
+        answer = self.submit(
+            client, "/proxies/alpha/bazaar/edit", action="save", name="shop", saved_revision="1"
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertIsNone(self.changes[0]["replaces"])
+        self.assertEqual(self.saved[0]["object_id"], "shop")
+
+    def test_a_draft_cannot_rename_an_object_with_saved_changes(self) -> None:
+        self.draft = self.row("saved", 2)
+        client = self.editor()
+
+        answer = self.submit(
+            client, "/proxies/alpha/shop/edit", action="draft", name="bazaar", saved_revision="2"
+        )
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertIn("can only change with Save", answer.text)
+        self.assertEqual((self.saved, self.renamed), ([], []))
+
+    def test_discard_without_a_draft_discards_the_saved_change(self) -> None:
+        self.draft = self.row("saved", 2)
+        client = self.editor()
+
+        with mock.patch("haproxy_ui.db.discard_draft") as discard:
+            self.submit(client, "/proxies/alpha/shop/edit", action="discard", saved_revision="2")
+
+        self.assertEqual(discard.call_args.kwargs["stage"], "saved")
+        self.assertEqual(discard.call_args.kwargs["expected_revision"], 2)
+
+    def test_the_page_says_which_it_is(self) -> None:
+        self.draft = self.row("saved", 2)
+
+        page = self.editor().get("/proxies/alpha/shop/edit").text
+
+        self.assertIn("<h3>Saved changes</h3>", page)
+        self.assertIn("Discard the changes", page)

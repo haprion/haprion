@@ -9,7 +9,7 @@
       while it sat on that object's own address.
     #}
     <h1>{% if name %}Editing {{ name }}{% else %}A new object on {{ cluster }}{% endif %}</h1>
-    <p>Changes are kept as a draft on this cluster. Nothing reaches the configuration until it is published, and publishing does not deploy.</p>
+    <p>Saved changes go out with the next publish; a draft stays here until it is saved. Publishing does not deploy.</p>
   </div>
   <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-info"></span>{{ cluster }}</span></div>
 </section>
@@ -28,10 +28,15 @@
 <p class="preview-notice"><strong>This object cannot be opened in the form.</strong> It says something the fields below have no place for, at <code>{{ unexpressible }}</code>. Saving here would write it back without that part, so the form has been left at its defaults instead — edit this object from the command line, or <a href="/proxies/{{ cluster }}/{{ name }}">read it as it is stored</a>.</p>
 {% endif %}
 
+{#
+  The top of the object's work (B257): a draft is unfinished and never
+  published; saved changes go out with the next publish. A draft over saved
+  changes says so, since those still go out while the draft is worked on.
+#}
 {% if draft %}
 <section class="cluster-card draft-card {{ accent | accent_class }}">
-  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>An unpublished draft</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div></header>
-  <p class="preview-notice">This is what the form below was opened with. The stored object is unchanged until the draft is published.</p>
+  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>{% if draft.stage == 'saved' %}Saved changes{% else %}A draft{% endif %}</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div></header>
+  <p class="preview-notice">{% if draft.stage == 'saved' %}The form below was opened with them. They go out with the next publish.{% elif work.saved %}The form below was opened with it. It is not published until it is saved; the saved changes under it are.{% else %}The form below was opened with it. It is not published until it is saved.{% endif %}</p>
 </section>
 {% endif %}
 
@@ -59,6 +64,7 @@
   <button type="submit" name="action" value="check" class="default-submit" tabindex="-1" aria-hidden="true">Validate the object</button>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="expected_revision" value="{{ draft_revision }}">
+  <input type="hidden" name="saved_revision" value="{{ saved_revision }}">
   <input type="hidden" name="object_fingerprint" value="{{ object_fingerprint }}">
 
   {#
@@ -97,8 +103,9 @@
   <div class="form-actions">
     <a class="secondary-button" href="/proxies">Back to proxies</a>
     <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
-    <button type="submit" name="action" value="save" class="secondary-button">Save as draft</button>
-    {% if draft %}<button type="submit" name="action" value="discard" class="secondary-button">Discard the draft</button>{% endif %}
+    <button type="submit" name="action" value="draft" class="secondary-button">Save as draft</button>
+    {% if draft %}<button type="submit" name="action" value="discard" class="secondary-button">{% if draft.stage == 'saved' %}Discard the changes{% else %}Discard the draft{% endif %}</button>{% endif %}
+    <button type="submit" name="action" value="save" class="secondary-button">Save</button>
     <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
   </div>
 </form>

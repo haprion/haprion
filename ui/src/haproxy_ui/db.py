@@ -396,6 +396,22 @@ class ProxyDraft:
     # is visibly not the row that was published.
     #
     id: UUID | None = None
+    #
+    # B257: a *draft* is unfinished and never published; a *saved* change goes
+    # out with the next publish. One of each may exist for an object - a draft
+    # on top of a saved change - and the stage is part of the key.
+    #
+    stage: str = "draft"
+    #
+    # The published name this object takes the place of, for a rename. Kept on
+    # the row so the publish that carries it removes the old name as well,
+    # whenever that publish happens.
+    #
+    replaces: str | None = None
+
+
+DRAFT = "draft"
+SAVED = "saved"
 
 
 class DraftConflict(Exception):
@@ -2155,24 +2171,24 @@ def try_singleton_lock(connection: Connection[Any], key: int) -> bool:
 
 
 def cluster_drafts(connection: Connection[Any], cluster: str) -> list[ProxyDraft]:
-    """Every draft for one cluster, in the order a listing shows objects."""
+    """Every draft and saved change for one cluster, in the order a listing shows objects."""
 
     with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         cursor.execute(
             "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
-            "       updated_by, updated_at, deleted "
+            "       updated_by, updated_at, deleted, stage, replaces "
             "  from proxy_draft "
             " where cluster = %(cluster)s "
-            " order by object_id",
+            " order by object_id, stage",
             {"cluster": cluster},
         )
         return cursor.fetchall()
 
 
 def live_drafts(connection: Connection[Any]) -> list[ProxyDraft]:
-    """Every draft in every cluster that still asks for an object to exist.
+    """Every draft and saved change in every cluster that still asks for an object to exist.
 
-    A draft marked `deleted` asks for its object to go and names nothing a
+    A row marked `deleted` asks for its object to go and names nothing a
     deletion has to respect, so it is left out here rather than filtered by
     every caller.
     """
@@ -2180,24 +2196,27 @@ def live_drafts(connection: Connection[Any]) -> list[ProxyDraft]:
     with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         cursor.execute(
             "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
-            "       updated_by, updated_at, deleted "
+            "       updated_by, updated_at, deleted, stage, replaces "
             "  from proxy_draft "
             " where not deleted "
-            " order by cluster, object_id"
+            " order by cluster, object_id, stage"
         )
         return cursor.fetchall()
 
 
-def read_draft(connection: Connection[Any], cluster: str, object_id: str) -> ProxyDraft | None:
-    """One draft, or None where the object has no unsaved edit."""
+def read_draft(
+    connection: Connection[Any], cluster: str, object_id: str, stage: str = DRAFT
+) -> ProxyDraft | None:
+    """One draft or saved change, or None where the object has none of that stage."""
 
     with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         cursor.execute(
             "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
-            "       updated_by, updated_at, deleted "
+            "       updated_by, updated_at, deleted, stage, replaces "
             "  from proxy_draft "
-            " where cluster = %(cluster)s and object_id = %(object_id)s",
-            {"cluster": cluster, "object_id": object_id},
+            " where cluster = %(cluster)s and object_id = %(object_id)s "
+            "   and stage = %(stage)s",
+            {"cluster": cluster, "object_id": object_id, "stage": stage},
         )
         return cursor.fetchone()
 
@@ -2212,9 +2231,13 @@ def save_draft(
     base_hash: str,
     updated_by: str,
     deleted: bool = False,
+    replaces: str | None = None,
     expected_revision: int | None,
 ) -> ProxyDraft:
     """Create or replace one draft, refusing a write the caller did not see.
+
+    A draft only: a saved change is written by `save_change`, which also
+    takes the draft it was finished from out of the way.
 
     `expected_revision` is None for a draft that should not exist yet and the
     revision the caller read for one that should. Both are enforced by the
@@ -2235,18 +2258,20 @@ def save_draft(
         "base_hash": base_hash,
         "updated_by": updated_by,
         "deleted": deleted,
+        "replaces": replaces,
         "revision": expected_revision,
     }
     with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         if expected_revision is None:
             cursor.execute(
                 "insert into proxy_draft "
-                "       (cluster, object_id, yaml, base_version, base_hash, updated_by, deleted) "
+                "       (cluster, object_id, yaml, base_version, base_hash, updated_by, deleted, "
+                "        replaces, stage) "
                 "values (%(cluster)s, %(object_id)s, %(yaml)s, %(base_version)s, "
-                "        %(base_hash)s, %(updated_by)s, %(deleted)s) "
+                "        %(base_hash)s, %(updated_by)s, %(deleted)s, %(replaces)s, 'draft') "
                 "on conflict do nothing "
                 "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
-                "          updated_by, updated_at, deleted",
+                "          updated_by, updated_at, deleted, stage, replaces",
                 values,
             )
         else:
@@ -2254,17 +2279,111 @@ def save_draft(
                 "update proxy_draft "
                 "   set yaml = %(yaml)s, base_version = %(base_version)s, "
                 "       base_hash = %(base_hash)s, updated_by = %(updated_by)s, "
-                "       deleted = %(deleted)s "
+                "       deleted = %(deleted)s, replaces = %(replaces)s "
                 " where cluster = %(cluster)s and object_id = %(object_id)s "
-                "   and revision = %(revision)s "
+                "   and stage = 'draft' and revision = %(revision)s "
                 "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
-                "          updated_by, updated_at, deleted",
+                "          updated_by, updated_at, deleted, stage, replaces",
                 values,
             )
         row = cursor.fetchone()
         if row is None:
             raise DraftConflict(
                 f"the draft for {object_id} changed since it was read; reload it and try again"
+            )
+        return row
+
+
+def save_change(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    object_id: str,
+    new_object_id: str | None = None,
+    yaml: str,
+    base_version: int | None,
+    base_hash: str,
+    updated_by: str,
+    deleted: bool = False,
+    replaces: str | None = None,
+    saved_revision: int | None,
+    draft_revision: int | None,
+) -> ProxyDraft:
+    """Write one object's saved change, and drop the draft it was finished from (B257).
+
+    One transaction, so a conflict on any part leaves all of it as it was:
+    the draft the person was looking at is removed (`draft_revision`, None
+    when there is none), and the saved change is written - inserted when
+    `saved_revision` is None, updated at that revision otherwise. A rename
+    moves the saved row's key to `new_object_id`; a name already taken fails
+    on the key rather than on a check that raced.
+
+    Each part is held to the revision the caller read, as `save_draft` holds
+    its one row, and for the same reason.
+    """
+
+    target = new_object_id or object_id
+    values = {
+        "cluster": cluster,
+        "object_id": object_id,
+        "target": target,
+        "yaml": yaml,
+        "base_version": base_version,
+        "base_hash": base_hash,
+        "updated_by": updated_by,
+        "deleted": deleted,
+        "replaces": replaces,
+        "saved_revision": saved_revision,
+        "draft_revision": draft_revision,
+    }
+    stale = f"the changes to {object_id} changed since they were read; reload and try again"
+    with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
+        if draft_revision is not None:
+            cursor.execute(
+                "delete from proxy_draft "
+                " where cluster = %(cluster)s and object_id = %(object_id)s "
+                "   and stage = 'draft' and revision = %(draft_revision)s",
+                values,
+            )
+            if cursor.rowcount == 0:
+                raise DraftConflict(stale)
+        try:
+            if saved_revision is None:
+                cursor.execute(
+                    "insert into proxy_draft "
+                    "       (cluster, object_id, yaml, base_version, base_hash, updated_by, "
+                    "        deleted, replaces, stage) "
+                    "values (%(cluster)s, %(target)s, %(yaml)s, %(base_version)s, "
+                    "        %(base_hash)s, %(updated_by)s, %(deleted)s, %(replaces)s, 'saved') "
+                    "on conflict do nothing "
+                    "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
+                    "          updated_by, updated_at, deleted, stage, replaces",
+                    values,
+                )
+            else:
+                cursor.execute(
+                    "update proxy_draft "
+                    "   set object_id = %(target)s, yaml = %(yaml)s, "
+                    "       base_version = %(base_version)s, base_hash = %(base_hash)s, "
+                    "       updated_by = %(updated_by)s, deleted = %(deleted)s, "
+                    "       replaces = %(replaces)s "
+                    " where cluster = %(cluster)s and object_id = %(object_id)s "
+                    "   and stage = 'saved' and revision = %(saved_revision)s "
+                    "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
+                    "          updated_by, updated_at, deleted, stage, replaces",
+                    values,
+                )
+        except psycopg.errors.UniqueViolation as clash:
+            raise DraftConflict(
+                f"{target} already has saved changes in this cluster; "
+                f"the rename would replace somebody's work"
+            ) from clash
+        row = cursor.fetchone()
+        if row is None:
+            raise DraftConflict(
+                f"{target} already has saved changes in this cluster"
+                if saved_revision is None and target != object_id
+                else stale
             )
         return row
 
@@ -2279,6 +2398,7 @@ def rename_draft(
     base_version: int | None,
     base_hash: str,
     updated_by: str,
+    replaces: str | None = None,
     expected_revision: int,
 ) -> ProxyDraft:
     """Move one draft to another name, as a change of its key.
@@ -2288,10 +2408,10 @@ def rename_draft(
     conflict on the second left the first standing and the person had two
     drafts where they had made one, which is precisely how this was found.
 
-    One statement instead. `(cluster, object_id)` is the primary key, so the
-    move either happens or does not, and a name already taken fails on the key
-    rather than on a check that raced. The row keeps its `id`: it is the same
-    piece of work, and the publish that eventually carries it should be able to
+    One statement instead. The stage is part of the key, so the move either
+    happens or does not, and a name already taken fails on the key rather
+    than on a check that raced. The row keeps its `id`: it is the same piece
+    of work, and the publish that eventually carries it should be able to
     say so.
     """
 
@@ -2303,6 +2423,7 @@ def rename_draft(
         "base_version": base_version,
         "base_hash": base_hash,
         "updated_by": updated_by,
+        "replaces": replaces,
         "revision": expected_revision,
     }
     with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
@@ -2311,11 +2432,11 @@ def rename_draft(
                 "update proxy_draft "
                 "   set object_id = %(new_object_id)s, yaml = %(yaml)s, "
                 "       base_version = %(base_version)s, base_hash = %(base_hash)s, "
-                "       updated_by = %(updated_by)s "
+                "       updated_by = %(updated_by)s, replaces = %(replaces)s "
                 " where cluster = %(cluster)s and object_id = %(object_id)s "
-                "   and revision = %(revision)s "
+                "   and stage = 'draft' and revision = %(revision)s "
                 "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
-                "          updated_by, updated_at, deleted",
+                "          updated_by, updated_at, deleted, stage, replaces",
                 values,
             )
         except psycopg.errors.UniqueViolation as clash:
@@ -2332,9 +2453,14 @@ def rename_draft(
 
 
 def discard_draft(
-    connection: Connection[Any], *, cluster: str, object_id: str, expected_revision: int
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    object_id: str,
+    expected_revision: int,
+    stage: str = DRAFT,
 ) -> None:
-    """Throw one draft away, and only the revision the caller was looking at.
+    """Throw one draft or saved change away, and only the revision the caller was looking at.
 
     A real delete rather than a flag. An abandoned edit that stayed in the table
     would be indistinguishable from a decision to remove the object, which is
@@ -2345,12 +2471,20 @@ def discard_draft(
         cursor.execute(
             "delete from proxy_draft "
             " where cluster = %(cluster)s and object_id = %(object_id)s "
-            "   and revision = %(revision)s",
-            {"cluster": cluster, "object_id": object_id, "revision": expected_revision},
+            "   and stage = %(stage)s and revision = %(revision)s",
+            {
+                "cluster": cluster,
+                "object_id": object_id,
+                "stage": stage,
+                "revision": expected_revision,
+            },
         )
         if cursor.rowcount == 0:
             raise DraftConflict(
-                f"the draft for {object_id} changed since it was read; reload it and try again"
+                f"the saved changes to {object_id} changed since they were read; "
+                "reload them and try again"
+                if stage == SAVED
+                else f"the draft for {object_id} changed since it was read; reload it and try again"
             )
 
 

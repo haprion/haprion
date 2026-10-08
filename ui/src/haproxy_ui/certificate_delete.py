@@ -41,7 +41,11 @@ def draft_references(
     """
 
     wanted = set(certificate_ids)
-    found: dict[str, list[str]] = {}
+    #
+    # A set: an object's draft and its saved changes (B257) are two rows, and
+    # the object is one reference.
+    #
+    found: dict[str, set[str]] = {}
     for draft in drafts:
         try:
             proxy = load_proxy(draft.object_id, draft.yaml.encode("utf-8"))
@@ -49,7 +53,7 @@ def draft_references(
             continue
         certificate = proxy.listen.certificate
         if certificate in wanted:
-            found.setdefault(certificate, []).append(f"{draft.cluster}/{draft.object_id}")
+            found.setdefault(certificate, set()).add(f"{draft.cluster}/{draft.object_id}")
     return {key: tuple(sorted(rows)) for key, rows in found.items()}
 
 

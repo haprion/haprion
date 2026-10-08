@@ -412,7 +412,12 @@ class ObjectForm(BaseModel):
     # The page is drawn again without it, unsaved, as any other change here.
     #
     drop_exception: Annotated[str, StringConstraints(max_length=4)] = ""
+    #
+    # The revisions the page was opened with: the object's draft, and its saved
+    # change (B257) - each empty where the object has none.
+    #
     expected_revision: Annotated[str, StringConstraints(max_length=16)] = ""
+    saved_revision: Annotated[str, StringConstraints(max_length=16)] = ""
     #
     # The stored object as the page showed it, by `fingerprint` (CR-01).
     #
@@ -429,7 +434,13 @@ class ObjectForm(BaseModel):
         """
 
         values = self.model_dump()
-        for key in ("action", "expected_revision", "object_fingerprint", "csrf_token"):
+        for key in (
+            "action",
+            "expected_revision",
+            "saved_revision",
+            "object_fingerprint",
+            "csrf_token",
+        ):
             values.pop(key)
         values["allow_from"] = tuple(entry for entry in self.allow_from if entry)
         values["deny_from"] = tuple(entry for entry in self.deny_from if entry)

@@ -25,9 +25,9 @@
 #}
 {% for message in dns_moved %}<div class="preview-notice form-problem notice-with-action"><span>{{ message }}</span>{% if loop.first and role == 'admin' and management_writes %}<form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/lookup"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button">Publish again</button></form>{% endif %}</div>{% endfor %}
 {% if saved %}
-<p class="preview-notice"><strong>Saved as a draft.</strong> It reaches no configuration until it is published.</p>
+<p class="preview-notice"><strong>Saved.</strong> It goes out with the next publish.</p>
 {% elif discarded %}
-<p class="preview-notice"><strong>The draft was discarded.</strong> The stored object is as it was.</p>
+<p class="preview-notice"><strong>Discarded.</strong> The stored object is as it was.</p>
 {% endif %}
 
 <div class="cluster-list">
@@ -39,10 +39,10 @@
 {% if draft %}
 <article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>An unpublished draft</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div>
+    <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>{% if draft.stage == 'saved' %}Saved changes{% else %}A draft{% endif %}</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div>
     <div class="cluster-state">{% if management_writes %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Open in the editor</a>{% endif %}{% if advanced_offered and not object.stored %}<button type="button" class="secondary-button" data-advanced-open>Advanced config</button>{% endif %}{% if draft.updated_at %}<time datetime="{{ draft.updated_at.isoformat() }}" title="{{ draft.updated_at | shown_at }}">{{ (draft.updated_at | shown).strftime('%H:%M:%S') }}</time>{% endif %}</div>
   </header>
-  <p class="preview-notice">{% if draft.deleted %}This draft says the object should be <strong>removed</strong> when it is published.{% else %}The stored object below is unchanged until this draft is published.{% endif %}</p>
+  <p class="preview-notice">{% if draft.deleted %}The object is <strong>removed</strong> with the next publish.{% elif draft.stage == 'saved' %}They go out with the next publish.{% else %}It is not published until it is saved.{% endif %}</p>
 </article>
 {% endif %}
 <article class="cluster-card {{ object.accent | accent_class }}">
@@ -152,8 +152,8 @@
 {#
   The advanced config dialog (Fas 17, B223, B225). Only a modal: the button
   above opens it and there is no page of its own. It edits the text and the
-  pool choice of the draft - or of the stored object when there is no draft -
-  and Save writes the same draft the editor does.
+  pool choice of the saved changes - or of the stored object when there are
+  none - and Save writes saved changes, as the editor's Save does (B257).
 #}
 {% if advanced_offered %}
 <dialog class="advanced-dialog" data-advanced-dialog aria-label="Advanced config">
@@ -168,7 +168,7 @@
     <div class="form-actions">
       <button type="button" class="secondary-button" data-advanced-close>Close</button>
       <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
-      <button type="submit" name="action" value="save" class="secondary-button">Save as draft</button>
+      <button type="submit" name="action" value="save" class="secondary-button">Save</button>
       <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
     </div>
     <div data-advanced-answer></div>

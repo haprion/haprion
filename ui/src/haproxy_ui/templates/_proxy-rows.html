@@ -11,7 +11,7 @@
         what it looked like was that publishing had quietly turned the object
         back into a draft. The reason is named here; the full text is one click
         away, where it has room.
-      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endmacro %}
+      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.stage == 'saved' %}{% if draft.deleted %}Saved: removal{% else %}Saved{% endif %}{% elif draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endmacro %}
 
 {% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}, unforwarded=()) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}

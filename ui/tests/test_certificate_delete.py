@@ -51,6 +51,11 @@ class DraftReferences(unittest.TestCase):
         )
         self.assertEqual(found, {"old.example.com": ("alpha/shop",)})
 
+    def test_an_object_s_draft_and_saved_changes_are_one_reference(self) -> None:
+        saved = replace(SHOP_DRAFT, stage="saved")
+        found = certificate_delete.draft_references([SHOP_DRAFT, saved], ["old.example.com"])
+        self.assertEqual(found, {"old.example.com": ("alpha/shop",)})
+
 
 class DeleteRouteTestCase(LoginTestCase):
     def setUp(self) -> None:

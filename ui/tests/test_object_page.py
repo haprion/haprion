@@ -75,7 +75,7 @@ class DraftReading(LoginTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        patch = mock.patch("haproxy_ui.db.read_draft", side_effect=lambda *_a, **_k: self.draft)
+        patch = mock.patch("haproxy_ui.db.read_draft", side_effect=self._read_draft)
         patch.start()
         self.addCleanup(patch.stop)
         #
@@ -90,6 +90,15 @@ class DraftReading(LoginTestCase):
             patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=answer)
             patch.start()
             self.addCleanup(patch.stop)
+
+    def _read_draft(
+        self, _c: object, _cluster: str, _object_id: str, stage: str = "draft"
+    ) -> ProxyDraft | None:
+        #
+        # The one row, under its own stage (B257): asked for the other stage,
+        # there is none - or every row would be both a draft and saved changes.
+        #
+        return self.draft if self.draft is not None and self.draft.stage == stage else None
 
 
 class OpeningAnObject(DraftReading):
@@ -366,17 +375,17 @@ class TheDraftOnTheObjectPage(DraftReading):
         self.draft = self.drafted()
         body = self.page().text  # type: ignore[attr-defined]
 
-        self.assertIn("An unpublished draft", body)
+        self.assertIn("<h3>A draft</h3>", body)
         self.assertIn("operator", body)
         self.assertIn("revision 3", body)
 
     def test_a_draft_that_removes_the_object_says_so(self) -> None:
         self.draft = self.drafted(deleted=True)
 
-        self.assertIn("should be <strong>removed</strong>", self.page().text)  # type: ignore[attr-defined]
+        self.assertIn("is <strong>removed</strong> with the next publish", self.page().text)  # type: ignore[attr-defined]
 
     def test_without_one_the_page_says_nothing_about_drafts(self) -> None:
-        self.assertNotIn("An unpublished draft", self.page().text)  # type: ignore[attr-defined]
+        self.assertNotIn("<h3>A draft</h3>", self.page().text)  # type: ignore[attr-defined]
 
     def test_the_save_is_confirmed_where_it_landed(self) -> None:
         """A 303 leaves nothing behind, so the page has to carry the answer."""
@@ -384,12 +393,12 @@ class TheDraftOnTheObjectPage(DraftReading):
         self.draft = self.drafted()
         body = self.page("/proxies/edge-demo/public-web?saved=1").text  # type: ignore[attr-defined]
 
-        self.assertIn("Saved as a draft", body)
+        self.assertIn("<strong>Saved.</strong> It goes out with the next publish.", body)
 
     def test_a_discard_is_confirmed_too(self) -> None:
         body = self.page("/proxies/edge-demo/public-web?discarded=1").text  # type: ignore[attr-defined]
 
-        self.assertIn("draft was discarded", body)
+        self.assertIn("<strong>Discarded.</strong>", body)
 
 
 class ADraftInTheListing(DraftReading):

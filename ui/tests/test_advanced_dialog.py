@@ -178,7 +178,7 @@ class TheDialogsRoute(AdvancedRouteTestCase):
         self.assertIn("Nothing changed", answer.text)
         self.assertEqual(self.saved, [])
 
-    def test_the_draft_is_edited_against_its_revision(self) -> None:
+    def test_saved_changes_are_edited_against_their_revision(self) -> None:
         self.draft = ProxyDraft(
             cluster="alpha",
             object_id="shop",
@@ -189,6 +189,7 @@ class TheDialogsRoute(AdvancedRouteTestCase):
             updated_by="operator",
             updated_at=OBSERVED,
             deleted=False,
+            stage="saved",
         )
 
         self.post(self.editor(), action="save", advanced="retries 5\n", expected_revision="3")
@@ -196,6 +197,27 @@ class TheDialogsRoute(AdvancedRouteTestCase):
         saved = yaml.safe_load(self.saved[0]["yaml"])
         self.assertEqual(saved["backends"]["web"]["servers"][0]["host"], "192.0.2.11")
         self.assertEqual(self.saved[0]["expected_revision"], 3)
+        self.assertIsNone(self.changes[0]["draft_revision"])
+
+    def test_a_draft_is_not_finished_work_so_the_dialog_will_not_save_it(self) -> None:
+        """B257: what the dialog saves goes out with the next publish."""
+
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="shop",
+            yaml=SHOP,
+            base_version=12,
+            base_hash=COMMIT,
+            revision=3,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+
+        answer = self.post(self.editor(), action="save", advanced="retries 5\n")
+
+        self.assertIn("has a draft. Save or discard it in the editor first.", answer.text)
+        self.assertEqual(self.saved, [])
 
     def test_a_revision_somebody_else_moved_is_said_in_the_dialog(self) -> None:
         self.conflict = True
@@ -347,4 +369,4 @@ class PublishingFromTheDialog(AdvancedRouteTestCase):
 
         self.assertEqual(len(self.saved), 1)
         self.assertIn("already running a job", answer.text)
-        self.assertIn("Saved as a draft", answer.text)
+        self.assertIn("<strong>Saved.</strong>", answer.text)

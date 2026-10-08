@@ -172,9 +172,9 @@ app_web	oidc_login	SELECT	created_at, mode, nonce, pre_session_hash, state, used
 app_web	oidc_login	UPDATE	used_at
 app_web	oidc_provider	SELECT	admin_group, auth_method, auto_create, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, revision, scopes, updated_at, updated_by, username_claim, verified_revision
 app_web	oidc_provider	UPDATE	admin_group, auth_method, auto_create, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, scopes, updated_by, username_claim, verified_revision
-app_web	proxy_draft	INSERT	base_hash, base_version, cluster, deleted, object_id, updated_by, yaml
-app_web	proxy_draft	SELECT	base_hash, base_version, cluster, deleted, id, object_id, revision, updated_at, updated_by, yaml
-app_web	proxy_draft	UPDATE	base_hash, base_version, deleted, updated_by, yaml
+app_web	proxy_draft	INSERT	base_hash, base_version, cluster, deleted, object_id, replaces, stage, updated_by, yaml
+app_web	proxy_draft	SELECT	base_hash, base_version, cluster, deleted, id, object_id, replaces, revision, stage, updated_at, updated_by, yaml
+app_web	proxy_draft	UPDATE	base_hash, base_version, deleted, object_id, replaces, updated_by, yaml
 app_web	search_entry	SELECT	admin_only, cluster, href, kind, label, source, title, value
 app_web	traffic_log	SELECT	backend, bytes, client, cluster, connect_time, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, rule, server, status, total_time, waf_id, waf_rules, waf_score
 app_web	version_diff	SELECT	cluster, commit, diff, recorded_at

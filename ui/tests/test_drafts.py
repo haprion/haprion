@@ -266,7 +266,9 @@ class ReadingDrafts(unittest.TestCase):
 
         db.read_draft(connection, "alpha", "shop")  # type: ignore[arg-type]
 
-        self.assertEqual(connection.last.parameters, {"cluster": "alpha", "object_id": "shop"})
+        self.assertEqual(
+            connection.last.parameters, {"cluster": "alpha", "object_id": "shop", "stage": "draft"}
+        )
 
 
 class TheTableAgreesWithTheEngine(unittest.TestCase):

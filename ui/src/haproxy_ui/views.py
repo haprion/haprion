@@ -1005,14 +1005,20 @@ def build_router(config: Config) -> APIRouter:
         #
         with request.app.state.pool.connection() as connection:
             drafts = {
+                #
+                # One row per object, the one its editor opens: a draft over a
+                # saved change (B257), each carrying its stage for the badge.
+                #
                 view.cluster: tuple(
-                    _settled_drafts(
-                        connection,
-                        view.cluster,
-                        _objects_reading(
-                            rows.get(view.cluster),
-                            {listing.name for listing in listed[view.cluster]},
-                        ),
+                    _top_layers(
+                        _settled_drafts(
+                            connection,
+                            view.cluster,
+                            _objects_reading(
+                                rows.get(view.cluster),
+                                {listing.name for listing in listed[view.cluster]},
+                            ),
+                        )
                     )
                 )
                 for view in overview.clusters
@@ -1264,11 +1270,10 @@ def build_router(config: Config) -> APIRouter:
             name,
             None,
             open_group="waf" if request.query_params.get("open") == "waf" else "",
-            notice=(
-                "Saved as a draft. It reaches no configuration until it is published."
-                if saved
-                else ""
-            ),
+            #
+            # The card under it says which: a draft or saved changes (B257).
+            #
+            notice="Saved." if saved else "",
         )
 
     @router.post("/proxies/{cluster}/{name}/edit", response_class=HTMLResponse)
@@ -7848,7 +7853,12 @@ def _editor_page(
     state = _editor_state(request, config, cluster)
 
     with request.app.state.pool.connection() as connection:
-        draft = _settled_draft(connection, cluster, name, _state_reading(state)) if name else None
+        work = (
+            _settled_work(connection, cluster, name, _state_reading(state))
+            if name
+            else ObjectWork()
+        )
+    draft = work.top
 
     stored = next((view for view in state.stored if view.name == name), None)
     unexpressible = ""
@@ -7880,9 +7890,10 @@ def _editor_page(
                 unexpressible = str(exc)
         form = editor_module.ObjectForm(
             **_form_defaults(fields),
+            saved_revision=str(work.saved.revision) if work.saved is not None else "",
             object_fingerprint=editor_module.fingerprint(stored.document if stored else None),
         )
-        draft_revision = str(draft.revision) if draft is not None else ""
+        draft_revision = str(work.draft.revision) if work.draft is not None else ""
 
     fields = form.fields()
     #
@@ -7992,7 +8003,9 @@ def _editor_page(
             "check_protocols": preview_module.CHECK_PROTOCOLS,
             "result": result,
             "draft": draft,
+            "work": work,
             "draft_revision": draft_revision,
+            "saved_revision": form.saved_revision,
             #
             # Carried from the page that was opened, not read again here: a
             # submission redrawn with the current object's would quietly accept
@@ -8056,7 +8069,8 @@ def _lookup_again(
         return _refusal_page(
             request,
             config,
-            f"{name} has a draft. Publish the draft from the editor; that looks the names up too.",
+            f"{name} has unpublished changes. Publish them from the editor; that looks the "
+            "names up too.",
             back=_proxy_path(cluster, name, "edit"),
         )
     try:
@@ -8259,7 +8273,6 @@ def _editor_submit(
     #
     renaming = bool(name) and bool(typed) and typed != name
     published = any(view.name == name for view in state.stored)
-    replaces_published = name if renaming and published else ""
     if renaming and not proxy_model.NAME.fullmatch(typed):
         return _refusal_page(
             request,
@@ -8269,10 +8282,11 @@ def _editor_submit(
             back=_proxy_path(cluster, name, "edit"),
         )
 
-    revision = int(form.expected_revision) if form.expected_revision.isdigit() else None
+    draft_revision = int(form.expected_revision) if form.expected_revision.isdigit() else None
+    saved_revision = int(form.saved_revision) if form.saved_revision.isdigit() else None
     #
-    # A new object has no draft to be a revision of, so the field is ignored
-    # here rather than trusted. It is a hidden input, and a browser restores
+    # A new object has no draft to be a revision of, so the fields are ignored
+    # here rather than trusted. They are hidden inputs, and a browser restores
     # hidden inputs when somebody navigates back into a form - so a revision
     # from the object saved a moment ago survived into the new-object form and
     # turned the next save into an update of a row that had never existed. The
@@ -8280,20 +8294,32 @@ def _editor_submit(
     # had ever made, and the work was refused with nowhere obvious to go.
     #
     if not name:
-        revision = None
+        draft_revision = saved_revision = None
 
     if form.action == "discard":
-        if revision is None:
+        #
+        # The top of the work, which is what the page shows: the draft, or the
+        # saved change when there is no draft over it (B257).
+        #
+        if draft_revision is not None:
+            stage, discarded_revision = db.DRAFT, draft_revision
+        elif saved_revision is not None:
+            stage, discarded_revision = db.SAVED, saved_revision
+        else:
             return _refusal_page(
                 request,
                 config,
-                "There is no draft to discard.",
+                "There is nothing to discard.",
                 back=_proxy_path(cluster, name, "edit"),
             )
         with request.app.state.pool.connection() as connection:
             try:
                 db.discard_draft(
-                    connection, cluster=cluster, object_id=object_id, expected_revision=revision
+                    connection,
+                    cluster=cluster,
+                    object_id=object_id,
+                    expected_revision=discarded_revision,
+                    stage=stage,
                 )
             except db.DraftConflict as conflict:
                 connection.rollback()
@@ -8310,7 +8336,7 @@ def _editor_submit(
                 action="discard_draft",
                 cluster=cluster,
                 request_id=uuid4(),
-                detail={"object": object_id},
+                detail={"object": object_id, "stage": stage},
             )
             connection.commit()
         #
@@ -8325,13 +8351,15 @@ def _editor_submit(
         # the engine's name rule above, so it is a name and not a fragment of
         # something else.
         #
-        if any(view.name == object_id for view in state.stored):
+        if any(view.name == object_id for view in state.stored) or (
+            stage == db.DRAFT and saved_revision is not None
+        ):
             return RedirectResponse(
                 _proxy_path(cluster, object_id) + "?discarded=1", status_code=303
             )
         return RedirectResponse(f"/proxies?discarded={object_id}", status_code=303)
 
-    if form.action not in ("save", "publish"):
+    if form.action not in ("draft", "save", "publish"):
         return PlainTextResponse("Unknown action", status_code=400)
 
     if state.commit is None:
@@ -8375,41 +8403,56 @@ def _editor_submit(
             object_fingerprint=current,
         )
 
+    with request.app.state.pool.connection() as connection:
+        work = (
+            _settled_work(connection, cluster, name, _state_reading(state))
+            if name
+            else ObjectWork()
+        )
     #
-    # The rename of an unpublished draft, resolved here where the write is.
-    # From this point the new name is the object: it is what gets saved, what
-    # the redirect lands on, and what a publish would carry.
+    # The published name this work takes the place of. A rename of a published
+    # object records it on the row (B257), so the publish that eventually
+    # carries the row removes the old name too - worked out at the moment of
+    # publishing, as it was, a rename saved first and published later lost it
+    # and the publish added the new object beside the old one.
     #
-    # The old row is deleted after the new one is written, and both happen in
-    # the transaction below - a rename that left the draft under both names
-    # would put two objects in the listing where the person made one.
+    # A name that has been renamed before keeps the first published name: the
+    # names in between were never anywhere but here. Renamed back to that name,
+    # it is an edit of the published object and replaces nothing.
     #
-    # The new name has to be free of both a stored object and another draft.
-    # A draft is not visible on the listing the way a published object is, so
-    # without the second check a rename could silently land on somebody else's
-    # unfinished work and take its revision with it.
-    #
-    renamed_from = ""
-    rename_revision = 0
+    replaces = next(
+        (row.replaces for row in (work.draft, work.saved) if row is not None and row.replaces),
+        None,
+    )
     if renaming:
+        if work.saved is not None and form.action == "draft":
+            #
+            # The two rows of one object carry one name. A draft that renamed
+            # the object while its saved change kept the old name would make
+            # them two objects, and saving the draft later would leave the
+            # first in the next publish beside the second.
+            #
+            return _refusal_page(
+                request,
+                config,
+                f"{name} has saved changes, so its name can only change with Save.",
+                back=_proxy_path(cluster, name, "edit"),
+            )
         with request.app.state.pool.connection() as connection:
             taken = _settled_draft(connection, cluster, typed, _state_reading(state))
-        if any(view.name == typed for view in state.stored) or taken is not None:
+        stored_elsewhere = any(view.name == typed for view in state.stored) and typed != replaces
+        if stored_elsewhere or taken is not None:
             return _refusal_page(
                 request,
                 config,
                 f"{typed} is already taken in this cluster, as an object or as a draft.",
                 back=_proxy_path(cluster, name, "edit"),
             )
-        #
-        # The move is only for a draft that exists. Without a revision there is
-        # no row under the old name - nothing was ever saved there - so the new
-        # name is simply where this work is saved, and nothing is left behind
-        # because nothing was there.
-        #
+        if published and replaces is None:
+            replaces = name
         object_id = typed
-        if revision is not None:
-            renamed_from, rename_revision = name, revision
+    if replaces == object_id:
+        replaces = None
 
     #
     # A draft must be an object. Whether it fits beside its neighbours is a
@@ -8440,7 +8483,7 @@ def _editor_submit(
     # version says it changed.
     #
     looked_up = False
-    if form.action == "publish" and not renaming:
+    if form.action == "publish" and replaces is None:
         stored = next((view for view in state.stored if view.name == object_id), None)
         if stored is not None and editor_module.unchanged(result.document, stored.document):
             looked_up = bool(_moved_servers(request, config, cluster, stored))
@@ -8458,9 +8501,29 @@ def _editor_submit(
                 back=_proxy_path(cluster, object_id, "edit"),
             )
 
+    key = name or object_id
     with request.app.state.pool.connection() as connection:
         try:
-            if renamed_from:
+            if form.action != "draft":
+                #
+                # Save, and the publish that follows it: the saved change is
+                # written and the draft it was finished from goes, in one
+                # transaction (B257). A rename moves the saved row's key.
+                #
+                saved = db.save_change(
+                    connection,
+                    cluster=cluster,
+                    object_id=key,
+                    new_object_id=object_id if object_id != key else None,
+                    yaml=result.document,
+                    base_version=state.base_version,
+                    base_hash=state.commit,
+                    updated_by=session.username,
+                    replaces=replaces,
+                    saved_revision=saved_revision,
+                    draft_revision=draft_revision,
+                )
+            elif object_id != key and draft_revision is not None:
                 #
                 # One statement, not a write and then a delete. `save_draft`
                 # commits a transaction of its own, so a two-step rename left
@@ -8471,13 +8534,14 @@ def _editor_submit(
                 saved = db.rename_draft(
                     connection,
                     cluster=cluster,
-                    object_id=renamed_from,
+                    object_id=key,
                     new_object_id=object_id,
                     yaml=result.document,
                     base_version=state.base_version,
                     base_hash=state.commit,
                     updated_by=session.username,
-                    expected_revision=rename_revision,
+                    replaces=replaces,
+                    expected_revision=draft_revision,
                 )
             else:
                 saved = db.save_draft(
@@ -8488,7 +8552,8 @@ def _editor_submit(
                     base_version=state.base_version,
                     base_hash=state.commit,
                     updated_by=session.username,
-                    expected_revision=revision,
+                    replaces=replaces,
+                    expected_revision=draft_revision if object_id == key else None,
                 )
         except db.DraftConflict as conflict:
             connection.rollback()
@@ -8499,53 +8564,41 @@ def _editor_submit(
                 back=_proxy_path(cluster, object_id, "edit"),
                 stale=True,
             )
+        detail: dict[str, Any] = {
+            "object": object_id,
+            "revision": saved.revision,
+            "stage": saved.stage,
+        }
+        if object_id != key:
+            detail["renamed_from"] = key
         db.record_audit_event(
             connection,
             actor=session.username,
-            action="save_draft",
+            action="save_draft" if form.action == "draft" else "save_change",
             cluster=cluster,
             request_id=uuid4(),
-            detail=(
-                {"object": object_id, "revision": saved.revision, "renamed_from": renamed_from}
-                if renamed_from
-                else {"object": object_id, "revision": saved.revision}
-            ),
+            detail=detail,
         )
         connection.commit()
     #
     # 303 rather than a rendered page, as everywhere else that writes: a
-    # refresh of this response must not save the draft a second time under a
-    # revision that has since moved.
+    # refresh of this response must not save a second time under a revision
+    # that has since moved.
     #
+    # Back to the editor, which is where the work is, under the name it was
+    # saved as - saving a new object lands on the object it just created
+    # rather than back on the empty form.
     #
-    # The flag is what the page says afterwards. A 303 leaves nothing behind,
-    # so without it a save that worked and a page that was merely opened look
-    # exactly alike - which is the moment somebody presses save again.
-    #
-    if form.action == "save":
-        #
-        # Back to the editor, which is where the work is. It went to the listing
-        # with the object's name in the flag, while the only readers of the flag
-        # are this page and the object's own and both look for "1" - so a save
-        # that worked and a page that had merely been opened looked exactly
-        # alike, which is the moment somebody presses save again.
-        #
-        # The name rather than `name`, because saving a new object lands on the
-        # object it just created rather than back on the empty form.
-        #
+    if form.action != "publish":
         return RedirectResponse(
             _proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303
         )
 
     #
-    # Publishing is a job, and the draft is saved first on purpose. The two are
-    # one button because saving and then publishing separately is three screens
-    # for one change - but they stay two acts underneath, so a publish that is
-    # refused leaves the work saved rather than lost.
-    #
-    # The key is derived from what is being published rather than generated, so
-    # a double-click is the same request and not a second one. The revision is
-    # in it because the next edit of the same object is a different publish.
+    # Publishing is a job, and the change is saved first on purpose. The two
+    # are one button because saving and then publishing separately is three
+    # screens for one change - but they stay two acts underneath, so a publish
+    # that is refused leaves the work saved rather than lost.
     #
     queued = _queue_object_publish(
         request,
@@ -8555,7 +8608,7 @@ def _editor_submit(
         saved=saved,
         expected_head=state.commit,
         username=session.username,
-        replaces_published=replaces_published,
+        replaces_published=saved.replaces or "",
         stored=state.stored,
         comment=f"Look up the servers of {object_id} again" if looked_up else "",
     )
@@ -8686,8 +8739,8 @@ def _queue_object_publish(
         except db.ClusterBusy:
             connection.rollback()
             return (
-                "This cluster is already running a job. The draft is saved; publish it when "
-                "that job has finished."
+                "This cluster is already running a job. The changes are saved; publish them "
+                "when that job has finished."
             )
         except db.RequestConflict:
             connection.rollback()
@@ -8776,9 +8829,14 @@ def _removal_submit(
         )
 
     with request.app.state.pool.connection() as connection:
-        existing = _settled_draft(connection, cluster, name, _state_reading(state))
+        existing = _settled_work(connection, cluster, name, _state_reading(state))
         try:
-            saved = db.save_draft(
+            #
+            # A removal is finished work, so it is a saved change (B257). A
+            # draft over the object goes with it, as the removal replaced the
+            # draft before there were two: there is nothing left to finish.
+            #
+            saved = db.save_change(
                 connection,
                 cluster=cluster,
                 object_id=name,
@@ -8793,7 +8851,8 @@ def _removal_submit(
                 base_hash=state.commit,
                 updated_by=session.username,
                 deleted=True,
-                expected_revision=existing.revision if existing else None,
+                saved_revision=existing.saved.revision if existing.saved else None,
+                draft_revision=existing.draft.revision if existing.draft else None,
             )
         except db.DraftConflict as conflict:
             connection.rollback()
@@ -9001,38 +9060,48 @@ def _reflects(draft: db.ProxyDraft, publish: DraftPublish, reading: ObjectsReadi
     )
 
 
-def _settled_draft(
-    connection: Any, cluster: str, object_id: str, reading: ObjectsReading
-) -> db.ProxyDraft | None:
-    """One draft, cleared away if its own publish has finished and can be read.
+@dataclass(frozen=True, slots=True)
+class ObjectWork:
+    """What one object has besides its stored document (B257).
 
-    The editor reads this rather than the row directly, and that is the case
-    that matters most: a draft opens in preference to the stored object, so a
-    stale one would hand somebody their pre-publish copy of a document they
-    have already published - and the next save would write it back.
+    A draft is unfinished and never published; a saved change goes out with
+    the next publish. Both may exist - a draft started on top of a saved
+    change - and what the editor opens is the top one.
     """
 
-    draft = db.read_draft(connection, cluster, object_id)
-    if draft is None:
-        return None
-    publish = _published_drafts(connection, cluster, (draft,)).get((str(draft.id), draft.revision))
-    if publish is None:
-        return draft
-    if not _reflects(draft, publish, reading):
+    draft: db.ProxyDraft | None = None
+    saved: db.ProxyDraft | None = None
+
+    @property
+    def top(self) -> db.ProxyDraft | None:
+        return self.draft or self.saved
+
+
+def _settled_row(
+    connection: Any, cluster: str, row: db.ProxyDraft, reading: ObjectsReading
+) -> db.ProxyDraft | None:
+    """One row, cleared away if its own publish has finished and can be read."""
+
+    publish = _published_drafts(connection, cluster, (row,)).get((str(row.id), row.revision))
+    if publish is None or not _reflects(row, publish, reading):
         #
-        # Published, but the cache has not caught up. The draft is the only
-        # thing that can carry the row until it does.
+        # Unpublished, or published and the cache has not caught up. The row
+        # is the only thing that can carry the object until it does.
         #
-        return draft
+        return row
     #
     # A conflict here is somebody saving in another tab between the read and
-    # the delete, and their draft is the newer one - so it stays, and the page
+    # the delete, and their row is the newer one - so it stays, and the page
     # shows it. Uncaught it took the whole listing down with it, which is a
     # 500 for a tidying step that was allowed to change nothing.
     #
     try:
         db.discard_draft(
-            connection, cluster=cluster, object_id=object_id, expected_revision=draft.revision
+            connection,
+            cluster=cluster,
+            object_id=row.object_id,
+            expected_revision=row.revision,
+            stage=row.stage,
         )
     except db.DraftConflict:
         #
@@ -9040,9 +9109,50 @@ def _settled_draft(
         # failed statement, so the transaction is still good - and rolling it
         # back here would throw away work the caller had already done.
         #
-        return db.read_draft(connection, cluster, object_id)
+        return db.read_draft(connection, cluster, row.object_id, row.stage)
     connection.commit()
     return None
+
+
+def _settled_work(
+    connection: Any, cluster: str, object_id: str, reading: ObjectsReading
+) -> ObjectWork:
+    """One object's draft and saved change, each cleared away once its publish can be read.
+
+    The editor reads this rather than the rows directly, and that is the case
+    that matters most: the editor opens the top row in preference to the
+    stored object, so a stale one would hand somebody their pre-publish copy
+    of a document they have already published - and the next save would write
+    it back.
+    """
+
+    rows = {
+        stage: row
+        for stage in (db.DRAFT, db.SAVED)
+        if (row := db.read_draft(connection, cluster, object_id, stage)) is not None
+    }
+    settled = {
+        stage: _settled_row(connection, cluster, row, reading) for stage, row in rows.items()
+    }
+    return ObjectWork(draft=settled.get(db.DRAFT), saved=settled.get(db.SAVED))
+
+
+def _settled_draft(
+    connection: Any, cluster: str, object_id: str, reading: ObjectsReading
+) -> db.ProxyDraft | None:
+    """The top of one object's work: its draft, else its saved change, else None."""
+
+    return _settled_work(connection, cluster, object_id, reading).top
+
+
+def _top_layers(rows: Iterable[db.ProxyDraft]) -> list[db.ProxyDraft]:
+    """One row per object, the one the editor would open: the draft over a saved change."""
+
+    top: dict[str, db.ProxyDraft] = {}
+    for row in rows:
+        if row.object_id not in top or row.stage == db.DRAFT:
+            top[row.object_id] = row
+    return [top[name] for name in sorted(top)]
 
 
 def _settled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> list[db.ProxyDraft]:
@@ -9063,7 +9173,7 @@ def _settled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> l
     drafts = db.cluster_drafts(connection, cluster)
     settled = _published_drafts(connection, cluster, drafts)
     published = {
-        draft.object_id
+        (draft.object_id, draft.stage)
         for draft in drafts
         if (publish := settled.get((str(draft.id), draft.revision))) is not None
         and _reflects(draft, publish, reading)
@@ -9075,9 +9185,9 @@ def _settled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> l
     # and is kept. Counted rather than assumed, because the rows returned below
     # have to match what the table now holds.
     #
-    kept: set[str] = set()
+    kept: set[tuple[str, str]] = set()
     for draft in drafts:
-        if draft.object_id not in published:
+        if (draft.object_id, draft.stage) not in published:
             continue
         try:
             db.discard_draft(
@@ -9085,16 +9195,19 @@ def _settled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> l
                 cluster=cluster,
                 object_id=draft.object_id,
                 expected_revision=draft.revision,
+                stage=draft.stage,
             )
         except db.DraftConflict:
             #
             # As above, and it matters more here: a rollback would undo the
             # deletes this loop has already made.
             #
-            kept.add(draft.object_id)
+            kept.add((draft.object_id, draft.stage))
     connection.commit()
     return [
-        draft for draft in drafts if draft.object_id not in published or draft.object_id in kept
+        draft
+        for draft in drafts
+        if (key := (draft.object_id, draft.stage)) not in published or key in kept
     ]
 
 
@@ -9555,9 +9668,21 @@ def _advanced_submit(
     state = _editor_state(request, config, cluster)
     stored = next((view for view in state.stored if view.name == name), None)
     with request.app.state.pool.connection() as connection:
-        draft = _settled_draft(connection, cluster, name, _state_reading(state))
+        work = _settled_work(connection, cluster, name, _state_reading(state))
+    #
+    # The dialog saves finished work (B257), so it starts from the saved change
+    # or the stored object - never from a draft somebody has not finished,
+    # which would go out with the next publish half-done.
+    #
+    if work.draft is not None:
+        return answer(
+            advanced_dialog.Answer(
+                problem=f"{name} has a draft. Save or discard it in the editor first."
+            )
+        )
+    draft = work.saved
     if draft is not None and draft.deleted:
-        return answer(advanced_dialog.Answer(problem="The draft removes this object."))
+        return answer(advanced_dialog.Answer(problem="The saved changes remove this object."))
     base = draft.yaml if draft is not None else (stored.document if stored is not None else "")
     if not base or state.commit is None:
         return answer(advanced_dialog.Answer(problem="The stored objects have not been read yet."))
@@ -9601,7 +9726,7 @@ def _advanced_submit(
     revision = int(expected_revision) if expected_revision.isdigit() else None
     with request.app.state.pool.connection() as connection:
         try:
-            saved = db.save_draft(
+            saved = db.save_change(
                 connection,
                 cluster=cluster,
                 object_id=name,
@@ -9609,7 +9734,9 @@ def _advanced_submit(
                 base_version=state.base_version,
                 base_hash=state.commit,
                 updated_by=session.username,
-                expected_revision=revision,
+                replaces=draft.replaces if draft is not None else None,
+                saved_revision=revision,
+                draft_revision=None,
             )
         except db.DraftConflict as conflict:
             connection.rollback()
@@ -9621,7 +9748,7 @@ def _advanced_submit(
         db.record_audit_event(
             connection,
             actor=session.username,
-            action="save_draft",
+            action="save_change",
             cluster=cluster,
             request_id=uuid4(),
             detail={"object": name, "revision": saved.revision, "advanced": True},
@@ -9674,8 +9801,8 @@ def _waf_documents(
     drafted: dict[tuple[str, str], str] = {}
     for cluster in clusters:
         names = {name for owner, name in stored if owner == cluster}
-        for draft in _settled_drafts(
-            connection, cluster, _objects_reading(readings.get(cluster), names)
+        for draft in _top_layers(
+            _settled_drafts(connection, cluster, _objects_reading(readings.get(cluster), names))
         ):
             if not draft.deleted:
                 drafted[(cluster, draft.object_id)] = draft.yaml
@@ -9783,9 +9910,17 @@ def _waf_save(
     state = _editor_state(request, config, cluster)
     stored = next((view for view in state.stored if view.name == name), None)
     with request.app.state.pool.connection() as connection:
-        draft = _settled_draft(connection, cluster, name, _state_reading(state))
+        work = _settled_work(connection, cluster, name, _state_reading(state))
+    #
+    # An exception is finished work, so it is a saved change (B257), made on
+    # the saved change or the stored object and never on a draft somebody has
+    # not finished.
+    #
+    if work.draft is not None:
+        return f"{name} has a draft. Save or discard it in the editor first."
+    draft = work.saved
     if draft is not None and draft.deleted:
-        return f"The draft removes {name}."
+        return f"The saved changes remove {name}."
     base = draft.yaml if draft is not None else (stored.document if stored is not None else "")
     if not base or state.commit is None:
         return "The stored objects have not been read yet."
@@ -9798,7 +9933,7 @@ def _waf_save(
         return None
     with request.app.state.pool.connection() as connection:
         try:
-            saved = db.save_draft(
+            saved = db.save_change(
                 connection,
                 cluster=cluster,
                 object_id=name,
@@ -9806,7 +9941,9 @@ def _waf_save(
                 base_version=state.base_version,
                 base_hash=state.commit,
                 updated_by=session.username,
-                expected_revision=draft.revision if draft is not None else None,
+                replaces=draft.replaces if draft is not None else None,
+                saved_revision=draft.revision if draft is not None else None,
+                draft_revision=None,
             )
         except db.DraftConflict as conflict:
             connection.rollback()
@@ -9814,7 +9951,7 @@ def _waf_save(
         db.record_audit_event(
             connection,
             actor=session.username,
-            action="save_draft",
+            action="save_change",
             cluster=cluster,
             request_id=uuid4(),
             detail={"object": name, "revision": saved.revision, **detail},

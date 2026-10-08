@@ -70,13 +70,6 @@ class TheNetworkFormSaves(QueueRouteTestCase):
         self.assertEqual((change["kind"], change["expected_revision"]), ("network", None))
         self.assertIn("192.0.2.20", change["document"])
 
-    def test_save_needs_no_comment_and_publish_does(self) -> None:
-        refused = self.post(self.writing_client(), **self.form(network_action="publish"))
-
-        self.assertEqual(refused.status_code, 400)
-        self.assertIn("A version comment is needed to publish", refused.text)
-        self.assertEqual((self.queued, self.saved_changes), ([], []))
-
     def test_save_still_asks_for_the_default_vip_confirmation(self) -> None:
         answer = self.post(
             self.writing_client(),
@@ -86,15 +79,11 @@ class TheNetworkFormSaves(QueueRouteTestCase):
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(self.saved_changes, [])
 
-    def test_publish_saves_first_and_names_the_saved_row(self) -> None:
-        self.post(
-            self.writing_client(),
-            **self.form(network_action="publish", comment="Add shop", saved_revision="2"),
-        )
+    def test_save_holds_the_revision_on_the_page(self) -> None:
+        self.post(self.writing_client(), **self.form(network_action="save", saved_revision="2"))
 
         self.assertEqual(self.saved_changes[0]["expected_revision"], 2)
-        payload = self.queued[0]["payload"]
-        self.assertEqual(payload["change"], {"id": str(SAVED_ID_IN_FIXTURE), "revision": 3})
+        self.assertEqual(self.queued, [])
 
     def test_discard_throws_away_the_revision_on_the_page(self) -> None:
         with mock.patch("haproxy_ui.db.discard_cluster_change") as discard:
@@ -230,13 +219,11 @@ class TheSettingsFormSaves(SettingsClusterTestCase):
         self.assertEqual(self.queued, [])
         self.assertEqual(self.saved_changes[0]["kind"], "settings")
 
-    def test_publish_names_the_saved_row(self) -> None:
-        self.save(self.client_for(), settings_action="publish", saved_revision="5")
+    def test_a_publish_from_the_form_is_no_action(self) -> None:
+        answer = self.save(self.client_for(), settings_action="publish")
 
-        self.assertEqual(self.saved_changes[0]["expected_revision"], 5)
-        self.assertEqual(
-            self.queued[0]["payload"]["change"], {"id": str(SAVED_ID_IN_FIXTURE), "revision": 6}
-        )
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual((self.queued, self.saved_changes), ([], []))
 
     def test_the_page_shows_saved_settings(self) -> None:
         document = "metrics:\n  port: 9100\n  sources:\n  - 192.0.2.0/24\n"

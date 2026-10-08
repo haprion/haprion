@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0063",
+    "database_head": "0064",
     "database_revisions": [
       "0028",
       "0029",
@@ -38,9 +38,10 @@
       "0060",
       "0061",
       "0062",
-      "0063"
+      "0063",
+      "0064"
     ],
-    "engine_api": 19,
+    "engine_api": 20,
     "node_api": 1,
     "poller_helpers": [
       "haproxy-status-helper",
@@ -60,6 +61,7 @@
       "haproxy-network-publish-helper",
       "haproxy-cluster-settings-publish-helper",
       "haproxy-objects-publish-helper",
+      "haproxy-changes-publish-helper",
       "haproxy-cert-issue-helper",
       "haproxy-cert-publish-helper",
       "haproxy-cert-target-helper",

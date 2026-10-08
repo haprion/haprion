@@ -775,6 +775,14 @@ draft_evidence() {
     select job.id from job
       join cluster_change on job.payload->'change'->>'id' = cluster_change.id::text
      where job.operation in ('network_publish', 'cluster_settings_publish')
+    union
+    select job.id from job
+      cross join lateral jsonb_array_elements(
+          coalesce(job.payload->'drafts', '[]') || coalesce(job.payload->'changes', '[]')
+      ) as entry
+     where job.operation = 'changes_publish'
+       and (entry->>'id' in (select id::text from proxy_draft)
+            or entry->>'id' in (select id::text from cluster_change))
 SQL
 }
 

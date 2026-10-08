@@ -303,14 +303,11 @@
 
       {#
         A rule and not another heading. What is above it describes the cluster's
-        addresses; what is below it is about this publish - the note it carries,
-        what it moves, and the button that runs it. They are two different
-        questions and were reading as one list.
+        addresses; what is below it is about this save - what it moves, and the
+        button that runs it. They are two different questions and were reading
+        as one list.
       #}
       <hr class="editor-break">
-      <div class="form-grid editor-note">
-        <label>Version comment — needed to publish<input name="comment" maxlength="4096" placeholder="Why this network change is needed"></label>
-      </div>
       <div class="form-checks">
         <label class="check"><input type="checkbox" name="default_vip_confirmation" value="on" required> I have checked the default VIP impact: {{ cluster.default_vip_object_count }} managed object{% if cluster.default_vip_object_count != 1 %}s{% endif %} follow{% if cluster.default_vip_object_count == 1 %}s{% endif %} it unless they name a VIP.</label>
       </div>
@@ -343,7 +340,6 @@
         <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this save writes.</p>
         {% if saved %}<button class="secondary-button" type="submit" name="network_action" value="discard" formnovalidate>Discard the changes</button>{% endif %}
         <button class="secondary-button" type="submit" name="network_action" value="save">Save</button>
-        <button class="secondary-button" type="submit" name="network_action" value="publish">Save and publish</button>
         {% endif %}
       </div>
     </form>

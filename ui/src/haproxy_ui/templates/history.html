@@ -13,6 +13,8 @@
   <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg></span><div><strong>{{ history.waiting_count }}</strong><span>Unpublished</span><small>Saved, not live</small></div></article>
 </section>
 
+{% if published %}<p class="preview-notice"><strong>Publishing {{ published }}.</strong> Deploy when it is done.</p>{% endif %}
+
 <div class="cluster-list history-cluster-list">
 {% for cluster in history.clusters %}
   <article class="cluster-card history-cluster-card {{ cluster.accent | accent_class }}" data-observed="{{ cluster.observed_iso or '' }}">
@@ -20,6 +22,32 @@
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
       <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at | shown_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
+    {#
+      What is saved and not yet published (B257): one list, one comment, one
+      version. Drafts are not here - they are unfinished - and a row saved
+      against an older version holds the whole list until it is saved again.
+    #}
+    {% set package = pending.get(cluster.cluster) if pending else none %}
+    {% if package and package.rows %}
+    <section class="pending-changes" aria-label="Pending changes on {{ cluster.cluster }}">
+      <h4 class="network-subhead">Pending changes</h4>
+      <div class="table-scroll"><table class="node-table pending-table"><thead><tr><th>Change</th><th>What</th><th>Saved by</th><th>Saved</th></tr></thead><tbody>
+        {% for row in package.rows %}
+        <tr{% if row.stale %} class="pending-stale"{% endif %} data-href="{{ row.link }}"><td data-label="Change"><a class="proxy-link" href="{{ row.link }}"><strong>{{ row.name }}</strong></a></td><td data-label="What">{% if row.stale %}<span class="status-badge status-badge-critical">Saved against an older version</span>{% else %}{{ row.what }}{% endif %}</td><td data-label="Saved by">{{ row.updated_by }}</td><td data-label="Saved"><time datetime="{{ row.updated_at.isoformat() }}" title="{{ row.updated_at | shown_at }}">{{ (row.updated_at | shown).strftime('%Y-%m-%d %H:%M') }}</time></td></tr>
+        {% endfor %}
+      </tbody></table></div>
+      {% if package.problem %}
+      <p class="preview-notice form-problem"><strong>{{ package.problem }}</strong></p>
+      {% else %}
+      <form method="post" action="/history/{{ cluster.cluster }}/publish" class="form-grid pending-publish">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="expected_head" value="{{ package.head }}">
+        <label><span class="field-title">Comment</span><input name="comment" maxlength="4096" required placeholder="What these changes are for"></label>
+        <button type="submit" class="primary-button">Publish {{ package.rows | length }} change{% if package.rows | length != 1 %}s{% endif %}</button>
+      </form>
+      {% endif %}
+    </section>
+    {% endif %}
     {% if cluster.versions %}
     {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
     <div data-version-list data-version-per-page="{{ versions_per_page }}" data-version-count="{{ cluster.versions | length }}">

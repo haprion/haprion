@@ -44,6 +44,7 @@ from haproxy_mgmt.cli import (
     cert_request_helper,
     cert_scep_helper,
     cert_target_helper,
+    changes_publish,
     cluster_settings_publish,
     deploy,
     managed_network_publish,
@@ -796,6 +797,65 @@ def _requested_by(payload: Mapping[str, Any]) -> str | None:
         raise BadPayload(f"requested_by {exc}") from exc
 
 
+def _objects(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    """`objects` and the object bookkeeping beside it, checked: one object's or a package's."""
+
+    #
+    # A mapping of name to document, where `None` asks for a removal. Every
+    # key and every value is checked here rather than trusted to the helper:
+    # this payload was built from a form, and the helper's own refusal would
+    # arrive as a failed job instead of as a page saying what was wrong.
+    #
+    objects = payload.get("objects")
+    if not isinstance(objects, Mapping) or not objects:
+        raise BadPayload("objects must be a non-empty mapping")
+    for name, document in objects.items():
+        if not isinstance(name, str) or not NAME.match(name):
+            raise BadPayload(f"{name!r} is not a usable object name")
+        if document is not None and (not isinstance(document, str) or not document):
+            raise BadPayload(f"the document for {name} must be a non-empty string or null")
+    #
+    # `removed_backends` is bookkeeping like `draft` (B250): the backends a
+    # removed object had, so the listing can tell the nodes still serve it.
+    # Checked because everything in a payload is, and not passed on.
+    #
+    removed = payload.get("removed_backends")
+    if removed is not None:
+        if not isinstance(removed, Mapping) or not removed:
+            raise BadPayload("removed_backends must be a non-empty mapping")
+        for name, backends in removed.items():
+            if not isinstance(name, str) or name not in objects or objects[name] is not None:
+                raise BadPayload(f"removed_backends names {name!r}, which is not removed")
+            if (
+                not isinstance(backends, list)
+                or not backends
+                or not all(
+                    isinstance(item, str) and 0 < len(item) <= MAX_BACKEND_NAME for item in backends
+                )
+            ):
+                raise BadPayload(f"the removed backends of {name} must be a list of names")
+    #
+    # `backend_renames` is bookkeeping too (B253): what this publish renames
+    # and brings into use, which the worker writes to `metric_backend_alias`
+    # once the publish is done - and only then, so a publish that never
+    # happened renames nothing. Checked, and not passed on.
+    #
+    renames = payload.get("backend_renames")
+    if renames is not None:
+        if not isinstance(renames, Mapping) or set(renames) != {"renamed", "introduced"}:
+            raise BadPayload("backend_renames must say what is renamed and what is introduced")
+        renamed, introduced = renames["renamed"], renames["introduced"]
+        if not isinstance(renamed, Mapping) or not all(
+            _backend_name(old) and _backend_name(new) and old != new for old, new in renamed.items()
+        ):
+            raise BadPayload("backend_renames.renamed must map names to other names")
+        if not isinstance(introduced, list) or not all(map(_backend_name, introduced)):
+            raise BadPayload("backend_renames.introduced must be a list of names")
+        if not renamed and not introduced:
+            raise BadPayload("backend_renames must not be empty")
+    return objects
+
+
 def _change(payload: Mapping[str, Any]) -> None:
     """`change`: which saved document a publish came from (B257), as `draft` for an object.
 
@@ -1189,64 +1249,10 @@ def prepare(
                 raise BadPayload("the draft id must be a non-empty string")
             if not isinstance(draft.get("revision"), int) or isinstance(draft["revision"], bool):
                 raise BadPayload("the draft revision must be a whole number")
-        objects = payload.get("objects")
+        objects = _objects(payload)
         expected_head = payload.get("expected_head")
         comment = payload.get("comment")
         override = payload.get("allow_certificate_mismatch", False)
-        #
-        # A mapping of name to document, where `None` asks for a removal. Every
-        # key and every value is checked here rather than trusted to the helper:
-        # this payload was built from a form, and the helper's own refusal would
-        # arrive as a failed job instead of as a page saying what was wrong.
-        #
-        if not isinstance(objects, Mapping) or not objects:
-            raise BadPayload("objects must be a non-empty mapping")
-        for name, document in objects.items():
-            if not isinstance(name, str) or not NAME.match(name):
-                raise BadPayload(f"{name!r} is not a usable object name")
-            if document is not None and (not isinstance(document, str) or not document):
-                raise BadPayload(f"the document for {name} must be a non-empty string or null")
-        #
-        # `removed_backends` is bookkeeping like `draft` (B250): the backends a
-        # removed object had, so the listing can tell the nodes still serve it.
-        # Checked because everything in a payload is, and not passed on.
-        #
-        removed = payload.get("removed_backends")
-        if removed is not None:
-            if not isinstance(removed, Mapping) or not removed:
-                raise BadPayload("removed_backends must be a non-empty mapping")
-            for name, backends in removed.items():
-                if not isinstance(name, str) or name not in objects or objects[name] is not None:
-                    raise BadPayload(f"removed_backends names {name!r}, which is not removed")
-                if (
-                    not isinstance(backends, list)
-                    or not backends
-                    or not all(
-                        isinstance(item, str) and 0 < len(item) <= MAX_BACKEND_NAME
-                        for item in backends
-                    )
-                ):
-                    raise BadPayload(f"the removed backends of {name} must be a list of names")
-        #
-        # `backend_renames` is bookkeeping too (B253): what this publish renames
-        # and brings into use, which the worker writes to `metric_backend_alias`
-        # once the publish is done - and only then, so a publish that never
-        # happened renames nothing. Checked, and not passed on.
-        #
-        renames = payload.get("backend_renames")
-        if renames is not None:
-            if not isinstance(renames, Mapping) or set(renames) != {"renamed", "introduced"}:
-                raise BadPayload("backend_renames must say what is renamed and what is introduced")
-            renamed, introduced = renames["renamed"], renames["introduced"]
-            if not isinstance(renamed, Mapping) or not all(
-                _backend_name(old) and _backend_name(new) and old != new
-                for old, new in renamed.items()
-            ):
-                raise BadPayload("backend_renames.renamed must map names to other names")
-            if not isinstance(introduced, list) or not all(map(_backend_name, introduced)):
-                raise BadPayload("backend_renames.introduced must be a list of names")
-            if not renamed and not introduced:
-                raise BadPayload("backend_renames must not be empty")
         if not isinstance(expected_head, str) or not expected_head:
             raise BadPayload("expected_head must be a commit id")
         if not isinstance(comment, str) or not comment:
@@ -1270,6 +1276,71 @@ def prepare(
                 objects=objects,
                 expected_head=expected_head,
                 comment=comment,
+                allow_certificate_mismatch=override,
+                requested_by=_requested_by(payload),
+            ),
+        )
+
+    if operation == "changes_publish":
+        _only(
+            payload,
+            "objects",
+            "network",
+            "settings",
+            "expected_head",
+            "comment",
+            "allow_certificate_mismatch",
+            "requested_by",
+            "drafts",
+            "changes",
+            "removed_backends",
+            "backend_renames",
+        )
+        #
+        # `drafts` and `changes` are the interface's bookkeeping (B257): which
+        # saved rows this publish carries, so each can be recognised as
+        # published afterwards. Checked, and never passed on.
+        #
+        for key in ("drafts", "changes"):
+            listed = payload.get(key)
+            if listed is None:
+                continue
+            if not isinstance(listed, list) or not listed:
+                raise BadPayload(f"{key} must be a non-empty list")
+            for entry in listed:
+                if not isinstance(entry, Mapping) or set(entry) != {"id", "revision"}:
+                    raise BadPayload(f"each of {key} must name an id and a revision")
+                if not isinstance(entry["id"], str) or not entry["id"]:
+                    raise BadPayload(f"an id in {key} must be a non-empty string")
+                if not isinstance(entry["revision"], int) or isinstance(entry["revision"], bool):
+                    raise BadPayload(f"a revision in {key} must be a whole number")
+        carried = _objects(payload) if "objects" in payload else None
+        network = payload.get("network")
+        settings = payload.get("settings")
+        for key, document in (("network", network), ("settings", settings)):
+            if key in payload and (not isinstance(document, str) or not document):
+                raise BadPayload(f"{key} must be a non-empty document")
+        if carried is None and network is None and settings is None:
+            raise BadPayload("a publish carries objects, a network or settings")
+        expected_head = payload.get("expected_head")
+        comment = payload.get("comment")
+        override = payload.get("allow_certificate_mismatch", False)
+        if not isinstance(expected_head, str) or not expected_head:
+            raise BadPayload("expected_head must be a commit id")
+        if not isinstance(comment, str) or not comment:
+            raise BadPayload("comment must be a non-empty string")
+        if not isinstance(override, bool):
+            raise BadPayload("allow_certificate_mismatch must be true or false")
+        return Prepared(
+            argv=(changes_publish.SUDO, *SUDO_FLAGS, changes_publish.HELPER),
+            request=changes_publish.build_request(
+                cluster,
+                str(request_id),
+                expected_head=expected_head,
+                comment=comment,
+                objects=carried,
+                network=network,
+                settings=settings,
                 allow_certificate_mismatch=override,
                 requested_by=_requested_by(payload),
             ),

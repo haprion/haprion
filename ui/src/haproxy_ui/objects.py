@@ -482,6 +482,13 @@ def stored_only(
     )
 
 
+#
+# The publishes whose payload names objects under `objects`: one object's, and
+# the saved changes published together (B257).
+#
+OBJECT_PUBLISHES = frozenset({"objects_publish", "changes_publish"})
+
+
 def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
     """Objects with a publish job that has not finished.
 
@@ -497,7 +504,7 @@ def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
 
     waiting: set[str] = set()
     for job in jobs:
-        if job.operation != "objects_publish" or job.state not in {"pending", "running"}:
+        if job.operation not in OBJECT_PUBLISHES or job.state not in {"pending", "running"}:
             continue
         named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
         if isinstance(named, Mapping):
@@ -533,7 +540,7 @@ def carried_since_deploy(jobs: Iterable[Job]) -> frozenset[str]:
             # publish older than it has already reached the nodes.
             #
             break
-        if job.operation != "objects_publish" or job.state != "done":
+        if job.operation not in OBJECT_PUBLISHES or job.state != "done":
             continue
         named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
         if isinstance(named, Mapping):
@@ -582,7 +589,7 @@ def publish_failures(jobs: Iterable[Job]) -> dict[str, str]:
     failures: dict[str, str] = {}
     settled: set[str] = set()
     for job in jobs:
-        if job.operation != "objects_publish" or job.state in {"pending", "running"}:
+        if job.operation not in OBJECT_PUBLISHES or job.state in {"pending", "running"}:
             continue
         named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
         if not isinstance(named, Mapping):
@@ -705,7 +712,7 @@ def removed_names(jobs: Iterable[Job]) -> tuple[str, ...]:
 
     names: list[str] = []
     for job in jobs:
-        if job.operation != "objects_publish" or job.state != "done":
+        if job.operation not in OBJECT_PUBLISHES or job.state != "done":
             continue
         payload = job.payload if isinstance(job.payload, Mapping) else {}
         asked = payload.get("objects")
@@ -728,7 +735,7 @@ def removed_backends(jobs: Iterable[Job]) -> dict[str, tuple[str, ...]]:
 
     found: dict[str, tuple[str, ...]] = {}
     for job in jobs:
-        if job.operation != "objects_publish" or job.state != "done":
+        if job.operation not in OBJECT_PUBLISHES or job.state != "done":
             continue
         payload = job.payload if isinstance(job.payload, Mapping) else {}
         written = payload.get("removed_backends")

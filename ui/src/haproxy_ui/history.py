@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_mgmt.cli.changes_publish import MESSAGE as CHANGES_MESSAGE
 from haproxy_mgmt.cli.cluster_settings_publish import MESSAGE as SETTINGS_MESSAGE
 from haproxy_mgmt.cli.managed_network_publish import MESSAGE as NETWORK_MESSAGE
 from haproxy_mgmt.cli.managed_objects_publish import MESSAGE as OBJECTS_MESSAGE
@@ -162,7 +163,8 @@ def _version_view(value: Any, published_hash: str | None, rank: int) -> VersionV
 # so a renamed prefix cannot quietly start showing again.
 #
 PUBLISH_PREFIXES = tuple(
-    f"{message}: " for message in (OBJECTS_MESSAGE, NETWORK_MESSAGE, SETTINGS_MESSAGE)
+    f"{message}: "
+    for message in (OBJECTS_MESSAGE, NETWORK_MESSAGE, SETTINGS_MESSAGE, CHANGES_MESSAGE)
 )
 
 

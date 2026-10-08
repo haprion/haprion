@@ -16,7 +16,7 @@
 </section>
 
 <div class="refusal-card">
-  <p class="refusal-message"><span class="status-orb status-critical" aria-hidden="true"></span>This publishes a removal: the object and the configuration generated from it leave the cluster's repository as one version.</p>
+  <p class="refusal-message"><span class="status-orb status-critical" aria-hidden="true"></span>This saves a removal. It goes out with the next publish from Versions: the object and the configuration generated from it leave the cluster's repository in that version.</p>
   <ul class="removal-consequences">
     <li>The hostnames it answered for stop being served once the nodes are deployed.</li>
     <li><strong>Deploy is a separate step.</strong> Until it runs, the nodes keep serving the release they have.</li>
@@ -25,7 +25,7 @@
   {% if hostnames %}<p class="refusal-hint">It answers for {{ hostnames | join(', ') }}.</p>{% endif %}
   <form method="post" action="/proxies/{{ cluster }}/{{ name }}/remove" class="editor-actions editor-submit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="form-buttons"><a class="secondary-button" href="/proxies/{{ cluster }}/{{ name }}">Keep it</a><button type="submit" class="danger-button">Publish the removal</button></div>
+    <div class="form-buttons"><a class="secondary-button" href="/proxies/{{ cluster }}/{{ name }}">Keep it</a><button type="submit" class="danger-button">Save the removal</button></div>
   </form>
 </div>
 {% endblock %}

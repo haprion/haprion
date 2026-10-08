@@ -509,19 +509,19 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         self.assertIn('form="deploy-', card)
         self.assertIn("Deploy before writing another change", card)
-        self.assertNotIn("Save and publish", card)
+        self.assertNotIn('name="network_action" value="save"', card)
 
     def test_the_owed_deploy_is_bound_to_the_version_the_page_shows(self) -> None:
         card = self.owed_page().text.split("service-demo", 1)[0]
 
         self.assertIn('name="expected_version" value="24"', card)
 
-    def test_a_cluster_with_nothing_owed_keeps_its_publish_button(self) -> None:
+    def test_a_cluster_with_nothing_owed_keeps_its_save_button(self) -> None:
         """And the swap is only ever one of the two, never both at once."""
 
         card = self.editable_page().text.split("service-demo", 1)[0]
 
-        self.assertIn("Save and publish", card)
+        self.assertIn('name="network_action" value="save"', card)
         self.assertNotIn('form="deploy-', card)
 
     def test_the_editor_is_the_tables_as_fields_rather_than_a_document_to_write(self) -> None:

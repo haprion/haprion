@@ -108,6 +108,7 @@ _OPERATION_OUTCOMES = {
     "network_publish": frozenset({"done", "failed", "blocked"}),
     "cluster_settings_publish": frozenset({"done", "failed", "blocked"}),
     "objects_publish": frozenset({"done", "failed", "blocked"}),
+    "changes_publish": frozenset({"done", "failed", "blocked"}),
     #
     # `cert_publish` and `cert_target` can end `partial`, and the reason is one
     # real registry entry rather than a theory: a certificate whose source is an
@@ -342,7 +343,7 @@ def _finish(
     renames = job.payload.get("backend_renames")
     if (
         state == "done"
-        and job.operation == "objects_publish"
+        and job.operation in ("objects_publish", "changes_publish")
         and job.cluster is not None
         and isinstance(renames, dict)
     ):

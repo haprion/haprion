@@ -847,12 +847,12 @@ class AMovedServerName(DraftReading):
         notice = notice.split("</div>", 1)[0]
         self.assertIn("now resolves to 192.0.2.54", notice)
         self.assertIn('action="/proxies/edge-demo/public-web/lookup"', notice)
-        self.assertIn(">Publish again</button>", notice)
+        self.assertIn(">Look up again</button>", notice)
 
     def test_without_management_writes_only_the_warning_is_shown(self) -> None:
         text = self.page()
         self.assertIn("now resolves to 192.0.2.54", text)
-        self.assertNotIn("Publish again", text)
+        self.assertNotIn("Look up again", text)
 
 
 class ASyslogObjectsCard(DraftReading):

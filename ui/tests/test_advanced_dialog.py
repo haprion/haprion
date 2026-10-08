@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import yaml
 
-from haproxy_ui import advanced_dialog, db
+from haproxy_ui import advanced_dialog
 from haproxy_ui import editor as editor_module
 from haproxy_ui.db import ProxyDraft
 from tests.test_editor_page import COMMIT, OBSERVED, SHOP, EditorTestCase
@@ -308,8 +308,8 @@ class OneRuleForAPoolWrittenByHand(unittest.TestCase):
                 self.assertEqual(form_from_document(document)["handwritten_pool"], expected)
 
 
-class PublishingFromTheDialog(AdvancedRouteTestCase):
-    """Save and publish, as the editor's button does it (2026-10-01)."""
+class TheDialogSavesAndNeverPublishes(AdvancedRouteTestCase):
+    """B257: the dialog saves; Versions publishes what is saved, together."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -327,46 +327,28 @@ class PublishingFromTheDialog(AdvancedRouteTestCase):
 
         answer = self.post(
             self.editor(),
-            action="publish",
+            action="save",
             advanced="retries 5\n",
             object_fingerprint=editor_module.fingerprint(SHOP.replace("8080", "9090")),
         )
 
         self.assertIn("was changed by a publish after this page was opened", answer.text)
-        self.assertEqual(self.saved, [])
+        self.assertEqual((self.saved, self.queued), ([], []))
+
+    def test_a_save_queues_nothing(self) -> None:
+        answer = self.post(self.editor(), action="save", advanced="retries 5\n")
+
+        self.assertIn("<strong>Saved.</strong>", answer.text)
+        self.assertEqual(len(self.saved), 1)
         self.assertEqual(self.queued, [])
 
-    def test_the_draft_is_saved_and_the_same_publish_is_queued(self) -> None:
+    def test_a_publish_asked_of_the_dialog_is_no_action(self) -> None:
         answer = self.post(self.editor(), action="publish", advanced="retries 5\n")
 
-        self.assertIn("Saved and sent to publish", answer.text)
-        self.assertIn('data-advanced-saved="/proxies?published=shop"', answer.text)
-        self.assertEqual(len(self.saved), 1)
-        job = self.queued[0]
-        self.assertEqual(job["operation"], "objects_publish")
-        self.assertEqual(job["cluster"], "alpha")
-        self.assertEqual(job["payload"]["objects"], {"shop": self.saved[0]["yaml"]})
-        self.assertEqual(job["payload"]["expected_head"], COMMIT)
-        self.assertEqual(job["payload"]["comment"], "Publish shop")
-
-    def test_a_refused_text_is_neither_saved_nor_published(self) -> None:
-        self.post(self.editor(), action="publish", advanced="use_backend other\n")
-
+        self.assertEqual(answer.status_code, 400)
         self.assertEqual((self.saved, self.queued), ([], []))
 
-    def test_what_is_already_stored_is_not_published(self) -> None:
-        answer = self.post(self.editor(), action="publish", advanced="")
+    def test_a_refused_text_is_not_saved(self) -> None:
+        self.post(self.editor(), action="save", advanced="use_backend other\n")
 
-        self.assertIn("Nothing to publish", answer.text)
-        self.assertEqual((self.saved, self.queued), ([], []))
-
-    def test_a_busy_cluster_leaves_the_draft_saved_and_says_so(self) -> None:
-        def busy(_c: object, **_values: Any) -> Any:
-            raise db.ClusterBusy("busy")
-
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=busy):
-            answer = self.post(self.editor(), action="publish", advanced="retries 5\n")
-
-        self.assertEqual(len(self.saved), 1)
-        self.assertIn("already running a job", answer.text)
-        self.assertIn("<strong>Saved.</strong>", answer.text)
+        self.assertEqual(self.saved, [])

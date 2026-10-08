@@ -73,7 +73,14 @@ REPEATABLE = frozenset({"deploy", "cert_deploy"})
 # Operations that record a version bound to the request that asked for it.
 #
 RECORDED = frozenset(
-    {"publish", "revert", "network_publish", "cluster_settings_publish", "objects_publish"}
+    {
+        "publish",
+        "revert",
+        "network_publish",
+        "cluster_settings_publish",
+        "objects_publish",
+        "changes_publish",
+    }
 )
 
 type Verdict = Literal["requeue", "abandon", "wait"]

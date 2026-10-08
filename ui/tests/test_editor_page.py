@@ -900,256 +900,34 @@ class WhereASaveLands(EditorTestCase):
         self.assertNotIn("<strong>Valid", answer.text)
 
 
-class SaveAndPublish(EditorTestCase):
-    """One button, two acts, and the second one is a job.
-
-    They are one button because saving and then publishing separately was three
-    screens for one change. They stay two acts underneath, and the order matters:
-    a publish that is refused has to leave the work saved rather than lost.
-    """
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.queued: list[dict[str, Any]] = []
-        patch = mock.patch("haproxy_ui.db.queue_job", side_effect=self._queue)
-        patch.start()
-        self.addCleanup(patch.stop)
-
-    def _queue(self, _c: object, **values: Any) -> Any:
-        self.queued.append(values)
-        return SimpleNamespace(id=1, request_id=uuid4())
-
-    def test_a_renamed_pool_travels_with_the_publish(self) -> None:
-        """B250: the card under the new name keeps the old one's history.
-
-        Carried by the job for the worker to write once the publish is done
-        (B253), never written by the interface when it queues.
-        """
-
-        self.publish(backend="shop-front")
-
-        self.assertEqual(self.backend_renames, [])
-        self.assertEqual(
-            self.queued[-1]["payload"]["backend_renames"],
-            {
-                "renamed": {"web": "shop-front", "mgd-shop-web": "shop-front"},
-                "introduced": ["shop-front"],
-            },
-        )
-
-    def test_an_empty_pool_name_is_the_objects(self) -> None:
-        self.publish(backend="")
-
-        self.assertIn("  shop:\n", self.queued[-1]["payload"]["objects"]["shop"])
-
-    def publish(self, **fields: Any) -> Any:
-        #
-        # With a change in it. The fixture's stored object never moves, so a
-        # form submitted as opened is identical to what is stored - and that
-        # is exactly what the editor now refuses to publish.
-        #
-        client = self.editor()
-        fields.setdefault("servers", "192.0.2.11:8080")
-        return self.submit(client, "/proxies/alpha/shop/edit", action="publish", **fields)
-
-    def test_an_identical_document_is_not_published(self) -> None:
-        """A publish is a version, and a version says what changed.
-
-        The helper would take it and answer with a verified no-op - its own
-        contract, kept for the repair of an interrupted run. From the editor
-        the same request was the way a cluster-level change got pushed out on
-        the back of an object that had not moved, with a history row naming
-        an object nobody had touched.
-        """
-
-        client = self.editor()
-        answer = self.submit(client, "/proxies/alpha/shop/edit", action="publish")
-
-        self.assertEqual(answer.status_code, 400)
-        self.assertIn("Nothing to publish", answer.text)
-        self.assertIn("identical to what is already stored", answer.text)
-        self.assertEqual(self.saved, [])
-        self.assertEqual(self.queued, [])
-
-    def moved(self) -> Any:
-        """The status saying pool `web` of `shop` was published under a name that has moved."""
-
-        from haproxy_mgmt import status_collect
-
-        from haproxy_ui.db import ClusterStatus
-
-        objects = replace(
-            OBJECTS,
-            result={
-                **OBJECTS.result,
-                "objects": [{**OBJECTS.result["objects"][0], "runtime_backends": ["web"]}],
-            },
-        )
-        name = status_collect.PublishedName(
-            pool="web", host="ns1.example.com", address="192.0.2.53"
-        )
-        row = ClusterStatus(
-            cluster="alpha",
-            observed_at=OBSERVED,
-            outcome="done",
-            result={"nodes": []},
-            warnings=[
-                {
-                    "code": status_collect.DNS_SERVER_MOVED,
-                    "message": status_collect.moved_message(name, "now resolves to 192.0.2.54"),
-                }
-            ],
-            error=None,
-            poll_error=None,
-        )
-        return (
-            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[row]),
-        )
-
-    def test_an_identical_document_is_published_when_a_server_name_moved(self) -> None:
-        """B253: the document is the same, the configuration generated from it is not."""
-
-        objects, statuses = self.moved()
-        with objects, statuses:
-            client = self.editor()
-            answer = self.submit(client, "/proxies/alpha/shop/edit", action="publish")
-
-        self.assertEqual(answer.status_code, 303)
-        self.assertEqual(len(self.queued), 1)
-        self.assertEqual(self.queued[0]["payload"]["comment"], "Look up the servers of shop again")
-
-    def test_publish_again_publishes_the_stored_object(self) -> None:
-        objects, statuses = self.moved()
-        with objects, statuses:
-            client = self.editor()
-            answer = client.post(
-                "/proxies/alpha/shop/lookup",
-                data={"csrf_token": self.token(client)},
-                follow_redirects=False,
-            )
-
-        self.assertEqual(answer.status_code, 303)
-        self.assertEqual(self.queued[0]["payload"]["objects"]["shop"].strip(), SHOP.strip())
-        self.assertEqual(self.queued[0]["payload"]["comment"], "Look up the servers of shop again")
-
-    def test_publish_again_without_a_moved_name_is_still_refused(self) -> None:
-        client = self.editor()
-        answer = client.post(
-            "/proxies/alpha/shop/lookup",
-            data={"csrf_token": self.token(client)},
-            follow_redirects=False,
-        )
-
-        self.assertEqual(answer.status_code, 400)
-        self.assertIn("Nothing to publish", answer.text)
-        self.assertEqual(self.queued, [])
+class NoPublishHere(EditorTestCase):
+    """B257: the editor saves; Versions publishes what is saved, together."""
 
     def test_an_identical_document_may_still_be_saved(self) -> None:
-        """The refusal is about publishing. Saving is the person's own business."""
-
         client = self.editor()
         answer = self.submit(client, "/proxies/alpha/shop/edit", action="save")
 
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(len(self.saved), 1)
 
-    def test_it_saves_the_draft_and_queues_the_publish(self) -> None:
-        answer = self.publish()
-
-        self.assertEqual(answer.status_code, 303)
-        self.assertEqual(answer.headers["location"], "/proxies?published=shop")
-        self.assertEqual(len(self.saved), 1)
-        self.assertEqual(len(self.queued), 1)
-        self.assertEqual(self.queued[0]["operation"], "objects_publish")
-        self.assertEqual(self.queued[0]["cluster"], "alpha")
-
-    def test_a_busy_cluster_says_the_draft_was_saved(self) -> None:
-        """Review 2026-09-28 F05: the heading said nothing was written."""
-
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.ClusterBusy("alpha")):
-            answer = self.publish()
+    def test_a_publish_asked_of_the_editor_writes_nothing(self) -> None:
+        with mock.patch("haproxy_ui.db.queue_job") as queue:
+            answer = self.submit(
+                self.editor(),
+                "/proxies/alpha/shop/edit",
+                action="publish",
+                servers="192.0.2.11:8080",
+            )
 
         self.assertEqual(answer.status_code, 400)
-        self.assertEqual(len(self.saved), 1)
-        self.assertIn("<h1>Saved, not published</h1>", answer.text)
-        self.assertNotIn("Nothing was written", answer.text)
-
-    def test_the_object_is_published_under_its_own_name(self) -> None:
-        self.publish()
-        payload = self.queued[0]["payload"]
-
-        self.assertEqual(list(payload["objects"]), ["shop"])
-        self.assertIn("name: shop", payload["objects"]["shop"])
-        self.assertIn("192.0.2.11", payload["objects"]["shop"])
-        self.assertTrue(payload["comment"])
-
-    def test_a_rename_publishes_the_new_name_and_the_removal_together(self) -> None:
-        """Sent apart, the first half is a cluster with two objects on one hostname.
-
-        `_refuse_shared_hostnames` would refuse that, and removing the old one
-        first would take the site down until the new one was published. One
-        publish means `haproxy -c` validates the state afterwards and never the
-        moment in between.
-        """
-
-        client = self.editor()
-        self.submit(client, "/proxies/alpha/shop/edit", action="publish", name="bazaar")
-        payload = self.queued[0]["payload"]
-
-        self.assertEqual(sorted(payload["objects"]), ["bazaar", "shop"])
-        self.assertIsNone(payload["objects"]["shop"])
-        self.assertIn("name: bazaar", payload["objects"]["bazaar"])
-        self.assertEqual(payload["comment"], "Rename shop to bazaar")
-
-    def test_the_same_publish_asked_for_twice_carries_one_key(self) -> None:
-        """A double-click is the same request, not a second publish."""
-
-        first = self.publish()
-        keys = {self.queued[0]["idempotency_key"]}
-        self.publish()
-        keys.add(self.queued[1]["idempotency_key"])
-
-        self.assertEqual(first.status_code, 303)
-        self.assertEqual(len(keys), 1)
-
-    def test_publishing_a_change_and_changing_it_back_asks_twice(self) -> None:
-        """The key was the draft revision, and a cleared draft starts at 1 again.
-
-        So publishing an object, changing it, and changing it back asked twice
-        under one key with two different documents. The queue refused the third
-        - correctly - and told somebody their publish had already been asked for
-        with different content, while they looked at a form that said otherwise.
-        """
-
-        client = self.editor()
-        changed = {"servers": "192.0.2.11:8080"}
-        self.submit(client, "/proxies/alpha/shop/edit", action="publish", **changed)
-        self.submit(
-            client,
-            "/proxies/alpha/shop/edit",
-            action="publish",
-            hostnames="other.example.com",
-            **changed,
-        )
-        self.submit(client, "/proxies/alpha/shop/edit", action="publish", **changed)
-
-        keys = [entry["idempotency_key"] for entry in self.queued]
-        self.assertEqual(len(keys), 3)
-        #
-        # The first and the third are the same document and so the same
-        # request; the middle one is a different document and its own.
-        #
-        self.assertEqual(keys[0], keys[2])
-        self.assertNotEqual(keys[0], keys[1])
-
-    def test_an_object_the_model_refuses_is_never_published(self) -> None:
-        client = self.editor()
-        answer = self.submit(client, "/proxies/alpha/shop/edit", action="publish", servers="")
-
-        self.assertEqual(answer.status_code, 200)
-        self.assertEqual(self.queued, [])
         self.assertEqual(self.saved, [])
+        queue.assert_not_called()
+
+    def test_the_page_has_no_publish_button(self) -> None:
+        page = self.editor().get("/proxies/alpha/shop/edit").text
+
+        self.assertNotIn('value="publish"', page)
+        self.assertIn('name="action" value="save" class="primary-button">Save</button>', page)
 
 
 LATER = "b" * 40
@@ -1171,11 +949,11 @@ def objects_at(commit: str, **documents: str) -> ClusterObjects:
     )
 
 
-class WhatThePageShowed(SaveAndPublish):
+class WhatThePageShowed(EditorTestCase):
     """A tab opened before somebody else's publish must not write it away (CR-01).
 
     The scenario the review reproduced: no draft, B publishes port 9090, A's
-    tab - opened on 8080 - changes only the address and presses publish.
+    tab - opened on 8080 - changes only the address and presses save.
     """
 
     def opened(self, client: Any) -> str:
@@ -1197,7 +975,7 @@ class WhatThePageShowed(SaveAndPublish):
             answer = self.submit(
                 client,
                 "/proxies/alpha/shop/edit",
-                action="publish",
+                action="save",
                 servers="192.0.2.11:8080",
                 object_fingerprint=shown,
             )
@@ -1205,7 +983,6 @@ class WhatThePageShowed(SaveAndPublish):
         self.assertEqual(answer.status_code, 200)
         self.assertIn("was changed by a publish after this page was opened", answer.text)
         self.assertEqual(self.saved, [])
-        self.assertEqual(self.queued, [])
         # The person's edit is still on the form.
         self.assertIn("192.0.2.11:8080", answer.text)
         # And the page now carries the object as it is, so saving again is a choice.
@@ -1252,14 +1029,13 @@ class WhatThePageShowed(SaveAndPublish):
             answer = self.submit(
                 client,
                 "/proxies/alpha/shop/edit",
-                action="publish",
+                action="save",
                 servers="192.0.2.11:8080",
                 object_fingerprint=shown,
             )
 
         self.assertEqual(answer.status_code, 303)
-        self.assertEqual(len(self.queued), 1)
-        self.assertEqual(self.queued[0]["payload"]["expected_head"], LATER)
+        self.assertEqual(self.saved[0]["base_hash"], LATER)
 
     def test_an_object_removed_meanwhile_is_not_written_back(self) -> None:
         client = self.editor()
@@ -1268,13 +1044,12 @@ class WhatThePageShowed(SaveAndPublish):
             self.submit(
                 client,
                 "/proxies/alpha/shop/edit",
-                action="publish",
+                action="save",
                 servers="192.0.2.11:8080",
                 object_fingerprint=shown,
             )
 
         self.assertEqual(self.saved, [])
-        self.assertEqual(self.queued, [])
 
 
 DRAFT_ID = uuid4()
@@ -1634,7 +1409,7 @@ class RemovingAnObject(EditorTestCase):
         page = self.editor().get("/proxies/alpha/shop/remove")
 
         self.assertEqual(page.status_code, 200)
-        self.assertIn("Publish the removal", page.text)
+        self.assertIn("Save the removal", page.text)
         self.assertIn("Deploy is a separate step", page.text)
         self.assertEqual(self.queued, [])
         self.assertEqual(self.saved, [])
@@ -1642,10 +1417,12 @@ class RemovingAnObject(EditorTestCase):
     def test_an_object_that_is_not_there_is_a_refusal_and_not_a_form(self) -> None:
         page = self.editor().get("/proxies/alpha/nothing-here/remove")
 
-        self.assertNotIn("Publish the removal", page.text)
+        self.assertNotIn("Save the removal", page.text)
         self.assertIn("no object of that name", page.text)
 
-    def test_confirming_publishes_a_null_document_for_that_object(self) -> None:
+    def test_confirming_saves_the_removal_and_queues_nothing(self) -> None:
+        """B257: the removal goes out with the next publish from Versions."""
+
         client = self.editor()
 
         answer = client.post(
@@ -1655,17 +1432,10 @@ class RemovingAnObject(EditorTestCase):
         )
 
         self.assertEqual(answer.status_code, 303)
-        self.assertEqual(answer.headers["location"], "/proxies?published=shop")
-        self.assertEqual(len(self.queued), 1)
-        payload = self.queued[0]["payload"]
-        #
-        # `null` is what asks the helper to remove it. The draft carries the
-        # stored text so the row says what is going, and the publish never
-        # sends that text.
-        #
-        self.assertEqual(payload["objects"], {"shop": None})
-        self.assertEqual(payload["comment"], "Remove shop")
-        self.assertIn("draft", payload)
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/shop?saved=1")
+        self.assertEqual(self.queued, [])
+        (change,) = self.changes
+        self.assertTrue(change["deleted"])
 
     def test_the_draft_it_writes_says_the_object_should_go(self) -> None:
         client = self.editor()
@@ -1850,21 +1620,24 @@ class SavedChangesAndDrafts(EditorTestCase):
         self.submit(client, "/proxies/alpha/shop/edit", action="save", name="bazaar")
         self.assertEqual(self.changes[0]["replaces"], "shop")
 
+        #
+        # And a later save from the new name keeps it, so the publish that
+        # eventually carries the row removes the old name (see the package
+        # tests for that publish).
+        #
         self.draft = self.row(
             "saved", 1, object_id="bazaar", yaml=SHOP.replace("shop", "bazaar"), replaces="shop"
         )
         self.submit(
             client,
             "/proxies/alpha/bazaar/edit",
-            action="publish",
+            action="save",
             name="bazaar",
             saved_revision="1",
             servers="192.0.2.11:8080",
         )
 
-        payload = self.queued[-1]["payload"]
-        self.assertEqual(sorted(payload["objects"]), ["bazaar", "shop"])
-        self.assertIsNone(payload["objects"]["shop"])
+        self.assertEqual(self.changes[-1]["replaces"], "shop")
 
     def test_renamed_back_it_replaces_nothing(self) -> None:
         self.draft = self.row(

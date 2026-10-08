@@ -23,7 +23,7 @@
   worked and a page somebody merely opened would otherwise look identical -
   which is the moment they press save again.
 #}
-{% for message in dns_moved %}<div class="preview-notice form-problem notice-with-action"><span>{{ message }}</span>{% if loop.first and role == 'admin' and management_writes %}<form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/lookup"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button">Publish again</button></form>{% endif %}</div>{% endfor %}
+{% for message in dns_moved %}<div class="preview-notice form-problem notice-with-action"><span>{{ message }}</span>{% if loop.first and role == 'admin' and management_writes %}<form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/lookup"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button">Look up again</button></form>{% endif %}</div>{% endfor %}
 {% if saved %}
 <p class="preview-notice"><strong>Saved.</strong> It goes out with the next publish.</p>
 {% elif discarded %}
@@ -168,8 +168,7 @@
     <div class="form-actions">
       <button type="button" class="secondary-button" data-advanced-close>Close</button>
       <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
-      <button type="submit" name="action" value="save" class="secondary-button">Save</button>
-      <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
+      <button type="submit" name="action" value="save" class="primary-button">Save</button>
     </div>
     <div data-advanced-answer></div>
   </form>

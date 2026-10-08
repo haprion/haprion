@@ -1619,6 +1619,26 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * without pretending they are separate objects: they are three parts of one
  * file, published and reverted together.
  */
+/*
+ * Versions' pending changes (B257): the list, then one row with the comment
+ * and the button that publishes it. The comment takes the room; the button
+ * keeps its own width beside it and drops under it on a narrow screen.
+ */
+.pending-changes .pending-table { margin: 0 20px; width: calc(100% - 40px); }
+/*
+ * Its own widths rather than `.node-table`'s, which are a node list's: the
+ * third column there is 120px, and a saved-by name ran over the time beside
+ * it. A long name wraps inside its cell instead of into the next.
+ */
+.pending-table th:nth-child(1), .pending-table td:nth-child(1) { width: 34%; }
+.pending-table th:nth-child(2), .pending-table td:nth-child(2) { width: 26%; }
+.pending-table th:nth-child(3), .pending-table td:nth-child(3) { width: 24%; }
+.pending-table th:nth-child(4), .pending-table td:nth-child(4) { width: 16%; }
+.pending-table td { overflow-wrap: anywhere; }
+.pending-stale td { background: var(--critical-soft); }
+.pending-publish { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 12px 20px 18px; }
+.pending-changes > .form-problem { margin: 12px 20px 18px; }
+@media (max-width: 720px) { .pending-publish { grid-template-columns: 1fr; } }
 .network-subhead {
   margin: 0; padding: 16px 20px 6px; color: var(--muted); font-size: 11px; font-weight: 700;
   letter-spacing: 0.055em; text-transform: uppercase;

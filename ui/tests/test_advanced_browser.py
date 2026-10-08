@@ -155,24 +155,12 @@ class TheDialogInABrowser(DraftReading):
         labels = page.eval_on_selector_all(
             "[data-advanced-form] .form-actions button", "buttons => buttons.map(b => b.innerText)"
         )
-        self.assertEqual(labels, ["Close", "Validate the object", "Save", "Save and publish"])
+        self.assertEqual(labels, ["Close", "Validate the object", "Save"])
         page.click("[data-advanced-close]")
         self.assertFalse(page.is_visible("[data-advanced-dialog]"))
 
-    def test_save_and_publish_lands_on_the_listing_as_the_editor_does(self) -> None:
-        page = self.open_page()
-        page.fill(
-            "textarea[name=advanced]",
-            "balance leastconn\nserver app1 192.0.2.30:8080 check\nretries 5\n",
-        )
-
-        page.click("[data-advanced-form] button[value=publish]")
-        page.wait_for_url("**/proxies?published=public-web")
-
-        self.assertEqual([job["operation"] for job in self.queued], ["objects_publish"])
-
     def test_a_lost_answer_after_the_save_does_not_say_nothing_was_saved(self) -> None:
-        """CR-11: the server saved and queued; only the answer was lost on the way back."""
+        """CR-11: the server saved; only the answer was lost on the way back."""
 
         page = self.open_page()
         text = "balance leastconn\nserver app1 192.0.2.30:8080 check\nretries 5\n"
@@ -183,12 +171,12 @@ class TheDialogInABrowser(DraftReading):
             route.abort("connectionreset")
 
         page.route("**/advanced", lose_the_answer)
-        page.click("[data-advanced-form] button[value=publish]")
+        page.click("[data-advanced-form] button[value=save]")
         page.wait_for_selector("[data-advanced-answer] .advanced-waiting:has-text('No answer')")
 
         shown = page.inner_text("[data-advanced-answer]")
         self.assertEqual(len(self.saved), 1)
-        self.assertEqual(len(self.queued), 1)
+        self.assertEqual(self.queued, [])
         self.assertNotIn("Nothing was saved", shown)
         self.assertIn("Check the object and Jobs before trying again", shown)
         self.assertEqual(page.input_value("textarea[name=advanced]"), text)

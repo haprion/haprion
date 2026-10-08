@@ -610,6 +610,60 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual([job.payload["change"]["id"] for job in found], [kept])
             connection.rollback()
 
+    def test_a_package_s_publish_is_the_evidence_for_each_row_it_carried(self) -> None:
+        """B257: `drafts` and `changes` lists, read and kept as one object's `draft` is."""
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
+                " '/^profile_evidence() {/,/^}/p;/^draft_evidence() {/,/^}/p;"
+                "/^where_removable() {/,/^}/p'"
+                ' "$0")"; where_removable',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into proxy_draft (cluster, object_id, yaml, base_hash, updated_by, stage) "
+                "values ('alpha', 'shop', 'schema: 1', %s, 'admin', 'saved') returning id",
+                ("a" * 40,),
+            )
+            draft = str(_first(cursor))
+            cursor.execute(
+                "insert into cluster_change (cluster, kind, document, base_hash, updated_by) "
+                "values ('alpha', 'settings', 'metrics: null', %s, 'admin') returning id",
+                ("a" * 40,),
+            )
+            change = str(_first(cursor))
+            named = {}
+            for name, payload in (
+                ("objects", {"drafts": [{"id": draft, "revision": 1}]}),
+                ("settings", {"changes": [{"id": change, "revision": 1}]}),
+                ("gone", {"drafts": [{"id": str(uuid4()), "revision": 1}]}),
+            ):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values ('changes_publish', 'alpha', %(payload)s, "
+                    "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
+                    "returning id",
+                    {"payload": json.dumps(payload), "key": uuid4()},
+                )
+                named[_first(cursor)] = name
+            cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
+            removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
+            self.assertEqual(removable, {"gone"})
+            found = db.draft_publishes(connection, cluster="alpha", draft_ids={draft})
+            self.assertEqual([named[job.id] for job in found], ["objects"])
+            found = db.change_publishes(connection, cluster="alpha", change_ids={change})
+            self.assertEqual([named[job.id] for job in found], ["settings"])
+            connection.rollback()
+
     def test_the_web_reads_a_draft_s_publishes_by_its_id(self) -> None:
         """`draft_publishes` as the web runs it: done publishes of these drafts only (CR-04)."""
 

@@ -502,9 +502,13 @@ def draft_publishes(
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
             "       idempotency_key, attempts "
             "  from job "
-            " where operation = 'objects_publish' and state = 'done' "
-            "   and cluster = %(cluster)s "
-            "   and payload->'draft'->>'id' = any(%(ids)s) "
+            " where state = 'done' and cluster = %(cluster)s "
+            "   and ((operation = 'objects_publish' "
+            "         and payload->'draft'->>'id' = any(%(ids)s)) "
+            "        or (operation = 'changes_publish' "
+            "            and exists (select 1 "
+            "                          from jsonb_array_elements(payload->'drafts') as entry "
+            "                         where entry->>'id' = any(%(ids)s)))) "
             " order by created_at desc, id desc",
             {"cluster": cluster, "ids": sorted(draft_ids)},
         )
@@ -2602,7 +2606,8 @@ def change_publishes(
     """The finished publishes of these saved documents, asked by their ids.
 
     The same evidence `draft_publishes` reads for a proxy object, under the
-    payload's `change`. Retention keeps these rows while their change exists.
+    payload's `change` - or in the `changes` of a publish of saved changes.
+    Retention keeps these rows while their change exists.
     """
 
     if not change_ids:
@@ -2613,9 +2618,13 @@ def change_publishes(
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
             "       idempotency_key, attempts "
             "  from job "
-            " where operation in ('network_publish', 'cluster_settings_publish') "
-            "   and state = 'done' and cluster = %(cluster)s "
-            "   and payload->'change'->>'id' = any(%(ids)s) "
+            " where state = 'done' and cluster = %(cluster)s "
+            "   and ((operation in ('network_publish', 'cluster_settings_publish') "
+            "         and payload->'change'->>'id' = any(%(ids)s)) "
+            "        or (operation = 'changes_publish' "
+            "            and exists (select 1 "
+            "                          from jsonb_array_elements(payload->'changes') as entry "
+            "                         where entry->>'id' = any(%(ids)s)))) "
             " order by created_at desc, id desc",
             {"cluster": cluster, "ids": sorted(change_ids)},
         )

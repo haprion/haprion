@@ -65,7 +65,10 @@ only works with the names used below, that is a bug in the software, not in this
 ## Configuration and deployment
 
 Editing produces a draft; saving it makes a saved change; publishing produces an immutable
-release; deploying brings nodes to that release. A draft is unfinished work and is never
+release; deploying brings nodes to that release. Saved changes are published from *Versions*:
+each cluster lists what is saved there, by whom, and publishes all of it with one comment as
+one version (`changes_publish`, up to 64 objects). A change saved against an older version than
+the newest holds the list until it is saved again. A draft is unfinished work and is never
 published. A saved change goes out with the next publish, and a draft may be started on top of
 one without taking it out. *Save as draft* and *Save* in the editor are the two; the advanced
 config dialog, a WAF exception and *Remove* save directly, and refuse while the object has a
@@ -140,8 +143,8 @@ and the address written into the configuration; a name that gives no address, or
 of one family, refuses the publish - and the editor says so before it is published, by
 asking `haproxy-resolve-helper` over `/run/haproxy-mgmt/resolve.sock` (production only;
 the web service itself reaches nothing past localhost). The address is the one the name had then:
-`haproxy-status` and the object's page say when the name has since moved, and *Publish again*
-beside that warning publishes the object unchanged, which looks the name up again. The balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
+`haproxy-status` and the object's page say when the name has since moved, and *Look up again*
+beside that warning saves the object unchanged for the next publish, which looks the name up again. The balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
 `firstAvailable` (the first server that is up: active/passive, since dnsdist has no backup
 server) and `chashed` (one name keeps one server) - and the health check asks every
 server a real question, `a.root-servers.net.` for `A` unless another is given, once a
@@ -4426,7 +4429,7 @@ exactly the case a lock file gets wrong.
 
 ##### What the worker may run
 
-Fifteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
+Sixteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
@@ -4435,6 +4438,7 @@ Fifteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-settings-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-changes-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper ""

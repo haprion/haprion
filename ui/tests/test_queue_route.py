@@ -208,17 +208,17 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.queued, [])
 
-    def test_a_confirmed_network_publish_queues_the_document_its_rows_describe(self) -> None:
+    def test_a_confirmed_network_save_writes_the_document_its_rows_describe(self) -> None:
         response = self.post(
             self.writing_client(), **self.network_form(default_vip_confirmation="on")
         )
 
         self.assertEqual(response.status_code, 303)
-        payload = self.queued[0]["payload"]
-        self.assertEqual(payload["expected_head"], "a" * 40)
-        self.assertEqual(payload["comment"], "Test")
+        self.assertEqual(self.queued, [])
+        (change,) = self.saved_changes
+        self.assertEqual(change["base_hash"], "a" * 40)
         self.assertEqual(
-            json.loads(payload["network"]),
+            json.loads(change["document"]),
             {
                 "vips": {"public": {"address": "192.0.2.20", "source": "192.0.2.25"}},
                 "default_vip": "public",
@@ -231,8 +231,7 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         #
         # The field the first version of this form posted. A browser that still
         # sends it - a stale page, or somebody curling the route - must not be
-        # able to put a document of its own choosing on the other side of the
-        # privilege boundary.
+        # able to put a document of its own choosing into what is saved.
         #
         response = self.post(
             self.writing_client(),
@@ -240,7 +239,18 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         )
 
         self.assertEqual(response.status_code, 303)
-        self.assertNotIn("vips: {}", self.queued[0]["payload"]["network"])
+        self.assertNotIn("vips: {}", self.saved_changes[0]["document"])
+
+    def test_a_network_publish_from_the_form_is_no_action(self) -> None:
+        """B257: published from Versions, with everything else saved."""
+
+        response = self.post(
+            self.writing_client(),
+            **self.network_form(default_vip_confirmation="on", network_action="publish"),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual((self.queued, self.saved_changes), ([], []))
 
     def test_a_half_filled_row_is_refused_without_naming_what_was_typed(self) -> None:
         response = self.post(

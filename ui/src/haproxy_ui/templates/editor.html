@@ -105,8 +105,7 @@
     <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
     <button type="submit" name="action" value="draft" class="secondary-button">Save as draft</button>
     {% if draft %}<button type="submit" name="action" value="discard" class="secondary-button">{% if draft.stage == 'saved' %}Discard the changes{% else %}Discard the draft{% endif %}</button>{% endif %}
-    <button type="submit" name="action" value="save" class="secondary-button">Save</button>
-    <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
+    <button type="submit" name="action" value="save" class="primary-button">Save</button>
   </div>
 </form>
 

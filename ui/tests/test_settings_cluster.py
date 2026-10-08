@@ -176,7 +176,7 @@ class ThePage(SettingsClusterTestCase):
             self.client_for(writes=False).get("/settings/clusters/edge-demo").status_code, 404
         )
 
-    def test_a_save_queues_the_canonical_document_for_the_signed_in_person(self) -> None:
+    def test_a_save_writes_the_canonical_document_for_the_signed_in_person(self) -> None:
         response = self.save(
             self.client_for(),
             metrics_on="on",
@@ -185,18 +185,13 @@ class ThePage(SettingsClusterTestCase):
         )
 
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertEqual(response.headers["location"], "/settings#logs-metrics")
-        (queued,) = self.queued
-        self.assertEqual(
-            (queued["operation"], queued["cluster"]), ("cluster_settings_publish", "service-demo")
-        )
-        payload = queued["payload"]
-        settings = load_document(payload["settings"].encode())
+        self.assertEqual(response.headers["location"], "/settings/clusters/service-demo")
+        self.assertEqual(self.queued, [])
+        (change,) = self.saved_changes
+        settings = load_document(change["document"].encode())
         self.assertEqual(settings.log_targets[0].address, "192.0.2.60")
         self.assertEqual(settings.metrics.port, 8405)  # type: ignore[union-attr]
-        self.assertEqual(payload["expected_head"], "b" * 40)
-        self.assertEqual(payload["comment"], "Logs & metrics: logs to graylog; metrics on 8405")
-        self.assertEqual(payload["requested_by"], "operator")
+        self.assertEqual((change["base_hash"], change["updated_by"]), ("b" * 40, "operator"))
 
     def test_a_target_named_rather_than_addressed_never_reaches_the_queue(self) -> None:
         response = self.save(self.client_for(), target_address=["logs.example.com", ""])

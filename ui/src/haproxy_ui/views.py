@@ -38,7 +38,7 @@ from hashlib import sha256
 from pathlib import Path
 from time import monotonic
 from typing import Annotated, Any
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
@@ -56,6 +56,7 @@ from haproxy_mgmt import cluster_settings as cluster_settings_module
 from haproxy_mgmt.cert_export import FORMATS as EXPORT_FORMATS
 from haproxy_mgmt.cert_export import Export, ExportError
 from haproxy_mgmt.certificates import CERTIFICATE_OPENING
+from haproxy_mgmt.cli import changes_publish
 from haproxy_mgmt.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW, ConfigError
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
@@ -4347,12 +4348,10 @@ def build_router(config: Config) -> APIRouter:
         metrics_port: str = Form(default="", max_length=8),
         metrics_sources: str = Form(default="", max_length=2048),
         expected_head: str = Form(default="", max_length=40),
-        idempotency_key: str = Form(default="", max_length=64),
         #
-        # Save, save and publish, or discard what was saved (B257); publish
-        # when absent, which is what every request before the buttons meant.
+        # Save, or discard what was saved (B257); published from Versions.
         #
-        settings_action: str = Form(default="publish", max_length=8),
+        settings_action: str = Form(default="save", max_length=8),
         saved_revision: str = Form(default="", max_length=16),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
@@ -4390,7 +4389,7 @@ def build_router(config: Config) -> APIRouter:
                 )
                 connection.commit()
             return RedirectResponse(page, status_code=303)
-        if settings_action not in ("save", "publish"):
+        if settings_action != "save":
             return PlainTextResponse("Unknown action", status_code=400)
         if not COMMIT_ID.fullmatch(expected_head):
             return PlainTextResponse("Invalid operation parameters", status_code=400)
@@ -4430,17 +4429,13 @@ def build_router(config: Config) -> APIRouter:
                 problem=str(problem),
                 status_code=400,
             )
-        try:
-            key = UUID(idempotency_key)
-        except ValueError:
-            return PlainTextResponse("A request key is required", status_code=400)
         #
         # The document is built here, from named fields, and in the engine's
         # canonical form; the helper parses it again and is the authority.
         #
         document = cluster_settings_module.dump_document(settings).decode("utf-8")
         #
-        # Saved first, whichever button, as the network form does.
+        # Saved, and published with the next publish from Versions (B257).
         #
         with request.app.state.pool.connection() as connection:
             try:
@@ -4473,58 +4468,7 @@ def build_router(config: Config) -> APIRouter:
                 detail={"kind": "settings", "revision": change.revision},
             )
             connection.commit()
-        if settings_action == "save":
-            return RedirectResponse(page, status_code=303)
-        payload = {
-            "settings": document,
-            "expected_head": expected_head,
-            "comment": cluster_settings_page.comment_for(settings),
-            "requested_by": gate.username,
-            "change": {"id": str(change.id), "revision": change.revision},
-        }
-        try:
-            operations.prepare(
-                operation="cluster_settings_publish",
-                cluster=cluster,
-                request_id=uuid4(),
-                payload=payload,
-            )
-        except operations.BadPayload:
-            return PlainTextResponse("Invalid operation parameters", status_code=400)
-        with request.app.state.pool.connection() as connection:
-            try:
-                job = db.queue_job(
-                    connection,
-                    operation="cluster_settings_publish",
-                    cluster=cluster,
-                    payload=payload,
-                    idempotency_key=key,
-                )
-            except db.ClusterBusy:
-                connection.rollback()
-                return _cluster_settings_page(
-                    request,
-                    gate,
-                    cluster,
-                    head=expected_head,
-                    form=form,
-                    problem="A job is already running for this cluster. Try again when it "
-                    "has finished.",
-                    status_code=409,
-                )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
-            db.record_audit_event(
-                connection,
-                actor=gate.username,
-                action="queue_job",
-                cluster=cluster,
-                request_id=job.request_id,
-                detail={"operation": "cluster_settings_publish", "job": job.id},
-            )
-            connection.commit()
-        return RedirectResponse("/settings#logs-metrics", status_code=303)
+        return RedirectResponse(page, status_code=303)
 
     # - Settings -> Nodes (Fas 16, B211) ------------------------------------
     #
@@ -6961,10 +6905,25 @@ def build_router(config: Config) -> APIRouter:
         )
         with request.app.state.pool.connection() as connection:
             running = jobs.in_flight(db.recent_jobs(connection))
+        #
+        # What is saved and not yet published, per cluster (B257): the one
+        # place a publish is made. Only where a publish could be.
+        #
+        pending = (
+            {
+                view.cluster: _package(request, config, view.cluster)
+                for view in overview.clusters
+                if view.configured
+            }
+            if config.management_writes and session.role == "admin"
+            else {}
+        )
         return TEMPLATES.TemplateResponse(
             request,
             "history.html",
             {
+                "pending": pending,
+                "published": request.query_params.get("published", "")[:40],
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
@@ -6984,6 +6943,104 @@ def build_router(config: Config) -> APIRouter:
                 "snapshot_age": snapshot_age(captured_at),
             },
         )
+
+    @router.post("/history/{cluster}/publish", response_class=HTMLResponse)
+    def publish_changes(
+        request: Request,
+        cluster: str,
+        comment: str = Form(default="", max_length=4096),
+        expected_head: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Publish everything saved for one cluster as one version (B257).
+
+        The package is built again here rather than carried by the form, so
+        what is published is what is saved now. `expected_head` is the version
+        the page was drawn at: a newer one means the list the person read is
+        not the list that would go, and the page is shown again instead.
+        """
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if cluster not in listed_clusters(request, config):
+            return PlainTextResponse("Not found", status_code=404)
+        package = _package(request, config, cluster)
+        if package.problem:
+            return _refusal_page(request, config, package.problem, back="/history")
+        if not package.rows:
+            return _refusal_page(request, config, "Nothing is saved to publish.", back="/history")
+        if expected_head != package.head:
+            return _refusal_page(
+                request,
+                config,
+                "A newer version was recorded after this page was opened. Read the list again "
+                "before publishing.",
+                back="/history",
+            )
+        if not comment.strip():
+            return _refusal_page(
+                request, config, "A comment is needed: it is the version's.", back="/history"
+            )
+        payload = {
+            **package.payload,
+            "comment": comment.strip(),
+            "requested_by": gate.username,
+        }
+        key = _publish_key(cluster, "changes_publish", payload)
+        try:
+            operations.prepare(
+                operation="changes_publish", cluster=cluster, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload:
+            return _refusal_page(
+                request,
+                config,
+                "This interface could not build a publish from what is saved.",
+                back="/history",
+            )
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="changes_publish",
+                    cluster=cluster,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.ClusterBusy:
+                connection.rollback()
+                return _refusal_page(
+                    request,
+                    config,
+                    "This cluster is already running a job. Publish when it has finished.",
+                    back="/history",
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return _refusal_page(
+                    request,
+                    config,
+                    "That publish was already asked for with different content.",
+                    back="/history",
+                )
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=cluster,
+                request_id=job.request_id,
+                detail={
+                    "operation": "changes_publish",
+                    "job": job.id,
+                    "changes": [row.name for row in package.rows],
+                },
+            )
+            connection.commit()
+        return RedirectResponse(f"/history?published={cluster}", status_code=303)
 
     @router.get("/jobs", response_class=HTMLResponse)
     def latest_jobs(request: Request) -> Response:
@@ -7190,11 +7247,10 @@ def build_router(config: Config) -> APIRouter:
         comment: str = Form(default="", max_length=4096),
         default_vip_confirmation: str = Form(default=""),
         #
-        # The network form's three buttons (B257): save the description, save
-        # and publish it, or discard what was saved. Publish when absent, which
-        # is what every request before the buttons existed meant.
+        # The network form's two buttons (B257): save the description, or
+        # discard what was saved. It is published from Versions.
         #
-        network_action: str = Form(default="publish", max_length=8),
+        network_action: str = Form(default="save", max_length=8),
         saved_revision: str = Form(default="", max_length=16),
         return_to: str = Form(default="", max_length=64),
         return_open: str = Form(default="", max_length=255),
@@ -7307,7 +7363,7 @@ def build_router(config: Config) -> APIRouter:
                     )
                     connection.commit()
                 return RedirectResponse("/network", status_code=303)
-            if network_action not in ("save", "publish"):
+            if network_action != "save":
                 return PlainTextResponse("Unknown action", status_code=400)
             # A changed default silently moves every object that did not name a
             # VIP.  The cached page states that count next to this confirmation;
@@ -7351,17 +7407,8 @@ def build_router(config: Config) -> APIRouter:
                 return _refusal(request, session, token, str(problem), back="/network")
             if not COMMIT_ID.fullmatch(expected_head):
                 return PlainTextResponse("Invalid operation parameters", status_code=400)
-            if network_action == "publish" and not comment.strip():
-                return _refusal(
-                    request,
-                    session,
-                    token,
-                    "A version comment is needed to publish.",
-                    back="/network",
-                )
             #
-            # Saved first, whichever button: a publish that is refused leaves
-            # the description saved rather than lost, as an object's does.
+            # Saved, and published with the next publish from Versions (B257).
             #
             with request.app.state.pool.connection() as connection:
                 try:
@@ -7386,15 +7433,7 @@ def build_router(config: Config) -> APIRouter:
                     detail={"kind": "network", "revision": change.revision},
                 )
                 connection.commit()
-            if network_action == "save":
-                return RedirectResponse("/network", status_code=303)
-            payload = {
-                "network": document,
-                "expected_head": expected_head,
-                "comment": comment,
-                "requested_by": session.username,
-                "change": {"id": str(change.id), "revision": change.revision},
-            }
+            return RedirectResponse("/network", status_code=303)
 
         try:
             key = UUID(idempotency_key)
@@ -8232,12 +8271,18 @@ def _editor_page(
 def _lookup_again(
     request: Request, config: Config, cluster: str, name: str, csrf_token: str
 ) -> Response:
-    """The stored object through the editor's publish, so its server names are looked up again."""
+    """The stored object saved as it is, so the next publish looks its server names up again."""
 
-    if current_session(request) is None:
+    session = current_session(request)
+    if session is None:
         return RedirectResponse("/login", status_code=303)
     if not config.management_writes:
         return PlainTextResponse("Not found", status_code=404)
+    if session.role != "admin":
+        return PlainTextResponse("Refused", status_code=403)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    if not auth.csrf_token_is_valid(token, csrf_token):
+        return PlainTextResponse("Refused", status_code=403)
     state = _editor_state(request, config, cluster)
     stored = next((view for view in state.stored if view.name == name), None)
     if stored is None:
@@ -8254,25 +8299,41 @@ def _lookup_again(
         return _refusal_page(
             request,
             config,
-            f"{name} has unpublished changes. Publish them from the editor; that looks the "
+            f"{name} has unpublished changes. Publish them from Versions; that looks the "
             "names up too.",
             back=_proxy_path(cluster, name, "edit"),
         )
-    try:
-        fields = preview_module.form_from_document(stored.document, networks=state.choices.networks)
-    except preview_module.Unexpressible as exc:
-        return _refusal_page(request, config, str(exc), back=_proxy_path(cluster, name))
-    form = editor_module.ObjectForm(
-        **_form_defaults(fields),
-        action="publish",
-        csrf_token=csrf_token,
-        object_fingerprint=editor_module.fingerprint(stored.document),
-    )
     #
-    # The stored object's own name from here on, not the address's: the two
-    # are equal, and only the first is something this installation wrote.
+    # Saved as it is stored (B257): the publish that carries it looks the
+    # names up again, and the version says that changed. The publish itself is
+    # Versions', with whatever else is saved.
     #
-    return _editor_submit(request, config, cluster, stored.name, form)
+    with request.app.state.pool.connection() as connection:
+        try:
+            saved = db.save_change(
+                connection,
+                cluster=cluster,
+                object_id=stored.name,
+                yaml=stored.document,
+                base_version=state.base_version,
+                base_hash=state.commit or "",
+                updated_by=session.username,
+                saved_revision=None,
+                draft_revision=None,
+            )
+        except db.DraftConflict as conflict:
+            connection.rollback()
+            return _refusal_page(request, config, str(conflict), back=_proxy_path(cluster, name))
+        db.record_audit_event(
+            connection,
+            actor=session.username,
+            action="save_change",
+            cluster=cluster,
+            request_id=uuid4(),
+            detail={"object": stored.name, "revision": saved.revision, "lookup": True},
+        )
+        connection.commit()
+    return RedirectResponse("/history", status_code=303)
 
 
 def _moved_servers(
@@ -8544,7 +8605,12 @@ def _editor_submit(
             )
         return RedirectResponse(f"/proxies?discarded={object_id}", status_code=303)
 
-    if form.action not in ("draft", "save", "publish"):
+    #
+    # No publish here (B257): saved changes are published together, from
+    # Versions. A request asking this page to publish is a stale page or a
+    # hand-made one, and nothing is written for it.
+    #
+    if form.action not in ("draft", "save"):
         return PlainTextResponse("Unknown action", status_code=400)
 
     if state.commit is None:
@@ -8650,50 +8716,14 @@ def _editor_submit(
             request, config, cluster, name, form, draft_revision=form.expected_revision
         )
 
-    #
-    # A publish carries a change, or it is not a publish. The helper would
-    # take an identical document and answer with a verified no-op - that is
-    # its contract, and the repair an interrupted run relies on - but from
-    # here the same request is a person asking for a version that says
-    # nothing, and once it was used as the way to push a cluster-level change
-    # out on the back of an object that had not moved. The history row that
-    # makes is false at exactly the moment it needs to be exact. A change on
-    # the cluster level gets its own action; until then the answer is no.
-    #
-    # A rename is a change by definition, whatever the document says.
-    #
-    # One exception (B253): a dns server published by name whose name has
-    # moved since. The document is the same, but the configuration generated
-    # from it is not - the name is looked up again - and that is what the
-    # version says it changed.
-    #
-    looked_up = False
-    if form.action == "publish" and replaces is None:
-        stored = next((view for view in state.stored if view.name == object_id), None)
-        if stored is not None and editor_module.unchanged(result.document, stored.document):
-            looked_up = bool(_moved_servers(request, config, cluster, stored))
-        if (
-            stored is not None
-            and editor_module.unchanged(result.document, stored.document)
-            and not looked_up
-        ):
-            return _refusal_page(
-                request,
-                config,
-                f"Nothing to publish: {object_id} is identical to what is already stored. "
-                "Change something first - a publish is a version, and a version says "
-                "what changed.",
-                back=_proxy_path(cluster, object_id, "edit"),
-            )
-
     key = name or object_id
     with request.app.state.pool.connection() as connection:
         try:
             if form.action != "draft":
                 #
-                # Save, and the publish that follows it: the saved change is
-                # written and the draft it was finished from goes, in one
-                # transaction (B257). A rename moves the saved row's key.
+                # Save: the saved change is written and the draft it was
+                # finished from goes, in one transaction (B257). A rename
+                # moves the saved row's key.
                 #
                 saved = db.save_change(
                     connection,
@@ -8774,35 +8804,7 @@ def _editor_submit(
     # saved as - saving a new object lands on the object it just created
     # rather than back on the empty form.
     #
-    if form.action != "publish":
-        return RedirectResponse(
-            _proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303
-        )
-
-    #
-    # Publishing is a job, and the change is saved first on purpose. The two
-    # are one button because saving and then publishing separately is three
-    # screens for one change - but they stay two acts underneath, so a publish
-    # that is refused leaves the work saved rather than lost.
-    #
-    queued = _queue_object_publish(
-        request,
-        cluster=cluster,
-        object_id=object_id,
-        document=result.document,
-        saved=saved,
-        expected_head=state.commit,
-        username=session.username,
-        replaces_published=saved.replaces or "",
-        stored=state.stored,
-        comment=f"Look up the servers of {object_id} again" if looked_up else "",
-    )
-    if isinstance(queued, str):
-        return _refusal_page(
-            request, config, queued, back=_proxy_path(cluster, object_id, "edit"), saved=True
-        )
-
-    return RedirectResponse("/proxies?published=" + quote(object_id), status_code=303)
+    return RedirectResponse(_proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303)
 
 
 def _removal_bookkeeping(
@@ -8829,117 +8831,140 @@ def _removal_bookkeeping(
     return {"removed_backends": written} if written else {}
 
 
-def _queue_object_publish(
-    request: Request,
-    *,
-    cluster: str,
-    object_id: str,
-    document: str,
-    saved: db.ProxyDraft,
-    expected_head: str,
-    username: str,
-    replaces_published: str = "",
-    stored: Sequence[objects.ObjectView] = (),
-    comment: str = "",
-) -> db.Job | str:
-    """Queue the publish of a draft that has just been saved: the job, or why not.
+@dataclass(frozen=True, slots=True)
+class PendingRow:
+    """One saved change waiting for the next publish, as the Versions page lists it."""
 
-    One place for the editor's *Save and publish* and the advanced config
-    dialog's, so the two publish the same way - the same payload, the same
-    idempotency key and the same refusals, each said as a sentence the caller
-    draws where its person is looking.
+    kind: str
+    name: str
+    what: str
+    updated_by: str
+    updated_at: datetime
+    link: str
+    #
+    # Saved against a version that is no longer the newest. Published as it
+    # is, it could put back what the newer version changed, so the package is
+    # refused until it is saved again over what is there now (B257).
+    #
+    stale: bool
 
-    A publish carries the whole object as the draft now holds it. Saved first,
-    so that a publish refused here or by the helper leaves the work saved
-    rather than lost.
+
+@dataclass(frozen=True, slots=True)
+class Package:
+    """A cluster's saved changes, and the publish that would carry them (B257)."""
+
+    cluster: str
+    head: str | None
+    rows: tuple[PendingRow, ...]
+    payload: dict[str, Any]
+    problem: str
+
+
+def _package(request: Request, config: Config, cluster: str) -> Package:
+    """Everything saved for one cluster, as rows and as one `changes_publish` payload.
+
+    Drafts are not part of it: they are unfinished. A saved row whose base is
+    not the newest version makes the whole package wait, and says which; the
+    objects' bookkeeping (removed backends, renamed pools) is what one
+    object's publish carried, for every object at once.
     """
 
-    objects: dict[str, str | None] = {object_id: None if saved.deleted else document}
-    if replaces_published and not saved.deleted:
-        #
-        # Both halves of the rename, in one publish. The order in the mapping
-        # does not matter - the helper applies the whole set and then generates
-        # from the result - but the pairing does: sent apart, the first of the
-        # two is a cluster with either two objects on one hostname or none.
-        #
-        objects[replaces_published] = None
-    payload = {
-        "objects": objects,
-        "expected_head": expected_head,
-        "comment": comment
-        or (
-            f"Rename {replaces_published} to {object_id}"
-            if replaces_published and not saved.deleted
-            else f"Publish {object_id}"
-        ),
-        #
-        # Which draft, and which revision of it. Carried by the job and never
-        # forwarded to the helper - `operations.prepare` builds the helper's
-        # request field by field - so this says what the interface has to know
-        # afterwards without widening what runs as root.
-        #
-        # It is what lets a published draft be recognised as published. The row
-        # is deleted once its publish is done, so a later edit of the same
-        # object is a new row with a new id, and reverting one to a text
-        # published earlier no longer looks like work that is already finished.
-        #
-        "draft": {"id": str(saved.id), "revision": saved.revision},
-        # Who asked, for the version's `Requested-By` (B207).
-        "requested_by": username,
-        **_removal_bookkeeping(stored, objects),
-    }
-    #
-    # A pool renamed here, or an object whose redirects are renamed with it,
-    # keeps its history under the new name (`metric_backend_alias`). Carried by
-    # the job and written by the worker once the publish is done (B253): a
-    # publish refused or failed after it was queued renames nothing.
-    #
-    renamed, introduced = _backend_renames(
-        stored, object_id, document, replaces_published or object_id
-    )
-    if renamed or introduced:
-        payload["backend_renames"] = {"renamed": renamed, "introduced": introduced}
-    key = _publish_key(cluster, "objects_publish", payload)
-    try:
-        operations.prepare(
-            operation="objects_publish", cluster=cluster, request_id=uuid4(), payload=payload
-        )
-    except operations.BadPayload:
-        #
-        # The form built this payload, so a refusal here is the interface's
-        # mistake and not the person's. Said plainly rather than echoed: the
-        # detail can carry what was typed.
-        #
-        return "The draft was saved, but this interface could not build a publish for it."
-
+    state = _editor_state(request, config, cluster)
+    head = state.commit
     with request.app.state.pool.connection() as connection:
-        try:
-            job = db.queue_job(
-                connection,
-                operation="objects_publish",
-                cluster=cluster,
-                payload=payload,
-                idempotency_key=key,
-            )
-        except db.ClusterBusy:
-            connection.rollback()
-            return (
-                "This cluster is already running a job. The changes are saved; publish them "
-                "when that job has finished."
-            )
-        except db.RequestConflict:
-            connection.rollback()
-            return "That publish was already asked for with different content."
-        db.record_audit_event(
-            connection,
-            actor=username,
-            action="queue_job",
-            cluster=cluster,
-            request_id=job.request_id,
-            detail={"operation": "objects_publish", "job": job.id, "object": object_id},
+        saved = [
+            row
+            for row in _settled_drafts(connection, cluster, _state_reading(state))
+            if row.stage == db.SAVED
+        ]
+        network_row = next(
+            (
+                row
+                for row in read_source(
+                    request, config, NETWORK_SOURCE, cluster=cluster, clusters=(cluster,)
+                )[1]
+                if row.cluster == cluster
+            ),
+            None,
         )
-        connection.commit()
-    return job
+        changes = _settled_changes(connection, cluster, _reading_head(network_row) or head)
+    rows: list[PendingRow] = []
+    objects: dict[str, str | None] = {}
+    for row in saved:
+        objects[row.object_id] = None if row.deleted else row.yaml
+        if row.replaces and not row.deleted:
+            objects.setdefault(row.replaces, None)
+        rows.append(
+            PendingRow(
+                kind="object",
+                name=row.object_id,
+                what=(
+                    "Removal"
+                    if row.deleted
+                    else f"Renamed from {row.replaces}"
+                    if row.replaces
+                    else "Changed"
+                ),
+                updated_by=row.updated_by,
+                updated_at=row.updated_at,
+                link=_proxy_path(cluster, row.object_id, "edit"),
+                stale=row.base_hash != head,
+            )
+        )
+    for kind, label, link in (
+        ("network", "Network description", "/network"),
+        ("settings", "Logs & metrics", f"/settings/clusters/{cluster}"),
+    ):
+        change = changes.get(kind)
+        if change is not None:
+            rows.append(
+                PendingRow(
+                    kind=kind,
+                    name=label,
+                    what="Changed",
+                    updated_by=change.updated_by,
+                    updated_at=change.updated_at,
+                    link=link,
+                    stale=change.base_hash != head,
+                )
+            )
+    payload: dict[str, Any] = {"expected_head": head or ""}
+    if objects:
+        payload["objects"] = objects
+        payload["drafts"] = [{"id": str(row.id), "revision": row.revision} for row in saved]
+        payload.update(_removal_bookkeeping(state.stored, objects))
+        renamed: dict[str, str] = {}
+        introduced: list[str] = []
+        for row in saved:
+            if row.deleted:
+                continue
+            more, new = _backend_renames(
+                state.stored, row.object_id, row.yaml, row.replaces or row.object_id
+            )
+            renamed.update(more)
+            introduced.extend(name for name in new if name not in introduced)
+        if renamed or introduced:
+            payload["backend_renames"] = {"renamed": renamed, "introduced": introduced}
+    for kind in ("network", "settings"):
+        if kind in changes:
+            payload[kind] = changes[kind].document
+    if changes:
+        payload["changes"] = [
+            {"id": str(change.id), "revision": change.revision}
+            for change in sorted(changes.values(), key=lambda change: change.kind)
+        ]
+    stale = [row.name for row in rows if row.stale]
+    problem = (
+        "The stored objects have not been read yet."
+        if head is None
+        else f"{', '.join(stale)} {'was' if len(stale) == 1 else 'were'} saved against an "
+        "older version. Open and save again before publishing."
+        if stale
+        else f"{len(objects)} objects; at most {changes_publish.MAX_OBJECTS} go in one publish."
+        if len(objects) > changes_publish.MAX_OBJECTS
+        else ""
+    )
+    return Package(cluster=cluster, head=head, rows=tuple(rows), payload=payload, problem=problem)
 
 
 def _backend_renames(
@@ -8972,18 +8997,13 @@ def _backend_renames(
 def _removal_submit(
     request: Request, config: Config, cluster: str, name: str, csrf_token: str
 ) -> Response:
-    """Publish the removal of one object.
+    """Save the removal of one object, for the next publish (B257).
 
-    A removal is a publish like any other: the object leaves the repository and
-    the configuration generated from it leaves with it, as one version. So this
-    goes through the same queue, the same helper and the same lock, and differs
-    only in carrying `null` where a document would be.
-
-    It writes a draft first, exactly as saving does, and for the same reason -
-    the draft is what the job names afterwards, so a removal can be told from
-    an edit that happened to look like one. `deleted` is what the draft says:
-    not that somebody abandoned an edit, but that they decided the object
-    should go.
+    A removal is a saved change like any other: the object leaves the
+    repository with the publish that carries it, and the configuration
+    generated from it leaves with it. `deleted` is what the row says: not
+    that somebody abandoned an edit, but that they decided the object should
+    go.
     """
 
     session = current_session(request)
@@ -9044,69 +9064,20 @@ def _removal_submit(
             return _refusal_page(
                 request, config, str(conflict), back=_proxy_path(cluster, name), stale=True
             )
-        connection.commit()
-
-    payload = {
-        "objects": {name: None},
-        "expected_head": state.commit,
-        "comment": f"Remove {name}",
-        "draft": {"id": str(saved.id), "revision": saved.revision},
-        "requested_by": session.username,
-        **_removal_bookkeeping(state.stored, {name: None}),
-    }
-    key = _publish_key(cluster, "objects_publish", payload)
-    try:
-        operations.prepare(
-            operation="objects_publish", cluster=cluster, request_id=uuid4(), payload=payload
-        )
-    except operations.BadPayload:
-        return _refusal_page(
-            request,
-            config,
-            "This interface could not build a removal for that object.",
-            back=_proxy_path(cluster, name),
-            saved=True,
-        )
-
-    with request.app.state.pool.connection() as connection:
-        try:
-            job = db.queue_job(
-                connection,
-                operation="objects_publish",
-                cluster=cluster,
-                payload=payload,
-                idempotency_key=key,
-            )
-        except db.ClusterBusy:
-            connection.rollback()
-            return _refusal_page(
-                request,
-                config,
-                "This cluster is already running a job. The removal is saved as a draft; "
-                "publish it when that job has finished.",
-                back=_proxy_path(cluster, name),
-                saved=True,
-            )
-        except db.RequestConflict:
-            connection.rollback()
-            return _refusal_page(
-                request,
-                config,
-                "That removal was already asked for with different content.",
-                back=_proxy_path(cluster, name),
-                saved=True,
-            )
         db.record_audit_event(
             connection,
             actor=session.username,
-            action="queue_job",
+            action="save_change",
             cluster=cluster,
-            request_id=job.request_id,
-            detail={"operation": "objects_publish", "job": job.id, "object": name, "removed": True},
+            request_id=uuid4(),
+            detail={"object": name, "revision": saved.revision, "removed": True},
         )
         connection.commit()
-
-    return RedirectResponse("/proxies?published=" + quote(name), status_code=303)
+    #
+    # Saved, not published (B257): the removal goes out with the next publish
+    # from Versions, and the object's page says so until then.
+    #
+    return RedirectResponse(_proxy_path(cluster, name) + "?saved=1", status_code=303)
 
 
 #
@@ -9196,22 +9167,33 @@ def _published_drafts(
     settled: dict[tuple[str, int], DraftPublish] = {}
     for job in db.draft_publishes(connection, cluster=cluster, draft_ids=ids):
         payload = job.payload if isinstance(job.payload, Mapping) else {}
-        draft = payload.get("draft")
-        if not isinstance(draft, Mapping):
-            continue
-        identity, revision = draft.get("id"), draft.get("revision")
-        if not isinstance(identity, str) or not isinstance(revision, int):
-            continue
         base = payload.get("expected_head")
         changed = job.result.get("changed") if isinstance(job.result, Mapping) else None
-        settled.setdefault(
-            (identity, revision),
-            DraftPublish(
-                base if isinstance(base, str) and base else None,
-                changed if isinstance(changed, bool) else None,
-            ),
-        )
+        for identity, revision in _carried(payload, "draft", "drafts"):
+            settled.setdefault(
+                (identity, revision),
+                DraftPublish(
+                    base if isinstance(base, str) and base else None,
+                    changed if isinstance(changed, bool) else None,
+                ),
+            )
     return settled
+
+
+def _carried(payload: Mapping[str, Any], one: str, many: str) -> list[tuple[str, int]]:
+    """The saved rows a publish carried: one object's `draft`, or a package's `drafts` (B257)."""
+
+    entries = [payload.get(one)]
+    listed = payload.get(many)
+    if isinstance(listed, list):
+        entries.extend(listed)
+    return [
+        (entry["id"], entry["revision"])
+        for entry in entries
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("id"), str)
+        and isinstance(entry.get("revision"), int)
+    ]
 
 
 def _reflects(draft: db.ProxyDraft, publish: DraftPublish, reading: ObjectsReading) -> bool:
@@ -9358,21 +9340,16 @@ def _settled_changes(
     ids = {str(change.id) for change in changes.values()}
     for job in db.change_publishes(connection, cluster=cluster, change_ids=ids):
         payload = job.payload if isinstance(job.payload, Mapping) else {}
-        change = payload.get("change")
-        if not isinstance(change, Mapping):
-            continue
-        identity, revision = change.get("id"), change.get("revision")
-        if not isinstance(identity, str) or not isinstance(revision, int):
-            continue
         base = payload.get("expected_head")
         changed = job.result.get("changed") if isinstance(job.result, Mapping) else None
-        evidence.setdefault(
-            (identity, revision),
-            DraftPublish(
-                base if isinstance(base, str) and base else None,
-                changed if isinstance(changed, bool) else None,
-            ),
-        )
+        for identity, revision in _carried(payload, "change", "changes"):
+            evidence.setdefault(
+                (identity, revision),
+                DraftPublish(
+                    base if isinstance(base, str) and base else None,
+                    changed if isinstance(changed, bool) else None,
+                ),
+            )
     kept = dict(changes)
     for kind, change in changes.items():
         publish = evidence.get((str(change.id), change.revision))
@@ -9914,16 +9891,17 @@ def _advanced_submit(
         return PlainTextResponse("Refused", status_code=403)
     if session.role != "admin":
         return PlainTextResponse("Refused", status_code=403)
-    if action not in ("check", "save", "publish") or not proxy_model.NAME.fullmatch(name):
+    #
+    # Check and save; publishing is Versions' (B257).
+    #
+    if action not in ("check", "save") or not proxy_model.NAME.fullmatch(name):
         return PlainTextResponse("Unknown action", status_code=400)
 
-    def answer(
-        result: advanced_dialog.Answer, *, saved: str = "", published: bool = False
-    ) -> Response:
+    def answer(result: advanced_dialog.Answer, *, saved: str = "") -> Response:
         return TEMPLATES.TemplateResponse(
             request,
             "_advanced-answer.html",
-            {"answer": result, "saved": saved, "published": published},
+            {"answer": result, "saved": saved},
         )
 
     if len(text) > advanced_dialog.MAX_TEXT:
@@ -9976,21 +9954,10 @@ def _advanced_submit(
             )
         )
     #
-    # The editor's rules for the two buttons (2026-10-01: a draft and then
-    # the editor to publish it was a detour). Saving what the draft already says
-    # is nothing; publishing it is a publish, unless the object is already
-    # stored that way - a version that says nothing is refused there too.
+    # Saving what is already there is nothing.
     #
-    if action == "save" and editor_module.unchanged(document, base):
+    if editor_module.unchanged(document, base):
         return answer(replace(result, problem="Nothing changed."))
-    if (
-        action == "publish"
-        and stored is not None
-        and editor_module.unchanged(document, stored.document)
-    ):
-        return answer(
-            replace(result, problem=f"Nothing to publish: {name} is already stored this way.")
-        )
 
     revision = int(expected_revision) if expected_revision.isdigit() else None
     with request.app.state.pool.connection() as connection:
@@ -10023,22 +9990,7 @@ def _advanced_submit(
             detail={"object": name, "revision": saved.revision, "advanced": True},
         )
         connection.commit()
-    if action == "save":
-        return answer(result, saved=_proxy_path(cluster, name) + "?saved=1")
-    queued = _queue_object_publish(
-        request,
-        cluster=cluster,
-        object_id=name,
-        document=document,
-        saved=saved,
-        expected_head=state.commit,
-        username=session.username,
-    )
-    if isinstance(queued, str):
-        return answer(
-            replace(result, problem=queued), saved=_proxy_path(cluster, name) + "?saved=1"
-        )
-    return answer(result, saved="/proxies?published=" + quote(name), published=True)
+    return answer(result, saved=_proxy_path(cluster, name) + "?saved=1")
 
 
 # - WAF page (Fas 21 del B, B234) ------------------------------------------

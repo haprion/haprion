@@ -47,12 +47,7 @@
     "poller_helpers": [
       "haproxy-status-helper",
       "haproxy-inventory-helper",
-      "haproxy-list-helper",
-      "haproxy-list-backups-helper",
-      "haproxy-cert-list-helper",
-      "haproxy-network-helper",
-      "haproxy-cluster-settings-helper",
-      "haproxy-objects-helper",
+      "haproxy-readings-helper",
       "haproxy-cluster-list-helper"
     ],
     "worker_helpers": [

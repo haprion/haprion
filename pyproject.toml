@@ -91,6 +91,7 @@ haproxy-network-helper = "haproxy_mgmt.cli.network_helper:main"
 haproxy-cluster-settings = "haproxy_mgmt.cli.cluster_settings:main"
 haproxy-cluster-settings-helper = "haproxy_mgmt.cli.cluster_settings_helper:main"
 haproxy-changes-publish-helper = "haproxy_mgmt.cli.changes_publish:main"
+haproxy-readings-helper = "haproxy_mgmt.cli.readings_helper:main"
 haproxy-ui-traffic-collector = "haproxy_mgmt.traffic_collector:_entry"
 
 #

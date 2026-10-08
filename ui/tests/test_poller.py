@@ -14,9 +14,11 @@ import json
 import subprocess
 import unittest
 import unittest.mock
+from collections.abc import Mapping
 from typing import Any
 
 import psycopg
+from haproxy_mgmt.version_history import MAX_LIST_LIMIT
 
 from haproxy_ui import config, db, poller
 
@@ -246,10 +248,20 @@ class Passes(unittest.TestCase):
         # retention on disk and off the page.
         #
         source = next(item for item in poller.SOURCES if item.operation == "list_backups")
-        with unittest.mock.patch.object(poller, "run_list_backups_helper") as helper:
-            source.run("alpha", "request-1")
+        if source.reading is None:
+            raise AssertionError("the backup listing is not a manager-local reading")
 
-        helper.assert_called_once_with("alpha", "request-1", None)
+        self.assertEqual(source.reading({}), {"limit": None, "node": None})
+
+    def test_the_six_manager_local_readings_are_one_call(self) -> None:
+        """N2 (2026-10-08): one sudo call for what touches only the manager."""
+
+        local = [source.operation for source in poller.SOURCES if source.run is None]
+
+        self.assertEqual(
+            local, ["list", "list_backups", "cert_list", "network", "cluster_settings", "objects"]
+        )
+        self.assertTrue(all(source.reading is not None for source in poller.SOURCES[2:]))
 
     def test_the_objects_source_reads_the_source_and_not_the_published_config(self) -> None:
         #
@@ -263,10 +275,6 @@ class Passes(unittest.TestCase):
 
         self.assertIs(source.record, db.record_cluster_objects)
         self.assertIsNot(source.record, db.record_cluster_inventory)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TheSingletonLockSession(unittest.TestCase):
@@ -536,3 +544,82 @@ class TheObjectsReadingSendsWhatItHolds(unittest.TestCase):
                 reading={"outcome": "done", "result": {"unchanged": True, "objects": []}},
             )
         replace.assert_not_called()
+
+
+class TheLocalReadingsComeFromOneCall(unittest.TestCase):
+    """`_local_readings`: one `haproxy-readings-helper` call, each answer as its own reading (N2)."""
+
+    class Pool:
+        def connection(self) -> Any:
+            return contextlib.nullcontext(object())
+
+    def sources(self) -> list[poller.Source]:
+        return [source for source in poller.SOURCES if source.run is None]
+
+    def test_each_reading_gets_its_own_envelope_and_the_list_its_diffs(self) -> None:
+        asked: list[tuple[str, Mapping[str, Any]]] = []
+
+        def readings(cluster: str, _request_id: str, reads: Mapping[str, Any]) -> Any:
+            asked.append((cluster, reads))
+            answers = {
+                name: {
+                    "exit_code": 0,
+                    "envelope": {"operation": name, "outcome": "done", "result": {"n": name}},
+                    "stderr": "",
+                }
+                for name in reads
+            }
+            return subprocess.CompletedProcess(
+                [], 0, json.dumps({"result": {"reads": answers}}), ""
+            )
+
+        with (
+            unittest.mock.patch("haproxy_ui.db.versions_without_diff", return_value=["a" * 40]),
+            unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value=None),
+        ):
+            runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
+
+        ((cluster, reads),) = asked
+        self.assertEqual(cluster, "alpha")
+        self.assertEqual(reads["list"], {"limit": MAX_LIST_LIMIT, "diffs": ["a" * 40]})
+        self.assertEqual(reads["objects"], {})
+        reading = poller.poll_cluster("alpha", runs["network"], operation="network")
+        self.assertEqual((reading["outcome"], reading["result"]), ("done", {"n": "network"}))
+
+    def test_a_failed_call_is_a_poll_error_on_every_reading_it_carried(self) -> None:
+        def readings(*_args: Any) -> Any:
+            return subprocess.CompletedProcess([], 1, "", "sudo: a password is required")
+
+        with (
+            unittest.mock.patch("haproxy_ui.db.versions_without_diff", return_value=[]),
+            unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value=None),
+        ):
+            runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
+
+        for name, run in runs.items():
+            reading = poller.poll_cluster("alpha", run, operation=name)
+            self.assertEqual(reading["outcome"], "unavailable")
+            self.assertIn("readings helper gave no answer", reading["poll_error"])
+
+    def test_a_reading_whose_helper_failed_keeps_its_own_words(self) -> None:
+        def readings(_cluster: str, _request_id: str, reads: Mapping[str, Any]) -> Any:
+            answers = {
+                name: {"exit_code": 78, "envelope": None, "stderr": "ERROR: no policy"}
+                for name in reads
+            }
+            return subprocess.CompletedProcess(
+                [], 0, json.dumps({"result": {"reads": answers}}), ""
+            )
+
+        with (
+            unittest.mock.patch("haproxy_ui.db.versions_without_diff", return_value=[]),
+            unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value=None),
+        ):
+            runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
+
+        reading = poller.poll_cluster("alpha", runs["cert_list"], operation="cert_list")
+        self.assertIn("ERROR: no policy", reading["poll_error"])
+
+
+if __name__ == "__main__":
+    unittest.main()

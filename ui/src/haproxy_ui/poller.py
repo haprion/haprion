@@ -26,22 +26,18 @@ import functools
 import json
 import logging
 import os
+import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt.cli.cert_list import run_cert_list_helper
 from haproxy_mgmt.cli.cluster_list_helper import run_cluster_list_helper
-from haproxy_mgmt.cli.cluster_settings import run_settings_helper
 from haproxy_mgmt.cli.inventory import run_inventory_helper
-from haproxy_mgmt.cli.list import run_list_helper
-from haproxy_mgmt.cli.list_backups import run_list_backups_helper
 from haproxy_mgmt.cli.list_helper import MAX_DIFFS
-from haproxy_mgmt.cli.network import run_network_helper
-from haproxy_mgmt.cli.objects import run_objects_helper
+from haproxy_mgmt.cli.readings_helper import run_readings_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.version_history import MAX_LIST_LIMIT
@@ -74,6 +70,7 @@ MAX_PARALLEL_CLUSTERS = 8
 
 type RunHelper = Callable[[str, str], Any]
 type Recorder = Callable[..., None]
+type ReadingsHelper = Callable[[str, str, Mapping[str, Mapping[str, Any]]], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +83,13 @@ class Source:
     """
 
     operation: str
-    run: RunHelper
+    #
+    # A reading of its own helper, behind its own sudo rule - the two that
+    # reach the nodes. None for a manager-local reading, which is asked for
+    # with the others in one `haproxy-readings-helper` call (N2) and says the
+    # parameters its helper takes in `reading`.
+    #
+    run: RunHelper | None
     record: Recorder
     #
     # Partial is allowed only where the read has more than one place to fail.
@@ -118,19 +121,25 @@ class Source:
     # asked for once, a few per pass, rather than on every pass.
     #
     asks: Callable[[Any, str], Mapping[str, Any]] | None = None
+    #
+    # A manager-local reading's parameters, from what `asks` found: what its
+    # own helper is sent inside the one readings call.
+    #
+    reading: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None
 
 
-def _list_every_version(cluster: str, request_id: str, *, diffs: tuple[str, ...] = ()) -> Any:
+def _every_version(extra: Mapping[str, Any]) -> dict[str, Any]:
     """Every version up to the helper's ceiling, not the terminal's ten.
 
     The Versions page pages through them in the browser (Fas 14 point 8), so a
     version older than the tenth is on the page rather than only in git.
     """
 
-    return run_list_helper(cluster, request_id, limit=MAX_LIST_LIMIT, diffs=diffs)
+    diffs = list(extra.get("diffs") or ())
+    return {"limit": MAX_LIST_LIMIT, **({"diffs": diffs} if diffs else {})}
 
 
-def _list_every_backup(cluster: str, request_id: str) -> Any:
+def _every_backup(_extra: Mapping[str, Any]) -> dict[str, Any]:
     """Every archive the manager keeps for this cluster, not the command line's default.
 
     The archive list is where a restore is chosen from, and the retention is
@@ -139,7 +148,11 @@ def _list_every_backup(cluster: str, request_id: str) -> Any:
     instead.
     """
 
-    return run_list_backups_helper(cluster, request_id, None)
+    return {"limit": None, "node": None}
+
+
+def _nothing(_extra: Mapping[str, Any]) -> dict[str, Any]:
+    return {}
 
 
 SOURCES: tuple[Source, ...] = (
@@ -151,19 +164,23 @@ SOURCES: tuple[Source, ...] = (
         sample=db.record_metric_samples,
     ),
     Source("inventory", run_inventory_helper, db.record_cluster_inventory),
+    #
+    # The manager-local readings, asked for in one call (N2, 2026-10-08).
+    #
     Source(
         "list",
-        _list_every_version,
+        None,
         db.record_cluster_history,
         sample=db.record_version_diffs,
         asks=lambda connection, cluster: {
             "diffs": db.versions_without_diff(connection, cluster=cluster, limit=MAX_DIFFS)
         },
+        reading=_every_version,
     ),
-    Source("list_backups", _list_every_backup, db.record_cluster_backups, partial_ok=True),
-    Source("cert_list", run_cert_list_helper, db.record_cluster_certificates),
-    Source("network", run_network_helper, db.record_cluster_network),
-    Source("cluster_settings", run_settings_helper, db.record_cluster_settings),
+    Source("list_backups", None, db.record_cluster_backups, partial_ok=True, reading=_every_backup),
+    Source("cert_list", None, db.record_cluster_certificates, reading=_nothing),
+    Source("network", None, db.record_cluster_network, reading=_nothing),
+    Source("cluster_settings", None, db.record_cluster_settings, reading=_nothing),
     #
     # The objects as they are written, which the inventory cannot answer for:
     # it parses published configuration, and an edit is made against the source
@@ -175,13 +192,14 @@ SOURCES: tuple[Source, ...] = (
     #
     Source(
         "objects",
-        run_objects_helper,
+        None,
         db.record_cluster_objects,
         asks=lambda connection, cluster: (
             {"unchanged_since": known}
             if (known := db.objects_fingerprint(connection, cluster))
             else {}
         ),
+        reading=dict,
     ),
 )
 
@@ -400,22 +418,79 @@ def poll_once(
         )
 
 
+def _extra(pool: Any, cluster: str, source: Source) -> Mapping[str, Any]:
+    """What a source asks for beyond its reading, decided from what is kept."""
+
+    if source.asks is None:
+        return {}
+    try:
+        with pool.connection() as connection:
+            return source.asks(connection, cluster)
+    except Exception as exc:  # noqa: BLE001 - the reading itself must still be made
+        logger.warning("cluster %s %s: extra request not built: %s", cluster, source.operation, exc)
+        return {}
+
+
+def _local_readings(
+    pool: Any,
+    cluster: str,
+    sources: Sequence[Source],
+    readings: ReadingsHelper = run_readings_helper,
+) -> dict[str, RunHelper]:
+    """The manager-local readings of one cluster, from one helper call (N2).
+
+    Each comes back as the `run` its source is polled with, answering with the
+    envelope its own helper wrote, so the judging and the writing below are
+    the same for it as for a reading of its own. When the one call fails, every
+    reading in it answers with that failure, as each would have on its own.
+    """
+
+    reads = {
+        source.operation: source.reading(_extra(pool, cluster, source))
+        for source in sources
+        if source.reading is not None
+    }
+    try:
+        completed = readings(cluster, new_request_id(), reads)
+        answers = json.loads(completed.stdout)["result"]["reads"]
+        if not isinstance(answers, dict):
+            raise TypeError("reads is not an object")
+    except Exception as exc:  # noqa: BLE001 - one failure, reported on every reading it carried
+        failure = exc
+
+        def failed(_cluster: str, _request_id: str) -> Any:
+            raise RuntimeError(f"the readings helper gave no answer: {failure}")
+
+        return dict.fromkeys(reads, failed)
+
+    def answered(name: str) -> RunHelper:
+        found = answers.get(name)
+        answer: dict[str, Any] = found if isinstance(found, dict) else {}
+        document = answer.get("envelope")
+        stdout = json.dumps(document) if document is not None else ""
+        code = answer.get("exit_code")
+        result = subprocess.CompletedProcess(
+            args=[name],
+            returncode=code if isinstance(code, int) else 1,
+            stdout=stdout,
+            stderr=str(answer.get("stderr") or ""),
+        )
+        return lambda _cluster, _request_id: result
+
+    return {name: answered(name) for name in reads}
+
+
 def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) -> int:
     """One cluster's sources in order; 1 when its status reading was done."""
 
     healthy = 0
+    local = [source for source in sources if source.run is None]
+    answered = _local_readings(pool, cluster, local) if local else {}
     for source in sources:
-        run = source.run
-        if source.asks is not None:
-            try:
-                with pool.connection() as connection:
-                    extra = source.asks(connection, cluster)
-            except Exception as exc:  # noqa: BLE001 - the reading itself must still be made
-                logger.warning(
-                    "cluster %s %s: extra request not built: %s", cluster, source.operation, exc
-                )
-                extra = {}
-            run = functools.partial(source.run, **extra)
+        if source.run is None:
+            run = answered[source.operation]
+        else:
+            run = functools.partial(source.run, **_extra(pool, cluster, source))
         reading = poll_cluster(
             cluster, run, operation=source.operation, partial_ok=source.partial_ok
         )

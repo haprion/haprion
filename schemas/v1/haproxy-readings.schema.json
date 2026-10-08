@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-readings.schema.json",
+  "title": "haproxy-readings-helper JSON result",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "readings"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed"
+          ]
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/readings_result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "done"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/readings_result"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "readings_result": {
+      "type": "object",
+      "required": [
+        "reads"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "reads": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "enum": [
+              "list",
+              "list_backups",
+              "cert_list",
+              "network",
+              "cluster_settings",
+              "objects"
+            ]
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/reading"
+          }
+        }
+      }
+    },
+    "reading": {
+      "type": "object",
+      "required": [
+        "exit_code",
+        "envelope",
+        "stderr"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "exit_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "envelope": {
+          "oneOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stderr": {
+          "type": "string",
+          "maxLength": 2048
+        }
+      }
+    }
+  }
+}

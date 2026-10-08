@@ -381,22 +381,10 @@ refuse "$WEB_USER" "cannot run the inventory helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper
 refuse "$WORKER_USER" "cannot run the inventory helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper
-refuse "$WEB_USER" "cannot run the list helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-helper
-refuse "$WORKER_USER" "cannot run the list helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-helper
-refuse "$WEB_USER" "cannot run the backup helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper
-refuse "$WORKER_USER" "cannot run the backup helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper
-refuse "$WEB_USER" "cannot run the certificate helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper
-refuse "$WORKER_USER" "cannot run the certificate helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper
-refuse "$WEB_USER" "cannot run the network helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-network-helper
-refuse "$WORKER_USER" "cannot run the network helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-network-helper
+refuse "$WEB_USER" "cannot run the readings helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-readings-helper
+refuse "$WORKER_USER" "cannot run the readings helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-readings-helper
 refuse "$WEB_USER" "has no DNS profile helper grant" \
     sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper
 refuse "$POLLER_USER" "has no DNS profile helper grant" \

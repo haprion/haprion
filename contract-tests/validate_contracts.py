@@ -373,6 +373,24 @@ def check_cluster_settings_semantics(document: dict[str, object], path: Path) ->
         raise AssertionError(f"{path}: settings reported without a stored document")
 
 
+def check_readings_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    assert isinstance(result, dict)
+    # Each reading is its own helper's answer, about this cluster (N2).
+    for name, reading in result["reads"].items():
+        answer = reading["envelope"]
+        if answer is None:
+            if reading["exit_code"] == 0:
+                raise AssertionError(f"{path}: {name} succeeded without an answer")
+            continue
+        if answer.get("operation") != name:
+            raise AssertionError(f"{path}: the {name} reading answers {answer.get('operation')}")
+        if answer.get("cluster") != document["cluster"]:
+            raise AssertionError(f"{path}: the {name} reading is about another cluster")
+
+
 def check_changes_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -970,6 +988,7 @@ SEMANTIC_CHECKS = {
     "revert": check_revert_semantics,
     "cluster_settings": check_cluster_settings_semantics,
     "changes_publish": check_changes_publish_semantics,
+    "readings": check_readings_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
     "cert_issue": check_cert_issue_semantics,
@@ -1022,6 +1041,10 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["proxies"].append(deepcopy(result["proxies"][0]))
     elif operation == "objects":
         result["objects"][1]["readable"] = True
+    elif operation == "readings":
+        first = next(iter(result["reads"].values()))
+        first["envelope"] = None
+        first["exit_code"] = 0
     elif operation == "cluster_settings":
         if result["log_targets"]:
             result["log_targets"].append(deepcopy(result["log_targets"][0]))

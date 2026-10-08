@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "readings",
+  "cluster": "alpha",
+  "request_id": "99999999-9999-4999-8999-999999999999",
+  "result": {
+    "reads": {
+      "network": {
+        "exit_code": 0,
+        "envelope": {
+          "schema_version": 1,
+          "ok": true,
+          "outcome": "done",
+          "operation": "network",
+          "cluster": "alpha",
+          "request_id": "99999999-9999-4999-8999-999999999999",
+          "result": {
+            "cluster": "alpha",
+            "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "origin": "repository",
+            "ownership_vip": "192.0.2.20",
+            "default_vip": "internal",
+            "default_vip_object_count": 2,
+            "vips": [
+              {
+                "name": "dmz",
+                "address": "198.51.100.20",
+                "source": "198.51.100.25"
+              },
+              {
+                "name": "internal",
+                "address": "192.0.2.20",
+                "source": "192.0.2.25"
+              }
+            ],
+            "sources": [
+              {
+                "name": "outbound",
+                "address": "192.0.2.35"
+              }
+            ],
+            "groups": [
+              {
+                "name": "office",
+                "members": [
+                  "198.51.100.0/24"
+                ]
+              }
+            ]
+          },
+          "warnings": [],
+          "error": null
+        },
+        "stderr": ""
+      },
+      "cert_list": {
+        "exit_code": 78,
+        "envelope": null,
+        "stderr": "ERROR: no certificate registry is configured\n"
+      }
+    }
+  },
+  "warnings": [],
+  "error": null
+}

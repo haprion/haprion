@@ -11,18 +11,19 @@
 # an exact rule possible - PRIVILEGE.md forbids wildcards in argument matching,
 # and without the no-argument form a rule naming a cluster would need one.
 #
-# All three helpers write nothing and take no lock. The status helper reaches
-# The backup helper reads directory metadata under the state backup root and
-# never opens an archive - which matters, because those archives hold password
-# hashes and private SSH keys. The certificate helper reports metadata about the
-# distribution root and about which certificates certbot is renewing; private
-# key material never reaches its output, because what it parses is the leaf
-# certificate alone. Both are reads, both take no lock.
-#
-# nodes; the inventory helper reads the exact commit named by the published
-# RELEASE stamp rather than a work tree; the list helper reads saved commit
-# metadata - version number, date and comment - and no file content at all. So
-# the poller cannot choose what the interface is told is current, cannot show an
+# Every helper here writes nothing and takes no lock. The status helper reaches
+# the nodes; the inventory helper reads the exact commit named by the published
+# RELEASE stamp rather than a work tree; the cluster-list helper reads the
+# cluster file. The readings helper (2026-10-08) answers the six manager-local
+# readings in one call, by running their own helpers in its process: the
+# version listing (saved commit metadata - number, date, comment - and the
+# diffs asked for), the backup archives (directory metadata under the state
+# backup root; it never opens an archive, which matters, because those hold
+# password hashes and private SSH keys), the certificate list (metadata about
+# the distribution root and certbot's renewals; private key material never
+# reaches its output, because it parses the leaf certificate alone), the
+# network description, the cluster settings and the stored objects. So the
+# poller cannot choose what the interface is told is current, cannot show an
 # unpublished draft as live, and cannot block a deploy.
 #
 # NOPASSWD because a service has no terminal to type a password at.
@@ -31,10 +32,5 @@
 
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-settings-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-readings-helper ""
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-list-helper ""

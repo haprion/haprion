@@ -4405,12 +4405,16 @@ through exact sudoers rules:
 ```
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-readings-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-list-helper ""
 ```
+
+Status and inventory reach the nodes. `haproxy-readings-helper` answers the six
+readings that touch only the management host - versions, backup archives,
+certificates, the network description, the cluster settings and the stored
+objects - in one call, by running their own helpers; until 2026-10-08 each had
+its own rule and its own sudo call every pass, which was most of the host's
+journal.
 
 For the polling interval and refresh behaviour, see
 [Jobs and status freshness](#jobs-and-status-freshness).

@@ -49,7 +49,9 @@ from haproxy_mgmt import (
     backup_schedule,
     cert_export_socket,
     crs,
+    dnsdist_config,
     proxy_model,
+    resolve_socket,
     status_collect,
 )
 from haproxy_mgmt import cluster_settings as cluster_settings_module
@@ -8314,7 +8316,7 @@ def _editor_page(
 def _lookup_again(
     request: Request, config: Config, cluster: str, name: str, csrf_token: str
 ) -> Response:
-    """The stored object saved as it is, so the next publish looks its server names up again."""
+    """The stored object saved with its dns server names looked up again (B252, B261)."""
 
     session = current_session(request)
     if session is None:
@@ -8336,28 +8338,34 @@ def _lookup_again(
         draft = _settled_draft(connection, cluster, name, _state_reading(state))
     if draft is not None:
         #
-        # Publishing the stored object would throw the draft's work away.
-        # The draft's own publish looks the names up as well.
+        # Saving the stored object would throw the draft's work away. Saving
+        # the draft looks the names up as well.
         #
         return _refusal_page(
             request,
             config,
-            f"{name} has unpublished changes. Publish them from Versions; that looks the "
-            "names up too.",
+            f"{name} has unsaved or unpublished changes. Save them in the editor; that looks "
+            "the names up too.",
             back=_proxy_path(cluster, name, "edit"),
         )
     #
-    # Saved as it is stored (B257): the publish that carries it looks the
-    # names up again, and the version says that changed. The publish itself is
-    # Versions', with whatever else is saved.
+    # The names are looked up here, as every save of a dns object does (B261),
+    # and the object saved with the addresses they give now. The publish is
+    # Versions', with whatever else is saved, and the version says what moved.
     #
+    try:
+        document = dnsdist_config.with_addresses(
+            stored.name, stored.document, resolve_socket.lookup
+        )
+    except (ValueError, ModelError) as refusal:
+        return _refusal_page(request, config, str(refusal), back=_proxy_path(cluster, name))
     with request.app.state.pool.connection() as connection:
         try:
             saved = db.save_change(
                 connection,
                 cluster=cluster,
                 object_id=stored.name,
-                yaml=stored.document,
+                yaml=document,
                 base_version=state.base_version,
                 base_hash=state.commit or "",
                 updated_by=session.username,

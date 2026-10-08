@@ -524,6 +524,8 @@ class Server:
     host: str
     port: int
     backup: bool = False
+    address: str | None = None
+    """A dns server's name looked up when the object was saved (B261): what dnsdist forwards to."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1116,7 +1118,7 @@ def _is_address(host: str) -> bool:
 
 def _server(value: Any, location: str) -> Server:
     data = _mapping(value, location)
-    _only_keys(data, {"host", "port", "backup"}, location)
+    _only_keys(data, {"host", "port", "backup", "address"}, location)
     host = _required_string(data, "host", location)
     port = data.get("port")
     #
@@ -1125,7 +1127,24 @@ def _server(value: Any, location: str) -> Server:
     #
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
         raise ModelError(f"{location}.port must be a port number")
-    return Server(host=host, port=port, backup=_boolean(data, "backup", location, default=False))
+    address = data.get("address")
+    if address is not None:
+        #
+        # The address a name had when the object was saved (B261). Beside a
+        # name only: an address beside an address is two answers to one
+        # question, and nothing would say which one dnsdist uses.
+        #
+        if not isinstance(address, str) or not _is_address(address):
+            raise ModelError(f"{location}.address must be an IP address")
+        if _is_address(host):
+            raise ModelError(f"{location}.address belongs beside a name, not an address")
+        address = str(ipaddress.ip_address(address.strip("[]")))
+    return Server(
+        host=host,
+        port=port,
+        backup=_boolean(data, "backup", location, default=False),
+        address=address,
+    )
 
 
 _HTTP_ONLY = ("path", "host", "expect_status", "expect_body")
@@ -1705,9 +1724,12 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
             _refuse_non_syslog_pools(backends, backends_raw, name)
         else:
             _refuse_http_only_pools(backends, name)
+        if listen.protocol != "dns":
+            _refuse_saved_addresses(backends, name, listen.protocol)
     else:
         _refuse_keys(data, TCP_ONLY_KEYS, name, "an http or https object")
         _refuse_dns_only_pools(backends, name)
+        _refuse_saved_addresses(backends, name, listen.protocol)
         hostnames = _hostnames(data.get("hostnames"), name)
         backend = None
         routes_raw = data.get("routes")
@@ -2000,6 +2022,17 @@ def _refuse_non_syslog_pools(
             raise ModelError(f"{where}.servers must be addresses for IPVS: {', '.join(named)}")
 
 
+def _refuse_saved_addresses(backends: Mapping[str, Backend], name: str, protocol: str) -> None:
+    """A server's saved `address` is a dns object's (B261); HAProxy resolves its own names."""
+
+    for key, pool in backends.items():
+        if any(server.address is not None for server in pool.servers):
+            raise ModelError(
+                f"{name}.backends.{key}.servers: address is saved for a dns object's servers "
+                f"only, not for a {protocol} object"
+            )
+
+
 def _refuse_non_dns_pools(backends: Mapping[str, Backend], name: str) -> None:
     """What a dns pool cannot have, because dnsdist has no line to carry it.
 
@@ -2032,11 +2065,11 @@ def _refuse_non_dns_pools(backends: Mapping[str, Backend], name: str) -> None:
             raise ModelError(f"{where}.health must be a dns check, or disabled")
         #
         # A server may be named (B252, 26-10-06): dnsdist takes addresses only,
-        # so the generator looks the name up when the object is published and
-        # writes the address (`dnsdist_config.lookup`). The object keeps the
-        # name; the status says when it no longer resolves to what was published.
-        # A name is held to the hostname pattern: it is written into the file
-        # as a comment beside the address.
+        # so the name is looked up when the object is saved and the address
+        # stored beside it (`dnsdist_config.with_addresses`, B261); publishing
+        # looks nothing up. The status says when the name no longer resolves to
+        # what was published. A name is held to the hostname pattern: it is
+        # written into the file as a comment beside the address.
         #
         unnamed = sorted(
             {

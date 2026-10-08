@@ -1,14 +1,15 @@
 """`haproxy-resolve-helper` - look a dns server's names up for the web (B253, 2026-10-06).
 
 A dns object's server may be written as a name, and dnsdist takes addresses
-only, so the generator looks each name up (`dnsdist_config.lookup`, B252). The
-publish does that in the worker. The editor and the preview run the generator
-in the web service, which is built to reach nothing but localhost
-(`IPAddressDeny=any`): there the lookup worked only because the manager's
-resolver happened to be systemd-resolved's stub on 127.0.0.53, and on a host
-whose `resolv.conf` names a server elsewhere it would have refused names the
-publish accepts. So the web asks here, over `/run/haproxy-mgmt/resolve.sock`,
-and this answers with the manager's own resolver - the one the publish uses.
+only, so each name is looked up (`dnsdist_config.lookup`, B252) - since B261
+when the object is saved, and the address stored beside it, so the publish
+looks nothing up. Saving happens in the web service, which is built to reach
+nothing but localhost (`IPAddressDeny=any`): there a lookup worked only because
+the manager's resolver happened to be systemd-resolved's stub on 127.0.0.53,
+and on a host whose `resolv.conf` names a server elsewhere it would have
+refused names that resolve. So the web asks here, over
+`/run/haproxy-mgmt/resolve.sock`, and this answers with the manager's own
+resolver - the one the status uses to say a name has moved.
 
 Not root, and nothing to hold: a dynamic account, no files, and the network
 only because looking a name up is the point. The names are held to the model's

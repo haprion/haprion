@@ -144,14 +144,28 @@ cannot fail over.
 An object whose protocol is *DNS* is served by dnsdist on the same nodes and VIPs, on
 UDP and TCP, port 53 unless another is written. The form offers DNS once every node of
 the cluster reports dnsdist installed; a node without it refuses a release that carries
-a DNS listener. The pool's servers are addresses or host names with a port. dnsdist
-takes addresses only, so a name is looked up on the manager when the object is published
-and the address written into the configuration; a name that gives no address, or several
-of one family, refuses the publish - and the editor says so before it is published, by
-asking `haproxy-resolve-helper` over `/run/haproxy-mgmt/resolve.sock` (production only;
-the web service itself reaches nothing past localhost). The address is the one the name had then:
-`haproxy-status` and the object's page say when the name has since moved, and *Look up again*
-beside that warning saves the object unchanged for the next publish, which looks the name up again. The balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
+a DNS listener. The pool's servers are addresses or host names with a port, and the list
+shows the names. dnsdist takes addresses only, so a name is looked up on the manager when
+the object is **saved**, by asking `haproxy-resolve-helper` over
+`/run/haproxy-mgmt/resolve.sock` (production only; the web service itself reaches nothing
+past localhost), and the address is stored in the object beside it:
+
+```yaml
+servers:
+  - host: dc1.example.com
+    port: 53
+    address: 192.0.2.53      # written when the object was saved
+```
+
+A name that gives no address, or several of one family, refuses the save. Publishing looks
+nothing up: it writes the stored address, so publishing something else - a log target, a
+neighbouring object - never moves a DNS server and never fails because DNS does. A name
+stored without an address refuses the publish with *save the object again*; an object
+written by hand gives the `address` itself. The address is the one the name had when the
+object was saved: `haproxy-status` and the object's page say when the name has since moved,
+and *Look up again* beside that warning saves the object with the address the name has now,
+for the next publish. The stored `address` came with engine API 21; before it, every
+publish looked every name up. The balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
 `firstAvailable` (the first server that is up: active/passive, since dnsdist has no backup
 server) and `chashed` (one name keeps one server) - and the health check asks every
 server a real question, `a.root-servers.net.` for `A` unless another is given, once a
@@ -635,7 +649,7 @@ sudo systemctl enable --now location-update.timer
 ```
 
 The timer fetches a new, signed database once a day. A cluster takes it up at
-its next publish, not on its own; *Settings → Location data* shows the
+its next publish, whatever that publish changes, and not on its own; *Settings → Location data* shows the
 database's date and, for each cluster that names a country, the date its
 published lists were made from. The data is IPFire Location, licensed under
 CC BY-SA 4.0 (https://location.ipfire.org); each generated file names it in
@@ -771,7 +785,8 @@ on hover, and marks a cluster when any node is at 85 % or more.
 pinned sources (see the installation guide). The engine package goes on the
 management host and on every node, the rule set on the management host only:
 publishing compiles the rules there before they leave it, and copies the rule
-set into the release's `waf/`, so a cluster runs the rule set it was published
+set into the release's `waf/` - every publish of a cluster with rules, whatever it
+changes, takes up the rule set installed then - so a cluster runs the rule set it was published
 with. A node starts the engine when a release carries rules and stops it when
 one no longer does, and refuses a release with rules if the engine is not
 installed. The engine listens on `127.0.0.1:9520`; nothing else on a node may

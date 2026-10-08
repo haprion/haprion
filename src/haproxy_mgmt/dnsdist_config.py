@@ -33,13 +33,17 @@ one (FTL's own documentation; the lab showed Pi-hole logging the real client,
 status to read; the API stays closed, and no console is configured.
 
 **A server may be named** (B252, 26-10-06). dnsdist takes addresses only and
-looks nothing up, so the name is looked up here, when the object is
-published, with the manager's resolver, and the address is written with the
-name beside it as a comment. Looked up then and not on the node: a node
-that needed DNS to start dnsdist would need the servers dnsdist stands in
-front of, and the release would no longer be the file that was published.
-The cost is that the address is the one the name had at publishing;
-`status_collect` says when the name has moved since.
+looks nothing up, so the name is looked up when the object is saved, with the
+manager's resolver, and the address is stored in the object beside it
+(`with_addresses`, B261, 26-10-08); the address is written here with the name
+beside it as a comment. Looked up then and not on the node: a node that needed
+DNS to start dnsdist would need the servers dnsdist stands in front of. Not at
+publishing either, since B261: a publish of something else - a log target, a
+neighbouring object - re-resolved every name, so it could move a dns server
+nobody touched, and a resolver that failed refused a publish that was not about
+DNS at all. The cost is that the address is the one the name had at saving;
+`status_collect` says when the name has moved since, and saving the object
+again (*Look up again*) looks it up anew.
 
 The output is Lua, and every value written into it has been held to a pattern
 by the model or comes from the cluster's own configuration: addresses parse as
@@ -55,7 +59,16 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from haproxy_mgmt.config import Vip
-from haproxy_mgmt.proxy_model import HOSTNAME, Backend, Health, Proxy, duration_ms, is_range
+from haproxy_mgmt.proxy_model import (
+    HOSTNAME,
+    Backend,
+    Health,
+    Proxy,
+    dump_document,
+    duration_ms,
+    is_range,
+    read_document,
+)
 
 FILE = "dnsdist.conf"
 #
@@ -136,6 +149,35 @@ def lookup(host: str) -> str:
     raise Unresolved(f"{host} has no address on the manager")
 
 
+def with_addresses(name: str, document: str, resolve: Lookup = lookup) -> str:
+    """The object with each dns server name's address stored beside it (B261).
+
+    What the interface does when a dns object is saved, and the one place a
+    name is looked up for one: publishing reads the stored address and looks
+    nothing up. Every name is looked up again, so saving is also how an
+    address that moved is followed. An object that is not a dns object, or a
+    server given as an address, is returned with no address beside it. A name
+    that gives no single address refuses, as `lookup` says why.
+    """
+
+    data = read_document(name, document.encode("utf-8"))
+    listen = data.get("listen")
+    backends = data.get("backends")
+    is_dns = isinstance(listen, Mapping) and listen.get("protocol") == "dns"
+    if not isinstance(backends, Mapping):
+        return document
+    for pool in backends.values():
+        servers = pool.get("servers") if isinstance(pool, Mapping) else None
+        for server in servers if isinstance(servers, list) else ():
+            if not isinstance(server, dict):
+                continue
+            host = server.get("host")
+            server.pop("address", None)
+            if is_dns and isinstance(host, str) and host and not is_address(host):
+                server["address"] = resolve(host)
+    return dump_document(data)
+
+
 def server_name(index: int) -> str:
     """The position, not the address: what `generate` calls a pool member too."""
 
@@ -198,13 +240,18 @@ def _check(health: Health) -> str:
     )
 
 
-def _servers(proxy: Proxy, pool: Backend, source: str | None, resolve: Lookup) -> list[str]:
+def _servers(proxy: Proxy, pool: Backend, source: str | None) -> list[str]:
     lines = []
     for index, server in enumerate(pool.servers):
         named = not is_address(server.host)
         if named and not HOSTNAME.match(server.host):
             raise ValueError(f"refusing to write {server.host!r} into dnsdist configuration")
-        address = resolve(server.host) if named else server.host
+        address = server.address if named else server.host
+        if address is None:
+            raise Unresolved(
+                f"{proxy.name}: {server.host} has no address saved with it; save the object "
+                f"again so the manager looks the name up"
+            )
         fields = [
             f"address={_quote(_endpoint(address, server.port))}",
             f"name={_quote(counted_name(pool_name(proxy), server_name(index)))}",
@@ -281,7 +328,6 @@ NAMED = "looked up from "
 def render(
     placed: Sequence[tuple[Vip, Proxy, str | None]],
     networks: Mapping[str, Sequence[str]],
-    resolve: Lookup = lookup,
     scrapers: Sequence[str] = (),
 ) -> DnsLayer:
     """The cluster's dnsdist configuration, from its dns objects and where they sit.
@@ -311,7 +357,7 @@ def render(
     rules: list[str] = []
     for vip, proxy, source in placed:
         pool = proxy.backends[proxy.backend or ""]
-        servers = _servers(proxy, pool, source, resolve)
+        servers = _servers(proxy, pool, source)
         policy = f"setPoolServerPolicy({pool.balance}, {_quote(pool_name(proxy))})"
         routing = _rules(proxy, vip, networks)
         pools += [f"-- {proxy.name}", *servers, policy, ""]

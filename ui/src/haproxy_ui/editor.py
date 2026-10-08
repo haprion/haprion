@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
-from haproxy_mgmt import resolve_socket
 from haproxy_mgmt.config import AbuseProtection, Cluster, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
 from haproxy_mgmt.proxy_model import HTTP_METHODS, ModelError, load_proxy
@@ -42,8 +41,8 @@ from haproxy_ui.preview import (
     QUERY_TYPES,
     Preview,
     access_rules,
-    build_document,
     named_addresses,
+    saved_document,
     unchecked_countries,
     vip_sources,
 )
@@ -185,7 +184,7 @@ def check(
     """
 
     try:
-        document = build_document(dict(form))
+        document = saved_document(dict(form))
     except ValueError as exc:
         return Preview(problem=str(exc), about_the_object=True)
 
@@ -221,7 +220,6 @@ def check(
             abuse_protection=VALIDATION_ABUSE_PROTECTION,
             certificate_sans=cluster.certificate_sans,
             countries=unchecked_countries([edited, *neighbours]),
-            resolve=resolve_socket.lookup,
         )
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))

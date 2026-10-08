@@ -19,7 +19,7 @@ import yaml
 from haproxy_mgmt import status_collect
 from haproxy_mgmt.proxy_model import load_proxy
 
-from haproxy_ui import form_groups, health, objects, views
+from haproxy_ui import auth, form_groups, health, objects, views
 from haproxy_ui.db import ClusterStatus
 from haproxy_ui.preview import DEFAULTS, build_document, form_from_document
 from tests.test_editor_page import EditorTestCase
@@ -78,7 +78,7 @@ class WritingADnsObject(unittest.TestCase):
         load_proxy("resolver", document.encode())
 
     def test_a_server_may_be_named(self) -> None:
-        """B252: looked up when published."""
+        """B252: a name; looked up when saved (B261)."""
 
         document = build_document(dns_form(servers="ns1.example.com:53"))
         proxy = load_proxy("resolver", document.encode())
@@ -113,6 +113,47 @@ class WritingADnsObject(unittest.TestCase):
 
         self.assertIsNone(result.problem)
         self.assertEqual(asked.call_args.args[0]["parameters"], {"names": ["ns1.example.com"]})
+
+    def test_saving_writes_the_address_beside_the_name(self) -> None:
+        """B261: looked up when saved, by the service; the name stays for the list."""
+
+        from haproxy_ui.preview import saved_document
+
+        with mock.patch(
+            "haproxy_mgmt.resolve_socket.lookup", return_value="198.51.100.53"
+        ) as asked:
+            document = saved_document(dns_form(servers="ns1.example.com:53\n192.0.2.54:53"))
+
+        servers = load_proxy("resolver", document.encode()).backends["dns"].servers
+        self.assertEqual(
+            [(s.host, s.address) for s in servers],
+            [("ns1.example.com", "198.51.100.53"), ("192.0.2.54", None)],
+        )
+        asked.assert_called_once_with("ns1.example.com")
+
+    def test_a_name_that_does_not_resolve_is_said_on_save(self) -> None:
+        from haproxy_mgmt.dnsdist_config import Unresolved
+
+        from haproxy_ui.preview import PREVIEW_CLUSTER, preview
+
+        with mock.patch(
+            "haproxy_mgmt.resolve_socket.lookup",
+            side_effect=Unresolved("ns1.example.com does not resolve on the manager"),
+        ):
+            result = preview(dns_form(servers="ns1.example.com:53"), PREVIEW_CLUSTER)
+
+        self.assertIn("does not resolve", result.problem or "")
+        self.assertTrue(result.about_the_object)
+
+    def test_a_stored_object_with_its_saved_address_opens_in_the_form(self) -> None:
+        with mock.patch("haproxy_mgmt.resolve_socket.lookup", return_value="198.51.100.53"):
+            from haproxy_ui.preview import saved_document
+
+            document = saved_document(dns_form(servers="ns1.example.com:53"))
+
+        form = form_from_document(document)
+
+        self.assertEqual(form["servers"], "ns1.example.com:53")
 
     def test_hidden_http_rules_are_not_written_for_it(self) -> None:
         document = built(
@@ -371,3 +412,54 @@ class TheEditorOffersDns(EditorTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LookingUpAgainFollowsAMovedName(EditorTestCase):
+    """B261: *Look up again* saves the stored dns object with the address its name has now."""
+
+    STORED = """schema: 1
+name: resolver
+listen: {protocol: dns, port: 53}
+backend: dns
+backends:
+  dns: {balance: roundrobin, servers: [{host: ns1.example.com, port: 53, address: 198.51.100.53}]}
+"""
+
+    def test_the_saved_change_carries_the_new_address(self) -> None:
+        from dataclasses import replace
+
+        from tests.test_editor_page import OBJECTS
+
+        reading = replace(
+            OBJECTS,
+            result={
+                **OBJECTS.result,
+                "objects": [
+                    *OBJECTS.result["objects"],
+                    {
+                        "name": "resolver",
+                        "document": self.STORED,
+                        "readable": True,
+                        "protocol": "dns",
+                        "hostnames": [],
+                    },
+                ],
+            },
+        )
+        client = self.editor()
+        with (
+            mock.patch("haproxy_ui.db.cluster_objects", return_value=[reading]),
+            mock.patch("haproxy_mgmt.resolve_socket.lookup", return_value="198.51.100.60"),
+        ):
+            answer = client.post(
+                "/proxies/alpha/resolver/lookup",
+                data={auth.CSRF_FIELD: self.token(client)},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(answer.status_code, 303)
+        (change,) = self.changes
+        servers = load_proxy("resolver", change["yaml"].encode()).backends["dns"].servers
+        self.assertEqual(
+            [(s.host, s.address) for s in servers], [("ns1.example.com", "198.51.100.60")]
+        )

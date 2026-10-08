@@ -860,7 +860,9 @@ class AMovedServerName(DraftReading):
     def page(self, **config: Any) -> str:
         patch = mock.patch(
             "haproxy_ui.views.moved_dns_servers",
-            return_value=["ns1.example.com now resolves to 192.0.2.54; publish its object again"],
+            return_value=[
+                "ns1.example.com now resolves to 192.0.2.54; look it up again on its object"
+            ],
         )
         patch.start()
         self.addCleanup(patch.stop)

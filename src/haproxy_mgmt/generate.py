@@ -350,7 +350,6 @@ def generate(
     traffic_logging: bool = False,
     settings: ClusterSettings = NO_SETTINGS,
     countries: geo.Countries | None = None,
-    resolve: dnsdist_config.Lookup = dnsdist_config.lookup,
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
 
@@ -422,12 +421,13 @@ def generate(
         if scrapers:
             _refuse_dns_statistics_port(everything)
     #
-    # A named dns server is looked up here (B252), so a name that gives no
-    # single address refuses the publish as any other object that cannot be
-    # generated - in the editor too, before anything is published.
+    # A named dns server is written with the address saved beside it when the
+    # object was saved (B252, B261); nothing is looked up here. A name saved
+    # without one refuses the publish as any other object that cannot be
+    # generated, and says to save the object again.
     #
     try:
-        dns = dnsdist_config.render(resolving, known_networks, resolve, scrapers)
+        dns = dnsdist_config.render(resolving, known_networks, scrapers)
     except dnsdist_config.Unresolved as exc:
         raise GeneratorError(str(exc)) from exc
     try:

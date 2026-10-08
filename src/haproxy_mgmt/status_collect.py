@@ -277,7 +277,7 @@ def moved_message(name: PublishedName, now: str) -> str:
 
     return (
         f"{name.host} {now}, not {name.address} as published for pool {name.pool}; "
-        f"publish its object again"
+        f"look it up again on its object"
     )
 
 
@@ -294,10 +294,11 @@ def dns_servers_moved(
 ) -> list[Message]:
     """A server published by name whose name no longer gives the published address (B252).
 
-    The release keeps the address the name had when it was published, which is
-    the point - dnsdist does not depend on DNS to start - and also the cost: a
-    server that moved is not followed until the cluster is published again.
-    Asked on every status read, with the same resolver the publish used.
+    The release keeps the address the name had when its object was saved, which
+    is the point - dnsdist does not depend on DNS to start - and also the cost: a
+    server that moved is not followed until the object is saved again (*Look up
+    again*) and published.
+    Asked on every status read, with the same resolver the save used (B261).
     """
 
     warnings = []

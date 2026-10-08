@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import geo, resolve_socket
+from haproxy_mgmt import dnsdist_config, geo, resolve_socket
 from haproxy_mgmt.advanced import normalise as normalise_advanced
 from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, countries_named, generate
@@ -522,6 +522,28 @@ def shown_only(form: Mapping[str, object]) -> dict[str, object]:
         key: (() if isinstance(value, (list, tuple)) else "") if key in hidden else value
         for key, value in form.items()
     }
+
+
+def saved_document(form: dict[str, object]) -> str:
+    """The YAML the object is saved as: the form's, with each dns server name looked up (B261).
+
+    The lookup is the manager's, through the resolve service, at the moment of
+    saving - publishing looks nothing up. Kept apart from `build_document`,
+    which stays a function of the form alone: the check that a stored object
+    can be opened in the form rebuilds it, and must not ask DNS to do so. A
+    name that gives no single address is refused as a server line the form
+    cannot take is, as a `ValueError` saying why.
+    """
+
+    document = build_document(form)
+    name = str(form.get("name", "") or "").strip() or "object"
+    try:
+        return dnsdist_config.with_addresses(name, document, resolve_socket.lookup)
+    except ModelError:
+        #
+        # Not an object at all; `load_proxy` says why, as it does for any.
+        #
+        return document
 
 
 def build_document(form: dict[str, object]) -> str:
@@ -1046,7 +1068,7 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
     """
 
     try:
-        document = build_document(form)
+        document = saved_document(form)
     except ValueError as exc:
         return Preview(problem=str(exc), about_the_object=True)
 
@@ -1074,7 +1096,6 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             abuse_protection=cluster.abuse_protection,
             certificate_sans=PREVIEW_CERTIFICATE_SANS,
             countries=unchecked_countries([proxy]),
-            resolve=resolve_socket.lookup,
         ).configuration
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))
@@ -1386,7 +1407,9 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
     difference = _first_difference(
         _with_normalised_waf(
             _with_normalised_advanced(
-                _without_a_redundant_check_protocol(_with_an_unwritten_check_said(data))
+                _without_a_redundant_check_protocol(
+                    _with_an_unwritten_check_said(_without_saved_addresses(data))
+                )
             )
         ),
         rebuilt,
@@ -1394,6 +1417,36 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
     if difference:
         raise Unexpressible(difference)
     return form
+
+
+def _without_saved_addresses(data: Mapping[str, Any]) -> dict[str, Any]:
+    """The object without the addresses saved beside its dns server names (B261).
+
+    The form shows the name and looks it up again when the object is saved, so
+    an address is not something the form expresses or loses: it is written
+    afresh by `saved_document`.
+    """
+
+    copy = dict(data)
+    backends = copy.get("backends")
+    if not isinstance(backends, Mapping):
+        return copy
+    pools: dict[str, Any] = {}
+    for key, pool in backends.items():
+        servers = pool.get("servers") if isinstance(pool, Mapping) else None
+        if isinstance(servers, list):
+            pool = {
+                **pool,
+                "servers": [
+                    {k: v for k, v in server.items() if k != "address"}
+                    if isinstance(server, Mapping)
+                    else server
+                    for server in servers
+                ],
+            }
+        pools[key] = pool
+    copy["backends"] = pools
+    return copy
 
 
 def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str, Any]:

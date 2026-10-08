@@ -318,7 +318,9 @@ def build_findings(
 
     A finding the published object already lets through is left out - what
     remains is what still needs a decision. One the draft lets through but the
-    nodes do not yet stays, saying so, until the draft is published.
+    nodes do not yet stays, saying so, until the draft is published. An object
+    whose engine is off, or that has no WAF any more, is left out: an exception
+    would change nothing there. Its counts are kept, and come back with the engine.
     """
 
     grouped: dict[tuple[str, str], list[Finding]] = {}
@@ -355,12 +357,15 @@ def build_findings(
     cards = []
     for (cluster, name), findings in sorted(grouped.items()):
         document = drafted.get((cluster, name)) or stored.get((cluster, name), "")
+        mode = object_mode(document)
+        if mode == "off":
+            continue
         judged, clients = verdicts.get((cluster, name), (0, 0))
         cards.append(
             ObjectFindings(
                 cluster=cluster,
                 name=name,
-                mode=object_mode(document),
+                mode=mode,
                 judged=judged,
                 clients=clients,
                 findings=tuple(findings),

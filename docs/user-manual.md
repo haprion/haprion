@@ -706,7 +706,10 @@ and its traffic record says `crs:log` with the CRS rules it matched and its
 anomaly score; in `block` the visitor gets 403 and the record says `crs:deny`.
 The engine's checks come after the access rules, so a request those refuse is
 never inspected. *WAF logs* shows the records with a match and what each rule
-is. A rule that matches traffic the site is meant to receive is a false alarm:
+is, from the last seven days (fewer if the traffic log keeps fewer): a finding
+leaves the page seven days after its last match. An object turned `off`, or
+without `waf`, shows no findings - an exception would change nothing there -
+and they come back if the engine is turned on within those days. A rule that matches traffic the site is meant to receive is a false alarm:
 let it through with an exception, and the object can leave `log`. A higher
 `paranoia` matches more attacks and more false alarms.
 

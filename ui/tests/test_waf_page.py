@@ -89,6 +89,17 @@ class WhatIsShownAsAFinding(unittest.TestCase):
         self.assertTrue(card.findings[0].in_draft)
         self.assertEqual(card.mode, "block")
 
+    def test_an_object_with_the_engine_off_has_no_findings_to_decide(self) -> None:
+        off = LOGGING.replace("mode: log", "mode: 'off'")
+        self.assertEqual(self.build(finding(), stored=off), [])
+        # Without WAF settings, or without the object, the engine inspects nothing either.
+        self.assertEqual(self.build(finding(), stored=SHOP), [])
+        self.assertEqual(self.build(finding(), stored=""), [])
+        # The draft is what the card shows: turned off there, gone; turned back on, back.
+        self.assertEqual(self.build(finding(), draft=off), [])
+        [card] = self.build(finding(), stored=off, draft=LOGGING)
+        self.assertEqual(card.mode, "log")
+
     def test_a_rule_the_catalog_does_not_know_is_still_shown(self) -> None:
         [card] = self.build(finding(999999, "", ("/x",)))
         self.assertEqual(

@@ -99,11 +99,24 @@ keepalived_includes_at_top() {
 }
 
 #
-# One file of keepalived's from the release: install it, and when keepalived
-# reads it, test and reload. $1 the release's file, $2 where it is installed,
-# $3 what it is called in the log, $4 the test for the include.
+# keepalived's files from the release, in two steps (review 26-10-08, R3):
+# each file is staged - installed, with what it replaced kept aside - and then
+# everything staged is activated together, with one configuration test and
+# one reload, or put back together. A release that changes both the address
+# list and the IPVS file (a VIP and the syslog object on it) is then one reload
+# and never half of one: before, each file was tested and reloaded on its own,
+# and a refusal of the second left the first live.
 #
-sync_keepalived_file() {
+STAGED_WHAT=()
+STAGED_INSTALLED=()
+STAGED_BACKUP=()
+STAGED_READ=0
+
+#
+# $1 the release's file, $2 where it is installed, $3 what it is called in the
+# log, $4 the test for the include.
+#
+stage_keepalived_file() {
     local published="$1" installed="$2" what="$3" includes="$4"
     local backup
 
@@ -139,19 +152,34 @@ sync_keepalived_file() {
         [[ -z "$backup" ]] || rm -f "$backup"
         return 0
     fi
+    STAGED_WHAT+=("$what")
+    STAGED_INSTALLED+=("$installed")
+    STAGED_BACKUP+=("$backup")
+    STAGED_READ=1
+}
 
-    #
-    # Reload ONLY on exit 0, and this is the whole reason the test is here.
-    # keepalived skips an address it cannot parse at runtime and carries on -
-    # "skipping IP" in its log - so a reload after a failed test turns a
-    # mistyped address into a VIP that silently never appears. A refusal is
-    # visible; a missing address is not.
-    #
+#
+# Everything staged, at once. Reload ONLY on exit 0, and this is the whole
+# reason the test is here. keepalived skips an address it cannot parse at
+# runtime and carries on - "skipping IP" in its log - so a reload after a
+# failed test turns a mistyped address into a VIP that silently never appears.
+# A refusal is visible; a missing address is not.
+#
+activate_keepalived() {
+    local index what
+
+    if (( ! STAGED_READ )); then
+        return 0
+    fi
+    what="$(IFS=,; echo "${STAGED_WHAT[*]}")"
+    what="${what//,/ and }"
     if keepalived --config-test -f "$KEEPALIVED_CONF"; then
         log "keepalived: configuration test passed. Reloading..."
         if systemctl reload keepalived; then
             log "keepalived: ${what} active."
-            [[ -z "$backup" ]] || rm -f "$backup"
+            for index in "${!STAGED_INSTALLED[@]}"; do
+                [[ -z "${STAGED_BACKUP[index]}" ]] || rm -f "${STAGED_BACKUP[index]}"
+            done
             return 0
         fi
         log "ERROR: keepalived reload failed."
@@ -159,19 +187,26 @@ sync_keepalived_file() {
         log "ERROR: keepalived rejected the published ${what}."
     fi
 
-    if [[ -n "$backup" ]]; then
-        mv -f "$backup" "$installed"
-        log "keepalived: previous ${what} restored. keepalived was NOT reloaded."
-    else
-        rm -f "$installed"
-        log "keepalived: the published ${what} was removed again."
-    fi
+    for index in "${!STAGED_INSTALLED[@]}"; do
+        if [[ -n "${STAGED_BACKUP[index]}" ]]; then
+            mv -f "${STAGED_BACKUP[index]}" "${STAGED_INSTALLED[index]}"
+            log "keepalived: previous ${STAGED_WHAT[index]} restored. keepalived was NOT reloaded."
+        else
+            rm -f "${STAGED_INSTALLED[index]}"
+            log "keepalived: the published ${STAGED_WHAT[index]} was removed again."
+        fi
+    done
     return 1
 }
 
-sync_keepalived_addresses() {
-    sync_keepalived_file "${CURRENT}/keepalived/addresses.conf" "$KEEPALIVED_ADDRESSES" \
+stage_keepalived_addresses() {
+    stage_keepalived_file "${CURRENT}/keepalived/addresses.conf" "$KEEPALIVED_ADDRESSES" \
         "address list" keepalived_includes_anywhere
+}
+
+sync_keepalived_addresses() {
+    stage_keepalived_addresses
+    activate_keepalived
 }
 
 #
@@ -203,25 +238,33 @@ validate_ipvs_candidate() {
     fi
 }
 
-sync_keepalived_ipvs() {
+stage_keepalived_ipvs() {
     if ipvs_unreadable "${CURRENT}/keepalived/ipvs.conf"; then
         refuse_unread_ipvs
         return 1
     fi
-    sync_keepalived_file "${CURRENT}/keepalived/ipvs.conf" "$KEEPALIVED_IPVS" \
+    stage_keepalived_file "${CURRENT}/keepalived/ipvs.conf" "$KEEPALIVED_IPVS" \
         "IPVS file" keepalived_includes_at_top
 }
 
+sync_keepalived_ipvs() {
+    stage_keepalived_ipvs || return 1
+    activate_keepalived
+}
+
 #
-# Both, the address list first: an address must be on the node before a
-# virtual server on it can take a packet. Each is tried even when the other
-# failed, so one broken file does not hold the other back.
+# Both files, staged and then activated together (R3): one test, one reload,
+# or both put back. An IPVS file keepalived would not read is refused before
+# anything is staged, so the address list does not go live without it.
 #
 sync_keepalived() {
-    local failed=0
-    sync_keepalived_addresses || failed=1
-    sync_keepalived_ipvs || failed=1
-    return "$failed"
+    if ipvs_unreadable "${CURRENT}/keepalived/ipvs.conf"; then
+        refuse_unread_ipvs
+        return 1
+    fi
+    stage_keepalived_addresses
+    stage_keepalived_ipvs
+    activate_keepalived
 }
 
 #
@@ -290,6 +333,46 @@ waf_journal() {
     else
         journalctl -u "$WAF_UNIT" "$@"
     fi
+}
+
+#
+# Whether two releases give the engine different rules: their `waf/`, file by
+# file (review 26-10-08, R5). Neither having one is no difference; one having
+# it is. The engine is reloaded only when this says so - an http change that
+# leaves the rules alone used to reload them on every deploy.
+#
+waf_differs() {
+    local old="$1/waf" new="$2/waf"
+    [[ -d "$old" || -d "$new" ]] || return 1
+    [[ -d "$old" && -d "$new" ]] || return 0
+    ! diff -qr "$old" "$new" >/dev/null
+}
+
+#
+# The releases a node keeps (review 26-10-08, R4): the newest KEEP_RELEASES,
+# and always the one `current` names, the one HAProxy ran before this deploy
+# and the one an interrupted run left behind - whatever their age. Run only
+# after a deploy that completed, so a failed one never removes the release it
+# fell back to. The names are the deploy's time, so they sort as they were made;
+# anything else in the directory is left alone. The configuration a release
+# carries is read when HAProxy, the engine or dnsdist loads it; nothing reads
+# a superseded one afterwards.
+#
+KEEP_RELEASES=10
+
+prune_releases() {
+    local kept current entry count=0
+    current="$(readlink -f "$CURRENT")"
+    while IFS= read -r entry; do
+        count=$((count + 1))
+        (( count > KEEP_RELEASES )) || continue
+        for kept in "$current" "$OLD_RELEASE" "$RUNNING"; do
+            [[ "$entry" != "$kept" ]] || continue 2
+        done
+        rm -rf -- "$entry"
+        log "pruned ${entry}"
+    done < <(find "$RELEASE_DIR" -mindepth 1 -maxdepth 1 -type d \
+        -regextype posix-extended -regex '.*/[0-9]{8}-[0-9]{6}' | sort -r)
 }
 
 sync_waf_engine() {
@@ -454,8 +537,10 @@ OLD_RELEASE="$(readlink -f "$CURRENT")"
 # link and never reloaded, when it is the one that run left in the marker.
 #
 RUNNING="$OLD_RELEASE"
+WAS_PENDING=0
 if [[ -s "$PENDING" ]]; then
     RUNNING="$(head -n 1 "$PENDING")"
+    WAS_PENDING=1
 fi
 
 mark_pending() {
@@ -518,6 +603,7 @@ if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
         rm -f "$PENDING"
         sync_keepalived
         log "Deploy complete."
+        prune_releases
         exit 0
     fi
     log "No change. No deploy or reload needed."
@@ -582,8 +668,12 @@ mkdir -p "$RELEASE"
 cp -a "${STAGE}/." "${RELEASE}/"
 
 chown -R root:root "$RELEASE"
-find "$RELEASE" -type d -exec chmod 755 {} \;
-find "$RELEASE" -type f -exec chmod 644 {} \;
+#
+# `+`, not `\;`: as many paths per chmod as fit, rather than one process per
+# file (review 26-10-08, R6; 2 000 files took 2-8 s one by one, 0.01 s so).
+#
+find "$RELEASE" -type d -exec chmod 755 {} +
+find "$RELEASE" -type f -exec chmod 644 {} +
 
 #
 # Atomic swap of the current symlink
@@ -619,7 +709,16 @@ fi
 # engine does not know yet. If the engine does not take the rules, nothing has
 # been reloaded - put `current` back and return the engine to the old rules.
 #
-if ! sync_waf_engine 1; then
+#
+# Against the release HAProxy and the engine are running, and always when an
+# earlier run was stopped half-way: what the engine read then is not known,
+# and a file comparison does not say what a process has loaded.
+#
+WAF_CHANGED=1
+if (( ! WAS_PENDING )) && ! waf_differs "$RUNNING" "$RELEASE"; then
+    WAF_CHANGED=0
+fi
+if ! sync_waf_engine "$WAF_CHANGED"; then
     log "ERROR: the WAF engine did not take the new rules. Rolling back to ${OLD_RELEASE}."
 
     rm -f "$NEW_LINK"
@@ -665,6 +764,7 @@ if systemctl reload haproxy; then
     #
     if sync_keepalived; then
         log "Deploy complete."
+        prune_releases
     else
         log "ERROR: the configuration is live, but keepalived's address list or IPVS file is not."
         exit 1

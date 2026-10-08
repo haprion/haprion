@@ -329,13 +329,60 @@ class TheOrderInTheDeploy(unittest.TestCase):
 
     def test_the_engine_takes_the_rules_before_haproxy_reloads(self) -> None:
         self.assertLess(
-            self.position("if ! sync_waf_engine 1; then"),
+            self.position('if ! sync_waf_engine "$WAF_CHANGED"; then'),
             self.position('log "Reloading HAProxy..."'),
         )
 
     def test_the_validation_copy_points_the_engine_at_the_candidate(self) -> None:
         self.assertIn('-e "s#/etc/haproxy/waf/#${VALIDATE}/waf/#g"', self.text)
         self.assertIn("--include='*.yaml'", self.text)
+
+
+class TheRulesAreReloadedOnlyWhenTheyChange(unittest.TestCase):
+    """R5 (26-10-08): `waf_differs` decides whether a new release reloads the engine."""
+
+    def setUp(self) -> None:
+        found = re.search(r"^waf_differs\(\) \{.*?^\}$", SCRIPT.read_text(), re.DOTALL | re.M)
+        assert found, "the function is no longer where the test extracts it from"
+        self.function = found.group(0)
+        self.root = Path(tempfile.mkdtemp())
+
+    def release(self, name: str, rules: str | None) -> Path:
+        path = self.root / name
+        path.mkdir()
+        if rules is not None:
+            (path / "waf").mkdir()
+            (path / "waf" / "coraza.yaml").write_text(rules)
+        return path
+
+    def differs(self, old: Path, new: Path) -> bool:
+        finished = subprocess.run(
+            ["/bin/bash", "-c", f'{self.function}\nwaf_differs "$0" "$1"', str(old), str(new)],
+            check=False,
+        )
+        return finished.returncode == 0
+
+    def test_the_same_rules_are_no_reason_to_reload(self) -> None:
+        self.assertFalse(
+            self.differs(self.release("a", "rules: 1\n"), self.release("b", "rules: 1\n"))
+        )
+
+    def test_changed_rules_reload(self) -> None:
+        self.assertTrue(
+            self.differs(self.release("a", "rules: 1\n"), self.release("b", "rules: 2\n"))
+        )
+
+    def test_rules_appearing_or_going_count_as_a_change(self) -> None:
+        self.assertTrue(self.differs(self.release("a", None), self.release("b", "rules: 1\n")))
+        self.assertTrue(self.differs(self.release("c", "rules: 1\n"), self.release("d", None)))
+        self.assertFalse(self.differs(self.release("e", None), self.release("f", None)))
+
+    def test_a_new_release_asks_with_what_it_found(self) -> None:
+        """The call site passes the comparison, and an interrupted run forces the reload."""
+
+        source = SCRIPT.read_text()
+        self.assertIn('if (( ! WAS_PENDING )) && ! waf_differs "$RUNNING" "$RELEASE"; then', source)
+        self.assertIn('if ! sync_waf_engine "$WAF_CHANGED"; then', source)
 
 
 if __name__ == "__main__":

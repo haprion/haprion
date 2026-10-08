@@ -1809,13 +1809,14 @@ lists the questions.
 
 ## What a node keeps, and for how long
 
-Two kinds of copies build up on a node. Both are removed automatically after **30 days**, and
-only at the moment a new copy of the same kind is made. Nothing runs on the node on a schedule
+Three kinds of copies build up on a node. The first two are removed automatically after
+**30 days**, the third by count, and each only at the moment a new copy of the same kind is made. Nothing runs on the node on a schedule
 for this. A node that is never reinstalled or restored keeps its copies until it is.
 
 | What | Where | Made by | Removed |
 |---|---|---|---|
 | rollback copy of a file an installer replaced | `<file>.replaced-<yyyymmdd-hhmmss>` beside the file, e.g. `/etc/haproxy-manager/node.conf.replaced-20260924-200115`, `/usr/local/sbin/haproxy-pull-deploy.replaced-…` | `04-node-prepare` (and so every node bundle installation and every restore) | when the same file is next installed, if the time in its name is more than 30 days old. **The newest copy of each file always stays, however old.** |
+| a configuration release: everything a deploy installed - `haproxy.cfg`, `conf.d/`, the certificate lists, `waf/`, `dns/`, `keepalived/` | `/etc/haproxy/releases/<yyyymmdd-hhmmss>/` | `haproxy-pull-deploy`, once per deploy that changed something | after a deploy that completed, all but the newest 10. **The release `current` names, the one running before that deploy and one an interrupted deploy left behind always stay.** `KEEP_RELEASES` in the script; each removal is logged `pruned <path>`. |
 | a restore run's directory: the `before/` copy an overwrite took, its `quarantine/`, and the node bundle it installed | `/var/lib/haproxy-restore/<run>/` | `haproxy-node-restore` (the terminal or the web page) | when a later restore run begins writing to the same node, if the run is more than 30 days old (by the date in its ID, `r<yymmdd>-…`). The current run is never removed. |
 
 Why 30 days: a copy is for the days after a change, until the change has proved itself. After

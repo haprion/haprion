@@ -86,7 +86,7 @@ class Step(unittest.TestCase):
             'log() { echo "$*"; }\n'
             f'CURRENT="{self.root / "release"}"\n'
             f'KEEPALIVED_CONF="{self.conf}"\n'
-            f'KEEPALIVED_ADDRESSES="{self.installed}"\n'
+            f'KEEPALIVED_ADDRESSES="{self.root / "etc" / "addresses.conf"}"\n'
             f'KEEPALIVED_IPVS="{self.root / "etc" / "ipvs.conf"}"\n'
             f"{self.function}\n"
             f"{step}\n"
@@ -318,23 +318,45 @@ class TheIpvsFile(Step):
         self.assertNotIn("reload", self.calls())
         self.assertIn("previous IPVS file restored", output)
 
-    def test_both_files_are_tried_when_the_first_fails(self) -> None:
-        """One broken file does not hold the other back, and the step still fails."""
-
+    def both(self, address: str) -> Path:
         addresses = self.root / "release" / "keepalived" / "addresses.conf"
-        addresses.write_text("    not-an-address\n")
+        addresses.write_text(address)
         self.published.write_text(self.SERVER)
+        installed_addresses = self.root / "etc" / "addresses.conf"
+        installed_addresses.write_text("    192.0.2.19\n")
+        self.installed.write_text("")
         self.conf.write_text(
             "vrrp_instance alpha {\n    virtual_ipaddress {\n"
-            f"        include {self.root / 'etc' / 'addresses.conf'}\n    }}\n}}\n"
+            f"        include {installed_addresses}\n    }}\n}}\n"
             f"include {self.installed}\n"
         )
+        return installed_addresses
+
+    def test_both_files_changed_are_one_test_and_one_reload(self) -> None:
+        """R3 (26-10-08): a VIP and the syslog object on it go live together."""
+
+        installed_addresses = self.both("    192.0.2.20\n")
+
+        code, output = self.run_step("sync_keepalived")
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.calls().count("--config-test"), 1)
+        self.assertEqual(self.calls().count("systemctl reload keepalived"), 1)
+        self.assertEqual(installed_addresses.read_text(), "    192.0.2.20\n")
+        self.assertEqual(self.installed.read_text(), self.SERVER)
+        self.assertIn("address list and IPVS file active", output)
+
+    def test_a_refusal_puts_both_files_back_and_reloads_nothing(self) -> None:
+        installed_addresses = self.both("    not-an-address\n")
 
         code, output = self.run_step("sync_keepalived", TEST_EXIT="5")
 
         self.assertEqual(code, 1)
-        self.assertIn("rejected the published address list", output)
-        self.assertIn("rejected the published IPVS file", output)
+        self.assertNotIn("reload", self.calls())
+        self.assertEqual(installed_addresses.read_text(), "    192.0.2.19\n")
+        self.assertEqual(self.installed.read_text(), "")
+        self.assertIn("previous address list restored", output)
+        self.assertIn("previous IPVS file restored", output)
 
 
 class OneReadingOfTheTopLevelInclude(unittest.TestCase):

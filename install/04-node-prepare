@@ -310,7 +310,7 @@ step "IPVS for syslog objects"
 #
 systemctl mask --quiet ipvsadm.service
 log "  masked   ipvsadm.service (keepalived owns the IPVS table)"
-DEBIAN_FRONTEND=noninteractive apt-get install -y -q ipvsadm >/dev/null \
+DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q ipvsadm >/dev/null \
     || die "ipvsadm: the package could not be installed"
 log "  ok       $(/usr/sbin/ipvsadm --version 2>/dev/null | head -n 1)"
 

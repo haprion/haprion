@@ -190,6 +190,13 @@ install_file() {
 # binary. Without it the node's drop-in decides (see 04-node-prepare).
 #
 DNSDIST_KEYRING="/etc/apt/keyrings/dnsdist-21-pub.asc"
+#
+# Wait for the package lock rather than fail on it: Ubuntu's unattended
+# upgrades hold it for minutes at a time, and a node preparation that stopped
+# on it left the node half-way (26-10-08). Ten minutes, then the error
+# as before. apt 3.2's `DPkg::Lock::Timeout`.
+#
+APT_WAIT=(-o DPkg::Lock::Timeout=600)
 ensure_dnsdist() {
     local hold="${1:-}" id codename version
     id="$(. /etc/os-release && echo "${ID:-}")"
@@ -208,8 +215,8 @@ ensure_dnsdist() {
         systemctl mask --quiet dnsdist.service
         log "  masked   dnsdist.service (the binary validates; nothing here serves dns)"
     fi
-    apt-get update -q >/dev/null || die "dnsdist: apt-get update failed"
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q dnsdist >/dev/null \
+    apt-get "${APT_WAIT[@]}" update -q >/dev/null || die "dnsdist: apt-get update failed"
+    DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q dnsdist >/dev/null \
         || die "dnsdist: the package could not be installed"
     version="$(dnsdist --version 2>/dev/null | head -n 1)"
     [[ "$version" == "dnsdist 2.1."* ]] || die "dnsdist: expected the 2.1 series, found '${version}'"

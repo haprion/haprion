@@ -78,6 +78,13 @@ KEEPALIVED_STATE = "/run/haproxy/keepalived.state"
 KEEPALIVED_STATE_MISSING = f"{KEEPALIVED_STATE} does not exist yet."
 KEEPALIVED_STATE_WAIT = 10.0
 POLICY_RC = "/usr/sbin/policy-rc.d"
+#
+# Wait for the package lock rather than fail on it: a freshly installed VM runs
+# Ubuntu's unattended upgrades on its first boot, which hold the lock for
+# minutes, and a node preparation stopped on it once (26-10-08). apt 3.2's
+# `DPkg::Lock::Timeout`, ten minutes, as `install/lib.sh` has it.
+#
+APT_WAIT = ("-o", "DPkg::Lock::Timeout=600")
 NODE_CONF = "/etc/haproxy-manager/node.conf"
 #
 # The release's node bundle (B180), sent in the apply payload at this name in
@@ -867,6 +874,7 @@ def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Rep
                 "apt-get",
                 "install",
                 "-y",
+                *APT_WAIT,
                 "-o",
                 "Dpkg::Options::=--force-confdef",
                 "-o",
@@ -891,7 +899,9 @@ def _missing_packages(host: Host, packages: list[str], report: Report) -> None:
     if not packages:
         report.step("packages", missing=[])
         return
-    if host.run(["apt-get", "-o", "Acquire::Retries=3", "update"], check=False).returncode:
+    if host.run(
+        ["apt-get", "-o", "Acquire::Retries=3", *APT_WAIT, "update"], check=False
+    ).returncode:
         report.warnings.append("apt-get update failed; installing from the lists the node has")
     policy = host.path(POLICY_RC)
     policy.write_text("#!/bin/sh\nexit 101\n", encoding="utf-8")
@@ -903,6 +913,7 @@ def _missing_packages(host: Host, packages: list[str], report: Report) -> None:
                 "install",
                 "-y",
                 "--no-upgrade",
+                *APT_WAIT,
                 "-o",
                 "Dpkg::Options::=--force-confdef",
                 "-o",
@@ -945,7 +956,7 @@ def _update(
     that follows fails by itself if a package it needs really cannot be had.
     """
 
-    argv = ["apt-get", "-o", "Acquire::Retries=3", "update"]
+    argv = ["apt-get", "-o", "Acquire::Retries=3", *APT_WAIT, "update"]
     for attempt in range(1, tries + 1):
         completed = host.run(argv, check=False)
         if completed.returncode == 0:

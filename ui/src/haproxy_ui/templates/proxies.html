@@ -19,8 +19,8 @@
 
 <section class="metric-grid proxy-summary" aria-label="Proxy summary">
   <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="published">{{ counts.published }}</strong><span>Proxies</span><small>Published</small></div></article>
-  <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"></path></svg></span><div><strong data-count="managed">{{ counts.managed }}</strong><span>Managed</span><small>Platform owned</small></div></article>
-  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="unmanaged">{{ counts.unmanaged }}</strong><span>Unmanaged</span><small>Read-only</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"></path></svg></span><div><strong data-count="managed">{{ counts.managed }}</strong><span>Application</span><small>Created here</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="unmanaged">{{ counts.unmanaged }}</strong><span>Manual</span><small>Read-only</small></div></article>
 </section>
 
 <div class="cluster-list proxy-cluster-list">
@@ -41,7 +41,7 @@
     {% set written = listed.get(cluster.cluster, ()) if listed else () %}
     {% set foreign = (unmanaged.get(cluster.cluster, ()) if unmanaged else ()) %}
     {% if written or foreign or unpublished %}
-    <div class="table-scroll"><table class="node-table proxy-table"><thead><tr>{{ sort.heading(proxy_sorts.name, "Proxy") }}{{ sort.heading(proxy_sorts.protocol, "Protocol") }}{{ sort.heading(proxy_sorts.hosts, "Hosts / ports") }}{{ sort.heading(proxy_sorts.address, "VIP / source") }}{{ sort.heading(proxy_sorts.health, "Health") }}{{ sort.heading(proxy_sorts.ownership, "Ownership") }}</tr></thead><tbody data-cluster="{{ cluster.cluster }}">
+    <div class="table-scroll"><table class="node-table proxy-table"><thead><tr>{{ sort.heading(proxy_sorts.name, "Proxy") }}{{ sort.heading(proxy_sorts.protocol, "Protocol") }}{{ sort.heading(proxy_sorts.hosts, "Hosts / ports") }}{{ sort.heading(proxy_sorts.address, "VIP / source") }}{{ sort.heading(proxy_sorts.health, "Health") }}{{ sort.heading(proxy_sorts.ownership, "Created by") }}</tr></thead><tbody data-cluster="{{ cluster.cluster }}">
 {{ rows.proxy_rows(cluster.cluster, role, unpublished, queued, written, foreign, health.get(cluster.cluster, {}) if health else {}, removed.get(cluster.cluster, ()) if removed else (), failed.get(cluster.cluster, {}) if failed else {}, (reconfigured.get(cluster.cluster, ()) if reconfigured else ()) if behind and cluster.cluster in behind else (), proxy_sort, proxy_paging or {}) }}
     </tbody></table></div>
     {% else %}

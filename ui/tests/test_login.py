@@ -471,7 +471,9 @@ class SigningIn(LoginTestCase):
         proxies = client.get("/proxies")
         self.assertIn("Synthetic dev data", dashboard.text)
         self.assertIn("public-web", proxies.text)
-        self.assertIn("Unmanaged", proxies.text)
+        self.assertIn('ownership-unmanaged">Manual<', proxies.text)
+        self.assertIn('ownership-managed">Application<', proxies.text)
+        self.assertIn(">Created by<", proxies.text)
 
     def test_static_design_assets_are_local_and_served(self) -> None:
         client = self.client()

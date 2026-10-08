@@ -129,13 +129,13 @@
   </header>
   {% if object.published %}
   <div class="table-scroll"><table class="node-table">
-    <thead><tr><th>Protocol</th><th>Hostnames</th><th>Ports</th><th>Backends</th><th>Ownership</th></tr></thead>
+    <thead><tr><th>Protocol</th><th>Hostnames</th><th>Ports</th><th>Backends</th><th>Created by</th></tr></thead>
     <tbody><tr>
       <td data-label="Protocol"><span class="protocol-badge protocol-{{ object.published.protocol }}">{{ object.published.protocol | upper }}</span></td>
       <td data-label="Hostnames">{{ object.published.hostnames | join(', ') if object.published.hostnames else 'No hostname rule' }}</td>
       <td data-label="Ports">{{ object.published.ports | join(', ') if object.published.ports else '—' }}</td>
       <td data-label="Backends">{{ object.published.backend_count }}</td>
-      <td data-label="Ownership"><span class="ownership-badge ownership-{{ 'managed' if object.published.managed else 'unmanaged' }}">{{ 'Managed' if object.published.managed else 'Unmanaged' }}</span></td>
+      <td data-label="Created by"><span class="ownership-badge ownership-{{ 'managed' if object.published.managed else 'unmanaged' }}">{{ 'Application' if object.published.managed else 'Manual' }}</span></td>
     </tr></tbody>
   </table></div>
   {% elif not object.vip %}

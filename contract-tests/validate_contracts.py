@@ -407,6 +407,25 @@ def check_objects_publish_semantics(document: dict[str, object], path: Path) -> 
         raise AssertionError(f"{path}: a changed objects publish names what it changed")
 
 
+def check_changes_publish_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    # The objects publish's promises, except that a package may change the
+    # network or the settings and no object at all.
+    if not result["deployment_required"] or result["next_command"] is None:
+        raise AssertionError(f"{path}: a publish must require explicit deploy")
+    if result["changed"] and result["published_at"] is None:
+        raise AssertionError(f"{path}: a changed publish requires a timestamp")
+    overlap = sorted(set(result["objects"]) & set(result["removed"]))
+    if overlap:
+        raise AssertionError(f"{path}: {', '.join(overlap)} is both published and removed")
+    if result["changed"] and not (
+        result["objects"] or result["removed"] or result["network"] or result["settings"]
+    ):
+        raise AssertionError(f"{path}: a changed publish names what it changed")
+
+
 def check_reconcile_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -983,6 +1002,7 @@ SEMANTIC_CHECKS = {
     # The same promise as a network publish: always deploy afterwards.
     "cluster_settings_publish": check_network_publish_semantics,
     "objects_publish": check_objects_publish_semantics,
+    "changes_publish": check_changes_publish_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
     "cert_issue": check_cert_issue_semantics,
@@ -1046,6 +1066,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         "network_publish",
         "objects_publish",
         "cluster_settings_publish",
+        "changes_publish",
     ):
         result["deployment_required"] = False
     elif operation == "deploy":

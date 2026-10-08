@@ -26,6 +26,7 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-cluster-settings` | `cluster_settings` | `done`, `failed` | The cluster's external log targets and metrics exporter, from `managed/cluster.yaml` at the published head, with that head; `stored` is false and both are empty when the file does not exist |
 | `haproxy-cluster-settings-publish-helper` | `cluster_settings_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/cluster.yaml`, stored canonically; `settings_invalid` for a document the model refuses (a target is an IP address, never a name), `network_missing` before the cluster has a network description |
 | `haproxy-objects-publish-helper` | `objects_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/proxies/` |
+| `haproxy-changes-publish-helper` | `changes_publish` | `done`, `failed`, `blocked` | The changes a person saved, published as one version: up to 64 proxy objects (`null` removes one), the network description and the cluster settings, in any combination and at least one; a part left out is read from the base. The result names the objects written and removed and whether `network` and `settings` were part of it. `network_invalid` and `settings_invalid` name the document that is wrong on its own, `changes_invalid` a package the managed layer refuses as a whole (B257) |
 | `haproxy-publish` | `publish` | `done`, `failed`, `blocked` | Validation and new immutable release |
 | `haproxy-deploy` | `deploy` | `done`, `partial`, `failed`, `blocked` | Config reconcile per node. `blocked` means no node was touched (split brain, unknown VIP owner, no usable status, missing certificates); a block met after a node already carries the target is `partial`, naming it |
 | `haproxy-revert` | `revert` | `done`, `failed`, `blocked` | New release built from an older version |
@@ -41,8 +42,8 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-resolve-helper` | `resolve` | `done`, `failed` | Looks up `parameters.names` (1-20 host names, no addresses) with the manager's resolver, as the generator does for a dns object's server: per name the one address, or the sentence the publish would refuse it with. `done` whatever the names gave; `cluster` is always null. Reached by the web over `/run/haproxy-mgmt/resolve.sock`, as a dynamic user with the network and nothing else (B253) |
 | `haproxy-cert-export-helper` | `cert_export` | `done`, `failed` | One certificate's key, for a registry entry marked `exportable` and no other (B255): `pem-key` (the key alone), `pfx` (key and chain, AES-256, PBKDF2, SHA-256 MAC) or `pfx-compatible` (3DES, SHA-1 MAC) under the caller's 8-128 character `password`, which is never returned; the file as `content_base64` with the name and media type to serve it under. Refused (`not_exportable`) for any entry without the mark or with a target; nothing is written; `cluster` is always null. Reached by the web over `/run/haproxy-mgmt/cert-export.sock`, as root |
 
-The five operations that record a version (`publish`, `revert`, `network_publish`,
-`objects_publish`, `cluster_settings_publish`) take an optional `requested_by`: the person a caller acts for, at most 64
+The six operations that record a version (`publish`, `revert`, `network_publish`,
+`objects_publish`, `cluster_settings_publish`, `changes_publish`) take an optional `requested_by`: the person a caller acts for, at most 64
 printable characters. The commit carries it as a `Requested-By` trailer, beside `Run-By` - the
 account sudo ran the helper as, which the helper can prove. The name is recorded only when that
 account is the runtime policy's `interface_account`, the web interface's worker; from any other
@@ -95,6 +96,7 @@ Command-specific stable codes:
 | `cert_deploy` | `split_brain`, `vip_unknown`, `certificate_missing`, `fingerprint_mismatch`, `node_cert_deploy_failed` |
 | `network_publish` | `dirty_worktree`, `candidate_invalid`, `publish_incomplete` |
 | `objects_publish` | `dirty_worktree`, `network_missing`, `objects_invalid`, `candidate_invalid`, `publish_incomplete` |
+| `changes_publish` | `dirty_worktree`, `network_missing`, `network_invalid`, `settings_invalid`, `changes_invalid`, `candidate_invalid`, `advanced_ignored`, `tls_defaults_stale`, `publish_incomplete` |
 | `cert_issue` | `already_exists`, `certbot_failed`, `publish_failed` |
 
 New codes may be added in schema v1 only when an older caller can safely show them as a generic

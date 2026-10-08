@@ -4416,13 +4416,14 @@ exactly the case a lock file gets wrong.
 
 ##### What the worker may run
 
-Thirteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
+Fifteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-settings-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""

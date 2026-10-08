@@ -271,7 +271,9 @@ class TheDnsCounterLists(unittest.TestCase):
     def test_the_migration_differences_what_the_readers_sum(self) -> None:
         source = DNS_COUNTERS_MIGRATION.read_text()
         self.assertEqual(_tuple_named(source, "HAPROXY_COUNTERS"), db.STORED_DELTAS)
-        self.assertEqual((*db.STORED_DELTAS, *metrics.DNS_COUNTERS), db.BACKEND_DELTAS)
+        self.assertEqual(
+            (*db.STORED_DELTAS, *metrics.DNS_COUNTERS, *metrics.SYSLOG_COUNTERS), db.BACKEND_DELTAS
+        )
         summed = {name for name, _label in metrics.DNS_SUMMED}
         self.assertLessEqual(summed, set(db.BACKEND_DELTAS))
 
@@ -284,6 +286,101 @@ class TheDnsCounterLists(unittest.TestCase):
         server = set(counters["servers"]["items"]["required"]) - {"pool", "server", "status"}
         self.assertEqual(set(metrics.DNS_POOL), pool)
         self.assertEqual(set(metrics.DNS_SERVER), server)
+
+
+SYSLOG_COUNTERS_MIGRATION = (
+    ROOT / "ui" / "migrations" / "versions" / "0061_metric_syslog_counters.py"
+)
+
+
+class TheSyslogCounters(unittest.TestCase):
+    """IPVS's counters (Fas 19b B3): the node's names, the reader's columns, the migration's."""
+
+    def test_the_migration_stores_exactly_what_the_reader_keeps(self) -> None:
+        source = SYSLOG_COUNTERS_MIGRATION.read_text()
+        self.assertEqual(_tuple_named(source, "SYSLOG_COUNTERS"), metrics.SYSLOG_COUNTERS)
+        self.assertEqual(tuple(metrics.SYSLOG_ROW.values()), metrics.SYSLOG_COUNTERS)
+        self.assertEqual(
+            tuple(name for name, _label in metrics.SYSLOG_CARD_COUNTERS), metrics.SYSLOG_COUNTERS
+        )
+
+    def test_the_reader_takes_the_names_the_node_reports(self) -> None:
+        schema = json.loads((ROOT / "schemas" / "v1" / "haproxy-status.schema.json").read_text())
+        service = schema["$defs"]["node_status"]["properties"]["ipvs"]["properties"]["services"][
+            "items"
+        ]
+        counted = {"packets", "bytes"}
+        self.assertLessEqual(counted, set(service["required"]))
+        self.assertLessEqual(counted, set(service["properties"]["receivers"]["items"]["required"]))
+        self.assertEqual(set(metrics.SYSLOG_ROW), counted)
+
+    def reading(self, owner: bool = True) -> dict[str, object]:
+        return {
+            "nodes": [
+                {
+                    "name": "a",
+                    "status": {
+                        "vip": {"owner": owner},
+                        "ipvs": {
+                            "services": [
+                                {
+                                    "protocol": "udp",
+                                    "address": "192.0.2.20",
+                                    "port": 514,
+                                    "packets": 30,
+                                    "bytes": 3000,
+                                    "object": "logs",
+                                    "pool": "receivers",
+                                    "receivers": [
+                                        {
+                                            "address": "192.0.2.71",
+                                            "port": 514,
+                                            "server": "s1",
+                                            "status": "UP",
+                                            "packets": 30,
+                                            "bytes": 3000,
+                                        },
+                                        {
+                                            "address": "192.0.2.72",
+                                            "port": 514,
+                                            "server": "s2",
+                                            "status": "DOWN",
+                                            "packets": None,
+                                            "bytes": None,
+                                        },
+                                    ],
+                                },
+                                {
+                                    "protocol": "udp",
+                                    "address": "192.0.2.20",
+                                    "port": 9999,
+                                    "packets": 5,
+                                    "bytes": 50,
+                                    "object": None,
+                                    "pool": None,
+                                    "receivers": [],
+                                },
+                            ]
+                        },
+                    },
+                }
+            ]
+        }
+
+    def test_a_pool_and_its_receivers_become_backend_rows(self) -> None:
+        _frontends, members = metrics.samples(self.reading())
+
+        self.assertEqual(
+            [(m.backend, m.member, m.status, dict(m.counters), m.uptime_sec) for m in members],
+            [
+                ("receivers", "BACKEND", None, {"syslog_messages": 30, "syslog_bytes": 3000}, None),
+                ("receivers", "s1", "UP", {"syslog_messages": 30, "syslog_bytes": 3000}, None),
+                ("receivers", "s2", "DOWN", {}, None),
+            ],
+        )
+
+    def test_only_the_address_holder_counts(self) -> None:
+        self.assertEqual(metrics.samples(self.reading(owner=False))[1], [])
 
 
 class TheMetricTables(unittest.TestCase):

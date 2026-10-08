@@ -846,6 +846,50 @@ class AMovedServerName(DraftReading):
         self.assertNotIn("Publish again", text)
 
 
+class ASyslogObjectsCard(DraftReading):
+    """Fas 19b B3: a syslog object's pool is drawn with messages and bytes, read from IPVS's columns."""
+
+    DOCUMENT = b"""schema: 1
+name: public-web
+listen: {protocol: syslog, port: 514}
+backend: receivers
+backends:
+  receivers:
+    balance: roundrobin
+    servers: [{host: 192.0.2.71, port: 514}, {host: 192.0.2.72, port: 514}]
+    health: {type: udp}
+"""
+
+    def test_the_figures_are_messages_and_bytes(self) -> None:
+        from haproxy_mgmt.proxy_model import load_proxy
+
+        totals: list[Any] = []
+
+        def read_totals(*_a: Any, **k: Any) -> metrics.BackendMeasurement:
+            totals.append(k.get("counters"))
+            return measurement(counters=k.get("counters", metrics.CARD_COUNTERS))
+
+        for name, answer in (
+            (
+                "haproxy_ui.views.load_proxy",
+                lambda name, _document: load_proxy(name, self.DOCUMENT),
+            ),
+            ("haproxy_ui.db.read_backend_totals", read_totals),
+        ):
+            patch = mock.patch(name, side_effect=answer)
+            patch.start()
+            self.addCleanup(patch.stop)
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        page = client.get("/proxies/edge-demo/public-web")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(totals, [metrics.SYSLOG_CARD_COUNTERS])
+        card = page.text.split('<div class="traffic-card">', 1)[1]
+        figures = [part.split("</dt>")[0] for part in card.split("<dt>")[1:]]
+        self.assertEqual(figures, ["Messages", "Bytes"])
+
+
 class ADnsObjectsCard(DraftReading):
     """Fas 19a B4: a dns object's pool is drawn with a resolver's figures and its servers.
 

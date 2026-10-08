@@ -379,6 +379,13 @@ def touch_after(inactivity_minutes: int) -> timedelta:
 #
 DNS_PROFILE_APPLY_WAIT = 6.0
 
+#
+# The figures an object's traffic card draws, by what serves it: dnsdist counts
+# a dns pool's queries (Fas 19a B4), IPVS a syslog pool's messages (19b B3),
+# HAProxy everything else.
+#
+OBJECT_FIGURES = {"dns": metrics.DNS_FIGURES, "syslog": metrics.SYSLOG_FIGURES}
+
 SIGN_IN_FAILED = "Sign-in failed. Check the username and password and try again."
 UNAVAILABLE_PROVIDER = "Sign-in through the provider is not available"
 EXPIRED = (
@@ -1615,8 +1622,8 @@ def build_router(config: Config) -> APIRouter:
                 proxy = load_proxy(name, detail.stored.document.encode())
             except ModelError:
                 proxy = None
-            if proxy is not None and proxy.listen.protocol == "dns":
-                figures = metrics.DNS_FIGURES
+            if proxy is not None:
+                figures = OBJECT_FIGURES.get(proxy.listen.protocol, metrics.HTTP_FIGURES)
             if proxy is not None:
                 #
                 # One card per backend the object has now, each reading the
@@ -1646,8 +1653,6 @@ def build_router(config: Config) -> APIRouter:
                     earlier=_earlier_names(backend, targets, aliases),
                 )
 
-            dns = figures is metrics.DNS_FIGURES
-
             def totals(backend: str) -> Callable[[Any], metrics.BackendMeasurement]:
                 def read(connection: Any) -> metrics.BackendMeasurement:
                     found = db.read_backend_totals(
@@ -1657,9 +1662,9 @@ def build_router(config: Config) -> APIRouter:
                         since=counted_since,
                         until=counted_until,
                         earlier=_earlier_names(backend, targets, aliases),
-                        counters=metrics.DNS_SUMMED if dns else metrics.CARD_COUNTERS,
+                        counters=metrics.summed(figures),
                     )
-                    return metrics.dns_measurement(found) if dns else found
+                    return metrics.measured(figures, found)
 
                 return read
 
@@ -1829,7 +1834,7 @@ def build_router(config: Config) -> APIRouter:
         # The names first, on one connection: they are cheap, and every card's
         # readings depend on them.
         #
-        listed: list[tuple[str, list[str], list[tuple[str, bool]], list[str]]] = []
+        listed: list[tuple[str, list[str], list[tuple[str, bool]], dict[str, metrics.Figures]]] = []
         #
         # Each backend's earlier names, so a renamed one keeps its history
         # under the name it has now: the generator's own rename (B250) from the
@@ -1866,13 +1871,32 @@ def build_router(config: Config) -> APIRouter:
                             if not metrics.is_exporter(seen[0])
                         ],
                         #
-                        # dnsdist's pools (Fas 19a B4), a section of their own:
-                        # queries are not requests, and one scale for both
-                        # would compare two different things.
+                        # dnsdist's pools (Fas 19a B4) and IPVS's (19b B3),
+                        # each with its own figures: queries and messages are
+                        # not requests.
                         #
-                        db.read_cluster_backends(
-                            connection, cluster=cluster, since=since, until=now, dns=True
-                        ),
+                        {
+                            **dict.fromkeys(
+                                db.read_cluster_backends(
+                                    connection,
+                                    cluster=cluster,
+                                    since=since,
+                                    until=now,
+                                    kind="dns",
+                                ),
+                                metrics.DNS_FIGURES,
+                            ),
+                            **dict.fromkeys(
+                                db.read_cluster_backends(
+                                    connection,
+                                    cluster=cluster,
+                                    since=since,
+                                    until=now,
+                                    kind="syslog",
+                                ),
+                                metrics.SYSLOG_FIGURES,
+                            ),
+                        },
                     )
                 )
 
@@ -1928,12 +1952,17 @@ def build_router(config: Config) -> APIRouter:
 
             return samples, totals
 
-        def dns_reads(cluster: str, name: str) -> tuple[Callable[[Any], Any], ...]:
+        def pool_reads(
+            cluster: str, name: str, figures: metrics.Figures
+        ) -> tuple[Callable[[Any], Any], ...]:
+            """A dns or syslog pool's readings: the backend's line, its own figures."""
+
             earlier = _earlier_names(name, targets_of[cluster], aliases[cluster])
             samples, _totals = backend_reads(cluster, name)
 
             def totals(connection: Any) -> metrics.BackendMeasurement:
-                return metrics.dns_measurement(
+                return metrics.measured(
+                    figures,
                     db.read_backend_totals(
                         connection,
                         cluster=cluster,
@@ -1941,8 +1970,8 @@ def build_router(config: Config) -> APIRouter:
                         since=counted_since,
                         until=counted_until,
                         earlier=earlier,
-                        counters=metrics.DNS_SUMMED,
-                    )
+                        counters=metrics.summed(figures),
+                    ),
                 )
 
             return samples, totals
@@ -1963,9 +1992,9 @@ def build_router(config: Config) -> APIRouter:
                 keys.append((cluster, "backend", backend))
                 reads.extend(backend_reads(cluster, backend))
                 spans.append(2)
-            for pool_name in pools:
+            for pool_name, figures in pools.items():
                 keys.append((cluster, "backend", pool_name))
-                reads.extend(dns_reads(cluster, pool_name))
+                reads.extend(pool_reads(cluster, pool_name, figures))
                 spans.append(2)
         answers = _read_concurrently(pool, reads)
         read_back: dict[tuple[str, str, str], tuple[Any, ...]] = {}
@@ -1979,7 +2008,7 @@ def build_router(config: Config) -> APIRouter:
             kind: str,
             named: Sequence[str],
             label: Callable[[str], str],
-            dns: Collection[str] = (),
+            kinds: Mapping[str, metrics.Figures] | None = None,
         ) -> list[metrics.BackendTraffic]:
             """One section: every series read, drawn against one scale.
 
@@ -1989,11 +2018,12 @@ def build_router(config: Config) -> APIRouter:
 
             A dns pool sits among the backends (26-10-06) with a resolver's
             figures, its line counting queries where the others count
-            requests - each a count per bucket, on the one scale.
+            requests, and a syslog pool (19b B3) counting messages - each a
+            count per bucket, on the one scale.
             """
 
             def figures_of(name: str) -> metrics.Figures:
-                return metrics.DNS_FIGURES if name in dns else metrics.HTTP_FIGURES
+                return (kinds or {}).get(name, metrics.HTTP_FIGURES)
 
             found = [(name, read_back[(cluster, kind, name)]) for name in named]
             ceiling = max(
@@ -2078,7 +2108,7 @@ def build_router(config: Config) -> APIRouter:
                         #
                         sorted([*served_pools, *pools], key=label),
                         label,
-                        dns=frozenset(pools),
+                        kinds=pools,
                     ),
                     "redirects": section(cluster, "backend", redirects, label),
                 }

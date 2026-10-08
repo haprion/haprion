@@ -84,6 +84,7 @@ class ReadingACluster(LoginTestCase):
     frontends: list[tuple[str, bool]] = [("mgd-vip-int-https", True), ("mgd-vip-int-http", True)]
     backends: list[str] = ["mgd-shop-web", "mgd-shop-api", "mgd-shop-redirect-eee20480"]
     dns_pools: list[str] = []
+    syslog_pools: list[str] = []
 
     def setUp(self) -> None:
         super().setUp()
@@ -91,7 +92,9 @@ class ReadingACluster(LoginTestCase):
             ("read_cluster_frontends", lambda *_a, **_k: self.frontends),
             (
                 "read_cluster_backends",
-                lambda *_a, **k: self.dns_pools if k.get("dns") else self.backends,
+                lambda *_a, **k: {"dns": self.dns_pools, "syslog": self.syslog_pools}.get(
+                    k.get("kind", "haproxy"), self.backends
+                ),
             ),
             ("read_backend_aliases", lambda *_a, **_k: {}),
             ("read_frontend_series", self._frontend_series),
@@ -336,6 +339,24 @@ class OneScalePerSection(ReadingACluster):
         peaks = {label.split("peaking at ")[1] for label in labels}
 
         self.assertGreater(len(peaks), 1)
+
+
+class SyslogPoolsAmongTheBackends(ReadingACluster):
+    """IPVS's pools (Fas 19b B3) in the backends' list, counting messages and bytes."""
+
+    syslog_pools = ["receivers"]
+    dns_pools = ["resolver"]
+
+    def test_each_pool_draws_its_own_figures(self) -> None:
+        text = str(self.page().text)  # type: ignore[attr-defined]
+        section = text.split('<h4 class="traffic-section">Backends</h4>', 1)[1]
+        cards = section.split('<code class="traffic-backend">')[1:]
+        receivers = next(card for card in cards if card.startswith("receivers<"))
+        figures = [part.split("</dt>")[0] for part in receivers.split("<dt>")[1:]]
+        self.assertEqual(figures, ["Messages", "Bytes"])
+        self.assertIn("Messages / ", receivers)
+        resolver = next(card for card in cards if card.startswith("resolver<"))
+        self.assertIn("Queries / ", resolver)
 
 
 class DnsPoolsAmongTheBackends(ReadingACluster):

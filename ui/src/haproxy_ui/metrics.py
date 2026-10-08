@@ -84,9 +84,17 @@ DNS_POOL = {
 #
 DNS_SERVER = {"queries": "dns_queries", "answered": "dns_answered"}
 #
+# IPVS's counters for a syslog pool (Fas 19b B3), in the same rows: the virtual
+# server's on the pool's own row, each receiver's on its own. One message is
+# one datagram (`ops`), so packets in are messages. Migration 0061 stores them,
+# and the node reports them as `packets` and `bytes`.
+#
+SYSLOG_COUNTERS: tuple[str, ...] = ("syslog_messages", "syslog_bytes")
+SYSLOG_ROW = {"packets": "syslog_messages", "bytes": "syslog_bytes"}
+#
 # Every counter a series is drawn and summed from.
 #
-SERIES_COUNTERS: tuple[str, ...] = (*METRIC_COUNTERS, *DNS_COUNTERS)
+SERIES_COUNTERS: tuple[str, ...] = (*METRIC_COUNTERS, *DNS_COUNTERS, *SYSLOG_COUNTERS)
 #
 # What a pool's own row is called, HAProxy's word for it, which a dns pool's
 # row borrows so the two are read alike.
@@ -229,6 +237,7 @@ def samples(result: Mapping[str, Any]) -> tuple[list[FrontendSample], list[Membe
             )
 
         members.extend(_dns_samples(node, status.get("dns_listener")))
+        members.extend(_syslog_samples(node, status.get("ipvs")))
 
     return frontends, members
 
@@ -281,6 +290,61 @@ def _dns_samples(node: str, listener: object) -> list[MemberSample]:
                 counters=_renamed(row, DNS_SERVER),
             )
         )
+    return found
+
+
+def _syslog_samples(node: str, ipvs: object) -> list[MemberSample]:
+    """A node's syslog pools and receivers as backend rows (Fas 19b B3).
+
+    The holder's only, as `samples` has decided: messages reach the node that
+    carries the address, and the standby's table counts nothing. Only the
+    virtual servers the node's installed file names - a pool and `s1`, `s2`...
+    as the generator wrote them - since a row has to say whose pool it is.
+
+    No uptime: IPVS reports none. A receiver keepalived put back counts from
+    nought, and 0048's rule leaves the interval it fell in without a figure.
+    A receiver it took out is DOWN with no counters, which is a state and not a
+    count of none.
+    """
+
+    services = ipvs.get("services") if isinstance(ipvs, Mapping) else None
+    found: list[MemberSample] = []
+    for service in _entries(services):
+        if not isinstance(service, Mapping) or service.get("protocol") != "udp":
+            continue
+        pool = _text(service.get("pool"))
+        if pool is None:
+            continue
+        found.append(
+            MemberSample(
+                node=node,
+                backend=pool,
+                member=POOL_ROW,
+                uptime_sec=None,
+                status=None,
+                check_status=None,
+                check_code=None,
+                counters=_renamed(service, SYSLOG_ROW),
+            )
+        )
+        for receiver in _entries(service.get("receivers")):
+            if not isinstance(receiver, Mapping):
+                continue
+            server = _text(receiver.get("server"))
+            if server is None or server == POOL_ROW:
+                continue
+            found.append(
+                MemberSample(
+                    node=node,
+                    backend=pool,
+                    member=server,
+                    uptime_sec=None,
+                    status=_text(receiver.get("status")),
+                    check_status=None,
+                    check_code=None,
+                    counters=_renamed(receiver, SYSLOG_ROW),
+                )
+            )
     return found
 
 
@@ -1394,8 +1458,19 @@ class Figures:
     rate: str
 
 
+#
+# A syslog object's card (Fas 19b B3): what arrived, in messages and bytes.
+# Nothing is refused or answered - IPVS forwards every datagram that reaches
+# the address - so there is nothing else to count.
+#
+SYSLOG_CARD_COUNTERS: tuple[tuple[str, str], ...] = (
+    ("syslog_messages", "Messages"),
+    ("syslog_bytes", "Bytes"),
+)
+
 HTTP_FIGURES = Figures(line="req_tot", counters=CARD_COUNTERS, rate="Requests")
 DNS_FIGURES = Figures(line="dns_queries", counters=DNS_CARD_COUNTERS, rate="Queries")
+SYSLOG_FIGURES = Figures(line="syslog_messages", counters=SYSLOG_CARD_COUNTERS, rate="Messages")
 
 
 def _unanswered(asked: int | None, *answered: int | None) -> int | None:
@@ -1446,6 +1521,18 @@ def dns_measurement(found: BackendMeasurement) -> BackendMeasurement:
         restarted=found.restarted,
         handed_over=found.handed_over,
     )
+
+
+def summed(figures: Figures) -> tuple[tuple[str, str], ...]:
+    """The counters a card's figures are read from: a dns card's Unanswered is worked out."""
+
+    return DNS_SUMMED if figures is DNS_FIGURES else figures.counters
+
+
+def measured(figures: Figures, found: BackendMeasurement) -> BackendMeasurement:
+    """What was read from `summed(figures)`, as the card shows it."""
+
+    return dns_measurement(found) if figures is DNS_FIGURES else found
 
 
 @dataclass(frozen=True, slots=True)

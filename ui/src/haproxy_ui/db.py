@@ -2385,7 +2385,7 @@ def record_metric_samples(
     """
 
     frontends, members = metrics.samples(result)
-    member_columns = (*metrics.METRIC_COUNTERS, *metrics.DNS_COUNTERS)
+    member_columns = (*metrics.METRIC_COUNTERS, *metrics.DNS_COUNTERS, *metrics.SYSLOG_COUNTERS)
     if not frontends and not members:
         return 0
 
@@ -2794,7 +2794,7 @@ def read_cluster_backends(
     cluster: str,
     since: datetime,
     until: datetime,
-    dns: bool = False,
+    kind: str = "haproxy",
 ) -> list[str]:
     """Which backends this cluster serves now, by the runtime's own names.
 
@@ -2805,27 +2805,35 @@ def read_cluster_backends(
     comparison is between. A per-server breakdown is a different question and
     belongs on the backend it is asked about, not on a page comparing backends.
 
-    HAProxy's backends, or with `dns` dnsdist's pools: told apart by the
-    counters on the pool's own row (0057), since the two count different things
-    and are not compared on one scale.
+    `kind` is `haproxy` for HAProxy's backends, `dns` for dnsdist's pools or
+    `syslog` for IPVS's: told apart by the counters on the pool's own row
+    (0057, 0061), since each counts something different.
     """
+
+    which = POOL_KINDS[kind]
 
     with connection.cursor() as cursor:
         cursor.execute(
             sql.SQL(
                 "select distinct backend from metric_backend_member "
                 " where cluster = %(cluster)s and member = 'BACKEND' "
-                "   and dns_queries is {kind} null "
+                "   and {which} "
                 "   and observed_at >= %(since)s and observed_at <= %(until)s and {active} "
                 " order by backend"
-            ).format(
-                active=_active("metric_backend_member"),
-                kind=sql.SQL("not" if dns else ""),
-            ),
+            ).format(active=_active("metric_backend_member"), which=which),
             {"cluster": cluster, "since": since, "until": until, "newest_poll": NEWEST_POLL},
         )
         return [row[0] for row in cursor.fetchall()]
 
+
+#
+# Which pools a kind is, by the counter only its pool's own row carries.
+#
+POOL_KINDS = {
+    "haproxy": sql.SQL("dns_queries is null and syslog_messages is null"),
+    "dns": sql.SQL("dns_queries is not null"),
+    "syslog": sql.SQL("syslog_messages is not null"),
+}
 
 #
 # The counters migration 0048 stores a difference for. A figure is only ever
@@ -2843,13 +2851,14 @@ STORED_DELTAS = (
     "bout",
 )
 #
-# A backend row's differences add dnsdist's (migration 0057); a frontend's do not.
+# A backend row's differences add dnsdist's (migration 0057) and IPVS's (0061);
+# a frontend's do not.
 #
-BACKEND_DELTAS = (*STORED_DELTAS, *metrics.DNS_COUNTERS)
+BACKEND_DELTAS = (*STORED_DELTAS, *metrics.DNS_COUNTERS, *metrics.SYSLOG_COUNTERS)
 
 
 def _deltas(table: str) -> tuple[str, ...]:
-    """The differences a metrics table stores: a backend's include dnsdist's."""
+    """The differences a metrics table stores: a backend's include dnsdist's and IPVS's."""
 
     return BACKEND_DELTAS if table.startswith("metric_backend") else STORED_DELTAS
 

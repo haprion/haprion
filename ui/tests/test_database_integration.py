@@ -5333,7 +5333,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
         since = self.now - timedelta(days=7)
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
             dns = db.read_cluster_backends(
-                connection, cluster=self.CLUSTER, since=since, until=self.now, dns=True
+                connection, cluster=self.CLUSTER, since=since, until=self.now, kind="dns"
             )
             backends = db.read_cluster_backends(
                 connection, cluster=self.CLUSTER, since=since, until=self.now
@@ -5436,6 +5436,277 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
                         *metrics.DNS_COUNTERS,
                         LATENCY_0057,
                         *(f"delta_{name}" for name in metrics.DNS_COUNTERS),
+                    },
+                )
+            connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class ASyslogPoolIsCountedAsABackendIs(unittest.TestCase):
+    """Migration 0061: IPVS's counters in the backend rows (Fas 19b B3).
+
+    Three days of a pool's own row and two receivers every ten minutes. IPVS
+    reports no uptime, and halfway the second receiver is taken out and put
+    back by keepalived, so its counters start again from nought: that interval
+    has no figure, the ones around it do, and the pool's own row - the virtual
+    server, which keepalived does not touch - counts straight through. Read
+    back over the raw rows and over the hourly sums against the same
+    differences summed by hand.
+    """
+
+    CLUSTER = "logging"
+    POOL = "receivers"
+    READDED = 200
+    now: datetime
+    rows: list[tuple[str, datetime, dict[str, int]]]
+
+    @staticmethod
+    def connect(role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        rows: list[tuple[str, datetime, dict[str, int]]] = []
+        at, step = cls.now - timedelta(days=3), 0
+        totals = {"BACKEND": [0, 0], "s1": [0, 0], "s2": [0, 0]}
+        while at <= cls.now - timedelta(minutes=10):
+            if step == cls.READDED:
+                totals["s2"] = [0, 0]
+            for member, (messages, size) in (("s1", (7, 700)), ("s2", (5, 450))):
+                totals[member][0] += messages
+                totals[member][1] += size
+                totals["BACKEND"][0] += messages
+                totals["BACKEND"][1] += size
+            for member in ("BACKEND", "s1", "s2"):
+                rows.append(
+                    (member, at, dict(zip(metrics.SYSLOG_COUNTERS, totals[member], strict=True)))
+                )
+            at += timedelta(minutes=10)
+            step += 1
+        cls.rows = rows
+        with cls.connect() as connection, connection.cursor() as cursor:
+            day = (cls.now - timedelta(days=4)).date()
+            while day <= cls.now.date() + timedelta(days=1):
+                cursor.execute("select metric_partition('metric_backend_member', %s::date)", (day,))
+                day += timedelta(days=1)
+            for member, at, counted in rows:
+                cursor.execute(
+                    "insert into metric_backend_member (cluster, node, backend, member, "
+                    "observed_at, status, syslog_messages, syslog_bytes) "
+                    "values (%s, 'a', %s, %s, %s, %s, %s, %s)",
+                    (
+                        cls.CLUSTER,
+                        cls.POOL,
+                        member,
+                        at,
+                        None if member == "BACKEND" else "UP",
+                        counted["syslog_messages"],
+                        counted["syslog_bytes"],
+                    ),
+                )
+            #
+            # An HAProxy backend and a dns pool beside it, neither listed as syslog.
+            #
+            cursor.execute(
+                "insert into metric_backend_member (cluster, node, backend, member, "
+                "observed_at, uptime_sec, req_tot) values (%s, 'a', 'web', 'BACKEND', %s, 1, 1)",
+                (cls.CLUSTER, cls.now - timedelta(minutes=10)),
+            )
+            cursor.execute(
+                "insert into metric_backend_member (cluster, node, backend, member, "
+                "observed_at, uptime_sec, dns_queries) "
+                "values (%s, 'a', 'resolver', 'BACKEND', %s, 1, 1)",
+                (cls.CLUSTER, cls.now - timedelta(minutes=10)),
+            )
+
+    def expected(self, member: str, name: str, since: datetime) -> int:
+        """The stored differences of one counter, by hand: a fall is no figure."""
+
+        readings = [row for row in self.rows if row[0] == member]
+        total = 0
+        for (_m, at_before, before), (_n, at, value) in zip(readings, readings[1:], strict=False):
+            if at_before < since or at > self.now or value[name] < before[name]:
+                continue
+            total += value[name] - before[name]
+        return total
+
+    def ranges(self) -> tuple[datetime, ...]:
+        return (
+            self.now - timedelta(hours=20),
+            self.now - timedelta(days=3),
+            self.now - timedelta(days=2, minutes=25),
+        )
+
+    def test_the_pool_s_figures_are_its_stored_differences(self) -> None:
+        for since in self.ranges():
+            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+                found = metrics.measured(
+                    metrics.SYSLOG_FIGURES,
+                    db.read_backend_totals(
+                        connection,
+                        cluster=self.CLUSTER,
+                        backend=self.POOL,
+                        since=since,
+                        until=self.now,
+                        counters=metrics.summed(metrics.SYSLOG_FIGURES),
+                    ),
+                )
+                figures = {total.label: total.value for total in found.totals}
+                self.assertGreater(figures["Messages"], 0)
+                self.assertEqual(
+                    figures,
+                    {
+                        "Messages": self.expected("BACKEND", "syslog_messages", since),
+                        "Bytes": self.expected("BACKEND", "syslog_bytes", since),
+                    },
+                )
+
+    def test_a_receiver_put_back_has_no_figure_for_the_interval_it_fell_in(self) -> None:
+        since = self.now - timedelta(days=3)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            found = db.read_backend_totals(
+                connection,
+                cluster=self.CLUSTER,
+                backend=self.POOL,
+                member="s2",
+                since=since,
+                until=self.now,
+                counters=metrics.SYSLOG_CARD_COUNTERS,
+            )
+        messages = found.totals[0].value
+        self.assertEqual(messages, self.expected("s2", "syslog_messages", since))
+        #
+        # One interval of five messages fewer than the pool's share - the one
+        # the receiver was put back in - and not a negative one.
+        #
+        intervals = len([row for row in self.rows if row[0] == "s2"]) - 1
+        self.assertEqual(messages, 5 * (intervals - 1))
+
+    def test_the_line_is_drawn_from_the_same_differences(self) -> None:
+        for since in self.ranges():
+            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+                drawn = db.read_backend_series(
+                    connection,
+                    cluster=self.CLUSTER,
+                    backend=self.POOL,
+                    since=since,
+                    until=self.now,
+                    width=timedelta(hours=1),
+                )
+                self.assertEqual(
+                    sum(interval.counters.get("syslog_messages") or 0 for interval in drawn),
+                    self.expected("BACKEND", "syslog_messages", since),
+                )
+
+    def test_each_kind_of_pool_is_listed_apart(self) -> None:
+        since = self.now - timedelta(days=7)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            listed = {
+                kind: db.read_cluster_backends(
+                    connection, cluster=self.CLUSTER, since=since, until=self.now, kind=kind
+                )
+                for kind in ("haproxy", "dns", "syslog")
+            }
+        self.assertEqual(listed, {"haproxy": ["web"], "dns": ["resolver"], "syslog": [self.POOL]})
+
+    def test_the_poller_writes_a_node_s_counters_and_the_trigger_pairs_them(self) -> None:
+        def reading(messages: int) -> dict[str, Any]:
+            receiver = {
+                "address": "192.0.2.71",
+                "port": 514,
+                "server": "s1",
+                "status": "UP",
+                "packets": messages,
+                "bytes": messages * 100,
+            }
+            down = dict(receiver, address="192.0.2.72", server="s2", status="DOWN")
+            down.update(packets=None, bytes=None)
+            return {
+                "nodes": [
+                    {
+                        "name": "a",
+                        "status": {
+                            "vip": {"owner": True},
+                            "ipvs": {
+                                "services": [
+                                    {
+                                        "protocol": "udp",
+                                        "address": "192.0.2.20",
+                                        "port": 514,
+                                        "packets": messages,
+                                        "bytes": messages * 100,
+                                        "object": "logs",
+                                        "pool": "polled",
+                                        "receivers": [receiver, down],
+                                    }
+                                ]
+                            },
+                        },
+                    }
+                ]
+            }
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select metric_partition('metric_backend_member', current_date)")
+        for messages in (10, 25):
+            with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+                written = db.record_metric_samples(
+                    connection, cluster="polling", result=reading(messages)
+                )
+                self.assertEqual(written, 3)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select member, delta_syslog_messages, delta_syslog_bytes, status "
+                "  from metric_backend_member where cluster = 'polling' "
+                " order by observed_at desc, member limit 3"
+            )
+            self.assertEqual(
+                cursor.fetchall(),
+                [("BACKEND", 15, 1500, None), ("s1", 15, 1500, "UP"), ("s2", None, None, "DOWN")],
+            )
+
+    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
+        def columns(cursor: psycopg.Cursor, table: str) -> set[str]:
+            cursor.execute(
+                "select column_name from information_schema.columns "
+                "where table_name = %s and column_name like %s",
+                (table, "%syslog%"),
+            )
+            return {row[0] for row in cursor.fetchall()}
+
+        now = datetime.now(UTC).replace(microsecond=0)
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0061_metric_syslog_counters.py", cursor)
+                migration.downgrade()
+                self.assertEqual(columns(cursor, "metric_backend_member"), set())
+                self.assertEqual(columns(cursor, "metric_backend_hour_delta"), set())
+                #
+                # dnsdist's rows still pair and sum under 0057's functions.
+                #
+                for minutes, total in ((20, 5), (10, 12)):
+                    cursor.execute(
+                        "insert into metric_backend_member (cluster, node, backend, member, "
+                        "observed_at, uptime_sec, dns_queries) "
+                        "values ('down', 'a', 'resolver', 'BACKEND', %s, %s, %s)",
+                        (now - timedelta(minutes=minutes), 100 - minutes, total),
+                    )
+                cursor.execute(
+                    "select sum(delta_dns_queries) from metric_backend_hour_delta "
+                    " where cluster = 'down'"
+                )
+                self.assertEqual(cursor.fetchone(), (7,))
+                migration.upgrade()
+                self.assertEqual(
+                    columns(cursor, "metric_backend_member"),
+                    {*metrics.SYSLOG_COUNTERS, *(f"delta_{n}" for n in metrics.SYSLOG_COUNTERS)},
+                )
+                self.assertEqual(
+                    columns(cursor, "metric_backend_hour_delta"),
+                    {
+                        *(f"delta_{n}" for n in metrics.SYSLOG_COUNTERS),
+                        *(f"span_{n}_sec" for n in metrics.SYSLOG_COUNTERS),
                     },
                 )
             connection.rollback()

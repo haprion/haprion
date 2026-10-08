@@ -38,7 +38,7 @@
       "0060",
       "0061"
     ],
-    "engine_api": 18,
+    "engine_api": 19,
     "node_api": 1,
     "poller_helpers": [
       "haproxy-status-helper",

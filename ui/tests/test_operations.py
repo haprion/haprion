@@ -18,9 +18,8 @@ from haproxy_mgmt import cert_issue
 from haproxy_mgmt.cli import (
     cert_deploy,
     cert_receiver_helper,
+    changes_publish,
     deploy,
-    managed_network_publish,
-    managed_objects_publish,
     revert,
 )
 
@@ -173,9 +172,8 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
         #
         for operation, payload in (
             ("revert", {"version": 12, "expected_commit": "a" * 40}),
-            ("network_publish", {"network": "x", "expected_head": "a" * 40, "comment": "c"}),
             (
-                "objects_publish",
+                "changes_publish",
                 {"objects": {"shop": "x"}, "expected_head": "a" * 40, "comment": "c"},
             ),
         ):
@@ -203,7 +201,7 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
 
     def test_a_network_publish_sends_the_engines_own_envelope(self) -> None:
         prepared = operations.prepare(
-            operation="network_publish",
+            operation="changes_publish",
             cluster="alpha",
             request_id=REQUEST,
             payload={
@@ -216,7 +214,7 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
         self.assertEqual(
             json.loads(prepared.request),
             json.loads(
-                managed_network_publish.build_request(
+                changes_publish.build_request(
                     "alpha",
                     str(REQUEST),
                     network="vips: {}\n",
@@ -532,12 +530,8 @@ class PayloadsAreRefusedRatherThanTrimmed(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class PublishingObjects(unittest.TestCase):
-    """The operation behind "Save and publish".
+class PublishingSavedChanges(unittest.TestCase):
+    """The operation behind *Publish* on Versions (B257).
 
     The payload is built from a form, so every field is checked here rather
     than trusted to the helper - a helper's refusal arrives as a failed job
@@ -546,7 +540,7 @@ class PublishingObjects(unittest.TestCase):
 
     def prepare(self, **payload: object) -> operations.Prepared:
         return operations.prepare(
-            operation="objects_publish",
+            operation="changes_publish",
             cluster="alpha",
             request_id=UUID("3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f"),
             payload={
@@ -560,23 +554,26 @@ class PublishingObjects(unittest.TestCase):
     def test_the_helper_is_named_by_the_engine_and_not_written_again(self) -> None:
         prepared = self.prepare()
 
-        self.assertEqual(prepared.argv[-1], managed_objects_publish.HELPER)
-        self.assertIn("objects_publish", prepared.request)
+        self.assertEqual(prepared.argv[-1], changes_publish.HELPER)
+        self.assertIn("changes_publish", prepared.request)
 
-    def test_the_draft_it_came_from_is_checked_and_never_forwarded(self) -> None:
+    def test_the_rows_it_came_from_are_checked_and_never_forwarded(self) -> None:
         #
-        # Which draft row this publish came from, so the row can be recognised
-        # as published rather than guessed at from its text. Checked like every
+        # Which saved rows this publish carries, so each can be recognised as
+        # published rather than guessed at from its text. Checked like every
         # other field - a job is what the worker runs as root - and deliberately
         # absent from the helper's request, whose parameters are named one at a
         # time.
         #
-        prepared = self.prepare(draft={"id": "11111111-2222-3333-4444-555555555555", "revision": 4})
+        row = {"id": "11111111-2222-3333-4444-555555555555", "revision": 4}
+        prepared = self.prepare(drafts=[row], changes=[{**row, "id": "22222222"}])
 
-        self.assertNotIn("draft", prepared.request)
+        self.assertNotIn("drafts", prepared.request)
+        self.assertNotIn('changes"', prepared.request)
         self.assertNotIn("11111111", prepared.request)
+        self.assertNotIn("22222222", prepared.request)
 
-    def test_a_draft_that_is_not_an_id_and_a_revision_is_refused(self) -> None:
+    def test_a_row_that_is_not_an_id_and_a_revision_is_refused(self) -> None:
         for value in (
             {"id": "", "revision": 1},
             {"id": "11111111-2222-3333-4444-555555555555"},
@@ -585,8 +582,9 @@ class PublishingObjects(unittest.TestCase):
             {"id": "11111111-2222-3333-4444-555555555555", "revision": 4, "extra": 1},
             "not a mapping",
         ):
-            with self.subTest(draft=value), self.assertRaises(operations.BadPayload):
-                self.prepare(draft=value)
+            for key in ("drafts", "changes"):
+                with self.subTest(key=key, row=value), self.assertRaises(operations.BadPayload):
+                    self.prepare(**{key: [value]})
 
     def test_a_removal_is_a_null_document(self) -> None:
         prepared = self.prepare(objects={"gone": None})
@@ -616,7 +614,7 @@ class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
 
     The rule is a file outside this repository, written from an example inside
     it, and neither follows a release - so a helper added here reaches sudo's
-    refusal on its first use, as `haproxy-objects-publish-helper` did. The
+    refusal on its first use, as the first objects publish helper did. The
     example is what an installation renders, so it is the thing to hold in step.
 
     It also has to be rendered rather than copied. It was installed as
@@ -643,8 +641,7 @@ class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
             deploy.HELPER,
             cert_deploy.HELPER,
             revert.HELPER,
-            managed_network_publish.HELPER,
-            managed_objects_publish.HELPER,
+            changes_publish.HELPER,
         }
         granted = self.example()
 
@@ -809,9 +806,6 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         for name, path in (
             ("backup_run", "haproxy-backup-run.schema.json"),
             ("backup_schedule", "haproxy-backup-schedule.schema.json"),
-            ("network_publish", "haproxy-network-publish.schema.json"),
-            ("objects_publish", "haproxy-objects-publish.schema.json"),
-            ("cluster_settings_publish", "haproxy-cluster-settings-publish.schema.json"),
             ("changes_publish", "haproxy-changes-publish.schema.json"),
             ("cert_issue", "haproxy-cert-issue.schema.json"),
             ("dns_profile_apply", "haproxy-dns-profile-apply.schema.json"),
@@ -910,3 +904,7 @@ class EnrollingOverNdes(unittest.TestCase):
                 operations.prepare(
                     operation="cert_scep", cluster=None, request_id=uuid4(), payload=payload
                 )
+
+
+if __name__ == "__main__":
+    unittest.main()

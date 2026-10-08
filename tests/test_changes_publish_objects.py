@@ -1,4 +1,8 @@
-"""Publishing the objects somebody edited crosses the same boundary as the rest."""
+"""Publishing the objects somebody saved crosses the same boundary as the rest.
+
+The objects part of a saved-changes publish (B257); what the package adds to
+it - a network and settings in the same version - is in `test_changes_publish`.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +19,7 @@ from unittest import mock
 
 from haproxy_mgmt import tls_policy
 from haproxy_mgmt.candidate_validation import ValidationResult
-from haproxy_mgmt.cli import managed_objects_publish
+from haproxy_mgmt.cli import changes_publish
 from haproxy_mgmt.version_history import count_versions, recent_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_publish_helper import PublishFixture, Recorder, git
@@ -83,7 +87,7 @@ class ObjectsPublishFixture(PublishFixture):
             json.dumps(
                 {
                     "schema_version": 1,
-                    "operation": "objects_publish",
+                    "operation": "changes_publish",
                     "cluster": "alpha",
                     "request_id": REQUEST_ID,
                     "parameters": parameters,
@@ -119,7 +123,7 @@ class ObjectsPublishFixture(PublishFixture):
                         )
             return ValidationResult(valid=valid, diagnostics=diagnostics)
 
-        code = managed_objects_publish.main(
+        code = changes_publish.main(
             [],
             policy_path=policy_path,
             run_root=self.run_root,
@@ -153,8 +157,8 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             code, document, err = self.publish_objects(policy, self.request())
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-objects-publish", json.dumps(document))
-            self.assertEqual(document["operation"], "objects_publish")
+            assert_contract("haproxy-changes-publish", json.dumps(document))
+            self.assertEqual(document["operation"], "changes_publish")
             self.assertTrue(document["result"]["changed"])
             self.assertEqual(document["result"]["objects"], ["shop"])
             self.assertEqual(document["result"]["removed"], [])
@@ -231,24 +235,8 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             )
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-objects-publish", json.dumps(document))
+            assert_contract("haproxy-changes-publish", json.dumps(document))
             self.assertEqual(document["result"]["objects"], ["web_app"])
-
-    def test_the_network_description_is_read_from_the_base_and_never_from_the_caller(self) -> None:
-        """A stale tab may not undo an address change through the object path."""
-
-        with tempfile.TemporaryDirectory() as raw:
-            policy = self.runtime(Path(raw))
-            self.seed()
-
-            code, document, err = self.publish_objects(
-                policy, self.request(network="vips: {}\ndefault_vip: main\n")
-            )
-
-            self.assertEqual(code, 65)
-            self.assertIsNone(document)
-            self.assertIn("unknown", err)
-            self.assertEqual((self.repo / "managed/network.yaml").read_text(), NETWORK)
 
     def test_publishing_before_a_network_exists_is_refused_rather_than_invented(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -405,7 +393,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             code, document, err = self.publish_objects(policy, io.BytesIO(sent))
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-objects-publish", json.dumps(document))
+            assert_contract("haproxy-changes-publish", json.dumps(document))
             self.assertFalse(document["result"]["changed"])
             self.assertEqual(document["result"]["hash"], head)
             self.assertEqual(count_versions(self.repo), versions)
@@ -467,7 +455,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             code, document, err = self.publish_objects(policy, self.request(objects={"gone": None}))
 
             self.assertEqual(code, 65)
-            self.assertEqual(document["error"]["code"], "objects_invalid")
+            self.assertEqual(document["error"]["code"], "changes_invalid")
             self.assertIn("cannot be removed", err)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
@@ -482,7 +470,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             )
 
             self.assertEqual(code, 65)
-            self.assertEqual(document["error"]["code"], "objects_invalid")
+            self.assertEqual(document["error"]["code"], "changes_invalid")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             self.assertFalse((self.repo / "managed/proxies/mirror.yaml").exists())
 
@@ -502,25 +490,11 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertIn("usable object name", err)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
-    def test_more_objects_than_one_publish_carries_are_refused_before_the_lock(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            policy = self.runtime(Path(raw))
-            self.seed()
-            objects = {
-                f"site-{index}": proxy(f"site-{index}", f"site{index}.example.com")
-                for index in range(managed_objects_publish.MAX_OBJECTS + 1)
-            }
-
-            code, document, _err = self.publish_objects(policy, self.request(objects=objects))
-
-            self.assertEqual(code, 65)
-            self.assertEqual(document["error"]["code"], "bad_input")
-
     def test_the_request_the_worker_builds_is_the_request_the_helper_accepts(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
             self.seed()
-            request = managed_objects_publish.build_request(
+            request = changes_publish.build_request(
                 "alpha",
                 REQUEST_ID,
                 objects={"shop": proxy("shop", "shop.example.com")},

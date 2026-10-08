@@ -1,16 +1,15 @@
-"""The one publishing loop behind every helper that replaces part of ``managed/``.
+"""The publishing loop behind the helper that replaces part of ``managed/``.
 
-Three helpers write the application-owned layer - the network description, the
-cluster's settings and the proxy objects - and each is its own entry point, so
-that a mistyped parameter cannot publish another helper's document. What they do
-with the document once it is read is the same, and lives here once: the dirty
-worktree, the head the request was built on, the retry that finds its own
-version, the sandbox, the TLS defaults, the commit and the release.
-
-A helper says three things and nothing more: which words its refusals use, how
-its parameters are read, and what it puts into ``managed/``. Everything a
-version records and every way it can be refused is decided by this loop, so a
-fix here is a fix to all three - the reason it exists (Fas 15's review, F3).
+The application-owned layer - the network description, the cluster's settings
+and the proxy objects - is written by one helper since B257, the one that
+publishes saved changes. Until then three helpers wrote it, one document each,
+and what they did with a document once it was read lived here once, so a fix
+was a fix to all three (Fas 15's review, F3). The loop stays apart from the
+helper for the same reason it was written: the dirty worktree, the head the
+request was built on, the retry that finds its own version, the sandbox, the
+TLS defaults, the commit and the release are decided here, and a helper says
+only which words its refusals use, how its parameters are read, and what it
+puts into ``managed/``.
 """
 
 from __future__ import annotations
@@ -199,7 +198,7 @@ def fence(parameters: Mapping[str, JsonValue]) -> tuple[str, str]:
 
 
 def network_of(base_files: Mapping[str, bytes], *, doing: str) -> bytes:
-    """The network helper's document, carried through untouched.
+    """The committed network description, carried through untouched.
 
     Its absence is not something another helper may paper over with a default:
     the generated layer would be rebuilt against invented addresses.

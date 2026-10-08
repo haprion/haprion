@@ -19,9 +19,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haproxy_mgmt.cli.changes_publish import MESSAGE as CHANGES_MESSAGE
-from haproxy_mgmt.cli.cluster_settings_publish import MESSAGE as SETTINGS_MESSAGE
-from haproxy_mgmt.cli.managed_network_publish import MESSAGE as NETWORK_MESSAGE
-from haproxy_mgmt.cli.managed_objects_publish import MESSAGE as OBJECTS_MESSAGE
 
 from haproxy_ui import metrics
 from haproxy_ui.cluster_identity import accent_index
@@ -159,12 +156,18 @@ def _version_view(value: Any, published_hash: str | None, rank: int) -> VersionV
 # What the engine puts in front of a comment it was given, so `git log` says
 # which kind of publish made the commit. On this page it is the same words on
 # every row, ahead of the part a person wrote, so it is left out here and the
-# history itself keeps it (2026-10-01). Taken from the engine's own constants,
-# so a renamed prefix cannot quietly start showing again.
+# history itself keeps it (2026-10-01). Taken from the engine's own constant,
+# so a renamed prefix cannot quietly start showing again. The other three are
+# the helpers B257 replaced: their versions stay in every cluster's history.
 #
 PUBLISH_PREFIXES = tuple(
     f"{message}: "
-    for message in (OBJECTS_MESSAGE, NETWORK_MESSAGE, SETTINGS_MESSAGE, CHANGES_MESSAGE)
+    for message in (
+        "Update proxy objects",
+        "Update network description",
+        "Update cluster settings",
+        CHANGES_MESSAGE,
+    )
 )
 
 

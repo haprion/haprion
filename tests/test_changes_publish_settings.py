@@ -1,6 +1,8 @@
 """The cluster's settings cross the same boundary as every other write (Fas 15).
 
-Held here: a settings publish is a version of its own, stored canonically,
+Published since B257 by the helper that publishes saved changes, as the part
+of a package that carries only settings. Held here: a settings publish is a
+version of its own, stored canonically,
 generated into `1000-cluster.cfg`; it needs the network description the
 generated layer is built around; a target given as a name is refused before
 anything is written; a later network publish keeps the settings; the read
@@ -21,12 +23,12 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt.candidate_validation import ValidationResult
+from haproxy_mgmt.cli import changes_publish, cluster_settings_helper
 from haproxy_mgmt.cli import cluster_settings as command
-from haproxy_mgmt.cli import cluster_settings_helper, cluster_settings_publish
 from haproxy_mgmt.cluster_settings import LOCATION
 from haproxy_mgmt.version_history import count_versions, request_id_of
 from tests.contract_schema import assert_contract
-from tests.test_managed_network_publish import NetworkPublishFixture
+from tests.test_changes_publish_network import NetworkPublishFixture
 from tests.test_publish_helper import Recorder, git
 
 REQUEST_ID = "66666666-6666-4666-8666-666666666666"
@@ -50,7 +52,7 @@ metrics:
 class SettingsPublishFixture(NetworkPublishFixture):
     def settings_request(self, settings: str = SETTINGS) -> io.BytesIO:
         return io.BytesIO(
-            cluster_settings_publish.build_request(
+            changes_publish.build_request(
                 "alpha",
                 REQUEST_ID,
                 settings=settings,
@@ -62,7 +64,7 @@ class SettingsPublishFixture(NetworkPublishFixture):
     def publish_settings(self, policy_path: Path, request: io.BytesIO) -> tuple[int, Any, str]:
         out, err = io.StringIO(), io.StringIO()
         self.recorder = Recorder()
-        code = cluster_settings_publish.main(
+        code = changes_publish.main(
             [],
             policy_path=policy_path,
             run_root=self.run_root,
@@ -88,7 +90,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
             code, document, err = self.publish_settings(policy, self.settings_request())
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-cluster-settings-publish", json.dumps(document))
+            assert_contract("haproxy-changes-publish", json.dumps(document))
             self.assertTrue(document["result"]["changed"])
             self.assertEqual((self.repo / LOCATION).read_text(), CANONICAL)
             files = git(self.repo, "ls-files")
@@ -100,7 +102,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
             head = git(self.repo, "rev-parse", "HEAD")
             self.assertEqual(request_id_of(self.repo, head), REQUEST_ID)
             self.assertIn(
-                "Update cluster settings: Send the traffic log to graylog",
+                "Publish changes: Send the traffic log to graylog",
                 git(self.repo, "log", "-1", "--format=%s"),
             )
 
@@ -170,7 +172,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
             self.assertIn("managed/generated/1000-cluster.cfg", git(self.repo, "ls-files"))
 
     def request_network_with_a_source(self) -> str:
-        from tests.test_managed_network_publish import NETWORK  # noqa: PLC0415
+        from tests.test_changes_publish_network import NETWORK  # noqa: PLC0415
 
         return NETWORK.replace("outbound: 192.0.2.35", "outbound: 192.0.2.36")
 
@@ -252,7 +254,7 @@ class TheTerminalCommand(SettingsPublishFixture):
         def publish(request: str) -> subprocess.CompletedProcess[str]:
             sent.append(json.loads(request))
             answer = {
-                "operation": "cluster_settings_publish",
+                "operation": "changes_publish",
                 "result": {"changed": True, "version": 12},
                 "error": None,
             }
@@ -271,10 +273,15 @@ class TheTerminalCommand(SettingsPublishFixture):
 
         self.assertEqual(code, 0)
         (request,) = sent
-        self.assertEqual(request["operation"], "cluster_settings_publish")
+        self.assertEqual(request["operation"], "changes_publish")
         self.assertEqual(
             request["parameters"],
-            {"settings": SETTINGS, "expected_head": "b" * 40, "comment": "Send the log"},
+            {
+                "settings": SETTINGS,
+                "expected_head": "b" * 40,
+                "comment": "Send the log",
+                "allow_certificate_mismatch": False,
+            },
         )
         self.assertIn("Published version 12 of alpha.", out.getvalue())
         self.assertIn("haproxy-deploy -c alpha", out.getvalue())

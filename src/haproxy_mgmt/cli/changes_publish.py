@@ -2,8 +2,8 @@
 
 Proxy objects, the network description and the cluster's settings, in any
 combination, published together: one version, one release and one revert. The
-three single-document helpers each published their own layer as a version of
-its own, so a VIP added for a new object was two versions and two reverts, and
+three single-document helpers this replaced each published their own layer as
+a version of its own, so a VIP added for a new object was two versions and two reverts, and
 the version between them was one nobody had asked for.
 
 The documents that are not sent are read from the committed base, as the other
@@ -132,8 +132,10 @@ def build_request(
 def _objects(parameters: Mapping[str, JsonValue]) -> dict[str, bytes | None]:
     """The objects part: name to document, or to removal; empty when not sent.
 
-    The names are held to the model's own pattern here, before `managed_files`
-    turns one into a path, for the reason the objects helper gives.
+    The names arrive from a job payload and are held to the model's own pattern
+    here, before `managed_files` turns one into a path. It is checked in both
+    places on purpose: this one keeps a bad name out of the candidate builder,
+    and the one there keeps the builder safe for any future caller.
     """
 
     if "objects" not in parameters:
@@ -191,7 +193,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
         # answer for - an object, or a network that moves one - and not for a
         # settings change alone, where an object published with the mismatch
         # override would otherwise block every change of log target. The same
-        # rule the three single-document helpers applied, one each.
+        # rule the three single-document helpers this replaced applied.
         #
         certificate_sans = (
             coverage(policy.certificate_root, cluster)

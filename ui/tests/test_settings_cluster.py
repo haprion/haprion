@@ -63,7 +63,7 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
             self.job("network_publish", "edge-demo"),
         ]
         self.assertEqual(
-            network.awaiting_deploy(newest_first, operation="cluster_settings_publish"),
+            network.awaiting_deploy(newest_first, part="settings"),
             frozenset({"edge-demo"}),
         )
         # The network page's own question is unchanged.

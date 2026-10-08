@@ -1,8 +1,8 @@
 """``haproxy-cluster-settings`` - where a cluster's traffic log goes, and metrics.
 
 Shows the settings the interface's *Logs & metrics* card edits, and sets them
-from a file through the same privileged helper the interface uses, so the
-terminal and the browser make the same version (Fas 15, B209):
+from a file through the helper the interface publishes saved changes with,
+so the terminal and the browser make the same version (Fas 15, B209, B257):
 
     haproxy-cluster-settings -c <cluster> [--json]
     haproxy-cluster-settings -c <cluster> --set <file> -m <comment>
@@ -21,7 +21,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from haproxy_mgmt.cli import cluster_settings_publish
+from haproxy_mgmt.cli import changes_publish
 from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.cluster_settings import MAX_BYTES
 from haproxy_mgmt.envelope import new_request_id
@@ -79,7 +79,7 @@ def run_publish_helper(request: str) -> subprocess.CompletedProcess[str]:
     """Publish through the root helper; sudo may ask for the operator's password."""
 
     return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
-        _through(cluster_settings_publish.HELPER, "--"),
+        _through(changes_publish.HELPER, "--"),
         input=request,
         capture_output=True,
         text=True,
@@ -178,7 +178,7 @@ def _set(
     except (ValueError, KeyError) as exc:
         errors.write(f"ERROR: {exc}\n")
         return code or EXIT_UNAVAILABLE
-    request = cluster_settings_publish.build_request(
+    request = changes_publish.build_request(
         cluster,
         new_request_id(),
         settings=text.decode("utf-8", errors="replace"),
@@ -188,7 +188,7 @@ def _set(
     completed = run_publish(request)
     try:
         answer = json.loads(completed.stdout)
-        result = _result(answer, cluster_settings_publish.OPERATION)
+        result = _result(answer, changes_publish.OPERATION)
     except (json.JSONDecodeError, ValueError) as exc:
         detail = completed.stderr.strip() or str(exc)
         errors.write(f"{detail}\n")

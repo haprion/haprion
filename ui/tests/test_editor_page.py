@@ -1062,7 +1062,7 @@ def published(changed: bool) -> dict[str, Any]:
     contract instead, the two cannot drift apart again.
     """
 
-    path = Path(__file__).resolve().parents[2] / "fixtures/haproxy-objects-publish/valid/done.json"
+    path = Path(__file__).resolve().parents[2] / "fixtures/haproxy-changes-publish/valid/done.json"
     document = json.loads(path.read_text(encoding="utf-8"))
     document["result"]["changed"] = changed
     return cast(dict[str, Any], document)

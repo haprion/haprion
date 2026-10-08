@@ -20,7 +20,7 @@ from haproxy_mgmt.cli import changes_publish
 from haproxy_mgmt.cluster_settings import LOCATION as SETTINGS_LOCATION
 from haproxy_mgmt.version_history import count_versions, recent_versions, request_id_of
 from tests.contract_schema import assert_contract
-from tests.test_managed_objects_publish import NETWORK, ObjectsPublishFixture, proxy
+from tests.test_changes_publish_objects import NETWORK, ObjectsPublishFixture, proxy
 from tests.test_publish_helper import Recorder, git
 
 REQUEST_ID = "77777777-7777-4777-8777-777777777777"

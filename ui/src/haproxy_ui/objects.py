@@ -30,7 +30,7 @@ from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterObjects, Job
 from haproxy_ui.history import VersionView
-from haproxy_ui.jobs import ATTENTION, error_code
+from haproxy_ui.jobs import ATTENTION, deploys, error_code, published
 from haproxy_ui.proxies import ProxyView, Tone
 
 #
@@ -534,13 +534,13 @@ def carried_since_deploy(jobs: Iterable[Job]) -> frozenset[str]:
 
     waiting: set[str] = set()
     for job in jobs:
-        if job.operation == "deploy" and job.state == "done":
+        if deploys(job) and job.state == "done":
             #
             # Newest first, so the first finished deploy ends the search: every
             # publish older than it has already reached the nodes.
             #
             break
-        if job.operation not in OBJECT_PUBLISHES or job.state != "done":
+        if job.operation not in OBJECT_PUBLISHES or not published(job):
             continue
         named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
         if isinstance(named, Mapping):
@@ -598,7 +598,11 @@ def publish_failures(jobs: Iterable[Job]) -> dict[str, str]:
             if not isinstance(name, str) or name in settled:
                 continue
             settled.add(name)
-            if job.state in ATTENTION:
+            #
+            # A *Publish & deploy* that published and then failed to deploy
+            # ends in the deploy's state; the publish itself went through.
+            #
+            if job.state in ATTENTION and not published(job):
                 failures[name] = error_code(job) or job.state
     return failures
 
@@ -712,7 +716,7 @@ def removed_names(jobs: Iterable[Job]) -> tuple[str, ...]:
 
     names: list[str] = []
     for job in jobs:
-        if job.operation not in OBJECT_PUBLISHES or job.state != "done":
+        if job.operation not in OBJECT_PUBLISHES or not published(job):
             continue
         payload = job.payload if isinstance(job.payload, Mapping) else {}
         asked = payload.get("objects")
@@ -735,7 +739,7 @@ def removed_backends(jobs: Iterable[Job]) -> dict[str, tuple[str, ...]]:
 
     found: dict[str, tuple[str, ...]] = {}
     for job in jobs:
-        if job.operation not in OBJECT_PUBLISHES or job.state != "done":
+        if job.operation not in OBJECT_PUBLISHES or not published(job):
             continue
         payload = job.payload if isinstance(job.payload, Mapping) else {}
         written = payload.get("removed_backends")

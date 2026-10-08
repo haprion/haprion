@@ -107,9 +107,6 @@ _OPERATION_OUTCOMES = {
     "deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "revert": frozenset({"done", "failed", "blocked"}),
-    "network_publish": frozenset({"done", "failed", "blocked"}),
-    "cluster_settings_publish": frozenset({"done", "failed", "blocked"}),
-    "objects_publish": frozenset({"done", "failed", "blocked"}),
     "changes_publish": frozenset({"done", "failed", "blocked"}),
     #
     # `cert_publish` and `cert_target` can end `partial`, and the reason is one
@@ -356,7 +353,7 @@ def _finish(
     )
     if (
         published
-        and job.operation in ("objects_publish", "changes_publish")
+        and job.operation == "changes_publish"
         and job.cluster is not None
         and isinstance(renames, dict)
     ):

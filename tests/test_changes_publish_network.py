@@ -1,4 +1,7 @@
-"""Network publication crosses the same hard boundary as every other write."""
+"""Network publication crosses the same hard boundary as every other write.
+
+The network part of a saved-changes publish (B257).
+"""
 
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ from typing import Any
 
 from haproxy_mgmt import tls_policy
 from haproxy_mgmt.candidate_validation import ValidationResult
-from haproxy_mgmt.cli import managed_network_publish
+from haproxy_mgmt.cli import changes_publish
 from haproxy_mgmt.version_history import count_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_publish_helper import PublishFixture, Recorder, git
@@ -45,7 +48,7 @@ class NetworkPublishFixture(PublishFixture):
             json.dumps(
                 {
                     "schema_version": 1,
-                    "operation": "network_publish",
+                    "operation": "changes_publish",
                     "cluster": "alpha",
                     "request_id": REQUEST_ID,
                     "parameters": parameters,
@@ -62,7 +65,7 @@ class NetworkPublishFixture(PublishFixture):
         def validator(_candidate: Path, _request_id: str) -> ValidationResult:
             return ValidationResult(valid=valid, diagnostics="candidate output")
 
-        code = managed_network_publish.main(
+        code = changes_publish.main(
             [],
             policy_path=policy_path,
             run_root=self.run_root,
@@ -88,8 +91,8 @@ class NetworkPublicationTests(NetworkPublishFixture):
             code, document, err = self.publish_network(policy, self.request())
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-network-publish", json.dumps(document))
-            self.assertEqual(document["operation"], "network_publish")
+            assert_contract("haproxy-changes-publish", json.dumps(document))
+            self.assertEqual(document["operation"], "changes_publish")
             self.assertTrue(document["result"]["changed"])
             self.assertEqual((self.repo / "managed/network.yaml").read_text(), NETWORK)
             self.assertEqual((self.repo / "core/haproxy.cfg").read_bytes(), before_core)

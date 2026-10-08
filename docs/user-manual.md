@@ -1942,10 +1942,11 @@ metrics:
 ```
 
 An admin edits it under **Settings → Logs & metrics**, one row per cluster and a
-page for each (installations with `management_writes` on); saving publishes a
-version, and deploying it is what reaches the nodes. Or read and set it at the
-terminal - `--set` publishes through the same privileged helper the interface
-uses, against the version it has just read, so a change
+page for each (installations with `management_writes` on); saving keeps the
+change until it is published from *Versions*, and deploying it is what reaches
+the nodes. Or read and set it at the terminal - `--set` publishes at once,
+through the helper *Versions* publishes with, against the version it has just
+read, so a change
 somebody else published in between is refused rather than overwritten. It runs
 under `sudo`, and the version records the person who typed it:
 
@@ -4423,8 +4424,6 @@ printf '{"schema_version":1,"operation":"status","cluster":"<id>",'\
 
 If that answers `done`, the sandbox is the problem and not the environment.
 
-If that answers `done`, the sandbox is the problem and not the environment.
-
 **One poller, enforced by the database.** It holds a session-scoped advisory
 lock for its whole life; a second one finds the lock taken and exits rather than
 doubling the load on every node. The lock is released by the server when the
@@ -4433,15 +4432,12 @@ exactly the case a lock file gets wrong.
 
 ##### What the worker may run
 
-Sixteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
+Thirteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-settings-publish-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-changes-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""

@@ -682,6 +682,19 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
             with self.subTest(job=(row.operation, row.state, row.cluster, row.result)):
                 self.assertIsNone(jobs.certificate_block(row))
 
+    def test_publish_and_deploy_blocked_on_certificates_is_a_block_too(self) -> None:
+        """B257: the job ends as its deploy ended, and offers the same fix."""
+
+        both = blocked_deploy(
+            operation="changes_publish",
+            payload={"objects": {"shop": "x"}, "deploy": True},
+            result={**certificate_refusal(), "publish": {"outcome": "done"}},
+        )
+        alone = replace(both, payload={"objects": {"shop": "x"}})
+
+        self.assertEqual(block_of(both).cluster, "alpha")
+        self.assertIsNone(jobs.certificate_block(alone))
+
     def test_malformed_details_cost_the_sentence_not_the_offer(self) -> None:
         #
         # The code alone is the engine's verdict; the details are what it

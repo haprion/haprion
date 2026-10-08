@@ -168,6 +168,35 @@ def _operation(value: str) -> str:
     }.get(value, value.replace("_", " ").capitalize())
 
 
+def deploys(job: Job) -> bool:
+    """Whether this job deploys a cluster's configuration.
+
+    A deploy, and the *Publish & deploy* that runs one after its publish in the
+    same job (B257). The job's state is then the deploy's, so a reader that
+    asks "was this cluster deployed" asks it of both.
+    """
+
+    if job.operation == "deploy":
+        return True
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    return job.operation == "changes_publish" and payload.get("deploy") is True
+
+
+def published(job: Job) -> bool:
+    """Whether a publish job recorded its version.
+
+    A finished job, or the publish half of a *Publish & deploy* whose deploy
+    did not finish: the job then ends as the deploy ended and keeps the
+    publish's own answer beside it (B257). Asked only of a publish; read
+    defensively, as every stored helper document is.
+    """
+
+    if job.state == "done":
+        return True
+    embedded = job.result.get("publish") if isinstance(job.result, dict) else None
+    return isinstance(embedded, dict) and embedded.get("outcome") == "done"
+
+
 def awaiting_deployment(statuses: list[ClusterStatus]) -> frozenset[str]:
     """Clusters whose newest reading says they are not on their target.
 
@@ -320,7 +349,7 @@ def certificate_block(job: Job) -> CertificateBlock | None:
     written by a privileged helper and stored as it arrived.
     """
 
-    if job.operation != "deploy" or job.state != "blocked" or not job.cluster:
+    if not deploys(job) or job.state != "blocked" or not job.cluster:
         return None
     if error_code(job) != CERTIFICATES_NOT_DEPLOYED:
         return None

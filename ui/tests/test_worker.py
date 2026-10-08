@@ -170,7 +170,7 @@ class GoodAnswers(WorkerTestCase):
         for state, written in (("done", True), ("failed", False), ("blocked", False)):
             with self.subTest(state=state):
                 job = claimed(
-                    operation="objects_publish", payload={"objects": {}, "backend_renames": renames}
+                    operation="changes_publish", payload={"objects": {}, "backend_renames": renames}
                 )
                 with mock.patch.object(db, "record_backend_renames") as record:
                     finished = worker._finish(
@@ -239,7 +239,7 @@ class GoodAnswers(WorkerTestCase):
 
     def test_a_network_publish_done_result_is_accepted(self) -> None:
         job = claimed(
-            operation="network_publish",
+            operation="changes_publish",
             payload={
                 "network": "vips: {}\n",
                 "expected_head": "a" * 40,

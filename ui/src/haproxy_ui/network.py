@@ -29,7 +29,7 @@ from haproxy_ui import metrics
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterNetwork, Job
-from haproxy_ui.jobs import Failure
+from haproxy_ui.jobs import Failure, deploys, published
 
 type Tone = Literal["healthy", "warning", "critical", "unknown"]
 #
@@ -125,11 +125,18 @@ class NetworkClusterView:
     groups: tuple[GroupView, ...]
 
 
-def awaiting_deploy(jobs: Iterable[Job], operation: str = "network_publish") -> frozenset[str]:
+#
+# Each part's publish before saved changes were published together (B257).
+# Their jobs stay in the window until it ages past them.
+#
+_ONE_PART = {"network": "network_publish", "settings": "cluster_settings_publish"}
+
+
+def awaiting_deploy(jobs: Iterable[Job], part: str = "network") -> frozenset[str]:
     """Clusters whose network description was published since the last deploy.
 
-    `operation` asks the same of the cluster's other one-document-per-cluster
-    publish, its settings (Fas 15).
+    `part` asks the same of the cluster's other one-document-per-cluster
+    document, its settings (Fas 15).
 
     The same question the proxy listing asks about an object, asked about the
     one description a cluster has. The listing no longer asks it of the jobs:
@@ -137,10 +144,11 @@ def awaiting_deploy(jobs: Iterable[Job], operation: str = "network_publish") -> 
     job window ages and knows nothing of what the command line did. A network
     publish carries no object names - the description is one document per
     cluster - so the answer here is the cluster, and the jobs are still what
-    says a publish happened and a deploy has not.
+    says a publish happened and a deploy has not. A publish of saved changes
+    names the part in its payload when it carries it (B257).
 
     Newest first, so the first finished deploy for a cluster ends the search
-    for that cluster.
+    for that cluster - and a *Publish & deploy* that finished is one.
 
     Bounded by whatever window the caller read, which understates rather than
     invents - the safe direction for a page that would otherwise claim a
@@ -151,14 +159,18 @@ def awaiting_deploy(jobs: Iterable[Job], operation: str = "network_publish") -> 
     deployed: set[str] = set()
     for job in jobs:
         #
-        # A certificate job has no cluster and owes no cluster a deploy; it is
-        # neither of the two operations below, so this only says so earlier.
+        # A certificate job has no cluster and owes no cluster a deploy.
         #
-        if job.cluster is None or job.state != "done" or job.cluster in deployed:
+        if job.cluster is None or job.cluster in deployed:
             continue
-        if job.operation == "deploy":
+        if deploys(job) and job.state == "done":
             deployed.add(job.cluster)
-        elif job.operation == operation:
+            continue
+        payload = job.payload if isinstance(job.payload, Mapping) else {}
+        carried = job.operation == _ONE_PART[part] or (
+            job.operation == "changes_publish" and part in payload
+        )
+        if carried and published(job):
             waiting.add(job.cluster)
     return frozenset(waiting)
 

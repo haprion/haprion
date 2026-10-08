@@ -3980,7 +3980,7 @@ def build_router(config: Config) -> APIRouter:
                 "sso_on": provider is not None and provider.enabled,
                 "cluster_settings": cluster_settings_page.card_views(
                     *read_source(request, config, SETTINGS_SOURCE)[:2],
-                    waiting=network.awaiting_deploy(recent, operation="cluster_settings_publish"),
+                    waiting=network.awaiting_deploy(recent, part="settings"),
                     running=jobs.in_flight(recent),
                 ),
                 "cluster_nodes": cluster_nodes.card_rows(

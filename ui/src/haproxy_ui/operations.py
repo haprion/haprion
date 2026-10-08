@@ -45,10 +45,7 @@ from haproxy_mgmt.cli import (
     cert_scep_helper,
     cert_target_helper,
     changes_publish,
-    cluster_settings_publish,
     deploy,
-    managed_network_publish,
-    managed_objects_publish,
     node_ask,
     node_helper,
     node_restore_ask,
@@ -856,25 +853,6 @@ def _objects(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     return objects
 
 
-def _change(payload: Mapping[str, Any]) -> None:
-    """`change`: which saved document a publish came from (B257), as `draft` for an object.
-
-    The interface's own bookkeeping, so the saved row can be recognised as
-    published afterwards. Checked because everything in a payload is, and
-    never passed on to the helper.
-    """
-
-    change = payload.get("change")
-    if change is None:
-        return
-    if not isinstance(change, Mapping) or set(change) != {"id", "revision"}:
-        raise BadPayload("change must name an id and a revision")
-    if not isinstance(change.get("id"), str) or not change["id"]:
-        raise BadPayload("the change id must be a non-empty string")
-    if not isinstance(change.get("revision"), int) or isinstance(change["revision"], bool):
-        raise BadPayload("the change revision must be a whole number")
-
-
 def prepare(
     *,
     operation: str,
@@ -1148,139 +1126,6 @@ def prepare(
             ),
         )
 
-    if operation == "network_publish":
-        _only(
-            payload,
-            "network",
-            "expected_head",
-            "comment",
-            "allow_certificate_mismatch",
-            "requested_by",
-            "change",
-        )
-        _change(payload)
-        network = payload.get("network")
-        expected_head = payload.get("expected_head")
-        comment = payload.get("comment")
-        override = payload.get("allow_certificate_mismatch", False)
-        if not isinstance(network, str) or not network:
-            raise BadPayload("network must be a non-empty document")
-        if not isinstance(expected_head, str) or not expected_head:
-            raise BadPayload("expected_head must be a commit id")
-        if not isinstance(comment, str) or not comment:
-            raise BadPayload("comment must be a non-empty string")
-        #
-        # Only a real boolean reaches the helper. A string "false" arriving as
-        # true is how an override turns itself on without anybody deciding to.
-        #
-        if not isinstance(override, bool):
-            raise BadPayload("allow_certificate_mismatch must be true or false")
-        return Prepared(
-            argv=(
-                managed_network_publish.SUDO,
-                *SUDO_FLAGS,
-                managed_network_publish.HELPER,
-            ),
-            request=managed_network_publish.build_request(
-                cluster,
-                str(request_id),
-                network=network,
-                expected_head=expected_head,
-                comment=comment,
-                allow_certificate_mismatch=override,
-                requested_by=_requested_by(payload),
-            ),
-        )
-
-    if operation == "cluster_settings_publish":
-        _only(payload, "settings", "expected_head", "comment", "requested_by", "change")
-        _change(payload)
-        settings = payload.get("settings")
-        expected_head = payload.get("expected_head")
-        comment = payload.get("comment")
-        if not isinstance(settings, str) or not settings:
-            raise BadPayload("settings must be a non-empty document")
-        if not isinstance(expected_head, str) or not expected_head:
-            raise BadPayload("expected_head must be a commit id")
-        if not isinstance(comment, str) or not comment:
-            raise BadPayload("comment must be a non-empty string")
-        return Prepared(
-            argv=(
-                cluster_settings_publish.SUDO,
-                *SUDO_FLAGS,
-                cluster_settings_publish.HELPER,
-            ),
-            request=cluster_settings_publish.build_request(
-                cluster,
-                str(request_id),
-                settings=settings,
-                expected_head=expected_head,
-                comment=comment,
-                requested_by=_requested_by(payload),
-            ),
-        )
-
-    if operation == "objects_publish":
-        _only(
-            payload,
-            "objects",
-            "expected_head",
-            "comment",
-            "allow_certificate_mismatch",
-            "draft",
-            "requested_by",
-            "removed_backends",
-            "backend_renames",
-        )
-        #
-        # `draft` is the interface's own bookkeeping: which draft row this
-        # publish came from, so the row can be recognised as published
-        # afterwards rather than guessed at from its text. It is checked here
-        # because everything in a payload is - a job is what the worker runs as
-        # root, and an unchecked field in one is an unchecked field either way -
-        # and it is deliberately not passed on below. The helper's parameters
-        # are named one at a time, so nothing reaches it that is not listed.
-        #
-        draft = payload.get("draft")
-        if draft is not None:
-            if not isinstance(draft, Mapping) or set(draft) != {"id", "revision"}:
-                raise BadPayload("draft must name an id and a revision")
-            if not isinstance(draft.get("id"), str) or not draft["id"]:
-                raise BadPayload("the draft id must be a non-empty string")
-            if not isinstance(draft.get("revision"), int) or isinstance(draft["revision"], bool):
-                raise BadPayload("the draft revision must be a whole number")
-        objects = _objects(payload)
-        expected_head = payload.get("expected_head")
-        comment = payload.get("comment")
-        override = payload.get("allow_certificate_mismatch", False)
-        if not isinstance(expected_head, str) or not expected_head:
-            raise BadPayload("expected_head must be a commit id")
-        if not isinstance(comment, str) or not comment:
-            raise BadPayload("comment must be a non-empty string")
-        #
-        # Only a real boolean reaches the helper, for the reason the network
-        # publish gives: a string "false" arriving as true is how an override
-        # turns itself on without anybody deciding to.
-        #
-        if not isinstance(override, bool):
-            raise BadPayload("allow_certificate_mismatch must be true or false")
-        return Prepared(
-            argv=(
-                managed_objects_publish.SUDO,
-                *SUDO_FLAGS,
-                managed_objects_publish.HELPER,
-            ),
-            request=managed_objects_publish.build_request(
-                cluster,
-                str(request_id),
-                objects=objects,
-                expected_head=expected_head,
-                comment=comment,
-                allow_certificate_mismatch=override,
-                requested_by=_requested_by(payload),
-            ),
-        )
-
     if operation == "changes_publish":
         _only(
             payload,
@@ -1336,6 +1181,10 @@ def prepare(
             raise BadPayload("expected_head must be a commit id")
         if not isinstance(comment, str) or not comment:
             raise BadPayload("comment must be a non-empty string")
+        #
+        # Only a real boolean reaches the helper. A string "false" arriving as
+        # true is how an override turns itself on without anybody deciding to.
+        #
         if not isinstance(override, bool):
             raise BadPayload("allow_certificate_mismatch must be true or false")
         return Prepared(

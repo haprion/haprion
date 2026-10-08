@@ -134,20 +134,27 @@ class PublishedIsNotDeployed(unittest.TestCase):
     of being a follow-up row rather than by design.
     """
 
-    def job(self, operation: str, cluster: str, state: str = "done") -> Job:
+    def job(
+        self,
+        operation: str,
+        cluster: str,
+        state: str = "done",
+        payload: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> Job:
         return Job(
             id=1,
             request_id=uuid4(),
             operation=operation,
             cluster=cluster,
-            payload={},
+            payload=payload or {},
             state=state,
             created_at=NOW,
             started_at=NOW,
             finished_at=NOW,
             exit_code=0,
             outcome="done",
-            result=None,
+            result=result,
             stderr_excerpt=None,
             idempotency_key=uuid4(),
             attempts=1,
@@ -182,6 +189,44 @@ class PublishedIsNotDeployed(unittest.TestCase):
         waiting = awaiting_deploy([self.job("network_publish", "alpha", state="running")])
 
         self.assertEqual(waiting, frozenset())
+
+    #
+    # Saved changes are published together since B257: the payload says which
+    # parts the publish carried, and *Publish & deploy* is a deploy as well.
+    #
+
+    def test_saved_changes_that_carried_the_network_are_waiting(self) -> None:
+        carried = self.job("changes_publish", "alpha", payload={"network": "vips: {}\n"})
+        objects_only = self.job("changes_publish", "beta", payload={"objects": {"shop": "x"}})
+
+        self.assertEqual(awaiting_deploy([carried, objects_only]), frozenset({"alpha"}))
+        self.assertEqual(awaiting_deploy([carried], part="settings"), frozenset())
+
+    def test_publish_and_deploy_that_finished_is_the_deploy(self) -> None:
+        both = self.job("changes_publish", "alpha", payload={"network": "x", "deploy": True})
+
+        self.assertEqual(
+            awaiting_deploy([both, self.job("changes_publish", "alpha", payload={"network": "x"})]),
+            frozenset(),
+        )
+
+    def test_a_deploy_that_failed_after_its_publish_leaves_it_waiting(self) -> None:
+        failed = self.job(
+            "changes_publish",
+            "alpha",
+            state="failed",
+            payload={"network": "x", "deploy": True},
+            result={"outcome": "failed", "publish": {"outcome": "done"}},
+        )
+        refused = self.job(
+            "changes_publish",
+            "beta",
+            state="failed",
+            payload={"network": "x", "deploy": True},
+            result={"outcome": "failed"},
+        )
+
+        self.assertEqual(awaiting_deploy([failed, refused]), frozenset({"alpha"}))
 
 
 class WhereTheConfigurationHasGotTo(unittest.TestCase):

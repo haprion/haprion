@@ -443,20 +443,30 @@ class WhichObjectsAPendingDeployCarries(unittest.TestCase):
     on every row, which is what the cluster-wide claim looked like.
     """
 
-    def job(self, operation: str, *names: str, state: str = "done") -> Job:
+    def job(
+        self,
+        operation: str,
+        *names: str,
+        state: str = "done",
+        deploy: bool = False,
+        result: dict[str, Any] | None = None,
+    ) -> Job:
         return Job(
             id=1,
             request_id=uuid4(),
             operation=operation,
             cluster="alpha",
-            payload={"objects": {name: "document" for name in names}},
+            payload={
+                "objects": {name: "document" for name in names},
+                **({"deploy": True} if deploy else {}),
+            },
             state=state,
             created_at=OBSERVED,
             started_at=None,
             finished_at=None,
             exit_code=None,
             outcome="done",
-            result=None,
+            result=result,
             stderr_excerpt=None,
             idempotency_key=uuid4(),
             attempts=1,
@@ -495,6 +505,47 @@ class WhichObjectsAPendingDeployCarries(unittest.TestCase):
         jobs = [self.job("objects_publish", "shop")]
 
         self.assertEqual(objects.awaiting_deploy({"shop": "current"}, jobs), frozenset())
+
+    #
+    # *Publish & deploy* (B257): one job that publishes and then deploys, and
+    # ends as the deploy ended.
+    #
+
+    def test_publish_and_deploy_that_finished_carried_nothing_further(self) -> None:
+        jobs = [
+            self.job("changes_publish", "shop", deploy=True),
+            self.job("changes_publish", "wiki"),
+        ]
+
+        self.assertEqual(objects.awaiting_deploy({"wiki": "unknown"}, jobs), frozenset())
+
+    def test_a_deploy_that_failed_after_its_publish_still_carries_the_objects(self) -> None:
+        jobs = [
+            self.job(
+                "changes_publish",
+                "shop",
+                state="failed",
+                deploy=True,
+                result={"outcome": "failed", "publish": {"outcome": "done"}},
+            )
+        ]
+
+        self.assertEqual(objects.awaiting_deploy({"shop": "unknown"}, jobs), frozenset({"shop"}))
+        self.assertEqual(objects.publish_failures(jobs), {})
+
+    def test_a_publish_that_failed_before_its_deploy_is_a_publish_failure(self) -> None:
+        jobs = [
+            self.job(
+                "changes_publish",
+                "shop",
+                state="failed",
+                deploy=True,
+                result={"outcome": "failed", "error": {"code": "changes_invalid"}},
+            )
+        ]
+
+        self.assertEqual(objects.awaiting_deploy({"shop": "unknown"}, jobs), frozenset())
+        self.assertEqual(objects.publish_failures(jobs), {"shop": "changes_invalid"})
 
 
 class TheRowStateBadgesFitTheColumnTheySitIn(unittest.TestCase):

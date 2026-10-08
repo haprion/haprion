@@ -133,7 +133,7 @@ class TheObjectsHelperIsRead(unittest.TestCase):
 class ARemovalWritesItDown(unittest.TestCase):
     def prepare(self, **payload: object) -> operations.Prepared:
         return operations.prepare(
-            operation="objects_publish",
+            operation="changes_publish",
             cluster="alpha",
             request_id=UUID("3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f"),
             payload={

@@ -355,20 +355,6 @@ def check_revert_semantics(document: dict[str, object], path: Path) -> None:
             raise AssertionError(f"{path}: no-op revert must not require deploy")
 
 
-def check_network_publish_semantics(document: dict[str, object], path: Path) -> None:
-    result = document["result"]
-    if result is None:
-        return
-    # Even a no-op network publish reinstalls the release from the committed
-    # tree.  The helper therefore always tells the operator to reconcile nodes;
-    # a previous failed deploy must not become invisible merely because the
-    # network document was byte-identical on the retry.
-    if not result["deployment_required"] or result["next_command"] is None:
-        raise AssertionError(f"{path}: network publish must require explicit deploy")
-    if result["changed"] and result["published_at"] is None:
-        raise AssertionError(f"{path}: changed network publish requires a timestamp")
-
-
 def check_cluster_settings_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -387,36 +373,21 @@ def check_cluster_settings_semantics(document: dict[str, object], path: Path) ->
         raise AssertionError(f"{path}: settings reported without a stored document")
 
 
-def check_objects_publish_semantics(document: dict[str, object], path: Path) -> None:
-    result = document["result"]
-    if result is None:
-        return
-    # Same reason as the network publish above: even a byte-identical retry
-    # reinstalls the release, so the operator is always told to reconcile.
-    if not result["deployment_required"] or result["next_command"] is None:
-        raise AssertionError(f"{path}: objects publish must require explicit deploy")
-    if result["changed"] and result["published_at"] is None:
-        raise AssertionError(f"{path}: changed objects publish requires a timestamp")
-    # An object cannot be both written and removed by one version.  The two
-    # lists are what the audit record and the job page read, and a name in both
-    # would describe a publish that did not happen.
-    overlap = sorted(set(result["objects"]) & set(result["removed"]))
-    if overlap:
-        raise AssertionError(f"{path}: {', '.join(overlap)} is both published and removed")
-    if result["changed"] and not (result["objects"] or result["removed"]):
-        raise AssertionError(f"{path}: a changed objects publish names what it changed")
-
-
 def check_changes_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
         return
-    # The objects publish's promises, except that a package may change the
-    # network or the settings and no object at all.
+    # Even a no-op publish reinstalls the release from the committed tree. The
+    # helper therefore always tells the operator to reconcile nodes; a previous
+    # failed deploy must not become invisible merely because the saved changes
+    # were byte-identical on the retry.
     if not result["deployment_required"] or result["next_command"] is None:
         raise AssertionError(f"{path}: a publish must require explicit deploy")
     if result["changed"] and result["published_at"] is None:
         raise AssertionError(f"{path}: a changed publish requires a timestamp")
+    # An object cannot be both written and removed by one version. The two
+    # lists are what the audit record and the job page read, and a name in both
+    # would describe a publish that did not happen.
     overlap = sorted(set(result["objects"]) & set(result["removed"]))
     if overlap:
         raise AssertionError(f"{path}: {', '.join(overlap)} is both published and removed")
@@ -997,11 +968,7 @@ SEMANTIC_CHECKS = {
     "objects": check_objects_semantics,
     "publish": check_publish_semantics,
     "revert": check_revert_semantics,
-    "network_publish": check_network_publish_semantics,
     "cluster_settings": check_cluster_settings_semantics,
-    # The same promise as a network publish: always deploy afterwards.
-    "cluster_settings_publish": check_network_publish_semantics,
-    "objects_publish": check_objects_publish_semantics,
     "changes_publish": check_changes_publish_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
@@ -1063,9 +1030,6 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
     elif operation in (
         "publish",
         "revert",
-        "network_publish",
-        "objects_publish",
-        "cluster_settings_publish",
         "changes_publish",
     ):
         result["deployment_required"] = False

@@ -763,13 +763,18 @@ SQL
 # cache shows it, and the done publish job is the evidence it reads. So that job
 # is kept for as long as its draft exists: pruned first, a published draft read
 # as unpublished work and opened in place of the stored object (review
-# 2026-10-04, CR-04).
+# 2026-10-04, CR-04). A saved network description or settings document (B257)
+# is cleared the same way, by the publish its `change` names.
 #
 draft_evidence() {
     cat <<SQL
     select job.id from job
       join proxy_draft on job.payload->'draft'->>'id' = proxy_draft.id::text
      where job.operation = 'objects_publish'
+    union
+    select job.id from job
+      join cluster_change on job.payload->'change'->>'id' = cluster_change.id::text
+     where job.operation in ('network_publish', 'cluster_settings_publish')
 SQL
 }
 

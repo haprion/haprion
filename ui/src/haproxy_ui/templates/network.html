@@ -113,6 +113,9 @@
       <input type="hidden" name="return_to" value="network">
       <input type="hidden" name="cluster" value="{{ cluster.cluster }}">
       <input type="hidden" name="expected_head" value="{{ cluster.head }}">
+      {% set saved = saved_network.get(cluster.cluster) if saved_network else none %}
+      <input type="hidden" name="saved_revision" value="{{ saved.revision if saved else '' }}">
+      {% if saved %}<p class="preview-notice"><strong>Saved changes</strong> by {{ saved.updated_by }}. The tables show them, and they go out with the next publish.</p>{% endif %}
       <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
 
       <h4 class="network-subhead">Virtual addresses</h4>
@@ -306,7 +309,7 @@
       #}
       <hr class="editor-break">
       <div class="form-grid editor-note">
-        <label>Version comment — mandatory<input name="comment" maxlength="4096" required placeholder="Why this network change is needed"></label>
+        <label>Version comment — needed to publish<input name="comment" maxlength="4096" placeholder="Why this network change is needed"></label>
       </div>
       <div class="form-checks">
         <label class="check"><input type="checkbox" name="default_vip_confirmation" value="on" required> I have checked the default VIP impact: {{ cluster.default_vip_object_count }} managed object{% if cluster.default_vip_object_count != 1 %}s{% endif %} follow{% if cluster.default_vip_object_count == 1 %}s{% endif %} it unless they name a VIP.</label>
@@ -337,8 +340,10 @@
         <p class="table-note">{% if cluster.cluster in awaiting_deploy %}These addresses are published and the nodes are not serving them yet.{% else %}The nodes are not on the current release.{% endif %} Deploy before writing another change.</p>
         <button class="secondary-button deploy-button" type="submit" form="deploy-{{ loop.index0 }}">Deploy {{ cluster.cluster }}</button>
         {% else %}
-        <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this publish writes.</p>
-        <button class="secondary-button" type="submit">Validate and publish network</button>
+        <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this save writes.</p>
+        {% if saved %}<button class="secondary-button" type="submit" name="network_action" value="discard" formnovalidate>Discard the changes</button>{% endif %}
+        <button class="secondary-button" type="submit" name="network_action" value="save">Save</button>
+        <button class="secondary-button" type="submit" name="network_action" value="publish">Save and publish</button>
         {% endif %}
       </div>
     </form>

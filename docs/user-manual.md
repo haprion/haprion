@@ -70,7 +70,11 @@ published. A saved change goes out with the next publish, and a draft may be sta
 one without taking it out. *Save as draft* and *Save* in the editor are the two; the advanced
 config dialog, a WAF exception and *Remove* save directly, and refuse while the object has a
 draft. A rename that is saved records the published name it replaces, so the publish that
-carries it removes the old name as well. Publishing and deploying are separate operations. On the dashboard,
+carries it removes the old name as well. The network description and a cluster's logs and
+metrics settings are saved the same way, one document each per cluster: the page shows the
+saved document, the object editor checks against a saved network (so an object may name a VIP
+the same change adds), and *Discard the changes* drops it. The default VIP confirmation is
+asked when the network is saved. Publishing and deploying are separate operations. On the dashboard,
 *Deploy certificates* installs the certificates and *Deploy configuration* installs the
 published configuration. A rollout deploys the nodes that do not own the VIP first and
 the owner last - also when another node cannot be read, and a node whose ownership is

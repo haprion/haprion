@@ -128,7 +128,9 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         self.assertIn("/static/waiting.js", page)
 
 
-class ThePage(QueueRouteTestCase):
+class SettingsClusterTestCase(QueueRouteTestCase):
+    """The settings page with the demo readings, and its form posted."""
+
     def setUp(self) -> None:
         super().setUp()
         patch = mock.patch(
@@ -162,6 +164,8 @@ class ThePage(QueueRouteTestCase):
         }
         return client.post("/settings/clusters/service-demo", data=data, follow_redirects=False)
 
+
+class ThePage(SettingsClusterTestCase):
     def test_the_page_is_an_admins_behind_writes_for_a_listed_cluster(self) -> None:
         self.assertEqual(self.client_for().get("/settings/clusters/edge-demo").status_code, 200)
         self.assertEqual(self.client_for().get("/settings/clusters/elsewhere").status_code, 404)

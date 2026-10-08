@@ -509,7 +509,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         self.assertIn('form="deploy-', card)
         self.assertIn("Deploy before writing another change", card)
-        self.assertNotIn("Validate and publish network", card)
+        self.assertNotIn("Save and publish", card)
 
     def test_the_owed_deploy_is_bound_to_the_version_the_page_shows(self) -> None:
         card = self.owed_page().text.split("service-demo", 1)[0]
@@ -521,7 +521,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         card = self.editable_page().text.split("service-demo", 1)[0]
 
-        self.assertIn("Validate and publish network", card)
+        self.assertIn("Save and publish", card)
         self.assertNotIn('form="deploy-', card)
 
     def test_the_editor_is_the_tables_as_fields_rather_than_a_document_to_write(self) -> None:

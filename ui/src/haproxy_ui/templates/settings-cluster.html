@@ -2,8 +2,9 @@
 {% block title %}Logs & metrics — {{ cluster }} — HAProxy Manager{% endblock %}
 {% block content %}
 {#
-  One cluster's log targets and metrics exporter (Fas 15, B209). Saving
-  publishes a version; deploying it is what reaches the nodes. A receiver is an
+  One cluster's log targets and metrics exporter (Fas 15, B209). Saved
+  settings go out with the next publish (B257); deploying it is what reaches
+  the nodes. A receiver is an
   IP address: a name that fails to resolve at a reload would fail the deploy.
 #}
 <section class="page-heading">
@@ -18,6 +19,8 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="expected_head" value="{{ head }}">
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <input type="hidden" name="saved_revision" value="{{ saved.revision if saved else '' }}">
+  {% if saved %}<p class="preview-notice"><strong>Saved changes</strong> by {{ saved.updated_by }}. The form shows them, and they go out with the next publish.</p>{% endif %}
   <section class="cluster-card {{ accent | accent_class }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Traffic log</h3><p>Syslog, RFC 5424 over TCP</p></div></div></header>
     <div class="table-scroll"><table class="node-table editor-table log-target-table">
@@ -45,7 +48,7 @@
       <label><span class="field-title">Allowed sources</span><textarea name="metrics_sources" rows="4" spellcheck="false" placeholder="One address or network per line">{{ form.metrics_sources }}</textarea></label>
     </div>
     <div class="editor-actions editor-submit">
-      <div class="form-buttons"><a class="secondary-button" href="/settings#logs-metrics">Cancel</a><button type="submit" class="secondary-button deploy-button">Publish</button></div>
+      <div class="form-buttons"><a class="secondary-button" href="/settings#logs-metrics">Cancel</a>{% if saved %}<button type="submit" name="settings_action" value="discard" class="secondary-button" formnovalidate>Discard the changes</button>{% endif %}<button type="submit" name="settings_action" value="save" class="secondary-button">Save</button><button type="submit" name="settings_action" value="publish" class="secondary-button deploy-button">Save and publish</button></div>
     </div>
   </section>
 </form>

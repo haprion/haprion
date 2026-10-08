@@ -17,9 +17,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Literal
+
+from haproxy_mgmt.config import ConfigError
+from haproxy_mgmt.managed_network import load_document
+from haproxy_mgmt.managed_network import location as network_location
 
 from haproxy_ui import metrics
 from haproxy_ui.cluster_identity import accent_index
@@ -384,6 +388,65 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
         named_sources=_named_sources(result),
         groups=_groups(result),
     )
+
+
+def result_from_document(document: str, reading: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A saved network document as the reading the page and the editor draw (B257).
+
+    Parsed by the engine's own loader, with the reading's ownership VIP, and
+    put in the shape `network_result` gives the poller - so a saved
+    description is shown, edited and checked against exactly as a published
+    one is. The head and the object count stay the reading's: the saved
+    document is not yet a version. None for a document the engine refuses,
+    which then shows as published rather than as something it cannot read.
+    """
+
+    ownership = reading.get("ownership_vip")
+    try:
+        parsed = load_document(
+            document.encode("utf-8"),
+            ownership_vip=str(ownership) if ownership else "",
+            location=network_location(),
+        )
+    except ConfigError:
+        return None
+    return {
+        **reading,
+        "default_vip": parsed.default_vip,
+        "vips": [
+            {"name": vip.name, "address": vip.address, "source": vip.source, "tls": vip.tls_policy}
+            for vip in sorted(parsed.vips.values(), key=lambda entry: entry.name)
+        ],
+        "sources": [
+            {"name": name, "address": parsed.sources[name]} for name in sorted(parsed.sources)
+        ],
+        "groups": [
+            {"name": name, "members": list(parsed.networks[name])}
+            for name in sorted(parsed.networks)
+        ],
+    }
+
+
+def with_saved(
+    readings: Iterable[ClusterNetwork], saved: Mapping[str, str]
+) -> list[ClusterNetwork]:
+    """The readings, with each cluster's saved document in place of what is published.
+
+    Everything that draws or checks against a cluster's addresses reads this,
+    so an object saved for a VIP the same package adds is checked against that
+    VIP and not refused for it.
+    """
+
+    rows: list[ClusterNetwork] = []
+    for reading in readings:
+        document = saved.get(reading.cluster)
+        result = reading.result if isinstance(reading.result, Mapping) else None
+        if document is not None and reading.outcome == "done" and result is not None:
+            replaced = result_from_document(document, result)
+            if replaced is not None:
+                reading = replace(reading, result=replaced)
+        rows.append(reading)
+    return rows
 
 
 def build_network_overview(

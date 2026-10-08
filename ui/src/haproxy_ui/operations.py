@@ -796,6 +796,25 @@ def _requested_by(payload: Mapping[str, Any]) -> str | None:
         raise BadPayload(f"requested_by {exc}") from exc
 
 
+def _change(payload: Mapping[str, Any]) -> None:
+    """`change`: which saved document a publish came from (B257), as `draft` for an object.
+
+    The interface's own bookkeeping, so the saved row can be recognised as
+    published afterwards. Checked because everything in a payload is, and
+    never passed on to the helper.
+    """
+
+    change = payload.get("change")
+    if change is None:
+        return
+    if not isinstance(change, Mapping) or set(change) != {"id", "revision"}:
+        raise BadPayload("change must name an id and a revision")
+    if not isinstance(change.get("id"), str) or not change["id"]:
+        raise BadPayload("the change id must be a non-empty string")
+    if not isinstance(change.get("revision"), int) or isinstance(change["revision"], bool):
+        raise BadPayload("the change revision must be a whole number")
+
+
 def prepare(
     *,
     operation: str,
@@ -1077,7 +1096,9 @@ def prepare(
             "comment",
             "allow_certificate_mismatch",
             "requested_by",
+            "change",
         )
+        _change(payload)
         network = payload.get("network")
         expected_head = payload.get("expected_head")
         comment = payload.get("comment")
@@ -1112,7 +1133,8 @@ def prepare(
         )
 
     if operation == "cluster_settings_publish":
-        _only(payload, "settings", "expected_head", "comment", "requested_by")
+        _only(payload, "settings", "expected_head", "comment", "requested_by", "change")
+        _change(payload)
         settings = payload.get("settings")
         expected_head = payload.get("expected_head")
         comment = payload.get("comment")

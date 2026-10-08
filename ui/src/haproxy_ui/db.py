@@ -2488,6 +2488,140 @@ def discard_draft(
             )
 
 
+@dataclass(frozen=True, slots=True)
+class ClusterChange:
+    """A cluster's saved network description or settings, before a publish (B257).
+
+    The whole document, saved the way a proxy object's change is: written
+    here, published with the next publish, and cleared once that publish can
+    be read.
+    """
+
+    cluster: str
+    kind: str
+    document: str
+    base_hash: str
+    revision: int
+    updated_by: str
+    updated_at: datetime
+    id: UUID
+
+
+CHANGE_KINDS = ("network", "settings")
+
+
+def cluster_changes(connection: Connection[Any], cluster: str) -> dict[str, ClusterChange]:
+    """This cluster's saved network description and settings, by kind."""
+
+    with connection.cursor(row_factory=class_row(ClusterChange)) as cursor:
+        cursor.execute(
+            "select cluster, kind, document, base_hash, revision, updated_by, updated_at, id "
+            "  from cluster_change "
+            " where cluster = %(cluster)s",
+            {"cluster": cluster},
+        )
+        return {row.kind: row for row in cursor.fetchall()}
+
+
+def save_cluster_change(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    kind: str,
+    document: str,
+    base_hash: str,
+    updated_by: str,
+    expected_revision: int | None,
+) -> ClusterChange:
+    """Create or replace one saved document, refusing a write the caller did not see.
+
+    The same rule as `save_draft`: None for a document that should not exist
+    yet, the revision read for one that should, both enforced by the statement.
+    """
+
+    values = {
+        "cluster": cluster,
+        "kind": kind,
+        "document": document,
+        "base_hash": base_hash,
+        "updated_by": updated_by,
+        "revision": expected_revision,
+    }
+    with (
+        connection.transaction(),
+        connection.cursor(row_factory=class_row(ClusterChange)) as cursor,
+    ):
+        if expected_revision is None:
+            cursor.execute(
+                "insert into cluster_change (cluster, kind, document, base_hash, updated_by) "
+                "values (%(cluster)s, %(kind)s, %(document)s, %(base_hash)s, %(updated_by)s) "
+                "on conflict do nothing "
+                "returning cluster, kind, document, base_hash, revision, updated_by, "
+                "          updated_at, id",
+                values,
+            )
+        else:
+            cursor.execute(
+                "update cluster_change "
+                "   set document = %(document)s, base_hash = %(base_hash)s, "
+                "       updated_by = %(updated_by)s "
+                " where cluster = %(cluster)s and kind = %(kind)s "
+                "   and revision = %(revision)s "
+                "returning cluster, kind, document, base_hash, revision, updated_by, "
+                "          updated_at, id",
+                values,
+            )
+        row = cursor.fetchone()
+        if row is None:
+            raise DraftConflict(
+                f"the saved {kind} of {cluster} changed since it was read; reload and try again"
+            )
+        return row
+
+
+def discard_cluster_change(
+    connection: Connection[Any], *, cluster: str, kind: str, expected_revision: int
+) -> None:
+    """Throw one saved document away, and only the revision the caller was looking at."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "delete from cluster_change "
+            " where cluster = %(cluster)s and kind = %(kind)s and revision = %(revision)s",
+            {"cluster": cluster, "kind": kind, "revision": expected_revision},
+        )
+        if cursor.rowcount == 0:
+            raise DraftConflict(
+                f"the saved {kind} of {cluster} changed since it was read; reload and try again"
+            )
+
+
+def change_publishes(
+    connection: Connection[Any], *, cluster: str, change_ids: Collection[str]
+) -> list[Job]:
+    """The finished publishes of these saved documents, asked by their ids.
+
+    The same evidence `draft_publishes` reads for a proxy object, under the
+    payload's `change`. Retention keeps these rows while their change exists.
+    """
+
+    if not change_ids:
+        return []
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts "
+            "  from job "
+            " where operation in ('network_publish', 'cluster_settings_publish') "
+            "   and state = 'done' and cluster = %(cluster)s "
+            "   and payload->'change'->>'id' = any(%(ids)s) "
+            " order by created_at desc, id desc",
+            {"cluster": cluster, "ids": sorted(change_ids)},
+        )
+        return cursor.fetchall()
+
+
 def record_metric_samples(
     connection: Connection[Any],
     *,

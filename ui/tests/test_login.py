@@ -19,6 +19,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
@@ -93,6 +94,21 @@ class FakePool:
 
 
 class LoginTestCase(unittest.TestCase):
+    def _save_change(self, _c: object, **values: Any) -> Any:
+        """A saved network or settings document, as the table would answer (B257)."""
+
+        self.saved_changes.append(values)
+        return db.ClusterChange(
+            cluster=values["cluster"],
+            kind=values["kind"],
+            document=values["document"],
+            base_hash=values["base_hash"],
+            revision=(values["expected_revision"] or 0) + 1,
+            updated_by=values["updated_by"],
+            updated_at=datetime(2026, 10, 8, 12, 0, tzinfo=UTC),
+            id=UUID("88888888-8888-4888-8888-888888888888"),
+        )
+
     def setUp(self) -> None:
         self.account = Account(
             id=1,
@@ -102,6 +118,7 @@ class LoginTestCase(unittest.TestCase):
             password_hash=auth.hash_password(PASSWORD),
         )
         self.pool = FakePool()
+        self.saved_changes: list[dict[str, Any]] = []
         self.sessions: dict[bytes, AuthenticatedSession] = {}
         self.attempts: list[tuple[str, str, bool]] = []
         self.audit: list[str] = []
@@ -139,6 +156,14 @@ class LoginTestCase(unittest.TestCase):
             # at all, which would hide whatever the case was about.
             #
             mock.patch("haproxy_ui.db.cluster_drafts", return_value=[]),
+            #
+            # And a cluster's saved network and settings (B257), which the
+            # network page, the editor and the settings page read: none.
+            #
+            mock.patch("haproxy_ui.db.cluster_changes", return_value={}),
+            mock.patch("haproxy_ui.db.save_cluster_change", side_effect=self._save_change),
+            mock.patch("haproxy_ui.db.discard_cluster_change"),
+            mock.patch("haproxy_ui.db.change_publishes", return_value=[]),
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
             #
             # The dashboard's traffic row (B220): no readings, as an

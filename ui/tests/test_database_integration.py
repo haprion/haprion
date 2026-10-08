@@ -511,6 +511,105 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(removable, {"gone"})
             connection.rollback()
 
+    def test_the_web_saves_and_discards_a_cluster_s_network_and_settings(self) -> None:
+        """B257: one saved document per cluster and kind, held to its revision."""
+
+        common: dict[str, Any] = {
+            "cluster": "alpha",
+            "kind": "network",
+            "base_hash": "a" * 40,
+            "updated_by": "admin",
+        }
+        try:
+            with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+                first = db.save_cluster_change(
+                    connection, **common, document="vips: {}\n", expected_revision=None
+                )
+                with self.assertRaises(db.DraftConflict):
+                    db.save_cluster_change(
+                        connection, **common, document="vips: {}\n", expected_revision=None
+                    )
+                again = db.save_cluster_change(
+                    connection, **common, document="vips: {x: 1}\n", expected_revision=1
+                )
+                db.save_cluster_change(
+                    connection,
+                    **{**common, "kind": "settings"},
+                    document="metrics: null\n",
+                    expected_revision=None,
+                )
+                connection.commit()
+                self.assertEqual((again.revision, again.id), (2, first.id))
+                self.assertEqual(
+                    sorted(db.cluster_changes(connection, "alpha")), ["network", "settings"]
+                )
+                with self.assertRaises(db.DraftConflict):
+                    db.discard_cluster_change(
+                        connection, cluster="alpha", kind="network", expected_revision=1
+                    )
+                db.discard_cluster_change(
+                    connection, cluster="alpha", kind="network", expected_revision=2
+                )
+                connection.commit()
+                self.assertEqual(list(db.cluster_changes(connection, "alpha")), ["settings"])
+                with self.assertRaises(psycopg.errors.CheckViolation):
+                    db.save_cluster_change(
+                        connection,
+                        **{**common, "kind": "objects"},
+                        document="x\n",
+                        expected_revision=None,
+                    )
+                connection.rollback()
+        finally:
+            with self.connect() as connection:
+                connection.execute("delete from cluster_change")
+                connection.commit()
+
+    def test_retention_keeps_the_publish_a_saved_network_is_cleared_by(self) -> None:
+        """The draft rule (CR-04), for a saved network description or settings (B257)."""
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
+                " '/^profile_evidence() {/,/^}/p;/^draft_evidence() {/,/^}/p;"
+                "/^where_removable() {/,/^}/p'"
+                ' "$0")"; where_removable',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into cluster_change (cluster, kind, document, base_hash, updated_by) "
+                "values ('alpha', 'network', 'vips: {}', %s, 'admin') returning id",
+                ("a" * 40,),
+            )
+            kept = str(_first(cursor))
+            named = {}
+            for name, change in (("kept", kept), ("gone", str(uuid4()))):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values ('network_publish', 'alpha', %(payload)s, "
+                    "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
+                    "returning id",
+                    {
+                        "payload": json.dumps({"change": {"id": change, "revision": 1}}),
+                        "key": uuid4(),
+                    },
+                )
+                named[_first(cursor)] = name
+            cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
+            removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
+            self.assertEqual(removable, {"gone"})
+            found = db.change_publishes(connection, cluster="alpha", change_ids={kept})
+            self.assertEqual([job.payload["change"]["id"] for job in found], [kept])
+            connection.rollback()
+
     def test_the_web_reads_a_draft_s_publishes_by_its_id(self) -> None:
         """`draft_publishes` as the web runs it: done publishes of these drafts only (CR-04)."""
 

@@ -19,12 +19,14 @@ The rules that shape every handler below:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import io
 import ipaddress
 import json
 import logging
+import re
 import secrets
 import zipfile
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -54,7 +56,7 @@ from haproxy_mgmt import cluster_settings as cluster_settings_module
 from haproxy_mgmt.cert_export import FORMATS as EXPORT_FORMATS
 from haproxy_mgmt.cert_export import Export, ExportError
 from haproxy_mgmt.certificates import CERTIFICATE_OPENING
-from haproxy_mgmt.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW
+from haproxy_mgmt.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW, ConfigError
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
     DEFAULT_DNS_FALL,
@@ -133,6 +135,12 @@ class _TimedTemplates(Jinja2Templates):
 
         return timing.rendered(render)
 
+
+#
+# A commit as a form carries it, checked before it reaches a column that
+# would refuse it with a database error instead of a sentence.
+#
+COMMIT_ID = re.compile(r"[0-9a-f]{40}")
 
 TEMPLATES = _TimedTemplates(directory=str(Path(__file__).parent / "templates"))
 logger = logging.getLogger("haproxy_ui")
@@ -4263,6 +4271,7 @@ def build_router(config: Config) -> APIRouter:
         *,
         head: str,
         form: cluster_settings_page.SettingsForm,
+        saved: db.ClusterChange | None = None,
         problem: str = "",
         status_code: int = 200,
     ) -> Response:
@@ -4275,10 +4284,15 @@ def build_router(config: Config) -> APIRouter:
                 "accent": cluster_identity.accent_index(cluster),
                 "head": head,
                 "form": form,
+                "saved": saved,
                 "problem": problem,
             },
             status_code=status_code,
         )
+
+    def _saved_settings(request: Request, cluster: str, row: Any) -> db.ClusterChange | None:
+        with request.app.state.pool.connection() as connection:
+            return _settled_changes(connection, cluster, _reading_head(row)).get("settings")
 
     def _settings_reading(request: Request, cluster: str) -> Any:
         """This cluster's cached reading, or None when it is not listed or not read."""
@@ -4296,12 +4310,28 @@ def build_router(config: Config) -> APIRouter:
         row = _settings_reading(request, cluster)
         if row is None:
             return PlainTextResponse("Not found", status_code=404)
+        #
+        # Saved settings are what the form shows and what the next publish
+        # carries (B257); the published ones when there are none, or when the
+        # saved document no longer parses.
+        #
+        saved = _saved_settings(request, cluster, row)
+        result = row.result
+        if saved is not None:
+            with contextlib.suppress(ConfigError):
+                result = {
+                    **row.result,
+                    **cluster_settings_module.document_result(
+                        cluster_settings_module.load_document(saved.document.encode("utf-8"))
+                    ),
+                }
         return _cluster_settings_page(
             request,
             gate,
             cluster,
             head=str(row.result.get("head", "")),
-            form=cluster_settings_page.form_from_result(row.result),
+            form=cluster_settings_page.form_from_result(result),
+            saved=saved,
         )
 
     @router.post("/settings/clusters/{cluster}", response_class=HTMLResponse)
@@ -4318,6 +4348,12 @@ def build_router(config: Config) -> APIRouter:
         metrics_sources: str = Form(default="", max_length=2048),
         expected_head: str = Form(default="", max_length=40),
         idempotency_key: str = Form(default="", max_length=64),
+        #
+        # Save, save and publish, or discard what was saved (B257); publish
+        # when absent, which is what every request before the buttons meant.
+        #
+        settings_action: str = Form(default="publish", max_length=8),
+        saved_revision: str = Form(default="", max_length=16),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         gate = _admin_write_gate(request)
@@ -4328,6 +4364,36 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Refused", status_code=403)
         if _settings_reading(request, cluster) is None:
             return PlainTextResponse("Not found", status_code=404)
+        revision = int(saved_revision) if saved_revision.isdigit() else None
+        page = f"/settings/clusters/{cluster}"
+        if settings_action == "discard":
+            if revision is None:
+                return PlainTextResponse("There is nothing to discard", status_code=400)
+            with request.app.state.pool.connection() as connection:
+                try:
+                    db.discard_cluster_change(
+                        connection, cluster=cluster, kind="settings", expected_revision=revision
+                    )
+                except db.DraftConflict:
+                    connection.rollback()
+                    return PlainTextResponse(
+                        "The saved settings changed since they were read; reload and try again",
+                        status_code=409,
+                    )
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="discard_change",
+                    cluster=cluster,
+                    request_id=uuid4(),
+                    detail={"kind": "settings"},
+                )
+                connection.commit()
+            return RedirectResponse(page, status_code=303)
+        if settings_action not in ("save", "publish"):
+            return PlainTextResponse("Unknown action", status_code=400)
+        if not COMMIT_ID.fullmatch(expected_head):
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
         rows = max(len(target_name), len(target_address), len(target_port))
         if rows > cluster_settings_page.MAX_TARGETS:
             return PlainTextResponse("Too many log targets", status_code=400)
@@ -4372,11 +4438,49 @@ def build_router(config: Config) -> APIRouter:
         # The document is built here, from named fields, and in the engine's
         # canonical form; the helper parses it again and is the authority.
         #
+        document = cluster_settings_module.dump_document(settings).decode("utf-8")
+        #
+        # Saved first, whichever button, as the network form does.
+        #
+        with request.app.state.pool.connection() as connection:
+            try:
+                change = db.save_cluster_change(
+                    connection,
+                    cluster=cluster,
+                    kind="settings",
+                    document=document,
+                    base_hash=expected_head,
+                    updated_by=gate.username,
+                    expected_revision=revision,
+                )
+            except db.DraftConflict as conflict:
+                connection.rollback()
+                return _cluster_settings_page(
+                    request,
+                    gate,
+                    cluster,
+                    head=expected_head,
+                    form=form,
+                    problem=str(conflict),
+                    status_code=409,
+                )
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="save_change",
+                cluster=cluster,
+                request_id=uuid4(),
+                detail={"kind": "settings", "revision": change.revision},
+            )
+            connection.commit()
+        if settings_action == "save":
+            return RedirectResponse(page, status_code=303)
         payload = {
-            "settings": cluster_settings_module.dump_document(settings).decode("utf-8"),
+            "settings": document,
             "expected_head": expected_head,
             "comment": cluster_settings_page.comment_for(settings),
             "requested_by": gate.username,
+            "change": {"id": str(change.id), "revision": change.revision},
         }
         try:
             operations.prepare(
@@ -7085,6 +7189,13 @@ def build_router(config: Config) -> APIRouter:
         expected_head: str = Form(default="", max_length=64),
         comment: str = Form(default="", max_length=4096),
         default_vip_confirmation: str = Form(default=""),
+        #
+        # The network form's three buttons (B257): save the description, save
+        # and publish it, or discard what was saved. Publish when absent, which
+        # is what every request before the buttons existed meant.
+        #
+        network_action: str = Form(default="publish", max_length=8),
+        saved_revision: str = Form(default="", max_length=16),
         return_to: str = Form(default="", max_length=64),
         return_open: str = Form(default="", max_length=255),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
@@ -7172,15 +7283,43 @@ def build_router(config: Config) -> APIRouter:
                 **({"expected_head": expected_head} if expected_head else {}),
             }
         elif operation == "network_publish":
+            revision = int(saved_revision) if saved_revision.isdigit() else None
+            if network_action == "discard":
+                if revision is None:
+                    return _refusal(
+                        request, session, token, "There is nothing to discard.", back="/network"
+                    )
+                with request.app.state.pool.connection() as connection:
+                    try:
+                        db.discard_cluster_change(
+                            connection, cluster=cluster, kind="network", expected_revision=revision
+                        )
+                    except db.DraftConflict as conflict:
+                        connection.rollback()
+                        return _refusal(request, session, token, str(conflict), back="/network")
+                    db.record_audit_event(
+                        connection,
+                        actor=session.username,
+                        action="discard_change",
+                        cluster=cluster,
+                        request_id=uuid4(),
+                        detail={"kind": "network"},
+                    )
+                    connection.commit()
+                return RedirectResponse("/network", status_code=303)
+            if network_action not in ("save", "publish"):
+                return PlainTextResponse("Unknown action", status_code=400)
             # A changed default silently moves every object that did not name a
             # VIP.  The cached page states that count next to this confirmation;
-            # the helper remains the authority for the document itself.
+            # the helper remains the authority for the document itself. Asked
+            # when the description is saved (B257), since that is where the
+            # decision is made.
             if default_vip_confirmation != "on":
                 return _refusal(
                     request,
                     session,
                     token,
-                    "Confirm the default VIP impact before publishing.",
+                    "Confirm the default VIP impact before saving.",
                     back="/network",
                 )
             try:
@@ -7210,11 +7349,51 @@ def build_router(config: Config) -> APIRouter:
                 # Safe to show: these messages name a row's position, never
                 # anything that was typed into it.
                 return _refusal(request, session, token, str(problem), back="/network")
+            if not COMMIT_ID.fullmatch(expected_head):
+                return PlainTextResponse("Invalid operation parameters", status_code=400)
+            if network_action == "publish" and not comment.strip():
+                return _refusal(
+                    request,
+                    session,
+                    token,
+                    "A version comment is needed to publish.",
+                    back="/network",
+                )
+            #
+            # Saved first, whichever button: a publish that is refused leaves
+            # the description saved rather than lost, as an object's does.
+            #
+            with request.app.state.pool.connection() as connection:
+                try:
+                    change = db.save_cluster_change(
+                        connection,
+                        cluster=cluster,
+                        kind="network",
+                        document=document,
+                        base_hash=expected_head,
+                        updated_by=session.username,
+                        expected_revision=revision,
+                    )
+                except db.DraftConflict as conflict:
+                    connection.rollback()
+                    return _refusal(request, session, token, str(conflict), back="/network")
+                db.record_audit_event(
+                    connection,
+                    actor=session.username,
+                    action="save_change",
+                    cluster=cluster,
+                    request_id=uuid4(),
+                    detail={"kind": "network", "revision": change.revision},
+                )
+                connection.commit()
+            if network_action == "save":
+                return RedirectResponse("/network", status_code=303)
             payload = {
                 "network": document,
                 "expected_head": expected_head,
                 "comment": comment,
                 "requested_by": session.username,
+                "change": {"id": str(change.id), "revision": change.revision},
             }
 
         try:
@@ -7748,6 +7927,12 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
     _, network_rows, _ = read_source(
         request, config, NETWORK_SOURCE, cluster=cluster, clusters=clusters
     )
+    #
+    # Checked against the saved network when there is one (B257): an object
+    # saved for a VIP the same publish adds would otherwise be refused for it.
+    #
+    with request.app.state.pool.connection() as connection:
+        network_rows, _saved = _saved_network_rows(connection, list(network_rows))
     described = next(
         (
             view
@@ -9155,6 +9340,83 @@ def _top_layers(rows: Iterable[db.ProxyDraft]) -> list[db.ProxyDraft]:
     return [top[name] for name in sorted(top)]
 
 
+def _settled_changes(
+    connection: Any, cluster: str, head: str | None
+) -> dict[str, db.ClusterChange]:
+    """This cluster's saved network and settings, each cleared once its publish can be read (B257).
+
+    The rule a proxy object's saved change follows (`_reflects`), by the head
+    of the reading the document is shown over: a reading past the commit the
+    publish was made against has read it, and a publish that changed nothing
+    needs no new commit.
+    """
+
+    changes = db.cluster_changes(connection, cluster)
+    if not changes:
+        return changes
+    evidence: dict[tuple[str, int], DraftPublish] = {}
+    ids = {str(change.id) for change in changes.values()}
+    for job in db.change_publishes(connection, cluster=cluster, change_ids=ids):
+        payload = job.payload if isinstance(job.payload, Mapping) else {}
+        change = payload.get("change")
+        if not isinstance(change, Mapping):
+            continue
+        identity, revision = change.get("id"), change.get("revision")
+        if not isinstance(identity, str) or not isinstance(revision, int):
+            continue
+        base = payload.get("expected_head")
+        changed = job.result.get("changed") if isinstance(job.result, Mapping) else None
+        evidence.setdefault(
+            (identity, revision),
+            DraftPublish(
+                base if isinstance(base, str) and base else None,
+                changed if isinstance(changed, bool) else None,
+            ),
+        )
+    kept = dict(changes)
+    for kind, change in changes.items():
+        publish = evidence.get((str(change.id), change.revision))
+        if publish is None or head is None:
+            continue
+        if head == publish.base and publish.changed is not False:
+            continue
+        try:
+            db.discard_cluster_change(
+                connection, cluster=cluster, kind=kind, expected_revision=change.revision
+            )
+        except db.DraftConflict:
+            #
+            # Saved again between the read and the delete: that one is newer
+            # and stays. No rollback, for the reason `_settled_row` gives.
+            #
+            continue
+        del kept[kind]
+    connection.commit()
+    return kept
+
+
+def _reading_head(row: Any) -> str | None:
+    result = getattr(row, "result", None)
+    head = result.get("head") if isinstance(result, Mapping) else None
+    return head if isinstance(head, str) and head else None
+
+
+def _saved_network_rows(
+    connection: Any, rows: Sequence[db.ClusterNetwork]
+) -> tuple[list[db.ClusterNetwork], dict[str, db.ClusterChange]]:
+    """The network readings with each cluster's saved description over them, and those saves."""
+
+    saved: dict[str, db.ClusterChange] = {}
+    for row in rows:
+        change = _settled_changes(connection, row.cluster, _reading_head(row)).get("network")
+        if change is not None:
+            saved[row.cluster] = change
+    return (
+        network.with_saved(rows, {cluster: change.document for cluster, change in saved.items()}),
+        saved,
+    )
+
+
 def _settled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> list[db.ProxyDraft]:
     """This cluster's drafts, with the ones already published cleared away.
 
@@ -9471,6 +9733,12 @@ def _network_page(request: Request, config: Config) -> Response:
         return RedirectResponse("/login", status_code=303)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
     clusters, network_rows, captured_at = read_source(request, config, NETWORK_SOURCE)
+    #
+    # A saved description is what the form shows and what the next publish
+    # carries (B257), so it is drawn in place of the published one and said so.
+    #
+    with request.app.state.pool.connection() as connection:
+        network_rows, saved_network = _saved_network_rows(connection, list(network_rows))
     overview = network.build_network_overview(
         clusters,
         network_rows,
@@ -9524,6 +9792,7 @@ def _network_page(request: Request, config: Config) -> Response:
             "csrf_token": auth.csrf_token(token),
             "section": "network",
             "clusters": overview,
+            "saved_network": saved_network,
             "awaiting_deploy": awaiting,
             "deployment": state,
             "targets": {name: view.target_version for name, view in serving.items()},

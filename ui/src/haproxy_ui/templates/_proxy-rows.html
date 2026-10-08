@@ -13,7 +13,7 @@
         away, where it has room.
       #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endmacro %}
 
-{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}) %}
+{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}, unforwarded=()) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
 {#
   A draft of an object that is already stored keeps that object's row - its
@@ -130,7 +130,7 @@
           urgent to say than "https". So the badge replaces it and the
           hostnames stay where they are, on every row, always.
         #}
-        <td data-label="Protocol">{% if object.name in drafts %}{{ draft_badge(drafts[object.name], queued, failed) }}{% elif not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% elif object.name in reconfigured %}<span class="status-badge status-badge-warning waiting-badge">Reconfigured · deploy to activate</span>{% elif object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td data-label="Protocol">{% if object.name in drafts %}{{ draft_badge(drafts[object.name], queued, failed) }}{% elif not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif object.protocol == 'syslog' and unforwarded %}<span class="status-badge status-badge-critical waiting-badge" title="keepalived.conf on {{ unforwarded | join(', ') }} does not include /etc/keepalived/ipvs.conf, so nothing is forwarded there and a deploy is refused">Include missing · {{ unforwarded[0] if unforwarded | length == 1 else unforwarded | length ~ ' nodes' }}</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% elif object.name in reconfigured %}<span class="status-badge status-badge-warning waiting-badge">Reconfigured · deploy to activate</span>{% elif object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td data-label="Hosts / ports"><span class="proxy-hosts">{% if object.protocol in ('tcp', 'dns', 'syslog') and not object.hostnames %}{% if object.servers %}{{ object.servers | join(', ') }} · {% endif %}{{ object.ports | join(', ') if object.ports else '—' }}{% else %}{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}{% endif %}</span></td>
         {#
           The addresses rather than their names (B221): an address is what

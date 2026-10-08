@@ -41,6 +41,7 @@ from haproxy_mgmt.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS
 from haproxy_mgmt.probe_socket import ProbeUnavailable, ask, build_request
 from haproxy_mgmt.proxy_model import (
     DEFAULT_EXPECT_STATUS,
+    SENDERS_ADDRESS,
     STATUS_RANGE,
     ModelError,
     load_proxy,
@@ -282,7 +283,7 @@ def source_address(form: Mapping[str, Any], choices: Mapping[str, Any]) -> str:
     # sender's address, and keepalived on every node checks from its own. Empty
     # here, so the editor's table is not held to the node carrying the VIP.
     #
-    if str(form.get("protocol", "") or "").strip() == "syslog":
+    if str(form.get("protocol", "") or "").strip() in SENDERS_ADDRESS:
         return ""
     named = str(form.get("source", "") or "").strip()
     if named:

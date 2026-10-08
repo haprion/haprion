@@ -174,7 +174,40 @@ sync_keepalived_addresses() {
         "address list" keepalived_includes_anywhere
 }
 
+#
+# A release whose IPVS file holds virtual servers is one this node cannot
+# serve until keepalived.conf includes the file (review 26-10-08, F1): the
+# file would be installed inert and the syslog objects forwarded nowhere,
+# while the deploy said it succeeded. Refused instead, as a dns listener is
+# on a node without dnsdist. A file without virtual servers is every
+# cluster's - one with no syslog object - and is installed inert as before,
+# which is how the file arrives before a person adds the include.
+#
+ipvs_unreadable() {
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    grep -q '^virtual_server ' "$file" || return 1
+    ! keepalived_includes_at_top "$KEEPALIVED_IPVS"
+}
+
+refuse_unread_ipvs() {
+    log "ERROR: the release carries syslog objects, but ${KEEPALIVED_CONF} does not include"
+    log "ERROR: ${KEEPALIVED_IPVS} at its top level, so nothing would forward them."
+    log "ERROR: add 'include ${KEEPALIVED_IPVS}' to ${KEEPALIVED_CONF} (docs/install.md), then deploy again."
+}
+
+validate_ipvs_candidate() {
+    if ipvs_unreadable "${1}/keepalived/ipvs.conf"; then
+        refuse_unread_ipvs
+        return 1
+    fi
+}
+
 sync_keepalived_ipvs() {
+    if ipvs_unreadable "${CURRENT}/keepalived/ipvs.conf"; then
+        refuse_unread_ipvs
+        return 1
+    fi
     sync_keepalived_file "${CURRENT}/keepalived/ipvs.conf" "$KEEPALIVED_IPVS" \
         "IPVS file" keepalived_includes_at_top
 }
@@ -538,6 +571,7 @@ log "Candidate configuration OK."
 
 validate_waf_candidate "$VALIDATE" || exit 1
 validate_dns_candidate "$VALIDATE" || exit 1
+validate_ipvs_candidate "$VALIDATE" || exit 1
 
 #
 # Create a new immutable release

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from haproxy_mgmt.cluster_status import ServerHealth
+from haproxy_mgmt.cluster_status import ServerHealth, ipvs_unread
 from haproxy_mgmt.generate import PREFIX, legacy_backend_name
 
 #
@@ -241,6 +241,26 @@ def _every_node(
         if not isinstance(status, Mapping) or not ready(status):
             return False
     return True
+
+
+def syslog_unforwarded(rows: Iterable[Any], *, cluster: str) -> tuple[str, ...]:
+    """The nodes whose release asks for virtual servers their keepalived does not read.
+
+    Review 26-10-08 F1: the include in keepalived.conf is missing there, so the
+    cluster's syslog objects are forwarded nowhere by that node, and a deploy
+    is refused until a person adds it. The engine's own reading.
+    """
+
+    reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
+    result = reading.result if reading is not None and isinstance(reading.result, Mapping) else {}
+    entries = result.get("nodes")
+    return tuple(
+        str(entry.get("name", ""))
+        for entry in (entries if isinstance(entries, list) else ())
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("status"), Mapping)
+        and ipvs_unread(entry["status"])
+    )
 
 
 def dns_everywhere(rows: Iterable[Any], *, cluster: str) -> bool:

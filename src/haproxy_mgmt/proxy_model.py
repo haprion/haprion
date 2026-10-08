@@ -164,6 +164,13 @@ OUTSIDE_HAPROXY = ("dns", "syslog")
 #
 OWN_PORT = ("tcp", "dns", "syslog")
 #
+# The objects whose traffic leaves with the sender's address rather than one of
+# the cluster's (B256): no source address, every node checks from its own, and
+# the node holding the VIP - the one the traffic passes - answers for them
+# wherever a page shows one node's view (review 26-10-08, F4).
+#
+SENDERS_ADDRESS = ("syslog",)
+#
 # The balancing algorithms an object may choose, read from HAProxy 3.4.4's own
 # documentation on this machine. HAProxy has more - `hash`, `hdr()`,
 # `url_param()`, `rdp-cookie` - and they are left out on purpose: each takes an

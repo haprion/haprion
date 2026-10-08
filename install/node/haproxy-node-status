@@ -483,6 +483,12 @@ def name_ipvs(services, names):
     return named
 
 
+def virtual_servers(text):
+    """How many virtual servers a generated file holds: each begins a line of its own."""
+
+    return sum(1 for line in text.splitlines() if line.startswith("virtual_server "))
+
+
 def read_ipvs():
     published, published_digest = address_list(PUBLISHED_IPVS)
     installed, installed_digest = address_list(KEEPALIVED_IPVS)
@@ -497,12 +503,20 @@ def read_ipvs():
         #
         services = parse_ipvs_stats(r.stdout) if r.returncode == 0 else None
     installed_text = read_config(KEEPALIVED_IPVS) if installed else None
+    #
+    # How many virtual servers the release asks for. With the include missing,
+    # a file that holds some is syslog objects forwarded nowhere, while one
+    # that holds none is how the file arrives (review 26-10-08, F1).
+    #
+    published_text = read_config(PUBLISHED_IPVS) if published else None
+    published_servers = None if published_text is None else virtual_servers(published_text)
     if services is not None:
         services = name_ipvs(services, ipvs_names(installed_text or ""))
     return {
         "ipvsadm": present,
         "published": published,
         "published_sha256": published_digest,
+        "published_servers": published_servers,
         "installed": installed,
         "installed_sha256": installed_digest,
         "included": None if text is None else top_level_include(text, KEEPALIVED_IPVS),

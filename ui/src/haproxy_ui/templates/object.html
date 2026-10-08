@@ -125,7 +125,7 @@
 {% endif %}
 <article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><div><h3>Frontend</h3><p>{% if object.vip %}Served on the {% if object.vip_is_default %}default {% endif %}VIP <code>{{ object.vip }}</code>{% if object.vip_address %} · {{ object.vip_address }}{% endif %}, through a frontend shared by every object on that address{% else %}The published frontend that carries this address, shared by every object on it{% endif %}</p></div></div>
+    <div class="cluster-identity"><div><h3>Frontend</h3><p>{% if object.vip %}Served on the {% if object.vip_is_default %}default {% endif %}VIP <code>{{ object.vip }}</code>{% if object.vip_address %} · {{ object.vip_address }}{% endif %}, {% if object.stored and object.stored.protocol == 'dns' %}by dnsdist{% elif object.stored and object.stored.protocol == 'syslog' %}by the kernel's IPVS, with each sender's own address{% else %}through a frontend shared by every object on that address{% endif %}{% else %}The published frontend that carries this address, shared by every object on it{% endif %}</p></div></div>
   </header>
   {% if object.published %}
   <div class="table-scroll"><table class="node-table">

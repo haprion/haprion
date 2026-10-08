@@ -163,6 +163,12 @@ def _ipvs_line(status: dict[str, Any]) -> str | None:
     if published != installed:
         return "BEHIND the release - run haproxy-deploy"
     if reported.get("included") is False:
+        servers = reported.get("published_servers")
+        if isinstance(servers, int) and not isinstance(servers, bool) and servers > 0:
+            return (
+                f"NOT FORWARDING {servers} virtual server{'' if servers == 1 else 's'} - "
+                "keepalived.conf does not include the file at its top level"
+            )
         return "installed, not included at the top of keepalived.conf"
     if reported.get("included") is not True:
         return "installed, include unknown"

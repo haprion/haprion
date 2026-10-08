@@ -81,14 +81,14 @@
           <option value="tcp"{% if form.protocol == 'tcp' %} selected{% endif %}>TCP</option>
           {#
             DNS (Fas 19a B5) once every node of the cluster runs dnsdist, and
-            always on an object that already is one, so it opens as what it is.
-          #}
-          {% if dns_offered or form.protocol == 'dns' %}<option value="dns"{% if form.protocol == 'dns' %} selected{% endif %}>DNS</option>{% endif %}
-          {#
             Syslog (Fas 19b B4) once every node's keepalived reads the file the
-            syslog objects are written to, and always on an object that already is one.
+            syslog objects are written to; always on an object that already is
+            one, so it opens as what it is. Until then the choice is there and
+            greyed out with the reason in it (review 26-10-08, F2), rather than
+            missing without a word.
           #}
-          {% if syslog_offered or form.protocol == 'syslog' %}<option value="syslog"{% if form.protocol == 'syslog' %} selected{% endif %}>Syslog (UDP)</option>{% endif %}
+          <option value="dns"{% if form.protocol == 'dns' %} selected{% elif not dns_offered %} disabled{% endif %}>DNS{% if not dns_offered and form.protocol != 'dns' %} · dnsdist not on every node{% endif %}</option>
+          <option value="syslog"{% if form.protocol == 'syslog' %} selected{% elif not syslog_offered %} disabled{% endif %}>Syslog (UDP){% if not syslog_offered and form.protocol != 'syslog' %} · include missing on a node{% endif %}</option>
         </select>
       </label>
       <label class="tcp-only" data-protocol="tcp dns syslog"{{ when('protocol', 'tcp dns syslog') }}>Port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="{{ {'dns': '53', 'syslog': '514'}.get(form.protocol, '5432') }}" data-placeholders="tcp:5432 dns:53 syslog:514"{% if form.protocol not in ('tcp', 'dns', 'syslog') %} disabled{% endif %}></label>

@@ -359,7 +359,25 @@ def ipvs_current(status: Mapping[str, Any]) -> bool | None:
     data = _ipvs(status)
     if data is None:
         return True
-    return _carried(data)
+    carried = _carried(data)
+    #
+    # Carried and not read is not current either (review 26-10-08, F1): the
+    # file's virtual servers are syslog objects forwarded nowhere, and the
+    # deploy refuses the release on this node until the include is there.
+    #
+    if carried is True and ipvs_unread(status):
+        return False
+    return carried
+
+
+def ipvs_unread(status: Mapping[str, Any]) -> bool:
+    """Whether the release asks for virtual servers keepalived on this node does not read."""
+
+    data = _ipvs(status)
+    if data is None or data.get("included") is not False:
+        return False
+    servers = data.get("published_servers")
+    return isinstance(servers, int) and not isinstance(servers, bool) and servers > 0
 
 
 def ipvs_included(status: Mapping[str, Any]) -> bool | None:

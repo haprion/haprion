@@ -188,6 +188,14 @@ class AUdpTarget(HelperFixture):
                 sent = self.sent(host=host)
                 self.assertEqual((sent["host"], sent["type"]), (host, "udp"))
 
+    def test_a_tcp_check_may_name_an_ipv6_receiver(self) -> None:
+        """Review 26-10-08 F5."""
+
+        code, _out, err = self.run_helper(
+            {"targets": [self.target(type="tcp", port=601, host="2001:db8::71")]}
+        )
+        self.assertEqual(code, 0, err)
+
     def test_a_name_or_a_bracketed_address_is_refused(self) -> None:
         for host in ("logs.example.com", "[2001:db8::71]"):
             with self.subTest(host=host):

@@ -636,6 +636,50 @@ class CallerTests(HelperFixture):
         self.assertIn("Syslog IPVS:  installed, not included at the top of keepalived.conf", out)
         self.assertIn("Syslog IPVS:  BEHIND the release - run haproxy-deploy", out)
 
+    def test_virtual_servers_keepalived_does_not_read_are_said_and_not_current(self) -> None:
+        """Review 26-10-08 F1: forwarded nowhere, so the node is not running its release."""
+
+        unread = dict(IPVS, included=False, published_servers=2, services=[])
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a", owner=True, release_hash=TARGET_HASH, ipvs=unread
+                    ),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=TARGET_HASH, ipvs=IPVS
+                    ),
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertIn(
+            "Syslog IPVS:  NOT FORWARDING 2 virtual servers - keepalived.conf does not include",
+            out,
+        )
+        self.assertNotIn("every node runs the published version", out)
+
+    def test_an_empty_file_not_yet_included_is_still_current(self) -> None:
+        """How the file arrives before a person adds the include."""
+
+        waiting = dict(IPVS, included=False, published_servers=0, services=[])
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    name: node_status(
+                        name, owner=name == "node-a", release_hash=TARGET_HASH, ipvs=waiting
+                    )
+                    for name in ("node-a", "node-b")
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertIn("every node runs the published version", out)
+
     def test_the_ipvs_line_counts_the_kernels_virtual_servers(self) -> None:
         payload = self.envelope(
             node_reader=self.reader(

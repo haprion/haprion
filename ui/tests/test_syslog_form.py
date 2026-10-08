@@ -350,6 +350,61 @@ class KeepalivedsVerdictLightsTheLamp(unittest.TestCase):
         self.assertEqual(members, [("192.0.2.71:514", "UP"), ("192.0.2.72:514", "DOWN")])
 
 
+class AMissingIncludeIsSaidInTheListing(unittest.TestCase):
+    """Review 26-10-08 F1: not *deploy to add*, which a deploy cannot fix, but what is missing where."""
+
+    def row(self, unforwarded: tuple[str, ...]) -> str:
+        from haproxy_ui.views import TEMPLATES
+
+        listed = objects.ListedObject(
+            name="logs",
+            protocol="syslog",
+            hostnames=(),
+            ports=(514,),
+            backend_count=1,
+            redirect_http=False,
+            readable=True,
+            problem=None,
+            serving=False,
+        )
+        macro = TEMPLATES.env.get_template("_proxy-rows.html").module.proxy_rows  # type: ignore[attr-defined]
+        return str(macro("alpha", "admin", (), (), (listed,), (), {}, unforwarded=unforwarded))
+
+    def test_the_node_is_named(self) -> None:
+        text = self.row(("node-b",))
+
+        self.assertIn("Include missing · node-b", text)
+        self.assertNotIn("deploy to add", text)
+
+    def test_two_are_counted(self) -> None:
+        self.assertIn("Include missing · 2 nodes", self.row(("node-a", "node-b")))
+
+    def test_without_one_it_is_what_it_was(self) -> None:
+        self.assertIn("Inactive · deploy to add", self.row(()))
+
+    def test_both_ways_the_listing_is_drawn_pass_them(self) -> None:
+        """The page and its refresh draw the rows with one macro, each passing the nodes."""
+
+        root = Path(objects.__file__).parent
+        self.assertIn(
+            "unforwarded.get(cluster.cluster, ())",
+            (root / "templates" / "proxies.html").read_text(),
+        )
+        self.assertIn(
+            'listing["unforwarded"].get(view.cluster, ())', (root / "views.py").read_text()
+        )
+
+    def test_the_nodes_are_read_from_the_status(self) -> None:
+        unread = node("node-b", included=False)
+        unread["status"]["ipvs"]["published_servers"] = 1
+        waiting = node("node-a", included=False)
+        waiting["status"]["ipvs"]["published_servers"] = 0
+
+        self.assertEqual(
+            health.syslog_unforwarded([status(waiting, unread)], cluster="alpha"), ("node-b",)
+        )
+
+
 class TheListingShowsTheObjectsPort(unittest.TestCase):
     def view(self, name: str) -> objects.ObjectView:
         found = objects.object_view(
@@ -368,7 +423,7 @@ class TheListingShowsTheObjectsPort(unittest.TestCase):
         view = self.view("audit")
 
         self.assertEqual(view.ports, (5514,))
-        self.assertEqual(view.servers, ("192.0.2.81", "192.0.2.82", "192.0.2.83"))
+        self.assertEqual(view.servers, ("192.0.2.81:514", "192.0.2.82:514", "192.0.2.83:514"))
 
     def test_the_cell_names_them_as_a_raw_port_s(self) -> None:
         template = (Path(objects.__file__).parent / "templates" / "_proxy-rows.html").read_text()
@@ -482,6 +537,20 @@ class TheEditorOffersSyslog(EditorTestCase):
         self.assertNotRegex(
             self.page([status(node("node-a"), node("node-b", included=False))]), offered
         )
+
+    def test_until_then_it_is_greyed_out_with_the_reason(self) -> None:
+        """Review 26-10-08 F2: there, and saying why, rather than missing."""
+
+        self.assertIn(
+            '<option value="syslog" disabled>Syslog (UDP) · include missing on a node</option>',
+            self.page([status(node("node-a"), node("node-b", included=False))]),
+        )
+
+    def test_the_object_page_says_what_serves_it(self) -> None:
+        """Review 26-10-08 F3: not HAProxy's shared frontend."""
+
+        template = (Path(objects.__file__).parent / "templates" / "object.html").read_text()
+        self.assertIn("by the kernel's IPVS, with each sender's own address", template)
 
     def test_its_port_s_example_is_514(self) -> None:
         text = self.syslog_page()

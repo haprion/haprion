@@ -311,7 +311,7 @@
           "additionalProperties": false
         },
         "ipvs": {
-          "description": "The syslog objects' IPVS virtual servers (B256): the file the release publishes, the one installed as /etc/keepalived/ipvs.conf, each present or not with its sha256, and whether keepalived.conf includes it at its top level - the address list's measurements. ipvsadm says whether the counting tool is installed; services are the kernel's virtual servers and receivers from ipvsadm -Ln --stats --exact, packets and bytes in, null when ipvsadm is missing or failed. A service the installed file names carries its object and pool, and lists every receiver the file gives it as s1, s2, ... in order: UP with its counters while the kernel holds it, DOWN without them once keepalived's check took it out. A service the file does not name has null names and the kernel's receivers. Absent from nodes installed before it was reported, which are not held to the file.",
+          "description": "The syslog objects' IPVS virtual servers (B256): the file the release publishes, the one installed as /etc/keepalived/ipvs.conf, each present or not with its sha256, and whether keepalived.conf includes it at its top level - the address list's measurements. ipvsadm says whether the counting tool is installed; services are the kernel's virtual servers and receivers from ipvsadm -Ln --stats --exact, packets and bytes in, null when ipvsadm is missing or failed. A service the installed file names carries its object and pool, and lists every receiver the file gives it as s1, s2, ... in order: UP with its counters while the kernel holds it, DOWN without them once keepalived's check took it out. A service the file does not name has null names and the kernel's receivers. published_servers counts the published file's virtual servers (null when it is absent or unreadable, absent from nodes reporting before 26-10-08): with included false, any is syslog objects forwarded nowhere. Absent from nodes installed before it was reported, which are not held to the file.",
           "type": "object",
           "required": [
             "ipvsadm",
@@ -326,6 +326,7 @@
             "ipvsadm": { "type": "boolean" },
             "published": { "type": ["boolean", "null"] },
             "published_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+            "published_servers": { "type": ["integer", "null"], "minimum": 0 },
             "installed": { "type": ["boolean", "null"] },
             "installed_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
             "included": { "type": ["boolean", "null"] },

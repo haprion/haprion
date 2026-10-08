@@ -142,7 +142,12 @@ def _targets(
                 raise HelperProtocolError(
                     "a udp target's host must be an IP address", exit_code=EXIT_BAD_INPUT
                 )
-        elif not isinstance(host, str) or not HOSTNAME.match(host):
+        #
+        # A name, or an address of either family (review 26-10-08, F5): a
+        # syslog pool on an IPv6 VIP has IPv6 receivers, which the name rule
+        # does not take.
+        #
+        elif not isinstance(host, str) or not (HOSTNAME.match(host) or _is_address(host)):
             raise HelperProtocolError("a target's host is not usable", exit_code=EXIT_BAD_INPUT)
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
             raise HelperProtocolError("a target's port is not a port", exit_code=EXIT_BAD_INPUT)

@@ -181,8 +181,10 @@ An object whose protocol is *Syslog (UDP)* is forwarded by the kernel's IPVS,
 configured by keepalived on the same nodes and VIPs, on port 514 unless another is
 written. The form offers it once every node of the cluster reports that
 `keepalived.conf` includes `/etc/keepalived/ipvs.conf` at its top level - see
-[Installing HAProxy Manager](install.md#5-install-optional-components); until then a
-node installs the file and forwards nothing. A syslog object shares a port number
+[Installing HAProxy Manager](install.md#5-install-optional-components); until then the
+choice is greyed out. A node without the include refuses a release that carries a
+syslog object, `haproxy-status` says *NOT FORWARDING* there and counts the node as
+not running its release, and the object list shows *Include missing* with the node. A syslog object shares a port number
 with tcp objects and the cluster's own ports, which are TCP, but not with a DNS object
 or another syslog object on the same VIP.
 

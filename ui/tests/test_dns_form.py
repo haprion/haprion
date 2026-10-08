@@ -255,7 +255,7 @@ class TheListingShowsTheObjectsPort(unittest.TestCase):
     def test_and_its_servers_as_written(self) -> None:
         self.assertEqual(
             self.view((GOLDEN / "iot.yaml").read_text(), "dns").servers,
-            ("192.0.2.61", "192.0.2.62"),
+            ("192.0.2.61:53", "192.0.2.62:53"),
         )
 
     def test_the_listing_row_carries_them(self) -> None:
@@ -264,7 +264,7 @@ class TheListingShowsTheObjectsPort(unittest.TestCase):
         view = self.view((GOLDEN / "iot.yaml").read_text(), "dns")
         (row,) = objects.listed_objects(None, views=[view])
 
-        self.assertEqual((row.ports, row.servers), ((5353,), ("192.0.2.61", "192.0.2.62")))
+        self.assertEqual((row.ports, row.servers), ((5353,), ("192.0.2.61:53", "192.0.2.62:53")))
 
     def test_the_cell_reads_like_a_site_s_servers_then_port(self) -> None:
         """`domaincontroller1.example.com, domaincontroller2.example.com · 53`, as a site is `shop.example.com · 443`."""

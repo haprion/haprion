@@ -23,7 +23,7 @@ from haproxy_mgmt.generate import PORTS
 from haproxy_mgmt.object_manifest import ABSENT as ABSENT
 from haproxy_mgmt.object_manifest import CHANGED as CHANGED
 from haproxy_mgmt.object_manifest import CURRENT
-from haproxy_mgmt.proxy_model import OWN_PORT, ModelError, read_document
+from haproxy_mgmt.proxy_model import OWN_PORT, SENDERS_ADDRESS, ModelError, read_document
 
 from haproxy_ui.addresses import ObjectAddresses, from_entry
 from haproxy_ui.cluster_identity import accent_index
@@ -198,10 +198,11 @@ def object_view(value: Any) -> ObjectView | None:
         # decides which node may answer for the backend.
         #
         #
-        # A syslog object has none, but its messages pass only the node holding
-        # the VIP, so its lamp is that node's, as the others' are (Fas 19b B5).
+        # An object leaving with its senders' addresses has none, but its
+        # traffic passes only the node holding the VIP, so its lamp is that
+        # node's, as the others' are (Fas 19b B5, `SENDERS_ADDRESS`).
         #
-        sourced=isinstance(entry.get("source"), Mapping) or protocol == "syslog",
+        sourced=isinstance(entry.get("source"), Mapping) or protocol in SENDERS_ADDRESS,
         runtime_backends=_names(entry.get("runtime_backends")),
     )
 
@@ -235,15 +236,26 @@ def _servers(data: Mapping[str, Any]) -> tuple[str, ...]:
 
     A site is named by its hostnames; a raw port has none, and the servers behind
     it are what somebody looks for.
+
+    A server's port is added where it is not the object's own (review 26-10-08,
+    F6): two receivers on one host otherwise read as the same one twice, and
+    a port the cell does not name is one somebody has to open the object for.
     """
 
     pool = _mapping(_mapping(data.get("backends")).get(str(data.get("backend", ""))))
     servers = pool.get("servers")
+    own = _mapping(data.get("listen")).get("port")
     return tuple(
-        str(server["host"])
+        _server(str(server["host"]), server.get("port"), own)
         for server in (servers if isinstance(servers, list) else ())
         if isinstance(server, Mapping) and isinstance(server.get("host"), str)
     )
+
+
+def _server(host: str, port: Any, own: Any) -> str:
+    if not isinstance(port, int) or isinstance(port, bool) or port == own:
+        return host
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
 
 
 def _names(value: Any) -> tuple[str, ...] | None:

@@ -65,6 +65,7 @@ from haproxy_mgmt.proxy_model import (
     DEFAULT_FAST_INTERVAL,
     DEFAULT_INTERVAL,
     DEFAULT_RISE,
+    SENDERS_ADDRESS,
     ModelError,
     load_proxy,
 )
@@ -1100,6 +1101,10 @@ def build_router(config: Config) -> APIRouter:
             "publishing": publishing,
             "behind": behind,
             "reconfigured": reconfigured,
+            "unforwarded": {
+                view.cluster: health.syslog_unforwarded(health_rows, cluster=view.cluster)
+                for view in overview.clusters
+            },
             "failed": failed,
             "removed": removed,
             "captured_at": captured_at,
@@ -1214,6 +1219,7 @@ def build_router(config: Config) -> APIRouter:
                     else frozenset(),
                     order,
                     proxies.pages_asked(request.query_params),
+                    listing["unforwarded"].get(view.cluster, ()),
                 )
             )
             for view in listing["proxies"].clusters
@@ -7904,7 +7910,7 @@ def _editor_page(
         # in the logs somebody will read next.
         #
         addresses=str(fields.get("servers", "")).splitlines(),
-        held_only=fields.get("protocol") == "syslog",
+        held_only=fields.get("protocol") in SENDERS_ADDRESS,
     )
     #
     # Only when somebody pressed the button. A page that probed on every open
@@ -7921,7 +7927,7 @@ def _editor_page(
     # runs it, and shown for the node holding the VIP, as the rows above it
     # are (Fas 19b B5).
     #
-    if report is not None and fields.get("protocol") == "syslog" and backend.held_by:
+    if report is not None and fields.get("protocol") in SENDERS_ADDRESS and backend.held_by:
         report = replace(
             report, nodes=tuple(node for node in report.nodes if node.node in backend.held_by)
         )

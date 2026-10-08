@@ -443,6 +443,25 @@ class AUdpCheck(unittest.TestCase):
         self.assertIn("must be an IP address", json.loads(completed.stdout)["error"])
 
 
+class AnIpv6Server(unittest.TestCase):
+    """Review 26-10-08 F5: a syslog pool on an IPv6 VIP has IPv6 receivers, tcp-checked too."""
+
+    def test_a_tcp_check_reaches_an_ipv6_listener(self) -> None:
+        listener = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        self.addCleanup(listener.close)
+        try:
+            listener.bind(("::1", 0))
+        except OSError:
+            self.skipTest("no IPv6 loopback here")
+        listener.listen(1)
+        entry = {"type": "tcp", "host": "::1", "port": int(listener.getsockname()[1])}
+
+        code, answer = ask({"schema_version": 1, "timeout_ms": 500, "targets": [entry]})
+
+        self.assertEqual(code, 0, answer)
+        self.assertTrue(answer["results"][0]["ok"], answer)
+
+
 class DnsServer:
     """A UDP server answering each question as told: the code, or a wrong question, or nothing."""
 

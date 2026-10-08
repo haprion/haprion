@@ -213,7 +213,8 @@ by HAProxy, so the receivers see each message's sender. Every release carries
 a syslog listener - and the deploy installs it as `/etc/keepalived/ipvs.conf` beside the
 address list, by the same rules: inert until `keepalived.conf` includes it, and once it
 does, a `keepalived --config-test` and a reload only when the test passes, the previous
-file restored otherwise. The include goes **at the top level** of `keepalived.conf`, outside
+file restored otherwise. A release whose file holds virtual servers - a cluster with a
+syslog object - is refused on a node without the include, before anything is activated. The include goes **at the top level** of `keepalived.conf`, outside
 every block, since that is where keepalived reads a virtual server:
 
 ```text

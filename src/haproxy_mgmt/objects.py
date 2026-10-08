@@ -30,7 +30,13 @@ from pathlib import Path, PurePosixPath
 from haproxy_mgmt import geo
 from haproxy_mgmt.config import ConfigError, Network
 from haproxy_mgmt.generate import GeneratorError, runtime_backends, source_of, vip_of
-from haproxy_mgmt.proxy_model import MAX_MODEL_BYTES, ModelError, Proxy, load_proxy
+from haproxy_mgmt.proxy_model import (
+    MAX_MODEL_BYTES,
+    SENDERS_ADDRESS,
+    ModelError,
+    Proxy,
+    load_proxy,
+)
 
 PROXY_PREFIX = "managed/proxies/"
 PLACEHOLDER = ".gitkeep"
@@ -137,7 +143,7 @@ def _addresses(
     # the VIP's source here would also have the interface hold the receivers'
     # verdict to the node carrying that address, while every node checks them.
     #
-    if proxy.listen.protocol == "syslog":
+    if proxy.listen.protocol in SENDERS_ADDRESS:
         return {"name": name, "address": vip.address, "default": default}, None
     try:
         address = source_of(proxy, vip, network.sources)

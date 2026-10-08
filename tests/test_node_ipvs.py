@@ -236,6 +236,20 @@ class NamingTheKernelsServices(unittest.TestCase):
         self.assertEqual(self.named[1]["receivers"][0]["status"], "UP")
 
 
+class WhatTheReleaseAsksFor(unittest.TestCase):
+    """Review 26-10-08 F1: the published file's virtual servers, counted as the generator writes them."""
+
+    def test_each_virtual_server_is_counted_once(self) -> None:
+        count = reading()["virtual_servers"]
+
+        self.assertEqual(count(FILE), FILE.count("\nvirtual_server "))
+        self.assertGreater(count(FILE), 0)
+        self.assertEqual(count(ipvs_config.HEADER), 0)
+        self.assertEqual(
+            count("# one virtual_server per object\nvirtual_server 192.0.2.20 514 {\n}\n"), 1
+        )
+
+
 class TheIncludeAtTheTop(unittest.TestCase):
     PATH = "/etc/keepalived/ipvs.conf"
 

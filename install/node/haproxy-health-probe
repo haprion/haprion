@@ -121,6 +121,17 @@ def dns_question(entry):
     return {"query_name": name, "query_type": kind, "address": address}
 
 
+def server_host(entry):
+    """A server's name, or its address - IPv6 too, which the name rule does not take."""
+
+    host = entry.get("host")
+    try:
+        ipaddress.ip_address(host)
+    except (TypeError, ValueError):
+        return text(entry, "host", HOST)
+    return host
+
+
 def udp_receiver(entry):
     """A udp check's receiver: an address, as keepalived and IPVS take it (Fas 19b B5)."""
 
@@ -211,7 +222,7 @@ def read_request(stream):
             refuse("a target's type must be tcp, http, dns or udp")
         read.append(
             {
-                "host": udp_receiver(entry) if kind == "udp" else text(entry, "host", HOST),
+                "host": udp_receiver(entry) if kind == "udp" else server_host(entry),
                 "port": port_of(entry, "port"),
                 "type": kind,
                 "tls": flag(entry, "tls"),
@@ -297,7 +308,12 @@ def holds(source, addresses):
 def connect(target, timeout, source):
     """One connection, and the reason it failed if it did."""
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #
+    # IPv6 when the server is an IPv6 address (review 26-10-08, F5); a name is
+    # looked up as IPv4, as before.
+    #
+    family = socket.AF_INET6 if ":" in target["host"] else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     if source:
         #
@@ -354,7 +370,9 @@ def http_status(stream, target, timeout, deadline):
     would be a way to read pages through it.
     """
 
-    host = target["host_header"] or target["host"]
+    host = target["host_header"] or (
+        f"[{target['host']}]" if ":" in target["host"] else target["host"]
+    )
     request = (
         f"GET {target['path']} HTTP/1.1\r\n"
         f"Host: {host}\r\n"

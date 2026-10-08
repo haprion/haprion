@@ -109,16 +109,26 @@ def _real_servers(vip: Vip, proxy: Proxy, pool: Backend) -> list[str]:
     family = _address(vip.address).version
     lines: list[str] = []
     checker = _checker(pool.health)
-    for server in pool.servers:
+    count = len(pool.servers)
+    for index, server in enumerate(pool.servers):
         address = _address(server.host)
         if address.version != family:
             raise ValueError(
                 f"{proxy.name} sits on an IPv{family} address and cannot forward to "
                 f"{server.host}: IPVS in NAT mode keeps the address family"
             )
+        #
+        # `fo` sends to the receiver of the highest weight, and between equal
+        # weights to the first in the kernel's list (`ip_vs_fo_schedule`,
+        # Linux 6.12) - which is the order keepalived added them in, and a
+        # receiver it took out and put back is added last. Falling weights in
+        # the object's order are what make the first receiver that is up the
+        # one that gets the messages, whatever came and went before.
+        #
+        weight = [f"weight {count - index}"] if pool.balance == "firstAvailable" else []
         lines += [
             f"real_server {address} {server.port} {{",
-            *(f"    {line}" for line in checker),
+            *(f"    {line}" for line in [*weight, *checker]),
             "}",
         ]
     return lines

@@ -173,6 +173,29 @@ class WhatTheFileSays(unittest.TestCase):
         self.assertNotIn("delay_loop", text)
         self.assertIn("real_server 198.51.100.71 514 {\n    }\n", text)
 
+    def test_first_available_is_the_highest_weight_in_the_objects_order(self) -> None:
+        """The kernel's `fo` picks by weight; list order alone changes when a receiver returns."""
+
+        proxy = load_proxy(
+            "standby",
+            b"""schema: 1
+name: standby
+listen: {protocol: syslog, port: 514}
+backend: pair
+backends:
+  pair:
+    balance: firstAvailable
+    servers: [{host: 198.51.100.72, port: 514}, {host: 198.51.100.71, port: 514},
+              {host: 198.51.100.73, port: 514}]
+""",
+        )
+        text = produced(proxy)
+
+        self.assertIn("real_server 198.51.100.72 514 {\n        weight 3\n", text)
+        self.assertIn("real_server 198.51.100.71 514 {\n        weight 2\n", text)
+        self.assertIn("real_server 198.51.100.73 514 {\n        weight 1\n", text)
+        self.assertNotIn("weight", produced(logs()))
+
     def test_the_manifest_sees_the_object(self) -> None:
         layer = generate([logs()], vips=VIPS, default_vip="main")
 

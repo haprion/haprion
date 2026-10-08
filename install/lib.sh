@@ -194,9 +194,31 @@ DNSDIST_KEYRING="/etc/apt/keyrings/dnsdist-21-pub.asc"
 # Wait for the package lock rather than fail on it: Ubuntu's unattended
 # upgrades hold it for minutes at a time, and a node preparation that stopped
 # on it left the node half-way (26-10-08). Ten minutes, then the error
-# as before. apt 3.2's `DPkg::Lock::Timeout`.
+# as before. apt 3.2's `DPkg::Lock::Timeout`, for `apt-get install`.
 #
-APT_WAIT=(-o DPkg::Lock::Timeout=600)
+APT_LOCK_SECONDS=600
+APT_LOCK_PAUSE=10
+APT_WAIT=(-o "DPkg::Lock::Timeout=${APT_LOCK_SECONDS}")
+
+#
+# `apt-get update` takes the lists lock, which `DPkg::Lock::Timeout` does not
+# cover: apt 3.2 gives up on it at once (measured 26-10-08). It is the lock
+# Ubuntu's daily apt run holds on a fresh VM's first boot, so the update is
+# asked again while the lock is all that stops it, as long as an install waits.
+#
+apt_update() {
+    local started=$SECONDS output
+    while true; do
+        if output="$(apt-get update -q 2>&1)"; then
+            return 0
+        fi
+        if [[ "$output" != *"Could not get lock"* ]] || (( SECONDS - started >= APT_LOCK_SECONDS )); then
+            printf '%s\n' "$output" >&2
+            return 1
+        fi
+        sleep "$APT_LOCK_PAUSE"
+    done
+}
 ensure_dnsdist() {
     local hold="${1:-}" id codename version
     id="$(. /etc/os-release && echo "${ID:-}")"
@@ -215,7 +237,7 @@ ensure_dnsdist() {
         systemctl mask --quiet dnsdist.service
         log "  masked   dnsdist.service (the binary validates; nothing here serves dns)"
     fi
-    apt-get "${APT_WAIT[@]}" update -q >/dev/null || die "dnsdist: apt-get update failed"
+    apt_update || die "dnsdist: apt-get update failed"
     DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q dnsdist >/dev/null \
         || die "dnsdist: the package could not be installed"
     version="$(dnsdist --version 2>/dev/null | head -n 1)"

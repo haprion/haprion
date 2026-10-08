@@ -82,9 +82,14 @@ POLICY_RC = "/usr/sbin/policy-rc.d"
 # Wait for the package lock rather than fail on it: a freshly installed VM runs
 # Ubuntu's unattended upgrades on its first boot, which hold the lock for
 # minutes, and a node preparation stopped on it once (26-10-08). apt 3.2's
-# `DPkg::Lock::Timeout`, ten minutes, as `install/lib.sh` has it.
+# `DPkg::Lock::Timeout`, ten minutes, as `install/lib.sh` has it - for
+# `apt-get install`. `apt-get update` takes the lists lock, which that option
+# does not cover (measured 26-10-08), and waits in `_apt_update` instead.
 #
-APT_WAIT = ("-o", "DPkg::Lock::Timeout=600")
+APT_LOCK_SECONDS = 600
+APT_LOCK_PAUSE = 10.0
+APT_WAIT = ("-o", f"DPkg::Lock::Timeout={APT_LOCK_SECONDS}")
+APT_LOCKED = "Could not get lock"
 NODE_CONF = "/etc/haproxy-manager/node.conf"
 #
 # The release's node bundle (B180), sent in the apply payload at this name in
@@ -899,9 +904,7 @@ def _missing_packages(host: Host, packages: list[str], report: Report) -> None:
     if not packages:
         report.step("packages", missing=[])
         return
-    if host.run(
-        ["apt-get", "-o", "Acquire::Retries=3", *APT_WAIT, "update"], check=False
-    ).returncode:
+    if _apt_update(host).returncode:
         report.warnings.append("apt-get update failed; installing from the lists the node has")
     policy = host.path(POLICY_RC)
     policy.write_text("#!/bin/sh\nexit 101\n", encoding="utf-8")
@@ -939,6 +942,30 @@ def _required_uris(apt: list[Item]) -> tuple[str, ...]:
     return tuple(uris)
 
 
+def _apt_update(
+    host: Host,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> subprocess.CompletedProcess[str]:
+    """One `apt-get update`, asked again while the lists lock is all that stops it.
+
+    Up to `APT_LOCK_SECONDS`, as long as an install waits for the dpkg lock;
+    any other failure is the caller's at once, and so is the lock after that.
+    """
+
+    started = clock()
+    while True:
+        completed = host.run(["apt-get", "-o", "Acquire::Retries=3", "update"], check=False)
+        if (
+            completed.returncode == 0
+            or APT_LOCKED not in f"{completed.stdout}\n{completed.stderr}"
+            or clock() - started >= APT_LOCK_SECONDS
+        ):
+            return completed
+        sleep(APT_LOCK_PAUSE)
+
+
 def _update(
     host: Host,
     required: tuple[str, ...],
@@ -956,9 +983,8 @@ def _update(
     that follows fails by itself if a package it needs really cannot be had.
     """
 
-    argv = ["apt-get", "-o", "Acquire::Retries=3", *APT_WAIT, "update"]
     for attempt in range(1, tries + 1):
-        completed = host.run(argv, check=False)
+        completed = _apt_update(host, sleep=sleep)
         if completed.returncode == 0:
             return
         if attempt < tries:

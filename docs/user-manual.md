@@ -3829,6 +3829,20 @@ A deploy never edits the running configuration. It builds a new immutable releas
 the `current` symlink atomically, validates again through exactly the paths `systemd` uses, and only
 then reloads. If either validation or the reload fails, the symlink is swapped back.
 
+The traffic log ([Traffic logs and metrics](#traffic-logs-and-metrics)) writes its day files under `/var/log/haprion`,
+and like the manager's mirror it grows with visitors. Give it a filesystem of its own on a busy
+node, mounted there, and make rsyslog wait for it, so a late volume does not let the files land on
+the root filesystem underneath the mount point:
+
+```text
+# /etc/systemd/system/rsyslog.service.d/10-haprion-logs.conf
+[Unit]
+RequiresMountsFor=/var/log/haprion
+```
+
+The retention window bounds what the files hold; the separate filesystem bounds what a burst
+within that window can take from everything else.
+
 `/run/lock` itself belongs to the operating system and is commonly mode `1777`. The node installer
 requires it to exist but never changes its owner or permissions; Haprion owns only its
 root-created lock files inside the directory.
@@ -4135,7 +4149,18 @@ that table and on no other. The rows are derived and rebuilt every pass; the web
 
 ##### Where the data lives
 
-Put the cluster's storage on the volume that holds the platform, and keep the
+**Give everything that grows with traffic a filesystem of its own, and keep the
+root filesystem out of reach of it.** Three things grow with the nodes' visitors
+rather than with anything the administrator does: the database (its traffic-log
+and WAF-log tables), the database dumps, and the mirror of the nodes' traffic
+logs. A full root filesystem stops far more than Haprion - journald, apt,
+logins - so a busy week must fill a volume that was sized for it, not `/`. The
+reference host has a separate volume mounted at `/apps` for exactly this, and
+everything that grows lives on it, each under the path the package expects
+through a bind mount, as below. The platform's `data/` directory (dumps and the
+mirror) belongs on the same volume.
+
+Put the cluster's storage on that volume, and keep the
 package's path. The reference host mounts the platform volume at `/apps`, and
 `/var/lib/postgresql` is a bind mount onto a directory there — not a cluster
 reconfigured with a different `data_directory`:

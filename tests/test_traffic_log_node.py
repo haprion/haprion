@@ -152,7 +152,7 @@ class WafJournalReaderTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.journal = self.root / "machine.haproxy-waf"
+        self.journal = self.root / "machine.haprion-waf"
         self.journal.mkdir()
         self.stub = self.root / "journalctl"
         self.stub.write_text(JOURNALCTL_STUB)
@@ -230,7 +230,7 @@ class WafJournalReaderTests(unittest.TestCase):
         self.assertEqual(rows[0]["at"], 1_790_000_000_000_001)
         arguments = self.arguments()
         for wanted in (
-            "--namespace=haproxy-waf",
+            "--namespace=haprion-waf",
             "--unit=coraza-spoa.service",
             "--output=json",
             "--all",
@@ -298,7 +298,7 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
     def test_it_sorts_before_ubuntus_terminating_haproxy_rule(self) -> None:
         script = (BASE / "install" / "node" / "haprion-traffic-log-enable").read_text()
 
-        self.assertIn('RSYSLOG_RULE="/etc/rsyslog.d/48-haproxy-manager-traffic.conf"', script)
+        self.assertIn('RSYSLOG_RULE="/etc/rsyslog.d/48-haprion-traffic.conf"', script)
 
     def test_the_restart_loss_window_is_reported_for_enable_and_disable(self) -> None:
         script = (BASE / "install" / "node" / "haprion-traffic-log-enable").read_text()

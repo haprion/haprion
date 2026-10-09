@@ -120,7 +120,7 @@ else
     ( cd "${source_tree}/ui" \
       && UV_PROJECT_ENVIRONMENT="${release}/venv" "$uv" sync --locked --no-dev \
              --no-editable --python "$PYTHON_BIN" --python-preference only-system \
-             --refresh-package haproxy-ui --refresh-package haproxy-manager )
+             --refresh-package haprion-ui --refresh-package haprion )
     clear_staging
 
     #

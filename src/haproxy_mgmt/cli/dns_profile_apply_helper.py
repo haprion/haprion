@@ -36,7 +36,7 @@ PARAMETERS = frozenset(
 )
 HELPER = dns_profiles.HELPER
 RENEWAL_DIRECTORY = Path("/etc/letsencrypt/renewal")
-_TOP_SECTION = "haproxy-manager.lineage"
+_TOP_SECTION = "haprion.lineage"
 
 
 def _renewal_references(directory: Path, credentials: str) -> tuple[str, ...]:

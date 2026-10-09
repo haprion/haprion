@@ -26,7 +26,7 @@ from haproxy_mgmt.cli import list_backups, list_backups_helper
 from haproxy_mgmt.config import ConfigError, Node
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
-SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haprion-list-backups.schema.json"
+SCHEMA_ID = "https://example.com/haprion/schemas/v1/haprion-list-backups.schema.json"
 
 # What the command asked the helper: cluster, limit and node.
 type Asked = tuple[str, int | None, str | None]

@@ -72,7 +72,7 @@ SBIN="/usr/local/sbin"
 NODE_CONF="/etc/haprion/node.conf"
 TRAFFIC_LOG_ROOT="/var/log/haprion"
 # The engine package's LogNamespace=, read by haprion-traffic-log-read.
-WAF_JOURNAL_NAMESPACE="haproxy-waf"
+WAF_JOURNAL_NAMESPACE="haprion-waf"
 
 SCRIPTS=(
     haprion-pull-deploy
@@ -204,7 +204,7 @@ log "  member    ${LOGREAD_USER} -> ${LOGS_GROUP}"
 # (tmpfiles.d/systemd.conf), which needs no acl package. Measured on a node
 # (26-10-03): read whole, read after rotation, system journal still refused.
 #
-WAF_JOURNAL_TMPFILES="/etc/tmpfiles.d/haproxy-manager-waf.conf"
+WAF_JOURNAL_TMPFILES="/etc/tmpfiles.d/haprion-waf.conf"
 install_file "$WAF_JOURNAL_TMPFILES" root:root 644 "# Installed by install/04-node-prepare.
 d /var/log/journal/%m.${WAF_JOURNAL_NAMESPACE} 2755 root systemd-journal -
 a+ /var/log/journal/%m.${WAF_JOURNAL_NAMESPACE} - - - - d:group:${LOGS_GROUP}:r-x,group:${LOGS_GROUP}:r-x"
@@ -238,12 +238,12 @@ ensure_dir /etc/haproxy/certs    root:root 750
 ensure_group "$WAF_GROUP"
 [[ -z "$(getent group "$WAF_GROUP" | cut -d: -f4)" ]] \
     || die "${WAF_GROUP} has members; only the WAF engine may pass through /etc/haproxy/releases"
-WAF_ENGINE_TMPFILES="/etc/tmpfiles.d/haproxy-manager-waf-engine.conf"
+WAF_ENGINE_TMPFILES="/etc/tmpfiles.d/haprion-waf-engine.conf"
 install_file "$WAF_ENGINE_TMPFILES" root:root 644 "# Installed by install/04-node-prepare.
 a+ /etc/haproxy/releases - - - - group:${WAF_GROUP}:--x"
 systemd-tmpfiles --create "$WAF_ENGINE_TMPFILES"
 log "  applied  ${WAF_ENGINE_TMPFILES}"
-WAF_ENGINE_DROPIN="/etc/systemd/system/coraza-spoa.service.d/haproxy-manager.conf"
+WAF_ENGINE_DROPIN="/etc/systemd/system/coraza-spoa.service.d/haprion.conf"
 ensure_dir "${WAF_ENGINE_DROPIN%/*}" root:root 755
 install_file "$WAF_ENGINE_DROPIN" root:root 644 "# Installed by install/04-node-prepare.
 [Service]
@@ -263,12 +263,12 @@ log "  applied  ${WAF_ENGINE_DROPIN}"
 ensure_group "$DNS_GROUP"
 [[ -z "$(getent group "$DNS_GROUP" | cut -d: -f4)" ]] \
     || die "${DNS_GROUP} has members; only dnsdist may pass through /etc/haproxy/releases"
-DNS_TMPFILES="/etc/tmpfiles.d/haproxy-manager-dns.conf"
+DNS_TMPFILES="/etc/tmpfiles.d/haprion-dns.conf"
 install_file "$DNS_TMPFILES" root:root 644 "# Installed by install/04-node-prepare.
 a+ /etc/haproxy/releases - - - - group:${DNS_GROUP}:--x"
 systemd-tmpfiles --create "$DNS_TMPFILES"
 log "  applied  ${DNS_TMPFILES}"
-DNS_DROPIN="/etc/systemd/system/dnsdist.service.d/haproxy-manager.conf"
+DNS_DROPIN="/etc/systemd/system/dnsdist.service.d/haprion.conf"
 ensure_dir "${DNS_DROPIN%/*}" root:root 755
 install_file "$DNS_DROPIN" root:root 644 "# Installed by install/04-node-prepare.
 [Unit]
@@ -291,7 +291,7 @@ log "  applied  ${DNS_DROPIN}"
 #
 SERVER_STATE_DIR="/var/lib/haprion"
 ensure_dir "$SERVER_STATE_DIR" root:root 700
-HAPROXY_DROPIN="/etc/systemd/system/haproxy.service.d/haproxy-manager-server-state.conf"
+HAPROXY_DROPIN="/etc/systemd/system/haproxy.service.d/haprion-server-state.conf"
 ensure_dir "${HAPROXY_DROPIN%/*}" root:root 755
 install_file "$HAPROXY_DROPIN" root:root 644 "# Installed by install/04-node-prepare.
 [Service]
@@ -609,9 +609,9 @@ generate_pull_key() {
     log "  created  ${path}"
 }
 
-generate_pull_key "$NODE_CONFIG_PULL_KEY" "haproxy-manager config pull"
+generate_pull_key "$NODE_CONFIG_PULL_KEY" "haprion config pull"
 [[ -n "${NODE_CERT_PULL_KEY:-}" ]] \
-    && generate_pull_key "$NODE_CERT_PULL_KEY" "haproxy-manager cert pull"
+    && generate_pull_key "$NODE_CERT_PULL_KEY" "haprion cert pull"
 
 step "Enrollment block"
 

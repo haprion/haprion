@@ -824,7 +824,7 @@ engine is not running while the published release has rules is marked *WAF
 engine stopped* on the dashboard, and `haprion-status` shows the engine on each
 node with a warning for that node. Each rule the engine matched is
 logged on the node with the part of the request and the matched value, in the
-engine's own journal (`journalctl --namespace=haproxy-waf -u coraza-spoa`),
+engine's own journal (`journalctl --namespace=haprion-waf -u coraza-spoa`),
 and collected to the management host with the traffic log, a page of up to
 20 000 lines per node and minute, when the management host has a database. The
 matched value is the requester's own text: it is kept to 1024 characters and
@@ -1349,7 +1349,7 @@ and no unrestricted key is installed. An SFTP account keeps `/usr/sbin/nologin` 
 receiver holds - a wildcard, a certificate the clusters serve - is the operator's call, not the
 program's. It reaches nothing but its own directory. It is served from the interface's own server block, on 443 under the
 interface's certificate and hostname, at `https://<server name>/certdist/<id>/<certificate>/`.
-The `location` blocks live in `/etc/nginx/snippets/haproxy-manager-receivers.conf`, which only this
+The `location` blocks live in `/etc/nginx/snippets/haprion-receivers.conf`, which only this
 command writes and which the interface's site pulls in with one `include` line; the interface's
 block itself is never edited by a receiver. Not a server block of its own beside the interface's:
 nginx serves the first server block for a name and port and silently ignores a second one, so that
@@ -2186,7 +2186,7 @@ for most and over a root-owned socket for the few that write under `/etc`. Its
 unit therefore allows `sudo` to raise privilege (`NoNewPrivileges=no` and a
 short, named capability set); every capability is explained in the unit file
 beside it. The real limit is not the sandbox but
-`/etc/sudoers.d/haproxy-ui-worker`, which names each helper and permits no
+`/etc/sudoers.d/haprion-worker`, which names each helper and permits no
 arguments: widening the unit does not widen what may be run, only that file
 does.
 
@@ -2553,15 +2553,15 @@ sudo usermod -a -G haprion <your-account>
 #### Directory layout
 
 ```text
-/srv/haproxy-manager/config/alpha.git/            authoritative history, bare
-/srv/haproxy-manager/config/alpha/                linked draft worktree - what you edit
-/srv/haproxy-manager/config/alpha/{core,managed,manual}
+/srv/haprion/config/alpha.git/            authoritative history, bare
+/srv/haprion/config/alpha/                linked draft worktree - what you edit
+/srv/haprion/config/alpha/{core,managed,manual}
 
-/srv/haproxy-manager/published/alpha/releases/    immutable published releases
-/srv/haproxy-manager/published/alpha/current      symlink to the current release
+/srv/haprion/published/alpha/releases/    immutable published releases
+/srv/haprion/published/alpha/current      symlink to the current release
 
-/srv/haproxy-manager/validation/certs/            validation-only certificate material
-/srv/haproxy-manager/clusters.yaml                cluster definitions
+/srv/haprion/validation/certs/            validation-only certificate material
+/srv/haprion/clusters.yaml                cluster definitions
 /etc/haprion/runtime-policy.yaml          the outer path boundary
 ```
 
@@ -2689,10 +2689,10 @@ escapes its root.
 ```yaml
 schema_version: 1
 
-cluster_file: /srv/haproxy-manager/clusters.yaml
-config_root: /srv/haproxy-manager/config
-publish_root: /srv/haproxy-manager/published
-validation_certs_root: /srv/haproxy-manager/validation
+cluster_file: /srv/haprion/clusters.yaml
+config_root: /srv/haprion/config
+publish_root: /srv/haprion/published
+validation_certs_root: /srv/haprion/validation
 
 deploy_identity:
   key: "/root/.ssh/id_ed25519_config_deploy"
@@ -2815,15 +2815,15 @@ clusters:
   alpha:
     display_name: Alpha
     vip: 192.0.2.10
-    config_path: /srv/haproxy-manager/config/alpha
-    publish_path: /srv/haproxy-manager/published/alpha
+    config_path: /srv/haprion/config/alpha
+    publish_path: /srv/haprion/published/alpha
     node_path: a
     nodes:
       - name: node-a
         mgmt_host: node-a.example.com
       - name: node-b
         mgmt_host: node-b.example.com
-    validation_certs: /srv/haproxy-manager/validation/certs
+    validation_certs: /srv/haprion/validation/certs
     certificate_ids:
       - example.com
     default_certificate: example.com
@@ -3156,11 +3156,11 @@ registered rather than hidden.
 #### Certificate publication hook
 
 **The certbot hook** is one file, [`../install/certbot-deploy-hook`](../install/certbot-deploy-hook),
-installed as `/etc/letsencrypt/renewal-hooks/deploy/50-haproxy-manager`:
+installed as `/etc/letsencrypt/renewal-hooks/deploy/50-haprion`:
 
 ```bash
 sudo install -o root -g root -m 755 install/certbot-deploy-hook \
-  /etc/letsencrypt/renewal-hooks/deploy/50-haproxy-manager
+  /etc/letsencrypt/renewal-hooks/deploy/50-haprion
 sudo certbot renew --dry-run --run-deploy-hooks
 ```
 
@@ -3848,7 +3848,7 @@ protected staging directory outside the repository:
 
 ```bash
 commit="$(git rev-parse --short=12 HEAD)"
-bundle="/path/to/protected/staging/haproxy-manager-node-${commit}.tar.gz"
+bundle="/path/to/protected/staging/haprion-node-${commit}.tar.gz"
 
 tools/node-bundle.py build \
   --source "$(pwd)" \
@@ -3889,7 +3889,7 @@ node's cluster and prerequisites, and writes neither a backup nor a staging file
 
 ```bash
 tools/install-node-bundle --dry-run \
-  --bundle /path/to/protected/staging/haproxy-manager-node-0123456789ab.tar.gz \
+  --bundle /path/to/protected/staging/haprion-node-0123456789ab.tar.gz \
   --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --answers /path/to/answers.env \
   --node node-b \
@@ -3974,7 +3974,7 @@ Install the absolute wheel and bundle paths with the digests printed by the prev
 sudo /usr/bin/python3 tools/install-release.py \
   --wheel /path/to/protected/staging/haproxy_manager-0.1.0-py3-none-any.whl \
   --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --node-bundle /path/to/protected/staging/haproxy-manager-node-0123456789ab.tar.gz \
+  --node-bundle /path/to/protected/staging/haprion-node-0123456789ab.tar.gz \
   --node-bundle-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
 ```
 
@@ -4222,7 +4222,7 @@ returning failure.
 terminates HTTPS there. The web service itself listens only on
 `127.0.0.1:8080`, in plain HTTP, and that leg stays plain deliberately: it never
 leaves the host. The rendered site also includes
-`/etc/nginx/snippets/haproxy-manager-receivers.conf`, created empty by this
+`/etc/nginx/snippets/haprion-receivers.conf`, created empty by this
 step and written afterwards only by `haprion-cert-receiver` ([Registering a receiver](#registering-a-receiver)); a rerun of
 the step leaves an existing snippet alone.
 
@@ -4279,7 +4279,7 @@ TRUSTED_PROXIES="192.0.2.10"        # one or more addresses or networks, space-s
 sudo ./05-platform-nginx answers.env
 ```
 
-Step 5 writes `/etc/nginx/snippets/haproxy-manager-real-ip.conf` on every run - `set_real_ip_from`
+Step 5 writes `/etc/nginx/snippets/haprion-real-ip.conf` on every run - `set_real_ip_from`
 per entry, `real_ip_header X-Forwarded-For` and `real_ip_recursive on` - and the site includes it.
 From then on nginx believes `X-Forwarded-For` only on connections from those addresses, and takes
 the client to be the last address in it that is not one of them: a value a client wrote into the

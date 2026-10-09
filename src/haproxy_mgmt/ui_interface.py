@@ -150,7 +150,7 @@ def install(
     # and removed with it. `haprion-tls` copies the pair into place itself;
     # the paths it is given are never the served ones.
     #
-    with tempfile.TemporaryDirectory(prefix="haproxy-ui-tls-") as directory:
+    with tempfile.TemporaryDirectory(prefix="haprion-tls-") as directory:
         cert, key = Path(directory) / "cert.pem", Path(directory) / "key.pem"
         cert.write_bytes(material.fullchain)
         descriptor = os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

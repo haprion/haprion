@@ -24,7 +24,7 @@ from haproxy_mgmt.deploy_run import CERT_OPERATION, DeployRun
 from tests.node_harness import FakeCluster, FakeNode
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
-CERT_SCHEMA = "https://example.com/haproxy-manager/schemas/v1/haprion-cert-deploy.schema.json"
+CERT_SCHEMA = "https://example.com/haprion/schemas/v1/haprion-cert-deploy.schema.json"
 
 WILDCARD = "a" * 64
 STALE = "c" * 64

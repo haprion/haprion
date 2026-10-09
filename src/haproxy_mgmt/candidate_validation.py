@@ -273,7 +273,7 @@ def sandbox_command(
     """
 
     suffix = "" if program is None else ("-dns" if program[0] == DNSDIST else "-waf")
-    unit = f"haproxy-manager-validation-{request_id.replace('-', '')}{suffix}"
+    unit = f"haprion-validation-{request_id.replace('-', '')}{suffix}"
     properties = (
         "NoNewPrivileges=yes",
         "PrivateDevices=yes",
@@ -440,7 +440,7 @@ def _waf_engine(candidate_root: Path, request_id: str) -> ValidationResult:
         return ValidationResult(
             valid=False,
             diagnostics="the candidate carries WAF rules, and the WAF engine is not installed "
-            "on the manager: install the haproxy-manager-coraza-spoa package",
+            "on the manager: install the haprion-coraza-spoa package",
         )
     return _sandboxed(
         sandbox_command(

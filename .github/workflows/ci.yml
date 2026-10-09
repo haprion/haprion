@@ -38,7 +38,7 @@ jobs:
       - name: Materialize required private denylist
         shell: bash
         env:
-          HAPROXY_MANAGER_SECRET_RULES: ${{ runner.temp }}/haproxy-manager-private.rules
+          HAPROXY_MANAGER_SECRET_RULES: ${{ runner.temp }}/haprion-private.rules
           PRIVATE_DENYLIST_B64: ${{ secrets.HAPROXY_MANAGER_DENYLIST }}
         run: |
           set -euo pipefail
@@ -101,7 +101,7 @@ jobs:
       - name: Run all source, quality, test, and dependency gates
         env:
           GITLEAKS_BIN: ${{ runner.temp }}/gitleaks/gitleaks
-          HAPROXY_MANAGER_SECRET_RULES: ${{ runner.temp }}/haproxy-manager-private.rules
+          HAPROXY_MANAGER_SECRET_RULES: ${{ runner.temp }}/haprion-private.rules
           # Without this the gate refuses to run rather than skipping the
           # interface. That is the point of it: a gate that passes because it
           # could not import what it was asked to check is not a gate.

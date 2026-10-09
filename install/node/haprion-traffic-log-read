@@ -33,7 +33,7 @@ RETENTION_DAYS = 14
 # journald's own position; journalctl validates it, this only bounds its form.
 #
 WAF_REQUEST = re.compile(r"^waf (-|[A-Za-z0-9=;_-]{1,512})$")
-WAF_NAMESPACE = "haproxy-waf"
+WAF_NAMESPACE = "haprion-waf"
 WAF_UNIT = "coraza-spoa.service"
 WAF_MAX_ENTRIES = 20_000
 WAF_TIMEOUT_SECONDS = 30

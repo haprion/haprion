@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-node-restore-preview.schema.json",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-node-restore-preview.schema.json",
   "title": "HAProxy node restore: preview",
   "allOf": [
     {
@@ -318,7 +318,7 @@
           "properties": {
             "root": {
               "type": "string",
-              "pattern": "^haproxy-manager-node-[0-9a-f]{12}$"
+              "pattern": "^haprion-node-[0-9a-f]{12}$"
             },
             "commit": {
               "type": "string",

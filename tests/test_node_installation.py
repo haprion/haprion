@@ -122,7 +122,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.assertIn("has members; only the WAF engine may pass", installer)
         # Given to the engine beside its package, which names no account of ours.
         self.assertIn(
-            'WAF_ENGINE_DROPIN="/etc/systemd/system/coraza-spoa.service.d/haproxy-manager.conf"',
+            'WAF_ENGINE_DROPIN="/etc/systemd/system/coraza-spoa.service.d/haprion.conf"',
             installer,
         )
         self.assertIn("SupplementaryGroups=${WAF_GROUP}", installer)

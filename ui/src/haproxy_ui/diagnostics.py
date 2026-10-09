@@ -28,7 +28,7 @@ _SECRET_ASSIGNMENT = re.compile(
 _SENSITIVE_PATH = re.compile(
     r"(?i)(?<![^\s\"'<>])(?=[^\s\"'<>]*(?:\.ssh(?:/|$)|/secrets/|"
     r"/etc/ssl/private/|/srv/certificates(?:/|$)|"
-    r"/srv/haproxy-manager/validation(?:/|$)))[^\s\"'<>]+"
+    r"/srv/haprion/validation(?:/|$)))[^\s\"'<>]+"
 )
 
 

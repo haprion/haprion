@@ -135,7 +135,7 @@ class TheWafEngineSteps(unittest.TestCase):
         )
 
         self.assertEqual(code, 1)
-        self.assertIn("haproxy-manager-coraza-spoa", output)
+        self.assertIn("haprion-coraza-spoa", output)
 
     def test_rules_the_engine_rejects_are_refused(self) -> None:
         self.with_rules(self.candidate)
@@ -216,7 +216,7 @@ class TheWafEngineSteps(unittest.TestCase):
     def test_the_answer_is_read_from_the_journal_the_unit_logs_to(self) -> None:
         # Package revision 2 logs into a namespace; revision 1 into the system journal.
         self.with_rules(self.current)
-        for namespace, wanted in (("haproxy-waf", "--namespace=haproxy-waf -u"), ("", "-u")):
+        for namespace, wanted in (("haprion-waf", "--namespace=haprion-waf -u"), ("", "-u")):
             with self.subTest(namespace=namespace or "system journal"):
                 self.record.unlink(missing_ok=True)
                 self.journal.unlink(missing_ok=True)
@@ -289,7 +289,7 @@ class TheStatusReport(unittest.TestCase):
         )
         assert found, "read_waf_engine is no longer where the test extracts it from"
         namespace: dict[str, Any] = {
-            "WAF_PACKAGE": "haproxy-manager-coraza-spoa",
+            "WAF_PACKAGE": "haprion-coraza-spoa",
             "WAF_UNIT": "coraza-spoa.service",
             "run": lambda *argv: subprocess.CompletedProcess(argv, dpkg[0], dpkg[1], ""),
             "service_active": lambda name: active,

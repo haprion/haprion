@@ -86,7 +86,7 @@ class InstallCertbotEnvTests(unittest.TestCase):
         self.project = self.work / "certbot"
         self.project.mkdir()
         (self.project / "pyproject.toml").write_text(
-            '[project]\nname = "haproxy-manager-certbot-env"\nversion = "0"\n'
+            '[project]\nname = "haprion-certbot-env"\nversion = "0"\n'
         )
         (self.project / "uv.lock").write_text(LOCK)
         (self.project / "verify-integrations.py").write_text(
@@ -176,7 +176,7 @@ class InstallCertbotEnvTests(unittest.TestCase):
         (self.project / "pyproject.toml").write_text('[project]\nname = "something-else"\n')
         with self.assertRaises(installer.InstallError) as caught:
             self.install("certbot-dns-alpha")
-        self.assertIn("is not the haproxy-manager-certbot-env project", str(caught.exception))
+        self.assertIn("is not the haprion-certbot-env project", str(caught.exception))
 
     def test_a_failed_or_missing_integration_verifier_refuses_the_release(self) -> None:
         verifier = self.project / "verify-integrations.py"

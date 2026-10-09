@@ -16,7 +16,7 @@ from haproxy_mgmt import backup_schedule
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_DIR = ROOT / "schemas" / "v1"
 FIXTURE_ROOT = ROOT / "fixtures"
-STATUS_SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haprion-status.schema.json"
+STATUS_SCHEMA_ID = "https://example.com/haprion/schemas/v1/haprion-status.schema.json"
 
 
 def load_json(path: Path) -> object:

@@ -15,7 +15,7 @@
 # patch releases; the lock file is what pins.
 #
 [project]
-name = "haproxy-manager-certbot-env"
+name = "haprion-certbot-env"
 version = "0"
 description = "certbot and its DNS plugins for Haprion, locked as one set"
 requires-python = ">=3.12"

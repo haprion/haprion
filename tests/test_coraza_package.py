@@ -103,18 +103,18 @@ class Packages(unittest.TestCase):
 
     def test_the_engine_package_holds_the_binary_the_unit_and_the_licence(self) -> None:
         deb = self.build_coraza(self.coraza_source(), "out")
-        self.assertEqual(deb.name, "haproxy-manager-coraza-spoa_9.9.9-4_amd64.deb")
+        self.assertEqual(deb.name, "haprion-coraza-spoa_9.9.9-4_amd64.deb")
         rows = listing(deb)
         self.assertEqual(rows["/usr/sbin/coraza-spoa"], "-rwxr-xr-x root/root")
         self.assertEqual(
             rows["/usr/lib/systemd/system/coraza-spoa.service"], "-rw-r--r-- root/root"
         )
-        self.assertIn("/usr/share/doc/haproxy-manager-coraza-spoa/copyright", rows)
+        self.assertIn("/usr/share/doc/haprion-coraza-spoa/copyright", rows)
         self.assertEqual(
-            rows["/usr/lib/haproxy-manager-coraza-spoa/wait-listening"], "-rwxr-xr-x root/root"
+            rows["/usr/lib/haprion-coraza-spoa/wait-listening"], "-rwxr-xr-x root/root"
         )
         self.assertEqual(
-            rows["/usr/lib/systemd/journald@haproxy-waf.conf.d/haproxy-manager.conf"],
+            rows["/usr/lib/systemd/journald@haprion-waf.conf.d/haprion.conf"],
             "-rw-r--r-- root/root",
         )
         self.assertEqual(field(deb, "Version"), "9.9.9-4")
@@ -133,9 +133,9 @@ class Packages(unittest.TestCase):
             # HAProxy starts after the engine, and the engine counts as started
             # only once its port listens.
             "Before=haproxy.service",
-            "ExecStartPost=/usr/lib/haproxy-manager-coraza-spoa/wait-listening "
+            "ExecStartPost=/usr/lib/haprion-coraza-spoa/wait-listening "
             "/etc/haproxy/waf/coraza.yaml",
-            "LogNamespace=haproxy-waf",
+            "LogNamespace=haprion-waf",
             # A share of the node's memory, not a fixed size (B240).
             "MemoryHigh=30%",
             "MemoryMax=40%",
@@ -202,7 +202,7 @@ class Packages(unittest.TestCase):
         out = self.root / "out"
         out.mkdir()
         deb = self.tool.build_crs(self.sources, out, source=self.crs_source())
-        self.assertEqual(deb.name, "haproxy-manager-crs_9.9.9-1_all.deb")
+        self.assertEqual(deb.name, "haprion-crs_9.9.9-1_all.deb")
         rows = listing(deb)
         share = "/usr/share/haprion/crs"
         for path in (

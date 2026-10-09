@@ -167,9 +167,7 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
             command[-4:],
             ["/usr/sbin/coraza-spoa", "-validate", "-config", "/candidate/waf/coraza.yaml"],
         )
-        self.assertIn(
-            "--unit=haproxy-manager-validation-11111111111141118111111111111111-waf", command
-        )
+        self.assertIn("--unit=haprion-validation-11111111111141118111111111111111-waf", command)
         self.assertIn("TemporaryFileSystem=/:ro", " ".join(command))
         self.assertNotIn("/usr/sbin/haproxy", command)
 
@@ -190,7 +188,7 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
             ):
                 result = candidate_validation.validate_in_sandbox(root, "1111")
         self.assertFalse(result.valid)
-        self.assertIn("haproxy-manager-coraza-spoa", result.diagnostics)
+        self.assertIn("haprion-coraza-spoa", result.diagnostics)
         self.assertEqual(len(calls), 1)
 
 
@@ -209,9 +207,7 @@ class TheDnsListenerIsValidatedByDnsdist(unittest.TestCase):
             command[-4:],
             ["/usr/bin/dnsdist", "--check-config", "-C", "/candidate/dns/dnsdist.conf"],
         )
-        self.assertIn(
-            "--unit=haproxy-manager-validation-11111111111141118111111111111111-dns", command
-        )
+        self.assertIn("--unit=haprion-validation-11111111111141118111111111111111-dns", command)
 
     def dns_validation(
         self, output: str, code: int = 0, *, installed: bool = True

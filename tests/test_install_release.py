@@ -25,7 +25,7 @@ SPEC.loader.exec_module(install_release_module)
 
 class InstallReleaseTests(unittest.TestCase):
     def make_wheel(self, root: Path) -> tuple[Path, str]:
-        wheel = root / "haproxy_manager-0.1.0-py3-none-any.whl"
+        wheel = root / "haprion-0.1.0-py3-none-any.whl"
         with zipfile.ZipFile(wheel, "w") as archive:
             archive.writestr("haproxy_mgmt/__init__.py", "")
             archive.writestr(
@@ -40,11 +40,11 @@ class InstallReleaseTests(unittest.TestCase):
                 "def main():\n    return 0\n",
             )
             archive.writestr(
-                "haproxy_manager-0.1.0.dist-info/METADATA",
-                "Metadata-Version: 2.4\nName: haproxy-manager\nVersion: 0.1.0\n",
+                "haprion-0.1.0.dist-info/METADATA",
+                "Metadata-Version: 2.4\nName: haprion\nVersion: 0.1.0\n",
             )
             archive.writestr(
-                "haproxy_manager-0.1.0.dist-info/entry_points.txt",
+                "haprion-0.1.0.dist-info/entry_points.txt",
                 "[console_scripts]\nhaprion-example = haproxy_mgmt.cli.example:main\n",
             )
         digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
@@ -81,7 +81,7 @@ class InstallReleaseTests(unittest.TestCase):
                 metadata["node_bundle"],
                 {
                     "file": "node-bundle.tar.gz",
-                    "root": f"haproxy-manager-node-{COMMIT[:12]}",
+                    "root": f"haprion-node-{COMMIT[:12]}",
                     "commit": COMMIT,
                     "sha256": bundle_digest,
                 },

@@ -83,9 +83,9 @@ class ReceiverFixture(Fixture):
             encoding="utf-8",
         )
         self.locations = Locations(
-            sshd_dropin=self.etc / "ssh" / "sshd_config.d" / "haproxy-manager-receivers.conf",
-            nginx_snippet=self.etc / "nginx" / "snippets" / "haproxy-manager-receivers.conf",
-            ui_site=self.etc / "nginx" / "sites-available" / "haproxy-ui",
+            sshd_dropin=self.etc / "ssh" / "sshd_config.d" / "haprion-receivers.conf",
+            nginx_snippet=self.etc / "nginx" / "snippets" / "haprion-receivers.conf",
+            ui_site=self.etc / "nginx" / "sites-available" / "haprion",
             ui_tls=self.etc / "haprion" / "ui-tls.conf",
         )
         # The interface's site as 05-platform-nginx renders it: with the line

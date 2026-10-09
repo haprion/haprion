@@ -3,7 +3,7 @@
 # certbot deploy hook: publish every registered certificate and roll out the
 # clusters that received a new version.
 #
-# Install as /etc/letsencrypt/renewal-hooks/deploy/50-haproxy-manager, mode
+# Install as /etc/letsencrypt/renewal-hooks/deploy/50-haprion, mode
 # 755, root-owned. certbot runs every file in that directory after every
 # successful renewal, whichever lineage renewed.
 #

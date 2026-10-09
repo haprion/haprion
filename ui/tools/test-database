@@ -21,7 +21,7 @@ for program in initdb pg_ctl psql createdb; do
     }
 done
 
-test_root="$(mktemp -d "${TMPDIR:-/tmp}/haproxy-ui-test-db.XXXXXX")"
+test_root="$(mktemp -d "${TMPDIR:-/tmp}/haprion-test-db.XXXXXX")"
 data_dir="${test_root}/data"
 socket_dir="${test_root}/socket"
 database="haproxy_ui_test"

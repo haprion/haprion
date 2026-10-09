@@ -644,7 +644,7 @@ class FollowingARun(RestoreRouteTestCase):
 
         self.runs = [PREPARED, PREVIEWED]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
-        self.assertIn("<code>haproxy-manager-node-000000000000</code> from this manager", page)
+        self.assertIn("<code>haprion-node-000000000000</code> from this manager", page)
         self.assertIn("in place of the archive's 2", page)
         self.assertIn("turns the traffic log on, as it was", page)
         self.assertIn("account svc-logread gets a free UID", page)

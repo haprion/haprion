@@ -421,7 +421,7 @@ class TheWafLayerTravelsWithTheRelease(unittest.TestCase):
         with self.assertRaises(ConfigError) as raised:
             self.publish(PROXY.replace(b"routes:", b"waf: {}\nroutes:"), rule_set=lambda: None)
 
-        self.assertIn("haproxy-manager-crs", str(raised.exception))
+        self.assertIn("haprion-crs", str(raised.exception))
 
     def test_the_waf_layer_takes_its_shapes_only(self) -> None:
         base = {"core/haproxy.cfg": b"global\n", "manual/reservations.yaml": b"{}\n"}

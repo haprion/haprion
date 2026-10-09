@@ -1140,13 +1140,13 @@ class TheCollectorUnits(unittest.TestCase):
             self.rendered[kind] = (
                 source.read_text()
                 .replace("PLATFORM_ROOT", "/apps/haproxy-manager")
-                .replace("COLLECTOR_USER", "haproxy-ui-collector")
+                .replace("COLLECTOR_USER", "_haprion-collector")
             )
 
     def test_it_runs_as_the_collector_and_may_gain_nothing(self) -> None:
         service = self.rendered["service"]
 
-        self.assertIn("User=haproxy-ui-collector", service)
+        self.assertIn("User=_haprion-collector", service)
         self.assertIn("NoNewPrivileges=yes", service)
         self.assertIn("CapabilityBoundingSet=\n", service)
         self.assertIn(

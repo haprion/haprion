@@ -35,8 +35,7 @@ def key(seed: int) -> str:
 
 HOST_KEY, CONFIG_KEY, CERT_KEY = key(1), key(2), key(3)
 EXISTING_LINE = (
-    'restrict,command="/usr/bin/rrsync -ro /srv/haproxy-manager/published" '
-    f"{key(9)} node-a config pull\n"
+    f'restrict,command="/usr/bin/rrsync -ro /srv/haprion/published" {key(9)} node-a config pull\n'
 )
 
 
@@ -210,7 +209,7 @@ class AddingANode(unittest.TestCase):
             pull = (site.root / "_haprion-pull/.ssh/authorized_keys").read_text()
             self.assertIn(EXISTING_LINE, pull)
             self.assertIn(
-                'restrict,command="/usr/bin/rrsync -ro /srv/haproxy-manager/published" '
+                'restrict,command="/usr/bin/rrsync -ro /srv/haprion/published" '
                 f"{CONFIG_KEY} node-c config pull\n",
                 pull,
             )

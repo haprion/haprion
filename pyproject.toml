@@ -3,7 +3,7 @@ requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "haproxy-manager"
+name = "haprion"
 version = "0.1.0"
 description = "UI-independent HAProxy management engine"
 readme = "README.md"

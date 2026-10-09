@@ -210,7 +210,7 @@ class NodeBundleTransportContractTests(unittest.TestCase):
         self.assertLess(verify, dry_run)
         self.assertLess(arch, dry_run)
         self.assertLess(dry_run, backup)
-        self.assertIn("^haproxy-manager-[a-z0-9-]+$", self.script)
+        self.assertIn("^haprion-[a-z0-9-]+$", self.script)
 
     def test_the_package_is_checked_again_on_the_node_and_installed_with_the_bundle(self) -> None:
         self.assertIn(

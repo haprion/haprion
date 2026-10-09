@@ -1,6 +1,6 @@
 """The OWASP Core Rule Set the manager publishes with a release (Fas 21 del B, B229).
 
-Installed by its own package (`haproxy-manager-crs`) on the manager only. A
+Installed by its own package (`haprion-crs`) on the manager only. A
 publish that has an object using the WAF engine copies it into the release's
 `waf/crs/`, so the nodes run the rule set the manager validated, and which
 rule set a cluster runs is in its release history like everything else.
@@ -182,7 +182,7 @@ def installed_catalog(root: Path = ROOT) -> dict[int, Rule]:
     return rules
 
 
-ENGINE_PACKAGE = "haproxy-manager-coraza-spoa"
+ENGINE_PACKAGE = "haprion-coraza-spoa"
 DPKG_QUERY = "/usr/bin/dpkg-query"
 
 

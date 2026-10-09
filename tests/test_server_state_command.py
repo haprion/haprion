@@ -508,10 +508,10 @@ class StepTwoNamesEveryIdentityStepThreeMakes(unittest.TestCase):
         return done.stdout
 
     ANSWERS = {
-        "CLUSTER_FILE": "/srv/haproxy-manager/clusters.yaml",
-        "CONFIG_ROOT": "/srv/haproxy-manager/config",
-        "PUBLISH_ROOT": "/srv/haproxy-manager/published",
-        "VALIDATION_ROOT": "/srv/haproxy-manager/validation",
+        "CLUSTER_FILE": "/srv/haprion/clusters.yaml",
+        "CONFIG_ROOT": "/srv/haprion/config",
+        "PUBLISH_ROOT": "/srv/haprion/published",
+        "VALIDATION_ROOT": "/srv/haprion/validation",
         "KEY_DIR": "/root/.ssh",
         "CONFIG_DEPLOY_KEY": "id_ed25519_config_deploy",
         "NODE_STATUS_KEY": "id_ed25519_node_status",

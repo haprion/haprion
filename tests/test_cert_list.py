@@ -28,7 +28,7 @@ from haproxy_mgmt.config import ConfigError
 from tests.contract_schema import assert_contract
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
-SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haprion-cert-list.schema.json"
+SCHEMA_ID = "https://example.com/haprion/schemas/v1/haprion-cert-list.schema.json"
 
 
 def _validator() -> Draft202012Validator:

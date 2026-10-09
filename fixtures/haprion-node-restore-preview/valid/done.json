@@ -90,7 +90,7 @@
       "extra_paths": []
     },
     "node_bundle": {
-      "root": "haproxy-manager-node-000000000000",
+      "root": "haprion-node-000000000000",
       "commit": "0000000000000000000000000000000000000000"
     },
     "renumbered": [

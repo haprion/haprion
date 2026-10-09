@@ -297,7 +297,7 @@ validate_waf_candidate() {
         # there, which is the object's on_engine_error for every request.
         #
         log "ERROR: the release carries WAF rules, but the WAF engine is not installed on this node."
-        log "ERROR: install the haproxy-manager-coraza-spoa package, then deploy again."
+        log "ERROR: install the haprion-coraza-spoa package, then deploy again."
         return 1
     fi
     log "Validating candidate WAF rules..."
@@ -459,7 +459,7 @@ sync_waf_engine() {
 #
 DNSDIST="/usr/bin/dnsdist"
 DNS_UNIT="dnsdist.service"
-DNS_DROPIN="/etc/systemd/system/dnsdist.service.d/haproxy-manager.conf"
+DNS_DROPIN="/etc/systemd/system/dnsdist.service.d/haprion.conf"
 DNS_WAIT_SECONDS=10
 
 validate_dns_candidate() {

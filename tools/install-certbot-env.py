@@ -34,7 +34,7 @@ from pathlib import Path
 
 DEFAULT_TARGET = Path("/opt/haprion-certbot")
 DEFAULT_PYTHON = Path("/usr/bin/python3")
-PROJECT_NAME = "haproxy-manager-certbot-env"
+PROJECT_NAME = "haprion-certbot-env"
 # The lock names certbot once, as a package; its version is the release's.
 CERTBOT_VERSION = re.compile(r'^\[\[package\]\]\nname = "certbot"\nversion = "([^"]+)"', re.M)
 SYNC_TIMEOUT = 900

@@ -1,8 +1,8 @@
 schema_version: 1
-cluster_file: /srv/haproxy-manager/config/clusters.yaml
-config_root: /srv/haproxy-manager/config-repositories
-publish_root: /srv/haproxy-manager/published
-validation_certs_root: /srv/haproxy-manager/validation-certs
+cluster_file: /srv/haprion/config/clusters.yaml
+config_root: /srv/haprion/config-repositories
+publish_root: /srv/haprion/published
+validation_certs_root: /srv/haprion/validation-certs
 
 # The key the manager reaches a node with. The account on the node is fixed
 # (_haprion-trigger here). Optional: only the deploy path uses it, and every
@@ -19,14 +19,14 @@ backup_identity:
 # The certificate registry (see certificates.yaml). Optional: without it a
 # cluster's certificates are the `certificate_ids` list in clusters.yaml. Once
 # named, that list must have moved here.
-# certificate_registry: /srv/haproxy-manager/config/certificates.yaml
+# certificate_registry: /srv/haprion/config/certificates.yaml
 
 # Where haprion-cert-receiver puts a new receiver's directory (<root>/<id>)
 # unless --path says otherwise, and where it keeps a migration's record. The
 # registry, not this root, says where each receiver actually is; one made
 # before the command existed may live elsewhere. Optional until the first
 # receiver is registered; `add` and `migrate` refuse without it.
-# receiver_root: /srv/haproxy-manager/receivers
+# receiver_root: /srv/haprion/receivers
 
 # How haprion-cert-issue answers ACME challenges. Each method needs one
 # installation-specific path that the caller must never supply: the

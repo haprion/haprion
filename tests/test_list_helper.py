@@ -27,7 +27,7 @@ from tests.contract_schema import assert_contract
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "66666666-6666-4666-8666-666666666666"
 SCHEMA_DIR = BASE / "schemas" / "v1"
-SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haprion-list.schema.json"
+SCHEMA_ID = "https://example.com/haprion/schemas/v1/haprion-list.schema.json"
 
 
 def list_validator() -> Draft202012Validator:

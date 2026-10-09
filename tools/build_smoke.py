@@ -22,7 +22,7 @@ def run(*args: str, cwd: Path, env: dict[str, str] | None = None) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="haproxy-manager-build-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="haprion-build-") as temporary:
         work = Path(temporary)
         source = work / "source"
         distributions = work / "dist"

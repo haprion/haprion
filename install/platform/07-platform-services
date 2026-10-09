@@ -63,7 +63,7 @@ if ! visudo -cqf "$sudoers_staging"; then
 fi
 install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${WORKER_SUDOERS}"
 rm -f "$sudoers_staging"
-log "  installed /etc/sudoers.d/${WORKER_USER}  (visudo accepted it)"
+log "  installed /etc/sudoers.d/${WORKER_SUDOERS}  (visudo accepted it)"
 
 step "The web service's way to the probe"
 #

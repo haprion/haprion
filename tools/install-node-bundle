@@ -75,7 +75,7 @@ if [[ -n "$package" || -n "$package_sha" ]]; then
         || fail "package does not match its SHA-256"
     package_name="$(dpkg-deb --field "$package" Package)"
     package_arch="$(dpkg-deb --field "$package" Architecture)"
-    [[ "$package_name" =~ ^haproxy-manager-[a-z0-9-]+$ ]] \
+    [[ "$package_name" =~ ^haprion-[a-z0-9-]+$ ]] \
         || fail "only the project's own packages are installed this way"
     [[ "$package_arch" =~ ^[a-z0-9]+$ ]] || fail "package declares an invalid architecture"
     echo "package: ${package_name} $(dpkg-deb --field "$package" Version) ${package_arch}"
@@ -84,7 +84,7 @@ fi
 verification="$(/usr/bin/python3 "$VERIFY" verify --bundle "$bundle" --sha256 "$expected_sha")" \
     || fail "node bundle verification failed"
 release_root="$(sed -n 's/^release: //p' <<<"$verification")"
-[[ "$release_root" =~ ^haproxy-manager-node-[0-9a-f]{12}$ ]] \
+[[ "$release_root" =~ ^haprion-node-[0-9a-f]{12}$ ]] \
     || fail "bundle verifier returned an invalid release root"
 printf '%s\n' "$verification"
 

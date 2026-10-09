@@ -169,7 +169,7 @@ log "  revoked  everything from PUBLIC"
 step "Authentication"
 hba="$(sudo -u postgres psql -tAX -c 'show hba_file')"
 ident="$(sudo -u postgres psql -tAX -c 'show ident_file')"
-marker="# haproxy-manager platform"
+marker="# haprion platform"
 
 #
 # Matched on the line itself, not on the marker. The marker says the file has
@@ -183,7 +183,7 @@ hba_line="local   ${DB_NAME}   ${DB_MIGRATION_ROLE}   peer   map=haproxy_manager
 if grep -qF "$ident_line" "$ident"; then
     log "  ok       ${ident}  (${DB_MIGRATION_ROLE})"
 else
-    cp -a "$ident" "${ident}.pre-haproxy-manager-$(date +%Y%m%d)"
+    cp -a "$ident" "${ident}.pre-haprion-$(date +%Y%m%d)"
     if grep -qF "$marker" "$ident"; then
         printf '%s\n' "$ident_line" >> "$ident"
     else
@@ -195,7 +195,7 @@ fi
 if grep -qF "$hba_line" "$hba"; then
     log "  ok       ${hba}  (${DB_NAME})"
 else
-    cp -a "$hba" "${hba}.pre-haproxy-manager-$(date +%Y%m%d)"
+    cp -a "$hba" "${hba}.pre-haprion-$(date +%Y%m%d)"
     #
     # Prepended, not appended: pg_hba is first-match-wins, and the generic
     # `local all all peer` line Ubuntu ships would otherwise match first and

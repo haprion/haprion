@@ -212,7 +212,7 @@ def managed_files(
         if rules is None:
             raise ConfigError(
                 "objects use the WAF engine and the rule set is not installed on the manager: "
-                "install the haproxy-manager-crs package"
+                "install the haprion-crs package"
             )
         result.update(
             {

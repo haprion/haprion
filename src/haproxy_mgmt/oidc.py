@@ -393,7 +393,7 @@ def check_client(
         method=method,
         fields={
             "grant_type": "authorization_code",
-            "code": "haproxy-manager-verify-" + hashlib.sha256(client_id.encode()).hexdigest()[:16],
+            "code": "haprion-verify-" + hashlib.sha256(client_id.encode()).hexdigest()[:16],
             "redirect_uri": redirect_uri,
             "code_verifier": "v" * 43,
         },

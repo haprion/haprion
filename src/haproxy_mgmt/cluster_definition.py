@@ -666,9 +666,9 @@ def _create_repository(policy: PathPolicy, spec: Definition, tools: Tools) -> li
                 path.write_bytes(content)
             identity = [
                 "-c",
-                "user.name=haproxy-manager",
+                "user.name=haprion",
                 "-c",
-                "user.email=haproxy-manager@localhost",
+                "user.email=haprion@localhost",
             ]
             _checked(
                 tools.run([GIT, "-C", str(seed), "init", "--quiet", "--initial-branch=main"]),

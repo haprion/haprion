@@ -48,7 +48,7 @@ Build the matching node bundle from the same commit and record the digest it pri
 ```bash
 tools/node-bundle.py build \
   --source "$(pwd)" \
-  --output /path/to/protected/staging/haproxy-manager-node-0123456789ab.tar.gz
+  --output /path/to/protected/staging/haprion-node-0123456789ab.tar.gz
 ```
 
 Install the wheel and bundle, using their actual absolute paths and SHA-256 digests:
@@ -57,7 +57,7 @@ Install the wheel and bundle, using their actual absolute paths and SHA-256 dige
 sudo /usr/bin/python3 tools/install-release.py \
   --wheel /path/to/protected/staging/haproxy_manager-0.1.0-py3-none-any.whl \
   --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --node-bundle /path/to/protected/staging/haproxy-manager-node-0123456789ab.tar.gz \
+  --node-bundle /path/to/protected/staging/haprion-node-0123456789ab.tar.gz \
   --node-bundle-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
 ```
 
@@ -150,8 +150,8 @@ leave it, and the engine package on every node:
 python3 tools/build-coraza-package.py crs --source-dir <dir> --output-dir <out>
 python3 tools/build-coraza-package.py coraza --source-dir <dir> --go-root <go> \
     --govulncheck <dir>/govulncheck --output-dir <out>
-sudo apt install ./haproxy-manager-crs_<version>_all.deb ./haproxy-manager-coraza-spoa_<version>_amd64.deb  # manager
-sudo apt install ./haproxy-manager-coraza-spoa_<version>_amd64.deb                                      # each node
+sudo apt install ./haprion-crs_<version>_all.deb ./haprion-coraza-spoa_<version>_amd64.deb  # manager
+sudo apt install ./haprion-coraza-spoa_<version>_amd64.deb                                      # each node
 ```
 
 Installing the packages starts nothing. On a node, the deploy starts the engine when a
@@ -161,19 +161,19 @@ The node status reports the engine's version, and the interface offers the engin
 object only when every node of its cluster has it.
 
 From package revision 2 the engine starts before HAProxy and counts as started only once
-its port listens, and it logs into a journal namespace of its own, `haproxy-waf`: each
+its port listens, and it logs into a journal namespace of its own, `haprion-waf`: each
 matched rule is a line carrying the matched value, longer than the system journal and
 rsyslog keep whole. The package sets that journal's line length and retention (14 days)
-under `/usr/lib/systemd/journald@haproxy-waf.conf.d/`; override them in `/etc`.
+under `/usr/lib/systemd/journald@haprion-waf.conf.d/`; override them in `/etc`.
 `04-node-prepare` grants the traffic log's read group read access to that namespace and
-nothing else in the journal (`/etc/tmpfiles.d/haproxy-manager-waf.conf`), and the
+nothing else in the journal (`/etc/tmpfiles.d/haprion-waf.conf`), and the
 collector reads it through the same forced command as the traffic log.
 
 The engine runs as a dynamic user, which belongs to no group, and `/etc/haproxy/releases`
 is closed to every account but root. `04-node-prepare` therefore creates the group
-`haproxy-waf`, with no members, lets it pass through that directory without listing it
-(`/etc/tmpfiles.d/haproxy-manager-waf-engine.conf`), and gives the engine the group in a
-drop-in, `/etc/systemd/system/coraza-spoa.service.d/haproxy-manager.conf`. A node bundle
+`haprion-waf`, with no members, lets it pass through that directory without listing it
+(`/etc/tmpfiles.d/haprion-waf-engine.conf`), and gives the engine the group in a
+drop-in, `/etc/systemd/system/coraza-spoa.service.d/haprion.conf`. A node bundle
 from before this cannot start the engine: the first deploy with rules fails on that node
 and returns it to the previous release.
 
@@ -192,13 +192,13 @@ never fetched, its source in `/etc/apt/sources.list.d/pdns.list` and a pin in
 `/etc/apt/preferences.d/dnsdist-21`, so the hosts need to reach `repo.powerdns.com`.
 
 Installing the package starts nothing. On a node, a drop-in
-(`/etc/systemd/system/dnsdist.service.d/haproxy-manager.conf`) points dnsdist at
+(`/etc/systemd/system/dnsdist.service.d/haprion.conf`) points dnsdist at
 `/etc/haproxy/dns/dnsdist.conf`, a link into the release like `waf`, and lets it start only
 when that file exists. The deploy starts dnsdist when a release carries a listener, restarts
 it when the listener's file changed, stops it when a release no longer has one, and refuses
 a release with a listener on a node that has not been prepared for one. dnsdist runs as
 `_dnsdist`; the drop-in gives it the member-less group `haproxy-dns`, which may pass
-through `/etc/haproxy/releases` (`/etc/tmpfiles.d/haproxy-manager-dns.conf`), as the WAF
+through `/etc/haproxy/releases` (`/etc/tmpfiles.d/haprion-dns.conf`), as the WAF
 engine's group does. A configuration dnsdist warns about is refused like one it cannot
 load: its check ignores a setting it does not know with only a warning.
 

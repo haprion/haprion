@@ -12,7 +12,7 @@ from tests.restore_fixture import FILES, NODE_CONF, build
 
 BASE = Path(__file__).resolve().parents[1]
 LIB = BASE / "install/lib.sh"
-PUBLISH_ROOT = Path("/srv/haproxy-manager/published")
+PUBLISH_ROOT = Path("/srv/haprion/published")
 
 
 class Deriving(unittest.TestCase):

@@ -144,7 +144,7 @@ def service_active(name):
 # has it (B231). The package's version says which engine; `active` says whether
 # a release with rules has started it - off is the normal state without one.
 #
-WAF_PACKAGE = "haproxy-manager-coraza-spoa"
+WAF_PACKAGE = "haprion-coraza-spoa"
 WAF_UNIT = "coraza-spoa.service"
 
 

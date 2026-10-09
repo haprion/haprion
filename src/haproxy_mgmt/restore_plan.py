@@ -98,12 +98,12 @@ TARGET_FILES = frozenset({"/etc/ssh/sshd_config"})
 # archive's copies are of the release the node ran when it was archived.
 #
 SCRIPT_DIR = "/usr/local/sbin"
-TRAFFIC_LOG_RULE = "/etc/rsyslog.d/48-haproxy-manager-traffic.conf"
+TRAFFIC_LOG_RULE = "/etc/rsyslog.d/48-haprion-traffic.conf"
 FROM_BUNDLE = frozenset(
     {
         "/etc/haprion/node-installation.json",
         TRAFFIC_LOG_RULE,
-        "/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic",
+        "/etc/apparmor.d/rsyslog.d/haprion-traffic",
         "/etc/systemd/system/haprion-traffic-log-prune.service",
         "/etc/systemd/system/haprion-traffic-log-prune.timer",
     }

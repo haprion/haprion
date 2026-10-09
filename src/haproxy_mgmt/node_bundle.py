@@ -149,7 +149,7 @@ def write_bundle(
 ) -> tuple[str, str]:
     """Write a reproducible bundle of this payload; answer its root and SHA-256."""
 
-    root = f"haproxy-manager-node-{release_commit[:12]}"
+    root = f"haprion-node-{release_commit[:12]}"
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "commit": release_commit,
@@ -243,7 +243,7 @@ def verify_bundle(
             or COMMIT.fullmatch(commit) is None
         ):
             raise BundleError("bundle manifest version or commit is invalid")
-        expected_root = f"haproxy-manager-node-{commit[:12]}"
+        expected_root = f"haprion-node-{commit[:12]}"
         if root != expected_root:
             raise BundleError("bundle root does not match its commit")
         files = manifest["files"]

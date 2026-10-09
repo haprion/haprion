@@ -250,7 +250,7 @@ class ReadingPackages(unittest.TestCase):
         installed = {"haproxy": "3.4.6-1ppa1~resolute", "libssl3": "3.0.13-0ubuntu3.5"}
         namespace: dict[str, Any] = {
             "DNS_PACKAGE": "dnsdist",
-            "WAF_PACKAGE": "haproxy-manager-coraza-spoa",
+            "WAF_PACKAGE": "haprion-coraza-spoa",
             "package_version": installed.get,
         }
         exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk

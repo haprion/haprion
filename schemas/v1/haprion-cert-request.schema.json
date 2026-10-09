@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-cert-request.schema.json",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-cert-request.schema.json",
   "title": "haprion-cert-request JSON result",
   "description": "A key made on the manager and a signing request for somebody else's CA (C9b). The result carries the CSR, which is public by construction, and nothing about the key: it waits in the import store under the certificate's ID until the signed certificate is imported over it.",
   "allOf": [

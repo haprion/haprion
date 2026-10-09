@@ -24,7 +24,7 @@ from haproxy_mgmt.deploy_run import DeployRun
 from tests.node_harness import TARGET_HASH, FakeCluster, pair
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
-DEPLOY_SCHEMA = "https://example.com/haproxy-manager/schemas/v1/haprion-deploy.schema.json"
+DEPLOY_SCHEMA = "https://example.com/haprion/schemas/v1/haprion-deploy.schema.json"
 
 TARGET = ReleaseTarget(version=8, hash=TARGET_HASH)
 

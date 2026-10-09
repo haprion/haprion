@@ -67,7 +67,7 @@ class HelperTest(unittest.TestCase):
         carried.write_bytes(b"the release's node bundle")
         self.bundle = node_bundle.ReleaseBundle(
             path=carried,
-            root="haproxy-manager-node-0123456789ab",
+            root="haprion-node-0123456789ab",
             commit="0123456789ab" + "0" * 28,
             sha256=hashlib.sha256(carried.read_bytes()).hexdigest(),
         )

@@ -255,7 +255,7 @@ else
     tmp="$(mktemp -d)"
     openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
         -keyout "${tmp}/key.pem" -out "${tmp}/cert.pem" \
-        -subj "/CN=haproxy-manager-validation" >/dev/null 2>&1
+        -subj "/CN=haprion-validation" >/dev/null 2>&1
     cat "${tmp}/cert.pem" "${tmp}/key.pem" > "$cert"
     rm -rf "$tmp"
     chown root:root "$cert"

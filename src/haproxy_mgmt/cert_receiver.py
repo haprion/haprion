@@ -129,9 +129,9 @@ class Layer:
 class Locations:
     """The files this command owns outside the registry, injectable for the tests."""
 
-    sshd_dropin: Path = Path("/etc/ssh/sshd_config.d/haproxy-manager-receivers.conf")
-    nginx_snippet: Path = Path("/etc/nginx/snippets/haproxy-manager-receivers.conf")
-    ui_site: Path = Path("/etc/nginx/sites-available/haproxy-ui")
+    sshd_dropin: Path = Path("/etc/ssh/sshd_config.d/haprion-receivers.conf")
+    nginx_snippet: Path = Path("/etc/nginx/snippets/haprion-receivers.conf")
+    ui_site: Path = Path("/etc/nginx/sites-available/haprion")
     ui_tls: Path = Path("/etc/haprion/ui-tls.conf")
 
 

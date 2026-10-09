@@ -20,8 +20,8 @@ LOG_GROUP="_haprion-logs"
 # Ubuntu's 49-haproxy.conf matches every tag starting with "haproxy" and stops.
 # A rule installed after it never sees a message - which is exactly how the
 # first build failed - so this file has to sort before it.
-RSYSLOG_RULE="/etc/rsyslog.d/48-haproxy-manager-traffic.conf"
-APPARMOR_SNIPPET="/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic"
+RSYSLOG_RULE="/etc/rsyslog.d/48-haprion-traffic.conf"
+APPARMOR_SNIPPET="/etc/apparmor.d/rsyslog.d/haprion-traffic"
 PRUNE_SERVICE="/etc/systemd/system/haprion-traffic-log-prune.service"
 PRUNE_TIMER="/etc/systemd/system/haprion-traffic-log-prune.timer"
 PRUNE_COMMAND="/usr/local/sbin/haprion-traffic-log-prune"
@@ -80,7 +80,7 @@ render_rule() {
 # monotonic clock source guarantees that a closed file is never appended to
 # after the rollover.
 
-template(name="haproxy-manager-traffic-file" type="string"
+template(name="haprion-traffic-file" type="string"
          string="/var/log/haprion/traffic-%$now-utc%.jsonl")
 # Only the message, from its second character. HAProxy already emits one
 # complete JSON object per record, and a syslog header in front of it would
@@ -93,7 +93,7 @@ template(name="haproxy-manager-traffic-file" type="string"
 # dropped. RFC3164 puts one space between the tag and the payload, and the
 # message property keeps it - measured through a real rsyslog on a real Unix
 # socket, where `%msg%` produced " {" and this form produced "{".
-template(name="haproxy-manager-traffic-line" type="string"
+template(name="haprion-traffic-line" type="string"
          string="%msg:2:$:drop-last-lf%\n")
 
 # Only a JSON record reaches the day file. HAProxy sends more than transaction
@@ -108,8 +108,8 @@ template(name="haproxy-manager-traffic-line" type="string"
 if ($programname == "haproxy-traffic") then {
     if ($msg startswith " {") then {
         action(type="omfile"
-               dynaFile="haproxy-manager-traffic-file"
-               template="haproxy-manager-traffic-line"
+               dynaFile="haprion-traffic-file"
+               template="haprion-traffic-line"
                fileCreateMode="0640"
                dirCreateMode="0750"
                createDirs="off")
@@ -135,7 +135,7 @@ CONF
 render_prune_service() {
     cat <<CONF
 [Unit]
-Description=Delete haproxy-manager traffic log files past their retention window
+Description=Delete Haprion traffic log files past their retention window
 
 [Service]
 Type=oneshot
@@ -165,7 +165,7 @@ CONF
 render_prune_timer() {
     cat <<'CONF'
 [Unit]
-Description=Daily retention pass over the haproxy-manager traffic log
+Description=Daily retention pass over the Haprion traffic log
 
 [Timer]
 OnCalendar=daily

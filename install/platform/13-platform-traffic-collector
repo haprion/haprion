@@ -84,7 +84,7 @@ ensure_dir "$IDENTITY_DIR" "${COLLECTOR_USER}:root" 500
 if [[ -f "$COLLECTOR_KEY" ]]; then
     log "  ok       ${COLLECTOR_KEY}"
 else
-    ssh-keygen -t ed25519 -N "" -C "haproxy-manager traffic collector" -f "$COLLECTOR_KEY" >/dev/null
+    ssh-keygen -t ed25519 -N "" -C "haprion traffic collector" -f "$COLLECTOR_KEY" >/dev/null
     log "  created  ${COLLECTOR_KEY}"
 fi
 chown "${COLLECTOR_USER}:root" "$COLLECTOR_KEY" "${COLLECTOR_KEY}.pub"

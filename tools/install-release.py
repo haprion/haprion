@@ -31,7 +31,7 @@ DEFAULT_PYTHON = Path("/usr/bin/python3")
 DEFAULT_KEEP = 10
 # Beside INSTALLATION.json in the release; `haproxy_mgmt.node_bundle` finds it there.
 NODE_BUNDLE_NAME = "node-bundle.tar.gz"
-EXPECTED_PROJECT = "haproxy-manager"
+EXPECTED_PROJECT = "haprion"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 ENTRY_POINT_PATTERN = re.compile(
@@ -148,7 +148,7 @@ def inspect_wheel(
         project = metadata.get("Name", "")
         version = metadata.get("Version", "")
         if project.lower().replace("_", "-") != EXPECTED_PROJECT:
-            raise InstallError("wheel project name is not haproxy-manager")
+            raise InstallError("wheel project name is not haprion")
         if not VERSION_PATTERN.fullmatch(version):
             raise InstallError("wheel contains an invalid project version")
 

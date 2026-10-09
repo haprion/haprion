@@ -44,21 +44,21 @@ generate_key() {
     log "  created  ${path}"
 }
 
-generate_key "$CONFIG_DEPLOY_KEY" "haproxy-manager config deploy"
-generate_key "$NODE_STATUS_KEY"   "haproxy-manager node status"
-[[ -n "${CERT_DEPLOY_KEY:-}" ]] && generate_key "$CERT_DEPLOY_KEY" "haproxy-manager cert deploy"
+generate_key "$CONFIG_DEPLOY_KEY" "haprion config deploy"
+generate_key "$NODE_STATUS_KEY"   "haprion node status"
+[[ -n "${CERT_DEPLOY_KEY:-}" ]] && generate_key "$CERT_DEPLOY_KEY" "haprion cert deploy"
 #
 # Optional, like the certificate key: an installation that does not want the
 # interface asking nodes to try a health check simply names no key, and the
 # probe reports itself as unavailable instead of failing anything else.
 #
-[[ -n "${NODE_PROBE_KEY:-}" ]] && generate_key "$NODE_PROBE_KEY" "haproxy-manager health probe"
+[[ -n "${NODE_PROBE_KEY:-}" ]] && generate_key "$NODE_PROBE_KEY" "haprion health probe"
 # Optional too (Fas 20, B263): without it the interface offers no drain,
 # maintenance or ready, and nothing else changes.
-[[ -n "${SERVER_STATE_KEY:-}" ]] && generate_key "$SERVER_STATE_KEY" "haproxy-manager server state"
+[[ -n "${SERVER_STATE_KEY:-}" ]] && generate_key "$SERVER_STATE_KEY" "haprion server state"
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
     require_vars NODE_BACKUP_KEY BACKUP_USER
-    generate_key "$NODE_BACKUP_KEY" "haproxy-manager node state backup"
+    generate_key "$NODE_BACKUP_KEY" "haprion node state backup"
 fi
 
 step "Lines to install on the nodes"

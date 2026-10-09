@@ -3,10 +3,10 @@
 
 Two Debian packages, one tool (B229):
 
-    coraza  haproxy-manager-coraza-spoa  the Coraza SPOA engine, built from source
+    coraza  haprion-coraza-spoa  the Coraza SPOA engine, built from source
                                          with a pinned Go; installed on the manager
                                          (validation only) and on every node
-    crs     haproxy-manager-crs          the OWASP Core Rule Set files; installed on
+    crs     haprion-crs          the OWASP Core Rule Set files; installed on
                                          the manager only - releases carry the rules
                                          to the nodes (managed/waf)
 
@@ -42,11 +42,11 @@ CORAZA_REVISION = "4"
 CRS_REVISION = "1"
 GO_VERSION = "go1.26.8"
 GOVULNCHECK_VERSION = "v1.8.0"
-MAINTAINER = "haproxy-manager maintainers <maintainers@example.org>"
+MAINTAINER = "haprion maintainers <maintainers@example.org>"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 DIGEST = re.compile(r"[0-9a-f]{64}")
 UNIT = "coraza-spoa.service"
-LIBEXEC = "usr/lib/haproxy-manager-coraza-spoa"
+LIBEXEC = "usr/lib/haprion-coraza-spoa"
 #
 # The engine logs one JSON line per matched rule, and a line carries the
 # matched value whole - as long as the request field it came from. rsyslog
@@ -55,9 +55,9 @@ LIBEXEC = "usr/lib/haproxy-manager-coraza-spoa"
 # handed and the traffic log's retention. Measured on a node (26-10-03): a
 # 150 000 character line arrives whole, and nothing reaches rsyslog.
 #
-JOURNAL_NAMESPACE = "haproxy-waf"
+JOURNAL_NAMESPACE = "haprion-waf"
 JOURNAL_CONF = f"""\
-# Installed by haproxy-manager-coraza-spoa. Override in
+# Installed by haprion-coraza-spoa. Override in
 # /etc/systemd/journald@{JOURNAL_NAMESPACE}.conf.d/ rather than editing this file.
 [Journal]
 Storage=persistent
@@ -437,13 +437,13 @@ def build_coraza(
             print(vulnerability_check(tree, go_root, govulncheck, work), file=sys.stderr)
         binary = built or go_build(tree, go_root, work, source.version)
         root = work / "root"
-        doc = "usr/share/doc/haproxy-manager-coraza-spoa"
+        doc = "usr/share/doc/haprion-coraza-spoa"
         write(root, "usr/sbin/coraza-spoa", binary.read_bytes(), 0o755)
         write(root, f"usr/lib/systemd/system/{UNIT}", UNIT_FILE.encode(), 0o644)
         write(root, f"{LIBEXEC}/wait-listening", WAIT_LISTENING.encode(), 0o755)
         write(
             root,
-            f"usr/lib/systemd/journald@{JOURNAL_NAMESPACE}.conf.d/haproxy-manager.conf",
+            f"usr/lib/systemd/journald@{JOURNAL_NAMESPACE}.conf.d/haprion.conf",
             JOURNAL_CONF.encode(),
             0o644,
         )
@@ -463,14 +463,14 @@ def build_coraza(
         return package(
             root,
             {
-                "Package": "haproxy-manager-coraza-spoa",
+                "Package": "haprion-coraza-spoa",
                 "Version": f"{source.version}-{CORAZA_REVISION}",
                 "Architecture": "amd64",
                 "Section": "net",
                 "Priority": "optional",
                 "Homepage": "https://github.com/corazawaf/coraza-spoa",
                 "Description": "Coraza SPOA web application firewall engine for HAProxy\n"
-                " Built by haproxy-manager from the pinned upstream source. The rules\n"
+                " Built by Haprion from the pinned upstream source. The rules\n"
                 " arrive with each published cluster release.",
             },
             output_dir,
@@ -502,7 +502,7 @@ def build_crs(source_dir: Path, output_dir: Path, *, source: Source = CRS) -> Pa
             write(root, f"{share}/rules/{path.name}", path.read_bytes(), 0o644)
         write(
             root,
-            "usr/share/doc/haproxy-manager-crs/copyright",
+            "usr/share/doc/haprion-crs/copyright",
             (tree / "LICENSE").read_bytes(),
             0o644,
         )
@@ -510,13 +510,13 @@ def build_crs(source_dir: Path, output_dir: Path, *, source: Source = CRS) -> Pa
         return package(
             root,
             {
-                "Package": "haproxy-manager-crs",
+                "Package": "haprion-crs",
                 "Version": f"{source.version}-{CRS_REVISION}",
                 "Architecture": "all",
                 "Section": "net",
                 "Priority": "optional",
                 "Homepage": "https://coreruleset.org",
-                "Description": "OWASP Core Rule Set for haproxy-manager\n"
+                "Description": "OWASP Core Rule Set for Haprion\n"
                 " The rule files the manager copies into each published cluster release.",
             },
             output_dir,

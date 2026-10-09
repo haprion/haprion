@@ -23,7 +23,7 @@ class RedactionHappensBeforePersistence(unittest.TestCase):
                 "read /run/secrets/example",
                 "read /etc/ssl/private/example.pem",
                 "read /srv/certificates/haproxy/example.pem",
-                "read /srv/haproxy-manager/validation/certs/example.pem",
+                "read /srv/haprion/validation/certs/example.pem",
             )
         )
 
@@ -37,7 +37,7 @@ class RedactionHappensBeforePersistence(unittest.TestCase):
             "/run/secrets/",
             "/etc/ssl/private/",
             "/srv/certificates/",
-            "/srv/haproxy-manager/validation/",
+            "/srv/haprion/validation/",
         ):
             self.assertNotIn(private, excerpt)
         self.assertGreaterEqual(excerpt.count(diagnostics.REDACTED), 8)

@@ -19,7 +19,7 @@ from haproxy_mgmt import restore_agent
 from haproxy_mgmt.restore_agent import Failed, Host
 
 RUN = "run-0123456789"
-BUNDLE_ROOT = "haproxy-manager-node-0123456789ab"
+BUNDLE_ROOT = "haprion-node-0123456789ab"
 
 
 def bundle_bytes() -> bytes:

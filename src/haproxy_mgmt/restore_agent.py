@@ -97,7 +97,7 @@ NODE_CONF = "/etc/haprion/node.conf"
 # what the product owns on a node, in the running release's version.
 #
 BUNDLE_FILE = "node-bundle.tar.gz"
-BUNDLE_ROOT = re.compile(r"^haproxy-manager-node-[0-9a-f]{12}$")
+BUNDLE_ROOT = re.compile(r"^haprion-node-[0-9a-f]{12}$")
 CLUSTER_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
 #
 # Turns the traffic log on in the release's version: the rsyslog rule, the
@@ -142,8 +142,8 @@ SNAPSHOT_FILES = (
     "/etc/hostname",
     "/etc/sudoers.d/haprion-node",
     "/etc/sysctl.d/60-haproxy.conf",
-    "/etc/rsyslog.d/48-haproxy-manager-traffic.conf",
-    "/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic",
+    "/etc/rsyslog.d/48-haprion-traffic.conf",
+    "/etc/apparmor.d/rsyslog.d/haprion-traffic",
     "/etc/systemd/system/haprion-traffic-log-prune.service",
     "/etc/systemd/system/haprion-traffic-log-prune.timer",
 )

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-node-restore.schema.json",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-node-restore.schema.json",
   "title": "HAProxy node restore: run",
   "allOf": [
     {

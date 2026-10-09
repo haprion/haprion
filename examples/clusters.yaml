@@ -60,10 +60,10 @@ clusters:
     #
     unknown_host:
       status: 404
-    config_path: /srv/haproxy-manager/config-repositories/alpha
-    publish_path: /srv/haproxy-manager/published/alpha
+    config_path: /srv/haprion/config-repositories/alpha
+    publish_path: /srv/haprion/published/alpha
     node_path: alpha
-    validation_certs: /srv/haproxy-manager/validation-certs
+    validation_certs: /srv/haprion/validation-certs
     default_certificate: example.com
     certificate_ids:
       - example.com

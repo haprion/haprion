@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-EXAMPLES = ("haproxy-ui.nginx.example",)
+EXAMPLES = ("haprion.nginx.example",)
 
 
 def directive(text: str, name: str) -> list[str]:
@@ -34,7 +34,7 @@ class RequestBodiesStayInMemory(unittest.TestCase):
 
 
 NGINX = shutil.which("nginx") or "/usr/sbin/nginx"
-SNIPPET = "/etc/nginx/snippets/haproxy-manager-real-ip.conf"
+SNIPPET = "/etc/nginx/snippets/haprion-real-ip.conf"
 
 
 def render_real_ip(trusted: str) -> subprocess.CompletedProcess[str]:
@@ -57,7 +57,7 @@ def render_real_ip(trusted: str) -> subprocess.CompletedProcess[str]:
 
 class TheSiteIncludesWhatStepFiveWrites(unittest.TestCase):
     def test_the_site_and_the_step_name_one_file(self) -> None:
-        site = (ROOT / "install/platform/examples/haproxy-ui.nginx.example").read_text()
+        site = (ROOT / "install/platform/examples/haprion.nginx.example").read_text()
         step = (ROOT / "install/platform/05-platform-nginx").read_text()
         self.assertEqual(directive(site, "include").count(SNIPPET), 1)
         self.assertIn(f"install_file {SNIPPET} ", step)

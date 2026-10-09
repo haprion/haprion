@@ -1906,7 +1906,7 @@ wheels = [
 ]
 
 [[package]]
-name = "haproxy-manager-certbot-env"
+name = "haprion-certbot-env"
 version = "0"
 source = { virtual = "." }
 dependencies = [

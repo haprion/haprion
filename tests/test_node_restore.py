@@ -23,7 +23,7 @@ from haproxy_mgmt.restore_plan import Target, TestProfile
 from tests.restore_fixture import build
 
 VERSION = "2026-01-01_04-00-00"
-PUBLISH_ROOT = Path("/srv/haproxy-manager/published")
+PUBLISH_ROOT = Path("/srv/haprion/published")
 FINGERPRINT = "SHA256:" + "A" * 43
 TARGET_KEY = "ssh-ed25519 AAAAtargetkey"
 CLUSTER = SimpleNamespace(
@@ -93,7 +93,7 @@ class RestoreTest(unittest.TestCase):
         carried.write_bytes(b"the release's node bundle")
         self.bundle: node_bundle.ReleaseBundle | None = node_bundle.ReleaseBundle(
             path=carried,
-            root="haproxy-manager-node-0123456789ab",
+            root="haprion-node-0123456789ab",
             commit="0123456789ab" + "0" * 28,
             sha256=hashlib.sha256(carried.read_bytes()).hexdigest(),
         )

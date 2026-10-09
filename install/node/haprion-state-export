@@ -161,8 +161,8 @@ done
 # files themselves are operational history and deliberately stay out of a DR
 # archive; the configuration and retention machinery are what make a rebuilt
 # node resume producing them.
-copy_path /etc/rsyslog.d/48-haproxy-manager-traffic.conf
-copy_path /etc/apparmor.d/rsyslog.d/haproxy-manager-traffic
+copy_path /etc/rsyslog.d/48-haprion-traffic.conf
+copy_path /etc/apparmor.d/rsyslog.d/haprion-traffic
 copy_path /etc/systemd/system/haprion-traffic-log-prune.service
 copy_path /etc/systemd/system/haprion-traffic-log-prune.timer
 

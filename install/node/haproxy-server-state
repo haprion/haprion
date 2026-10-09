@@ -87,14 +87,7 @@ CERTS_DIR = Path("/etc/haproxy/certs")
 # `haproxy-cert-pull`'s certificate ID.
 #
 CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
-#
-# Built rather than written out, as in `haproxy-node-status`: a PEM boundary in
-# the source is what the secret scanner exists to catch.
-#
-PEM = "-" * 5
-CERTIFICATE_BLOCK = re.compile(
-    PEM + "BEGIN CERTIFICATE" + PEM + ".+?" + PEM + "END CERTIFICATE" + PEM, re.DOTALL
-)
+OPENSSL = "/usr/bin/openssl"
 WAIT_FOR_WORKER_SECONDS = 15
 LOCK_SECONDS = 60
 
@@ -403,20 +396,38 @@ def held_certificates() -> tuple[set[str], set[str]]:
     return held, open_transactions
 
 
-def fingerprint(pem: str) -> str:
-    """The SHA-1 of the first certificate in a PEM file, as `show ssl cert` writes it."""
+def identity(path: str) -> tuple[str, str]:
+    """A certificate file's issuer and serial number, as `show ssl cert` writes them.
 
-    import hashlib
-    import ssl
+    Issuer and serial name one certificate (RFC 5280: a CA never repeats a
+    serial). OpenSSL's `compat` names are the one-line form HAProxy prints -
+    the same library writes both (measured on 3.4.6, including a name of
+    several parts with a comma in it).
+    """
 
-    block = CERTIFICATE_BLOCK.search(pem)
-    if block is None:
-        raise ValueError("no certificate in the file")
-    return (
-        hashlib.sha1(ssl.PEM_cert_to_DER_cert(block.group(0)), usedforsecurity=False)
-        .hexdigest()
-        .upper()
+    answer = subprocess.run(  # noqa: S603 - fixed binary; the path is this helper's own
+        [OPENSSL, "x509", "-in", path, "-noout", "-serial", "-issuer", "-nameopt", "compat"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    found = dict(line.split("=", 1) for line in answer.stdout.splitlines() if "=" in line)
+    if answer.returncode != 0 or "serial" not in found or "issuer" not in found:
+        raise ValueError("openssl cannot read the certificate in the file")
+    return found["issuer"], found["serial"].upper()
+
+
+def served_identity(answer: str) -> tuple[str, str] | None:
+    """The issuer and serial `show ssl cert <name>` reports, or None."""
+
+    fields = dict(
+        line.split(": ", 1)
+        for line in answer.splitlines()
+        if line.startswith(("Issuer: ", "Serial: "))
+    )
+    if "Issuer" not in fields or "Serial" not in fields:
+        return None
+    return fields["Issuer"], fields["Serial"].upper()
 
 
 def update_one(name: str, pem: str) -> str | None:
@@ -433,10 +444,7 @@ def update_one(name: str, pem: str) -> str | None:
     if "Success!" not in reply:
         ask([f"abort ssl cert {name}"])
         return f"commit ssl cert: {reply.strip()[:300]}"
-    served = re.search(
-        r"^SHA1 FingerPrint: ([0-9A-F]+)$", ask([f"show ssl cert {name}"]), re.MULTILINE
-    )
-    if served is None or served.group(1) != fingerprint(pem):
+    if served_identity(ask([f"show ssl cert {name}"])) != identity(name):
         return "HAProxy does not serve the file's certificate after the commit"
     return None
 

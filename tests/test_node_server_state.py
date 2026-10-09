@@ -328,10 +328,16 @@ class TheHelperReplacesACertificateWithoutAReload(unittest.TestCase):
             code = self.helper.main(list(argv))
         return code, out.getvalue()
 
-    def served(self) -> str:
+    def served(self) -> tuple[str, str] | None:
         reply = self.helper.ask([f"show ssl cert {self.certs}/shop.pem"])
-        found = re.search(r"^SHA1 FingerPrint: ([0-9A-F]+)$", reply, re.MULTILINE)
-        return found.group(1) if found else ""
+        found: tuple[str, str] | None = self.helper.served_identity(reply)
+        return found
+
+    def identity_of(self, text: str) -> tuple[str, str]:
+        copy = self.root / "compare.pem"
+        copy.write_text(text)
+        found: tuple[str, str] = self.helper.identity(str(copy))
+        return found
 
     def test_the_new_file_is_served_by_the_same_worker(self) -> None:
         new = pem(self.root, "new")
@@ -340,7 +346,7 @@ class TheHelperReplacesACertificateWithoutAReload(unittest.TestCase):
         code, out = self.run_helper("update-certs", "shop")
 
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.served(), self.helper.fingerprint(new))
+        self.assertEqual(self.served(), self.identity_of(new))
         self.assertEqual(self.helper.worker_pid(self.helper.ask(["show info"])), self.pid)
 
     def test_a_certificate_haproxy_does_not_hold_asks_for_a_reload(self) -> None:
@@ -353,6 +359,7 @@ class TheHelperReplacesACertificateWithoutAReload(unittest.TestCase):
 
     def test_a_file_haproxy_refuses_is_aborted_and_the_old_one_still_served(self) -> None:
         before = self.served()
+        self.assertIsNotNone(before)
         certificate_only = pem(self.root, "new").split("-" * 5 + "BEGIN PRIVATE KEY")[0]
         (self.certs / "shop.pem").write_text(certificate_only)
 
@@ -378,7 +385,7 @@ class TheHelperReplacesACertificateWithoutAReload(unittest.TestCase):
 
         self.assertEqual(code, 0, out)
         self.assertIn("aborting a transaction", out)
-        self.assertEqual(self.served(), self.helper.fingerprint(new))
+        self.assertEqual(self.served(), self.identity_of(new))
 
     def test_words_that_are_not_certificate_ids_are_refused(self) -> None:
         for argv in (

@@ -66,7 +66,7 @@ class ARealDatabase(unittest.TestCase):
         self.assertGreaterEqual(measured.database, 0.01)
 
     def drain(self, *arguments: str) -> subprocess.CompletedProcess[str]:
-        """`haproxy-ui-drain` itself, against this database, as the migration role."""
+        """`haprion-drain` itself, against this database, as the migration role."""
 
         directory = Path(tempfile.mkdtemp(prefix="drain-"))
         self.addCleanup(shutil.rmtree, directory)
@@ -74,7 +74,7 @@ class ARealDatabase(unittest.TestCase):
             f"DB_NAME={os.environ['HAPROXY_UI_TEST_DATABASE_NAME']}\n"
             f"DB_ROLE={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}\n"
         )
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-drain"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-drain"
         return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             ["/bin/bash", str(script), "-e", "test", *arguments],
             capture_output=True,
@@ -175,7 +175,7 @@ class ARealDatabase(unittest.TestCase):
             connection.commit()
         self.addCleanup(self.forget_job, pending)
 
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-drain"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-drain"
         with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as worker:
             claimed = db.claim_job(worker, worker_id="w", lease_seconds=60)
             self.assertIsNotNone(claimed)
@@ -225,7 +225,7 @@ class ARealDatabase(unittest.TestCase):
     def test_retention_removes_oidc_sign_ins_older_than_a_day(self) -> None:
         """The clause is printed by the retention command itself, as above."""
 
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",
@@ -324,7 +324,7 @@ class ARealDatabase(unittest.TestCase):
             self.assertIsNone(db.read_version_diff(connection, cluster="vd-ask", commit=hashes[1]))
 
     def retention_clause(self, function: str, keep: str) -> str:
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",
@@ -414,7 +414,7 @@ class ARealDatabase(unittest.TestCase):
         of recent rows is set to nothing, so only the profile rule keeps a row.
         """
 
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",
@@ -471,7 +471,7 @@ class ARealDatabase(unittest.TestCase):
         The clause is the retention command's own, as above.
         """
 
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",
@@ -568,7 +568,7 @@ class ARealDatabase(unittest.TestCase):
     def test_retention_keeps_the_publish_a_saved_network_is_cleared_by(self) -> None:
         """The draft rule (CR-04), for a saved network description or settings (B257)."""
 
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",
@@ -613,7 +613,7 @@ class ARealDatabase(unittest.TestCase):
     def test_a_package_s_publish_is_the_evidence_for_each_row_it_carried(self) -> None:
         """B257: `drafts` and `changes` lists, read and kept as one object's `draft` is."""
 
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",
@@ -1419,7 +1419,7 @@ class ARealDatabase(unittest.TestCase):
             connection.commit()
         self.assertEqual(self.waf_findings_both_ways(since), (counted, counted))
 
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         expired = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",
@@ -1447,7 +1447,7 @@ class ARealDatabase(unittest.TestCase):
     def test_retention_analyzes_every_partitioned_table_and_no_other(self) -> None:
         """Review 2026-10-03, D1: autovacuum never analyzes a partitioned parent."""
 
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         listed = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",
@@ -1470,7 +1470,7 @@ class ARealDatabase(unittest.TestCase):
             connection.rollback()
 
     def test_quick_log_report_sums_leaf_statistics_and_sizes_once(self) -> None:
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         for table in ("traffic_log", "waf_match"):
             query = subprocess.run(  # noqa: S603 - fixed interpreter, repository script
                 [
@@ -1525,7 +1525,7 @@ class ARealDatabase(unittest.TestCase):
 
     def retention_partitions_expired(self, table: str) -> str:
         """The retention command's own query for a day-partitioned table's expired days."""
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",
@@ -3660,7 +3660,7 @@ class OidcAccounts(unittest.TestCase):
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheAccountToolAgainstARealDatabase(unittest.TestCase):
-    """`haproxy-ui-user`'s verbs from 0041 (B196, B197), through `main`, on the real schema."""
+    """`haprion-user`'s verbs from 0041 (B196, B197), through `main`, on the real schema."""
 
     HASH = OidcAccounts.HASH
 
@@ -5058,7 +5058,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
         self.assertLess(oldest[0], self.now - timedelta(days=30))  # type: ignore[index]
 
     def test_retention_deletes_the_hours_the_fill_would_not_take(self) -> None:
-        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
         expired = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
             [
                 "/bin/bash",

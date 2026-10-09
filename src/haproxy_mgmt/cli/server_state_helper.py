@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-server-state` - drain, maintenance or ready.
+"""The privileged half of `haprion-server-state` - drain, maintenance or ready.
 
 Takes no arguments; the request arrives on stdin, for the reason every helper
 gives: PRIVILEGE.md forbids wildcards in sudoers argument matching, so one
@@ -56,7 +56,7 @@ from haproxy_mgmt.server_state import (
 
 PARAMETERS = frozenset({"object", "servers", "state"})
 
-HELPER = "/opt/haprion/current/bin/haproxy-server-state-helper"
+HELPER = "/opt/haprion/current/bin/haprion-server-state-helper"
 SUDO = "/usr/bin/sudo"
 
 EXIT_NOT_ROOT = 77

@@ -1,4 +1,4 @@
-"""`haproxy-publish` - save the draft area as a new version and publish it.
+"""`haprion-publish` - save the draft area as a new version and publish it.
 
 The thin half. It runs entirely as the calling user and does only what an
 unprivileged caller can honestly do: check the arguments, look up the cluster,
@@ -40,16 +40,16 @@ from haproxy_mgmt.repo_snapshot import SNAPSHOT_PREFIXES, PublishError, resolve_
 
 OPERATION = "publish_version"
 
-HELPER = "/opt/haprion/current/bin/haproxy-publish-helper"
+HELPER = "/opt/haprion/current/bin/haprion-publish-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-publish -c <cluster> <comment>\n"
+    "  haprion-publish -c <cluster> <comment>\n"
     "\n"
     "Examples:\n"
-    '  haproxy-publish -c internal "Added serverxyz"\n'
-    '  haproxy-publish -c external "Added public service"\n'
+    '  haprion-publish -c internal "Added serverxyz"\n'
+    '  haprion-publish -c external "Added public service"\n'
 )
 
 type RunHelper = Callable[[bytes], tuple[int, str, str]]

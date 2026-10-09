@@ -1,4 +1,4 @@
-"""`haproxy-cert-export-helper` - an exportable certificate's key, for the web (B255, 2026-10-06).
+"""`haprion-cert-export-helper` - an exportable certificate's key, for the web (B255, 2026-10-06).
 
 The web cannot read the certificate store, and it is meant not to: the store is
 root's, and no application identity reads a key back. The one exception is an
@@ -60,7 +60,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=require_root,
-            helper_name="haproxy-cert-export-helper",
+            helper_name="haprion-cert-export-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

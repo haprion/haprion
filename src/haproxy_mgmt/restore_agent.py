@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
-STATE = "/var/lib/haproxy-restore"
+STATE = "/var/lib/haprion-restore"
 #
 # The packages whose presence means the VM is not empty. A restore installs
 # them itself with their services held off; one already there has run with the
@@ -104,10 +104,10 @@ CLUSTER_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
 # AppArmor snippet and the retention timer, enabled. Run when the archive
 # shows the log was on; the archive's own copies are not written.
 #
-TRAFFIC_LOG_ENABLE = "/usr/local/sbin/haproxy-traffic-log-enable"
+TRAFFIC_LOG_ENABLE = "/usr/local/sbin/haprion-traffic-log-enable"
 HAPROXY = "/etc/haproxy"
 EMPTY_RELEASE = "00000000-000000"
-BOOTSTRAP_SOCKET = "/run/haproxy-restore-bootstrap.sock"
+BOOTSTRAP_SOCKET = "/run/haprion-restore-bootstrap.sock"
 #
 # The release `current` points at until the first deploy. 04-node-prepare
 # leaves an empty haproxy.cfg there, and on a fresh node that is a dead end:
@@ -132,7 +132,7 @@ frontend restore-bootstrap
 #
 # What an overwrite copies before its first write, besides the paths it writes
 # itself: the account files, and what the node bundle's 04-node-prepare and
-# haproxy-traffic-log-enable write - their files and the directories they fill.
+# haprion-traffic-log-enable write - their files and the directories they fill.
 #
 SNAPSHOT_FILES = (
     "/etc/passwd",
@@ -140,12 +140,12 @@ SNAPSHOT_FILES = (
     "/etc/shadow",
     "/etc/gshadow",
     "/etc/hostname",
-    "/etc/sudoers.d/haproxy-node",
+    "/etc/sudoers.d/haprion-node",
     "/etc/sysctl.d/60-haproxy.conf",
     "/etc/rsyslog.d/48-haproxy-manager-traffic.conf",
     "/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic",
-    "/etc/systemd/system/haproxy-traffic-log-prune.service",
-    "/etc/systemd/system/haproxy-traffic-log-prune.timer",
+    "/etc/systemd/system/haprion-traffic-log-prune.service",
+    "/etc/systemd/system/haprion-traffic-log-prune.timer",
 )
 SNAPSHOT_TREES = ("/usr/local/sbin", "/etc/haprion")
 #
@@ -412,7 +412,7 @@ def _holdings(host: Host, header: dict[str, Any]) -> dict[str, Any]:
     listing = {directory: _tree(host, directory) for directory in header.get("list", [])}
     wanted = set(header.get("hash", [])) | {p for paths in listing.values() for p in paths}
     run = str(header.get("run", ""))
-    one_time = f" haproxy-restore-{run}" if RUN_ID.fullmatch(run) else None
+    one_time = f" haprion-restore-{run}" if RUN_ID.fullmatch(run) else None
     return {
         "hashes": {
             path: _sha256(host.path(path), without=one_time if path == ROOT_KEYS else None)
@@ -1259,7 +1259,7 @@ def _apply(
 
 
 def _unit(run: str, what: str) -> str:
-    return f"haproxy-restore-{what}-{run}"
+    return f"haprion-restore-{what}-{run}"
 
 
 def network(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, Any]:
@@ -1375,9 +1375,9 @@ def _start(
     # so HAProxy runs on the bootstrap release first (see BOOTSTRAP_CONFIG).
     host.run(["systemctl", "start", "haproxy"])
     if certificates:
-        host.run(["/usr/local/sbin/haproxy-cert-pull", *certificates])
+        host.run(["/usr/local/sbin/haprion-cert-pull", *certificates])
     report.step("certificates", pulled=list(certificates))
-    host.run(["/usr/local/sbin/haproxy-pull-deploy"])
+    host.run(["/usr/local/sbin/haprion-pull-deploy"])
     report.step("config", pulled=True)
 
     if header["keepalived"] == "start":

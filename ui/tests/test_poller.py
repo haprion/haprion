@@ -547,7 +547,7 @@ class TheObjectsReadingSendsWhatItHolds(unittest.TestCase):
 
 
 class TheLocalReadingsComeFromOneCall(unittest.TestCase):
-    """`_local_readings`: one `haproxy-readings-helper` call, each answer as its own reading (N2)."""
+    """`_local_readings`: one `haprion-readings-helper` call, each answer as its own reading (N2)."""
 
     class Pool:
         def connection(self) -> Any:

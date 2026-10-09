@@ -1,4 +1,4 @@
-"""haproxy-ui-user - accounts, from a root shell and nowhere else.
+"""haprion-user - accounts, from a root shell and nowhere else.
 
 The first admin has to come from somewhere, and every alternative is worse. A
 default password shipped with the installation is a password that survives in
@@ -396,7 +396,7 @@ def command_list(environment: Environment, _: argparse.Namespace) -> int:
         rows = cursor.fetchall()
     if not rows:
         print("no accounts. Create the first one with:")
-        print(f"  sudo haproxy-ui-user -e {environment.name} add <username> --role admin")
+        print(f"  sudo haprion-user -e {environment.name} add <username> --role admin")
         return 0
     print(f"{'USERNAME':<24} {'ROLE':<8} {'KIND':<12} {'STATE':<9} {'CREATED':<12} SESSIONS")
     for username, role, disabled, source, break_glass, created, sessions in rows:
@@ -422,7 +422,7 @@ COMMANDS = {
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="haproxy-ui-user",
+        prog="haprion-user",
         description="Manage interface accounts. Root only; passwords are never arguments.",
     )
     parser.add_argument(

@@ -1161,7 +1161,7 @@ def _server(value: Any, location: str) -> Server:
         #
         drain = (
             "; to take the server out for a while, drain it under Servers on the "
-            "object's page or with haproxy-server-state"
+            "object's page or with haprion-server-state"
             if weight == 0 and not isinstance(weight, bool)
             else ""
         )
@@ -1871,7 +1871,7 @@ def _advanced(
 def advanced_placement(name: str, document: bytes) -> advanced_config.Placement | None:
     """Where each line of an object's advanced config goes, refused lines included.
 
-    What `haproxy-objects --advanced` prints and the interface's *Check* shows,
+    What `haprion-objects --advanced` prints and the interface's *Check* shows,
     from one function so the two cannot disagree. It reads only what the
     placement depends on - the shape, whether the form has a rate limit, and
     whether the pool is written by hand - so a text with refused lines can

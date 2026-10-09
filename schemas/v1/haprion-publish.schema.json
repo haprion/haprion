@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-publish.schema.json",
+  "title": "haprion-publish JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "publish" },
+        "outcome": { "enum": ["done", "failed", "blocked"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/publish_result" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/publish_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "validation_issue": {
+      "type": "object",
+      "required": ["code", "message", "object_id", "field", "line"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "object_id": { "type": ["string", "null"], "maxLength": 255 },
+        "field": { "type": ["string", "null"], "maxLength": 255 },
+        "line": { "type": ["integer", "null"], "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "publish_result": {
+      "type": "object",
+      "required": [
+        "changed",
+        "version",
+        "hash",
+        "published_at",
+        "comment",
+        "validation",
+        "deployment_required",
+        "next_command"
+      ],
+      "properties": {
+        "changed": { "type": "boolean" },
+        "version": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/version" },
+            { "type": "null" }
+          ]
+        },
+        "hash": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/hash" },
+            { "type": "null" }
+          ]
+        },
+        "published_at": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "comment": { "type": "string", "maxLength": 4096 },
+        "validation": {
+          "type": "object",
+          "required": ["valid", "issues"],
+          "properties": {
+            "valid": { "type": "boolean" },
+            "issues": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/validation_issue" }
+            }
+          },
+          "additionalProperties": true
+        },
+        "deployment_required": { "type": "boolean" },
+        "next_command": { "type": ["string", "null"], "maxLength": 1024 }
+      },
+      "additionalProperties": true
+    }
+  }
+}

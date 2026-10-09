@@ -1,6 +1,6 @@
-"""`haproxy-cert-deploy` - put the cluster's referenced certificates on its nodes.
+"""`haprion-cert-deploy` - put the cluster's referenced certificates on its nodes.
 
-The thin half. Same shape as `haproxy-deploy` and for the same reasons: it
+The thin half. Same shape as `haprion-deploy` and for the same reasons: it
 resolves the cluster, hands one structured request across the boundary, and
 lets the privileged half stream the rollout straight to this process's stdout.
 
@@ -22,16 +22,16 @@ from haproxy_mgmt.cli.caller import usage
 
 OPERATION = "cert_deploy_cluster"
 
-HELPER = "/opt/haprion/current/bin/haproxy-cert-deploy-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cert-deploy-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-cert-deploy -c <cluster> [--allow-vip-unknown] [--json]\n"
+    "  haprion-cert-deploy -c <cluster> [--allow-vip-unknown] [--json]\n"
     "\n"
     "Examples:\n"
-    "  haproxy-cert-deploy -c internal\n"
-    "  haproxy-cert-deploy -c external --json\n"
+    "  haprion-cert-deploy -c internal\n"
+    "  haprion-cert-deploy -c external --json\n"
     "\n"
     "Options:\n"
     "  --allow-vip-unknown\n"

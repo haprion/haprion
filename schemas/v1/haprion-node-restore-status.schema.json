@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-node-restore-status.schema.json",
+  "title": "HAProxy node restore: status",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "node_restore_status"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed",
+            "blocked"
+          ]
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "done"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "result": {
+      "description": "How a run stands, read from its directory on the management host. `finished` carries what `node_restore` answered, or would have: `outcome`, `error` and its `result`. `stopped` began writing to the target and left no outcome. `running` is a step working in the run now; a restore holding the helper's socket answers `blocked` with `restore_busy` instead.",
+      "type": "object",
+      "required": [
+        "run",
+        "state"
+      ],
+      "properties": {
+        "run": {
+          "$ref": "haprion-node-restore.schema.json#/$defs/run_id"
+        },
+        "state": {
+          "enum": [
+            "running",
+            "finished",
+            "stopped",
+            "not_started"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result": {
+          "$ref": "haprion-node-restore.schema.json#/$defs/result"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

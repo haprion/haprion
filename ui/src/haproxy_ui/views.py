@@ -595,7 +595,7 @@ def read_source(
         rows = [row for row in rows if getattr(row, "cluster", None) == cluster]
     #
     # A cluster the cluster file no longer names has been removed (Settings or
-    # `haproxy-cluster remove`), and its last cached readings are never deleted:
+    # `haprion-cluster remove`), and its last cached readings are never deleted:
     # the poller has no delete privilege. Drawn, it stayed on every page as "Not
     # configured" for good (review 2026-09-30 F1). With the list from `ui.toml`
     # the old card stays, because there a removal is a hand edit worth seeing.
@@ -3120,7 +3120,7 @@ def build_router(config: Config) -> APIRouter:
                 config,
                 form,
                 problem="The installation's sealing key is not configured, so a file cannot "
-                "be uploaded. Import it with haproxy-cert-import on the manager.",
+                "be uploaded. Import it with haprion-cert-import on the manager.",
             )
         choices = _certificate_choices(request, config)
         try:
@@ -3182,7 +3182,7 @@ def build_router(config: Config) -> APIRouter:
                 request,
                 config,
                 "The installation's sealing key is not configured, so a file cannot be "
-                "uploaded. Import it with haproxy-cert-import on the manager.",
+                "uploaded. Import it with haprion-cert-import on the manager.",
                 back=f"/certificates?view=registry&open={certificate_id}",
             )
         back = (
@@ -4106,7 +4106,7 @@ def build_router(config: Config) -> APIRouter:
                 #
                 # The registry marks one certificate and nginx serves another:
                 # an install that has not happened yet, or a pair replaced by
-                # hand with haproxy-ui-tls. Said, not resolved here.
+                # hand with haprion-tls. Said, not resolved here.
                 #
                 "mismatch": entry is not None
                 and served is not None
@@ -4344,7 +4344,7 @@ def build_router(config: Config) -> APIRouter:
     # 2026-09-27, reverses that part of B187). Refuses the admin's own
     # account - that is the account menu's - and leaves the last active admin
     # to the database, which refuses under a lock whichever path asks. The
-    # verbs and audit names are `haproxy-ui-user`'s, with `via: web`.
+    # verbs and audit names are `haprion-user`'s, with `via: web`.
     #
 
     def _account_rows(request: Request) -> list[db.AccountRow]:

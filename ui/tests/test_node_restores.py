@@ -71,13 +71,13 @@ def job(
 PREPARED = job(
     "node_restore_prepare",
     "done",
-    result=fixture("haproxy-node-restore-prepare", "done.json"),
+    result=fixture("haprion-node-restore-prepare", "done.json"),
     number=1,
 )
 PREVIEWED = job(
     "node_restore_preview",
     "done",
-    result=fixture("haproxy-node-restore-preview", "done.json"),
+    result=fixture("haprion-node-restore-preview", "done.json"),
     number=2,
 )
 SOON = PREPARED.created_at + timedelta(minutes=10)
@@ -85,7 +85,7 @@ LATE = PREPARED.created_at + node_restores.EXPIRES_AFTER + timedelta(minutes=1)
 BLOCKED_PREVIEW = job(
     "node_restore_preview",
     "blocked",
-    result=fixture("haproxy-node-restore-preview", "blocked.json"),
+    result=fixture("haprion-node-restore-preview", "blocked.json"),
     number=2,
 )
 
@@ -194,7 +194,7 @@ class TheRunPage(unittest.TestCase):
     def test_prepared_asks_for_the_fingerprint_with_the_line_to_paste(self) -> None:
         restore = self.view(PREPARED)
         self.assertEqual(restore.stage, "fingerprint")
-        self.assertIn("haproxy-restore-r260101-0000aaaa", restore.paste)
+        self.assertIn("haprion-restore-r260101-0000aaaa", restore.paste)
         self.assertEqual(restore.mode, "test")
         self.assertEqual(restore.node, "node-a")
 
@@ -204,7 +204,7 @@ class TheRunPage(unittest.TestCase):
                 "node_restore_prepare",
                 "blocked",
                 result={
-                    **fixture("haproxy-node-restore", "refused.json"),
+                    **fixture("haprion-node-restore", "refused.json"),
                     "operation": "node_restore_prepare",
                 },
             )
@@ -236,7 +236,7 @@ class TheRunPage(unittest.TestCase):
             job(
                 "node_restore",
                 "failed",
-                result=fixture("haproxy-node-restore", "rolled-back.json"),
+                result=fixture("haprion-node-restore", "rolled-back.json"),
                 number=3,
             ),
         )
@@ -252,7 +252,7 @@ class TheRunPage(unittest.TestCase):
             job(
                 "node_restore",
                 "blocked",
-                result=fixture("haproxy-node-restore", "refused.json"),
+                result=fixture("haprion-node-restore", "refused.json"),
                 number=3,
             ),
         )
@@ -260,7 +260,7 @@ class TheRunPage(unittest.TestCase):
         self.assertIn("preview again", restore.error)
 
     def test_a_done_run_carries_its_address_and_warnings(self) -> None:
-        done = fixture("haproxy-node-restore", "done.json")
+        done = fixture("haprion-node-restore", "done.json")
         done["result"]["sessions"]["finish"]["warnings"] = ["prune timer state unknown"]
         restore = self.view(PREPARED, PREVIEWED, job("node_restore", "done", result=done, number=3))
         self.assertEqual(restore.stage, "done")
@@ -269,7 +269,7 @@ class TheRunPage(unittest.TestCase):
         self.assertEqual(restore.warning_commands, ("",))
 
     def test_a_warning_one_command_answers_carries_that_command(self) -> None:
-        done = fixture("haproxy-node-restore", "done.json")
+        done = fixture("haprion-node-restore", "done.json")
         done["result"]["sessions"]["apply"]["warnings"] = [
             "node preparation: /run/haproxy/keepalived.state does not exist yet. A config reload"
             " does not always produce a state transition - force one by restarting keepalived"
@@ -305,7 +305,7 @@ class RecentRuns(unittest.TestCase):
 
     def test_a_restored_run_is_not_listed(self) -> None:
         done = job(
-            "node_restore", "done", result=fixture("haproxy-node-restore", "done.json"), number=3
+            "node_restore", "done", result=fixture("haprion-node-restore", "done.json"), number=3
         )
         self.assertEqual(
             node_restores.recent_runs([PREPARED, PREVIEWED, done], shown=lambda m: m, now=SOON), {}
@@ -315,7 +315,7 @@ class RecentRuns(unittest.TestCase):
         failed = job(
             "node_restore",
             "failed",
-            result=fixture("haproxy-node-restore", "rolled-back.json"),
+            result=fixture("haprion-node-restore", "rolled-back.json"),
             number=3,
         )
         recent = node_restores.recent_runs(
@@ -352,7 +352,7 @@ class TheHour(unittest.TestCase):
         failed = job(
             "node_restore",
             "failed",
-            result=fixture("haproxy-node-restore", "rolled-back.json"),
+            result=fixture("haprion-node-restore", "rolled-back.json"),
             number=3,
         )
         self.assertEqual(viewed([PREPARED, PREVIEWED, failed], LATE).stage, "failed")
@@ -365,7 +365,7 @@ class TheHour(unittest.TestCase):
         failed = job(
             "node_restore",
             "failed",
-            result=fixture("haproxy-node-restore", "rolled-back.json"),
+            result=fixture("haprion-node-restore", "rolled-back.json"),
             number=3,
         )
         self.assertEqual(
@@ -401,7 +401,7 @@ class Discarding(unittest.TestCase):
         refused = job(
             "node_restore_discard",
             "blocked",
-            result=fixture("haproxy-node-restore-discard", "refused.json"),
+            result=fixture("haprion-node-restore-discard", "refused.json"),
             number=3,
         )
         restore = viewed([PREPARED, refused], SOON)
@@ -419,9 +419,9 @@ def asked(state: str, name: str | None = None, *, body: dict[str, Any] | None = 
     """A status job after the lost run job: a fixture's answer, or one standing."""
 
     if name is not None:
-        result = fixture("haproxy-node-restore-status", name)
+        result = fixture("haprion-node-restore-status", name)
     elif body is not None:
-        result = {**fixture("haproxy-node-restore-status", "not-started.json"), "result": body}
+        result = {**fixture("haprion-node-restore-status", "not-started.json"), "result": body}
     else:
         result = None
     return job("node_restore_status", state, result=result, number=4)
@@ -618,7 +618,7 @@ class FollowingARun(RestoreRouteTestCase):
         self.assertIn("Preparing restore.", page)
 
     def test_a_warning_s_command_is_offered_with_a_copy_button(self) -> None:
-        done = fixture("haproxy-node-restore", "done.json")
+        done = fixture("haprion-node-restore", "done.json")
         done["result"]["sessions"]["apply"]["warnings"] = [
             "node preparation: /run/haproxy/keepalived.state does not exist yet."
         ]
@@ -632,7 +632,7 @@ class FollowingARun(RestoreRouteTestCase):
     def test_a_prepared_run_shows_the_line_and_asks_for_the_fingerprint(self) -> None:
         self.runs = [PREPARED]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
-        self.assertIn("haproxy-restore-r260101-0000aaaa", page)
+        self.assertIn("haprion-restore-r260101-0000aaaa", page)
         self.assertIn('<pre class="receiver-command" data-copy-beside>', page)
         self.assertIn('maxlength="512"', page)
         self.assertIn("/copy-command.js", page)
@@ -715,7 +715,7 @@ class FollowingARun(RestoreRouteTestCase):
             job(
                 "node_restore",
                 "done",
-                result=fixture("haproxy-node-restore", "done.json"),
+                result=fixture("haprion-node-restore", "done.json"),
                 number=3,
             ),
         ]
@@ -759,7 +759,7 @@ class FollowingARun(RestoreRouteTestCase):
 OVERWRITE_PREPARED = job(
     "node_restore_prepare",
     "done",
-    result=fixture("haproxy-node-restore-prepare", "done.json"),
+    result=fixture("haprion-node-restore-prepare", "done.json"),
     number=1,
     target="192.0.2.21",
     test=None,
@@ -767,7 +767,7 @@ OVERWRITE_PREPARED = job(
 OVERWRITE_PREVIEWED = job(
     "node_restore_preview",
     "done",
-    result=fixture("haproxy-node-restore-preview", "overwrite.json"),
+    result=fixture("haprion-node-restore-preview", "overwrite.json"),
     number=2,
 )
 
@@ -844,7 +844,7 @@ class OverwritingANode(RestoreRouteTestCase):
         self.assertIn("Overwrite node-a</button>", page)
 
     def test_a_sick_neighbour_under_the_vip_asks_for_the_traffic_tick(self) -> None:
-        document = fixture("haproxy-node-restore-preview", "overwrite.json")
+        document = fixture("haprion-node-restore-preview", "overwrite.json")
         document["result"]["overwrite"].update(neighbour_healthy=False, detail="HAProxy down")
         self.runs = [
             OVERWRITE_PREPARED,
@@ -874,7 +874,7 @@ class OverwritingANode(RestoreRouteTestCase):
         failed = job(
             "node_restore",
             "failed",
-            result=fixture("haproxy-node-restore", "overwrite-rolled-back.json"),
+            result=fixture("haprion-node-restore", "overwrite-rolled-back.json"),
             number=3,
             confirm="node-a",
         )
@@ -946,7 +946,7 @@ class DiscardingARun(RestoreRouteTestCase):
 
     def test_a_restored_or_working_run_is_not_discarded(self) -> None:
         done = job(
-            "node_restore", "done", result=fixture("haproxy-node-restore", "done.json"), number=3
+            "node_restore", "done", result=fixture("haprion-node-restore", "done.json"), number=3
         )
         client = self.writing_client()
         for rows in ([PREPARED, PREVIEWED, done], [job("node_restore_prepare", "running")]):

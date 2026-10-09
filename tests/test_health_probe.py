@@ -27,7 +27,7 @@ from typing import Any
 
 from tests import spawned
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-health-probe"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-health-probe"
 
 
 def free_port() -> int:

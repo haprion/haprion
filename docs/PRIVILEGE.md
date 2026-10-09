@@ -42,7 +42,7 @@ is a forced command with no argument, and each has its own key; none of them is 
 ### Identity provisioning
 
 Account names are deployment data supplied in a protected identity-policy file. The
-`haproxy-render-sysusers --policy <file>` command validates that file and renders a declarative
+`haprion-render-sysusers --policy <file>` command validates that file and renders a declarative
 `sysusers.d` fragment. It creates three distinct, locked, no-login service accounts and the
 read-only production config group; only the worker receives supplementary membership in that
 group. Rendering does not modify the system.

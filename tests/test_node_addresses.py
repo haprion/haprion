@@ -1,6 +1,6 @@
 """What a node measures about the keepalived address list it was given.
 
-The three functions are extracted from `install/node/haproxy-node-status`
+The three functions are extracted from `install/node/haprion-node-status`
 verbatim and run against real files in a temporary directory, the way
 `test_node_vip_detection` extracts the VIP parsing. The node script is not
 importable - it is installed on a node, not packaged - and copying its logic
@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 READING = re.compile(
     r"^def address_list\(path\):.*?(?=^def runtime_info\()", re.DOTALL | re.MULTILINE
 )

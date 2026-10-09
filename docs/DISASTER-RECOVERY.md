@@ -116,14 +116,14 @@ These exist only on the management host. Losing them is not recoverable from the
 After restoring the management host, before restoring any node:
 
 - Check the configuration repositories. A restore that put the history and the draft on different
-  paths leaves a link pointing at the old one; `haproxy-config-status -c <cluster>` reports it, and
+  paths leaves a link pointing at the old one; `haprion-config-status -c <cluster>` reports it, and
   `git worktree repair` fixes it.
 - Check the CLI release. A node restore prepares the node with the node bundle of the management
   host's own release, and a host restored from an older backup would give the restored node older
   scripts than its neighbour. `/opt/haprion/current/INSTALLATION.json` names the release's
   bundle (`node_bundle.commit`); it must be the one the nodes were last prepared with, so note that
   at every node roll-out: `<...>`. Node status cannot tell you: it compares a node's scripts with
-  that node's own record. After a restore, `sha256sum /usr/local/sbin/haproxy-*` on both nodes
+  that node's own record. After a restore, `sha256sum /usr/local/sbin/haprion-*` on both nodes
   should match.
 
 ### 3. Failing over
@@ -160,13 +160,13 @@ up under a test hostname, address and VIP, with keepalived masked, next to the p
 - [ ] The management host works, or has been restored first, and its CLI release is the one the
       nodes run (section 2).
 - [ ] The node is not suspected compromised ([When the restore is the wrong tool](#when-the-restore-is-the-wrong-tool)).
-- [ ] Traffic is on the neighbour, and the neighbour is healthy (`haproxy-status -c <cluster>`).
-- [ ] A recent archive of the lost node exists (`haproxy-list-backups --node <node>`), and you have
+- [ ] Traffic is on the neighbour, and the neighbour is healthy (`haprion-status -c <cluster>`).
+- [ ] A recent archive of the lost node exists (`haprion-list-backups --node <node>`), and you have
       chosen which one.
 - [ ] The old node is off and cannot come back by itself.
 - [ ] An empty VM with a temporary address is running (section 1).
-- [ ] `haproxy-node-restore prepare`, paste the line on the VM, `preview`: read every line of the plan.
+- [ ] `haprion-node-restore prepare`, paste the line on the VM, `preview`: read every line of the plan.
 - [ ] `run`, confirmed with the node's name.
-- [ ] `haproxy-status -c <cluster>`: the node is `BACKUP` and runs the published version.
+- [ ] `haprion-status -c <cluster>`: the node is `BACKUP` and runs the published version.
 - [ ] Your own steps from section 4.
 - [ ] A state backup of the cluster.

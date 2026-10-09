@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "blocked",
+  "operation": "deploy",
+  "cluster": "alpha",
+  "request_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef",
+  "result": {
+    "target": {
+      "hash": "1111111111111111111111111111111111111111",
+      "version": 8
+    },
+    "converged": false,
+    "override_used": false,
+    "initial_summary": {
+      "configured_nodes": 2,
+      "reachable_nodes": 2,
+      "valid_status_nodes": 2,
+      "vip_owner_count": 1,
+      "vip_owners": [
+        "node-a"
+      ],
+      "vip_state": "single_owner",
+      "vip_unknown_nodes": []
+    },
+    "final_summary": {
+      "configured_nodes": 2,
+      "reachable_nodes": 2,
+      "valid_status_nodes": 2,
+      "vip_owner_count": 1,
+      "vip_owners": [
+        "node-a"
+      ],
+      "vip_state": "single_owner",
+      "vip_unknown_nodes": []
+    },
+    "nodes": [
+      {
+        "name": "node-a",
+        "reachable": true,
+        "current_before": false,
+        "action": "none",
+        "outcome": "not_attempted",
+        "verified": false,
+        "error": null
+      },
+      {
+        "name": "node-b",
+        "reachable": true,
+        "current_before": false,
+        "action": "none",
+        "outcome": "not_attempted",
+        "verified": false,
+        "error": null
+      }
+    ]
+  },
+  "warnings": [],
+  "error": {
+    "code": "certificates_not_deployed",
+    "message": "referenced certificates are not on every node: node-a (missing example.net); node-b (missing example.net). Run haprion-cert-deploy -c alpha first, then deploy again",
+    "node": null,
+    "details": {
+      "next_command": "haprion-cert-deploy -c alpha",
+      "nodes": [
+        {
+          "missing": [
+            "example.net"
+          ],
+          "node": "node-a",
+          "stale": []
+        },
+        {
+          "missing": [
+            "example.net"
+          ],
+          "node": "node-b",
+          "stale": []
+        }
+      ]
+    }
+  }
+}

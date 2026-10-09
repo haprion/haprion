@@ -18,7 +18,7 @@ BASE = Path(__file__).resolve().parents[1]
 
 
 def load_script() -> ModuleType:
-    path = BASE / "install" / "node" / "haproxy-traffic-log-read"
+    path = BASE / "install" / "node" / "haprion-traffic-log-read"
     spec = importlib.util.spec_from_loader(
         "traffic_log_node", SourceFileLoader("traffic_log_node", str(path))
     )
@@ -118,7 +118,7 @@ if __name__ == "__main__":
 def render_rule() -> str:
     """The rule exactly as the node installer writes it."""
 
-    script = BASE / "install" / "node" / "haproxy-traffic-log-enable"
+    script = BASE / "install" / "node" / "haprion-traffic-log-enable"
     return subprocess.run(
         [str(script), "--print"], capture_output=True, text=True, check=True
     ).stdout
@@ -296,12 +296,12 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
         self.rule = render_rule()
 
     def test_it_sorts_before_ubuntus_terminating_haproxy_rule(self) -> None:
-        script = (BASE / "install" / "node" / "haproxy-traffic-log-enable").read_text()
+        script = (BASE / "install" / "node" / "haprion-traffic-log-enable").read_text()
 
         self.assertIn('RSYSLOG_RULE="/etc/rsyslog.d/48-haproxy-manager-traffic.conf"', script)
 
     def test_the_restart_loss_window_is_reported_for_enable_and_disable(self) -> None:
-        script = (BASE / "install" / "node" / "haproxy-traffic-log-enable").read_text()
+        script = (BASE / "install" / "node" / "haprion-traffic-log-enable").read_text()
 
         message = "HAProxy cannot buffer log lines during that brief window"
         self.assertEqual(script.count(message), 2)
@@ -389,7 +389,7 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
 
 
 def load_prune() -> ModuleType:
-    path = BASE / "install" / "node" / "haproxy-traffic-log-prune"
+    path = BASE / "install" / "node" / "haprion-traffic-log-prune"
     spec = importlib.util.spec_from_loader(
         "traffic_log_prune", SourceFileLoader("traffic_log_prune", str(path))
     )
@@ -466,7 +466,7 @@ class TrafficLogRetentionTests(unittest.TestCase):
 
 class TrafficLogRetentionUnitTests(unittest.TestCase):
     def setUp(self) -> None:
-        script = BASE / "install" / "node" / "haproxy-traffic-log-enable"
+        script = BASE / "install" / "node" / "haprion-traffic-log-enable"
         printed = subprocess.run(
             [str(script), "--print-units"], capture_output=True, text=True, check=True
         ).stdout
@@ -488,9 +488,9 @@ class TrafficLogRetentionUnitTests(unittest.TestCase):
         assert analyze is not None
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "haproxy-traffic-log-prune.service").write_text(self.service)
-            (root / "haproxy-traffic-log-prune.timer").write_text(self.timer)
-            for unit in ("haproxy-traffic-log-prune.timer", "haproxy-traffic-log-prune.service"):
+            (root / "haprion-traffic-log-prune.service").write_text(self.service)
+            (root / "haprion-traffic-log-prune.timer").write_text(self.timer)
+            for unit in ("haprion-traffic-log-prune.timer", "haprion-traffic-log-prune.service"):
                 result = subprocess.run(
                     [analyze, "verify", str(root / unit)],
                     capture_output=True,
@@ -506,7 +506,7 @@ class TrafficLogRetentionUnitTests(unittest.TestCase):
                 complaints = [
                     line
                     for line in (result.stderr + result.stdout).splitlines()
-                    if line.strip() and "haproxy-traffic-log-prune" in line
+                    if line.strip() and "haprion-traffic-log-prune" in line
                 ]
 
                 self.assertEqual(

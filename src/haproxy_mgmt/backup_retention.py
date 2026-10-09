@@ -5,7 +5,7 @@ is root-installed by hand and this is something an administrator changes from
 the Backups page with the schedule. So it lives in one small root-owned file
 per cluster, next to the runtime policy, read by whoever prunes - the timer's
 service, the socket helper behind *Back up now*, and the break-glass
-``sudo haproxy-state-backup``. One reader for all three, because a manual run
+``sudo haprion-state-backup``. One reader for all three, because a manual run
 that pruned to the code's default would delete what the schedule promised to
 keep.
 

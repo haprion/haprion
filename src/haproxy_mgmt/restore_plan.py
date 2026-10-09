@@ -85,7 +85,7 @@ APT_DIRECTORIES = ("/etc/apt/sources.list.d", "/etc/apt/preferences.d", "/etc/ap
 #
 SHARED_DIRECTORIES = {
     "/etc/sysctl.d": frozenset({"/etc/sysctl.d/60-haproxy.conf"}),
-    "/etc/sudoers.d": frozenset({"/etc/sudoers.d/haproxy-node"}),
+    "/etc/sudoers.d": frozenset({"/etc/sudoers.d/haprion-node"}),
     "/etc/ssh/sshd_config.d": frozenset(),
 }
 # The product sets nothing in the SSH server's own file; the target's stays.
@@ -94,7 +94,7 @@ TARGET_FILES = frozenset({"/etc/ssh/sshd_config"})
 # What the release's node bundle writes on a restored node (B178, B180): the
 # node scripts and the record of which bundle they came from, by
 # 04-node-prepare, and the traffic log's rsyslog, AppArmor and retention files,
-# by haproxy-traffic-log-enable when the archive shows the log was on. The
+# by haprion-traffic-log-enable when the archive shows the log was on. The
 # archive's copies are of the release the node ran when it was archived.
 #
 SCRIPT_DIR = "/usr/local/sbin"
@@ -104,8 +104,8 @@ FROM_BUNDLE = frozenset(
         "/etc/haprion/node-installation.json",
         TRAFFIC_LOG_RULE,
         "/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic",
-        "/etc/systemd/system/haproxy-traffic-log-prune.service",
-        "/etc/systemd/system/haproxy-traffic-log-prune.timer",
+        "/etc/systemd/system/haprion-traffic-log-prune.service",
+        "/etc/systemd/system/haprion-traffic-log-prune.timer",
     }
 )
 #
@@ -186,7 +186,7 @@ class RestorePlan:
     left_out: tuple[str, ...]
     # Archived files the node bundle writes in its own version instead.
     from_bundle: tuple[str, ...]
-    # The archive shows the traffic log was on; haproxy-traffic-log-enable runs.
+    # The archive shows the traffic log was on; haprion-traffic-log-enable runs.
     traffic_log: bool
     parents: tuple[str, ...]
     network: tuple[PlannedFile, ...]

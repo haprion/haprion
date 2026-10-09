@@ -212,7 +212,7 @@ class PublishTests(PublishFixture):
             before = git(self.repo, "rev-parse", "HEAD")
             self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
             code, stdout, stderr = self.run_publish(policy_path, self.request())
-            document = assert_contract("haproxy-publish", stdout)
+            document = assert_contract("haprion-publish", stdout)
             result = document["result"]
 
             self.assertEqual((code, stderr), (0, ""))
@@ -223,7 +223,7 @@ class PublishTests(PublishFixture):
             self.assertEqual(result["hash"], git(self.repo, "rev-parse", "HEAD"))
             self.assertNotEqual(result["hash"], before)
             self.assertIs(result["deployment_required"], True)
-            self.assertEqual(result["next_command"], "haproxy-deploy -c alpha")
+            self.assertEqual(result["next_command"], "haprion-deploy -c alpha")
             self.assertEqual(result["comment"], "Added serverxyz")
             self.assertEqual(git(self.repo, "log", "-1", "--format=%s"), "Added serverxyz")
 
@@ -250,7 +250,7 @@ class PublishTests(PublishFixture):
             code, stdout, _ = self.run_publish(policy_path, self.request())
 
             self.assertEqual(code, 0)
-            document = assert_contract("haproxy-publish", stdout)
+            document = assert_contract("haprion-publish", stdout)
             head = git(self.repo, "rev-parse", "HEAD")
             self.assertEqual(request_id_of(self.repo, head), document["request_id"])
             self.assertEqual(git(self.repo, "log", "-1", "--format=%s"), "Added serverxyz")
@@ -279,7 +279,7 @@ class PublishTests(PublishFixture):
             policy_path = self.runtime(Path(raw), linked_worktree=True)
             self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
             code, stdout, stderr = self.run_publish(policy_path, self.request())
-            result = assert_contract("haproxy-publish", stdout)["result"]
+            result = assert_contract("haprion-publish", stdout)["result"]
             self.assertEqual((code, stderr), (0, ""))
             self.assertEqual(result["version"], 2)
             self.assertEqual(git(self.repo, "status", "--porcelain"), "")
@@ -319,7 +319,7 @@ class PublishTests(PublishFixture):
             policy_path = self.runtime(Path(raw))
             before = git(self.repo, "rev-parse", "HEAD")
             code, stdout, stderr = self.run_publish(policy_path, self.request())
-            document = assert_contract("haproxy-publish", stdout)
+            document = assert_contract("haprion-publish", stdout)
             result = document["result"]
             self.assertEqual((code, stderr), (0, ""))
             #
@@ -353,7 +353,7 @@ class RefusalTests(PublishFixture):
             code, stdout, stderr = self.run_publish(policy_path, stream)
             self.assertEqual(code, 75)
             self.assertIn("changed after this candidate was prepared", stderr)
-            document = assert_contract("haproxy-publish", stdout)
+            document = assert_contract("haprion-publish", stdout)
             self.assertEqual(document["outcome"], "blocked")
             self.assertEqual(document["error"]["code"], "base_version_changed")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
@@ -370,7 +370,7 @@ class RefusalTests(PublishFixture):
                 valid=False,
                 diagnostics="[ALERT] parsing error\n",
             )
-            document = assert_contract("haproxy-publish", stdout)
+            document = assert_contract("haprion-publish", stdout)
             self.assertEqual(code, 65)
             self.assertIn("configuration is invalid", stderr)
             self.assertEqual(document["outcome"], "failed")
@@ -392,7 +392,7 @@ class RefusalTests(PublishFixture):
                 code, stdout, stderr = self.run_publish(policy_path, stream)
                 self.assertEqual(code, 65)
                 self.assertIn("ERROR:", stderr)
-                document = assert_contract("haproxy-publish", stdout)
+                document = assert_contract("haprion-publish", stdout)
                 self.assertEqual(document["error"]["code"], "bad_input")
 
     def test_a_second_publish_with_the_release_in_place_asks_for_no_deploy(self) -> None:
@@ -407,7 +407,7 @@ class RefusalTests(PublishFixture):
             code, stdout, _ = self.run_publish(policy_path, self.request())
 
             self.assertEqual(code, 0)
-            result = assert_contract("haproxy-publish", stdout)["result"]
+            result = assert_contract("haprion-publish", stdout)["result"]
             self.assertFalse(result["changed"])
             self.assertIs(result["deployment_required"], False)
             self.assertIsNone(result["next_command"])
@@ -438,7 +438,7 @@ class RefusalTests(PublishFixture):
             code, stdout, _ = self.run_publish(policy_path, self.request())
 
             self.assertEqual(code, 0)
-            result = assert_contract("haproxy-publish", stdout)["result"]
+            result = assert_contract("haprion-publish", stdout)["result"]
             self.assertFalse(result["changed"])
             self.assertEqual(count_versions(self.repo), versions)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
@@ -464,7 +464,7 @@ class RefusalTests(PublishFixture):
                 code, stdout, _ = self.run_publish(policy_path, self.request())
 
             self.assertEqual(code, 75)
-            document = assert_contract("haproxy-publish", stdout)
+            document = assert_contract("haprion-publish", stdout)
             self.assertEqual(document["outcome"], "blocked")
             self.assertEqual(document["error"]["code"], "operation_locked")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)

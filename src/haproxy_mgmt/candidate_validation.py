@@ -401,7 +401,7 @@ def sandbox_command(
             # Nothing is lost by this that was ever worth much. The shell path
             # resolved those names on the MANAGER, which says nothing about
             # whether the nodes can resolve them - and the nodes check for
-            # themselves: haproxy-pull-deploy runs `haproxy -c` before the
+            # themselves: haprion-pull-deploy runs `haproxy -c` before the
             # symlink swap and again after it, and rolls back if either fails.
             # That check runs with the node's own resolver, which is the only
             # one whose answer matters.

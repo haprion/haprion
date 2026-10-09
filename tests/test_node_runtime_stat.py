@@ -1,6 +1,6 @@
 """What a node makes of `show stat`, and what it refuses to make of it.
 
-The parsing is extracted from `install/node/haproxy-node-status` verbatim and
+The parsing is extracted from `install/node/haprion-node-status` verbatim and
 run against captured output, the way `test_node_vip_detection` extracts the VIP
 parser. That is deliberate: the script is installed on the nodes rather than
 imported, so a test that reimplemented the parsing would prove nothing about
@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 PARSING = re.compile(r"^MAX_STAT_ROWS = .*?(?=^def ask_runtime\()", re.DOTALL | re.MULTILINE)
 
 #

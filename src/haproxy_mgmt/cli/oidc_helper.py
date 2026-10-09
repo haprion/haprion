@@ -247,7 +247,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=False,
-            helper_name="haproxy-oidc-helper",
+            helper_name="haprion-oidc-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

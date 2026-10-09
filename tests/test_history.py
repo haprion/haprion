@@ -2,7 +2,7 @@
 
 The number an operator cares about is not in the listing: it is how many saved
 versions are newer than the published one. That is derived here, once, for both
-`haproxy-list --json` and the interface's helper - so these tests are where a
+`haprion-list --json` and the interface's helper - so these tests are where a
 wrong derivation is caught before two readers disagree about whether a cluster
 has anything waiting to go out.
 """

@@ -4,12 +4,12 @@
 #
 #     sudo ./05-platform-nginx <answers-file>
 #
-# Installs haproxy-ui-tls, renders the site, and - if no pair is installed yet -
+# Installs haprion-tls, renders the site, and - if no pair is installed yet -
 # generates a self-signed one so the UI is encrypted from the first login. The
 # session cookie is Secure, so plain HTTP is not a lesser option here; it is a
 # non-working one. See B21.
 #
-# Replacing that certificate later is haproxy-ui-tls, not a rerun of this
+# Replacing that certificate later is haprion-tls, not a rerun of this
 # script.
 #
 set -Eeuo pipefail
@@ -45,7 +45,7 @@ ensure_dir /etc/haprion root:root 755
 ensure_dir "$(dirname "$TLS_CERT")" root:root 700
 ensure_dir "$(dirname "$TLS_KEY")" root:root 700
 install_file /etc/haprion/ui-tls.conf root:root 644 "$(cat <<EOF
-# Read by haproxy-ui-tls. Written by 05-platform-nginx.
+# Read by haprion-tls. Written by 05-platform-nginx.
 TLS_CERT=${TLS_CERT}
 TLS_KEY=${TLS_KEY}
 SERVER_NAME=${SERVER_NAME}
@@ -53,12 +53,12 @@ EOF
 )"
 
 step "The command that owns the certificate"
-install -o root -g root -m 755 bin/haproxy-ui-tls /usr/local/sbin/haproxy-ui-tls
-log "  installed /usr/local/sbin/haproxy-ui-tls"
+install -o root -g root -m 755 bin/haprion-tls /usr/local/sbin/haprion-tls
+log "  installed /usr/local/sbin/haprion-tls"
 
 #
 # The receivers' snippet, included by the site below. Created empty only when
-# absent: once haproxy-cert-receiver has written it, a rerun of this step must
+# absent: once haprion-cert-receiver has written it, a rerun of this step must
 # not take the receivers with it. nginx refuses a site that includes a file
 # which does not exist, which is why the site is not rendered before this.
 #
@@ -68,7 +68,7 @@ if [[ -f /etc/nginx/snippets/haproxy-manager-receivers.conf ]]; then
     log "  ok       /etc/nginx/snippets/haproxy-manager-receivers.conf"
 else
     install_file /etc/nginx/snippets/haproxy-manager-receivers.conf root:root 644 \
-        "# Written by haproxy-cert-receiver from the certificate registry. Empty until the first https receiver."
+        "# Written by haprion-cert-receiver from the certificate registry. Empty until the first https receiver."
 fi
 
 #
@@ -113,13 +113,13 @@ fi
 step "Certificate"
 if [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]]; then
     log "  ok       a pair is already installed"
-    /usr/local/sbin/haproxy-ui-tls show
+    /usr/local/sbin/haprion-tls show
     # The public copy the site serves at /certdist/manager-ui.pem, for an
     # installation whose pair predates it; a new pair writes its own.
-    /usr/local/sbin/haproxy-ui-tls publish
+    /usr/local/sbin/haprion-tls publish
 else
     log "  none installed - generating a self-signed starting point"
-    /usr/local/sbin/haproxy-ui-tls self-signed
+    /usr/local/sbin/haprion-tls self-signed
 fi
 
 step "Starting"

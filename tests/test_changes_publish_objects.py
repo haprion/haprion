@@ -157,7 +157,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             code, document, err = self.publish_objects(policy, self.request())
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-changes-publish", json.dumps(document))
+            assert_contract("haprion-changes-publish", json.dumps(document))
             self.assertEqual(document["operation"], "changes_publish")
             self.assertTrue(document["result"]["changed"])
             self.assertEqual(document["result"]["objects"], ["shop"])
@@ -235,7 +235,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             )
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-changes-publish", json.dumps(document))
+            assert_contract("haprion-changes-publish", json.dumps(document))
             self.assertEqual(document["result"]["objects"], ["web_app"])
 
     def test_publishing_before_a_network_exists_is_refused_rather_than_invented(self) -> None:
@@ -393,7 +393,7 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             code, document, err = self.publish_objects(policy, io.BytesIO(sent))
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-changes-publish", json.dumps(document))
+            assert_contract("haprion-changes-publish", json.dumps(document))
             self.assertFalse(document["result"]["changed"])
             self.assertEqual(document["result"]["hash"], head)
             self.assertEqual(count_versions(self.repo), versions)

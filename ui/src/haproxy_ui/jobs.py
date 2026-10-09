@@ -232,7 +232,7 @@ def _owes_deployment(job: Job) -> tuple[bool, str | None]:
     """
 
     if job.operation == "cert_deploy" and job.state == "done" and job.cluster:
-        return True, f"haproxy-deploy -c {job.cluster}"
+        return True, f"haprion-deploy -c {job.cluster}"
 
     envelope = job.result
     if not isinstance(envelope, dict):
@@ -369,7 +369,7 @@ def certificate_block(job: Job) -> CertificateBlock | None:
         next_command=(
             command
             if isinstance(command, str) and command
-            else f"haproxy-cert-deploy -c {job.cluster}"
+            else f"haprion-cert-deploy -c {job.cluster}"
         ),
     )
 

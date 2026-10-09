@@ -1,13 +1,13 @@
 """The interface certificate's way to nginx (B188, D2).
 
 What is held here: a certificate that does not name the interface's
-`SERVER_NAME` never reaches `haproxy-ui-tls`; one nginx already serves is not
+`SERVER_NAME` never reaches `haprion-tls`; one nginx already serves is not
 installed again, so a renewal of something else costs no reload; the key is
 handed over in a private file that does not outlive the call; and the
 command's refusal comes back as the publisher's own kind of failure. The
 publisher gives the entry to its installer and to nothing else.
 
-`haproxy-ui-tls` itself is not run: it needs root, nginx and a reload. The
+`haprion-tls` itself is not run: it needs root, nginx and a reload. The
 runner is replaced by one that does what the command does to the served
 certificate - copies it into place - so the next call measures a real file.
 """
@@ -52,7 +52,7 @@ class TheConfiguration(unittest.TestCase):
 
     def test_the_installer_s_own_file_is_read(self) -> None:
         self.path.write_text(
-            "# Read by haproxy-ui-tls. Written by 05-platform-nginx.\n"
+            "# Read by haprion-tls. Written by 05-platform-nginx.\n"
             "TLS_CERT=/etc/haprion/tls/ui.crt\n"
             "TLS_KEY=/etc/haprion/tls/ui.key\n"
             "SERVER_NAME=Mgr.example.net\n"
@@ -115,7 +115,7 @@ class Installing(unittest.TestCase):
         return ui_interface.install(
             material,
             config_path=self.config,
-            command=Path("/usr/local/sbin/haproxy-ui-tls"),
+            command=Path("/usr/local/sbin/haprion-tls"),
             run=self.runner,
         )
 
@@ -128,7 +128,7 @@ class Installing(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         argv = self.calls[0]
         self.assertEqual(
-            argv[:4], ["/usr/local/sbin/haproxy-ui-tls", "--config", str(self.config), "install"]
+            argv[:4], ["/usr/local/sbin/haprion-tls", "--config", str(self.config), "install"]
         )
         mode, handed_from = self.handed[0]
         self.assertEqual(mode, 0o600)
@@ -271,7 +271,7 @@ class TheSocketHelper(Fixture):
         code, out, _ = self.ask({"id": "mgr.example.net"})
 
         self.assertEqual(code, 0)
-        document = assert_contract("haproxy-ui-tls-install", out)
+        document = assert_contract("haprion-tls-install", out)
         self.assertEqual(document["outcome"], "done")
         self.assertEqual(document["result"]["id"], "mgr.example.net")
         self.assertTrue(document["result"]["changed"])
@@ -285,7 +285,7 @@ class TheSocketHelper(Fixture):
             ("../etc/passwd", "bad_input"),
         ):
             code, out, _ = self.ask({"id": certificate_id})
-            document = assert_contract("haproxy-ui-tls-install", out)
+            document = assert_contract("haprion-tls-install", out)
             self.assertNotEqual(code, 0)
             self.assertEqual(document["error"]["code"], wanted, certificate_id)
         self.assertEqual(self.handed, [])
@@ -304,7 +304,7 @@ class TheSocketHelper(Fixture):
 
         code, out, _ = self.ask({"id": "mgr.example.net"}, installer=refusing)
 
-        document = assert_contract("haproxy-ui-tls-install", out)
+        document = assert_contract("haprion-tls-install", out)
         self.assertEqual(code, 64)
         self.assertEqual(document["error"]["code"], "name_mismatch")
 
@@ -351,7 +351,7 @@ class TheSocketClient(unittest.TestCase):
         with self.assertRaises(PublishError) as caught:
             self.answer(helper_socket.HelperUnavailable("nothing listens."))
         self.assertEqual(caught.exception.code, "dependency_unavailable")
-        self.assertIn("haproxy-ui-tls-helper.socket", str(caught.exception))
+        self.assertIn("haprion-tls-helper.socket", str(caught.exception))
 
         with self.assertRaises(PublishError) as caught:
             self.answer(helper_socket.HelperSilent("it stopped answering."))

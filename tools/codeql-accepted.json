@@ -23,7 +23,7 @@
     },
     {
       "rule": "py/insecure-protocol",
-      "path": "install/node/haproxy-health-probe",
+      "path": "install/node/haprion-health-probe",
       "message": "Insecure SSL/TLS protocol version TLSv1_1 allowed by [call to ssl.create_default_context](1).\nInsecure SSL/TLS protocol version TLSv1 allowed by [call to ssl.create_default_context](1).",
       "decided": "2026-09-05",
       "reason": "TLS 1.0 is not reachable and the alert overstates by naming it: MIN_VERSIONS is an allowlist of exactly TLSv1.1, TLSv1.2 and TLSv1.3, a target naming anything else is refused before a context exists, and minimum_version is always set explicitly rather than inherited from OpenSSL. What remains is that `legacy` floors at TLS 1.1, which is the feature B83 built for one named appliance on a network the operator owns - applied per target that asked for it and never to the rest of the request. The probe must not hold a floor of its own: HAProxy reaches the pool under the policy the object names, and a probe that refused what HAProxy accepts would report a healthy pool as broken."
@@ -75,7 +75,7 @@
       "path": "src/haproxy_mgmt/cert_publish.py",
       "message": "Overly permissive mask in chmod sets file to group readable.",
       "decided": "2026-09-17",
-      "reason": "The per-certificate directory a receiver fetches from (C7, B138). Group read and execute is what lets the receiver's own account reach the 0600 files inside it; the directory itself stays owned by root and not writable by the account, which is the point - a receiver reads what it was given and cannot replace it. The group is the account's own, created with it by haproxy-cert-receiver, so group read reaches one receiver and no other. Re-check if a receiver account is ever given a shared group."
+      "reason": "The per-certificate directory a receiver fetches from (C7, B138). Group read and execute is what lets the receiver's own account reach the 0600 files inside it; the directory itself stays owned by root and not writable by the account, which is the point - a receiver reads what it was given and cannot replace it. The group is the account's own, created with it by haprion-cert-receiver, so group read reaches one receiver and no other. Re-check if a receiver account is ever given a shared group."
     },
     {
       "rule": "py/overly-permissive-file",

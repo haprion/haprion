@@ -73,7 +73,7 @@ class BackupJobHelperTests(unittest.TestCase):
             requested,
             True,
             {
-                "unit": "haproxy-state-backup@alpha.timer",
+                "unit": "haprion-state-backup@alpha.timer",
                 "known": True,
                 "enabled": True,
                 "active": True,

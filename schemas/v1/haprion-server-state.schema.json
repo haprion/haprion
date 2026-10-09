@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-server-state.schema.json",
+  "title": "haprion-server-state-helper JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "server_state" },
+        "cluster": { "type": ["string", "null"] },
+        "outcome": { "enum": ["done", "partial", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/state_result" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "enum": ["done", "partial"] } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/state_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "state_result": {
+      "type": "object",
+      "required": ["object", "state", "nodes"],
+      "properties": {
+        "object": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$" },
+        "state": { "enum": ["ready", "drain", "maint"] },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["node", "servers"],
+            "properties": {
+              "node": { "type": "string", "minLength": 1 },
+              "servers": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "required": ["server", "guid", "outcome", "message"],
+                  "properties": {
+                    "server": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}/[^\\s/]+:[0-9]{1,5}$" },
+                    "guid": { "type": "string", "pattern": "^srv:[a-z][a-z0-9_-]{0,39}\\.[0-9a-f]{16}$" },
+                    "outcome": { "enum": ["done", "refused", "failed"] },
+                    "message": { "type": ["string", "null"], "maxLength": 300 }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

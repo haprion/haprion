@@ -1,10 +1,10 @@
-"""``haproxy-cluster`` - create a cluster with its first two nodes, or remove one (B211).
+"""``haprion-cluster`` - create a cluster with its first two nodes, or remove one (B211).
 
-    haproxy-cluster add -c <id> --display-name <name> --vip <address>
+    haprion-cluster add -c <id> --display-name <name> --vip <address>
                         --node-path <path> --certificate <id>
                         --host <first node> --host <second node>
                         [--prefix <length>] [--interface <name>] < blocks
-    haproxy-cluster remove -c <id>
+    haprion-cluster remove -c <id>
 
 The blocks are what `04-node-prepare` printed on the two nodes, one after the
 other on stdin, in the order of the `--host` options. Both go through the same
@@ -31,7 +31,7 @@ from haproxy_mgmt.node_enrollment import BLOCK_PREFIX, MAX_BLOCK_BYTES
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="haproxy-cluster")
+    parser = argparse.ArgumentParser(prog="haprion-cluster")
     actions = parser.add_subparsers(dest="action", required=True)
     create = actions.add_parser("add")
     create.add_argument("-c", "--cluster", required=True)
@@ -95,8 +95,8 @@ def main(
             f"Created {args.cluster} with {names}.\n"
             f"Host keys: {', '.join(str(item) for item in result.get('host_key_fingerprints', []))}\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
-            f"Next: publish its network and objects, then haproxy-cert-deploy -c {args.cluster} "
-            f"and haproxy-deploy -c {args.cluster}\n"
+            f"Next: publish its network and objects, then haprion-cert-deploy -c {args.cluster} "
+            f"and haprion-deploy -c {args.cluster}\n"
         )
     else:
         writer.write(

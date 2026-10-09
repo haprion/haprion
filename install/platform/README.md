@@ -38,7 +38,7 @@ into daily PostgreSQL partitions. Production only, and it fetches nothing until
 each node has accepted the key it prints.
 
 Step 14 builds the locked certbot environment - certbot and every DNS plugin
-the web interface offers - under `/opt/haproxy-certbot`, proves it with the
+the web interface offers - under `/opt/haprion-certbot`, proves it with the
 profile-aware dry-run renewal wrapper, and moves renewal onto it. Rerun with a newer lock to upgrade;
 the previous release is restored if the dry run fails.
 
@@ -299,7 +299,7 @@ schema change still stops until a metadata-bearing bridge is active.
 
 ## Step 11 — retention
 
-`./11-platform-retention` installs `haproxy-ui-retention` and a daily timer.
+`./11-platform-retention` installs `haprion-retention` and a daily timer.
 
 **A root command, because no application role holds `delete` on any table and
 none is going to.** The audit trail, the login attempts and the job queue follow
@@ -372,7 +372,7 @@ symlink removal, not a file deletion. It answers on port 80 for any name, which
 includes this one.
 
 The site includes `/etc/nginx/snippets/haproxy-manager-receivers.conf`, the
-file `haproxy-cert-receiver` writes its `https` receivers' `location` blocks
+file `haprion-cert-receiver` writes its `https` receivers' `location` blocks
 into. The step creates it empty when it is absent and never touches an existing
 one, so a rerun does not take the receivers with it.
 
@@ -394,8 +394,8 @@ the real installed accounts.
 Not by rerunning step 5. The command it installs owns the pair:
 
 ```bash
-sudo haproxy-ui-tls show
-sudo haproxy-ui-tls install --cert <file> --key <file>
+sudo haprion-tls show
+sudo haprion-tls install --cert <file> --key <file>
 ```
 
 It verifies that certificate and key belong together by comparing public halves,
@@ -449,22 +449,22 @@ Set `clusters` in `ui.toml` before running this; with an empty list the poller
 has nothing to do and says so instead of starting.
 
 On production the step also installs the web's way to a name lookup (B253):
-`haproxy-resolve-helper.socket` (`/run/haprion/resolve.sock`, group
-`WEB_USER`) and the per-request `haproxy-resolve-helper@.service`, a dynamic
+`haprion-resolve-helper.socket` (`/run/haprion/resolve.sock`, group
+`WEB_USER`) and the per-request `haprion-resolve-helper@.service`, a dynamic
 user with the network and nothing else. The editor and the preview look a dns
 server's name up through it; the web itself reaches only localhost. The CLI
-release must carry `haproxy-resolve-helper`.
+release must carry `haprion-resolve-helper`.
 
 And the web's way to an exportable certificate's key (B255):
-`haproxy-cert-export-helper.socket` (`/run/haprion/cert-export.sock`, group
-`WEB_USER`) and the per-request `haproxy-cert-export-helper@.service`, root with a
+`haprion-cert-export-helper.socket` (`/run/haprion/cert-export.sock`, group
+`WEB_USER`) and the per-request `haprion-cert-export-helper@.service`, root with a
 read-only sandbox and no network. It gives out the key of a registry entry marked
 `exportable` and of no other, and writes nothing. The CLI release must carry
-`haproxy-cert-export-helper`.
+`haprion-cert-export-helper`.
 
 ## Step 6 — backups that have been read back
 
-`./06-platform-backup` installs `haproxy-ui-backup`, a daily dump timer and a
+`./06-platform-backup` installs `haprion-backup`, a daily dump timer and a
 weekly restore check, then runs both immediately. A dump nobody has restored is
 a belief rather than a backup, and installation is the cheap moment to find that
 out.
@@ -488,12 +488,12 @@ backup. Nothing there survives losing the host.
 Nothing can sign in until an account exists, and creating one is a root action
 rather than a page the interface offers. `install-ui-release` makes the first
 one: on an installation with no account at all it runs
-`haproxy-ui-user init-admin`, which creates `admin` as a break-glass admin and
+`haprion-user init-admin`, which creates `admin` as a break-glass admin and
 asks for its password. Later releases find accounts and do nothing. More
 accounts:
 
 ```bash
-sudo haproxy-ui-user -e prod add operator --role admin
+sudo haprion-user -e prod add operator --role admin
 ```
 
 The password is typed at a terminal, twice; there is no flag for passing it as
@@ -561,7 +561,7 @@ and a key plus an inventory would undo the property that makes it safe.
 `./17-platform-oidc <answers-file> <source-tree>` prepares sign-in through an
 OpenID Connect provider (schema `0041`). The web service reaches localhost and
 nothing else, and keeps doing so: every request to the provider goes through
-`/run/haprion/oidc.sock` to `haproxy-oidc-helper`, which runs as
+`/run/haprion/oidc.sock` to `haprion-oidc-helper`, which runs as
 `OIDC_USER` — an account of its own, not root, in no group, with no sudo rule.
 
 The step makes the key pair the web seals the client secret against: the
@@ -572,7 +572,7 @@ installs the socket (group `WEB_USER`) and the per-request service.
 
 The account must exist first: add `oidc: <name>` under `roles` in the identity
 policy, render the sysusers fragment and apply it. The CLI release must carry
-`haproxy-oidc-helper`. Production only.
+`haprion-oidc-helper`. Production only.
 
 ### Optional SCEP client bundle
 

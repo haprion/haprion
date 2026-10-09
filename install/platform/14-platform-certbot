@@ -5,7 +5,7 @@
 #     sudo UV_BIN=/path/to/uv ./14-platform-certbot <answers-file> <source-tree>
 #
 # Builds certbot and every DNS plugin the product offers, from the source
-# tree's certbot/uv.lock, into an immutable release under /opt/haproxy-certbot;
+# tree's certbot/uv.lock, into an immutable release under /opt/haprion-certbot;
 # proves it against this host's lineages with a dry-run renewal; and moves
 # renewal from the distribution's timer to one that runs the release. Rerun it
 # with a newer lock to upgrade: the same gate, and the previous release is
@@ -30,10 +30,10 @@ source_tree="$(cd "$source_tree" && pwd)"
 uv="${UV_BIN:-}"
 [[ -n "$uv" && -x "$uv" ]] || die "set UV_BIN to the uv executable"
 
-TARGET="/opt/haproxy-certbot"
+TARGET="/opt/haprion-certbot"
 CERTBOT="${TARGET}/current/venv/bin/certbot"
 POLICY="/etc/haprion/runtime-policy.yaml"
-UNIT="haproxy-certbot-renew"
+UNIT="haprion-certbot-renew"
 
 [[ -f "${source_tree}/certbot/uv.lock" ]] \
     || die "${source_tree}/certbot/uv.lock is missing; this is not a source tree with the certbot environment"
@@ -78,7 +78,7 @@ step "Proving it against this host's lineages"
 # the release's certbot and plugins, and runs the deploy hook - which publishes
 # nothing, because no certificate changed. The one gate a certbot upgrade has.
 #
-if ! /opt/haprion/current/bin/haproxy-cert-renew \
+if ! /opt/haprion/current/bin/haprion-cert-renew \
     --certbot "$CERTBOT" --dry-run --run-deploy-hooks; then
     restore_previous
     die "the dry-run renewal failed with ${release##*/}; the previous environment is current again"

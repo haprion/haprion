@@ -235,7 +235,7 @@ class ClusterPage(NodesPage):
 
 class CreatingACluster(ClusterPage):
     """Held here: both blocks are read and shown before anything is queued, and the ID
-    typed back queues exactly the request `haproxy-cluster add` sends."""
+    typed back queues exactly the request `haprion-cluster add` sends."""
 
     def test_the_card_offers_it_and_the_page_lists_the_registry(self) -> None:
         client = self.client_for()

@@ -83,7 +83,7 @@ class ANewVm(Planning):
 
         plan = restore_plan.build(self.source(), "new_vm", TARGET)
         paths = {file.path for file in plan.files}
-        self.assertIn("/etc/sudoers.d/haproxy-node", paths)
+        self.assertIn("/etc/sudoers.d/haprion-node", paths)
         self.assertIn("/etc/sysctl.d/60-haproxy.conf", paths)
         for path in (
             "/etc/sudoers.d/90-cloud-init-users",
@@ -120,7 +120,7 @@ class ANewVm(Planning):
         paths = {file.path for file in plan.files}
         self.assertFalse(any(path.startswith("/usr/local/sbin/") for path in paths))
         self.assertNotIn("/etc/haprion/node-installation.json", paths)
-        self.assertIn("/usr/local/sbin/haproxy-pull-deploy", plan.from_bundle)
+        self.assertIn("/usr/local/sbin/haprion-pull-deploy", plan.from_bundle)
         self.assertIn("/etc/haprion/node-installation.json", plan.from_bundle)
         # node.conf and the pull key are the node's own and do come back.
         self.assertIn("/etc/haprion/node.conf", paths)
@@ -130,12 +130,12 @@ class ANewVm(Planning):
     def test_the_traffic_log_is_turned_on_again_rather_than_copied(self) -> None:
         files = dict(FILES)
         files[restore_plan.TRAFFIC_LOG_RULE] = ("# rule\n", 0o644)
-        files["/etc/systemd/system/haproxy-traffic-log-prune.timer"] = ("[Timer]\n", 0o644)
+        files["/etc/systemd/system/haprion-traffic-log-prune.timer"] = ("[Timer]\n", 0o644)
         plan = restore_plan.build(self.source(files), "new_vm", TARGET)
         self.assertTrue(plan.traffic_log)
         paths = {file.path for file in plan.files}
         self.assertNotIn(restore_plan.TRAFFIC_LOG_RULE, paths)
-        self.assertIn("/etc/systemd/system/haproxy-traffic-log-prune.timer", plan.from_bundle)
+        self.assertIn("/etc/systemd/system/haprion-traffic-log-prune.timer", plan.from_bundle)
 
     def test_rollback_copies_of_the_old_node_stay_behind(self) -> None:
         files = dict(FILES)
@@ -434,7 +434,7 @@ if __name__ == "__main__":
 class TheProductsFilesAreTheInstallersOwn(unittest.TestCase):
     def test_each_shared_directory_keeps_exactly_what_04_node_prepare_writes(self) -> None:
         text = NODE_PREPARE.read_text(encoding="utf-8")
-        self.assertIn('install -o root -g root -m 440 "$tmp" /etc/sudoers.d/haproxy-node', text)
+        self.assertIn('install -o root -g root -m 440 "$tmp" /etc/sudoers.d/haprion-node', text)
         self.assertIn('sysctl_file="/etc/sysctl.d/60-haproxy.conf"', text)
         self.assertNotIn("sshd_config", text)
         written = set(re.findall(r"/etc/(?:sudoers|sysctl)\.d/[\w.-]+", text))
@@ -444,7 +444,7 @@ class TheProductsFilesAreTheInstallersOwn(unittest.TestCase):
 
 class TheBundlesFilesAreTheEnableScriptsOwn(unittest.TestCase):
     def test_the_traffic_log_files_are_the_ones_haproxy_traffic_log_enable_writes(self) -> None:
-        text = (BASE / "install/node/haproxy-traffic-log-enable").read_text(encoding="utf-8")
+        text = (BASE / "install/node/haprion-traffic-log-enable").read_text(encoding="utf-8")
         written = set(re.findall(r'^[A-Z_]+="(/etc/[^"]+)"$', text, re.MULTILINE))
         in_plan = {
             path for path in restore_plan.FROM_BUNDLE if not path.startswith("/etc/haprion/")

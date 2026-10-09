@@ -1,4 +1,4 @@
-"""`haproxy-objects`, both halves.
+"""`haprion-objects`, both halves.
 
 The helper reads a committed tree inside the privilege boundary; the command
 renders what came back and never decides anything itself.
@@ -117,7 +117,7 @@ class ObjectsHelperTests(unittest.TestCase):
         A package installed or upgraded is a new listing, not an unchanged one."""
 
         _, first, _ = self.run_helper()
-        result = assert_contract("haproxy-objects", first)["result"]
+        result = assert_contract("haprion-objects", first)["result"]
         self.assertEqual(result["waf"], {"engine": "0.9.0-2", "crs": "4.25.1"})
         _, again, _ = self.run_helper(
             parameters={"unchanged_since": result["fingerprint"]},
@@ -146,7 +146,7 @@ class ObjectsHelperTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(seen[0][1], HEAD)
-        document = assert_contract("haproxy-objects", out)
+        document = assert_contract("haprion-objects", out)
         self.assertEqual(document["outcome"], "done")
         self.assertEqual(document["request_id"], REQUEST_ID)
         self.assertEqual(document["result"]["commit"], HEAD)
@@ -164,7 +164,7 @@ class ObjectsHelperTests(unittest.TestCase):
         )
 
         self.assertEqual(code, 65)
-        document = assert_contract("haproxy-objects", out)
+        document = assert_contract("haprion-objects", out)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["error"]["code"], "objects_invalid")
 
@@ -179,7 +179,7 @@ class ObjectsHelperTests(unittest.TestCase):
         code, out, _ = self.run_helper(head_resolver=detached)
 
         self.assertEqual(code, 65)
-        document = assert_contract("haproxy-objects", out)
+        document = assert_contract("haprion-objects", out)
         self.assertEqual(document["error"]["code"], "objects_unavailable")
 
     def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
@@ -187,7 +187,7 @@ class ObjectsHelperTests(unittest.TestCase):
 
         self.assertEqual(code, 64)
         self.assertIn("unknown cluster", err)
-        document = assert_contract("haproxy-objects", out)
+        document = assert_contract("haprion-objects", out)
         self.assertEqual(document["error"]["code"], "bad_input")
 
     def test_protocol_and_argument_errors_do_not_cross_the_boundary(self) -> None:
@@ -219,7 +219,7 @@ class ObjectsHelperTests(unittest.TestCase):
         code, out, _ = self.run_helper(tree_reader=tree, parameters={"unchanged_since": known})
 
         self.assertEqual(code, 0)
-        document = assert_contract("haproxy-objects", out)
+        document = assert_contract("haprion-objects", out)
         self.assertIs(document["result"]["unchanged"], True)
         self.assertEqual(document["result"]["objects"], [])
         self.assertEqual(document["result"]["fingerprint"], known)
@@ -256,7 +256,7 @@ class ObjectsHelperTests(unittest.TestCase):
         code, out, _ = self.run_helper()
 
         self.assertEqual(code, 0)
-        entry = assert_contract("haproxy-objects", out)["result"]["objects"][0]
+        entry = assert_contract("haprion-objects", out)["result"]["objects"][0]
         self.assertEqual(
             entry["vip"], {"name": "internal", "address": "192.0.2.20", "default": True}
         )
@@ -271,7 +271,7 @@ class ObjectsHelperTests(unittest.TestCase):
         code, out, _ = self.run_helper()
 
         self.assertEqual(code, 0)
-        document = assert_contract("haproxy-objects", out)
+        document = assert_contract("haprion-objects", out)
         self.assertEqual(document["outcome"], "done")
         self.assertEqual([w["code"] for w in document["warnings"]], ["network_unreadable"])
         self.assertIsNone(document["result"]["objects"][0]["vip"])
@@ -407,7 +407,7 @@ class ObjectsCommandTests(unittest.TestCase):
         )
 
         self.assertEqual(code, 0)
-        assert_contract("haproxy-objects", out)
+        assert_contract("haprion-objects", out)
 
     def test_a_helper_that_returned_nothing_is_reported_not_rendered(self) -> None:
         empty = subprocess.CompletedProcess([], 68, "", "sudo: a password is required")

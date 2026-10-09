@@ -4,7 +4,7 @@ The worker cannot do this through sudo: a restore writes under /var/lib and
 reaches the target over SSH as root, and a sudoed child would inherit the
 worker's read-only mount namespace. So the helper answers on a root-owned
 socket, like the backup and receiver helpers, and runs the same engine the
-terminal's ``haproxy-node-restore`` runs - one implementation, two callers.
+terminal's ``haprion-node-restore`` runs - one implementation, two callers.
 
 ``node_restore_prepare``  creates the run and its one-time key; answers with
                           the line the operator pastes on the target
@@ -58,7 +58,7 @@ RUN = "node_restore"
 DISCARD = "node_restore_discard"
 STATUS = "node_restore_status"
 OPERATIONS = frozenset({PREPARE, PREVIEW, RUN, DISCARD, STATUS})
-HELPER = "/opt/haprion/current/bin/haproxy-node-restore-helper"
+HELPER = "/opt/haprion/current/bin/haprion-node-restore-helper"
 EXIT_NOT_ROOT = 77
 
 KEYS = {
@@ -289,10 +289,10 @@ def _answer(
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
     if argv:
-        errors.write("ERROR: haproxy-node-restore-helper accepts no arguments\n")
+        errors.write("ERROR: haprion-node-restore-helper accepts no arguments\n")
         return 64
     if require_root and os.geteuid() != 0:
-        errors.write("ERROR: haproxy-node-restore-helper must run as root\n")
+        errors.write("ERROR: haprion-node-restore-helper must run as root\n")
         return EXIT_NOT_ROOT
     try:
         raw, operation = _raw(input_stream or sys.stdin.buffer)

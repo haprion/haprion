@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-revert.schema.json",
+  "title": "haprion-revert JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "revert" },
+        "outcome": { "enum": ["done", "failed", "blocked"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/revert_result" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/revert_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "revert_result": {
+      "type": "object",
+      "required": [
+        "changed",
+        "from_version",
+        "restored_version",
+        "new_version",
+        "hash",
+        "published_at",
+        "deployment_required",
+        "next_command"
+      ],
+      "properties": {
+        "changed": { "type": "boolean" },
+        "from_version": { "$ref": "common.schema.json#/$defs/version" },
+        "restored_version": { "$ref": "common.schema.json#/$defs/version" },
+        "new_version": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/version" },
+            { "type": "null" }
+          ]
+        },
+        "hash": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/hash" },
+            { "type": "null" }
+          ]
+        },
+        "published_at": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "deployment_required": { "type": "boolean" },
+        "next_command": { "type": ["string", "null"], "maxLength": 1024 }
+      },
+      "additionalProperties": true
+    }
+  }
+}

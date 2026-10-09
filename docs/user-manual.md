@@ -95,7 +95,7 @@ before anything is changed, whatever else could not be read, and no override let
 past.
 
 A node counts as running a release once HAProxy has reloaded it, not once the files are
-in place: the node marks the switch in `/run/haproxy-pull-deploy.pending` until the
+in place: the node marks the switch in `/run/haprion-pull-deploy.pending` until the
 reload, its status reports the release HAProxy still runs meanwhile, and the next deploy
 finishes the reload of a run that was stopped in between. Each node gets five minutes
 to answer a deploy; one that does not is a failed step, and its status decides what it
@@ -104,11 +104,11 @@ runs.
 At the terminal, inspect the configuration and the nodes before deploying:
 
 ```bash
-haproxy-config-status -c alpha
-haproxy-status -c alpha
-haproxy-objects -c alpha
-haproxy-objects -c alpha --show <name>
-haproxy-deploy -c alpha
+haprion-config-status -c alpha
+haprion-status -c alpha
+haprion-objects -c alpha
+haprion-objects -c alpha --show <name>
+haprion-deploy -c alpha
 ```
 
 A converged deploy skips nodes already current. See the installation guide for
@@ -144,8 +144,8 @@ It is set on the nodes, on every node of the cluster at once. On the object's pa
 tick the servers and press **Drain**, **Maintenance** or **Ready**. The same from the command line:
 
 ```
-sudo haproxy-server-state -c alpha -o shop drain 198.51.100.10:8080
-sudo haproxy-server-state -c alpha -o shop ready 198.51.100.10:8080
+sudo haprion-server-state -c alpha -o shop drain 198.51.100.10:8080
+sudo haprion-server-state -c alpha -o shop ready 198.51.100.10:8080
 ```
 
 - **`drain`** takes the server out of load balancing. A visitor whose session cookie names it
@@ -208,7 +208,7 @@ UDP and TCP, port 53 unless another is written. The form offers DNS once every n
 the cluster reports dnsdist installed; a node without it refuses a release that carries
 a DNS listener. The pool's servers are addresses or host names with a port, and the list
 shows the names. dnsdist takes addresses only, so a name is looked up on the manager when
-the object is **saved**, by asking `haproxy-resolve-helper` over
+the object is **saved**, by asking `haprion-resolve-helper` over
 `/run/haprion/resolve.sock` (production only; the web service itself reaches nothing
 past localhost), and the address is stored in the object beside it:
 
@@ -224,7 +224,7 @@ nothing up: it writes the stored address, so publishing something else - a log t
 neighbouring object - never moves a DNS server and never fails because DNS does. A name
 stored without an address refuses the publish with *save the object again*; an object
 written by hand gives the `address` itself. The address is the one the name had when the
-object was saved: `haproxy-status` and the object's page say when the name has since moved,
+object was saved: `haprion-status` and the object's page say when the name has since moved,
 and *Look up again* beside that warning saves the object with the address the name has now,
 for the next publish. The stored `address` came with engine API 21; before it, every
 publish looked every name up. The balancing is one of dnsdist's - `roundrobin`, `leastOutstanding`,
@@ -278,7 +278,7 @@ written. The form offers it once every node of the cluster reports that
 `keepalived.conf` includes `/etc/keepalived/ipvs.conf` at its top level - see
 [Installing Haprion](install.md#5-install-optional-components); until then the
 choice is greyed out. A node without the include refuses a release that carries a
-syslog object, `haproxy-status` says *NOT FORWARDING* there and counts the node as
+syslog object, `haprion-status` says *NOT FORWARDING* there and counts the node as
 not running its release, and the object list shows *Include missing* with the node. A syslog object shares a port number
 with tcp objects and the cluster's own ports, which are TCP, but not with a DNS object
 or another syslog object on the same VIP.
@@ -297,7 +297,7 @@ check* tries the check from the nodes' own addresses, as keepalived does, and sh
 answer of the node holding the VIP: *udp*
 sends one empty datagram and waits five seconds for a refusal - keepalived's own wait -
 and says *not refused* when none came; *tcp* connects and closes. On the command line,
-`haproxy-probe -c <cluster> -t <address:port>[,...] --udp` asks the same.
+`haprion-probe -c <cluster> -t <address:port>[,...] --udp` asks the same.
 
 The editor's *What the nodes report* and the lamp in the object list show each
 receiver up or down, as keepalived on the node holding the VIP sees it - the node the
@@ -318,7 +318,7 @@ Further accounts are a local root action too, or an admin's in the interface
 (below):
 
 ```bash
-sudo haproxy-ui-user -e prod add operator --role admin
+sudo haprion-user -e prod add operator --role admin
 ```
 
 The password is typed at the terminal, twice, and there is deliberately no flag
@@ -450,7 +450,7 @@ would let one address work through a list of names.
 The attempts table is **append-only by grant** — the web role can add a row and
 read rows, and holds no update or delete. A counter the web process could reset
 would be a lock whose key is kept behind the door. An unlock therefore deletes
-nothing: `haproxy-ui-user unlock` (and, for an admin, the interface) adds a row
+nothing: `haprion-user unlock` (and, for an admin, the interface) adds a row
 to `login_unlock`, and the throttle counts failures since the latest success or
 unlock for that name. The failed attempts stay in the record.
 
@@ -474,7 +474,7 @@ provider, and it does not go through the web service.
 
 The web service reaches localhost and nothing else (`IPAddressDeny=any`), and
 keeps doing so. Every request to the provider goes through
-`/run/haprion/oidc.sock` to `haproxy-oidc-helper`, installed by platform
+`/run/haprion/oidc.sock` to `haprion-oidc-helper`, installed by platform
 step 17. It runs as an account of its own (`OIDC_USER`, the identity policy's
 `roles.oidc`), not root, and is the one part that may reach the network. It
 takes no URL from the web: the issuer comes from the settings, every other
@@ -608,7 +608,7 @@ installation opts in.
   while a cluster has a job running, while a restore is running or waiting,
   and for a cluster whose schedule the form cannot write back.
 
-`haproxy-state-backup` and the restore commands on the manager work either way.
+`haprion-state-backup` and the restore commands on the manager work either way.
 
 A third switch, **Cluster colours** (schema `0042`), is on from the start and
 hides nothing: it draws the rule down each cluster card's left edge, one of six
@@ -625,7 +625,7 @@ and the dialog only: an object that has text keeps it, its page says so, and
 the generator writes it on every publish, because what a cluster runs must not
 depend on an interface setting.
 
-What the layer does, line by line (`haproxy-objects -c alpha --advanced <name>`
+What the layer does, line by line (`haprion-objects -c alpha --advanced <name>`
 prints the same answer as the dialog's *Check*):
 
 - Lines outside a section, and under the text's own `frontend` or `listen`, are
@@ -822,7 +822,7 @@ arrives too slowly is answered 408 after a second, as before.
 `allow` serves the request uninspected and records `waf-engine:log`, and `deny`
 answers 503 and records `waf-engine:deny`; either answers at once. A node whose
 engine is not running while the published release has rules is marked *WAF
-engine stopped* on the dashboard, and `haproxy-status` shows the engine on each
+engine stopped* on the dashboard, and `haprion-status` shows the engine on each
 node with a warning for that node. Each rule the engine matched is
 logged on the node with the part of the request and the matched value, in the
 engine's own journal (`journalctl --namespace=haproxy-waf -u coraza-spoa`),
@@ -864,7 +864,7 @@ and [Preparing Microsoft AD CS / NDES for CSR enrollment](#preparing-microsoft-a
 
 ### Publishing certificates
 
-`haproxy-cert-publish` is the one path from a certificate's source to every place it is read.
+`haprion-cert-publish` is the one path from a certificate's source to every place it is read.
 It runs as root, takes no file, directory or account on its command line, and reads the registry
 for all three: which certificates exist, where each comes from, and where each goes.
 
@@ -899,39 +899,39 @@ published copy is left as it is. That is what a certificate published by hand be
 store existed looks like.
 
 With `--deploy`, every cluster that received a new version is rolled out afterwards with
-`haproxy-cert-deploy`, once each, after every file is written. Two clusters that carry the same
+`haprion-cert-deploy`, once each, after every file is written. Two clusters that carry the same
 certificate read the same file; it is written once and both are rolled out.
 
 So is every cluster an earlier run published to without a rollout that succeeded. The files alone
 cannot say that - a cluster's PEM is the same whether its nodes took it or not - so the publisher
 keeps a note beside the registry, `certificates.pending-deploy.json` (owned and moded like the
 registry): a cluster is marked before its material is written and cleared only when
-`haproxy-cert-deploy` answered 0 for it. Running the same command again after a failed rollout
+`haprion-cert-deploy` answered 0 for it. Running the same command again after a failed rollout
 therefore finishes it, with nothing issued or rewritten, instead of finding the files in place and
-answering `done`. Adding a cluster to a certificate (*Publish to…*, `haproxy-cert-target-helper`) marks it
+answering `done`. Adding a cluster to a certificate (*Publish to…*, `haprion-cert-target-helper`) marks it
 the same way. A note that cannot be read counts every cluster as due: each is rolled out once, its
 current nodes are skipped, and the file is written whole again. A cluster removed from the
 configuration is dropped from it.
 
 ```bash
-haproxy-cert-publish                 # publish what changed, report per certificate
-haproxy-cert-publish --json          # the same, as a result envelope
-haproxy-cert-publish --deploy        # ... and roll out the clusters that changed or are still due
-haproxy-cert-publish --certificate example.com   # one registered certificate only
+haprion-cert-publish                 # publish what changed, report per certificate
+haprion-cert-publish --json          # the same, as a result envelope
+haprion-cert-publish --deploy        # ... and roll out the clusters that changed or are still due
+haprion-cert-publish --certificate example.com   # one registered certificate only
 ```
 
 ### Issuing a certificate
 
-`haproxy-cert-issue` obtains one ACME certificate and takes it all the way to its targets: certbot,
+`haprion-cert-issue` obtains one ACME certificate and takes it all the way to its targets: certbot,
 then the registry entry, then the publish and the rollout of the clusters named. Root only. The
 whole run is timed and the time is part of its result, because the point of the command is the
 number: a certificate on its targets in minutes, from one line.
 
 ```bash
-sudo haproxy-cert-issue --domain www.example.com --method dns-01 --cluster alpha
-sudo haproxy-cert-issue --domain '*.example.net' --method dns-01 --dns-profile cf-main \
+sudo haprion-cert-issue --domain www.example.com --method dns-01 --cluster alpha
+sudo haprion-cert-issue --domain '*.example.net' --method dns-01 --dns-profile cf-main \
   --cluster alpha --receiver lb-01.example.net
-sudo haproxy-cert-issue --domain intranet.example.com --method dns-01 --dns-profile cf-main \
+sudo haprion-cert-issue --domain intranet.example.com --method dns-01 --dns-profile cf-main \
   --receiver certserver1.example.net --format certserver1.example.net=pkcs12
 ```
 
@@ -940,7 +940,7 @@ The ACME policy and challenge routes must already be configured; see
 
 The web interface asks for the same thing from **Certificates → New certificate**: a domain, a
 method, an in-effect DNS profile for DNS-01, and boxes for the clusters and the registered receivers. It queues one `cert_issue` job
-through `haproxy-cert-issue-helper` ([worker helper configuration](#what-the-worker-may-run)) and reports on the Jobs page, certbot's output included.
+through `haprion-cert-issue-helper` ([worker helper configuration](#what-the-worker-may-run)) and reports on the Jobs page, certbot's output included.
 The form cannot register a receiver - one is a directory, an account and a key, made on the host as
 in [Registering a receiver](#registering-a-receiver) - and it refuses a wildcard over `http-01` before the job is queued.
 
@@ -984,7 +984,7 @@ the profile; the database row is deleted only after the helper's successful, rev
 
 A lineage issued through a profile renews through it: certbot writes the profile's credentials path
 and the catalogue's propagation wait into the lineage's renewal configuration, and [The certbot environment](#the-certbot-environment)'s
-`haproxy-cert-renew` restores what a plugin cannot persist. Removing a profile a lineage still
+`haprion-cert-renew` restores what a plugin cannot persist. Removing a profile a lineage still
 renews through would break that renewal, which is why the registry and the renewal files are
 checked first.
 
@@ -1069,7 +1069,7 @@ holds when it runs, so thirty certificates sent to the wrong cluster are one job
 certificate somebody else changed in between is not overwritten with a stale target set.
 
 **Publishing** registers the certificate for the target, publishes its material there, and rolls
-each added cluster out once — a `haproxy-cert-deploy` for the cluster, so its nodes pull and
+each added cluster out once — a `haprion-cert-deploy` for the cluster, so its nodes pull and
 **replace the certificate in the running HAProxy** (`set ssl cert`, no reload), or reload where it
 does not hold the certificate yet or refuses the new one. A receiver fetches on its own schedule. A certificate already on a chosen
 target is reported `unchanged`.
@@ -1091,15 +1091,15 @@ row `incomplete` — the registry has changed, and running the removal again ask
 
 ### Importing a certificate
 
-`haproxy-cert-import` is the other way a certificate reaches the registry: one issued elsewhere -
+`haprion-cert-import` is the other way a certificate reaches the registry: one issued elsewhere -
 an internal CA, a purchased certificate, a wildcard exported from a Windows CA - whose key the
-maintainer already holds. Root only. Like `haproxy-cert-issue` it goes all the way: the import
+maintainer already holds. Root only. Like `haprion-cert-issue` it goes all the way: the import
 store, the registry entry, the publish and the rollout of the clusters named.
 
 ```bash
-sudo haproxy-cert-import --id intranet.example --certificate intranet.example.crt --key intranet.example.key \
+sudo haprion-cert-import --id intranet.example --certificate intranet.example.crt --key intranet.example.key \
   --chain issuing-ca.pem --cluster alpha
-sudo haproxy-cert-import --id intranet.example --pkcs12 intranet.example.pfx --password-file /root/intranet.example.pw \
+sudo haprion-cert-import --id intranet.example --pkcs12 intranet.example.pfx --password-file /root/intranet.example.pw \
   --cluster alpha
 ```
 
@@ -1136,7 +1136,7 @@ PEM (certificate, key and chain in any order), PKCS#12 with its password, a DER 
 PKCS#7 bundle, at most 32 kB, plus the name and the targets. The web process seals the file
 against the installation's public key - the pair step 15 creates for DNS provider profiles -
 inside the request that carries it, and queues a `cert_import` job whose payload is the
-ciphertext. `haproxy-cert-import-helper`, run by the worker through its sudoers rule, opens the
+ciphertext. `haprion-cert-import-helper`, run by the worker through its sudoers rule, opens the
 box with the private key and imports the material exactly as the command does. So the key is in
 clear in the web process for the length of one request and in the root helper; it is never in
 the database, the job row, the audit or the snapshot to a development platform, none of which
@@ -1151,7 +1151,7 @@ certificate; a file holding a key is refused there and pointed at the import pag
 the key is the stated intent. Enrollment from a Microsoft CA needs no file at all ([Preparing Microsoft AD CS / NDES for CSR enrollment](#preparing-microsoft-ad-cs--ndes-for-csr-enrollment)).
 
 **Renew…** is one button for every source: ticked on a certbot certificate it runs the daily
-timer's `certbot renew --cert-name <lineage>` now with `--force-renewal` (`haproxy-cert-renew
+timer's `certbot renew --cert-name <lineage>` now with `--force-renewal` (`haprion-cert-renew
 --acme-now <id>` from the terminal; Let's Encrypt allows five identical certificates a week), on an
 NDES certificate it enrolls again from the same profile with the same names and targets ([Preparing Microsoft AD CS / NDES for CSR enrollment](#preparing-microsoft-ad-cs--ndes-for-csr-enrollment)),
 and on an imported one or a waiting signing request it is the page with the file field.
@@ -1160,7 +1160,7 @@ and on an imported one or a waiting signing request it is the page with the file
 PKI without SCEP, whoever signs things - the key can be made on the manager instead of imported:
 
 ```bash
-sudo haproxy-cert-request --id intranet.example --domain intranet.example --domain '*.intranet.example' \
+sudo haprion-cert-request --id intranet.example --domain intranet.example --domain '*.intranet.example' \
   --cluster alpha [--key-type ec-p256|rsa-2048|rsa-4096]
 ```
 
@@ -1172,14 +1172,14 @@ rollout to its clusters - and the listing shows it from the store as **Signing r
 with the CSR to download from the row. The name is refused while anything else holds it: a
 registry entry, a certbot lineage, imported material, an NDES request in flight.
 
-When the CA has signed, the certificate comes back without a key - `haproxy-cert-import --id <id>
+When the CA has signed, the certificate comes back without a key - `haprion-cert-import --id <id>
 --certificate <file> [--chain <file>]` with no `--key`, or *Renew…* with the row ticked - and is
 matched against the stored key, imported and published to the targets the request named plus any
 named now. A certificate for another key is refused and the request kept. Deleting the row ([Deleting a certificate](#deleting-a-certificate))
 removes the key with it; a request nobody signs is otherwise harmless, and stays until it is
 deleted. On the interface the same thing is the fourth choice on *New certificate*, **CSR**, with
 the key type where the other methods have their profile; it queues a `cert_request` job that
-`haproxy-cert-request-helper` runs, the fourteenth worker helper (its sudoers rule and step 07 are
+`haprion-cert-request-helper` runs, the fourteenth worker helper (its sudoers rule and step 07 are
 part of the release).
 
 ### Enrolling and renewing through NDES
@@ -1187,7 +1187,7 @@ part of the release).
 After installation, root policy configuration and provider application, the pilot root CLI is:
 
 ```sh
-haproxy-cert-scep --id example-cert --profile internal-ca --domain example.test --domain '*.example.test' --json
+haprion-cert-scep --id example-cert --profile internal-ca --domain example.test --domain '*.example.test' --json
 ```
 
 A CA approval wait returns `state: pending` and envelope outcome `partial`. The certificate is
@@ -1195,7 +1195,7 @@ A CA approval wait returns `state: pending` and envelope outcome `partial`. The 
 certificate list and the deploy preflight are built from it and an entry without material would
 refuse every rollout to the clusters it names. The request's root-only state holds the key, the
 profile, the names and the chosen targets, and the listing helper reads it there, so the row shows
-as **Request pending** all the same. Resume with `haproxy-cert-scep --id <id> --resume` - the
+as **Request pending** all the same. Resume with `haprion-cert-scep --id <id> --resume` - the
 original key is retained, the targets are the ones the request was made with, and a resume that
 disagrees with the record is refused. Returned certificates must pass chain, names, usages and key
 validation before the existing import/publication path is called; only then is the certificate
@@ -1203,10 +1203,10 @@ registered and published.
 
 A request the CA rejects, or one Certmonger never took, removes its own state so the same ID can
 be asked for again. A request that is neither answered nor rejected - the approval is not coming,
-or the process died on it - is given up with `haproxy-cert-scep --id <id> --abandon`, which
+or the process died on it - is given up with `haprion-cert-scep --id <id> --abandon`, which
 discards the key; deleting the certificate removes its request state too.
 
-**Scheduled renewal.** `haproxy-cert-renew` - the command the daily `haproxy-certbot-renew.timer`
+**Scheduled renewal.** `haprion-cert-renew` - the command the daily `haprion-certbot-renew.timer`
 runs - makes an NDES pass after certbot's: every registered certificate whose source names an
 NDES profile and whose `not_after`, read at its source, is less than `ndes.renew_days` away is
 enrolled again under the same ID, with the same profile, the names the current certificate
@@ -1215,7 +1215,7 @@ enrollment: a fresh key, and the published material replaced only once the new c
 been validated; a request the CA holds is **Renewal pending** on the row, with the same *Resume
 enrollment* button, and the next day's pass resumes that request rather than asking anew. One record per certificate under `<state_root>/renewals/` says what the last
 attempt did, and the listing shows a failure as **Renewal failed** with the CA's sentence rather
-than an expiry creeping closer. `haproxy-cert-renew --ndes-now <id>` renews one certificate at
+than an expiry creeping closer. `haprion-cert-renew --ndes-now <id>` renews one certificate at
 once, threshold or not, and skips certbot's pass: the way to prove the path on a template whose
 validity cannot be shortened per request, and to rotate a key. `--acme-now <id>` is the same for
 a certbot lineage, forced; the interface's *Renew…* runs both. `--dry-run` says who would renew.
@@ -1224,7 +1224,7 @@ a certbot lineage, forced; the interface's *Renew…* runs both. `--dry-run` say
 From the interface, *Certificates → New certificate* offers *Microsoft AD CS · NDES* beside
 the two Let's Encrypt challenges whenever an NDES profile is in effect; a wildcard becomes the
 base name as CN with the wildcard as a SAN. The submission is one `cert_scep` job run by
-`haproxy-cert-scep-helper` (the twelfth worker helper; a sudoers rule and step 07 are part of
+`haprion-cert-scep-helper` (the twelfth worker helper; a sudoers rule and step 07 are part of
 its installation). A pending request shows **Resume enrollment** in its registry row, which
 queues the same job with only the ID. Migration `0027` adds provider storage and apply jobs,
 `0028` the profile's plain endpoint column and worker deletion, `0029` the `cert_scep` job.
@@ -1249,8 +1249,8 @@ certificate is ordered and taken out; it is installed by hand (B255). Behind the
 *Targets*): the same form, for one host name and with no targets. DNS-01, HTTP-01 or NDES; not a CSR,
 because the point is a key that can be handed out. The key is RSA 2048, which every
 device takes - several take no EC key. A wildcard is refused: its key would answer for
-every name under it. From the command line, `haproxy-cert-issue --exportable` or
-`haproxy-cert-scep --exportable` with no `--cluster` and no `--receiver`.
+every name under it. From the command line, `haprion-cert-issue --exportable` or
+`haprion-cert-scep --exportable` with no `--cluster` and no `--receiver`.
 
 The registry marks the entry `exportable: true`. The mark is set when the entry is made
 and never changes, and an exportable entry can never be given a target: *Publish to…*
@@ -1271,10 +1271,10 @@ external row and no other):
   a SHA-1 MAC, for older Windows, Java and embedded readers - not OpenSSL's `-legacy`,
   whose certificate part is 40-bit RC2. Type the certificate's name to confirm.
 
-The key is read by `haproxy-cert-export-helper`, root, over
+The key is read by `haprion-cert-export-helper`, root, over
 `/run/haprion/cert-export.sock`, which only the web account may connect to. It
 refuses every entry without the mark, writes nothing, and says in the journal what it
-exported for whom (`journalctl -u 'haproxy-cert-export-helper@*'`); the web writes a
+exported for whom (`journalctl -u 'haprion-cert-export-helper@*'`); the web writes a
 `certificate_export` audit event with the certificate's fingerprint. Nothing keeps a
 copy, and the password is never stored or returned. Root at the terminal can ask the
 helper directly with the same request document.
@@ -1287,20 +1287,20 @@ to be signed; the manager does not sign an uploaded request - see
 
 A receiver is a machine outside this installation that fetches certificates from the manager. It
 is four things at once - an account, a directory only that account may read, a lock binding its key
-to that directory, and the registry entry - and `haproxy-cert-receiver` makes all four, or none:
+to that directory, and the registry entry - and `haprion-cert-receiver` makes all four, or none:
 
 ```bash
 # The receiver makes its own key pair and sends you the public half.
-sudo haproxy-cert-receiver add lb-02.example.net --transport rsync \
+sudo haprion-cert-receiver add lb-02.example.net --transport rsync \
   --public-key /tmp/lb-02.pub
 
-sudo haproxy-cert-receiver add lb-03.example.net --transport sftp \
+sudo haprion-cert-receiver add lb-03.example.net --transport sftp \
   --public-key /tmp/lb-03.pub --owner crx-lb-03
 
-sudo haproxy-cert-receiver add 192.0.2.40 --transport https --allow 192.0.2.0/24
+sudo haprion-cert-receiver add 192.0.2.40 --transport https --allow 192.0.2.0/24
 
-sudo haproxy-cert-receiver list
-sudo haproxy-cert-receiver remove lb-02.example.net
+sudo haprion-cert-receiver list
+sudo haprion-cert-receiver remove lb-02.example.net
 ```
 
 **The account is `crx-` and the ID** with its dots turned into dashes (`crx-lb-02-example-net`):
@@ -1361,8 +1361,8 @@ registering a receiver nothing serves.
 
 **What the receiver trusts.** The interface's certificate is what the receiver's `curl` must
 verify, and it is served as a file for that purpose at `https://<server name>/certdist/manager-ui.pem`
-(a copy under `/srv/certdist/`, written by `haproxy-ui-tls` at every replacement and by
-`haproxy-ui-tls publish`; the TLS directory itself is root-only, which nginx's workers are not).
+(a copy under `/srv/certdist/`, written by `haprion-tls` at every replacement and by
+`haprion-tls publish`; the TLS directory itself is root-only, which nginx's workers are not).
 The receiver saves it once - `curl -k -o manager-ui.pem …` on that first contact, or with
 `openssl s_client` where openssl exists - and passes it as `--cacert` to every fetch after, so it
 trusts exactly that certificate. A receiver whose host already trusts the CA that issued the
@@ -1380,7 +1380,7 @@ its certificates: its own public key, readable and not writable, and nothing els
 **Removing** is refused while any certificate still names the receiver - `Remove from...` in the
 interface ([Deleting a certificate](#deleting-a-certificate)) is what lets a certificate go of a target, and it is the operation that also
 says what that costs. There is no operator command for that step: the interface queues a
-`cert_target` job and the worker runs `haproxy-cert-target-helper`, which takes its request on
+`cert_target` job and the worker runs `haprion-cert-target-helper`, which takes its request on
 stdin and is not meant to be typed. Once nothing names it, the registry entry, the lock, the
 directory and the account go in that order; an account another receiver still fetches as (the
 `legacy` ones share one) is kept, and only the key line naming this directory is taken out.
@@ -1389,9 +1389,9 @@ directory and the account go in that order; an account another receiver still fe
 sharing one account and a `flat` directory) is two steps with the receiver's own change in between:
 
 ```bash
-sudo haproxy-cert-receiver migrate pve-01.example.net --public-key /tmp/pve-01.pub
+sudo haprion-cert-receiver migrate pve-01.example.net --public-key /tmp/pve-01.pub
 # ... the host changes account, path and key, and fetches once ...
-sudo haproxy-cert-receiver migrate pve-01.example.net --finish
+sudo haprion-cert-receiver migrate pve-01.example.net --finish
 ```
 
 The first builds the new account, directory and lock **beside** the old ones and points the
@@ -1410,14 +1410,14 @@ belong to its fetch account (`0600`), and a directory made before this command e
 to that account outright. Root inside the worker's unit is only uid 0 - the mode bits are the law
 there unless the bounding set says otherwise - so the worker unit carries `CAP_DAC_READ_SEARCH`,
 the read-and-traverse capability the poller already has. Without it a target change from the
-interface ends `target_missing` on a directory that `haproxy-cert-publish` run as root from a
+interface ends `target_missing` on a directory that `haprion-cert-publish` run as root from a
 terminal publishes to without complaint. An installation whose worker unit predates this line
 reruns `install/platform/07-platform-services`, which rewrites and restarts the unit.
 
 **From the interface**, *Certificates → Receivers* lists every registered receiver - transport,
 account, what it holds - and registers or removes one. The form takes the receiver's name, the
 transport, and the public key pasted as text (or, for https, the allowed addresses); the job is
-one `cert_receiver` run by `haproxy-cert-receiver-helper` - not through `sudo` but on a socket,
+one `cert_receiver` run by `haprion-cert-receiver-helper` - not through `sudo` but on a socket,
 `/run/haprion/cert-receiver.sock`, from a unit of its own that step 07 installs (see *The
 worker's way to the receiver helper* in the installation guide; migration `0032` lets the queue accept the job). The
 helper takes the key as text and never as a path, so the interface cannot point it at a file. What the page adds over the command is the other half of the contract: under each
@@ -1438,7 +1438,7 @@ whose CLI release predates those fields shows the page without rows until the CL
 A node is known to the management host in six root-owned places: its entry in `clusters.yaml`, its
 host key in root's `known_hosts`, its two fetch keys in the pull accounts' `authorized_keys`, and -
 where the traffic-log collector is installed - its entry in the collector's node list and its host
-key in the collector's own `known_hosts`. `haproxy-node` and the Nodes card under Settings change
+key in the collector's own `known_hosts`. `haprion-node` and the Nodes card under Settings change
 all six as one, through the same root helper:
 
 ```bash
@@ -1446,8 +1446,8 @@ all six as one, through the same root helper:
 sudo ./04-node-prepare answers.env alpha
 
 # On the management host, the block on stdin:
-sudo haproxy-node add -c alpha --host node-c.example.com < block
-sudo haproxy-node remove -c alpha node-c
+sudo haprion-node add -c alpha --host node-c.example.com < block
+sudo haprion-node remove -c alpha node-c
 ```
 
 The block carries the node's name, its cluster, a suggested host name, its ed25519 host key and the
@@ -1460,7 +1460,7 @@ After writing, the manager asks the node for its status as the status identity, 
 key checking. The node reports its own host name and cluster, so an answer proves the host key, that
 the node already has the manager's key lines from step 3, and that the block described the node that
 answered. Anything short of that puts every file back and says why. The node has no certificates
-and no release until `haproxy-cert-deploy -c <cluster>` and then `haproxy-deploy -c <cluster>` run
+and no release until `haprion-cert-deploy -c <cluster>` and then `haprion-deploy -c <cluster>` run
 (*Deploy certificates* and *Deploy configuration* on the dashboard); a deploy before the
 certificates stops and says so, since the node has none.
 
@@ -1487,7 +1487,7 @@ nodes from it rather than from the answers file.
 ### Creating and removing a cluster
 
 Steps 1 and 2 make the clusters of a new installation from the answers file. A cluster added later
-is made by `haproxy-cluster`, or the Nodes card under Settings, through the same root helper as a
+is made by `haprion-cluster`, or the Nodes card under Settings, through the same root helper as a
 node:
 
 ```bash
@@ -1495,11 +1495,11 @@ node:
 sudo ./04-node-prepare answers.env beta
 
 # On the management host, both blocks on stdin in the order of the --host options:
-sudo haproxy-cluster add -c beta --display-name Beta --vip 203.0.113.10 \
+sudo haprion-cluster add -c beta --display-name Beta --vip 203.0.113.10 \
     --node-path beta --certificate example.com \
     --host node-c.example.com --host node-d.example.com [--prefix 24] [--interface eth0] < blocks
 
-sudo haproxy-cluster remove -c beta
+sudo haprion-cluster remove -c beta
 ```
 
 A creation writes, as one change: the cluster's entry in `clusters.yaml`; the default certificate's
@@ -1515,13 +1515,13 @@ must all be free; the certificate must already be in the registry.
 
 The new cluster is polled and drawn from the poller's next pass ([Which clusters get
 polled](#which-clusters-get-polled)). It has no release until its network description and objects
-are published and `haproxy-cert-deploy -c <cluster>` and then `haproxy-deploy -c <cluster>` run, and no backup schedule until one is set on
+are published and `haprion-cert-deploy -c <cluster>` and then `haprion-deploy -c <cluster>` run, and no backup schedule until one is set on
 the Backups page; its retention is the default until then. Each node's `keepalived.conf` is not
 written by this project.
 
 A removal is refused for the last cluster. It takes the cluster out of `clusters.yaml`, out of every
 certificate's targets, out of the editing policy and `safe.directory`, and takes its nodes out of the
-six places; it stops `haproxy-state-backup@<cluster>.timer`. Nothing is deleted: the configuration
+six places; it stops `haprion-state-backup@<cluster>.timer`. Nothing is deleted: the configuration
 repository and its history, the release directory, the nodes' backup archives and the retention
 file are moved to `.removed/<cluster>-<time>/` under their own roots - the same file system, so a
 rename, and whatever protects the root protects the archive. The ID cannot be used again while its
@@ -1537,8 +1537,8 @@ Not by rerunning the installer. The command that owns the certificate is
 installed by step 5:
 
 ```bash
-sudo haproxy-ui-tls show
-sudo haproxy-ui-tls install --cert /path/to/ui.crt --key /path/to/ui.key
+sudo haprion-tls show
+sudo haprion-tls install --cert /path/to/ui.crt --key /path/to/ui.key
 ```
 
 `install` checks that the certificate and key actually belong together by
@@ -1556,21 +1556,21 @@ whoever would fix it. Enable it after installing a trusted pair.
 
 The pair can instead come from the certificate registry ([The certificate registry](#the-certificate-registry)): an entry marked
 `interface: true`, issued over ACME or NDES or imported like any other certificate, and renewed by
-the same timer. Publishing that entry runs `haproxy-ui-tls install` with it - the same checks and
+the same timer. Publishing that entry runs `haprion-tls install` with it - the same checks and
 the same rollback as above - after two refusals the command does not make itself: the certificate
 must name this host's `SERVER_NAME` (a wildcard covers one label), and a certificate nginx already
 serves is not installed again, so a renewal of some other certificate costs no reload.
 
-Who runs it depends on where the publish runs. `haproxy-cert-publish` and the renewal timer are
+Who runs it depends on where the publish runs. `haprion-cert-publish` and the renewal timer are
 root outside any sandbox and install directly. The certificate helpers the worker starts through
 `sudo` run inside the worker's `ProtectSystem=strict` namespace, where `/etc/haprion` is
-read-only; they name the entry by ID to `haproxy-ui-tls-helper` on
+read-only; they name the entry by ID to `haprion-tls-helper` on
 `/run/haprion/ui-tls.sock`, a root unit step 07 installs, which reads the registry and the
 material itself and refuses any entry not marked `interface: true`. The key never passes through
 the web process: the interface names a certificate, never bytes, never a path.
 
-At the terminal the mark is `--interface` on `haproxy-cert-issue`, `haproxy-cert-scep`,
-`haproxy-cert-request` and `haproxy-cert-import`, with no `--cluster` or `--receiver` beside it; a
+At the terminal the mark is `--interface` on `haprion-cert-issue`, `haprion-cert-scep`,
+`haprion-cert-request` and `haprion-cert-import`, with no `--cluster` or `--receiver` beside it; a
 signing request or an NDES enrollment the CA is still holding remembers it until the certificate
 arrives. A rotated or renewed interface certificate keeps the mark. A new one under another ID takes
 it: the registry moves the mark, publishing installs the new certificate, and only once nginx
@@ -1578,15 +1578,15 @@ serves it is the previous entry deleted, through the ordinary deletion. If the i
 the previous pair keeps serving, and its entry stays in the listing without the mark and without
 targets. The entry that serves the interface cannot be deleted (`serves_interface`).
 
-`haproxy-ui-tls install` and `self-signed` stay the way back: running either replaces the served
+`haprion-tls install` and `self-signed` stay the way back: running either replaces the served
 pair whatever the registry says, and the next publish of the marked entry puts it back.
 
 ## Backups, and proving they restore
 
 ```bash
-sudo haproxy-ui-backup dump            # what the daily timer runs
-sudo haproxy-ui-backup verify-restore  # what the weekly timer runs
-sudo haproxy-ui-backup list
+sudo haprion-backup dump            # what the daily timer runs
+sudo haprion-backup verify-restore  # what the weekly timer runs
+sudo haprion-backup list
 ```
 
 **Dumps are root-owned `0600` in a `0700` directory**, and step 6 verifies that
@@ -1664,7 +1664,7 @@ log page, although the records are still in staging ([Mirroring node traffic log
 collector account (`COLLECTOR_USER`):
 
 ```bash
-sudo -u <collector> /opt/haprion/current/bin/haproxy-ui-traffic-collector \
+sudo -u <collector> /opt/haprion/current/bin/haprion-traffic-collector \
   --replay-database /etc/haprion/traffic-collector.json
 ```
 
@@ -1687,8 +1687,8 @@ immediately. Schedules may run every day, on chosen weekdays, or on one day of t
 (1–28). The terminal path is:
 
 ```bash
-sudo haproxy-state-backup -c alpha
-haproxy-list-backups -c alpha
+sudo haprion-state-backup -c alpha
+haprion-list-backups -c alpha
 ```
 
 Archives are root-only and belong to a specific node. For backup identities, storage and
@@ -1697,7 +1697,7 @@ timers, see [Runtime policy](#runtime-policy).
 ## Restoring a node onto an empty VM
 
 A node that is lost is rebuilt from its state archive: install an empty VM, run
-`haproxy-node-restore`, and the VM becomes that node - its hostname, address, SSH host keys,
+`haprion-node-restore`, and the VM becomes that node - its hostname, address, SSH host keys,
 accounts, node scripts and keepalived role - and then fetches its configuration and certificates
 the way a deploy does. Nothing is installed on the VM beforehand.
 
@@ -1715,8 +1715,8 @@ itself* below.
 **Three steps, each its own command**, run as root on the management host:
 
 ```bash
-# 1. Choose the node, the archive (by its version, from haproxy-list-backups) and the VM.
-sudo haproxy-node-restore prepare -c alpha --node node-a \
+# 1. Choose the node, the archive (by its version, from haprion-list-backups) and the VM.
+sudo haprion-node-restore prepare -c alpha --node node-a \
     --archive 2026-01-01_04-00-00 --target 192.0.2.120
 
 # It prints one line. Paste it on the VM, as its administrator. It adds this run's
@@ -1725,16 +1725,16 @@ sudo haproxy-node-restore prepare -c alpha --node node-a \
 # host key fingerprint.
 
 # 2. Compare: the fingerprint it printed is the one the preview is given.
-sudo haproxy-node-restore preview --run <run> --fingerprint SHA256:...
+sudo haprion-node-restore preview --run <run> --fingerprint SHA256:...
 
 # 3. Carry out exactly what the preview showed, confirmed with the node's name.
-sudo haproxy-node-restore run --run <run> --confirm node-a
+sudo haprion-node-restore run --run <run> --confirm node-a
 
 # To abandon a run: remove its directory and one-time key.
-sudo haproxy-node-restore discard --run <run>
+sudo haprion-node-restore discard --run <run>
 
 # How a run stands: running, finished (and how), stopped mid-run, or not started.
-sudo haproxy-node-restore status --run <run>
+sudo haprion-node-restore status --run <run>
 ```
 
 **The same three steps from the interface.** An administrator with management writes gets
@@ -1805,12 +1805,12 @@ written.
    node scripts and `node-installation.json` of the running release, not the archive's, the sudo
    rules, the traffic-log directory, and re-renders `node.conf` - to the same bytes, which the
    preview's answers are tested against. If the archive shows the traffic log was on, the bundle's
-   `haproxy-traffic-log-enable` turns it on again, prune timer included.
+   `haprion-traffic-log-enable` turns it on again, prune timer included.
 2. Still there: the archive's Netplan, bound to the VM's MAC address, applied three seconds after
    the session ends - under a timer that puts the VM's own Netplan back after 180 seconds.
 3. On the node's own address, with the archive's host key: the timer is cancelled, HAProxy starts
    on a placeholder release whose only listener is a root-only unix socket, the node's
-   `haproxy-cert-pull` fetches the cluster's certificates and its `haproxy-pull-deploy` the
+   `haprion-cert-pull` fetches the cluster's certificates and its `haprion-pull-deploy` the
    published configuration - the same scripts a deploy triggers - keepalived starts as `BACKUP`,
    and **last** root's `authorized_keys` is replaced by the archive's, which removes the one-time
    key.
@@ -1844,7 +1844,7 @@ and the three steps are the same; over the node itself, what differs:
 - `run` refuses when that backup failed, unless `--backup-failed-ok`, and when the node may hold
   the VIP while its neighbour is not healthy, unless `--break-traffic` - which is what it says;
 - before its first write the run copies every path it or the node bundle may change to
-  `/var/lib/haproxy-restore/<run>/before/` on the node, then stops keepalived, so the VIP moves to
+  `/var/lib/haprion-restore/<run>/before/` on the node, then stops keepalived, so the VIP moves to
   the neighbour before anything changes. The copy stays 30 days (see
   [What a node keeps and for how long](#what-a-node-keeps-and-for-how-long));
 - the node's software is its own: no repository file is written, and only a product package the
@@ -1878,9 +1878,9 @@ for this. A node that is never reinstalled or restored keeps its copies until it
 
 | What | Where | Made by | Removed |
 |---|---|---|---|
-| rollback copy of a file an installer replaced | `<file>.replaced-<yyyymmdd-hhmmss>` beside the file, e.g. `/etc/haprion/node.conf.replaced-20260924-200115`, `/usr/local/sbin/haproxy-pull-deploy.replaced-…` | `04-node-prepare` (and so every node bundle installation and every restore) | when the same file is next installed, if the time in its name is more than 30 days old. **The newest copy of each file always stays, however old.** |
-| a configuration release: everything a deploy installed - `haproxy.cfg`, `conf.d/`, the certificate lists, `waf/`, `dns/`, `keepalived/` | `/etc/haproxy/releases/<yyyymmdd-hhmmss>/` | `haproxy-pull-deploy`, once per deploy that changed something | after a deploy that completed, all but the newest 10. **The release `current` names, the one running before that deploy and one an interrupted deploy left behind always stay.** `KEEP_RELEASES` in the script; each removal is logged `pruned <path>`. |
-| a restore run's directory: the `before/` copy an overwrite took, its `quarantine/`, and the node bundle it installed | `/var/lib/haproxy-restore/<run>/` | `haproxy-node-restore` (the terminal or the web page) | when a later restore run begins writing to the same node, if the run is more than 30 days old (by the date in its ID, `r<yymmdd>-…`). The current run is never removed. |
+| rollback copy of a file an installer replaced | `<file>.replaced-<yyyymmdd-hhmmss>` beside the file, e.g. `/etc/haprion/node.conf.replaced-20260924-200115`, `/usr/local/sbin/haprion-pull-deploy.replaced-…` | `04-node-prepare` (and so every node bundle installation and every restore) | when the same file is next installed, if the time in its name is more than 30 days old. **The newest copy of each file always stays, however old.** |
+| a configuration release: everything a deploy installed - `haproxy.cfg`, `conf.d/`, the certificate lists, `waf/`, `dns/`, `keepalived/` | `/etc/haproxy/releases/<yyyymmdd-hhmmss>/` | `haprion-pull-deploy`, once per deploy that changed something | after a deploy that completed, all but the newest 10. **The release `current` names, the one running before that deploy and one an interrupted deploy left behind always stay.** `KEEP_RELEASES` in the script; each removal is logged `pruned <path>`. |
+| a restore run's directory: the `before/` copy an overwrite took, its `quarantine/`, and the node bundle it installed | `/var/lib/haprion-restore/<run>/` | `haprion-node-restore` (the terminal or the web page) | when a later restore run begins writing to the same node, if the run is more than 30 days old (by the date in its ID, `r<yymmdd>-…`). The current run is never removed. |
 
 Why 30 days: a copy is for the days after a change, until the change has proved itself. After
 that, the nightly state backup on the management host is the node's history and a node bundle
@@ -1890,7 +1890,7 @@ original's.
 
 To keep something for longer, move it out of those names before the next installation or restore:
 anything not named `<file>.replaced-<yyyymmdd-hhmmss>`, and any directory under
-`/var/lib/haproxy-restore` that is not a run ID, is left alone. The periods are
+`/var/lib/haprion-restore` that is not a run ID, is left alone. The periods are
 `REPLACED_KEEP_DAYS` in `install/lib.sh` and `RUN_KEPT_DAYS` in `haproxy_mgmt/restore_agent.py`.
 Each removal is printed: `pruned <path>` in the installer's output, and an `old-runs` step in the
 restore's `apply` session.
@@ -1901,10 +1901,10 @@ write; the manager is backed up as a whole machine and needs no older copies tha
 ## Keeping jobs, sessions and metric history bounded
 
 ```bash
-sudo haproxy-ui-retention report              # quick overview; log row counts are estimates
-sudo haproxy-ui-retention report --exact      # count every traffic/WAF log row
-sudo haproxy-ui-retention prune --dry-run     # the same, deleting nothing
-sudo haproxy-ui-retention prune               # what the daily timer runs
+sudo haprion-retention report              # quick overview; log row counts are estimates
+sudo haprion-retention report --exact      # count every traffic/WAF log row
+sudo haprion-retention prune --dry-run     # the same, deleting nothing
+sudo haprion-retention prune               # what the daily timer runs
 ```
 
 The quick report sums row estimates and total storage (including indexes) from leaf
@@ -2010,7 +2010,7 @@ expose HAProxy's own Prometheus exporter. Both are settings of the cluster's
 HAProxy configuration, kept in `managed/cluster.yaml` in its repository and
 published as a version like any other change - a lock, a validated candidate,
 *Published by*, and a revert that takes them back. Nothing is installed on the
-nodes and nothing is relayed through the management host: after `haproxy-deploy`
+nodes and nothing is relayed through the management host: after `haprion-deploy`
 the nodes send and listen themselves.
 
 ```yaml
@@ -2037,9 +2037,9 @@ somebody else published in between is refused rather than overwritten. It runs
 under `sudo`, and the version records the person who typed it:
 
 ```bash
-sudo haproxy-cluster-settings -c alpha
-sudo haproxy-cluster-settings -c alpha --set cluster.yaml -m "Send the traffic log to graylog"
-haproxy-deploy -c alpha
+sudo haprion-cluster-settings -c alpha
+sudo haprion-cluster-settings -c alpha --set cluster.yaml -m "Send the traffic log to graylog"
+haprion-deploy -c alpha
 ```
 
 **The log** is the same structured record the node's own file gets ([Mirroring node traffic logs](#mirroring-node-traffic-logs)),
@@ -2135,7 +2135,7 @@ different server and starts again; reordering a pool moves nothing.
   `/run/haproxy` to make the file in, so another path is refused there.
 - **The interface's own figures were right before and stay right.** A node reports
   whether its HAProxy has the file in use (`runtime.shared_counters` in
-  `haproxy-status --json`), and the metrics count a reload as a restart only
+  `haprion-status --json`), and the metrics count a reload as a restart only
   when the counters did start again: when they were not kept, or when one of
   them went down.
 
@@ -2163,13 +2163,13 @@ invocations and two of them reach the nodes.
 **A finished job wakes it as well as the clock.** Publishing or deploying
 through the interface queues a job, and the poller reads the clusters again as
 soon as that job ends - so those changes appear without waiting. What waits is a
-change made *outside* the interface: `haproxy-publish` or `haproxy-deploy` run
+change made *outside* the interface: `haprion-publish` or `haprion-deploy` run
 on the command line queues no job, nothing is notified, and until the next tick
 the pages show the reading taken before the change. An object deployed from the
 command line therefore keeps its `Inactive - deploy to add` badge for up to one
 interval, which is the interface being careful rather than wrong.
 
-The same holds for what a version changed. `haproxy-list -c <cluster> --diff <version>`
+The same holds for what a version changed. `haprion-list -c <cluster> --diff <version>`
 prints one version against the version before it, file by file; the poller asks the
 helper for the same thing (`diffs`, at most ten commit hashes per request) for each
 version it has no diff for yet and keeps the answer, since a version's diff never
@@ -2260,7 +2260,7 @@ the management host last, and the validator is never the newer of the two.
 **One node at a time is fine, and it is shown.** Patching one node and leaving the other a day or
 two - to try a release before the second node gets it, with the old one still there to go back to -
 works: nothing here refuses a deploy over it. The dashboard says it on the node that is behind, in
-its Runtime cell, until both match; `haproxy-status` says the same on that node's version line:
+its Runtime cell, until both match; `haprion-status` says the same on that node's version line:
 
 - `Behind 3.4.7` - its HAProxy process is an older release than another node's. The running
   process, not the package: a node patched and not restarted still says it.
@@ -2353,9 +2353,9 @@ old directory loses nothing Git holds. `--keep N` changes the number (at least t
 ### Rolling a release back
 
 ```bash
-sudo haproxy-ui-rollback --list
-sudo haproxy-ui-rollback                       # the previous release
-sudo haproxy-ui-rollback --to <release-id>     # a named one
+sudo haprion-rollback --list
+sudo haprion-rollback                       # the previous release
+sudo haprion-rollback --to <release-id>     # a named one
 ```
 
 "Point `current` back and restart" is the shape of the rollback, but doing only
@@ -2548,7 +2548,7 @@ the worker joins the read-only configuration group. Account names are deployment
 supplied in a policy file rather than compiled in:
 
 ```bash
-haproxy-render-sysusers --policy /etc/haprion/identity-policy.yaml
+haprion-render-sysusers --policy /etc/haprion/identity-policy.yaml
 ```
 
 The command validates the policy and renders a `sysusers.d` fragment. It does not modify the
@@ -2726,7 +2726,7 @@ backup_root: /srv/state-backups
 backup_identity:
   user: "svc-backup"
   key: "/root/.ssh/id_ed25519_node_backup"
-backup_timer: haproxy-state-backup.timer
+backup_timer: haprion-state-backup.timer
 
 interface_account: "svc-app"
 pull_account: "svc-pull"
@@ -2742,12 +2742,12 @@ purpose stays possible with the certificate mismatch override, which is asked fo
 than written into the object.
 
 `backup_root` is where the state backup engine writes one directory per node, and it is what
-`haproxy-list-backups` reads. Called with no cluster, that command lists every configured cluster
-in turn - it reads `clusters.yaml` as the calling user, the same way `haproxy-cluster-config` does,
+`haprion-list-backups` reads. Called with no cluster, that command lists every configured cluster
+in turn - it reads `clusters.yaml` as the calling user, the same way `haprion-cluster-config` does,
 only to learn which clusters exist. Each listing is still resolved inside the privilege boundary by
 one helper call per cluster. Only metadata is ever reported from it - archive name, size and
 modification time. The archives themselves hold password hashes and private SSH keys, so the root
-stays root-owned and only one command opens one - `haproxy-node-restore`, as root, to restore it
+stays root-owned and only one command opens one - `haprion-node-restore`, as root, to restore it
 ([Restoring a node onto an empty vm](#restoring-a-node-onto-an-empty-vm)); the helper exists precisely so that an unprivileged
 caller can learn a backup exists without being able to read it.
 
@@ -2756,18 +2756,18 @@ from a node. It must not reuse the deploy or status key: unlike those responses,
 password hashes and private SSH keys. Step 3 creates the key and prints the exact line to install
 for the node's backup account; the private half remains root-only on the manager.
 
-Step 2 installs `haproxy-state-backup@.service`. Each instance takes both nodes in exactly one
+Step 2 installs `haprion-state-backup@.service`. Each instance takes both nodes in exactly one
 configured cluster and keeps a bounded number of root-only archives per node — 14 unless the
 Backups page set another count, which the root socket helper records in
 `/etc/haprion/backup-retention/<cluster>.json` (root-only, 1–365). Every run
-reads that file, including the terminal `haproxy-state-backup`, so a manual run prunes to the
+reads that file, including the terminal `haprion-state-backup`, so a manual run prunes to the
 same count the schedule promised; a file that is present but unreadable stops the run rather
 than falling back to 14. The ordinary list and the backup UI show every retained archive per node
 and identify the source node because hostnames, network state and SSH identities are not
 interchangeable between the pair.
 
 `backup_timer` names the legacy fleet-wide timer during migration. With `backup_identity`
-configured, listings instead read the derived `haproxy-state-backup@<cluster>.timer`. An admin can
+configured, listings instead read the derived `haprion-state-backup@<cluster>.timer`. An admin can
 set its schedule on the manager's clock — every day, chosen weekdays, or one day of the month
 (1–28, so no month is skipped) at a given time — enable or disable it, set the retention, and run
 an immediate cluster backup on the Backups page. The browser supplies no unit name or systemd
@@ -2775,7 +2775,7 @@ expression: the root socket helper derives both from the configured cluster and 
 request (`Mon,Wed,Fri *-*-* 05:00:00`, `*-*-07 05:00:00`), writes them as a drop-in on the
 timer instance, and reads the effective state back before reporting success. A calendar edited
 by hand on the manager is shown verbatim on the page and is not translated into the form's
-shapes. The terminal break-glass path remains `sudo haproxy-state-backup [-c <cluster>]`.
+shapes. The terminal break-glass path remains `sudo haprion-state-backup [-c <cluster>]`.
 
 `interface_account` names the web interface's worker account. It is the one caller a version
 believes about who published it: a publish or revert from the browser records the signed-in person
@@ -2786,17 +2786,17 @@ helper, the worker's own name for everything done in the browser.
 
 `pull_account` and `cert_pull_account` name the accounts the nodes fetch as - the `rrsync -ro`
 accounts whose `authorized_keys` carry one line per node ([Ssh identities](#ssh-identities)). They are what
-lets a node be added or removed with `haproxy-node` or the interface's Nodes card
+lets a node be added or removed with `haprion-node` or the interface's Nodes card
 ([Adding and removing a node](#adding-and-removing-a-node)): the names exist nowhere else a command reads. Leave
 them out and nodes are added by hand, as before.
 
-`status_identity` is the account `haproxy-status` becomes to read a node, and `haproxy-deploy`
+`status_identity` is the account `haprion-status` becomes to read a node, and `haprion-deploy`
 uses it too: a rollout reads the pair before and after every step, and it reads with the identity
 that cannot change a node rather than the one it triggers with. Both commands refuse to run
 without it instead of falling back to the deploy identity. It is deliberately not
 the deploy identity: reading status is the one thing the manager asks a node to do that cannot
 change it, so it is the identity that can be granted most widely, and keeping it separate is what
-preserves that difference. Without it, `haproxy-status` says exactly which field is missing.
+preserves that difference. Without it, `haprion-status` says exactly which field is missing.
 
 `probe_identity` is what the interface uses to ask a node to *try* a health check - open a
 connection to the servers an object names, from the address that object leaves from, and report
@@ -2811,7 +2811,7 @@ changes.
 ([Drain and maintenance](#drain-and-maintenance)). It logs in as the trigger account with a key of
 its own, whose forced command takes one server GUID and one of three states and nothing else; it
 changes where HAProxy sends traffic without a deploy, which is why it is neither the deploy nor the
-status key. Leave it out and `haproxy-server-state` says which field is missing; nothing else
+status key. Leave it out and `haprion-server-state` says which field is missing; nothing else
 changes. Step 2 writes it, and `status_identity` and `probe_identity`, when the answers file names
 their keys.
 
@@ -3007,7 +3007,7 @@ call them](#addresses-and-what-to-call-them).
 
 **The other half can be handed to the deploy.** A published release carries
 `keepalived/addresses.conf`, derived from `managed/network.yaml`: every VIP and every source
-address, one per line, with a comment saying which is which. `haproxy-pull-deploy` installs it at
+address, one per line, with a comment saying which is which. `haprion-pull-deploy` installs it at
 `/etc/keepalived/addresses.conf` on each node, and a node whose `keepalived.conf` includes that
 path gets a `keepalived --config-test` and a reload - **only** on exit 0, because keepalived skips
 an address it cannot parse at runtime and carries on, which would turn a mistyped address into a
@@ -3017,9 +3017,9 @@ the deploy as failed with the HAProxy configuration already live.
 **That failure leaves the node half-way, and the status says which half.** The configuration is
 live on the new release while the address list is the old one, so the release hash alone would
 report the node as up to date and a second deploy would pass over the node that still needs the
-work. `haproxy-node-status` therefore reports three measurements about the list - the digest the
+work. `haprion-node-status` therefore reports three measurements about the list - the digest the
 release publishes, the digest the node installed, and whether `keepalived.conf` includes it - and
-both `haproxy-status` and `haproxy-deploy` call a node current only when every component the
+both `haprion-status` and `haprion-deploy` call a node current only when every component the
 release owns is where it should be. Re-running the deploy after fixing the cause finishes the half
 that was left; the node script syncs the addresses even on a release it already runs.
 
@@ -3048,13 +3048,13 @@ line in `virtual_ipaddress` cannot cause either, which is what makes this half s
 An `include` naming a file that does not exist yet is a keepalived that will not start. That is the
 whole reason step 1 comes first.
 
-**The node's status helper has to be able to follow that include.** `haproxy-node-status` reports
+**The node's status helper has to be able to follow that include.** `haprion-node-status` reports
 whether this node currently carries the address by reading the `virtual_ipaddress` block and
 looking the address up on the interface. Once the block holds nothing but the include, a helper
 that reads only the block finds no address and answers that ownership is unknown - on both nodes.
 That is not a cosmetic answer: a deploy refuses to run without a known owner, so the whole cluster's
 deployment path stops. Install the node scripts from the same release as the manager before
-switching a node over, and confirm afterwards with `haproxy-status -c <cluster>` that the owner is
+switching a node over, and confirm afterwards with `haprion-status -c <cluster>` that the owner is
 named and the state is `single_owner`.
 
 **A cluster that sets `resolvers` must provide the section itself in `core/`**, since nameserver
@@ -3110,7 +3110,7 @@ one edit. `default_certificate` stays in `clusters.yaml` and must still be one t
 
 A **receiver** is somewhere other than a cluster that certificates are published to: a directory
 under the distribution root and the account whose fetch key is locked to it. A receiver is
-registered with `haproxy-cert-receiver` ([Registering a receiver](#registering-a-receiver)), not by hand, because an account, a key and a
+registered with `haprion-cert-receiver` ([Registering a receiver](#registering-a-receiver)), not by hand, because an account, a key and a
 directory are what let anyone fetch key material at all and none of the three is safe without the
 others. Which certificate goes to which already-registered receiver is the part the interface is
 allowed to change, and it does so through a helper that accepts only targets registered in this
@@ -3136,7 +3136,7 @@ with a password beside it rather than as a PEM pair. A bare ID means `pem`. The 
 the pair, because one host can want PEM for HAProxy and a `.pfx` for IIS.
 
 The choice is made where the receiver is chosen: `--format <receiver>=pkcs12` beside `--receiver`
-on `haproxy-cert-issue`, `haproxy-cert-import` and `haproxy-cert-scep`, and a select beside the
+on `haprion-cert-issue`, `haprion-cert-import` and `haprion-cert-scep`, and a select beside the
 receiver's box on the interface's certificate form and in *Publish to…*. A receiver kept at a
 target change keeps its format unless a new one is stated; stating a different one rewrites that
 receiver's files in the new format at once.
@@ -3161,7 +3161,7 @@ and two writers in the same second would otherwise be a lost update the loader c
 file that wins is valid, it just lacks what the other one wrote. A command that finds the lock held
 for longer than two minutes refuses with `operation_locked` rather than waiting on.
 
-`haproxy-cert-list` reports `source` and `targets` for every certificate the registry names, and
+`haprion-cert-list` reports `source` and `targets` for every certificate the registry names, and
 `null` for both on a file in the distribution directory that no entry names: that is what a
 certificate published before the registry existed looks like, and it is listed so it can be
 registered rather than hidden.
@@ -3177,7 +3177,7 @@ sudo install -o root -g root -m 755 install/certbot-deploy-hook \
 sudo certbot renew --dry-run --run-deploy-hooks
 ```
 
-It runs `haproxy-cert-publish --deploy` and nothing else. certbot runs every hook in that directory
+It runs `haprion-cert-publish --deploy` and nothing else. certbot runs every hook in that directory
 after every successful renewal, whichever lineage renewed, and the publisher finds the changed one
 by comparing bytes - so there is no per-lineage logic in the hook to go stale when a certificate is
 added. A hook that filtered on a hardcoded lineage, and a second one that walked a list file, are
@@ -3197,7 +3197,7 @@ from the runtime policy:
 acme:
   dns_cloudflare_credentials: /etc/letsencrypt/cloudflare/example.ini
   webroot: /var/www/acme
-  certbot: /opt/haproxy-certbot/current/venv/bin/certbot
+  certbot: /opt/haprion-certbot/current/venv/bin/certbot
   dns_profiles:
     directory: /etc/haprion/dns-profiles
     private_keys:
@@ -3257,7 +3257,7 @@ sudo UV_BIN=/path/to/uv ./install/platform/14-platform-certbot answers.env /path
 ```
 
 The step hands the lock to [`../tools/install-certbot-env.py`](../tools/install-certbot-env.py),
-which lets uv install exactly the locked set into `/opt/haproxy-certbot/releases/<certbot
+which lets uv install exactly the locked set into `/opt/haprion-certbot/releases/<certbot
 version>-<lock hash>/venv` and proves that every plugin in it loads. It then runs
 `certbot/verify-integrations.py` with the new environment's interpreter. Those checks feed the
 catalogue's rendered credentials through every offered plugin's own credential setup, exercise
@@ -3266,11 +3266,11 @@ reaches out fails instead of passing quietly; a missing, empty or failed report 
 release. The catalogue states per provider what has been proved (`packaged`, `loaded`,
 `integration-tested`, `live-verified`) and the verifier refuses a catalogue that claims more than
 the run showed. The passed check names are recorded in `INSTALLATION.json`. The installer freezes the tree root-owned and read-only and
-points `/opt/haproxy-certbot/current` at it. Then the platform step runs
-`haproxy-cert-renew --certbot <new binary> --dry-run --run-deploy-hooks` against every lineage on the host: the
+points `/opt/haprion-certbot/current` at it. Then the platform step runs
+`haprion-cert-renew --certbot <new binary> --dry-run --run-deploy-hooks` against every lineage on the host: the
 one gate a certbot upgrade has, and a failure puts the previous release back before the step
 stops. Only after that does renewal move: the distribution's `certbot.timer` is masked and
-`haproxy-certbot-renew.timer` - the same schedule, the release's binary, the same
+`haprion-certbot-renew.timer` - the same schedule, the release's binary, the same
 `/etc/letsencrypt` - takes over. Its bounded wrapper invokes Certbot once per lineage. Most plugins
 persist their credentials-file flag in the renewal configuration; Route53 has no such flag, so the
 wrapper restores `AWS_SHARED_CREDENTIALS_FILE` from the registry's `source.dns_profile` binding.
@@ -3377,7 +3377,7 @@ domain membership or AD account and does not visit `mscep_admin` during normal o
 `profiles` and the optional `renew_days` (1–3650, default 30). Paths are absolute. `profiles` contains `directory` and `private_keys`,
 a non-empty list of absolute private-key file paths using the existing profile sealing keys. The endpoint must use HTTPS and
 match the encrypted provider profile exactly. TLS trust and certificate issuing trust are
-configured separately. Suggested roots are `/opt/haproxy-scep/current`,
+configured separately. Suggested roots are `/opt/haprion-scep/current`,
 `/etc/haprion/ndes-requests` and `/etc/haprion/ndes-profiles`.
 The latter directories are root-owned, mode `0700`; records and keys are mode `0600`.
 
@@ -3632,7 +3632,7 @@ $ grep -vE '^\s*#|^\s*$' /etc/default/haproxy
 `Environment=` lines. `EnvironmentFile=` is read when the service starts, never appears there, and
 overrides them.
 
-This matters beyond startup. `haproxy-pull-deploy` validates with its own explicit arguments —
+This matters beyond startup. `haprion-pull-deploy` validates with its own explicit arguments —
 each file named once — so a configuration can validate cleanly while the service will not start.
 The two paths only agree if the unit names each path once too.
 
@@ -3661,9 +3661,9 @@ vrrp_instance alpha {
         192.0.2.10                # the VIP
     }
 
-    notify_master "/usr/local/sbin/haproxy-keepalived-state MASTER"
-    notify_backup "/usr/local/sbin/haproxy-keepalived-state BACKUP"
-    notify_fault  "/usr/local/sbin/haproxy-keepalived-state FAULT"
+    notify_master "/usr/local/sbin/haprion-keepalived-state MASTER"
+    notify_backup "/usr/local/sbin/haprion-keepalived-state BACKUP"
+    notify_fault  "/usr/local/sbin/haprion-keepalived-state FAULT"
 }
 ```
 
@@ -3743,23 +3743,23 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 
 | Script | What it does |
 |---|---|
-| `haproxy-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
-| `haproxy-cert-trigger` | unprivileged wrapper: validates the verb (`cert-pull` or `cert-remove`) and the certificate IDs, then escalates |
-| `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, and replaces them in the running HAProxy through `haproxy-server-state update-certs` (`set ssl cert`/`commit ssl cert` on the admin socket), reloading instead when HAProxy does not hold one of them or refuses it; a run stopped between installing and reloading leaves `/run/haproxy-cert-pull.pending`, the node's status leaves those certificates out until the next run reloads |
-| `haproxy-cert-remove` | removes the requested certificates from `/etc/haproxy/certs`, refusing any the installed configuration still names; no reload |
-| `haproxy-node-status` | reports version, health, carried certificates, keepalived state and the address list |
-| `haproxy-keepalived-state` | records the keepalived transition to a state file |
-| `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
-| `haproxy-health-probe` | opens one connection per named target and reports the status line |
-| `haproxy-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB; `waf <cursor>` returns the WAF engine's journal lines after a journal cursor, same cap |
-| `haproxy-traffic-log-enable` | installs or removes this node's rsyslog route and retention timer |
-| `haproxy-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
-| `haproxy-server-state-trigger` | unprivileged wrapper: validates `server-state <guid> <ready\|drain\|maint>`, then escalates |
-| `haproxy-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts; replaces certificates HAProxy already holds without a reload (`update-certs`) |
+| `haprion-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
+| `haprion-cert-trigger` | unprivileged wrapper: validates the verb (`cert-pull` or `cert-remove`) and the certificate IDs, then escalates |
+| `haprion-cert-pull` | fetches the requested certificates, validates them, installs, and replaces them in the running HAProxy through `haprion-server-state update-certs` (`set ssl cert`/`commit ssl cert` on the admin socket), reloading instead when HAProxy does not hold one of them or refuses it; a run stopped between installing and reloading leaves `/run/haprion-cert-pull.pending`, the node's status leaves those certificates out until the next run reloads |
+| `haprion-cert-remove` | removes the requested certificates from `/etc/haproxy/certs`, refusing any the installed configuration still names; no reload |
+| `haprion-node-status` | reports version, health, carried certificates, keepalived state and the address list |
+| `haprion-keepalived-state` | records the keepalived transition to a state file |
+| `haprion-state-export` | writes this node's permanent state to stdout as a gzipped tar |
+| `haprion-health-probe` | opens one connection per named target and reports the status line |
+| `haprion-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB; `waf <cursor>` returns the WAF engine's journal lines after a journal cursor, same cap |
+| `haprion-traffic-log-enable` | installs or removes this node's rsyslog route and retention timer |
+| `haprion-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
+| `haprion-server-state-trigger` | unprivileged wrapper: validates `server-state <guid> <ready\|drain\|maint>`, then escalates |
+| `haprion-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts; replaces certificates HAProxy already holds without a reload (`update-certs`) |
 
 Step 4 also writes `/etc/haprion/node-installation.json`. It records the
 node compatibility API and a SHA-256 digest for each of these thirteen scripts.
-`haproxy-node-status` recomputes the digests on every reading, so copied metadata
+`haprion-node-status` recomputes the digests on every reading, so copied metadata
 cannot hide a script changed after installation. The report contains code
 digests only, never node configuration or key material.
 
@@ -3778,7 +3778,7 @@ node that gets the answers file must therefore have every listed path.
 
 Two of these deserve attention:
 
-**`haproxy-cert-trigger` exists because sudoers cannot express a list.** The certificate IDs arrive
+**`haprion-cert-trigger` exists because sudoers cannot express a list.** The certificate IDs arrive
 as SSH command arguments, and no wildcard rule can safely constrain them. So validation happens
 twice: unprivileged in the wrapper, and again in the root helper. The wrapper escalates with
 `sudo -n` and an exact `NOPASSWD` rule, so a policy mismatch fails immediately instead of falling
@@ -3787,7 +3787,7 @@ verbs, `cert-pull` and `cert-remove`, each with its own root helper and its own 
 node installed before that answers `cert-remove` with "unknown request", which the manager reports
 as a kept copy rather than as a failure. Rerun step 4 on such a node to give it the verb.
 
-**`haproxy-health-probe` is held to the same TLS floor as the configuration.** A pool whose object
+**`haprion-health-probe` is held to the same TLS floor as the configuration.** A pool whose object
 names a `legacy` policy is reached by HAProxy over TLS [Service accounts and the config group](#service-accounts-and-the-config-group), so a probe that kept a floor of its own
 would refuse a backend HAProxy accepts and report a healthy pool as down. Each target therefore
 carries a `min_version` — `TLSv1.1`, `TLSv1.2` or `TLSv1.3` — and the script refuses anything else.
@@ -3797,14 +3797,14 @@ degradation runs the other way too and is worth knowing: a **node** older than t
 and probes at TLS [Directory layout](#directory-layout) regardless, so a `legacy` pool reads as unreachable until that node's script
 is updated. The configuration is unaffected — only the answer the card gives.
 
-**`haproxy-server-state` keeps a drain through reloads and restarts.** A state set over HAProxy's
+**`haprion-server-state` keeps a drain through reloads and restarts.** A state set over HAProxy's
 runtime socket lasts only as long as the worker, and every deploy and certificate rollout starts a
 new one. So the node keeps the wanted state per server in `/var/lib/haprion/server-state.json`
 (`root`, `0600`), named by the server's GUID - derived from its address and port, so reordering a
 pool moves nothing and a server given a new address starts ready - and every reload on the node
-goes through `haproxy-server-state reload`: it reads the worker's pid, reloads, waits for a
+goes through `haprion-server-state reload`: it reads the worker's pid, reloads, waits for a
 worker with another pid, and sets the kept states on a connection whose `show info` proves which
-worker took them. A drop-in on `haproxy.service` runs `haproxy-server-state reapply` once HAProxy
+worker took them. A drop-in on `haproxy.service` runs `haprion-server-state reapply` once HAProxy
 is ready, prefixed `-` so a state that cannot be set never keeps HAProxy from starting. HAProxy's
 own `server-state-file` is not used: it carries a server's old port over a changed configuration
 (haproxy/haproxy#3296). It needs a socket at level `admin` that only root can open - one line in
@@ -3819,7 +3819,7 @@ answers file; a line already there for the same forced command is replaced. A no
 key, or a core without the socket, offers no server state and refuses a request with the line
 that is missing.
 
-**`haproxy-pull-deploy` is generic except for its publication path.** Everything else — validation,
+**`haprion-pull-deploy` is generic except for its publication path.** Everything else — validation,
 release creation, the atomic symlink swap, the rollback on failure — is identical on every node.
 
 #### Node filesystem layout
@@ -3830,7 +3830,7 @@ release creation, the atomic symlink swap, the rollback on failure — is identi
 /etc/haproxy/conf.d      -> current/conf.d
 /etc/haproxy/maps        -> current/maps
 /etc/haproxy/certs/          local certificate directory
-/run/lock/haproxy-deploy.lock
+/run/lock/haprion-deploy.lock
 ```
 
 The releases root is `root:root 0750`. HAProxy, deployment, status and backup operations read it as
@@ -3896,7 +3896,7 @@ Measure the pair immediately before an update and select the node that does not 
 address:
 
 ```bash
-haproxy-status -c alpha
+haprion-status -c alpha
 ```
 
 Run the transport as your administrator account, never as root. All paths must be absolute. The dry
@@ -3914,7 +3914,7 @@ tools/install-node-bundle --dry-run \
 
 Remove `--dry-run` to install. Rolling one bundle across a cluster's pair, give the first node
 `--skip-backup-after` and the second `--skip-backup-before`: the state backup
-(`haproxy-state-backup -c <cluster>` from the installed release) archives both nodes of that
+(`haprion-state-backup -c <cluster>` from the installed release) archives both nodes of that
 cluster, and one before the first write and one after the last is the rule, not one pair per
 node. Another cluster's roll-out is its own pair of backups. The tool:
 
@@ -3924,7 +3924,7 @@ node. Another cluster's roll-out is its own pair of backups. The tool:
 4. copies only the bundle and the separate answers file to a random mode-700 directory under
    `/tmp`, then verifies the bundle digest again on the node;
 5. runs the bundle's own `04-node-prepare` through the operator's interactive `sudo` path;
-6. takes another state backup and runs `haproxy-status` for the cluster; and
+6. takes another state backup and runs `haprion-status` for the cluster; and
 7. removes its remote and local staging automatically. A cleanup failure is a visible warning that
    names the exact directory; remove only that named directory after inspecting it.
 
@@ -3932,12 +3932,12 @@ The SSH login and the node's sudo authentication are deliberately interactive. T
 session means each is requested once per node, not once per file. The management identities remain
 forced commands and gain no file-copy ability.
 
-Stop after the first node and read both the install report and `haproxy-status`. A successful copy
+Stop after the first node and read both the install report and `haprion-status`. A successful copy
 proves bytes, modes and ownership; run the command that uses a changed script before proceeding.
 Remeasure VIP ownership before every subsequent node — never assume it stayed where the previous
 status reading found it.
 
-`haproxy-traffic-log-enable` and its `--disable` path restart rsyslog because rsyslog does not load
+`haprion-traffic-log-enable` and its `--disable` path restart rsyslog because rsyslog does not load
 a changed rule on HUP. HAProxy does not buffer while its local log socket is unavailable, so a
 request during that sub-second restart can be absent from both the structured day file and the
 classic log. Run the command on the node that does not own the VIP first, remeasure ownership, and
@@ -3948,7 +3948,7 @@ restart cannot recover a line emitted while rsyslog was down.
 
 Keep the previous node bundle and its recorded SHA-256. A code rollback is the same verified
 installation command with that retained bundle; there is no special path that bypasses manifest or
-hash checks. Re-run the functional command and `haproxy-status` afterwards.
+hash checks. Re-run the functional command and `haprion-status` afterwards.
 
 State backups are taken on both sides of every update so account, policy and configuration changes
 also have a recovery point. They are not restored automatically: an automatic whole-node restore
@@ -3957,7 +3957,7 @@ failure, preserve the reported backup, note any cleanup warning and determine wh
 operation completed before restoring state.
 
 Optional features have their own symmetric rollback. For traffic logging, disable the node route
-with `sudo haproxy-traffic-log-enable --disable`, remove only that collector key's forced-command
+with `sudo haprion-traffic-log-enable --disable`, remove only that collector key's forced-command
 line from `svc-logread` and disable the manager collector. Traffic files are deliberately retained;
 rollback never deletes evidence.
 
@@ -4022,21 +4022,21 @@ Short stable wrappers and exact sudoers rules may point into `current/bin`; they
 into a source checkout.
 
 **`current/bin` is not on `sudo`'s path.** `sudo` resets `PATH` to its `secure_path`, which does
-not include `/opt/haprion/current/bin`, so `sudo haproxy-cert-receiver ...` answers
+not include `/opt/haprion/current/bin`, so `sudo haprion-cert-receiver ...` answers
 `command not found` on a fresh installation even though the command is installed. The examples
 in the user manual assume one short wrapper per operator command in `/usr/local/bin`, each of the
 shape
 
 ```bash
 #!/usr/bin/env bash
-exec /opt/haprion/current/bin/haproxy-cert-receiver "$@"
+exec /opt/haprion/current/bin/haprion-cert-receiver "$@"
 ```
 
 so that a release switch moves every command at once and nothing points at a release
 directory by name. The installer does not write them - which commands an operator types is
 the installation's choice, and a helper the worker runs through an exact sudoers rule must
 **not** get one. Until a wrapper exists, the full path works the same:
-`sudo /opt/haprion/current/bin/haproxy-cert-receiver ...`.
+`sudo /opt/haprion/current/bin/haprion-cert-receiver ...`.
 
 `INSTALLATION.json` also records the engine compatibility API carried by the
 wheel. A wheel from before that metadata existed remains installable for
@@ -4245,7 +4245,7 @@ terminates HTTPS there. The web service itself listens only on
 `127.0.0.1:8080`, in plain HTTP, and that leg stays plain deliberately: it never
 leaves the host. The rendered site also includes
 `/etc/nginx/snippets/haproxy-manager-receivers.conf`, created empty by this
-step and written afterwards only by `haproxy-cert-receiver` ([Registering a receiver](#registering-a-receiver)); a rerun of
+step and written afterwards only by `haprion-cert-receiver` ([Registering a receiver](#registering-a-receiver)); a rerun of
 the step leaves an existing snippet alone.
 
 **This is the direct address, and it does not go through the HAProxy pair.**
@@ -4361,7 +4361,7 @@ like.
 
 So the first account is made by the installation itself, on the terminal of
 whoever installs it: when `install-ui-release` activates a release on an
-installation that has **no account at all**, it runs `haproxy-ui-user init-admin`,
+installation that has **no account at all**, it runs `haprion-user init-admin`,
 which creates `admin` as a break-glass admin and asks for its password, twice,
 as `add` does. It is never printed and stored nowhere but as a hash. Every later
 release finds accounts and does nothing, and asks nothing. Without a terminal —
@@ -4374,7 +4374,7 @@ For account administration and password recovery, see
 
 #### Platform backup installation
 
-`install/platform/06-platform-backup` installs `haproxy-ui-backup`, a daily
+`install/platform/06-platform-backup` installs `haprion-backup`, a daily
 timer, and a weekly restore check — then takes a dump and restores it
 immediately, because the moment to discover that a backup does not work is
 during installation rather than during an incident.
@@ -4384,7 +4384,7 @@ For manual dumps, restore checks and recovery, see
 
 #### Retention installation
 
-`install/platform/11-platform-retention` installs `haproxy-ui-retention` and a
+`install/platform/11-platform-retention` installs `haprion-retention` and a
 daily timer. It is optional, and it is separate from the backup step because
 it is the only thing here that removes rows from a live table. **The step itself
 deletes nothing** — it reports what the first run would remove and leaves the
@@ -4446,7 +4446,7 @@ nodes, and giving it a key and an inventory would undo exactly that.
 
 The step fetches nothing on its own. It prints one `authorized_keys` line to add
 to `svc-logread` on each node, and each node also needs its own log route
-switched on with `sudo haproxy-traffic-log-enable`.
+switched on with `sudo haprion-traffic-log-enable`.
 
 Enabling or disabling that node route restarts rsyslog; a reload does not apply
 the rule. HAProxy does not buffer log lines during the brief restart, so apply
@@ -4554,13 +4554,13 @@ design, so the poller runs the same privileged helper the command line runs,
 through exact sudoers rules:
 
 ```
-<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-status-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-inventory-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-readings-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cluster-list-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-status-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-inventory-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-readings-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cluster-list-helper ""
 ```
 
-Status and inventory reach the nodes. `haproxy-readings-helper` answers the six
+Status and inventory reach the nodes. `haprion-readings-helper` answers the six
 readings that touch only the management host - versions, backup archives,
 certificates, the network description, the cluster settings and the stored
 objects - in one call, by running their own helpers; until 2026-10-08 each had
@@ -4598,7 +4598,7 @@ simply open it — and reports the three address tables plus which of the two
 possible sources they came from. None takes a lock, so these
 reads stay answerable while a deploy runs.
 
-`haproxy-list` itself does not use that helper: a person running it can already
+`haprion-list` itself does not use that helper: a person running it can already
 read the cluster repository, so the command reads it directly and requiring
 `sudo` for machine-readable output would be privilege for formatting. Both paths
 build their result with the same function, so the two cannot come to describe
@@ -4641,7 +4641,7 @@ under `/root`, so the unit needs a hole in `ProtectHome` — and:
 ```bash
 printf '{"schema_version":1,"operation":"status","cluster":"<id>",'\
 '"request_id":"'"$(uuidgen)"'","parameters":{}}' \
-  | sudo -u <poller> sudo -n /opt/haprion/current/bin/haproxy-status-helper
+  | sudo -u <poller> sudo -n /opt/haprion/current/bin/haprion-status-helper
 ```
 
 If that answers `done`, the sandbox is the problem and not the environment.
@@ -4657,19 +4657,19 @@ exactly the case a lock file gets wrong.
 Thirteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-deploy-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-deploy-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-revert-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-changes-publish-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-issue-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-publish-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-target-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-dns-profile-apply-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-delete-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-ndes-profile-apply-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-scep-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-import-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-request-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-deploy-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-deploy-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-revert-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-changes-publish-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-issue-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-publish-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-target-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-dns-profile-apply-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-delete-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-ndes-profile-apply-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-scep-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-import-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-request-helper ""
 ```
 
 The last nine are the certificate jobs ([Issuing a certificate](#issuing-a-certificate), [The DNS profile key pair](#the-dns-profile-key-pair), [Deleting a certificate](#deleting-a-certificate), [Importing a certificate](#importing-a-certificate)): they belong to no cluster, and
@@ -4713,8 +4713,8 @@ worth keeping for a button.
 So the privilege stays still and the request travels instead:
 
 ```
-/run/haprion/probe.sock   root:<web> 0660, created by haproxy-probe-helper.socket
-haproxy-probe-helper@.service  runs the helper as root, one instance per connection
+/run/haprion/probe.sock   root:<web> 0660, created by haprion-probe-helper.socket
+haprion-probe-helper@.service  runs the helper as root, one instance per connection
 ```
 
 The web service opens the socket, writes one JSON request, closes its write side,
@@ -4722,7 +4722,7 @@ and reads one JSON answer. The far end takes no arguments and does exactly one
 thing, so reaching it is worth no more than the sudo rule would have been — and
 the web account keeps a sandbox in which nothing it runs can gain privilege.
 
-`haproxy-probe` on the command line still goes through `sudo`, because a person
+`haprion-probe` on the command line still goes through `sudo`, because a person
 running it has a terminal and a `%sudo` rule. Both build the request with the
 same function, so the two paths cannot come to describe the same probe
 differently.
@@ -4746,11 +4746,11 @@ in order to serve one; a rule that stays fails at the first write.
 So this helper, too, sits still and the request travels:
 
 ```
-/run/haprion/cert-receiver.sock    root:<worker> 0660, created by haproxy-cert-receiver-helper.socket
-haproxy-cert-receiver-helper@.service   runs the helper as root, one instance per connection
+/run/haprion/cert-receiver.sock    root:<worker> 0660, created by haprion-cert-receiver-helper.socket
+haprion-cert-receiver-helper@.service   runs the helper as root, one instance per connection
 ```
 
-The worker runs `haproxy-cert-receiver-ask` from its own environment, as
+The worker runs `haprion-cert-receiver-ask` from its own environment, as
 itself: no arguments, the request on stdin, the answer on stdout - the same
 shape every other helper is run in, so the queue, the lease and the output cap
 are unchanged. The client connects to the socket, writes the request, closes its
@@ -4759,12 +4759,12 @@ answer is an envelope that says so (`dependency_unavailable`), never `unknown`;
 a helper that was asked and went quiet leaves the job `unknown` (see the backup
 and restore helpers below).
 The helper's own stderr goes to the journal (`journalctl -u
-'haproxy-cert-receiver-helper@*'`), not to the job.
+'haprion-cert-receiver-helper@*'`), not to the job.
 
 The service's sandbox is `ProtectSystem=yes` - `/usr`, `/boot` and `/efi`
 read-only, `/etc` writable - because writing `/etc` is the job. `full` and
 `strict` would both take `/etc` away, which is the failure this unit ends.
-`haproxy-cert-receiver` at the terminal does not go this way; root runs it
+`haprion-cert-receiver` at the terminal does not go this way; root runs it
 directly.
 
 Step 07 installs the socket wherever it installs a worker. It reaches no node.
@@ -4773,19 +4773,19 @@ Step 07 installs the socket wherever it installs a worker. It reaches no node.
 
 The same boundary once more, with a different caller. The helpers that issue, enroll and import
 certificates run through `sudo` inside the worker's namespace, and publishing the entry marked
-`interface: true` ([HTTPS and the certificate](#https-and-the-certificate)) ends in `haproxy-ui-tls install`, which writes `/etc/haprion/tls`
+`interface: true` ([HTTPS and the certificate](#https-and-the-certificate)) ends in `haprion-tls install`, which writes `/etc/haprion/tls`
 and a rollback directory beside it. So those helpers name the entry by ID on a socket:
 
 ```
-/run/haprion/ui-tls.sock      root:<worker> 0660, created by haproxy-ui-tls-helper.socket
-haproxy-ui-tls-helper@.service     runs the helper as root, one instance per connection
+/run/haprion/ui-tls.sock      root:<worker> 0660, created by haprion-tls-helper.socket
+haprion-tls-helper@.service     runs the helper as root, one instance per connection
 ```
 
 The request carries the certificate ID and nothing else; the helper reads the registry and the
 material itself and refuses an entry without the mark. The socket takes one connection at a time,
 and the helper takes no lock: its callers hold the publisher's lock while they wait for it. The
 sandbox is `ProtectSystem=yes`, as for the receiver helper. The renewal timer and
-`haproxy-cert-publish` do not go this way; root runs them directly. Step 07 installs the socket
+`haprion-cert-publish` do not go this way; root runs them directly. Step 07 installs the socket
 wherever it installs a worker.
 
 ##### The worker's way to the backup and restore helpers
@@ -4797,13 +4797,13 @@ under `backup_root`, a restore keeps its run and one-time key under
 child of the worker would inherit its read-only mount namespace.
 
 ```
-/run/haprion/backup-job.sock       root:<worker> 0660, created by haproxy-backup-job-helper.socket
-haproxy-backup-job-helper@.service      backup_run and backup_schedule, as root, one instance per connection
-/run/haprion/node-restore.sock     root:<worker> 0660, created by haproxy-node-restore-helper.socket
-haproxy-node-restore-helper@.service    node_restore_prepare, _preview, node_restore and _discard, as root
+/run/haprion/backup-job.sock       root:<worker> 0660, created by haprion-backup-job-helper.socket
+haprion-backup-job-helper@.service      backup_run and backup_schedule, as root, one instance per connection
+/run/haprion/node-restore.sock     root:<worker> 0660, created by haprion-node-restore-helper.socket
+haprion-node-restore-helper@.service    node_restore_prepare, _preview, node_restore and _discard, as root
 ```
 
-The worker runs `haproxy-backup-job-ask` and `haproxy-node-restore-ask` from its
+The worker runs `haprion-backup-job-ask` and `haprion-node-restore-ask` from its
 own environment, exactly as it runs the receiver client. Two answers differ from
 a helper that ran and refused. Nothing listening is an envelope that says so
 (`dependency_unavailable`, `failed`): nothing ran. A helper that was asked and
@@ -4811,17 +4811,17 @@ then went quiet - the client's time ran out, or the connection dropped - is
 **no** envelope, and the job ends `unknown`: the root service carries on without
 the client and may have finished. The client's sentence is in the job's stderr
 excerpt; the helper's own lines are in the journal (`journalctl -u
-'haproxy-node-restore-helper@*'`).
+'haprion-node-restore-helper@*'`).
 
 The restore service needs `AF_NETLINK` besides the usual families: `ip route
 get` names the address the target will see the manager come from, which is what
 the one-time key's `from=` is limited to. Activating a UI release, and
-`haproxy-ui-rollback`, restart the worker, so both first pause its claims
-(`haproxy-ui-drain`) and wait until no job is running - fifteen minutes at most
+`haprion-rollback`, restart the worker, so both first pause its claims
+(`haprion-drain`) and wait until no job is running - fifteen minutes at most
 (`DRAIN_SECONDS`), after which they stop without switching anything and lift
 the pause. A pause left behind by a killed run ends by itself five minutes after
 its wait would have. Step 07 installs both sockets wherever it installs a
-worker; `haproxy-node-restore` and `haproxy-state-backup` at the terminal do not
+worker; `haprion-node-restore` and `haprion-state-backup` at the terminal do not
 go this way, root runs them directly.
 
 ##### The worker's way to the node helper
@@ -4830,15 +4830,15 @@ Adding or removing a node writes root's `known_hosts`, the pull accounts' `autho
 cluster file and the collector's files - none of which a helper the worker starts through sudo may
 write. Creating or removing a cluster writes those and the editing policy under `/etc/sudoers.d`,
 a new repository under the configuration root, and moves directories into `.removed/`. So
-`haproxy-node-helper` answers both on `/run/haprion/cluster-node.sock` (root, group the
-worker's account, `0660`) from `haproxy-node-helper@.service`, installed by step 07; the worker's
-`haproxy-node-ask` carries the request there, and `haproxy-node` and `haproxy-cluster` from a
+`haprion-node-helper` answers both on `/run/haprion/cluster-node.sock` (root, group the
+worker's account, `0660`) from `haprion-node-helper@.service`, installed by step 07; the worker's
+`haprion-node-ask` carries the request there, and `haprion-node` and `haprion-cluster` from a
 terminal run the helper directly as root.
 
 ##### Which clusters get polled
 
 The clusters `clusters.yaml` lists, in its order. The poller asks
-`haproxy-cluster-list-helper` on every pass - through one sudoers rule, because the application
+`haprion-cluster-list-helper` on every pass - through one sudoers rule, because the application
 accounts cannot read the engine's configuration and must not - and keeps the answer in one row that
 the pages read. A cluster created or removed from Settings is therefore polled and drawn from the
 next pass on, and its colour follows its place in the file.
@@ -4917,19 +4917,19 @@ business; what they may do inside it is the schema's.
 
 Work outward, and stop at the first step that fails:
 
-1. **Configuration status** — `haproxy-config-status -c alpha` reports the published version and a
+1. **Configuration status** — `haprion-config-status -c alpha` reports the published version and a
    clean draft.
-2. **Node status** — `haproxy-status -c alpha` reaches both nodes and reports the address owner,
+2. **Node status** — `haprion-status -c alpha` reaches both nodes and reports the address owner,
    the release each node runs, and whether that is the published one. This proves the status key,
    its forced command, and the node reporter.
-3. **The stored objects** — `haproxy-objects -c alpha` lists the proxy objects as they are written,
+3. **The stored objects** — `haprion-objects -c alpha` lists the proxy objects as they are written,
    at the commit the repository is on, and `--show <name>` prints one document exactly as stored;
    `--advanced <name>` prints where each line of its advanced config goes.
-   Where `haproxy-inventory` parses what a node is serving, this reads the source that produced it -
+   Where `haprion-inventory` parses what a node is serving, this reads the source that produced it -
    so an object the generator refuses is listed with the refusal rather than left out. The listing
    also names the VIP each object is served on, worked out by the generator's own rule against the
    network description, which is what the interface lists and searches by.
-4. **A converged deploy** — `haproxy-deploy -c alpha` with nodes already current should skip both
+4. **A converged deploy** — `haprion-deploy -c alpha` with nodes already current should skip both
    nodes and change nothing. A run that correctly does nothing is a real test. Step 2 should
    already have said the cluster was converged; if the two disagree, believe neither and find out
    why before deploying anything.

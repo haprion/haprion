@@ -1,4 +1,4 @@
-"""``haproxy-network``: the addresses a cluster serves on, and where they came from.
+"""``haprion-network``: the addresses a cluster serves on, and where they came from.
 
 The command exists so that "which addresses does this cluster have, and can
 they be edited" is answerable without opening a file - by an operator on the
@@ -203,7 +203,7 @@ class TheHelperAnswersInTheFrozenEnvelope(unittest.TestCase):
         )
 
         self.assertEqual((code, err), (0, ""))
-        document = assert_contract("haproxy-network", out)
+        document = assert_contract("haprion-network", out)
         self.assertEqual(document["outcome"], "done")
         self.assertEqual(document["result"]["origin"], "repository")
 
@@ -212,7 +212,7 @@ class TheHelperAnswersInTheFrozenEnvelope(unittest.TestCase):
 
         self.assertEqual(code, 64)
         self.assertIn("unknown cluster", err)
-        document = assert_contract("haproxy-network", out)
+        document = assert_contract("haprion-network", out)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["error"]["code"], "bad_input")
         self.assertIsNone(document["result"])
@@ -229,7 +229,7 @@ class TheHelperAnswersInTheFrozenEnvelope(unittest.TestCase):
 
         self.assertNotEqual(code, 0)
         self.assertIn("ERROR", err)
-        document = assert_contract("haproxy-network", out)
+        document = assert_contract("haprion-network", out)
         self.assertEqual(document["outcome"], "failed")
 
     def test_an_argument_never_reaches_the_helper(self) -> None:

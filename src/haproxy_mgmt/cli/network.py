@@ -1,4 +1,4 @@
-"""``haproxy-network`` - where a cluster's traffic arrives and leaves, read-only.
+"""``haprion-network`` - where a cluster's traffic arrives and leaves, read-only.
 
 The addresses an object can be served on, the addresses it can leave from, and
 the groups it can be restricted to. Read-only here on purpose: these tables are
@@ -19,10 +19,10 @@ from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.helper_protocol import write_document
 
 OPERATION = "network"
-HELPER = "/opt/haprion/current/bin/haproxy-network-helper"
+HELPER = "/opt/haprion/current/bin/haprion-network-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
-USAGE = "Usage:\n  haproxy-network -c <cluster> [--json]\n"
+USAGE = "Usage:\n  haprion-network -c <cluster> [--json]\n"
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
 

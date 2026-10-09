@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-cert-request` - one key and one CSR, from a job (C9b).
+"""The privileged half of `haprion-cert-request` - one key and one CSR, from a job (C9b).
 
 Calls the same `request` the terminal command calls. What this half adds is
 the boundary: a bounded request in, one envelope out, and no way to name a
@@ -28,7 +28,7 @@ from haproxy_mgmt.helper_protocol import HelperProtocolError, write_document
 PARAMETERS = frozenset(
     {"id", "domains", "key_type", "clusters", "receivers", "formats", "interface"}
 )
-HELPER = "/opt/haprion/current/bin/haproxy-cert-request-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cert-request-helper"
 SUDO = "/usr/bin/sudo"
 MAX_DOMAINS = 32
 MAX_DOMAIN_BYTES = 255
@@ -94,7 +94,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=require_root,
-            helper_name="haproxy-cert-request-helper",
+            helper_name="haprion-cert-request-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

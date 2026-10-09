@@ -1,4 +1,4 @@
-"""The privileged, read-only half of ``haproxy-objects``.
+"""The privileged, read-only half of ``haprion-objects``.
 
 The caller names a cluster; the helper chooses the repository inside the
 privilege boundary and reads the committed tree. It never opens the working
@@ -6,7 +6,7 @@ copy - a file somebody is halfway through saving must not be able to look like
 a stored object.
 
 **Read at HEAD, not at the published release**, and that is the one thing that
-differs from ``haproxy-inventory``. The two answer different questions.
+differs from ``haprion-inventory``. The two answer different questions.
 Inventory says what a node is serving, so it reads the commit the RELEASE stamp
 names. This is the base an edit is made against, and a publish checks its
 snapshot against HEAD - so a draft that recorded anything else would be
@@ -72,7 +72,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-objects-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-objects-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

@@ -1,4 +1,4 @@
-"""`haproxy-readings-helper`: the poller's manager-local readings in one call (N2, 2026-10-08)."""
+"""`haprion-readings-helper`: the poller's manager-local readings in one call (N2, 2026-10-08)."""
 
 from __future__ import annotations
 

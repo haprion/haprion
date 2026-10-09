@@ -1,6 +1,6 @@
-"""The privileged half of `haproxy-cert-deploy` - the reconcile loop, for certificates.
+"""The privileged half of `haprion-cert-deploy` - the reconcile loop, for certificates.
 
-Shares the loop, the matrix and the node result with `haproxy-deploy-helper`,
+Shares the loop, the matrix and the node result with `haprion-deploy-helper`,
 because §6.4 says certificate rollout follows exactly the same ordering,
 blocking and partial rules as configuration rollout, and the frozen contracts
 agree. What differs is one object: the target. Everything the operator sees
@@ -122,7 +122,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-cert-deploy-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-cert-deploy-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

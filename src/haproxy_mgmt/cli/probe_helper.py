@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-probe` - ask the nodes to try a check.
+"""The privileged half of `haprion-probe` - ask the nodes to try a check.
 
 Takes no arguments; the request arrives on stdin, the same form and for the same
 reason as every other helper: PRIVILEGE.md forbids wildcards in sudoers argument
@@ -221,7 +221,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-probe-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-probe-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

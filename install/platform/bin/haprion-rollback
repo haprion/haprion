@@ -1,0 +1,199 @@
+#!/bin/bash
+#
+# haprion-rollback - go back to an earlier release, having first checked
+# that the earlier release can actually run here.
+#
+#     haprion-rollback --list
+#     haprion-rollback [--to <release-id>]
+#
+# The documented rollback used to be "point current back and restart", and on
+# 2026-08-28 that was measured rather than assumed. It took the interface down.
+#
+# Two reasons, and neither is visible from the symlink:
+#
+#   * Configuration is validated strictly - unknown keys are refused, which is
+#     what makes a typo an error instead of a setting that silently does
+#     nothing. A config written for release N therefore makes release N-1 refuse
+#     to start, and the rollback that was supposed to be the way out of trouble
+#     becomes more of it.
+#   * A unit installed for a newer release names a program that an older release
+#     does not contain. The poller and the worker did not exist in every release
+#     that is still on disk.
+#
+# So this checks both against the target BEFORE switching, and verifies the
+# interface answers AFTER - rolling forward again by itself if it does not. A
+# rollback that needs a second rollback is not a way back.
+#
+set -Eeuo pipefail
+
+CONFIG=/apps/haproxy-manager/config/ui.toml
+SERVICES=(haproxy-ui-web haproxy-ui-worker haproxy-ui-poller)
+
+log()  { echo "[$(date '+%H:%M:%S')] $*"; }
+step() { echo; echo "== $*"; }
+warn() { echo "WARNING: $*" >&2; }
+die()  { echo "ERROR: $*" >&2; exit 1; }
+
+usage() { sed -n '3,8p' "$0" | sed 's/^# \?//'; exit 64; }
+
+[[ $EUID -eq 0 ]] || die "run this with sudo"
+
+platform_root=/apps/haproxy-manager
+releases="${platform_root}/releases"
+link="${platform_root}/current"
+[[ -L "$link" ]] || die "${link} does not exist"
+
+current="$(basename "$(readlink "$link")")"
+
+#
+# Ordered by modification time rather than by name. A release id ends in a
+# commit hash, which sorts alphabetically and says nothing about when it was
+# built - so sorting by name would offer a "previous" release at random.
+#
+mapfile -t known < <(find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
+                     | sort -rn | cut -d' ' -f2-)
+
+target=""
+case "${1:-}" in
+    --list)
+        for release in "${known[@]}"; do
+            if [[ "$release" == "$current" ]]; then
+                echo "  ${release}  <- current"
+            else
+                echo "  ${release}"
+            fi
+        done
+        exit 0
+        ;;
+    --to) target="${2:-}"; [[ -n "$target" ]] || usage ;;
+    "")  ;;
+    *)   usage ;;
+esac
+
+if [[ -z "$target" ]]; then
+    for release in "${known[@]}"; do
+        [[ "$release" == "$current" ]] && continue
+        target="$release"
+        break
+    done
+fi
+[[ -n "$target" ]] || die "there is no other release to roll back to"
+[[ -d "${releases}/${target}" ]] || die "no such release: ${target}"
+[[ "$target" != "$current" ]] || die "${target} is already current"
+
+log "current: ${current}"
+log "target:  ${target}"
+
+step "Can the target run with the configuration that is installed?"
+#
+# Asked of the target's own code, because the answer is whatever that release's
+# validator says and not what this script believes about it. Loading the config
+# is exactly what the service does first, so a release that passes here starts.
+#
+#
+# Path, not str: `load` takes a Path and a string fails on it with an
+# AttributeError - which this script would have read as "the target refuses the
+# configuration". A check that says no to everything is exactly as useless as
+# one that says yes to everything, and it fails in the more convincing
+# direction. Found by running it against a release that should have passed.
+#
+# Any exception counts as a refusal, not only ConfigError: whatever the target
+# does when it reads this file is what it will do at startup.
+#
+if ! "${releases}/${target}/venv/bin/python" -c '
+import sys
+from pathlib import Path
+from haproxy_ui.config import load
+try:
+    load(Path(sys.argv[1]))
+except Exception as exc:
+    print(f"the target release refuses this configuration: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+' "$CONFIG" 2>&1 | sed 's/^/  /'; then
+    die "${target} cannot read ${CONFIG}.
+  Configuration follows the same expand/contract rule as the schema: a key added
+  for a newer release has to be removed from the configuration before rolling
+  back past the release that introduced it."
+fi
+log "  ok       the target accepts the configuration"
+
+step "Does the target contain what the installed units start?"
+missing=""
+for service in "${SERVICES[@]}"; do
+    unit="/etc/systemd/system/${service}.service"
+    [[ -f "$unit" ]] || continue
+    #
+    # Read out of the unit rather than assumed, so a unit that was edited by
+    # hand is checked as it actually is.
+    #
+    program="$(sed -n 's|^ExecStart=\([^ ]*\).*|\1|p' "$unit" | head -1)"
+    program="${program/${platform_root}\/current/${releases}/${target}}"
+    if [[ -n "$program" && ! -x "$program" ]]; then
+        warn "  missing  ${service}: ${program}"
+        missing="${missing} ${service}"
+    else
+        log "  ok       ${service}"
+    fi
+done
+[[ -z "$missing" ]] || die "${target} does not contain the program(s) for:${missing}.
+  Those services were added after that release. Roll back to a release that has
+  them, or stop and disable them first - deliberately, not by surprise."
+
+step "Holding the worker's claims"
+#
+# As a release does (CR-12): the restart below ends the job the worker holds.
+# Installed by install-ui-release since 2026-10-06; older installations go on
+# without it, as they did.
+#
+drain=/usr/local/sbin/haprion-drain
+if [[ -x "$drain" ]]; then
+    "$drain" -e prod pause --wait "${DRAIN_SECONDS:-900}"
+    trap '"$drain" -e prod resume || true' EXIT
+else
+    warn "  ${drain} is missing; the worker restarts without waiting for its jobs"
+fi
+
+step "Switching"
+ln -sfn "${releases}/${target}" "${link}.new"
+mv -T "${link}.new" "$link"
+log "  current -> ${target}"
+
+systemctl restart "${SERVICES[@]}" || true
+
+step "Proving the interface answers"
+answered=""
+for _ in $(seq 15); do
+    if answered="$(curl -fsS --max-time 3 http://127.0.0.1:8080/healthz 2>/dev/null)"; then
+        break
+    fi
+    answered=""
+    sleep 1
+done
+
+if [[ -z "$answered" ]]; then
+    #
+    # Undone without being asked. Somebody running this is already having a bad
+    # day, and leaving them on a release that does not answer - with the rollback
+    # reported as done - is the worst possible outcome of a command whose entire
+    # purpose is to get back to something that works.
+    #
+    warn "the interface did not answer on ${target}; rolling forward to ${current}"
+    ln -sfn "${releases}/${current}" "${link}.new"
+    mv -T "${link}.new" "$link"
+    systemctl restart "${SERVICES[@]}" || true
+    journalctl -u haproxy-ui-web.service --no-pager --lines=15 || true
+    die "rolled forward to ${current}; ${target} did not answer"
+fi
+
+log "  ok       ${answered}"
+for service in "${SERVICES[@]}"; do
+    if systemctl is-active --quiet "${service}.service"; then
+        log "  ok       ${service}.service"
+    else
+        warn "  ${service}.service is not active"
+    fi
+done
+
+echo
+log "rolled back to ${target}"
+log "Roll forward with: haprion-rollback --to ${current}"

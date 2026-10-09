@@ -1,13 +1,13 @@
-"""``haproxy-cluster-settings`` - where a cluster's traffic log goes, and metrics.
+"""``haprion-cluster-settings`` - where a cluster's traffic log goes, and metrics.
 
 Shows the settings the interface's *Logs & metrics* card edits, and sets them
 from a file through the helper the interface publishes saved changes with,
 so the terminal and the browser make the same version (Fas 15, B209, B257):
 
-    haproxy-cluster-settings -c <cluster> [--json]
-    haproxy-cluster-settings -c <cluster> --set <file> -m <comment>
+    haprion-cluster-settings -c <cluster> [--json]
+    haprion-cluster-settings -c <cluster> --set <file> -m <comment>
 
-A change is published, not deployed: `haproxy-deploy -c <cluster>` takes it
+A change is published, not deployed: `haprion-deploy -c <cluster>` takes it
 to the nodes, as after any other publish.
 """
 
@@ -28,13 +28,13 @@ from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.helper_protocol import write_document
 
 OPERATION = "cluster_settings"
-HELPER = "/opt/haprion/current/bin/haproxy-cluster-settings-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cluster-settings-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
 USAGE = (
     "Usage:\n"
-    "  haproxy-cluster-settings -c <cluster> [--json]\n"
-    "  haproxy-cluster-settings -c <cluster> --set <file> -m <comment>\n"
+    "  haprion-cluster-settings -c <cluster> [--json]\n"
+    "  haprion-cluster-settings -c <cluster> --set <file> -m <comment>\n"
 )
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
@@ -197,7 +197,7 @@ def _set(
         writer.write(f"Published version {result.get('version')} of {cluster}.\n")
     else:
         writer.write(f"{cluster} already has these settings (version {result.get('version')}).\n")
-    writer.write(f"Deploy it with: haproxy-deploy -c {cluster}\n")
+    writer.write(f"Deploy it with: haprion-deploy -c {cluster}\n")
     return completed.returncode
 
 

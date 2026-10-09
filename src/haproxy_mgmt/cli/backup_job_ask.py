@@ -38,7 +38,7 @@ def main(
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
     if argv:
-        errors.write("ERROR: haproxy-backup-job-ask accepts no arguments\n")
+        errors.write("ERROR: haprion-backup-job-ask accepts no arguments\n")
         return 64
     try:
         request = _request(input_stream or sys.stdin.buffer)
@@ -74,7 +74,7 @@ def main(
                 cluster=cluster,
                 request_id=request_id,
                 code="dependency_unavailable",
-                message=f"{exc} Install haproxy-backup-job-helper.socket.",
+                message=f"{exc} Install haprion-backup-job-helper.socket.",
                 exit_code=78,
             ),
         )

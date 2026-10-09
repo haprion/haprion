@@ -241,7 +241,7 @@ class GeneratedConfigurationInDnsdist(unittest.TestCase):
         self.assertIn('dnsdist_server_status{server="elsewhere-dns/s2"', body)
 
     def test_the_node_counts_each_pool_as_the_generator_named_it(self) -> None:
-        """What `haproxy-node-status` reports, read from this dnsdist (B4, 26-10-06).
+        """What `haprion-node-status` reports, read from this dnsdist (B4, 26-10-06).
 
         Asked, refused, over TCP and answered per pool, and per server: the
         rules count what came in, the servers what came back. The question over

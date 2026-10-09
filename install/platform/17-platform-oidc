@@ -6,7 +6,7 @@
 #
 # Sign-in through an OpenID Connect provider (Fas 13 part 4, B195-B199) needs
 # the provider, and the web service must not reach the network. So the requests
-# go through /run/haprion/oidc.sock to haproxy-oidc-helper, which runs as an
+# go through /run/haprion/oidc.sock to haprion-oidc-helper, which runs as an
 # account of its own - the identity policy's `oidc` role, OIDC_USER here - and
 # is the one holder of the key that opens the client secret the web sealed.
 #
@@ -14,7 +14,7 @@
 #
 #   /etc/haprion/oidc/<key id>.key    OIDC_USER, 0600 (directory 0500)
 #   PLATFORM_ROOT/config/oidc-keys/<id>.pub   root:PLATFORM_GROUP, 0640
-#   haproxy-oidc-helper.socket and @.service  the socket group is WEB_USER
+#   haprion-oidc-helper.socket and @.service  the socket group is WEB_USER
 #
 # An installation that already has a pair keeps it; ROTATE=1 adds a second one
 # beside it, and the client secret is then saved again under the new key.
@@ -46,16 +46,16 @@ done
 id -u "$OIDC_USER" >/dev/null 2>&1 \
     || die "service account ${OIDC_USER} does not exist. Add it to the identity policy as
   roles.oidc, render the sysusers fragment and apply it:
-  haproxy-render-sysusers --policy <file> > /etc/sysusers.d/haproxy-manager.conf
+  haprion-render-sysusers --policy <file> > /etc/sysusers.d/haproxy-manager.conf
   systemd-sysusers"
 
 KEY_DIR="/etc/haprion/oidc"
 PUBLIC_DIR="${PLATFORM_ROOT}/config/oidc-keys"
-BINARY="/opt/haprion/current/bin/haproxy-oidc-helper"
+BINARY="/opt/haprion/current/bin/haprion-oidc-helper"
 
 step "The helper"
 [[ -x "$BINARY" ]] \
-    || die "${BINARY} is missing; install a CLI release that carries haproxy-oidc-helper first"
+    || die "${BINARY} is missing; install a CLI release that carries haprion-oidc-helper first"
 log "  ok       ${BINARY}"
 
 step "The interpreter"
@@ -108,15 +108,15 @@ chmod 500 "$KEY_DIR"
 log "  ok       ${KEY_DIR}  (${OIDC_USER}, 0500; keys 0600)"
 
 step "The socket"
-install_file /etc/systemd/system/haproxy-oidc-helper@.service root:root 644 \
-    "$(sed "s|OIDC_USER|${OIDC_USER}|g" 'examples/haproxy-oidc-helper@.service.example')"
-install_file /etc/systemd/system/haproxy-oidc-helper.socket root:root 644 \
-    "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haproxy-oidc-helper.socket.example)"
+install_file /etc/systemd/system/haprion-oidc-helper@.service root:root 644 \
+    "$(sed "s|OIDC_USER|${OIDC_USER}|g" 'examples/haprion-oidc-helper@.service.example')"
+install_file /etc/systemd/system/haprion-oidc-helper.socket root:root 644 \
+    "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-oidc-helper.socket.example)"
 systemctl daemon-reload
-systemctl enable --quiet haproxy-oidc-helper.socket
-systemctl restart haproxy-oidc-helper.socket
-systemctl is-active --quiet haproxy-oidc-helper.socket \
-    || die "haproxy-oidc-helper.socket did not start"
+systemctl enable --quiet haprion-oidc-helper.socket
+systemctl restart haprion-oidc-helper.socket
+systemctl is-active --quiet haprion-oidc-helper.socket \
+    || die "haprion-oidc-helper.socket did not start"
 log "  listening on /run/haprion/oidc.sock  (group ${WEB_USER})"
 
 step "The web's half"

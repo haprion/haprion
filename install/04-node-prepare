@@ -43,7 +43,7 @@ fi
 # Debian 13 has no such line and no such account and writes as root
 # (measured 2026-09-24). Read from rsyslog's own configuration, the main file
 # first and its drop-ins after, the last setting winning - the same function
-# in 04-node-prepare and haproxy-traffic-log-enable, held together by a test.
+# in 04-node-prepare and haprion-traffic-log-enable, held together by a test.
 #
 rsyslog_writer() {
     local config="${RSYSLOG_CONFIG:-/etc/rsyslog.conf}" dropins="${RSYSLOG_DROPINS:-/etc/rsyslog.d}"
@@ -72,23 +72,23 @@ SBIN="/usr/local/sbin"
 NODE_CONF="/etc/haprion/node.conf"
 LOGREAD_GROUP="haproxy-logread"
 TRAFFIC_LOG_ROOT="/var/log/haprion"
-# The engine package's LogNamespace=, read by haproxy-traffic-log-read.
+# The engine package's LogNamespace=, read by haprion-traffic-log-read.
 WAF_JOURNAL_NAMESPACE="haproxy-waf"
 
 SCRIPTS=(
-    haproxy-pull-deploy
-    haproxy-cert-pull
-    haproxy-cert-remove
-    haproxy-cert-trigger
-    haproxy-node-status
-    haproxy-health-probe
-    haproxy-keepalived-state
-    haproxy-state-export
-    haproxy-traffic-log-read
-    haproxy-traffic-log-enable
-    haproxy-traffic-log-prune
-    haproxy-server-state
-    haproxy-server-state-trigger
+    haprion-pull-deploy
+    haprion-cert-pull
+    haprion-cert-remove
+    haprion-cert-trigger
+    haprion-node-status
+    haprion-health-probe
+    haprion-keepalived-state
+    haprion-state-export
+    haprion-traffic-log-read
+    haprion-traffic-log-enable
+    haprion-traffic-log-prune
+    haprion-server-state
+    haprion-server-state-trigger
 )
 # Unchanged. This level says whether the manager and a node may speak to each
 # other; the traffic chain is opt-in and adds no operation the manager calls on
@@ -168,7 +168,7 @@ if [[ -n "${SERVER_STATE_PUBKEY:-}" ]]; then
     [[ "$SERVER_STATE_PUBKEY" =~ ^ssh-ed25519\ [A-Za-z0-9+/]+=*$ ]] \
         || die "SERVER_STATE_PUBKEY must be one ssh-ed25519 public key (type and key, no comment)"
     keys="/home/${TRIGGER_USER}/.ssh/authorized_keys"
-    forced="command=\"${SBIN}/haproxy-server-state-trigger\""
+    forced="command=\"${SBIN}/haprion-server-state-trigger\""
     line="restrict,${forced} ${SERVER_STATE_PUBKEY}"
     if grep -qxF "$line" "$keys"; then
         log "  ok       server state key in ${keys}"
@@ -301,7 +301,7 @@ HAPROXY_DROPIN="/etc/systemd/system/haproxy.service.d/haproxy-manager-server-sta
 ensure_dir "${HAPROXY_DROPIN%/*}" root:root 755
 install_file "$HAPROXY_DROPIN" root:root 644 "# Installed by install/04-node-prepare.
 [Service]
-ExecStartPost=-${SBIN}/haproxy-server-state reapply"
+ExecStartPost=-${SBIN}/haprion-server-state reapply"
 systemctl daemon-reload
 log "  applied  ${HAPROXY_DROPIN}"
 # /run/lock is a distribution-owned shared directory, normally mode 1777.
@@ -452,29 +452,29 @@ step "Sudo rules"
 # The certificate rule allows arguments, and that is deliberate: the argument is
 # a list of certificate IDs, and sudoers cannot express "a list of validated
 # IDs" more strongly than a wildcard would. The real gate is validation in two
-# places - unprivileged in haproxy-cert-trigger, then again in the root helper.
+# places - unprivileged in haprion-cert-trigger, then again in the root helper.
 # The server state rule is the same shape (Fas 20, B263): the verb `set` is
 # fixed, the GUID and the state behind it are validated by
-# haproxy-server-state-trigger and again by the helper.
+# haprion-server-state-trigger and again by the helper.
 #
 sudoers="# Installed by install/04-node-prepare. Do not edit by hand.
 #
 # One rule per forced command. Each is an exact absolute path, and none of them
 # grants a shell, an interpreter, an editor or environment preservation.
 
-${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-pull-deploy
-${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-cert-pull
-${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-cert-remove
-${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-server-state set *
-${STATUS_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-node-status -c ${CLUSTER} --json
-${BACKUP_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-state-export"
+${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-pull-deploy
+${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-cert-pull
+${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-cert-remove
+${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-server-state set *
+${STATUS_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-node-status -c ${CLUSTER} --json
+${BACKUP_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-state-export"
 
 tmp="$(mktemp)"
 printf '%s\n' "$sudoers" > "$tmp"
 visudo -cqf "$tmp" || { rm -f "$tmp"; die "generated sudoers file is invalid - nothing installed"; }
-install -o root -g root -m 440 "$tmp" /etc/sudoers.d/haproxy-node
+install -o root -g root -m 440 "$tmp" /etc/sudoers.d/haprion-node
 rm -f "$tmp"
-log "  installed /etc/sudoers.d/haproxy-node"
+log "  installed /etc/sudoers.d/haprion-node"
 
 step "HAProxy baseline"
 
@@ -526,14 +526,14 @@ if [[ ! -f "$KA_CONF" ]]; then
         log "  skipped  cluster ${CLUSTER} has no virtual address"
     fi
 else
-    if grep -q haproxy-keepalived-state "$KA_CONF"; then
+    if grep -q haprion-keepalived-state "$KA_CONF"; then
         log "  ok       notify lines present"
     else
         warn "keepalived does not notify the state helper. Add to the vrrp_instance:"
         echo
-        echo "    notify_master \"${SBIN}/haproxy-keepalived-state MASTER\""
-        echo "    notify_backup \"${SBIN}/haproxy-keepalived-state BACKUP\""
-        echo "    notify_fault  \"${SBIN}/haproxy-keepalived-state FAULT\""
+        echo "    notify_master \"${SBIN}/haprion-keepalived-state MASTER\""
+        echo "    notify_backup \"${SBIN}/haprion-keepalived-state BACKUP\""
+        echo "    notify_fault  \"${SBIN}/haprion-keepalived-state FAULT\""
         echo
         warn "  Without them the management host cannot tell which node owns the"
         warn "  address. A rollout then cannot deploy the owner last, which is the"
@@ -557,7 +557,7 @@ else
 
     #
     # The syslog objects' file, read by keepalived only from the top level -
-    # the reading `haproxy-pull-deploy` and `haproxy-node-status` make. Written
+    # the reading `haprion-pull-deploy` and `haprion-node-status` make. Written
     # by a person, as the address list's include is: a deploy installs the
     # file and reloads only once keepalived.conf includes it.
     #
@@ -672,7 +672,7 @@ Two things left, both on machines this node cannot write to.
    root's, as is the whole home; edit it with sudo.
 
 2. On the MANAGEMENT host: paste this block into the cluster's Nodes card under
-   Settings, or give it to  sudo haproxy-node add -c ${CLUSTER} --host <name>
+   Settings, or give it to  sudo haprion-node add -c ${CLUSTER} --host <name>
    on stdin. The manager then asks this node for its status, and takes the
    change back if the node does not answer as itself.
 

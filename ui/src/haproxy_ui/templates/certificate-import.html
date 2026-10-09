@@ -7,7 +7,7 @@
 {#
   A certificate somebody already has (C9, B165). The same page as New
   certificate with a different middle: a file instead of a domain and a
-  challenge. What it asks for is what `haproxy-cert-import` takes - the
+  challenge. What it asks for is what `haprion-cert-import` takes - the
   material, a name, the targets - and the root helper judges the material;
   this page judges the form.
 
@@ -29,7 +29,7 @@
 {% endif %}
 
 {% if not sealing_available %}
-<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The installation's sealing key is not configured, so a file cannot be uploaded here.</strong> Import it on the manager with <code>haproxy-cert-import</code>.</p>
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The installation's sealing key is not configured, so a file cannot be uploaded here.</strong> Import it on the manager with <code>haprion-cert-import</code>.</p>
 {% endif %}
 
 <form method="post" action="/certificates/import" enctype="multipart/form-data" class="preview-form certificate-form">
@@ -83,7 +83,7 @@
       </div>
     </div>
     <div class="editor-actions editor-submit">
-      <p class="table-note">The import takes a few seconds. The certificate's row shows it being imported, and the reason if the material is refused. Prefer to keep the key off the web entirely? <code>haproxy-cert-import</code> on the manager takes the same files.</p>
+      <p class="table-note">The import takes a few seconds. The certificate's row shows it being imported, and the reason if the material is refused. Prefer to keep the key off the web entirely? <code>haprion-cert-import</code> on the manager takes the same files.</p>
       <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job or not sealing_available %} disabled{% endif %}>Import the certificate</button></div>
     </div>
   </section>

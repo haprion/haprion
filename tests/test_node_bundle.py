@@ -110,7 +110,7 @@ class NodeBundleTests(unittest.TestCase):
             tarfile.open(fileobj=compressed, mode="w") as target,
         ):
             for item, data in held:
-                if item.name == f"{release}/install/node/haproxy-node-status":
+                if item.name == f"{release}/install/node/haprion-node-status":
                     data += b"changed\n"
                     item.size = len(data)
                 target.addfile(item, io.BytesIO(data))
@@ -187,7 +187,7 @@ class NodeBundleTransportContractTests(unittest.TestCase):
         self.assertIn('sudo test -x "$STATE_BACKUP"', self.script)
         # The engine's own command, scoped to the cluster the bundle goes to:
         # the other cluster is neither written nor archived.
-        self.assertIn("STATE_BACKUP=/opt/haprion/current/bin/haproxy-state-backup", self.script)
+        self.assertIn("STATE_BACKUP=/opt/haprion/current/bin/haprion-state-backup", self.script)
         self.assertNotIn("/usr/local/sbin", self.script)
 
     def test_staging_has_a_narrow_shape_and_is_deleted(self) -> None:

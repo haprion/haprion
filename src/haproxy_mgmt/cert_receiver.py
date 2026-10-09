@@ -430,7 +430,7 @@ def write_authorized_keys(home: Path, line: str) -> Layer:
     os.chown(ssh_directory, ROOT_UID, ROOT_GID)
     os.chmod(ssh_directory, 0o755)  # noqa: S103 - root-owned, as B131 left the nodes
     keys = ssh_directory / "authorized_keys"
-    content = f"# Written by haproxy-cert-receiver. One receiver, one key, one directory.\n{line}\n"
+    content = f"# Written by haprion-cert-receiver. One receiver, one key, one directory.\n{line}\n"
     keys.write_text(content, encoding="ascii")
     os.chown(keys, ROOT_UID, ROOT_GID)
     os.chmod(keys, 0o644)
@@ -461,7 +461,7 @@ def render_sshd_dropin(registry: Registry) -> str:
     """
 
     lines = [
-        "# Written by haproxy-cert-receiver from the certificate registry.",
+        "# Written by haprion-cert-receiver from the certificate registry.",
         "# One block per sftp receiver. Hand edits are lost at the next change.",
         "",
     ]
@@ -513,7 +513,7 @@ def render_nginx_snippet(registry: Registry) -> str:
     """
 
     lines = [
-        "# Written by haproxy-cert-receiver from the certificate registry.",
+        "# Written by haprion-cert-receiver from the certificate registry.",
         "# Included by the interface's server block. Hand edits are lost at the next change.",
         "",
     ]

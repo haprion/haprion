@@ -18,8 +18,8 @@
 #
 # The release's own bin directory, not PATH: certbot's environment is not the
 # operator's, and the release this command comes from is the one whose
-# haproxy-cert-deploy it should use.
+# haprion-cert-deploy it should use.
 #
 set -Eeuo pipefail
 
-exec /opt/haprion/current/bin/haproxy-cert-publish --deploy
+exec /opt/haprion/current/bin/haprion-cert-publish --deploy

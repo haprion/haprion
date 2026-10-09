@@ -1,6 +1,6 @@
 """The node's certificate activation, run for real in a temporary tree.
 
-`haproxy-cert-pull` is run by bash with its fixed paths rewritten to a scratch
+`haprion-cert-pull` is run by bash with its fixed paths rewritten to a scratch
 directory and the commands that need a real node - rsync, haproxy, systemctl,
 install as root - replaced by stubs that record what they were asked. openssl
 is the real one, on a real certificate and key.
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 BASE = Path(__file__).resolve().parents[1]
-PULL = BASE / "install" / "node" / "haproxy-cert-pull"
+PULL = BASE / "install" / "node" / "haprion-cert-pull"
 
 #
 # rsync as the script calls it: `rsync -t -e <ssh> user@host:<id>.pem <dest>`.
@@ -125,22 +125,22 @@ class CertPull(unittest.TestCase):
             ("rsync", RSYNC_STUB),
             ("haproxy", HAPROXY_STUB),
             ("systemctl", SYSTEMCTL_STUB),
-            ("haproxy-server-state", SERVER_STATE_STUB),
+            ("haprion-server-state", SERVER_STATE_STUB),
             ("install", INSTALL_STUB),
         ):
             path = self.bin / name
             path.write_text(body, encoding="utf-8")
             path.chmod(0o755)
-        self.script = self.bin / "haproxy-cert-pull"
+        self.script = self.bin / "haprion-cert-pull"
         self.script.write_text(
             PULL.read_text(encoding="utf-8")
             .replace('NODE_CONF="/etc/haprion/node.conf"', f'NODE_CONF="{conf}"')
             .replace('CERTS_DIR="/etc/haproxy/certs"', f'CERTS_DIR="{self.certs}"')
-            .replace('PENDING="/run/haproxy-cert-pull.pending"', f'PENDING="{self.pending}"')
-            .replace("/run/lock/haproxy-cert-pull.lock", str(self.root / "cert.lock"))
+            .replace('PENDING="/run/haprion-cert-pull.pending"', f'PENDING="{self.pending}"')
+            .replace("/run/lock/haprion-cert-pull.lock", str(self.root / "cert.lock"))
             .replace(
-                'SERVER_STATE="/usr/local/sbin/haproxy-server-state"',
-                f'SERVER_STATE="{self.bin}/haproxy-server-state"',
+                'SERVER_STATE="/usr/local/sbin/haprion-server-state"',
+                f'SERVER_STATE="{self.bin}/haprion-server-state"',
             ),
             encoding="utf-8",
         )
@@ -273,7 +273,7 @@ class CertPull(unittest.TestCase):
         self.assertFalse(self.pending.exists())
 
     def test_a_temporary_file_a_killed_run_left_is_swept(self) -> None:
-        stray = self.certs / ".haproxy-cert-pull.cert-a.pem"
+        stray = self.certs / ".haprion-cert-pull.cert-a.pem"
         stray.write_bytes(self.old)
         self.offer(self.new)
 
@@ -284,7 +284,7 @@ class CertPull(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self.certs)), ["cert-a.pem"])
 
 
-STATUS = BASE / "install" / "node" / "haproxy-node-status"
+STATUS = BASE / "install" / "node" / "haprion-node-status"
 
 
 def status_functions(certs: Path, pending: Path) -> dict[str, Any]:

@@ -38,7 +38,7 @@ valid_id "$LOGREAD_USER" || die "invalid node traffic log account: ${LOGREAD_USE
 for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER" "$COLLECTOR_USER"; do
     id -u "$role" >/dev/null 2>&1 \
         || die "service account ${role} does not exist. Render and apply the
-  sysusers fragment first: haproxy-render-sysusers --policy <file>"
+  sysusers fragment first: haprion-render-sysusers --policy <file>"
 done
 for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
     [[ "$COLLECTOR_USER" != "$role" ]] \
@@ -53,7 +53,7 @@ LOG_ROOT="${PLATFORM_ROOT}/logs"
 MIRROR="${LOG_ROOT}/mirror"
 STAGING="${LOG_ROOT}/staging"
 ROOT_KNOWN_HOSTS="${ROOT_KNOWN_HOSTS:-/root/.ssh/known_hosts}"
-UNIT="haproxy-ui-traffic-collector"
+UNIT="haprion-traffic-collector"
 
 step "Where the mirror lives"
 
@@ -117,16 +117,16 @@ step "Host keys this identity may trust"
 
 #
 # The nodes come from clusters.yaml, through the engine's own reader - the file
-# the Nodes card and haproxy-node change (B211) - and not from the answers
+# the Nodes card and haprion-node change (B211) - and not from the answers
 # file's NODES_<cluster>. Running this step again then keeps a node added since
 # the installation; reading the answers file would drop it from the collector
 # without a word.
 #
-CLUSTER_CONFIG="${CLUSTER_CONFIG:-/usr/local/bin/haproxy-cluster-config}"
+CLUSTER_CONFIG="${CLUSTER_CONFIG:-/usr/local/bin/haprion-cluster-config}"
 cluster_nodes() {
     local listed
     listed="$("$CLUSTER_CONFIG" -c "$1" --field nodes)" \
-        || die "haproxy-cluster-config could not read the nodes of ${1}"
+        || die "haprion-cluster-config could not read the nodes of ${1}"
     [[ -n "$listed" ]] || die "clusters.yaml lists no nodes for ${1}"
     printf '%s\n' "$listed"
 }
@@ -214,7 +214,7 @@ install_file "$COLLECTOR_CONFIG" "root:${COLLECTOR_USER}" 640 "$config"
 # than absent: the timer would then fail every minute for a reason nothing here
 # reported.
 #
-/opt/haprion/current/bin/haproxy-ui-traffic-collector \
+/opt/haprion/current/bin/haprion-traffic-collector \
     --check-config "$COLLECTOR_CONFIG" \
     | sed 's/^/  /' \
     || die "the collector rejected the configuration this step wrote"
@@ -312,12 +312,12 @@ cat <<INTRO
 One thing left, by hand, on each NODE - this host cannot write to them.
 
 Add the line below to the traffic-log reader's authorized_keys, then enable the
-node's own log route with 'sudo haproxy-traffic-log-enable'.
+node's own log route with 'sudo haprion-traffic-log-enable'.
 
   /home/${LOGREAD_USER}/.ssh/authorized_keys   (owner ${LOGREAD_USER}, mode 600)
 
 INTRO
-echo "restrict,command=\"/usr/local/sbin/haproxy-traffic-log-read\" $(cut -d' ' -f1,2 < "${COLLECTOR_KEY}.pub")"
+echo "restrict,command=\"/usr/local/sbin/haprion-traffic-log-read\" $(cut -d' ' -f1,2 < "${COLLECTOR_KEY}.pub")"
 cat <<'OUTRO'
 
 One line, the same on every node: the manager decides which node a fetch is

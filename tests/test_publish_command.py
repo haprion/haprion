@@ -247,7 +247,7 @@ class RefusalTests(CallerFixture):
             with self.assertRaises(SystemExit) as caught, redirect_stdout(shown):
                 publish.main(argv, stream_out=io.StringIO())
             self.assertEqual(caught.exception.code, 64)
-            self.assertIn("haproxy-publish -c <cluster>", shown.getvalue())
+            self.assertIn("haprion-publish -c <cluster>", shown.getvalue())
 
     def test_a_comment_of_several_words_is_joined(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

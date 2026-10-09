@@ -1,6 +1,6 @@
 """What a node reports of its IPVS virtual servers (Fas 19b, B256).
 
-The reading is extracted from `install/node/haproxy-node-status` verbatim, as
+The reading is extracted from `install/node/haprion-node-status` verbatim, as
 `test_node_dns_metrics` does: the script is installed on the nodes rather than
 imported. The ipvsadm text is built in ipvsadm 1.31's own layout, read from its
 source (`print_title`, `print_service_entry`, `print_largenum` with `--exact`):
@@ -26,7 +26,7 @@ from haproxy_mgmt.generate import generate
 from haproxy_mgmt.proxy_model import load_proxy
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "install" / "node" / "haproxy-node-status"
+SCRIPT = ROOT / "install" / "node" / "haprion-node-status"
 READING = re.compile(r"^KEEPALIVED_IPVS = .*?(?=^def read_ipvs\()", re.DOTALL | re.MULTILINE)
 
 
@@ -126,7 +126,7 @@ class ReadingTheKernelsTable(unittest.TestCase):
         self.assertEqual(len(services[0]["receivers"]), 2)
 
     def test_what_it_reads_is_what_the_status_schema_allows(self) -> None:
-        schema = json.loads((ROOT / "schemas" / "v1" / "haproxy-status.schema.json").read_text())
+        schema = json.loads((ROOT / "schemas" / "v1" / "haprion-status.schema.json").read_text())
         section = schema["$defs"]["node_status"]["properties"]["ipvs"]
         document = {
             "ipvsadm": True,

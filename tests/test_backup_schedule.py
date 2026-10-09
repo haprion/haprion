@@ -23,7 +23,7 @@ from haproxy_mgmt.backup_schedule import (
     schedule_result,
 )
 
-TIMER = "haproxy-state-backup.timer"
+TIMER = "haprion-state-backup.timer"
 
 #
 # Copied from a real `systemctl show --timestamp=unix` on a manager, with the
@@ -37,7 +37,7 @@ LOADED = {
     "TimersCalendar": "{ OnCalendar=*-*-* 05:00:00 ; next_elapse=Sun 2026-08-30 05:00:00 CEST }",
     "NextElapseUSecRealtime": "@1788058800",
     "LastTriggerUSec": "@1787972440",
-    "Unit": "haproxy-state-backup.service",
+    "Unit": "haprion-state-backup.service",
     "DropInPaths": "",
 }
 
@@ -124,15 +124,15 @@ class ScheduleTests(unittest.TestCase):
     def test_a_cluster_instance_is_read_in_exactly_the_shape_it_is_derived_in(self) -> None:
         #
         # Found on the first policy with `backup_identity` (2026-09-21): the
-        # listing derived `haproxy-state-backup@internal.timer` and its own
+        # listing derived `haprion-state-backup@internal.timer` and its own
         # name check, written for the policy's plain timer, refused it.
         #
         show, asked = reader(LOADED)
-        schedule = schedule_result("haproxy-state-backup@alpha.timer", show=show)
+        schedule = schedule_result("haprion-state-backup@alpha.timer", show=show)
         assert schedule is not None
 
-        self.assertEqual(schedule["unit"], "haproxy-state-backup@alpha.timer")
-        self.assertEqual(asked[0][0], "haproxy-state-backup@alpha.timer")
+        self.assertEqual(schedule["unit"], "haprion-state-backup@alpha.timer")
+        self.assertEqual(asked[0][0], "haprion-state-backup@alpha.timer")
 
     def test_an_instance_is_scheduled_only_once_its_drop_in_exists(self) -> None:
         #
@@ -140,7 +140,7 @@ class ScheduleTests(unittest.TestCase):
         # load it; what says an administrator chose a time is the drop-in the
         # schedule helper writes. Without it the card says "Not scheduled".
         #
-        unit = "haproxy-state-backup@alpha.timer"
+        unit = "haprion-state-backup@alpha.timer"
         show, _ = reader({**LOADED, "UnitFileState": "disabled", "ActiveState": "inactive"})
         fresh = schedule_result(unit, show=show)
         show, _ = reader({**LOADED, "DropInPaths": f"/etc/systemd/system/{unit}.d/schedule.conf"})
@@ -152,11 +152,11 @@ class ScheduleTests(unittest.TestCase):
 
     def test_a_name_that_is_not_a_unit_name_never_reaches_an_argv(self) -> None:
         for unit in (
-            "haproxy-state-backup.service",
+            "haprion-state-backup.service",
             "other@alpha.timer",
-            "haproxy-state-backup@Alpha.timer",
-            "haproxy-state-backup@../alpha.timer",
-            "haproxy-state-backup@.timer",
+            "haprion-state-backup@Alpha.timer",
+            "haprion-state-backup@../alpha.timer",
+            "haprion-state-backup@.timer",
             "../../etc/passwd.timer",
             "backup.timer; rm -rf /",
             "backup timer.timer",

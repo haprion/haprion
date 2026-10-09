@@ -99,7 +99,7 @@ class InventoryHelperTests(unittest.TestCase):
         code, out, _ = self.run_helper(tree_reader=tree)
         self.assertEqual(code, 0)
         self.assertEqual(called[0][1], TARGET_HASH)
-        document = assert_contract("haproxy-inventory", out)
+        document = assert_contract("haprion-inventory", out)
         self.assertEqual(document["outcome"], "done")
         self.assertEqual(document["request_id"], REQUEST_ID)
         self.assertTrue(document["result"]["proxies"][0]["managed"])
@@ -119,7 +119,7 @@ class InventoryHelperTests(unittest.TestCase):
             tree_reader=lambda _repo, _commit: {"core/haproxy.cfg": b"\xff"}
         )
         self.assertEqual(code, 65)
-        document = assert_contract("haproxy-inventory", out)
+        document = assert_contract("haprion-inventory", out)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["error"]["code"], "inventory_invalid")
 
@@ -128,7 +128,7 @@ class InventoryHelperTests(unittest.TestCase):
 
         self.assertEqual(code, 64)
         self.assertIn("unknown cluster", err)
-        document = assert_contract("haproxy-inventory", out)
+        document = assert_contract("haprion-inventory", out)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["error"]["code"], "bad_input")
 

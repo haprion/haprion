@@ -1,4 +1,4 @@
-"""`haproxy-deploy` - bring the cluster's nodes onto the published version.
+"""`haprion-deploy` - bring the cluster's nodes onto the published version.
 
 The thin half, and thinner than the other callers by design. It resolves the
 cluster, hands one structured request across the boundary, and gets out of the
@@ -30,16 +30,16 @@ from haproxy_mgmt.cli.caller import usage
 
 OPERATION = "deploy_cluster"
 
-HELPER = "/opt/haprion/current/bin/haproxy-deploy-helper"
+HELPER = "/opt/haprion/current/bin/haprion-deploy-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-deploy -c <cluster> [--allow-vip-unknown] [--json]\n"
+    "  haprion-deploy -c <cluster> [--allow-vip-unknown] [--json]\n"
     "\n"
     "Examples:\n"
-    "  haproxy-deploy -c internal\n"
-    "  haproxy-deploy -c external --json\n"
+    "  haprion-deploy -c internal\n"
+    "  haprion-deploy -c external --json\n"
     "\n"
     "Options:\n"
     "  --allow-vip-unknown\n"

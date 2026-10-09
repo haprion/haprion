@@ -273,7 +273,7 @@ class HelperFixture(Fixture):
             lock_path=self.lock,
         )
         document = (
-            assert_contract("haproxy-cert-import", output.getvalue()) if output.getvalue() else {}
+            assert_contract("haprion-cert-import", output.getvalue()) if output.getvalue() else {}
         )
         self.assertNotIn(KEY_MARK, output.getvalue() + errors.getvalue())
         return code, document, errors.getvalue()
@@ -364,7 +364,7 @@ class TheHelper(HelperFixture):
         self.assertEqual(code, 65)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["error"]["code"], "no_key")
-        self.assertIn("haproxy-cert-import", document["error"]["message"])
+        self.assertIn("haprion-cert-import", document["error"]["message"])
         self.assertFalse((self.store / "shop.example").exists())
 
     def test_a_key_that_does_not_belong_leaves_nothing_behind(self) -> None:

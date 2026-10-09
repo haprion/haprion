@@ -650,7 +650,7 @@ def main(argv: list[str] | None = None) -> int:
             collector_config=args.collector_config,
         )
     if cli_release is not None:
-        helper = cli_release / "bin/haproxy-status-helper"
+        helper = cli_release / "bin/haprion-status-helper"
         for cluster in args.clusters:
             check_cluster_nodes(
                 report, cluster=cluster, helper=helper, required_api=requirements.node_api

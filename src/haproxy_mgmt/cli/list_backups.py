@@ -1,4 +1,4 @@
-"""``haproxy-list-backups`` - which state backups exist per node, read-only.
+"""``haprion-list-backups`` - which state backups exist per node, read-only.
 
 Replaces a shell implementation that read the backup directory directly with a
 hardcoded node list. Two things change and one deliberately does not: the nodes
@@ -24,13 +24,13 @@ from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.helper_protocol import write_document
 
 OPERATION = "list_backups"
-HELPER = "/opt/haprion/current/bin/haproxy-list-backups-helper"
+HELPER = "/opt/haprion/current/bin/haprion-list-backups-helper"
 SUDO = "/usr/bin/sudo"
 DEFAULT_LIMIT = 14
 EXIT_UNAVAILABLE = 68
 USAGE = (
     "Usage:\n"
-    "  haproxy-list-backups [-c <cluster>] [--node <name>] [--all] [--json]\n"
+    "  haprion-list-backups [-c <cluster>] [--node <name>] [--all] [--json]\n"
     "\n"
     "  -c      one cluster; without it, every configured cluster in turn\n"
     "  --node  one node, instead of every node in the cluster. A short name is\n"
@@ -119,7 +119,7 @@ def _resolve(request: Request) -> tuple[tuple[str, ...], str | None]:
     """Which clusters to ask, and the full name of the node that was meant.
 
     The cluster list is read as the calling user, the same way
-    `haproxy-cluster-config` reads it. This resolves nothing privileged - it
+    `haprion-cluster-config` reads it. This resolves nothing privileged - it
     only learns which clusters and nodes exist, and each helper call still
     resolves its own paths inside the boundary.
     """

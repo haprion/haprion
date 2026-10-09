@@ -232,7 +232,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", required=True, type=Path)
     parser.add_argument("--sha256", required=True)
-    parser.add_argument("--target", type=Path, default=Path("/opt/haproxy-scep"))
+    parser.add_argument("--target", type=Path, default=Path("/opt/haprion-scep"))
     args = parser.parse_args()
     try:
         print(install(args.bundle, args.sha256, args.target))

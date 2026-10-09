@@ -65,7 +65,7 @@ from haproxy_mgmt.node_enrollment import (
 )
 
 ARCHIVE = ".removed"
-SUDOERS_EDIT = Path("/etc/sudoers.d/haproxy-config-edit")
+SUDOERS_EDIT = Path("/etc/sudoers.d/haprion-config-edit")
 ROOT_GITCONFIG = Path("/root/.gitconfig")
 RETENTION_ROOT = Path("/etc/haprion/backup-retention")
 GIT_CONFIG_NOTHING_TO_UNSET = 5
@@ -979,7 +979,7 @@ def remove(
         change_journal.apply(changes)
 
     warnings: list[str] = []
-    timer = f"haproxy-state-backup@{cluster}.timer"
+    timer = f"haprion-state-backup@{cluster}.timer"
     stopped = tools.run([SYSTEMCTL, "disable", "--now", timer])
     if stopped.returncode != 0:
         warnings.append(f"{timer} could not be stopped: {stopped.stderr.strip()}")

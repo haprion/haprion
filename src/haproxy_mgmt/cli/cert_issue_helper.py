@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-cert-issue` - one ACME certificate, from a job.
+"""The privileged half of `haprion-cert-issue` - one ACME certificate, from a job.
 
 Calls the same `issue` the terminal command calls, so the five-minute gate C3
 measured is the same code path the interface will use. What this half adds is
@@ -54,7 +54,7 @@ PARAMETERS = frozenset(
     }
 )
 MAX_DOMAIN_BYTES = 255
-HELPER = "/opt/haprion/current/bin/haproxy-cert-issue-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cert-issue-helper"
 SUDO = "/usr/bin/sudo"
 
 
@@ -134,7 +134,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=require_root,
-            helper_name="haproxy-cert-issue-helper",
+            helper_name="haprion-cert-issue-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
@@ -178,7 +178,7 @@ def main(
         return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
 
     #
-    # Rolled out at the end, with the same `haproxy-cert-deploy` the hook uses.
+    # Rolled out at the end, with the same `haprion-cert-deploy` the hook uses.
     # A certificate that is published but not deployed is one the nodes do not
     # have, and the gate this phase lives or dies on is measured from the click
     # to a certificate that actually answers.

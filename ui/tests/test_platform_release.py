@@ -105,7 +105,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertLess(pause, installer.index('step "Activating"'))
         self.assertLess(pause, installer.index("systemctl restart"))
         self.assertIn('resume || true" EXIT', installer)
-        rollback = (ROOT / "install/platform/bin/haproxy-ui-rollback").read_text()
+        rollback = (ROOT / "install/platform/bin/haprion-rollback").read_text()
         self.assertLess(rollback.index("pause --wait"), rollback.index('step "Switching"'))
         self.assertNotIn("Checking that no node restore or backup is running", self.update)
 

@@ -103,7 +103,7 @@ class AcrossTheSocket(unittest.TestCase):
         self.assertEqual(document["operation"], "cert_receiver")
         self.assertEqual(document["request_id"], "r-1")
         self.assertEqual(document["error"]["code"], "dependency_unavailable")
-        self.assertIn("haproxy-cert-receiver-helper.socket", document["error"]["message"])
+        self.assertIn("haprion-cert-receiver-helper.socket", document["error"]["message"])
         self.assertIn("not installed", err)
 
     def test_a_service_that_never_answers_is_given_up_on_without_a_verdict(self) -> None:

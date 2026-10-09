@@ -237,7 +237,7 @@ def _result(
         # deploy takes either to the nodes.
         #
         "deployment_required": True,
-        "next_command": f"haproxy-deploy -c {cluster}",
+        "next_command": f"haprion-deploy -c {cluster}",
         "release": release,
         "already_current": already_current,
         **named,

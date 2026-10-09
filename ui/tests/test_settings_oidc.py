@@ -241,7 +241,7 @@ class SettingsOidc(LoginTestCase):
         # (review 2026-09-28 F2).
         unit = (
             Path(__file__).resolve().parents[2]
-            / "install/platform/examples/haproxy-oidc-helper@.service.example"
+            / "install/platform/examples/haprion-oidc-helper@.service.example"
         ).read_text()
         self.assertIn("Type=exec", unit)
         seconds = int(unit.split("\nRuntimeMaxSec=", 1)[1].split("\n", 1)[0])

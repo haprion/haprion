@@ -1,6 +1,6 @@
 """How the web asks for an exportable certificate's key (B255).
 
-Over `/run/haprion/cert-export.sock` to `haproxy-cert-export-helper`, which
+Over `/run/haprion/cert-export.sock` to `haprion-cert-export-helper`, which
 runs as root and gives out the key of an entry the registry marks exportable,
 and of no other. A service that cannot be asked is said as such, not as a
 refusal of the certificate.

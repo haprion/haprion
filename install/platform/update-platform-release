@@ -27,7 +27,7 @@ previous_path="$(readlink -f "$current")"
 [[ -d "$previous_path" && "$previous_path" == "${PLATFORM_ROOT}/releases/"* ]] \
     || die "${current} does not point into ${PLATFORM_ROOT}/releases"
 previous_id="$(basename "$previous_path")"
-rollback="/usr/local/sbin/haproxy-ui-rollback"
+rollback="/usr/local/sbin/haprion-rollback"
 [[ -x "$rollback" ]] || die "${rollback} is missing; reinstall the current UI release first"
 
 if [[ -n "$(git -C "$source_tree" status --porcelain)" ]]; then

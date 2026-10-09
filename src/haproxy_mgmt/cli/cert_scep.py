@@ -74,7 +74,7 @@ def enroll(
 ) -> tuple[dict[str, Any], int]:
     """One enrollment, from profile to published certificate, as one document.
 
-    The engine behind both `haproxy-cert-scep` and its job helper: the same
+    The engine behind both `haprion-cert-scep` and its job helper: the same
     checks, the same Certmonger run, the same validation and the same import
     path, so what the terminal proved is what the interface gets. Raises
     `ScepRefusal` for everything that is a refusal rather than a result.
@@ -241,7 +241,7 @@ def enroll(
             }
             #
             # Imported and registered: the request is over whatever the
-            # publication's exit code says, and `haproxy-cert-publish` is
+            # publication's exit code says, and `haprion-cert-publish` is
             # the way to finish that - not a resume of a request the CA has
             # already answered.
             #
@@ -334,7 +334,7 @@ def main(
         "--interface",
         action="store_true",
         help="this manager's own interface certificate: no targets, installed with "
-        "haproxy-ui-tls; takes the mark from the one that had it",
+        "haprion-tls; takes the mark from the one that had it",
     )
     parser.add_argument(
         "--exportable",
@@ -368,7 +368,7 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haproxy-cert-scep must run as root", 77)
+        return refuse("not_root", "haprion-cert-scep must run as root", 77)
     if args.abandon and (
         args.resume or args.profile or args.domain or args.cluster or args.receiver
     ):

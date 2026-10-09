@@ -48,7 +48,7 @@ def main(
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
     if argv:
-        errors.write("ERROR: haproxy-node-ask accepts no arguments\n")
+        errors.write("ERROR: haprion-node-ask accepts no arguments\n")
         return 64
     try:
         request = _request(input_stream or sys.stdin.buffer)
@@ -84,7 +84,7 @@ def main(
                 cluster=cluster,
                 request_id=request_id,
                 code="dependency_unavailable",
-                message=f"{exc} Install haproxy-node-helper.socket (07-platform-services).",
+                message=f"{exc} Install haprion-node-helper.socket (07-platform-services).",
                 exit_code=78,
             ),
         )

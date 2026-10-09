@@ -8,7 +8,7 @@ newer than a node can accept a directive that node then refuses.
 The versions compared are what each node's running process reports on its
 runtime socket and what `haproxy -v` names on this host, compared by their
 upstream part (`3.4.6` of `3.4.6-1ppa1~resolute`). One implementation, read
-by `haproxy-status` and the dashboard alike.
+by `haprion-status` and the dashboard alike.
 
 And the packages beside it (26-10-09): HAProxy's own package, keepalived,
 dnsdist, the WAF engine and the OpenSSL library, as each node reports them. A

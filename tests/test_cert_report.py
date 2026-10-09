@@ -1,7 +1,7 @@
 """The cert-deploy result, against the frozen schema that describes it.
 
 The loop and the matrix are shared with config deploy; the contract is not.
-`haproxy-cert-deploy.schema.json` was frozen in phase 0 with its own required
+`haprion-cert-deploy.schema.json` was frozen in phase 0 with its own required
 `target_certificates`, and a run that produced a deploy-shaped result would
 validate against the wrong schema and reach the interface as a valid-looking
 lie. So every outcome is generated through the real loop and validated here.
@@ -24,7 +24,7 @@ from haproxy_mgmt.deploy_run import CERT_OPERATION, DeployRun
 from tests.node_harness import FakeCluster, FakeNode
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
-CERT_SCHEMA = "https://example.com/haproxy-manager/schemas/v1/haproxy-cert-deploy.schema.json"
+CERT_SCHEMA = "https://example.com/haproxy-manager/schemas/v1/haprion-cert-deploy.schema.json"
 
 WILDCARD = "a" * 64
 STALE = "c" * 64

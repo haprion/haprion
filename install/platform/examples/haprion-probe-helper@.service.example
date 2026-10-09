@@ -1,0 +1,68 @@
+# Answers exactly one probe request, then exits.
+#
+# Started by haprion-probe-helper.socket, one instance per connection. The
+# connection is this process's stdin and stdout, which is the same protocol the
+# helper already speaks when a person pipes a request into it - it is unchanged
+# by being reached this way, and `haprion-probe` on the command line still runs
+# it through sudo.
+#
+# What it may do with root
+# ------------------------
+# Read the probe identity's private key, and reach a node with it. It writes
+# nothing, takes no cluster lock, and the forced command on the node can only
+# open outbound connections and report whether they answered - never a response
+# body. Targets are validated here and again on the node; neither check is
+# redundant with the other.
+#
+# Errors go to the journal and not to the socket. The caller reads one JSON
+# document; a diagnostic mixed into that stream would be read as a malformed
+# answer instead of as the problem it describes.
+#
+# Installed as /etc/systemd/system/haprion-probe-helper@.service.
+
+[Unit]
+Description=Answer one Haprion health probe request
+Documentation=file:///opt/haprion/current
+
+[Service]
+Type=exec
+ExecStart=/opt/haprion/current/bin/haprion-probe-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+
+# With Type=exec this bounds the start only; systemd does not end a run that
+# has begun. What bounds a run is the SSH call to each node, 30 s,
+# asked one node after the other. No RuntimeMaxSec on
+# purpose: a root step stopped midway would skip its own clean-up
+# (review 2026-09-28).
+TimeoutStartSec=120
+TimeoutStopSec=10
+
+# It reads its configuration, one key and one known_hosts file, and writes
+# nothing anywhere. ProtectHome is read-only rather than yes because the probe
+# identity's key lives under /root by design - no application account may hold
+# it - and ProtectHome=yes would hide it from the one process meant to read it.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+
+# AF_UNIX is the connection it was handed; AF_INET and AF_INET6 are ssh reaching
+# the nodes. Nothing else.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

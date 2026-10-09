@@ -139,7 +139,7 @@ class PathPolicy:
     certificate_registry: Path | None = None
 
     #
-    # Where `haproxy-cert-receiver` creates a receiver's directory (C7,
+    # Where `haprion-cert-receiver` creates a receiver's directory (C7,
     # §9 choice 2). Its own root rather than a corner of `certificate_root`:
     # the distribution root is the manager's own copy of every certificate,
     # while these directories are other machines' mailboxes, owned by their
@@ -157,7 +157,7 @@ class PathPolicy:
     # for HTTP-01. A method whose setting is absent is refused by name.
     #
     # `certbot` is the binary itself (P1): the locked environment's
-    # `/opt/haproxy-certbot/current/venv/bin/certbot` once that is installed,
+    # `/opt/haprion-certbot/current/venv/bin/certbot` once that is installed,
     # the distribution's `/usr/bin/certbot` until then. Left out, the helper
     # uses the distribution's; it never takes the path from its caller.
     #
@@ -417,7 +417,7 @@ HOSTNAME = re.compile(
 #
 # `rsync` and `flat` are the defaults because they are what the three
 # receivers registered before C7 do, and the reader has to keep reading their
-# entries unchanged. That is the only reason: `haproxy-cert-receiver` refuses
+# entries unchanged. That is the only reason: `haprion-cert-receiver` refuses
 # to create a new `flat` receiver, since a directory that holds one
 # certificate's `fullchain.pem` cannot hold a second certificate at all.
 #
@@ -440,7 +440,7 @@ def receiver_id_names_a_host(receiver_id: str) -> bool:
 
     Held here as a function rather than as a pattern because an IP address is
     not a regular expression anyone should write twice, and because two places
-    ask the question for the same reason: `haproxy-cert-receiver` refuses a
+    ask the question for the same reason: `haprion-cert-receiver` refuses a
     registration whose ID is not a host, and the lock it writes -
     `from="<id>,<its addresses>"` in `authorized_keys`, `allow <id>` in nginx - is what makes
     the answer matter. Existing entries are not held to it (§3 of the C7
@@ -1348,7 +1348,7 @@ def check_allow_entries(entries: Sequence[str]) -> tuple[str, ...]:
     """The one rule for an `https` whitelist entry, or a `ValueError` naming the entry.
 
     Stated once, here, because two callers must agree on it before anything is
-    written: the loader when it reads the registry, and `haproxy-cert-receiver`
+    written: the loader when it reads the registry, and `haprion-cert-receiver`
     before it renders the entries into nginx's configuration - the rule used
     to live in the loader alone, so an entry the loader would refuse reached
     nginx, and a reload, first (review 2026-09-20). The message starts with

@@ -1,0 +1,283 @@
+#!/bin/bash
+#
+# Pull the certificates this cluster references, validate them, install them and
+# put them into the running HAProxy - without a reload where HAProxy already
+# holds each one (Fas 20 P5), and with one reload otherwise.
+#
+# Replaces the single-certificate version. That one was hardcoded to one file in
+# two independent ways - the source path and the hostname checks - so it could
+# not carry a cluster-referenced list even with the filename parameterised.
+#
+# What it does NOT do, on purpose:
+#
+#   * it does not remove certificates that were not requested. The distribution
+#     directory is shared with other systems and this node may still be serving
+#     a file nobody asked about here; deleting key material is the worse failure
+#     and nothing on this side can tell the difference
+#   * it does not decide which certificates belong to this cluster. That is the
+#     manager's configuration, and a node that second-guessed it would become a
+#     second source of truth
+#   * it does not check hostname coverage. The old script did, against two
+#     hardcoded names. Coverage is a property of the configuration that uses the
+#     certificate, and `haproxy -c` below checks exactly that, for whatever this
+#     node actually serves
+#
+# The expiry rule changed with it. The old script refused anything with less
+# than seven days left, which is a renewal policy living on the wrong machine:
+# renewal is decided where certbot runs. What remains is a safety net that
+# cannot be wrong - an already-expired certificate is refused.
+#
+
+set -Eeuo pipefail
+
+#
+# Everything environment-specific comes from one root-owned file, rendered at
+# install time. Nothing about this node's cluster, its management host or its
+# accounts is compiled in - that is what let three hand-maintained variants of
+# this script collapse into one.
+#
+NODE_CONF="/etc/haprion/node.conf"
+#
+# Every reload goes through the server state helper (Fas 20, B263): it reloads,
+# waits for the new worker and puts back any server kept in drain or
+# maintenance. A plain `systemctl reload haproxy` would quietly send traffic
+# to a server somebody took out.
+#
+SERVER_STATE="/usr/local/sbin/haprion-server-state"
+
+[[ -r "$NODE_CONF" ]] || {
+    echo "ERROR: ${NODE_CONF} is missing. Run install/04-node-prepare." >&2
+    exit 78
+}
+# shellcheck source=/dev/null
+source "$NODE_CONF"
+
+for required in MANAGER CERT_PULL_USER CERT_PULL_KEY; do
+    [[ -n "${!required:-}" ]] || {
+        echo "ERROR: ${required} is not set in ${NODE_CONF}" >&2
+        exit 78
+    }
+done
+
+REMOTE_USER="$CERT_PULL_USER"
+SSH_KEY="$CERT_PULL_KEY"
+CERTS_DIR="/etc/haproxy/certs"
+
+#
+# Present from the moment the first file is replaced until HAProxy has been
+# reloaded with it, or the old files are back. A run killed in between leaves
+# new files on disk that the running HAProxy has never read, and the next run
+# would find them identical to what the manager offers and say "no reload
+# needed" - forever, while the old certificate is what clients get. The marker
+# is what the next run checks before that conclusion (review 2026-09-26, F5).
+#
+# In /run on purpose: a reboot empties it, and a reboot is also a HAProxy that
+# read every file from disk, so there is nothing left to finish.
+#
+PENDING="/run/haprion-cert-pull.pending"
+
+ID_PATTERN='^[a-z0-9][a-z0-9._-]{0,254}$'
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+fail() {
+    log "ERROR: $*"
+    exit 1
+}
+
+(( $# > 0 )) || {
+    echo "Usage: haprion-cert-pull <certificate-id> [...]" >&2
+    exit 64
+}
+
+#
+# Validated again here even though the trigger already did it. This helper runs
+# as root and must not depend on having been called by the wrapper.
+#
+for id in "$@"; do
+    [[ "$id" =~ $ID_PATTERN ]] || fail "invalid certificate ID"
+done
+
+exec 9>/run/lock/haprion-cert-pull.lock
+if ! flock -n 9; then
+    fail "another certificate deployment is already running"
+fi
+
+umask 077
+
+#
+# A temporary file a killed run left behind. It sits beside the certificates
+# only between being written and being renamed, so anything by that name now
+# belongs to no run.
+#
+rm -f "${CERTS_DIR}"/.haprion-cert-pull.*
+
+WORK="$(mktemp -d /tmp/haproxy-cert.XXXXXX)"
+BACKUP="${WORK}/backup"
+mkdir -p "$BACKUP"
+
+cleanup() {
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+#
+# Every certificate is fetched and validated before any of them is installed.
+# A run that installed two, failed on the third and rolled back would have
+# reloaded nothing but still have touched the node twice.
+#
+declare -a CHANGED=()
+
+for id in "$@"; do
+    candidate="${WORK}/${id}.pem"
+    dest="${CERTS_DIR}/${id}.pem"
+
+    log "Fetching ${id}..."
+
+    rsync -t --timeout=120 \
+        -e "ssh -i ${SSH_KEY} -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4" \
+        "${REMOTE_USER}@${MANAGER}:${id}.pem" \
+        "$candidate" \
+        || fail "${id} could not be fetched"
+
+    openssl x509 -in "$candidate" -noout >/dev/null 2>&1 \
+        || fail "${id} contains no valid certificate"
+
+    openssl pkey -in "$candidate" -noout >/dev/null 2>&1 \
+        || fail "${id} contains no valid private key"
+
+    openssl x509 -in "$candidate" -checkend 0 -noout >/dev/null \
+        || fail "${id} has already expired"
+
+    cert_key="$(
+        openssl x509 -in "$candidate" -pubkey -noout |
+        openssl pkey -pubin -outform DER 2>/dev/null |
+        sha256sum |
+        awk '{print $1}'
+    )"
+
+    private_key="$(
+        openssl pkey -in "$candidate" -pubout -outform DER 2>/dev/null |
+        sha256sum |
+        awk '{print $1}'
+    )"
+
+    [[ "$cert_key" == "$private_key" ]] \
+        || fail "${id}: the private key and the certificate do not match"
+
+    if [[ -f "$dest" ]] && cmp -s "$candidate" "$dest"; then
+        log "${id} is unchanged."
+        continue
+    fi
+
+    CHANGED+=("$id")
+done
+
+reload_checked() {
+    haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d \
+        || fail "HAProxy validation failed; the certificates on disk were left as they are"
+    "$SERVER_STATE" reload || fail "HAProxy reload failed"
+}
+
+if (( ${#CHANGED[@]} == 0 )); then
+    if [[ -e "$PENDING" ]]; then
+        #
+        # The files are the ones asked for, but an earlier run was stopped
+        # before HAProxy read them. The reload is the part it never did.
+        #
+        log "An earlier run installed these certificates but never reloaded. Reloading now..."
+        reload_checked
+        rm -f "$PENDING"
+        log "Certificate deployment complete."
+        exit 0
+    fi
+    log "Nothing changed. No reload needed."
+    exit 0
+fi
+
+log "New certificates: ${CHANGED[*]}"
+
+#
+# One file replaced in one step: written beside its destination and renamed
+# over it, so a reader - HAProxy, or this script's next run - sees the old file
+# or the new one and never half of either.
+#
+replace_file() {
+    local source="$1" dest="$2" staged
+    staged="${CERTS_DIR}/.haprion-cert-pull.$(basename "$dest")"
+    install -o root -g root -m 600 "$source" "$staged"
+    mv -f "$staged" "$dest"
+}
+
+restore() {
+    for id in "${CHANGED[@]}"; do
+        if [[ -f "${BACKUP}/${id}.pem" ]]; then
+            replace_file "${BACKUP}/${id}.pem" "${CERTS_DIR}/${id}.pem"
+        else
+            rm -f "${CERTS_DIR}/${id}.pem"
+        fi
+    done
+    #
+    # The old files are back and are what HAProxy was already serving, so
+    # nothing is left unfinished.
+    #
+    rm -f "$PENDING"
+}
+
+#
+# The IDs, one per line: `haprion-node-status` leaves exactly these out of what
+# it reports while the marker stands, because a file HAProxy has not read does
+# not say what this node serves.
+#
+printf '%s\n' "${CHANGED[@]}" > "$PENDING"
+
+for id in "${CHANGED[@]}"; do
+    dest="${CERTS_DIR}/${id}.pem"
+    if [[ -f "$dest" ]]; then
+        cp -a "$dest" "${BACKUP}/${id}.pem"
+    fi
+    replace_file "${WORK}/${id}.pem" "$dest"
+done
+
+log "Validating HAProxy with the new certificates..."
+
+if ! haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d; then
+    log "ERROR: HAProxy validation failed. Restoring the previous certificates."
+    restore
+    exit 1
+fi
+
+#
+# Replaced in the running process where it holds every one of them: no new
+# worker, no connection handed over. A certificate it does not hold yet - one
+# a deploy has only just named - and anything that goes wrong on the way are a
+# reload, as before; the files on disk are the new ones either way.
+#
+log "Replacing the certificates in the running HAProxy..."
+
+if "$SERVER_STATE" update-certs "${CHANGED[@]}"; then
+    rm -f "$PENDING"
+    log "Certificate deployment complete, without a reload."
+    for id in "${CHANGED[@]}"; do
+        openssl x509 -in "${CERTS_DIR}/${id}.pem" -noout -subject -dates -serial
+    done
+    exit 0
+fi
+
+log "Reloading HAProxy..."
+
+if ! "$SERVER_STATE" reload; then
+    log "ERROR: HAProxy reload failed. Rolling back."
+    restore
+    "$SERVER_STATE" reload || true
+    exit 1
+fi
+
+rm -f "$PENDING"
+log "Certificate deployment complete."
+
+for id in "${CHANGED[@]}"; do
+    openssl x509 -in "${CERTS_DIR}/${id}.pem" -noout -subject -dates -serial
+done

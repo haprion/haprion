@@ -308,7 +308,7 @@ def write_release(root: Path, layer: GeneratedLayer, certificates: Path | None =
     def local(content: str) -> str:
         #
         # The node points `/etc/haproxy/maps/` at the candidate's own maps when
-        # it validates (`haproxy-pull-deploy`); this is that step.
+        # it validates (`haprion-pull-deploy`); this is that step.
         #
         content = content.replace("/etc/haproxy/maps/", f"{root}/maps/")
         return (

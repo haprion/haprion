@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-backup-run.schema.json",
+  "title": "HAProxy node backup run result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "backup_run" },
+        "outcome": { "enum": ["done", "partial", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/run_result" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "enum": ["done", "partial"] } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/run_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$"
+    },
+    "node_run": {
+      "description": "One node's archive. A node that failed has no version and no size, only the reason.",
+      "type": "object",
+      "required": ["name", "outcome", "version", "size_bytes", "error"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "outcome": { "enum": ["done", "failed"] },
+        "version": { "oneOf": [{ "$ref": "#/$defs/version" }, { "type": "null" }] },
+        "size_bytes": { "type": ["integer", "null"], "minimum": 1 },
+        "error": { "type": ["string", "null"], "maxLength": 64 }
+      },
+      "additionalProperties": false
+    },
+    "run_result": {
+      "description": "One cluster run: the shared version stamp and a separate archive per node. `partial` is a run where at least one node produced a valid archive and at least one did not.",
+      "type": "object",
+      "required": ["version", "nodes"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/node_run" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

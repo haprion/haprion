@@ -1,6 +1,6 @@
 """The node's server state helper against a real HAProxy (Fas 20, B263).
 
-`install/node/haproxy-server-state` is loaded from the file the node bundle
+`install/node/haprion-server-state` is loaded from the file the node bundle
 installs and pointed at a scratch directory: its own admin socket, state file,
 lock and configuration, and a `systemctl` that reloads the way the packaged
 unit does - SIGUSR2 to the master. HAProxy is the one on this machine, the
@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import Any
 
 BASE = Path(__file__).resolve().parents[1]
-HELPER = BASE / "install" / "node" / "haproxy-server-state"
-TRIGGER = BASE / "install" / "node" / "haproxy-server-state-trigger"
+HELPER = BASE / "install" / "node" / "haprion-server-state"
+TRIGGER = BASE / "install" / "node" / "haprion-server-state-trigger"
 HAPROXY = shutil.which("haproxy") or ""
 
 WEB_A = "srv:shop.1111111111111111"
@@ -457,7 +457,7 @@ class TheTriggerValidatesBeforeSudo(unittest.TestCase):
 
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(
-            done.stdout.strip(), f"-n /usr/local/sbin/haproxy-server-state set {WEB_A} drain"
+            done.stdout.strip(), f"-n /usr/local/sbin/haprion-server-state set {WEB_A} drain"
         )
 
     def test_anything_else_is_refused_and_never_reaches_sudo(self) -> None:
@@ -508,7 +508,7 @@ class TheNodeWritesTheServerStateKeyFromTheAnswers(unittest.TestCase):
         )
 
     def test_the_line_is_written_and_a_rotated_key_replaces_the_old_one(self) -> None:
-        other = 'restrict,command="sudo -n /usr/local/sbin/haproxy-pull-deploy" ' + KEY_B
+        other = 'restrict,command="sudo -n /usr/local/sbin/haprion-pull-deploy" ' + KEY_B
         self.keys.write_text(other + "\n")
 
         first = self.run_block(KEY_A)
@@ -521,7 +521,7 @@ class TheNodeWritesTheServerStateKeyFromTheAnswers(unittest.TestCase):
         lines = self.keys.read_text().splitlines()
         self.assertEqual(
             lines,
-            [other, f'restrict,command="/usr/local/sbin/haproxy-server-state-trigger" {KEY_B}'],
+            [other, f'restrict,command="/usr/local/sbin/haprion-server-state-trigger" {KEY_B}'],
         )
 
     def test_anything_but_one_ed25519_key_is_refused(self) -> None:

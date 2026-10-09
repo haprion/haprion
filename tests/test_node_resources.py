@@ -1,6 +1,6 @@
 """A node's CPU and memory, from the node's files to the status command (B239).
 
-The reader is extracted from `install/node/haproxy-node-status` verbatim and run
+The reader is extracted from `install/node/haprion-node-status` verbatim and run
 against files written here, as `test_node_runtime_stat` does with the stat
 parser: the script is installed on the nodes rather than imported, so a test
 that reimplemented the reading would prove nothing about what the nodes run.
@@ -19,7 +19,7 @@ from typing import Any
 from haproxy_mgmt import node_resources
 from haproxy_mgmt.cli import status
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 READER = re.compile(r"^def read_resources\(\):.*?(?=^#\n# A directive)", re.DOTALL | re.MULTILINE)
 
 STAT = "cpu  1000 10 200 8000 300 0 40 50 7 0\ncpu0 1000 10 200 8000 300 0 40 50 7 0\nintr 1 2 3\n"

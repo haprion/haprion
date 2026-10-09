@@ -74,7 +74,7 @@ vrrp_instance alpha {
     #         include /etc/keepalived/addresses.conf
     #     }
     #
-    # That file is written by haproxy-pull-deploy out of the published release,
+    # That file is written by haprion-pull-deploy out of the published release,
     # which derives it from managed/network.yaml - so adding an address in the
     # interface puts it on the interface here as well.
     #
@@ -90,7 +90,7 @@ vrrp_instance alpha {
     # state file is never written, node status reports no owner, and a deploy
     # has no way to order the nodes.
     #
-    notify_master "/usr/local/sbin/haproxy-keepalived-state MASTER"
-    notify_backup "/usr/local/sbin/haproxy-keepalived-state BACKUP"
-    notify_fault  "/usr/local/sbin/haproxy-keepalived-state FAULT"
+    notify_master "/usr/local/sbin/haprion-keepalived-state MASTER"
+    notify_backup "/usr/local/sbin/haprion-keepalived-state BACKUP"
+    notify_fault  "/usr/local/sbin/haprion-keepalived-state FAULT"
 }

@@ -1,6 +1,6 @@
 """How a node decides whether it currently holds the cluster's address.
 
-The parsing is extracted from `install/node/haproxy-node-status` verbatim and
+The parsing is extracted from `install/node/haprion-node-status` verbatim and
 run against real files in a temporary directory, the way
 `test_node_keepalived_sync` extracts its shell function. That is deliberate:
 the answer this code produces is not cosmetic. A node that cannot name the
@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 PARSING = re.compile(r"^INTERFACE = re\.compile.*?(?=^def owns_vip\()", re.DOTALL | re.MULTILINE)
 
 #

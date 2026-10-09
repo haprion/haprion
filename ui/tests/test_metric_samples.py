@@ -27,8 +27,8 @@ from haproxy_ui.metrics import CARD_COUNTERS, METRIC_COUNTERS, SUMMARY_COUNTERS
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0018_metric_samples.py"
 SAMPLE_INSTANT = ROOT / "ui" / "migrations" / "versions" / "0019_sample_instant.py"
-RETENTION = ROOT / "install" / "platform" / "bin" / "haproxy-ui-retention"
-NODE_SCRIPT = ROOT / "install" / "node" / "haproxy-node-status"
+RETENTION = ROOT / "install" / "platform" / "bin" / "haprion-retention"
+NODE_SCRIPT = ROOT / "install" / "node" / "haprion-node-status"
 ROLLUP = ROOT / "ui" / "migrations" / "versions" / "0020_metric_pool_hour.py"
 ROLLUP_STATE = ROOT / "ui" / "migrations" / "versions" / "0021_metric_rollup_state.py"
 RENAME = ROOT / "ui" / "migrations" / "versions" / "0023_metric_table_names.py"
@@ -278,7 +278,7 @@ class TheDnsCounterLists(unittest.TestCase):
         self.assertLessEqual(summed, set(db.BACKEND_DELTAS))
 
     def test_the_reader_takes_the_names_the_node_reports(self) -> None:
-        schema = json.loads((ROOT / "schemas" / "v1" / "haproxy-status.schema.json").read_text())
+        schema = json.loads((ROOT / "schemas" / "v1" / "haprion-status.schema.json").read_text())
         counters = schema["$defs"]["node_status"]["properties"]["dns_listener"]["properties"][
             "counters"
         ]["properties"]
@@ -305,7 +305,7 @@ class TheSyslogCounters(unittest.TestCase):
         )
 
     def test_the_reader_takes_the_names_the_node_reports(self) -> None:
-        schema = json.loads((ROOT / "schemas" / "v1" / "haproxy-status.schema.json").read_text())
+        schema = json.loads((ROOT / "schemas" / "v1" / "haprion-status.schema.json").read_text())
         service = schema["$defs"]["node_status"]["properties"]["ipvs"]["properties"]["services"][
             "items"
         ]
@@ -448,7 +448,7 @@ class WhetherTheCountersWereKept(unittest.TestCase):
         )
 
     def test_the_reader_takes_the_name_the_node_reports(self) -> None:
-        schema = json.loads((ROOT / "schemas" / "v1" / "haproxy-status.schema.json").read_text())
+        schema = json.loads((ROOT / "schemas" / "v1" / "haprion-status.schema.json").read_text())
         runtime = schema["$defs"]["node_status"]["properties"]["runtime"]["properties"]
         self.assertEqual(runtime["shared_counters"]["type"], ["boolean", "null"])
 

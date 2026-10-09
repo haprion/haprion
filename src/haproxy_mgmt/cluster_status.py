@@ -1,7 +1,7 @@
 """Reading a cluster status result, once, for everyone who needs one.
 
 `haproxy-status-root` answers in the frozen schema in
-`schemas/v1/haproxy-status.schema.json`. Deploy needs to know who owns the VIP
+`schemas/v1/haprion-status.schema.json`. Deploy needs to know who owns the VIP
 and what each node is running; the interface will need the same answer later,
 and the poller after that. Every one of them reading the payload its own way is
 how they end up disagreeing about whether it is safe to act.

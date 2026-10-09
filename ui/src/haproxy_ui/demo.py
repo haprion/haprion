@@ -539,7 +539,7 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
     observed = moment - timedelta(seconds=18)
     last_run = (moment - timedelta(hours=6)).replace(minute=0, second=0, microsecond=0)
     schedule = {
-        "unit": "haproxy-state-backup.timer",
+        "unit": "haprion-state-backup.timer",
         "known": True,
         "enabled": True,
         "active": True,

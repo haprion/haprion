@@ -28,19 +28,19 @@ MAX_MANIFEST_BYTES = 64 * 1024
 SHA256 = re.compile(r"[0-9a-f]{64}")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 NODE_SCRIPTS = (
-    "haproxy-pull-deploy",
-    "haproxy-cert-pull",
-    "haproxy-cert-remove",
-    "haproxy-cert-trigger",
-    "haproxy-node-status",
-    "haproxy-health-probe",
-    "haproxy-keepalived-state",
-    "haproxy-state-export",
-    "haproxy-traffic-log-read",
-    "haproxy-traffic-log-enable",
-    "haproxy-traffic-log-prune",
-    "haproxy-server-state",
-    "haproxy-server-state-trigger",
+    "haprion-pull-deploy",
+    "haprion-cert-pull",
+    "haprion-cert-remove",
+    "haprion-cert-trigger",
+    "haprion-node-status",
+    "haprion-health-probe",
+    "haprion-keepalived-state",
+    "haprion-state-export",
+    "haprion-traffic-log-read",
+    "haprion-traffic-log-enable",
+    "haprion-traffic-log-prune",
+    "haprion-server-state",
+    "haprion-server-state-trigger",
 )
 #
 # Data rather than programs, so 0644: the shell library the scripts source,

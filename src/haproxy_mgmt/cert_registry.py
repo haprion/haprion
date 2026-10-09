@@ -59,7 +59,7 @@ from haproxy_mgmt.config import (
 # does, so it belongs where that is decided.
 #
 HEADER = """\
-# The certificate registry (B135). Maintained by haproxy-cert-issue and the
+# The certificate registry (B135). Maintained by haprion-cert-issue and the
 # registry helper; hand edits are kept but comments are not, since the file is
 # rewritten as a whole. See user-manual.md, 'The certificate registry', for the fields.
 """
@@ -150,7 +150,7 @@ def write(
 
     `document` is what `read_document` returned, so the receiver block and any
     field a later version adds travel through untouched. Only the certificate
-    half is the caller's to decide - except for `haproxy-cert-receiver`, root
+    half is the caller's to decide - except for `haprion-cert-receiver`, root
     work with its own command, which passes `receivers` and is the only caller
     that may: a receiver that could be introduced by a job payload would be a
     directory key material lands in that nobody registered.
@@ -363,7 +363,7 @@ def drop_receiver(
 def receiver_in_use(registry: Registry, receiver_id: str) -> tuple[str, ...]:
     """Spärr 4 (B138): the certificates that name this receiver, in registry order.
 
-    Asked by `haproxy-cert-receiver remove`, which may not take an account,
+    Asked by `haprion-cert-receiver remove`, which may not take an account,
     a directory and a key out from under a certificate that still publishes
     there. Answered here, beside the rules, rather than counted again at the
     call site.

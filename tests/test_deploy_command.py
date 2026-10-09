@@ -291,7 +291,7 @@ class HelperBehaviourTests(HelperFixture):
         code, out, err = self.run_helper(request(expected_version=7, json=True))
 
         self.assertEqual(code, 75)
-        document = assert_contract("haproxy-deploy", out)
+        document = assert_contract("haprion-deploy", out)
         self.assertEqual(document["outcome"], "blocked")
         self.assertEqual(document["error"]["code"], "expected_target_changed")
         self.assertIn("now v8, not v7", err)
@@ -423,11 +423,11 @@ class CertificatePreflightTests(HelperFixture):
 
         self.assertEqual(code, 65)
         self.assertEqual(self.triggered, [])
-        document = assert_contract("haproxy-deploy", out)
+        document = assert_contract("haprion-deploy", out)
         self.assertEqual(document["outcome"], "blocked")
         self.assertEqual(document["error"]["code"], "certificates_not_deployed")
         self.assertEqual(
-            document["error"]["details"]["next_command"], "haproxy-cert-deploy -c alpha"
+            document["error"]["details"]["next_command"], "haprion-cert-deploy -c alpha"
         )
         self.assertEqual(
             document["error"]["details"]["nodes"],
@@ -455,7 +455,7 @@ class CertificatePreflightTests(HelperFixture):
 
         self.assertEqual(code, 0)
         self.assertEqual(self.triggered, ["node-b", "node-a"])
-        document = assert_contract("haproxy-deploy", out)
+        document = assert_contract("haprion-deploy", out)
         self.assertEqual(document["outcome"], "done")
         self.assertEqual(document["warnings"], [])
 
@@ -476,7 +476,7 @@ class CertificatePreflightTests(HelperFixture):
         self.assertEqual(self.triggered, [])
         self.assertIn("[certificate_missing]", err)
         self.assertIn("example.net", err)
-        document = assert_contract("haproxy-deploy", out)
+        document = assert_contract("haprion-deploy", out)
         self.assertEqual(document["error"]["code"], "certificate_missing")
         self.assertIsNone(document["result"])
 
@@ -487,7 +487,7 @@ class CertificatePreflightTests(HelperFixture):
 
         self.assertEqual(code, 0)
         self.assertEqual(self.triggered, ["node-b", "node-a"])
-        document = assert_contract("haproxy-deploy", out)
+        document = assert_contract("haprion-deploy", out)
         self.assertEqual(document["outcome"], "done")
         self.assertEqual(
             [warning["code"] for warning in document["warnings"]], ["certificates_unchecked"]
@@ -501,7 +501,7 @@ class CertificatePreflightTests(HelperFixture):
 
         self.assertEqual(code, 65)
         self.assertIn("ERROR: [certificates_not_deployed]", out)
-        self.assertIn("Run haproxy-cert-deploy -c alpha first, then deploy again", out)
+        self.assertIn("Run haprion-cert-deploy -c alpha first, then deploy again", out)
 
 
 class CallerTests(unittest.TestCase):
@@ -561,7 +561,7 @@ class RefusalContractTests(HelperFixture):
         self.assertEqual(code, 64)
         self.assertIn("unknown cluster", err)
 
-        document = assert_contract("haproxy-deploy", out)
+        document = assert_contract("haprion-deploy", out)
         self.assertEqual(document["operation"], "deploy")
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["request_id"], REQUEST_ID)
@@ -582,7 +582,7 @@ class RefusalContractTests(HelperFixture):
             node_trigger=lambda node: 0,
         )
         self.assertEqual(code, deploy_helper.EXIT_NO_IDENTITY)
-        document = assert_contract("haproxy-deploy", out.getvalue())
+        document = assert_contract("haprion-deploy", out.getvalue())
         self.assertEqual(document["error"]["code"], "dependency_unavailable")
         self.assertEqual(document["outcome"], "failed")
 
@@ -591,7 +591,7 @@ class RefusalContractTests(HelperFixture):
             code, out, _ = self.run_helper(request(json=True))
 
         self.assertEqual(code, 75)
-        document = assert_contract("haproxy-deploy", out)
+        document = assert_contract("haprion-deploy", out)
         self.assertEqual(document["outcome"], "blocked")
         self.assertEqual(document["error"]["code"], "operation_locked")
         self.assertEqual(self.triggered, [])

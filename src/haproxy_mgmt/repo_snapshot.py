@@ -4,7 +4,7 @@ Publishing creates a commit, and a commit is a write into a repository owned by
 root. That write cannot move outside the boundary - so what crosses it is the
 configuration bytes, and this module turns them into a version on the far side.
 
-The rules are taken from `haproxy-publish` and are semantic, not incidental:
+The rules are taken from `haprion-publish` and are semantic, not incidental:
 
 * only `core/` and `manual/` are replaced. `managed/` is written by the
   application and is carried over from the previous version unchanged, so a

@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-status` - reach the nodes, read the release.
+"""The privileged half of `haprion-status` - reach the nodes, read the release.
 
 Takes no arguments; the cluster arrives as a structured request on stdin, the
 same form and for the same reason as the other helpers: PRIVILEGE.md forbids
@@ -88,7 +88,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-status-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-status-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

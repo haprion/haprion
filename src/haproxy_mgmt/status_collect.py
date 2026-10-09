@@ -1,6 +1,6 @@
 """One reading of a cluster, in the frozen status envelope.
 
-This is the collecting half of `haproxy-status`, kept apart from both the
+This is the collecting half of `haprion-status`, kept apart from both the
 command that prints it and the helper that runs it as root so it can be tested
 against a cluster that answers in ways the real pair cannot be made to answer.
 
@@ -9,7 +9,7 @@ What it adds over the shell command it replaces
 The nodes have always reported which release they run - `release.version` and
 `release.hash` are in the node status envelope and have been since the schema
 was frozen. Nothing read them. The only way to find out whether the nodes were
-running what was published was to start `haproxy-deploy`, which is the mutating
+running what was published was to start `haprion-deploy`, which is the mutating
 command: you had to reach for the thing that changes the cluster in order to
 observe it.
 
@@ -66,7 +66,7 @@ EXIT_PARTIAL = 69
 EXIT_UNAVAILABLE = 68
 
 #
-# The top level of schemas/v1/haproxy-status.schema.json#/$defs/node_status. A
+# The top level of schemas/v1/haprion-status.schema.json#/$defs/node_status. A
 # response missing any of these cannot be reported on without guessing, so it is
 # refused as a node status rather than partially believed.
 #
@@ -476,7 +476,7 @@ def _node_result(
     # JSON parsed" is not "the status is valid": null parses, and so does a
     # list. Treating those as valid used to crash the derivation below with an
     # unhandled AttributeError - no JSON on stdout, a traceback on stderr, and
-    # haproxy-deploy reporting "did not return valid JSON" instead of degrading
+    # haprion-deploy reporting "did not return valid JSON" instead of degrading
     # to a partial run.
     #
     if not isinstance(status, dict) or not set(status) >= REQUIRED_NODE_STATUS_KEYS:

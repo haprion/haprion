@@ -1,0 +1,15 @@
+[Unit]
+# Restores the newest dump into a scratch database and compares it with the live
+# one. A dump nobody has restored is a belief, not a backup.
+Description=Verify that the newest interface dump restores
+Documentation=file:///apps/haproxy-manager-dev/src/haproxy-manager/docs/user-manual.md
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/haprion-backup verify-restore -e ENVIRONMENT
+
+[Install]
+WantedBy=multi-user.target

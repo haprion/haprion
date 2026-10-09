@@ -1040,7 +1040,7 @@ class AReceiverIdNamesAHost(unittest.TestCase):
 
 
 class TheReceiverRoot(unittest.TestCase):
-    """Where `haproxy-cert-receiver` will create directories (C7, §9 choice 2)."""
+    """Where `haprion-cert-receiver` will create directories (C7, §9 choice 2)."""
 
     def policy(self, value: object = None) -> PathPolicy:
         with tempfile.TemporaryDirectory() as raw:

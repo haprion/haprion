@@ -4,7 +4,7 @@
 #
 #     sudo ./06-platform-backup <answers-file>
 #
-# Installs haproxy-ui-backup, a daily timer, and a weekly restore check. Then it
+# Installs haprion-backup, a daily timer, and a weekly restore check. Then it
 # takes a dump and restores it immediately, because a backup that has never been
 # read back is a belief rather than a backup - and the moment to find out is
 # during installation, not during an incident.
@@ -36,11 +36,11 @@ step "Where the dumps live"
 ensure_dir "$DUMP_DIR" root:root 700
 
 step "The command"
-install -o root -g root -m 755 bin/haproxy-ui-backup /usr/local/sbin/haproxy-ui-backup
-log "  installed /usr/local/sbin/haproxy-ui-backup"
+install -o root -g root -m 755 bin/haprion-backup /usr/local/sbin/haprion-backup
+log "  installed /usr/local/sbin/haprion-backup"
 
 step "Timers"
-for unit in haproxy-ui-backup haproxy-ui-restore-check; do
+for unit in haprion-backup haprion-restore-check; do
     for kind in service timer; do
         install_file "/etc/systemd/system/${unit}.${kind}" root:root 644 \
             "$(sed "s|ENVIRONMENT|${ENVIRONMENT}|g" "examples/${unit}.${kind}.example")"
@@ -48,21 +48,21 @@ for unit in haproxy-ui-backup haproxy-ui-restore-check; do
 done
 systemctl daemon-reload
 log "  reloaded systemd"
-systemctl enable --quiet --now haproxy-ui-backup.timer haproxy-ui-restore-check.timer
+systemctl enable --quiet --now haprion-backup.timer haprion-restore-check.timer
 log "  enabled  daily dump and weekly restore check"
 
 #
 # Asked of the running system rather than assumed from a clean enable. A timer
 # that is enabled but whose next run is never is a backup that will not happen.
 #
-systemctl list-timers --no-pager --no-legend haproxy-ui-backup.timer \
-    haproxy-ui-restore-check.timer | sed 's/^/  /'
+systemctl list-timers --no-pager --no-legend haprion-backup.timer \
+    haprion-restore-check.timer | sed 's/^/  /'
 
 step "Proving it, now rather than at 02:30"
-/usr/local/sbin/haproxy-ui-backup dump -e "$ENVIRONMENT"
+/usr/local/sbin/haprion-backup dump -e "$ENVIRONMENT"
 
 step "Proving the dump restores"
-/usr/local/sbin/haproxy-ui-backup verify-restore -e "$ENVIRONMENT"
+/usr/local/sbin/haprion-backup verify-restore -e "$ENVIRONMENT"
 
 step "What must not be able to read a dump"
 newest="$(find "$DUMP_DIR" -maxdepth 1 -name '*.dump' -printf '%p\n' | sort -r | head -1)"

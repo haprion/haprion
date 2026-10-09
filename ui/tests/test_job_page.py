@@ -134,7 +134,7 @@ class JobPageTests(LoginTestCase):
 
         self.assertIn("Published, not deployed", page.text)
         self.assertNotIn('action="/operations"', page.text)
-        self.assertNotIn("haproxy-deploy -c", page.text)
+        self.assertNotIn("haprion-deploy -c", page.text)
 
     def test_where_nobody_may_press_it_the_command_is_still_named(self) -> None:
         #
@@ -145,7 +145,7 @@ class JobPageTests(LoginTestCase):
         page = self.follow_up_page()
 
         self.assertNotIn('name="operation" value="deploy"', page.text)
-        self.assertIn("haproxy-deploy -c alpha", page.text)
+        self.assertIn("haprion-deploy -c alpha", page.text)
 
     def test_a_finished_page_does_not_reload_itself(self) -> None:
         #
@@ -279,7 +279,7 @@ class JobPageTests(LoginTestCase):
 
         self.assertEqual(page.status_code, 200)
         self.assertIn("Published, not deployed", page.text)
-        self.assertIn("haproxy-deploy -c alpha", page.text)
+        self.assertIn("haprion-deploy -c alpha", page.text)
         #
         # Still says Completed, and should: the job did finish. The two
         # statements together are the honest answer, which is why the row is
@@ -304,7 +304,7 @@ def revert_result(**changes: object) -> dict[str, Any]:
         "new_version": 26,
         "from_version": 25,
         "deployment_required": True,
-        "next_command": "haproxy-deploy -c alpha",
+        "next_command": "haprion-deploy -c alpha",
     }
     body.update(changes)
     return {"ok": True, "outcome": "done", "result": body}
@@ -331,7 +331,7 @@ class WhatAFinishedJobStillOwes(unittest.TestCase):
         self.assertIsNotNone(view.follow_up)
         self.assertIn("Published, not deployed", view.follow_up or "")
         self.assertIn("alpha", view.follow_up or "")
-        self.assertEqual(view.next_command, "haproxy-deploy -c alpha")
+        self.assertEqual(view.next_command, "haprion-deploy -c alpha")
 
     def test_a_cluster_that_has_caught_up_is_not_captioned(self) -> None:
         """The rule that was missing, and the reason the line was wrong.
@@ -585,9 +585,9 @@ class TheErrorCodeReachesThePage(LoginTestCase):
 def certificate_refusal(
     nodes: list[dict[str, object]] | None = None,
     *,
-    next_command: str | None = "haproxy-cert-deploy -c alpha",
+    next_command: str | None = "haprion-cert-deploy -c alpha",
 ) -> dict[str, Any]:
-    """What `haproxy-deploy` answers when its preflight finds a node behind."""
+    """What `haprion-deploy` answers when its preflight finds a node behind."""
 
     details: dict[str, object] = {
         "nodes": [{"node": "node-b", "missing": ["example-net"], "stale": []}]
@@ -637,7 +637,7 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
         self.assertEqual(block.cluster, "alpha")
         self.assertEqual(block.job_id, 19)
         self.assertEqual(block.gaps, (jobs.NodeGap("node-b", ("example-net",), ()),))
-        self.assertEqual(block.next_command, "haproxy-cert-deploy -c alpha")
+        self.assertEqual(block.next_command, "haprion-cert-deploy -c alpha")
         self.assertEqual(block.headline, "Deploy blocked: node-b is missing example-net")
         self.assertEqual(
             block.sentence,
@@ -708,7 +708,7 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
                 block = block_of(job(state="blocked", outcome="blocked", result=refusal))
 
                 self.assertEqual(block.gaps, ())
-                self.assertEqual(block.next_command, "haproxy-cert-deploy -c alpha")
+                self.assertEqual(block.next_command, "haprion-cert-deploy -c alpha")
                 self.assertIn("a node does not carry every certificate", block.headline)
 
     def test_only_the_newest_finished_job_carries_the_block(self) -> None:
@@ -734,7 +734,7 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
         overview = jobs.build_job_overview([blocked_deploy(20), blocked_deploy(19)])
 
         newest, older = overview.jobs
-        self.assertEqual(newest.next_command, "haproxy-cert-deploy -c alpha")
+        self.assertEqual(newest.next_command, "haprion-cert-deploy -c alpha")
         self.assertIn("Deploy blocked: node-b is missing example-net", newest.follow_up or "")
         self.assertEqual(newest.error_code, "certificates_not_deployed")
         self.assertIsNone(older.follow_up)
@@ -749,7 +749,7 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
         rows = [replace(job(state="done", outcome="done", operation="cert_deploy"), id=21)]
 
         captioned = jobs.build_job_overview(rows, awaiting=frozenset({"alpha"})).jobs[0]
-        self.assertEqual(captioned.next_command, "haproxy-deploy -c alpha")
+        self.assertEqual(captioned.next_command, "haprion-deploy -c alpha")
         self.assertIn("Certificates deployed, configuration not", captioned.follow_up or "")
 
         converged = jobs.build_job_overview(rows).jobs[0]
@@ -771,13 +771,13 @@ class TheBlockReachesThePages(LoginTestCase):
         self.assertIn("Deploy blocked: node-b is missing example-net.", body)
         self.assertNotIn('action="/operations"', body)
         self.assertIn("certificates_not_deployed", body)
-        self.assertNotIn("haproxy-cert-deploy -c", body)
+        self.assertNotIn("haprion-cert-deploy -c", body)
 
     def test_where_nobody_may_press_it_the_command_is_named(self) -> None:
         body = self.page("/jobs", [blocked_deploy()], writes=False)
 
         self.assertNotIn('name="operation" value="cert_deploy"', body)
-        self.assertIn("haproxy-cert-deploy -c alpha", body)
+        self.assertIn("haprion-cert-deploy -c alpha", body)
 
     def test_the_dashboard_offers_it_on_the_cluster_card_while_the_block_stands(self) -> None:
         body = self.page("/", [blocked_deploy()])
@@ -809,7 +809,7 @@ class AFailedCertificateIssue(LoginTestCase):
 
     def failed_issue(self) -> db.Job:
         document = json.loads(
-            (FIXTURES / "haproxy-cert-issue" / "valid" / "certbot-failed.json").read_text()
+            (FIXTURES / "haprion-cert-issue" / "valid" / "certbot-failed.json").read_text()
         )
         return job(
             state="failed",

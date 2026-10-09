@@ -45,7 +45,7 @@ class InstallReleaseTests(unittest.TestCase):
             )
             archive.writestr(
                 "haproxy_manager-0.1.0.dist-info/entry_points.txt",
-                "[console_scripts]\nhaproxy-example = haproxy_mgmt.cli.example:main\n",
+                "[console_scripts]\nhaprion-example = haproxy_mgmt.cli.example:main\n",
             )
         digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
         return wheel, digest
@@ -156,20 +156,20 @@ class InstallReleaseTests(unittest.TestCase):
             self.assertEqual((target / "current").readlink(), Path("releases") / release_id)
             metadata = json.loads((release / "INSTALLATION.json").read_text())
             self.assertEqual(metadata["wheel_sha256"], digest)
-            self.assertEqual(metadata["entry_points"], ["haproxy-example"])
+            self.assertEqual(metadata["entry_points"], ["haprion-example"])
             self.assertEqual(metadata["engine_api"], 1)
             self.assertRegex(metadata["pynacl"], r"^1\.")
             self.assertRegex(metadata["psycopg"], r"^3\.")
             self.assertEqual(stat.S_IMODE(release.stat().st_mode), 0o555)
-            self.assertEqual(stat.S_IMODE((release / "bin/haproxy-example").stat().st_mode), 0o555)
+            self.assertEqual(stat.S_IMODE((release / "bin/haprion-example").stat().st_mode), 0o555)
             self.assertEqual(
                 stat.S_IMODE((release / "lib/haproxy_mgmt/__init__.py").stat().st_mode), 0o444
             )
-            launcher = (release / "bin/haproxy-example").read_text()
+            launcher = (release / "bin/haprion-example").read_text()
             self.assertTrue(launcher.startswith(f"#!{sys.executable} -I\n"))
             self.assertNotIn(str(INSTALLER_PATH.parents[1]), launcher)
             subprocess.run(  # noqa: S603 - generated local test launcher
-                [str(release / "bin/haproxy-example")], check=True
+                [str(release / "bin/haprion-example")], check=True
             )
 
             for path in sorted(release.rglob("*"), reverse=True):

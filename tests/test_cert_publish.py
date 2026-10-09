@@ -696,7 +696,7 @@ class TheCommand(Fixture):
 
         #
         # Another certificate's run carries the earlier one's cluster along:
-        # the note is per cluster, and haproxy-cert-deploy rolls out a
+        # the note is per cluster, and haprion-cert-deploy rolls out a
         # cluster's whole set.
         #
         self.run_command(policy, "--certificate", "example.net", "--deploy", deployer=deployer)

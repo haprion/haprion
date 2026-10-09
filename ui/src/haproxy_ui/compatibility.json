@@ -47,33 +47,33 @@
     "engine_api": 23,
     "node_api": 1,
     "poller_helpers": [
-      "haproxy-status-helper",
-      "haproxy-inventory-helper",
-      "haproxy-readings-helper",
-      "haproxy-cluster-list-helper"
+      "haprion-status-helper",
+      "haprion-inventory-helper",
+      "haprion-readings-helper",
+      "haprion-cluster-list-helper"
     ],
     "worker_helpers": [
-      "haproxy-deploy-helper",
-      "haproxy-cert-deploy-helper",
-      "haproxy-revert-helper",
-      "haproxy-changes-publish-helper",
-      "haproxy-cert-issue-helper",
-      "haproxy-cert-publish-helper",
-      "haproxy-cert-target-helper",
-      "haproxy-dns-profile-apply-helper",
-      "haproxy-cert-delete-helper",
-      "haproxy-ndes-profile-apply-helper",
-      "haproxy-cert-scep-helper",
-      "haproxy-cert-import-helper",
-      "haproxy-cert-request-helper",
-      "haproxy-server-state-helper"
+      "haprion-deploy-helper",
+      "haprion-cert-deploy-helper",
+      "haprion-revert-helper",
+      "haprion-changes-publish-helper",
+      "haprion-cert-issue-helper",
+      "haprion-cert-publish-helper",
+      "haprion-cert-target-helper",
+      "haprion-dns-profile-apply-helper",
+      "haprion-cert-delete-helper",
+      "haprion-ndes-profile-apply-helper",
+      "haprion-cert-scep-helper",
+      "haprion-cert-import-helper",
+      "haprion-cert-request-helper",
+      "haprion-server-state-helper"
     ],
     "socket_helpers": {
-      "haproxy-cert-receiver-helper": "/run/haprion/cert-receiver.sock",
-      "haproxy-backup-job-helper": "/run/haprion/backup-job.sock",
-      "haproxy-node-restore-helper": "/run/haprion/node-restore.sock",
-      "haproxy-ui-tls-helper": "/run/haprion/ui-tls.sock",
-      "haproxy-node-helper": "/run/haprion/cluster-node.sock"
+      "haprion-cert-receiver-helper": "/run/haprion/cert-receiver.sock",
+      "haprion-backup-job-helper": "/run/haprion/backup-job.sock",
+      "haprion-node-restore-helper": "/run/haprion/node-restore.sock",
+      "haprion-tls-helper": "/run/haprion/ui-tls.sock",
+      "haprion-node-helper": "/run/haprion/cluster-node.sock"
     }
   }
 }

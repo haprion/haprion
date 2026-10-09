@@ -1,4 +1,4 @@
-"""The privileged, read-only half of ``haproxy-network``.
+"""The privileged, read-only half of ``haprion-network``.
 
 The cluster repository is group-readable by the engine's own group and by
 nobody else, and the interface's identities are deliberately not in it. This
@@ -52,7 +52,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-network-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-network-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

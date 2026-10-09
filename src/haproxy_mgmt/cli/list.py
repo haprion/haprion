@@ -1,4 +1,4 @@
-"""`haproxy-list` - the recent versions of a cluster's configuration.
+"""`haprion-list` - the recent versions of a cluster's configuration.
 
 The whole command runs as the calling user. It reads history and nothing else:
 no `sudo`, no root helper, no write anywhere. That is why it was the first of
@@ -13,7 +13,7 @@ way is a change nobody asked for hidden inside a change nobody should notice.
 same way the table does rather than going through the root helper, because a
 human who can run this command can already read the repository and requiring
 `sudo` to get machine-readable output would be privilege for formatting. The
-poller, which cannot read the repository, uses `haproxy-list-helper`; both build
+poller, which cannot read the repository, uses `haprion-list-helper`; both build
 their result with `haproxy_mgmt.history.history_result`, so the two paths cannot
 come to describe the same history differently.
 """
@@ -41,11 +41,11 @@ from haproxy_mgmt.version_history import recent_versions, version_commit
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-list -c <cluster> [--json]\n"
-    "  haproxy-list -c <cluster> --diff <version>   what one version changed\n"
+    "  haprion-list -c <cluster> [--json]\n"
+    "  haprion-list -c <cluster> --diff <version>   what one version changed\n"
 )
 OPERATION = "list"
-HELPER = "/opt/haprion/current/bin/haproxy-list-helper"
+HELPER = "/opt/haprion/current/bin/haprion-list-helper"
 SUDO = "/usr/bin/sudo"
 
 #

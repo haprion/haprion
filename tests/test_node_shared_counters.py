@@ -3,7 +3,7 @@
 A reload starts `Uptime_sec` from nought whether or not `shm-stats-file` is in
 use, so the node says which it is, read from what runs: the path the running
 release's `global` names, and whether HAProxy's worker has that file mapped
-shared. The functions are extracted from `install/node/haproxy-node-status`
+shared. The functions are extracted from `install/node/haprion-node-status`
 verbatim, as `test_node_runtime_stat` does, because the script is installed on
 the nodes rather than imported.
 
@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 PART = re.compile(r"^SHM_STATS_FILE = .*?(?=^#\n# A pool's own row)", re.DOTALL | re.MULTILINE)
 
 SHM = "/run/haproxy/stats.shm"

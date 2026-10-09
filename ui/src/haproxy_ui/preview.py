@@ -1597,7 +1597,7 @@ def _with_normalised_advanced(data: Any) -> Any:
 
     A file written by hand may end a line in blanks or carry no final newline,
     and the form writes the text back normalised. That is one change to the
-    text, made the same way `haproxy-objects` makes it, and not a reason to
+    text, made the same way `haprion-objects` makes it, and not a reason to
     refuse the object.
     """
 

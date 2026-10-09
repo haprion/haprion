@@ -1,4 +1,4 @@
-"""``haproxy-node-restore`` - restore a node's state archive as the node, or as a test.
+"""``haprion-node-restore`` - restore a node's state archive as the node, or as a test.
 
 Runs as root: it reads the root-only archives and holds the run's one-time key.
 Three steps, in order, each a separate command (B175):
@@ -36,14 +36,14 @@ EXIT_NOT_ROOT = 77
 
 USAGE = """\
 Usage:
-  haproxy-node-restore prepare -c <cluster> --node <node> --archive <version> --target <address>
+  haprion-node-restore prepare -c <cluster> --node <node> --archive <version> --target <address>
                                [--test --test-hostname <name> --test-address <addr/prefix>
                                 --test-vip <addr/prefix>]
-  haproxy-node-restore preview --run <id> [--fingerprint <SHA256:...>]
-  haproxy-node-restore run     --run <id> --confirm <hostname>
+  haprion-node-restore preview --run <id> [--fingerprint <SHA256:...>]
+  haprion-node-restore run     --run <id> --confirm <hostname>
                                [--backup-failed-ok] [--break-traffic]
-  haproxy-node-restore discard --run <id>
-  haproxy-node-restore status  --run <id>
+  haprion-node-restore discard --run <id>
+  haprion-node-restore status  --run <id>
 
   prepare   prints a line to paste on the target's console as its administrator.
             It authorizes this run's one-time key for root, from this host only,
@@ -223,7 +223,7 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
             out.write(f"  - {problem}\n")
     else:
         out.write(
-            f"\nNext: haproxy-node-restore run --run {summary['run']} --confirm {plan['hostname']}\n"
+            f"\nNext: haprion-node-restore run --run {summary['run']} --confirm {plan['hostname']}\n"
         )
 
 
@@ -316,7 +316,7 @@ def main(
         return EXIT_USAGE
 
     if require_root and os.geteuid() != 0:
-        errors.write("ERROR: haproxy-node-restore must run as root\n")
+        errors.write("ERROR: haprion-node-restore must run as root\n")
         return EXIT_NOT_ROOT
 
     as_json = "--json" in options
@@ -383,7 +383,7 @@ def _step(
                 out.write(
                     f"Run {prepared['run']}\n\nOn {request.target}'s console, as its administrator:\n\n"
                     f"{prepared['paste']}\n\n"
-                    f"Then: haproxy-node-restore preview --run {prepared['run']} "
+                    f"Then: haprion-node-restore preview --run {prepared['run']} "
                     "--fingerprint <the SHA256:... it printed>\n"
                 )
             return 0

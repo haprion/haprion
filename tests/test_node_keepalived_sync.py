@@ -1,6 +1,6 @@
 """The node's keepalived step, exercised as the shell it actually is.
 
-The function is extracted from `install/node/haproxy-pull-deploy` verbatim and
+The function is extracted from `install/node/haprion-pull-deploy` verbatim and
 run with `keepalived` and `systemctl` replaced by recording stubs. That proves
 the branches - when it does nothing, when it reloads, and what it leaves behind
 when the configuration test fails - without a node.
@@ -20,7 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-pull-deploy"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-pull-deploy"
 #
 # From the include tests through `sync_keepalived`: the shared step and both
 # files' wrappers (B256), as one piece of the script.

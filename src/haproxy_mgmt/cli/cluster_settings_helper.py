@@ -1,4 +1,4 @@
-"""The privileged, read-only half of ``haproxy-cluster-settings`` (Fas 15).
+"""The privileged, read-only half of ``haprion-cluster-settings`` (Fas 15).
 
 The cluster's own settings - external log targets and the metrics exporter -
 read from the published head of its repository inside the boundary the
@@ -68,7 +68,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-cluster-settings-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-cluster-settings-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERIFY="${SCRIPT_DIR}/node-bundle.py"
-STATE_BACKUP=/opt/haprion/current/bin/haproxy-state-backup
+STATE_BACKUP=/opt/haprion/current/bin/haprion-state-backup
 
 bundle=""
 expected_sha=""
@@ -186,9 +186,9 @@ if [[ "$backup_after" == "yes" ]]; then
 else
     echo "state backup after: skipped on request (take one after the cluster's last node)"
 fi
-if [[ -x /opt/haprion/current/bin/haproxy-status ]]; then
-    /opt/haprion/current/bin/haproxy-status -c "$cluster"
+if [[ -x /opt/haprion/current/bin/haprion-status ]]; then
+    /opt/haprion/current/bin/haprion-status -c "$cluster"
 else
-    echo "WARNING: haproxy-status is unavailable; run the installation check manually" >&2
+    echo "WARNING: haprion-status is unavailable; run the installation check manually" >&2
 fi
 echo "node bundle installation: PASS (${node}, ${release_root})"

@@ -174,7 +174,7 @@ def renew_ndes(
                 #
                 # The timer is root outside any sandbox, so the interface
                 # certificate (B188) is installed directly, as the certbot
-                # hook's `haproxy-cert-publish` does.
+                # hook's `haprion-cert-publish` does.
                 #
                 installer=ui_interface.install,
                 live=live,

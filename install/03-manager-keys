@@ -90,18 +90,18 @@ for cluster in $(each_cluster); do
         echo
         echo "  /home/${TRIGGER_USER}/.ssh/authorized_keys    (owner root, mode 644)"
         echo
-        echo "restrict,command=\"sudo -n /usr/local/sbin/haproxy-pull-deploy\" $(pub "$CONFIG_DEPLOY_KEY")"
+        echo "restrict,command=\"sudo -n /usr/local/sbin/haprion-pull-deploy\" $(pub "$CONFIG_DEPLOY_KEY")"
         if [[ -n "${CERT_DEPLOY_KEY:-}" ]]; then
-            echo "restrict,command=\"/usr/local/sbin/haproxy-cert-trigger\" $(pub "$CERT_DEPLOY_KEY")"
+            echo "restrict,command=\"/usr/local/sbin/haprion-cert-trigger\" $(pub "$CERT_DEPLOY_KEY")"
         fi
         if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
-            echo "restrict,command=\"/usr/local/sbin/haproxy-server-state-trigger\" $(pub "$SERVER_STATE_KEY")"
+            echo "restrict,command=\"/usr/local/sbin/haprion-server-state-trigger\" $(pub "$SERVER_STATE_KEY")"
             echo "    (written by 04-node-prepare when the node's answers file has SERVER_STATE_PUBKEY)"
         fi
         echo
         echo "  /home/${STATUS_USER}/.ssh/authorized_keys     (owner root, mode 644)"
         echo
-        echo "restrict,command=\"sudo -n /usr/local/sbin/haproxy-node-status -c ${cluster} --json\" $(pub "$NODE_STATUS_KEY")"
+        echo "restrict,command=\"sudo -n /usr/local/sbin/haprion-node-status -c ${cluster} --json\" $(pub "$NODE_STATUS_KEY")"
         #
         # The probe rides on the status account and not on the trigger account,
         # and it is still its own key with its own forced command. It needs no
@@ -109,13 +109,13 @@ for cluster in $(each_cluster); do
         # this node already carries, are unprivileged.
         #
         if [[ -n "${NODE_PROBE_KEY:-}" ]]; then
-            echo "restrict,command=\"/usr/local/sbin/haproxy-health-probe\" $(pub "$NODE_PROBE_KEY")"
+            echo "restrict,command=\"/usr/local/sbin/haprion-health-probe\" $(pub "$NODE_PROBE_KEY")"
         fi
         if [[ -n "${BACKUP_ROOT:-}" ]]; then
             echo
             echo "  /home/${BACKUP_USER}/.ssh/authorized_keys     (owner root, mode 644)"
             echo
-            echo "restrict,command=\"sudo -n /usr/local/sbin/haproxy-state-export\" $(pub "$NODE_BACKUP_KEY")"
+            echo "restrict,command=\"sudo -n /usr/local/sbin/haprion-state-export\" $(pub "$NODE_BACKUP_KEY")"
         fi
         echo
     done
@@ -139,7 +139,7 @@ Two things to check after pasting, on every node:
   * every key line starts with `restrict` and carries its OWN forced command.
     Two keys sharing a command makes them interchangeable and undoes the
     separation they exist for
-  * the certificate line goes through haproxy-cert-trigger, NOT straight to the
+  * the certificate line goes through haprion-cert-trigger, NOT straight to the
     pull script. The wrapper is what validates the certificate IDs before
     anything runs as root
 

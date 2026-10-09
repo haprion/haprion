@@ -1,6 +1,6 @@
 """The node's configuration activation, run for real in a temporary tree (review 2026-10-03, F2).
 
-`haproxy-pull-deploy` switched `current` to the new release before HAProxy
+`haprion-pull-deploy` switched `current` to the new release before HAProxy
 reloaded. A run stopped in between left a node whose status read the new
 release - so the manager skipped it as current - and whose next run found the
 files identical to what was offered and said "no reload needed". HAProxy kept
@@ -10,7 +10,7 @@ The script is run by bash with its fixed paths rewritten to a scratch
 directory, and the commands that need a real node - rsync, haproxy, systemctl,
 chown - replaced by stubs that record what they were asked, as
 `test_cert_pull_script` does for the certificate marker this follows. The
-status side is `haproxy-node-status`'s reader, extracted verbatim.
+status side is `haprion-node-status`'s reader, extracted verbatim.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Any
 
 BASE = Path(__file__).resolve().parents[1]
-DEPLOY = BASE / "install" / "node" / "haproxy-pull-deploy"
-STATUS = BASE / "install" / "node" / "haproxy-node-status"
+DEPLOY = BASE / "install" / "node" / "haprion-pull-deploy"
+STATUS = BASE / "install" / "node" / "haprion-node-status"
 
 #
 # rsync as the script calls it: the last argument is the stage directory.
@@ -91,7 +91,7 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
             ("rsync", RSYNC_STUB),
             ("haproxy", HAPROXY_STUB),
             ("systemctl", SYSTEMCTL_STUB),
-            ("haproxy-server-state", SERVER_STATE_STUB),
+            ("haprion-server-state", SERVER_STATE_STUB),
             ("chown", CHOWN_STUB),
         ):
             path = self.bin / name
@@ -102,16 +102,16 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
             "MANAGER=mgr.example.com\nCONFIG_PULL_USER=svc-app\nCONFIG_PULL_KEY=/dev/null\n"
             "CONFIG_REMOTE_PATH=/srv/alpha/\n"
         )
-        self.script = self.bin / "haproxy-pull-deploy"
+        self.script = self.bin / "haprion-pull-deploy"
         self.script.write_text(
             DEPLOY.read_text()
             .replace('NODE_CONF="/etc/haprion/node.conf"', f'NODE_CONF="{conf}"')
             .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.haproxy}"')
-            .replace('PENDING="/run/haproxy-pull-deploy.pending"', f'PENDING="{self.pending}"')
-            .replace("/run/lock/haproxy-deploy.lock", str(self.root / "deploy.lock"))
+            .replace('PENDING="/run/haprion-pull-deploy.pending"', f'PENDING="{self.pending}"')
+            .replace("/run/lock/haprion-deploy.lock", str(self.root / "deploy.lock"))
             .replace(
-                'SERVER_STATE="/usr/local/sbin/haproxy-server-state"',
-                f'SERVER_STATE="{self.bin}/haproxy-server-state"',
+                'SERVER_STATE="/usr/local/sbin/haprion-server-state"',
+                f'SERVER_STATE="{self.bin}/haprion-server-state"',
             )
             .replace('KEEPALIVED_CONF="/etc/keepalived/', f'KEEPALIVED_CONF="{self.root}/')
             .replace(

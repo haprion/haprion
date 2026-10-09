@@ -75,7 +75,7 @@ type Ask = Callable[[Node, DeployIdentity, str, str], subprocess.CompletedProces
 def node_said(
     guid: str, state: str, *, code: int = 0, outcome: str = "done", message: str | None = None
 ) -> subprocess.CompletedProcess[str]:
-    """One line as `haproxy-server-state set` prints it."""
+    """One line as `haprion-server-state set` prints it."""
 
     document: dict[str, object] = {"node": "node", "guid": guid, "outcome": outcome}
     if outcome == "done":
@@ -185,7 +185,7 @@ class HelperFixture(unittest.TestCase):
         for path in schemas.glob("*.json"):
             contents = json.loads(path.read_text())
             registry = registry.with_resource(contents["$id"], Resource.from_contents(contents))
-        schema = json.loads((schemas / "haproxy-server-state.schema.json").read_text())
+        schema = json.loads((schemas / "haprion-server-state.schema.json").read_text())
         errors = list(Draft202012Validator(schema, registry=registry).iter_errors(document))
         self.assertEqual(errors, [], document)
 
@@ -410,7 +410,7 @@ class TheNodeIsAskedWithItsOwnForcedCommand(unittest.TestCase):
             for state in server_state.STATES:
                 with self.subTest(guid=target.guid, state=state):
                     done = subprocess.run(  # noqa: S603 - the file under test
-                        ["/bin/bash", str(BASE / "install/node/haproxy-server-state-trigger")],
+                        ["/bin/bash", str(BASE / "install/node/haprion-server-state-trigger")],
                         env={
                             "PATH": f"{root}:{os.environ['PATH']}",
                             "SSH_ORIGINAL_COMMAND": f"{server_state.NODE_VERB} {target.guid} {state}",
@@ -430,7 +430,7 @@ class TheCommandSendsWhatTheWorkerSends(unittest.TestCase):
         def run(request: str) -> subprocess.CompletedProcess[str]:
             sent.append(request)
             answer = json.loads(
-                (BASE / "fixtures/haproxy-server-state/valid/done.json").read_text()
+                (BASE / "fixtures/haprion-server-state/valid/done.json").read_text()
             )
             return subprocess.CompletedProcess(["sudo"], 0, json.dumps(answer), "")
 
@@ -486,7 +486,7 @@ class StepTwoNamesEveryIdentityStepThreeMakes(unittest.TestCase):
     """02-manager-config's policy block, run in bash and read by the policy reader.
 
     Until 2026-10-09 it wrote neither status_identity nor probe_identity, so a
-    manager built from the scripts had a `haproxy-status` that refused to run.
+    manager built from the scripts had a `haprion-status` that refused to run.
     """
 
     def rendered(self, answers: dict[str, str]) -> str:

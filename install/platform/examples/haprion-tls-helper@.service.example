@@ -1,0 +1,61 @@
+# Installs the interface certificate the registry marks, then exits.
+#
+# Started by haprion-tls-helper.socket, one instance per connection. The
+# connection is this process's stdin and stdout, the protocol the helper
+# speaks when a person pipes a request into it.
+#
+# What it may do with root
+# ------------------------
+# Read the registry and the one certificate marked `interface: true`, check
+# that it names the interface's SERVER_NAME, and run
+# /usr/local/sbin/haprion-tls install with it: write the pair under
+# /etc/haprion/tls, keep a rollback copy beside it, run `nginx -t`,
+# reload nginx, and write the public copy under /srv/certdist. The key is
+# handed to that command in a private temporary directory and never returned.
+#
+# Why this sandbox is looser than the worker's: writing /etc/haprion
+# is the job. ProtectSystem=yes keeps /usr, /boot and /efi read-only and
+# leaves /etc to the helper, as the receiver helper's unit does.
+#
+# Errors go to the journal and not to the socket. The caller reads one JSON
+# document.
+#
+# Installed as /etc/systemd/system/haprion-tls-helper@.service.
+
+[Unit]
+Description=Install the Haprion interface certificate
+Documentation=file:///opt/haprion/current
+
+[Service]
+Type=exec
+ExecStart=/opt/haprion/current/bin/haprion-tls-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+# With Type=exec this bounds the start only; systemd does not end a run that
+# has begun. What bounds a run is haprion-tls install, 120 s,
+# which puts the previous pair back itself. No RuntimeMaxSec on
+# purpose: a root step stopped midway would skip its own clean-up
+# (review 2026-09-28).
+TimeoutStartSec=180
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=yes
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

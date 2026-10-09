@@ -1,6 +1,6 @@
 """Drain, maintenance and ready for one object's servers, on every node (Fas 20, B263).
 
-The manager's half. The node keeps the state - `haproxy-server-state` on the
+The manager's half. The node keeps the state - `haprion-server-state` on the
 node sets it on HAProxy's admin socket and holds it across reloads and restarts
 - and this module decides what to ask for and who to ask.
 
@@ -49,12 +49,12 @@ STATES = ("ready", "drain", "maint")
 
 #
 # The forced command's one verb, and the words it takes after it
-# (`haproxy-server-state-trigger` on the node).
+# (`haprion-server-state-trigger` on the node).
 #
 NODE_VERB = "server-state"
 
 #
-# The node helper's own exit codes (`install/node/haproxy-server-state`).
+# The node helper's own exit codes (`install/node/haprion-server-state`).
 #
 NODE_UNKNOWN_SERVER = 65
 

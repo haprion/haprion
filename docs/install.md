@@ -109,7 +109,7 @@ The first activation creates the `admin` account if no account exists and asks f
 password at the terminal. If installation ran without a terminal, create it afterwards:
 
 ```bash
-sudo haproxy-ui-user -e prod init-admin
+sudo haprion-user -e prod init-admin
 ```
 
 ## 5. Install optional components
@@ -203,7 +203,7 @@ engine's group does. A configuration dnsdist warns about is refused like one it 
 load: its check ignores a setting it does not know with only a warning.
 
 dnsdist serves its counters on `127.0.0.1:9521`, without a key and to loopback only; its
-API keeps requiring one, and no console is configured. `haproxy-node-status` reads them
+API keeps requiring one, and no console is configured. `haprion-node-status` reads them
 while dnsdist runs and reports them per pool and server, which is where the interface's
 DNS cards come from. Nothing outside the node can reach them.
 
@@ -224,7 +224,7 @@ include /etc/keepalived/ipvs.conf
 Add it after the first deploy has installed the file, one node at a time, with
 `keepalived --config-test -f /etc/keepalived/keepalived.conf` before the reload;
 `04-node-prepare` warns while it is missing. `04-node-prepare` also installs `ipvsadm`, which
-`haproxy-node-status` reads the counters with, and masks `ipvsadm.service` first: Debian's
+`haprion-node-status` reads the counters with, and masks `ipvsadm.service` first: Debian's
 package enables it, and it restores and clears the IPVS table at boot and shutdown, which
 keepalived owns. The nodes need no `ip_forward`: the receivers never answer through them.
 

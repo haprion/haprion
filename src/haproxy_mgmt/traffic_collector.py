@@ -1555,8 +1555,7 @@ def _entry() -> None:
     modes = {"--check-config", "--config", "--replay-database"}
     if len(sys.argv) != 3 or sys.argv[1] not in modes:
         print(
-            "usage: haproxy-ui-traffic-collector "
-            "(--check-config|--config|--replay-database) <path>",
+            "usage: haprion-traffic-collector (--check-config|--config|--replay-database) <path>",
             file=sys.stderr,
         )
         raise SystemExit(64)

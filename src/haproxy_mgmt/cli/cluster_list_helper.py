@@ -34,7 +34,7 @@ from haproxy_mgmt.helper_protocol import (
 )
 
 OPERATION = "cluster_list"
-HELPER = "/opt/haprion/current/bin/haproxy-cluster-list-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cluster-list-helper"
 EXIT_NOT_ROOT = 77
 SUDO = "/usr/bin/sudo"
 
@@ -97,7 +97,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-cluster-list-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-cluster-list-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_clusterless_request(
             input_stream or sys.stdin.buffer, expected_operation=OPERATION

@@ -1,7 +1,7 @@
 """The deploy result, validated against the frozen schema that describes it.
 
-A result is not "some JSON the command happens to print". `haproxy-deploy` has a
-contract in `schemas/v1/haproxy-deploy.schema.json`, frozen in phase 0, and the
+A result is not "some JSON the command happens to print". `haprion-deploy` has a
+contract in `schemas/v1/haprion-deploy.schema.json`, frozen in phase 0, and the
 interface and the poller will read it. So every outcome the loop can reach is
 generated here and validated against that schema rather than against a
 hand-written example of it.
@@ -24,7 +24,7 @@ from haproxy_mgmt.deploy_run import DeployRun
 from tests.node_harness import TARGET_HASH, FakeCluster, pair
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
-DEPLOY_SCHEMA = "https://example.com/haproxy-manager/schemas/v1/haproxy-deploy.schema.json"
+DEPLOY_SCHEMA = "https://example.com/haproxy-manager/schemas/v1/haprion-deploy.schema.json"
 
 TARGET = ReleaseTarget(version=8, hash=TARGET_HASH)
 

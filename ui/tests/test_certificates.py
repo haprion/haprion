@@ -135,7 +135,7 @@ def with_registry(
 def node(*carried: tuple[str, str], reachable: bool = True) -> dict[str, object]:
     """One node as the status helper reports it, carrying these certificates.
 
-    The shape is the status contract's - `fixtures/haproxy-status/valid/` -
+    The shape is the status contract's - `fixtures/haprion-status/valid/` -
     with the certificate list inside the node's `status` document. The first
     version of this helper put it beside `name`, the page read it there too,
     and the two agreed with each other and not with the machine: every
@@ -895,7 +895,7 @@ class TheStateIsReadFromTheContractsShape(unittest.TestCase):
     """
 
     def test_a_contract_status_fixture_counts_as_nodes_reporting(self) -> None:
-        fixture = Path(__file__).parents[2] / "fixtures" / "haproxy-status" / "valid"
+        fixture = Path(__file__).parents[2] / "fixtures" / "haprion-status" / "valid"
         document = json.loads((fixture / "done-single-owner.json").read_text())
         held = ClusterStatus(
             cluster="alpha",

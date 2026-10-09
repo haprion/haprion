@@ -84,7 +84,7 @@ class ChangesPublishTests(ObjectsPublishFixture):
             )
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-changes-publish", json.dumps(document))
+            assert_contract("haprion-changes-publish", json.dumps(document))
             result = document["result"]
             self.assertEqual(
                 (result["objects"], result["removed"], result["network"], result["settings"]),
@@ -135,7 +135,7 @@ class ChangesPublishTests(ObjectsPublishFixture):
             code, document, err = self.publish(policy, self.changes(network=WIDER_NETWORK))
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-changes-publish", json.dumps(document))
+            assert_contract("haprion-changes-publish", json.dumps(document))
             result = document["result"]
             self.assertEqual(
                 (result["changed"], result["objects"], result["network"], result["settings"]),
@@ -260,7 +260,7 @@ class ChangesPublishTests(ObjectsPublishFixture):
                 policy, self.changes(objects=sites(changes_publish.MAX_OBJECTS))
             )
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-changes-publish", json.dumps(document))
+            assert_contract("haprion-changes-publish", json.dumps(document))
             self.assertEqual(len(document["result"]["objects"]), 64)
 
     def test_a_request_over_the_ceiling_is_refused_before_it_is_parsed(self) -> None:

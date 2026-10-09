@@ -9,7 +9,7 @@ loss and a half-finished snapshot are properties of the two halves *together*.
 What it is faithful to
 ----------------------
 The shipped programs, unmodified. The node side is
-`install/node/haproxy-traffic-log-read` executed as its own process, reading its
+`install/node/haprion-traffic-log-read` executed as its own process, reading its
 request from `SSH_ORIGINAL_COMMAND` the way sshd's forced command hands it over,
 writing the real wire bytes to a pipe. The manager side is the real
 `_bounded_ssh` reading that pipe, the real `_parse_response` deciding whether the
@@ -61,7 +61,7 @@ from haproxy_mgmt.traffic_collector import (
 )
 
 BASE = Path(__file__).resolve().parents[1]
-NODE_READER = BASE / "install" / "node" / "haproxy-traffic-log-read"
+NODE_READER = BASE / "install" / "node" / "haprion-traffic-log-read"
 UI_READER = BASE / "ui" / "src" / "haproxy_ui" / "traffic_logs.py"
 
 #
@@ -118,7 +118,7 @@ UI = load_ui_reader()
 def load_node_prune() -> ModuleType:
     """The node's retention timer, loaded the same way as the reader."""
 
-    path = BASE / "install" / "node" / "haproxy-traffic-log-prune"
+    path = BASE / "install" / "node" / "haprion-traffic-log-prune"
     spec = spec_from_loader("prune", SourceFileLoader("prune", str(path)))
     if spec is None or spec.loader is None:  # pragma: no cover - a loader always yields one
         raise RuntimeError("cannot load the node's prune helper")

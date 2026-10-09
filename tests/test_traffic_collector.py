@@ -1136,7 +1136,7 @@ class TheCollectorUnits(unittest.TestCase):
     def setUp(self) -> None:
         self.rendered = {}
         for kind in ("service", "timer"):
-            source = INSTALL / "examples" / f"haproxy-ui-traffic-collector.{kind}.example"
+            source = INSTALL / "examples" / f"haprion-traffic-collector.{kind}.example"
             self.rendered[kind] = (
                 source.read_text()
                 .replace("PLATFORM_ROOT", "/apps/haproxy-manager")
@@ -1150,7 +1150,7 @@ class TheCollectorUnits(unittest.TestCase):
         self.assertIn("NoNewPrivileges=yes", service)
         self.assertIn("CapabilityBoundingSet=\n", service)
         self.assertIn(
-            "ExecStart=/opt/haprion/current/bin/haproxy-ui-traffic-collector",
+            "ExecStart=/opt/haprion/current/bin/haprion-traffic-collector",
             service,
         )
         self.assertNotIn("/apps/haproxy-manager/current/venv", service)
@@ -1194,10 +1194,10 @@ class TheCollectorUnits(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for kind, text in self.rendered.items():
-                (root / f"haproxy-ui-traffic-collector.{kind}").write_text(text)
+                (root / f"haprion-traffic-collector.{kind}").write_text(text)
             for kind in ("timer", "service"):
                 result = subprocess.run(  # noqa: S603
-                    [analyze, "verify", str(root / f"haproxy-ui-traffic-collector.{kind}")],
+                    [analyze, "verify", str(root / f"haprion-traffic-collector.{kind}")],
                     capture_output=True,
                     text=True,
                     check=False,
@@ -1210,7 +1210,7 @@ class TheCollectorUnits(unittest.TestCase):
                 complaints = [
                     line
                     for line in (result.stderr + result.stdout).splitlines()
-                    if "haproxy-ui-traffic-collector" in line and "is not executable" not in line
+                    if "haprion-traffic-collector" in line and "is not executable" not in line
                 ]
 
                 self.assertEqual(complaints, [], result.stderr or result.stdout)

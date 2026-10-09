@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "backup_schedule",
+  "cluster": "external",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "cluster": "external",
+    "time": "05:00",
+    "frequency": "weekly",
+    "weekdays": [
+      "Mon",
+      "Wed",
+      "Fri"
+    ],
+    "day_of_month": null,
+    "retention": 21,
+    "enabled": true,
+    "schedule": {
+      "unit": "haprion-state-backup@external.timer",
+      "known": true,
+      "enabled": true,
+      "active": true,
+      "calendar": "Mon,Wed,Fri *-*-* 05:00:00",
+      "next_run": "2026-09-22T05:00:00Z",
+      "last_run": null,
+      "last_result": null,
+      "scheduled": true,
+      "retention": 21
+    }
+  },
+  "warnings": [],
+  "error": null
+}

@@ -337,7 +337,7 @@ class TheRoundTrip(RequestFixture):
         self.assertIsNotNone(pending_csr(self.store, "shop.example.net"))
 
     def test_the_terminal_import_takes_the_signed_certificate_without_a_key(self) -> None:
-        """CLI parity: what the row's upload does, `haproxy-cert-import` does without `--key`."""
+        """CLI parity: what the row's upload does, `haprion-cert-import` does without `--key`."""
 
         result = self.request(receivers=["lb-01"])
         signed = self.root / "signed-cli.pem"
@@ -365,7 +365,7 @@ class TheRoundTrip(RequestFixture):
             lock_path=self.lock,
         )
         self.assertEqual(code, 0, err.getvalue())
-        document = assert_contract("haproxy-cert-import", out.getvalue())
+        document = assert_contract("haprion-cert-import", out.getvalue())
         self.assertFalse(document["result"]["replaced"])
         self.assertNotIn(KEY_MARK, out.getvalue() + err.getvalue())
         entry = self.registered()["shop.example.net"]
@@ -455,7 +455,7 @@ class TheHelperAndTheCommand(RequestFixture):
         )
         self.assertNotIn(KEY_MARK, output.getvalue() + errors.getvalue())
         document = (
-            assert_contract("haproxy-cert-request", output.getvalue()) if output.getvalue() else {}
+            assert_contract("haprion-cert-request", output.getvalue()) if output.getvalue() else {}
         )
         return code, document, errors.getvalue()
 
@@ -548,7 +548,7 @@ class TheHelperAndTheCommand(RequestFixture):
             "--json",
         )
         self.assertEqual(code, 0, errors)
-        document = assert_contract("haproxy-cert-request", output)
+        document = assert_contract("haprion-cert-request", output)
         self.assertEqual(document["result"]["key_type"], "rsa-2048")
 
     def test_the_command_refuses_in_the_envelope_shape(self) -> None:
@@ -557,7 +557,7 @@ class TheHelperAndTheCommand(RequestFixture):
         )
         self.assertEqual(code, 65)
         self.assertEqual(
-            assert_contract("haproxy-cert-request", output)["error"]["code"], "already_exists"
+            assert_contract("haprion-cert-request", output)["error"]["code"], "already_exists"
         )
         self.assertIn("already_exists", errors)
 

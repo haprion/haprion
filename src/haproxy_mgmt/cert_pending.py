@@ -9,7 +9,7 @@ and answered `done` (review 2026-09-30, R1). This file is that note.
 
 One small JSON document beside the registry: cluster ID -> a serial. A cluster
 is marked before its material is written, so a run interrupted anywhere after
-that leaves it marked, and it is settled only after `haproxy-cert-deploy`
+that leaves it marked, and it is settled only after `haprion-cert-deploy`
 answered 0 for it. The serial is what makes settling safe while another run
 publishes: a rollout clears the mark only if nobody marked the cluster again
 since the rollout read it, because that later change is one the rollout may not

@@ -299,7 +299,7 @@ class DeletingCertificates(unittest.TestCase):
             request_id=REQUEST,
             payload={"certificates": ["old.example.com", "older.example.net"]},
         )
-        self.assertEqual(prepared.argv[-1], "/opt/haprion/current/bin/haproxy-cert-delete-helper")
+        self.assertEqual(prepared.argv[-1], "/opt/haprion/current/bin/haprion-cert-delete-helper")
         request = json.loads(prepared.request)
         self.assertIsNone(request["cluster"])
         self.assertEqual(
@@ -412,7 +412,7 @@ class RetargetingCertificates(unittest.TestCase):
                 "clusters": ["beta"],
             },
         )
-        self.assertEqual(prepared.argv[-1], "/opt/haprion/current/bin/haproxy-cert-target-helper")
+        self.assertEqual(prepared.argv[-1], "/opt/haprion/current/bin/haprion-cert-target-helper")
         request = json.loads(prepared.request)
         self.assertIsNone(request["cluster"])
         self.assertEqual(
@@ -845,27 +845,27 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         #
         schemas = Path(__file__).resolve().parents[2] / "schemas" / "v1"
         for name, path in (
-            ("backup_run", "haproxy-backup-run.schema.json"),
-            ("backup_schedule", "haproxy-backup-schedule.schema.json"),
-            ("changes_publish", "haproxy-changes-publish.schema.json"),
-            ("cert_issue", "haproxy-cert-issue.schema.json"),
-            ("dns_profile_apply", "haproxy-dns-profile-apply.schema.json"),
-            ("ndes_profile_apply", "haproxy-ndes-profile-apply.schema.json"),
-            ("cert_publish", "haproxy-cert-publish.schema.json"),
-            ("cert_target", "haproxy-cert-target.schema.json"),
-            ("cert_delete", "haproxy-cert-delete.schema.json"),
-            ("cert_scep", "haproxy-cert-scep.schema.json"),
-            ("cert_receiver", "haproxy-cert-receiver.schema.json"),
-            ("cluster_node", "haproxy-cluster-node.schema.json"),
-            ("cluster_define", "haproxy-cluster-define.schema.json"),
-            ("server_state", "haproxy-server-state.schema.json"),
-            ("cert_import", "haproxy-cert-import.schema.json"),
-            ("cert_request", "haproxy-cert-request.schema.json"),
-            ("node_restore_prepare", "haproxy-node-restore-prepare.schema.json"),
-            ("node_restore_preview", "haproxy-node-restore-preview.schema.json"),
-            ("node_restore", "haproxy-node-restore.schema.json"),
-            ("node_restore_discard", "haproxy-node-restore-discard.schema.json"),
-            ("node_restore_status", "haproxy-node-restore-status.schema.json"),
+            ("backup_run", "haprion-backup-run.schema.json"),
+            ("backup_schedule", "haprion-backup-schedule.schema.json"),
+            ("changes_publish", "haprion-changes-publish.schema.json"),
+            ("cert_issue", "haprion-cert-issue.schema.json"),
+            ("dns_profile_apply", "haprion-dns-profile-apply.schema.json"),
+            ("ndes_profile_apply", "haprion-ndes-profile-apply.schema.json"),
+            ("cert_publish", "haprion-cert-publish.schema.json"),
+            ("cert_target", "haprion-cert-target.schema.json"),
+            ("cert_delete", "haprion-cert-delete.schema.json"),
+            ("cert_scep", "haprion-cert-scep.schema.json"),
+            ("cert_receiver", "haprion-cert-receiver.schema.json"),
+            ("cluster_node", "haprion-cluster-node.schema.json"),
+            ("cluster_define", "haprion-cluster-define.schema.json"),
+            ("server_state", "haprion-server-state.schema.json"),
+            ("cert_import", "haprion-cert-import.schema.json"),
+            ("cert_request", "haprion-cert-request.schema.json"),
+            ("node_restore_prepare", "haprion-node-restore-prepare.schema.json"),
+            ("node_restore_preview", "haprion-node-restore-preview.schema.json"),
+            ("node_restore", "haprion-node-restore.schema.json"),
+            ("node_restore_discard", "haprion-node-restore-discard.schema.json"),
+            ("node_restore_status", "haprion-node-restore-status.schema.json"),
         ):
             with self.subTest(operation=name):
                 document = json.loads((schemas / path).read_text(encoding="utf-8"))
@@ -906,7 +906,7 @@ class EnrollingOverNdes(unittest.TestCase):
                 "receivers": [],
             },
         )
-        self.assertTrue(prepared.argv[-1].endswith("haproxy-cert-scep-helper"))
+        self.assertTrue(prepared.argv[-1].endswith("haprion-cert-scep-helper"))
         request = json.loads(prepared.request)
         self.assertIsNone(request["cluster"])
         self.assertEqual(

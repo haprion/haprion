@@ -2,7 +2,7 @@
 #
 # Fetch this host's certificates from the manager over rsync, and reload the
 # service only if something changed. For a receiver registered with
-# `haproxy-cert-receiver add <id> --transport rsync`.
+# `haprion-cert-receiver add <id> --transport rsync`.
 #
 # The key on this host is the private half of what was given to the manager.
 # The manager's lock allows exactly one command - rrsync -ro over the

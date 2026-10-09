@@ -1,12 +1,12 @@
-"""`haproxy-cert-import` - a certificate issued elsewhere, into the registry and out to its targets.
+"""`haprion-cert-import` - a certificate issued elsewhere, into the registry and out to its targets.
 
 Runs as root. The command line names the files and the targets; what the
 material is - which block is the leaf, what the chain is, whether the key
 belongs to it - is decided in `cert_import` from the files, and a pair that
 does not fit leaves nothing behind. The clusters named are rolled out at the
-end with the same `haproxy-cert-deploy` the certbot hook uses.
+end with the same `haprion-cert-deploy` the certbot hook uses.
 
-The other way in is a signing request made here (`haproxy-cert-request`,
+The other way in is a signing request made here (`haprion-cert-request`,
 C9b), where the key never exists anywhere but the manager; the signed
 certificate then comes back through this command without `--key`. With
 `--key` this is for the case where the key already exists elsewhere: a
@@ -43,10 +43,10 @@ EXIT_USAGE = 64
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-cert-import --id <id> --certificate <pem> [--key <pem>] [--chain <pem>]\n"
+    "  haprion-cert-import --id <id> --certificate <pem> [--key <pem>] [--chain <pem>]\n"
     "                      [--cluster <id>]... [--receiver <id>]...\n"
     "                      [--format <id>=<form>]... [--interface] [--json]\n"
-    "  haproxy-cert-import --id <id> --pkcs12 <file> [--password-file <path>]\n"
+    "  haprion-cert-import --id <id> --pkcs12 <file> [--password-file <path>]\n"
     "                      [--cluster <id>]... [--receiver <id>]...\n"
     "                      [--format <id>=<form>]... [--interface] [--json]\n"
     "\n"
@@ -60,7 +60,7 @@ USAGE = (
     "  --certificate <pem>   The leaf, or the leaf followed by its chain.\n"
     "  --key <pem>           The unencrypted private key. Omitted, the key the manager\n"
     "                        already holds for the ID is used: a signing request made\n"
-    "                        here (haproxy-cert-request), or an earlier import.\n"
+    "                        here (haprion-cert-request), or an earlier import.\n"
     "  --chain <pem>         The issuing CA certificate(s), if not in --certificate.\n"
     "  --pkcs12 <file>       Everything in one PKCS#12 (.pfx/.p12) instead.\n"
     "  --password-file <p>   A file whose first line is the PKCS#12 password.\n"
@@ -69,7 +69,7 @@ USAGE = (
     "  --receiver <id>       A registered receiver to publish to. May be repeated.\n"
     "  --format <id>=<form>  How that receiver is written: pem (default) or pkcs12.\n"
     "  --interface           This manager's own interface certificate: no targets,\n"
-    "                        installed with haproxy-ui-tls. Takes the mark from the\n"
+    "                        installed with haprion-tls. Takes the mark from the\n"
     "                        one that had it, which is deleted once this one serves.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
@@ -228,7 +228,7 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haproxy-cert-import must run as root", EXIT_NOT_ROOT)
+        return refuse("not_root", "haprion-cert-import must run as root", EXIT_NOT_ROOT)
     try:
         formats = cert_job.format_flags(arguments.formats, arguments.receivers)
     except HelperProtocolError as exc:

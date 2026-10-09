@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-cert-scep` - one NDES enrollment, from a job.
+"""The privileged half of `haprion-cert-scep` - one NDES enrollment, from a job.
 
 Calls the same `enroll` the terminal command calls, so the two live
 issuances proved from the terminal on 2026-09-15 are the code path the
@@ -43,7 +43,7 @@ PARAMETERS = frozenset(
         "exportable",
     }
 )
-HELPER = "/opt/haprion/current/bin/haproxy-cert-scep-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cert-scep-helper"
 SUDO = "/usr/bin/sudo"
 MAX_DOMAINS = 32
 MAX_DOMAIN_BYTES = 255
@@ -116,7 +116,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=require_root,
-            helper_name="haproxy-cert-scep-helper",
+            helper_name="haprion-cert-scep-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

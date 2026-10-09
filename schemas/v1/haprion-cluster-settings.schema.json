@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-cluster-settings.schema.json",
+  "title": "haprion-cluster-settings JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "cluster_settings" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/cluster_settings_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/cluster_settings_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "cluster_settings_result": {
+      "type": "object",
+      "required": ["cluster", "head", "stored", "log_targets", "metrics"],
+      "properties": {
+        "cluster": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "head": { "$ref": "common.schema.json#/$defs/hash" },
+        "stored": { "type": "boolean" },
+        "log_targets": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "required": ["name", "address", "port", "buffer_kib", "tls"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,23}$" },
+              "address": { "type": "string", "minLength": 2, "maxLength": 45 },
+              "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "buffer_kib": { "type": "integer", "minimum": 64, "maximum": 65536 },
+              "tls": { "type": "boolean" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "metrics": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["port", "sources"],
+              "properties": {
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "sources": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "type": "string", "minLength": 2, "maxLength": 49 } }
+              },
+              "additionalProperties": true
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

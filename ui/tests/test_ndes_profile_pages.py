@@ -114,7 +114,7 @@ class NdesPages(ProfileRouteTestCase):
             payload={"profile": "internal-ca", "revision": 1},
             profile_lookup=lambda _p: row,
         )
-        self.assertTrue(prepared.argv[-1].endswith("haproxy-ndes-profile-apply-helper"))
+        self.assertTrue(prepared.argv[-1].endswith("haprion-ndes-profile-apply-helper"))
         with self.assertRaises(operations.BadPayload):
             operations.prepare(
                 operation="ndes_profile_apply",

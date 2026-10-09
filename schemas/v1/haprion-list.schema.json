@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-list.schema.json",
+  "title": "haprion-list JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "list" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/list_result" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/list_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "version_entry": {
+      "type": "object",
+      "required": ["version", "hash", "created_at", "comment", "current"],
+      "properties": {
+        "version": { "$ref": "common.schema.json#/$defs/version" },
+        "hash": { "$ref": "common.schema.json#/$defs/hash" },
+        "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "comment": { "type": "string", "maxLength": 4096 },
+        "current": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "list_result": {
+      "type": "object",
+      "required": ["current_version", "total_versions", "versions"],
+      "properties": {
+        "current_version": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/version" },
+            { "type": "null" }
+          ]
+        },
+        "total_versions": { "type": "integer", "minimum": 0 },
+        "versions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/version_entry" }
+        },
+        "diffs": {
+          "description": "What each requested version changed against the one before it, by commit hash (haprion-list-helper parameters.diffs).",
+          "type": "object",
+          "propertyNames": { "$ref": "common.schema.json#/$defs/hash" },
+          "additionalProperties": { "$ref": "#/$defs/version_diff" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "version_diff": {
+      "type": "object",
+      "required": ["commit", "parent", "files", "truncated"],
+      "properties": {
+        "commit": { "$ref": "common.schema.json#/$defs/hash" },
+        "parent": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/hash" },
+            { "type": "null" }
+          ]
+        },
+        "truncated": { "type": "boolean" },
+        "files": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/file_change" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "file_change": {
+      "type": "object",
+      "required": ["path", "status", "old_path", "added", "removed", "binary", "lines"],
+      "properties": {
+        "path": { "type": "string" },
+        "status": { "enum": ["added", "modified", "deleted", "renamed"] },
+        "old_path": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "added": { "type": "integer", "minimum": 0 },
+        "removed": { "type": "integer", "minimum": 0 },
+        "binary": { "type": "boolean" },
+        "lines": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -53,7 +53,7 @@ def node(
 
 def schedule(**changes: object) -> dict[str, object]:
     return {
-        "unit": "haproxy-state-backup.timer",
+        "unit": "haprion-state-backup.timer",
         "known": True,
         "enabled": True,
         "active": True,

@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-history-reset`.
+"""The privileged half of `haprion-history-reset`.
 
 Takes no arguments. The cluster and the operator's acknowledgement arrive as a
 structured request on stdin, for the reason PRIVILEGE.md gives: a sudoers rule

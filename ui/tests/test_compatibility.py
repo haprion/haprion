@@ -49,7 +49,7 @@ class CompatibilityMetadataTests(unittest.TestCase):
         requirements = compatibility.load_requirements(MANIFEST)
         helper = Path(cert_receiver_helper.HELPER).name
         unit = (
-            ROOT / "install/platform/examples/haproxy-cert-receiver-helper.socket.example"
+            ROOT / "install/platform/examples/haprion-cert-receiver-helper.socket.example"
         ).read_text()
 
         self.assertNotIn(helper, requirements.worker_helpers)
@@ -61,7 +61,7 @@ class CompatibilityMetadataTests(unittest.TestCase):
         requirements = compatibility.load_requirements(MANIFEST)
         helper = Path(backup_job_helper.HELPER).name
         unit = (
-            ROOT / "install/platform/examples/haproxy-backup-job-helper.socket.example"
+            ROOT / "install/platform/examples/haprion-backup-job-helper.socket.example"
         ).read_text()
 
         self.assertNotIn(helper, requirements.worker_helpers)
@@ -74,7 +74,7 @@ class CompatibilityMetadataTests(unittest.TestCase):
 
         requirements = compatibility.load_requirements(MANIFEST)
         helper = Path(node_helper.HELPER).name
-        unit = (ROOT / "install/platform/examples/haproxy-node-helper.socket.example").read_text()
+        unit = (ROOT / "install/platform/examples/haprion-node-helper.socket.example").read_text()
 
         self.assertNotIn(helper, requirements.worker_helpers)
         self.assertEqual(requirements.socket_helpers[helper], node_ask.SOCKET_PATH)
@@ -85,7 +85,7 @@ class CompatibilityMetadataTests(unittest.TestCase):
         requirements = compatibility.load_requirements(MANIFEST)
         helper = Path(node_restore_helper.HELPER).name
         unit = (
-            ROOT / "install/platform/examples/haproxy-node-restore-helper.socket.example"
+            ROOT / "install/platform/examples/haprion-node-restore-helper.socket.example"
         ).read_text()
 
         self.assertNotIn(helper, requirements.worker_helpers)
@@ -329,7 +329,7 @@ class TrafficCollectorInventoryTests(unittest.TestCase):
 
 class FrozenSchemaTests(unittest.TestCase):
     def test_node_installation_metadata_is_documented_in_the_status_contract(self) -> None:
-        schema = json.loads((ROOT / "schemas/v1/haproxy-status.schema.json").read_text())
+        schema = json.loads((ROOT / "schemas/v1/haprion-status.schema.json").read_text())
         installation = schema["$defs"]["node_status"]["properties"]["installation"]
         self.assertEqual(installation["required"], ["node_api", "scripts_current", "scripts"])
 

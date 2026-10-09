@@ -38,7 +38,7 @@ from haproxy_mgmt.proxy_model import Proxy
 
 #
 # HAProxy's own `show stat` column names. The same list appears in
-# `install/node/haproxy-node-status`, which reads them, and in migration 0018,
+# `install/node/haprion-node-status`, which reads them, and in migration 0018,
 # which stores them. Three lists is two too many, and they cannot be one: the
 # node script is installed rather than imported and a migration must not import
 # application code. `test_metric_samples` compares all three instead.

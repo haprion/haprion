@@ -96,7 +96,7 @@ from haproxy_mgmt.proxy_model import ModelError
 from haproxy_mgmt.repo_snapshot import PublishError, read_tree_files, resolve_head
 
 OPERATION = "cert_delete"
-HELPER = "/opt/haprion/current/bin/haproxy-cert-delete-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cert-delete-helper"
 SUDO = "/usr/bin/sudo"
 
 #
@@ -107,7 +107,7 @@ SUDO = "/usr/bin/sudo"
 #
 NODE_VERB = "cert-remove"
 #
-# The node script (`install/node/haproxy-cert-remove`) logs one line per
+# The node script (`install/node/haprion-cert-remove`) logs one line per
 # certificate it removed, in this form. A copy the node never had answers with
 # exit 0 as well, and only this line tells the two apart - `absent` is what a
 # repeated run sees on every node. The wording is part of the node contract:

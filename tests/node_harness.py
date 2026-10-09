@@ -8,7 +8,7 @@ matrix is driven against this instead.
 What it is faithful to
 ----------------------
 The contract, exactly. It answers with the envelope
-`schemas/v1/haproxy-status.schema.json` describes, derived the way
+`schemas/v1/haprion-status.schema.json` describes, derived the way
 `haproxy-status-root` derives it, and it reacts to a trigger the way a node
 does: a successful pull moves the node onto the target release, a failing reload
 leaves it where it was and reports non-zero, and an unreachable node answers

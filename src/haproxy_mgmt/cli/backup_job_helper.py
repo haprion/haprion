@@ -26,7 +26,7 @@ from haproxy_mgmt.helper_protocol import (
 RUN = "backup_run"
 SCHEDULE = "backup_schedule"
 OPERATIONS = frozenset({RUN, SCHEDULE})
-HELPER = "/opt/haprion/current/bin/haproxy-backup-job-helper"
+HELPER = "/opt/haprion/current/bin/haprion-backup-job-helper"
 EXIT_NOT_ROOT = 77
 
 __all__ = ["HELPER", "RUN", "SCHEDULE", "build_run_request", "build_schedule_request", "main"]
@@ -129,10 +129,10 @@ def main(
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
     if argv:
-        errors.write("ERROR: haproxy-backup-job-helper accepts no arguments\n")
+        errors.write("ERROR: haprion-backup-job-helper accepts no arguments\n")
         return 64
     if require_root and os.geteuid() != 0:
-        errors.write("ERROR: haproxy-backup-job-helper must run as root\n")
+        errors.write("ERROR: haprion-backup-job-helper must run as root\n")
         return EXIT_NOT_ROOT
     try:
         raw, operation = _raw(input_stream or sys.stdin.buffer)

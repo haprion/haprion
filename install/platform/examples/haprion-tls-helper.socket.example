@@ -1,0 +1,35 @@
+# The socket the interface certificate is installed through (B188).
+#
+# Owned by root, connectable by the worker's account. Each connection starts
+# one instance of haprion-tls-helper@.service, which reads one request -
+# a certificate ID - and writes one answer. What answers installs only the
+# registry entry marked `interface: true`, and only through haprion-tls.
+#
+# The callers are the certificate helpers the worker starts through sudo:
+# they run as root but inside the worker's ProtectSystem=strict namespace,
+# where /etc/haprion is read-only (B163). The renewal timer and an
+# operator's haprion-cert-publish run outside it and install directly.
+#
+# Installed as /etc/systemd/system/haprion-tls-helper.socket, with
+# WORKER_USER rendered by 07-platform-services.
+
+[Unit]
+Description=Socket the Haprion interface certificate is installed through
+Documentation=file:///opt/haprion/current
+
+[Socket]
+ListenStream=/run/haprion/ui-tls.sock
+SocketUser=root
+SocketGroup=WORKER_USER
+SocketMode=0660
+
+Accept=yes
+
+# One at a time: two installs of the same pair have nothing to gain from
+# running side by side, and haprion-tls takes no lock of its own.
+MaxConnections=1
+
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

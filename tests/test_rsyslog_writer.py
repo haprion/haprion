@@ -3,7 +3,7 @@
 Ubuntu drops to `syslog`; Debian 13 writes as root with no `syslog` account
 (measured 2026-09-24). The traffic log's directory is owned by whichever it is,
 and two scripts decide that - 04-node-prepare, which a node restore also runs
-(B180), and haproxy-traffic-log-enable - so they are run against the same
+(B180), and haprion-traffic-log-enable - so they are run against the same
 configurations here and must answer alike.
 """
 
@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = (ROOT / "install/04-node-prepare", ROOT / "install/node/haproxy-traffic-log-enable")
+SCRIPTS = (ROOT / "install/04-node-prepare", ROOT / "install/node/haprion-traffic-log-enable")
 BASH = shutil.which("bash") or "/bin/bash"
 FUNCTION = re.compile(r"^rsyslog_writer\(\) \{\n.*?^\}\n", re.MULTILINE | re.DOTALL)
 

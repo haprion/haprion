@@ -1,11 +1,11 @@
 """Root CLI for a signing request made on the manager (C9b).
 
-    haproxy-cert-request --id shop.example --domain shop.example --domain '*.shop.example' \\
+    haprion-cert-request --id shop.example --domain shop.example --domain '*.shop.example' \\
         --cluster alpha --receiver lb-01 [--key-type ec-p256|rsa-2048|rsa-4096] [--json]
 
 The key is made under the ID in the import store and never leaves it; the
 CSR is printed, for whoever signs it. The signed certificate comes back
-through `haproxy-cert-import --certificate <file>` without `--key`, or the
+through `haprion-cert-import --certificate <file>` without `--key`, or the
 interface's upload, and lands on the targets named here.
 """
 
@@ -63,7 +63,7 @@ def request(
 ) -> tuple[dict[str, Any], int]:
     """One request, from names to a CSR in the store, as one document.
 
-    The engine behind both `haproxy-cert-request` and its job helper: the
+    The engine behind both `haprion-cert-request` and its job helper: the
     same checks and the same `openssl` run, so what the terminal makes is
     what the interface makes. Raises `RequestRefusal` for everything that is
     a refusal rather than a result.
@@ -146,7 +146,7 @@ def main(
         "--interface",
         action="store_true",
         help="for this manager's own interface certificate: no targets; the signed "
-        "certificate is installed with haproxy-ui-tls when it is imported",
+        "certificate is installed with haprion-tls when it is imported",
     )
     parser.add_argument("--json", action="store_true")
     try:
@@ -174,7 +174,7 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haproxy-cert-request must run as root", 77)
+        return refuse("not_root", "haprion-cert-request must run as root", 77)
     try:
         formats = cert_job.format_flags(args.format, args.receiver)
     except HelperProtocolError as exc:

@@ -275,7 +275,7 @@ class TheProbeIsHeldToTheSameFloorAsHaproxy(unittest.TestCase):
         """
 
         script = (
-            Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-health-probe"
+            Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-health-probe"
         ).read_text(encoding="utf-8")
         named = set(re.findall(r'"(TLSv1\.[123])":\s*ssl\.TLSVersion', script))
 

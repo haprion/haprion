@@ -72,7 +72,7 @@ server {
     #
     # Certificate receivers that fetch over https (INSTALLATION 1.4.9). The
     # file holds one whitelisted `location /certdist/<receiver>/` per such
-    # receiver and is written by haproxy-cert-receiver alone; 05-platform-nginx
+    # receiver and is written by haprion-cert-receiver alone; 05-platform-nginx
     # creates it empty. It lives in this block because nginx serves the first
     # server block for a name and port and silently ignores a second one, so
     # a block of its own beside this one would never answer. The interface
@@ -83,7 +83,7 @@ server {
     #
     # The interface's own certificate, as a file, for a receiver that fetches
     # over https to save and pass to --cacert. Public material - it is sent in
-    # every handshake - and a copy (haproxy-ui-tls writes it) because the TLS
+    # every handshake - and a copy (haprion-tls writes it) because the TLS
     # directory is root-only and the workers are not. Exact match, so the
     # receiver locations above, which are prefixes, never shadow it.
     #

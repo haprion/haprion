@@ -414,7 +414,7 @@ class RefusalTests(RevertFixture):
             with self.assertRaises(SystemExit) as caught, redirect_stdout(shown):
                 revert.main(argv, stream_out=io.StringIO())
             self.assertEqual(caught.exception.code, 64)
-            self.assertIn("haproxy-revert -c <cluster>", shown.getvalue())
+            self.assertIn("haprion-revert -c <cluster>", shown.getvalue())
 
     def test_the_helper_refuses_argv_and_a_non_root_caller(self) -> None:
         stderr = io.StringIO()
@@ -430,7 +430,7 @@ class RefusalTests(RevertFixture):
 
 
 class ContractTests(RevertFixture):
-    """What the privileged half prints, held to `schemas/v1/haproxy-revert`.
+    """What the privileged half prints, held to `schemas/v1/haprion-revert`.
 
     The worker stores whatever this document says happened, and refuses anything
     that is not the common v1 envelope bound to the job it claimed. A helper that
@@ -446,7 +446,7 @@ class ContractTests(RevertFixture):
             code, _ = self.run_caller(policy_path, "-c", "alpha", "2")
             self.assertEqual(code, 0)
 
-            document = assert_contract("haproxy-revert", self.helper_stdout)
+            document = assert_contract("haprion-revert", self.helper_stdout)
             self.assertEqual(document["operation"], "revert")
             self.assertEqual(document["outcome"], "done")
             self.assertIs(document["ok"], True)
@@ -460,7 +460,7 @@ class ContractTests(RevertFixture):
             )
             self.assertEqual(result["new_version"], 4)
             self.assertIs(result["deployment_required"], True)
-            self.assertEqual(result["next_command"], "haproxy-deploy -c alpha")
+            self.assertEqual(result["next_command"], "haprion-deploy -c alpha")
 
     def test_reverting_to_the_content_already_in_place_is_a_no_op(self) -> None:
         """The contract's successful no-op: no second version, but still deploy.
@@ -488,12 +488,12 @@ class ContractTests(RevertFixture):
             self.assertEqual(code, 0)
             self.assertEqual(count_versions(self.repo), 4)
 
-            document = assert_contract("haproxy-revert", self.helper_stdout)
+            document = assert_contract("haprion-revert", self.helper_stdout)
             self.assertEqual(document["outcome"], "done")
             result = document["result"]
             self.assertIs(result["changed"], False)
             self.assertIs(result["deployment_required"], True)
-            self.assertEqual(result["next_command"], "haproxy-deploy -c alpha")
+            self.assertEqual(result["next_command"], "haprion-deploy -c alpha")
             self.assertEqual(result["new_version"], result["from_version"])
             self.assertIn("already holds the content of version 2", output)
 
@@ -518,7 +518,7 @@ class ContractTests(RevertFixture):
             code, _ = self.run_caller(policy_path, "-c", "alpha", "2")
 
             self.assertEqual(code, 0)
-            result = assert_contract("haproxy-revert", self.helper_stdout)["result"]
+            result = assert_contract("haprion-revert", self.helper_stdout)["result"]
             self.assertFalse(result["changed"])
             self.assertEqual(count_versions(self.repo), versions)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
@@ -539,7 +539,7 @@ class ContractTests(RevertFixture):
             )
             self.assertEqual(code, 65)
 
-            document = assert_contract("haproxy-revert", self.helper_stdout)
+            document = assert_contract("haprion-revert", self.helper_stdout)
             self.assertEqual(document["outcome"], "failed")
             self.assertIsNone(document["result"])
             self.assertEqual(document["error"]["code"], "candidate_invalid")
@@ -562,7 +562,7 @@ class ContractTests(RevertFixture):
                 policy_path, "-c", "alpha", "2", before_helper=somebody_edits_the_draft
             )
             self.assertEqual(code, 75)
-            document = assert_contract("haproxy-revert", self.helper_stdout)
+            document = assert_contract("haprion-revert", self.helper_stdout)
             self.assertEqual(document["error"]["code"], "dirty_worktree")
 
     def test_a_version_that_moved_is_reported_as_a_changed_target(self) -> None:
@@ -582,7 +582,7 @@ class ContractTests(RevertFixture):
                 policy_path, "-c", "alpha", "2", before_helper=someone_rewrites_history
             )
             self.assertEqual(code, 75)
-            document = assert_contract("haproxy-revert", self.helper_stdout)
+            document = assert_contract("haprion-revert", self.helper_stdout)
             self.assertEqual(document["error"]["code"], "expected_target_changed")
 
     def test_a_held_cluster_lock_blocks_the_revert_without_writing(self) -> None:
@@ -603,7 +603,7 @@ class ContractTests(RevertFixture):
                 code, _ = self.run_caller(policy_path, "-c", "alpha", "2")
 
             self.assertEqual(code, 75)
-            document = assert_contract("haproxy-revert", self.helper_stdout)
+            document = assert_contract("haprion-revert", self.helper_stdout)
             self.assertEqual(document["outcome"], "blocked")
             self.assertEqual(document["error"]["code"], "operation_locked")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)

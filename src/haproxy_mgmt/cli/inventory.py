@@ -1,4 +1,4 @@
-"""``haproxy-inventory`` - the published proxy configuration, read-only."""
+"""``haprion-inventory`` - the published proxy configuration, read-only."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.helper_protocol import write_document
 
 OPERATION = "inventory"
-HELPER = "/opt/haprion/current/bin/haproxy-inventory-helper"
+HELPER = "/opt/haprion/current/bin/haprion-inventory-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
-USAGE = "Usage:\n  haproxy-inventory -c <cluster> [--json]\n"
+USAGE = "Usage:\n  haprion-inventory -c <cluster> [--json]\n"
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
 

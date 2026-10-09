@@ -26,7 +26,7 @@ def main(
     policy_path: Path = DEFAULT_POLICY_PATH,
     require_secure: bool = True,
 ) -> int:
-    parser = argparse.ArgumentParser(prog="haproxy-cluster-config")
+    parser = argparse.ArgumentParser(prog="haprion-cluster-config")
     parser.add_argument("-c", "--cluster", required=True)
     parser.add_argument("--field", required=True, choices=FIELDS)
     args = parser.parse_args(argv)

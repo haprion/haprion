@@ -1,7 +1,7 @@
-"""``haproxy-node`` - add a node to a cluster, or take one away (B211).
+"""``haprion-node`` - add a node to a cluster, or take one away (B211).
 
-    haproxy-node add -c <cluster> --host <name> < block
-    haproxy-node remove -c <cluster> <node>
+    haprion-node add -c <cluster> --host <name> < block
+    haprion-node remove -c <cluster> <node>
 
 The block is what `04-node-prepare` printed on the node. `--host` is the name
 this management host reaches the node at; the block carries the node's own
@@ -10,8 +10,8 @@ helper the interface's Nodes card uses, so the terminal and the browser change
 the same six files the same way - and a node that does not then answer as
 itself is taken back out.
 
-A new node has no certificates and no release until `haproxy-cert-deploy -c <cluster>`
-and then `haproxy-deploy -c <cluster>`.
+A new node has no certificates and no release until `haprion-cert-deploy -c <cluster>`
+and then `haprion-deploy -c <cluster>`.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ from haproxy_mgmt.node_enrollment import MAX_BLOCK_BYTES
 SUDO = "/usr/bin/sudo"
 USAGE = (
     "Usage:\n"
-    "  haproxy-node add -c <cluster> --host <name> < block\n"
-    "  haproxy-node remove -c <cluster> <node>\n"
+    "  haprion-node add -c <cluster> --host <name> < block\n"
+    "  haprion-node remove -c <cluster> <node>\n"
 )
 
 type RunHelper = Callable[[str], subprocess.CompletedProcess[str]]
@@ -111,8 +111,8 @@ def main(
             f"Added {result.get('node')} ({result.get('host')}) to {cluster}.\n"
             f"Host key: {result.get('host_key_fingerprint')}\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
-            f"The node has no certificates or release yet: haproxy-cert-deploy -c {cluster}, "
-            f"then haproxy-deploy -c {cluster}\n"
+            f"The node has no certificates or release yet: haprion-cert-deploy -c {cluster}, "
+            f"then haprion-deploy -c {cluster}\n"
         )
     else:
         writer.write(

@@ -5,8 +5,8 @@ its first parent - the version before it in the same list. The first version is
 compared with an empty tree. That difference never changes once the commit
 exists, which is what lets the interface fetch it once and keep it.
 
-One reading for every caller. `haproxy-list --diff` reads the repository as the
-person running it; the poller cannot, and asks `haproxy-list-helper` for the
+One reading for every caller. `haprion-list --diff` reads the repository as the
+person running it; the poller cannot, and asks `haprion-list-helper` for the
 same thing. Both come here, so the terminal and the Versions page cannot show
 the same version differently.
 

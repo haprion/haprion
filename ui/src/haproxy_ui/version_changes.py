@@ -20,7 +20,7 @@ type LineKind = Literal["hunk", "add", "del", "ctx"]
 # The engine's own bookkeeping, not configuration: fingerprints per object that
 # let two releases be compared. Every object publish changes it, so it was the
 # same block of hashes under every version (2026-10-01). Left out of the
-# page and its counts; Git and `haproxy-list --diff` still show it.
+# page and its counts; Git and `haprion-list --diff` still show it.
 #
 NOT_SHOWN = frozenset({MANIFEST_PATH})
 

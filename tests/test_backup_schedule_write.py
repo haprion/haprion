@@ -51,7 +51,7 @@ class BackupScheduleWriteTests(unittest.TestCase):
                     run=recording(commands),
                     read=lambda unit: next(readings),
                 )
-            dropin = root / "haproxy-state-backup@alpha.timer.d"
+            dropin = root / "haprion-state-backup@alpha.timer.d"
             content = (dropin / "schedule.conf").read_text()
             kept = backup_retention.read("alpha", root=root / "retention")
             # World-readable whatever umask the helper runs under: systemd's
@@ -77,7 +77,7 @@ class BackupScheduleWriteTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            dropin = root / "haproxy-state-backup@alpha.timer.d"
+            dropin = root / "haprion-state-backup@alpha.timer.d"
             dropin.mkdir()
             path = dropin / "schedule.conf"
             old = b"[Timer]\nOnCalendar=\nOnCalendar=*-*-* 05:00:00\n"
@@ -141,7 +141,7 @@ class BackupScheduleWriteTests(unittest.TestCase):
                 run=lambda command: 0,
                 read=lambda unit: next(readings),
             )
-            return (root / "haproxy-state-backup@alpha.timer.d/schedule.conf").read_text()
+            return (root / "haprion-state-backup@alpha.timer.d/schedule.conf").read_text()
 
     def test_only_a_bounded_schedule_and_cluster_id_are_accepted(self) -> None:
         for parameters in (

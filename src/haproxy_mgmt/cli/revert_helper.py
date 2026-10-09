@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-revert`.
+"""The privileged half of `haprion-revert`.
 
 Takes no arguments; the cluster, the version number and the commit the operator
 actually saw arrive as a structured request on stdin. Same form and same reason
@@ -107,7 +107,7 @@ TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 #
 # The message a reverted version is recorded under. Frozen: an operator reading
-# a version list recognises it, and haproxy-list shows it verbatim.
+# a version list recognises it, and haprion-list shows it verbatim.
 #
 MESSAGE = "Revert configuration to version {version}"
 
@@ -179,7 +179,7 @@ def _result(
         "hash": commit,
         "published_at": published_at,
         "deployment_required": deployment_required,
-        "next_command": f"haproxy-deploy -c {cluster}" if deployment_required else None,
+        "next_command": f"haprion-deploy -c {cluster}" if deployment_required else None,
         #
         # Outside the frozen fields, and allowed to be: v1 ignores unknown keys.
         # The release path is what an operator looks for when asking whether the

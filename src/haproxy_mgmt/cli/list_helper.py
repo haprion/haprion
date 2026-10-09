@@ -1,6 +1,6 @@
-"""The privileged, read-only half of ``haproxy-list``.
+"""The privileged, read-only half of ``haprion-list``.
 
-A human running `haproxy-list` can already read the cluster repository, so the
+A human running `haprion-list` can already read the cluster repository, so the
 command itself needs no privilege. The interface's poller cannot and must not:
 the configuration repositories are readable by the management group only, and
 giving the web platform's poller a group membership to read them would hand it
@@ -98,7 +98,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-list-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-list-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

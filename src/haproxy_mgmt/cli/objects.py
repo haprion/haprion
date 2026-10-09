@@ -1,6 +1,6 @@
-"""``haproxy-objects`` - the stored proxy objects, read-only.
+"""``haprion-objects`` - the stored proxy objects, read-only.
 
-Where `haproxy-inventory` says what a node is serving, this says what the
+Where `haprion-inventory` says what a node is serving, this says what the
 cluster's objects look like as written. The listing names them; `--show <name>`
 prints one document exactly as it is stored, so it can be piped, diffed or
 copied without going through a browser; `--advanced <name>` prints where each
@@ -21,12 +21,12 @@ from haproxy_mgmt.helper_protocol import write_document
 from haproxy_mgmt.proxy_model import ModelError, advanced_placement
 
 OPERATION = "objects"
-HELPER = "/opt/haprion/current/bin/haproxy-objects-helper"
+HELPER = "/opt/haprion/current/bin/haprion-objects-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
 EXIT_NOT_FOUND = 66
 EXIT_REFUSED = 65
-USAGE = "Usage:\n  haproxy-objects -c <cluster> [--show <name> | --advanced <name> | --json]\n"
+USAGE = "Usage:\n  haprion-objects -c <cluster> [--show <name> | --advanced <name> | --json]\n"
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
 

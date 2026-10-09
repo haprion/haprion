@@ -1,6 +1,6 @@
 """The node's dnsdist steps, exercised as the shell they actually are (B249).
 
-The functions are extracted from `install/node/haproxy-pull-deploy` verbatim and
+The functions are extracted from `install/node/haprion-pull-deploy` verbatim and
 run with `systemctl`, `ss` and dnsdist replaced by recording stubs, as
 `test_node_waf_engine` does for the WAF engine. dnsdist's answers are the ones
 measured on 2.1.2: `--check-config` exits 0 and warns on a key it does not
@@ -18,7 +18,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-pull-deploy"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-pull-deploy"
 FUNCTIONS = ("validate_dns_candidate", "dns_listening", "sync_dns_listener")
 
 SYSTEMCTL = """#!/bin/bash
@@ -206,7 +206,7 @@ class TheDnsListenerSteps(unittest.TestCase):
         self.assertIn("did not start listening", output)
 
 
-STATUS = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
+STATUS = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 
 
 class TheStatusReport(unittest.TestCase):

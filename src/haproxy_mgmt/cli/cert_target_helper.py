@@ -153,7 +153,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=require_root,
-            helper_name="haproxy-cert-target-helper",
+            helper_name="haprion-cert-target-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

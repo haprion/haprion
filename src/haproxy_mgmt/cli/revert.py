@@ -1,4 +1,4 @@
-"""`haproxy-revert` - make an earlier version the current one again.
+"""`haprion-revert` - make an earlier version the current one again.
 
 The thin half. It runs entirely as the calling user: it resolves the cluster,
 checks that the draft area holds nothing unsaved, translates the version number
@@ -33,18 +33,18 @@ from haproxy_mgmt.version_history import count_versions, version_commit, version
 
 OPERATION = "revert_version"
 
-HELPER = "/opt/haprion/current/bin/haproxy-revert-helper"
+HELPER = "/opt/haprion/current/bin/haprion-revert-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-revert -c <cluster>\n"
-    "  haproxy-revert -c <cluster> VERSION\n"
+    "  haprion-revert -c <cluster>\n"
+    "  haprion-revert -c <cluster> VERSION\n"
     "\n"
     "Examples:\n"
-    "  haproxy-revert -c internal\n"
-    "  haproxy-revert -c internal 7\n"
-    "  haproxy-revert -c external\n"
+    "  haprion-revert -c internal\n"
+    "  haprion-revert -c internal 7\n"
+    "  haprion-revert -c external\n"
 )
 
 type RunHelper = Callable[[bytes], tuple[int, str, str]]
@@ -83,8 +83,8 @@ def _target_version(cluster_id: str, requested: str | None, total: int) -> int:
         raise CallerError(
             "the version must be a plain version number.\n\n"
             "Examples:\n"
-            f"  haproxy-revert -c {cluster_id} 7\n\n"
-            f"Run haproxy-list -c {cluster_id} to list the versions.",
+            f"  haprion-revert -c {cluster_id} 7\n\n"
+            f"Run haprion-list -c {cluster_id} to list the versions.",
             exit_code=64,
         )
 

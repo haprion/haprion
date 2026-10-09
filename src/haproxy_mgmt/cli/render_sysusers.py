@@ -9,7 +9,7 @@ from haproxy_mgmt.identity_policy import load_identity_policy, render_sysusers
 
 
 def main(argv: list[str] | None = None, *, require_secure: bool = True) -> int:
-    parser = argparse.ArgumentParser(prog="haproxy-render-sysusers")
+    parser = argparse.ArgumentParser(prog="haprion-render-sysusers")
     parser.add_argument("--policy", required=True, type=Path)
     args = parser.parse_args(argv)
 

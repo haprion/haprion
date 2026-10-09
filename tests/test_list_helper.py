@@ -1,4 +1,4 @@
-"""The root-only half of `haproxy-list`.
+"""The root-only half of `haprion-list`.
 
 The poller cannot read a cluster repository, and must not be given a group
 membership that would let it read every published configuration for the sake of
@@ -27,7 +27,7 @@ from tests.contract_schema import assert_contract
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "66666666-6666-4666-8666-666666666666"
 SCHEMA_DIR = BASE / "schemas" / "v1"
-SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haproxy-list.schema.json"
+SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haprion-list.schema.json"
 
 
 def list_validator() -> Draft202012Validator:
@@ -190,7 +190,7 @@ class ListHelperTests(unittest.TestCase):
         self.assertEqual((change["path"], change["status"]), ("core/haproxy.cfg", "modified"))
         self.assertIn("+  # version 2", change["lines"])
         self.assertEqual(diffs[hashes[0]]["parent"], hashes[1])
-        assert_contract("haproxy-list", out)
+        assert_contract("haprion-list", out)
 
     def test_diffs_are_full_hashes_and_ten_at_most(self) -> None:
         for diffs in ("HEAD", ["HEAD"], ["abc"], ["a" * 40] * 11, [None]):
@@ -244,7 +244,7 @@ class ListHelperTests(unittest.TestCase):
 
         self.assertEqual(code, 64)
         self.assertIn("unknown cluster", err)
-        document = assert_contract("haproxy-list", out)
+        document = assert_contract("haprion-list", out)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["error"]["code"], "bad_input")
         self.assertIsNone(document["result"])

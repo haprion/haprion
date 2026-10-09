@@ -37,7 +37,7 @@ VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 ENTRY_POINT_PATTERN = re.compile(
     r"(?P<module>haproxy_mgmt(?:\.[a-z_][a-z0-9_]*)*):(?P<callable>[a-z_][a-z0-9_]*)"
 )
-SCRIPT_NAME_PATTERN = re.compile(r"haproxy-[a-z0-9-]+")
+SCRIPT_NAME_PATTERN = re.compile(r"haprion-[a-z0-9-]+")
 
 
 class InstallError(RuntimeError):

@@ -105,7 +105,7 @@ def _text(value: Any, fallback: str = "—") -> str:
 def _saved_at(value: Any) -> str:
     """The contract's timestamp, in the reader's clock like every other time.
 
-    Once UTC, to match `haproxy-list` beside it; since B190 every page shows
+    Once UTC, to match `haprion-list` beside it; since B190 every page shows
     one clock, the reader's, and a history that alone kept another was the
     time that differed by an hour without saying so.
     """

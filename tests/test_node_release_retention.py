@@ -1,6 +1,6 @@
 """The configuration releases a node keeps (review 26-10-08, R4), run as the shell it is.
 
-`prune_releases` is extracted from `install/node/haproxy-pull-deploy` verbatim
+`prune_releases` is extracted from `install/node/haprion-pull-deploy` verbatim
 and run against a scratch release directory, as the keepalived and WAF steps
 are. What it must never remove is the release a deploy falls back to.
 """
@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-pull-deploy"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-pull-deploy"
 
 
 class TheNodeKeepsItsNewestReleases(unittest.TestCase):

@@ -523,7 +523,7 @@ class TheSealedSecret(unittest.TestCase):
 
 
 class TheHelper(ProviderTestCase):
-    """`haproxy-oidc-helper` end to end: the request in, the envelope out."""
+    """`haprion-oidc-helper` end to end: the request in, the envelope out."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -559,7 +559,7 @@ class TheHelper(ProviderTestCase):
             key_directory=self.keys,
             owner=Path(self.keys / f"{self.key_id}.key").stat().st_uid,
         )
-        document = assert_contract("haproxy-oidc", out.getvalue())
+        document = assert_contract("haprion-oidc", out.getvalue())
         return code, document
 
     def client_fields(self) -> dict[str, Any]:

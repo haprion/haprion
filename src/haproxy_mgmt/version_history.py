@@ -70,7 +70,7 @@ RUN_BY_TRAILER = "Run-By"
 
 #
 # The longest listing a caller may ask for. The interface pages through what it
-# gets in the browser; `haproxy-list` keeps its ten.
+# gets in the browser; `haprion-list` keeps its ten.
 #
 MAX_LIST_LIMIT = 250
 

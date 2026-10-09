@@ -52,7 +52,7 @@ FETCH_TIMEOUT_SECONDS = 300.0
 # another count (`backup_retention`).  Retention is deliberately per node: a
 # two-node cluster on the default therefore holds 28 archives in total.
 RETENTION = DEFAULT_RETENTION
-LOCK_PATH = Path("/run/lock/haproxy-state-backup.lock")
+LOCK_PATH = Path("/run/lock/haprion-state-backup.lock")
 #
 # Where node restore runs live (`node_restore.RUN_ROOT` is this). Defined here
 # because retention reads it and `node_restore` already imports this module.

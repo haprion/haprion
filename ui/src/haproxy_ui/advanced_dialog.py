@@ -4,7 +4,7 @@ The dialog edits one thing, the object's `advanced` text, and one choice beside
 it: whether the text writes the object's pool. Everything else in the object is
 the form's and is carried over as the draft or stored document has it. Where
 each line goes is the engine's decision (`proxy_model.advanced_placement`), so
-the dialog's *Check* and `haproxy-objects --advanced` cannot disagree.
+the dialog's *Check* and `haprion-objects --advanced` cannot disagree.
 """
 
 from __future__ import annotations

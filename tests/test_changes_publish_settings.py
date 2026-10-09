@@ -90,7 +90,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
             code, document, err = self.publish_settings(policy, self.settings_request())
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-changes-publish", json.dumps(document))
+            assert_contract("haprion-changes-publish", json.dumps(document))
             self.assertTrue(document["result"]["changed"])
             self.assertEqual((self.repo / LOCATION).read_text(), CANONICAL)
             files = git(self.repo, "ls-files")
@@ -204,7 +204,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
             )
 
             self.assertEqual(code, 0)
-            assert_contract("haproxy-cluster-settings", out.getvalue())
+            assert_contract("haprion-cluster-settings", out.getvalue())
             result = json.loads(out.getvalue())["result"]
             self.assertEqual(result["head"], git(self.repo, "rev-parse", "HEAD"))
             self.assertTrue(result["stored"])
@@ -284,10 +284,10 @@ class TheTerminalCommand(SettingsPublishFixture):
             },
         )
         self.assertIn("Published version 12 of alpha.", out.getvalue())
-        self.assertIn("haproxy-deploy -c alpha", out.getvalue())
+        self.assertIn("haprion-deploy -c alpha", out.getvalue())
 
     def test_as_root_the_helper_runs_directly_so_the_person_is_recorded(self) -> None:
-        # Review 2026-09-29 F2: under `sudo haproxy-cluster-settings`, an inner
+        # Review 2026-09-29 F2: under `sudo haprion-cluster-settings`, an inner
         # sudo would name root; run directly, the outer SUDO_USER carries over.
         from unittest import mock  # noqa: PLC0415
 

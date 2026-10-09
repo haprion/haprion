@@ -39,10 +39,10 @@ dependencies = [
 # implementations of Argon2 parameters is two places for them to disagree.
 #
 [project.scripts]
-haproxy-ui-user = "haproxy_ui.admin:_entry"
+haprion-user = "haproxy_ui.admin:_entry"
 haproxy-ui-poller = "haproxy_ui.poller:_entry"
 haproxy-ui-worker = "haproxy_ui.worker:_entry"
-haproxy-ui-production-snapshot = "haproxy_ui.snapshot:_entry"
+haprion-production-snapshot = "haproxy_ui.snapshot:_entry"
 
 [dependency-groups]
 dev = [

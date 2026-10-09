@@ -4,7 +4,7 @@
 #
 #     sudo ./11-platform-retention <answers-file>
 #
-# Installs haproxy-ui-retention and a daily timer. Optional, and separate from
+# Installs haprion-retention and a daily timer. Optional, and separate from
 # the backup step on purpose: this removes rows from a live table, which is a
 # different kind of action from writing a dump, and an installation that wants
 # one does not necessarily want the other.
@@ -36,8 +36,8 @@ DB_ROLE="$(source "$config"; echo "${DB_ROLE:-}")"
 [[ -n "$DB_ROLE" ]] || die "DB_ROLE is not in ${config}"
 
 step "The command"
-install -o root -g root -m 755 bin/haproxy-ui-retention /usr/local/sbin/haproxy-ui-retention
-log "  installed /usr/local/sbin/haproxy-ui-retention"
+install -o root -g root -m 755 bin/haprion-retention /usr/local/sbin/haprion-retention
+log "  installed /usr/local/sbin/haprion-retention"
 
 step "Timer"
 #
@@ -46,10 +46,10 @@ step "Timer"
 # on a machine carrying both platforms - and two timers pruning each other's
 # database is a failure that would look like retention working.
 #
-unit="haproxy-ui-retention-${ENVIRONMENT}"
+unit="haprion-retention-${ENVIRONMENT}"
 for kind in service timer; do
     install_file "/etc/systemd/system/${unit}.${kind}" root:root 644 \
-        "$(sed "s|ENVIRONMENT|${ENVIRONMENT}|g" "examples/haproxy-ui-retention.${kind}.example")"
+        "$(sed "s|ENVIRONMENT|${ENVIRONMENT}|g" "examples/haprion-retention.${kind}.example")"
 done
 systemctl daemon-reload
 log "  reloaded systemd"
@@ -70,7 +70,7 @@ step "What the first run will remove"
 # does it deliberately - which is also the honest reading of a dry run: it means
 # something, or it is decoration.
 #
-/usr/local/sbin/haproxy-ui-retention prune -e "$ENVIRONMENT" --dry-run
+/usr/local/sbin/haprion-retention prune -e "$ENVIRONMENT" --dry-run
 
 step "What must not be able to do this"
 #
@@ -94,4 +94,4 @@ step "Done"
 log "  ${unit}.timer runs daily: prunes finished jobs older than a week, keeping the 20 most recent,"
 log "           rolls up metric hours, and rotates traffic-log partitions at the configured retention"
 log "  nothing has been deleted yet; run it now with:"
-log "    sudo haproxy-ui-retention prune -e ${ENVIRONMENT}"
+log "    sudo haprion-retention prune -e ${ENVIRONMENT}"

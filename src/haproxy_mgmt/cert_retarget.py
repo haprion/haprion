@@ -84,7 +84,7 @@ from haproxy_mgmt.config import (
 )
 
 OPERATION = "cert_target"
-HELPER = "/opt/haprion/current/bin/haproxy-cert-target-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cert-target-helper"
 SUDO = "/usr/bin/sudo"
 
 GuardsReader = Callable[[RuntimeConfig, Sequence[str]], Guards]

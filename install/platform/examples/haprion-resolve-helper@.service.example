@@ -1,0 +1,53 @@
+# One lookup for the Haprion interface, answered by haprion-resolve-helper (B253).
+#
+# Not root and no account of its own: a dynamic user, nothing to read but the
+# release, nothing to write, and a way out to the network - which is the
+# point of it, and why this unit has no IPAddressDeny. Everything else is the
+# other helpers' sandbox.
+#
+# Installed by install/platform/07-platform-services as
+# /etc/systemd/system/haprion-resolve-helper@.service.
+
+[Unit]
+Description=Look up dns server names for the Haprion interface
+Documentation=file:///opt/haprion/current
+
+[Service]
+Type=exec
+DynamicUser=yes
+ExecStart=/opt/haprion/current/bin/haprion-resolve-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+TimeoutStartSec=20
+#
+# The whole answer, not only the start: the web stops waiting after 15 s
+# (resolve_socket.TIMEOUT_SECONDS), and this makes the helper stop too.
+#
+RuntimeMaxSec=20
+TimeoutStopSec=5
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete @privileged
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077

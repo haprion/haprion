@@ -138,7 +138,7 @@ class AnObjectThisVersionCannotRead(unittest.TestCase):
         """The command line and the page must agree about the same object.
 
         A page that decided readability from whether `problem` is set would
-        disagree with `haproxy-objects` the moment the two ever differ, and the
+        disagree with `haprion-objects` the moment the two ever differ, and the
         contract check already refuses an entry where they do.
         """
 

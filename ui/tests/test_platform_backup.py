@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "install/platform/bin/haproxy-ui-backup"
+SCRIPT = ROOT / "install/platform/bin/haprion-backup"
 
 #
 # What `pg_restore --data-only --table=<t> --file=-` writes: a header, one COPY

@@ -31,7 +31,7 @@ from typing import Any
 from haproxy_mgmt.backup_archive import MANIFEST, ArchiveError, ArchiveFacts, validate
 
 #
-# Every literal `copy_path` argument in install/node/haproxy-state-export, in
+# Every literal `copy_path` argument in install/node/haprion-state-export, in
 # the exporter's order.  A contract test reads the exporter and fails when the
 # two lists differ, so a path added there cannot be restored with the wrong
 # metadata here without the gate noticing.
@@ -57,8 +57,8 @@ EXPORT_ROOTS = (
     "/root/.ssh",
     "/etc/rsyslog.d/48-haproxy-manager-traffic.conf",
     "/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic",
-    "/etc/systemd/system/haproxy-traffic-log-prune.service",
-    "/etc/systemd/system/haproxy-traffic-log-prune.timer",
+    "/etc/systemd/system/haprion-traffic-log-prune.service",
+    "/etc/systemd/system/haprion-traffic-log-prune.timer",
     "/etc/systemd/system/ipvsadm.service",
     "/etc/cloud/cloud-init.disabled",
 )

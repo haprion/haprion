@@ -1,4 +1,4 @@
-"""`haproxy-cert-receiver` - the command that makes a receiver exist, or stop existing.
+"""`haprion-cert-receiver` - the command that makes a receiver exist, or stop existing.
 
 Runs as root, on the manager, and does the whole of it: the account, the
 directory, the lock for the transport, and the registry entry. Until C7 this
@@ -39,15 +39,15 @@ EXIT_USAGE = 64
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-cert-receiver add <id> --transport rsync|sftp --public-key <file>\n"
+    "  haprion-cert-receiver add <id> --transport rsync|sftp --public-key <file>\n"
     "                        [--owner <name>] [--path <dir>] [--json]\n"
-    "  haproxy-cert-receiver add <id> --transport https --allow <cidr>... [--path <dir>]\n"
+    "  haprion-cert-receiver add <id> --transport https --allow <cidr>... [--path <dir>]\n"
     "                        [--json]\n"
-    "  haproxy-cert-receiver list [--json]\n"
-    "  haproxy-cert-receiver remove <id> [--json]\n"
-    "  haproxy-cert-receiver migrate <id> --public-key <file> [--owner <name>]\n"
+    "  haprion-cert-receiver list [--json]\n"
+    "  haprion-cert-receiver remove <id> [--json]\n"
+    "  haprion-cert-receiver migrate <id> --public-key <file> [--owner <name>]\n"
     "                        [--path <dir>] [--json]\n"
-    "  haproxy-cert-receiver migrate <id> --finish [--json]\n"
+    "  haprion-cert-receiver migrate <id> --finish [--json]\n"
     "\n"
     "A receiver is a machine outside this installation that fetches certificates.\n"
     "Registering one makes an account, a directory only that account may read, a\n"
@@ -197,7 +197,7 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haproxy-cert-receiver must run as root", EXIT_NOT_ROOT)
+        return refuse("not_root", "haprion-cert-receiver must run as root", EXIT_NOT_ROOT)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)

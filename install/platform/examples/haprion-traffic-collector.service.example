@@ -1,0 +1,58 @@
+[Unit]
+# Mirrors each node's structured traffic log to the manager. Rendered by
+# 13-platform-traffic-collector.
+Description=Mirror HAProxy node traffic logs to the manager
+Documentation=file:///apps/haproxy-manager/current
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=COLLECTOR_USER
+Group=COLLECTOR_USER
+
+ExecStart=/opt/haprion/current/bin/haprion-traffic-collector --config /etc/haprion/traffic-collector.json
+
+# A timer, not a daemon. A run that cannot reach a node exits non-zero and the
+# next run tries again; a long-lived process would have to reimplement that
+# retry itself, and would hold an SSH identity in memory between runs for no
+# reason.
+#
+# The local PostgreSQL socket is its only manager-side service. Peer
+# authentication maps this OS identity to the insert-only collector role; it
+# has no password, sudo rule or privileged helper.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+# The mirror and the staging area, and nothing else on the machine. Two entries
+# rather than their shared parent, because nothing else under it should be
+# writable - and note that this is why the collector never renames from one to
+# the other: systemd bind-mounts each ReadWritePaths entry separately, so a
+# rename between them is EXDEV even though one filesystem backs both. Every
+# temporary file is written in the directory it is renamed into.
+ReadWritePaths=PLATFORM_ROOT/logs/mirror PLATFORM_ROOT/logs/staging
+# tmpfs rather than yes: the key lives under /etc, not under a home directory,
+# so there is nothing to punch a hole for. This unit reads no home at all.
+ProtectHome=tmpfs
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete @privileged
+# SSH to the nodes, and the local socket ssh itself needs. Nothing else - this
+# process never listens and never speaks any other protocol.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

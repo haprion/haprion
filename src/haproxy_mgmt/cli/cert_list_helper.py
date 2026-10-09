@@ -1,4 +1,4 @@
-"""The privileged, read-only half of ``haproxy-cert-list``.
+"""The privileged, read-only half of ``haprion-cert-list``.
 
 The certificate distribution root is root-owned because the files in it are
 private key plus chain. This helper reports metadata about them and never lets
@@ -54,7 +54,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-cert-list-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-cert-list-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

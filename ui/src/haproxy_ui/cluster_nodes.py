@@ -7,7 +7,7 @@ here in the web process, only to show the administrator what it says before
 anything is queued; the root helper parses it again and is the authority.
 
 Creating a cluster is read the same way, by the engine's own
-`cluster_definition.definition` - the check `haproxy-cluster` and the helper
+`cluster_definition.definition` - the check `haprion-cluster` and the helper
 make - so a form the page accepts is a request the helper reads alike.
 """
 

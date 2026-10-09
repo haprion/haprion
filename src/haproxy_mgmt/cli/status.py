@@ -1,4 +1,4 @@
-"""`haproxy-status` - what the nodes are doing, and whether they run what you published.
+"""`haprion-status` - what the nodes are doing, and whether they run what you published.
 
 The thin half. It runs as the calling user, checks the arguments, and hands a
 structured request to the root helper. It decides nothing about the cluster: the
@@ -6,11 +6,11 @@ document it prints is the one the helper produced.
 
 The question this command exists to answer
 ------------------------------------------
-`haproxy-config-status` answers "what is published, and what have I not sent
+`haprion-config-status` answers "what is published, and what have I not sent
 yet", which is a question about the manager. This one answers "are the nodes
 healthy", which is a question about the nodes. Between them sat a third question
 that neither answered - *do the nodes run what is published* - and the only way
-to find out was to start `haproxy-deploy` and read what it decided to skip.
+to find out was to start `haprion-deploy` and read what it decided to skip.
 Reaching for the mutating command in order to observe is exactly backwards
 during an incident, so the answer is reported here, from the same comparison the
 deploy matrix makes.
@@ -30,16 +30,16 @@ from haproxy_mgmt.cluster_status import StatusError, keepalived_state, parse_sta
 from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.status_collect import EXIT_UNAVAILABLE, OPERATION
 
-HELPER = "/opt/haprion/current/bin/haproxy-status-helper"
+HELPER = "/opt/haprion/current/bin/haprion-status-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-status -c <cluster> [--json]\n"
+    "  haprion-status -c <cluster> [--json]\n"
     "\n"
     "Examples:\n"
-    "  haproxy-status -c alpha\n"
-    "  haproxy-status -c beta --json\n"
+    "  haprion-status -c alpha\n"
+    "  haprion-status -c beta --json\n"
 )
 
 #
@@ -108,7 +108,7 @@ def _release_line(node: dict[str, Any]) -> str:
     if current is True:
         return f"{shown}   (published)"
     if current is False:
-        return f"{shown}   BEHIND - run haproxy-deploy"
+        return f"{shown}   BEHIND - run haprion-deploy"
     return f"{shown}   (not compared)"
 
 
@@ -132,10 +132,10 @@ def _addresses_line(status: dict[str, Any]) -> str | None:
     installed = reported.get("installed_sha256")
     if not isinstance(published, str) or not isinstance(installed, str):
         if reported.get("installed") is False:
-            return "MISSING - run haproxy-deploy"
+            return "MISSING - run haprion-deploy"
         return "unknown"
     if published != installed:
-        return "BEHIND the release - run haproxy-deploy"
+        return "BEHIND the release - run haprion-deploy"
     if reported.get("included") is False:
         return "installed, not included in keepalived.conf"
     return "in use"
@@ -158,10 +158,10 @@ def _ipvs_line(status: dict[str, Any]) -> str | None:
     installed = reported.get("installed_sha256")
     if not isinstance(published, str) or not isinstance(installed, str):
         if reported.get("installed") is False:
-            return "MISSING - run haproxy-deploy"
+            return "MISSING - run haprion-deploy"
         return "unknown"
     if published != installed:
-        return "BEHIND the release - run haproxy-deploy"
+        return "BEHIND the release - run haprion-deploy"
     if reported.get("included") is False:
         servers = reported.get("published_servers")
         if isinstance(servers, int) and not isinstance(servers, bool) and servers > 0:

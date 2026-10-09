@@ -16,7 +16,7 @@ from haproxy_mgmt import backup_schedule
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_DIR = ROOT / "schemas" / "v1"
 FIXTURE_ROOT = ROOT / "fixtures"
-STATUS_SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haproxy-status.schema.json"
+STATUS_SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haprion-status.schema.json"
 
 
 def load_json(path: Path) -> object:
@@ -861,7 +861,7 @@ def check_backup_schedule_semantics(document: dict[str, object], path: Path) -> 
     assert isinstance(schedule, dict)
     if result["cluster"] != document["cluster"]:
         raise AssertionError(f"{path}: backup_schedule result names another cluster")
-    if schedule["unit"] != f"haproxy-state-backup@{result['cluster']}.timer":
+    if schedule["unit"] != f"haprion-state-backup@{result['cluster']}.timer":
         raise AssertionError(f"{path}: backup_schedule unit is not the cluster's timer instance")
     # `done` is the read-back: systemd knows the timer, reports the requested
     # calendar and sits in the requested enabled/active state.
@@ -890,7 +890,7 @@ def check_node_restore_prepare_semantics(document: dict[str, object], path: Path
         raise AssertionError(f"{path}: node_restore_prepare mode and profile disagree")
     # The pasted line authorizes this run's key, restricted and for a while only (B182).
     paste = str(result["paste"])
-    if f"haproxy-restore-{result['run']}" not in paste or ",restrict," not in paste:
+    if f"haprion-restore-{result['run']}" not in paste or ",restrict," not in paste:
         raise AssertionError(f"{path}: the pasted line is not this run's restricted key")
     if 'expiry-time="' not in paste:
         raise AssertionError(f"{path}: the pasted line lets the target accept the key forever")

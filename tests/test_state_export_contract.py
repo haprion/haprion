@@ -22,7 +22,7 @@ def shell_array(text: str, name: str) -> tuple[str, ...]:
 class StateExportContractTests(unittest.TestCase):
     def test_export_and_installer_name_the_same_node_bundle(self) -> None:
         installer = (BASE / "install/04-node-prepare").read_text(encoding="utf-8")
-        exporter = (BASE / "install/node/haproxy-state-export").read_text(encoding="utf-8")
+        exporter = (BASE / "install/node/haprion-state-export").read_text(encoding="utf-8")
         self.assertEqual(shell_array(exporter, "DR_SCRIPTS"), shell_array(installer, "SCRIPTS"))
 
     def test_every_node_bundle_script_is_required_by_the_archive_validator(self) -> None:
@@ -33,7 +33,7 @@ class StateExportContractTests(unittest.TestCase):
     def test_only_forced_command_accounts_are_required_to_have_authorized_keys(self) -> None:
         # node.conf's template, used by 04-node-prepare, lives in lib.sh.
         template = (BASE / "install/lib.sh").read_text(encoding="utf-8")
-        exporter = (BASE / "install/node/haproxy-state-export").read_text(encoding="utf-8")
+        exporter = (BASE / "install/node/haprion-state-export").read_text(encoding="utf-8")
         self.assertIn('BACKUP_SERVICE_ACCOUNTS=\\"${TRIGGER_USER}', template)
         required_keys = exporter.split("# The manifest is the archive's content contract.", 1)[0]
         self.assertIn("for user in $BACKUP_SERVICE_ACCOUNTS; do", required_keys)
@@ -64,7 +64,7 @@ class TheOperatorsOwnPaths(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.exporter = (BASE / "install/node/haproxy-state-export").read_text(encoding="utf-8")
+        cls.exporter = (BASE / "install/node/haprion-state-export").read_text(encoding="utf-8")
 
     def export(self, extra: str) -> tuple[subprocess.CompletedProcess[str], Path]:
         work = Path(tempfile.mkdtemp())

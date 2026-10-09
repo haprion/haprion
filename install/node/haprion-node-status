@@ -1,0 +1,1440 @@
+#!/usr/bin/env python3
+
+import argparse
+import base64
+import hashlib
+import ipaddress
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+KEEPALIVED_CONFIG = Path("/etc/keepalived/keepalived.conf")
+KEEPALIVED_STATE = Path("/run/haproxy/keepalived.state")
+KEEPALIVED_ADDRESSES = Path("/etc/keepalived/addresses.conf")
+PUBLISHED_ADDRESSES = Path("/etc/haproxy/current/keepalived/addresses.conf")
+RUNTIME_SOCKET = "/run/haproxy/ui-status.sock"
+CURRENT_RELEASE = Path("/etc/haproxy/current/RELEASE")
+RELEASES = Path("/etc/haproxy/releases")
+CONFIG_PENDING = Path("/run/haprion-pull-deploy.pending")
+#
+# Written by `haprion-server-state` when a kept drain or maintenance could not
+# be put back after a reload or a start (review 26-10-09, F1).
+#
+SERVER_STATE_UNAPPLIED = Path("/run/haprion-server-state.unapplied")
+SERVER_GUID = re.compile(r"^srv:[a-z][a-z0-9_-]{0,39}\.[0-9a-f]{16}$")
+VALIDATION_STATE = Path("/run/haproxy/last-validation.json")
+CERTS_DIR = Path("/etc/haproxy/certs")
+CERT_PENDING = Path("/run/haprion-cert-pull.pending")
+NODE_INSTALLATION = Path("/etc/haprion/node-installation.json")
+SBIN = Path("/usr/local/sbin")
+MAX_INSTALLATION_BYTES = 64 * 1024
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+NODE_SCRIPTS = (
+    "haprion-pull-deploy",
+    "haprion-cert-pull",
+    "haprion-cert-remove",
+    "haprion-cert-trigger",
+    "haprion-node-status",
+    "haprion-health-probe",
+    "haprion-keepalived-state",
+    "haprion-state-export",
+    "haprion-traffic-log-read",
+    "haprion-traffic-log-enable",
+    "haprion-traffic-log-prune",
+    "haprion-server-state",
+    "haprion-server-state-trigger",
+)
+
+#
+# Assembled rather than written out. A literal PEM header in a file that is
+# reviewed alongside the manager repository is exactly what its secret scanner
+# exists to catch, and the same construction is used there.
+#
+PEM = "-" * 5
+CERTIFICATE_BLOCK = re.compile(
+    PEM + "BEGIN CERTIFICATE" + PEM + "(.+?)" + PEM + "END CERTIFICATE" + PEM,
+    re.DOTALL,
+)
+
+# A certificate file is small. The cap keeps a wrong path from being read into
+# memory by a process running as root.
+MAX_CERTIFICATE_BYTES = 1024 * 1024
+
+
+def read_installation():
+    """The installed node bundle's declared API and whether its bytes still match.
+
+    The metadata is written by 04-node-prepare from the same source files it
+    installs. The status command recomputes every digest: a copied marker beside
+    hand-edited scripts is therefore not accepted as a current installation.
+    """
+
+    def installed_scripts(expected_scripts=None):
+        scripts = {}
+        all_current = expected_scripts is not None
+        for name in NODE_SCRIPTS:
+            try:
+                installed = hashlib.sha256((SBIN / name).read_bytes()).hexdigest()
+            except Exception:
+                installed = None
+            expected = expected_scripts.get(name) if expected_scripts is not None else None
+            current = expected is not None and installed == expected
+            all_current = all_current and current
+            scripts[name] = {
+                "expected_sha256": expected,
+                "installed_sha256": installed,
+                "current": current,
+            }
+        return all_current, scripts
+
+    try:
+        if NODE_INSTALLATION.stat().st_size > MAX_INSTALLATION_BYTES:
+            raise ValueError("installation metadata is too large")
+        document = json.loads(NODE_INSTALLATION.read_text(encoding="utf-8"))
+        if (
+            not isinstance(document, dict)
+            or document.get("schema_version") != 1
+            or type(document.get("node_api")) is not int
+            or document["node_api"] < 1
+            or not isinstance(document.get("scripts"), dict)
+            or set(document["scripts"]) != set(NODE_SCRIPTS)
+        ):
+            raise ValueError("invalid installation metadata")
+
+        for name, expected in document["scripts"].items():
+            if (
+                not isinstance(name, str)
+                or not re.fullmatch(r"haprion-[a-z0-9-]+", name)
+                or not isinstance(expected, str)
+                or not SHA256.fullmatch(expected)
+            ):
+                raise ValueError("invalid script metadata")
+        all_current, scripts = installed_scripts(document["scripts"])
+        return {
+            "node_api": document["node_api"],
+            "scripts_current": all_current,
+            "scripts": scripts,
+        }
+    except Exception:
+        _, scripts = installed_scripts()
+        return {"node_api": None, "scripts_current": False, "scripts": scripts}
+
+
+def run(*argv):
+    #
+    # Every caller passes an absolute binary and this script's own names and
+    # paths - never anything read from the manager or from a request.
+    #
+    return subprocess.run(argv, capture_output=True, text=True, check=False)  # noqa: S603
+
+
+def service_active(name):
+    r = run("/usr/bin/systemctl", "is-active", name)
+    return r.returncode == 0 and r.stdout.strip() == "active"
+
+
+#
+# The WAF engine is a package of its own, installed by a person (B229), and the
+# manager offers the engine on an object only when every node of its cluster
+# has it (B231). The package's version says which engine; `active` says whether
+# a release with rules has started it - off is the normal state without one.
+#
+WAF_PACKAGE = "haproxy-manager-coraza-spoa"
+WAF_UNIT = "coraza-spoa.service"
+
+
+def package_version(package):
+    r = run("/usr/bin/dpkg-query", "-W", "-f=${Status}\t${Version}", package)
+    status, _, version = r.stdout.partition("\t")
+    installed = r.returncode == 0 and status.strip() == "install ok installed"
+    return version.strip()[:64] if installed else None
+
+
+def read_waf_engine():
+    return {"version": package_version(WAF_PACKAGE), "active": service_active(WAF_UNIT)}
+
+
+#
+# dnsdist, which serves the cluster's dns listeners (B249): installed by
+# 04-node-prepare from PowerDNS's repository, started by a release that carries
+# a listener and stopped by one that does not - the WAF engine's shape, read
+# the same way.
+#
+DNS_PACKAGE = "dnsdist"
+
+
+#
+# The packages a node's traffic passes through besides HAProxy, whose own
+# version is the running process's (`runtime.version`). Reported so the
+# manager can say when the nodes of one cluster run different versions - a
+# node patched a day before the other on purpose, or one forgotten (26-10-09).
+# OpenSSL is the library HAProxy links (the system's libssl3t64, measured
+# 26-10-09: the PPA's HAProxy is built against it), named by the release it is
+# in. Versions are compared as dpkg orders them, whichever source a package
+# comes from - the distribution, a PPA, PowerDNS's repository or ours.
+#
+PACKAGES = {
+    #
+    # HAProxy's package as well as its process: a rebuild of the same upstream
+    # release - `3.4.6-1ppa2` after `-1ppa1` - changes only the package, and a
+    # process that was not restarted after a patch shows only in the runtime.
+    #
+    "haproxy": ("haproxy",),
+    "keepalived": ("keepalived",),
+    "dnsdist": (DNS_PACKAGE,),
+    "waf_engine": (WAF_PACKAGE,),
+    "openssl": ("libssl3t64", "libssl3"),
+}
+
+
+def read_packages():
+    """Each package's installed version, or null where it is not installed."""
+
+    found = {}
+    for key, names in PACKAGES.items():
+        found[key] = next(
+            (version for name in names if (version := package_version(name)) is not None), None
+        )
+    return found
+
+
+DNS_UNIT = "dnsdist.service"
+
+
+#
+# Where dnsdist serves its counters: loopback, no key, written by the
+# generator (`dnsdist_config.STATS_PORT`; a test holds the two equal).
+#
+DNS_METRICS = "http://127.0.0.1:9521/metrics"
+MAX_DNS_METRICS_BYTES = 4 * 1024 * 1024
+MAX_DNS_ROWS = 500
+DNS_SAMPLE = re.compile(r"^([a-z_]+)(?:\{(.*)\})? ([0-9.eE+-]+)$")
+DNS_LABEL = re.compile(r'([a-z_]+)="([^"\\]*)"')
+
+
+def parse_dns_metrics(text):
+    """dnsdist's `/metrics` as the cluster's dns pools and their servers.
+
+    Everything is counted under the pool's name, the way the generator names
+    it (`dnsdist_config`): the rule `<pool>` counts every query reaching the
+    object's listener, `<pool>/tcp` those over TCP and `<pool>/refused` those
+    refused for `allow_from`; a server is `<pool>/s<n>`. A pool's answered
+    queries are its servers' responses added up - the rules count what came
+    in, the servers what went out and came back.
+
+    No latency: dnsdist's is a running average that starts at nought with every
+    start, and nothing read it (26-10-06, B253). Its exporter carries it to
+    whoever scrapes dnsdist. None for text that is not dnsdist's.
+    """
+
+    rules = {}
+    servers = {}
+    uptime = None
+    seen = False
+    for line in text.splitlines()[: MAX_DNS_ROWS * 64]:
+        found = DNS_SAMPLE.match(line.strip())
+        if found is None:
+            continue
+        metric, labels, raw = found.groups()
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if metric == "dnsdist_uptime":
+            seen = True
+            uptime = int(value) if value >= 0 else None
+            continue
+        named = dict(DNS_LABEL.findall(labels or ""))
+        if metric == "dnsdist_rule_hits" and "id" in named:
+            rules[named["id"]] = int(value)
+            continue
+        server = named.get("server", "")
+        pool, slash, member = server.partition("/")
+        if not metric.startswith("dnsdist_server_") or not slash or not pool or not member:
+            continue
+        field = metric.removeprefix("dnsdist_server_")
+        if field in ("queries", "responses", "status"):
+            servers.setdefault((pool, member), {})[field] = value
+    if not seen:
+        return None
+
+    pools = {}
+    for name, hits in rules.items():
+        pool, slash, part = name.partition("/")
+        if not slash:
+            pools.setdefault(name, {})["queries"] = hits
+        elif part in ("tcp", "refused"):
+            pools.setdefault(pool, {})[part] = hits
+    rows = []
+    for (pool, member), found in sorted(servers.items())[:MAX_DNS_ROWS]:
+        rows.append(
+            {
+                "pool": pool,
+                "server": member,
+                "status": None if "status" not in found else ("UP" if found["status"] else "DOWN"),
+                "queries": None if "queries" not in found else int(found["queries"]),
+                "answered": None if "responses" not in found else int(found["responses"]),
+            }
+        )
+    #
+    # A pool is one with servers. A rule without a name gets a UUID, which can
+    # look like a pool's name; no server is ever named after one.
+    #
+    served = {row["pool"] for row in rows}
+    listed = []
+    for pool, found in sorted(pools.items())[:MAX_DNS_ROWS]:
+        if "queries" not in found or pool not in served:
+            continue
+        answers = [row["answered"] for row in rows if row["pool"] == pool]
+        listed.append(
+            {
+                "pool": pool,
+                "queries": found["queries"],
+                "tcp_queries": found.get("tcp"),
+                #
+                # No rule is a pool without `allow_from`, which refuses
+                # nobody - zero, not unknown.
+                #
+                "refused": found.get("refused", 0),
+                "answered": None if None in answers else sum(answers),
+            }
+        )
+    return {"uptime_sec": uptime, "pools": listed, "servers": rows}
+
+
+def dns_counters():
+    try:
+        #
+        # No proxy, whatever the environment says: the counters are on loopback.
+        #
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(DNS_METRICS, timeout=2.0) as response:
+            text = response.read(MAX_DNS_METRICS_BYTES + 1)
+    except Exception:
+        return None
+    if len(text) > MAX_DNS_METRICS_BYTES:
+        return None
+    return parse_dns_metrics(text.decode("utf-8", errors="replace"))
+
+
+def read_dns_listener():
+    active = service_active(DNS_UNIT)
+    return {
+        "version": package_version(DNS_PACKAGE),
+        "active": active,
+        #
+        # null when dnsdist is stopped or did not answer, so a listener that
+        # could not be read is never reported as one that counted nothing.
+        #
+        "counters": dns_counters() if active else None,
+    }
+
+
+#
+# The syslog objects' IPVS virtual servers (Fas 19b, B256): a file the release
+# carries, the deploy installs as /etc/keepalived/ipvs.conf, and a person
+# includes at the top level of keepalived.conf - the address list's three
+# measurements - and the kernel's counters per virtual server and receiver.
+# keepalived takes a receiver its check failed out of the table, so one the
+# release names and the kernel does not hold is down.
+#
+KEEPALIVED_IPVS = Path("/etc/keepalived/ipvs.conf")
+PUBLISHED_IPVS = Path("/etc/haproxy/current/keepalived/ipvs.conf")
+IPVSADM = Path("/usr/sbin/ipvsadm")
+MAX_IPVS_ROWS = 500
+IPVS_PROTOCOLS = {"TCP": "tcp", "UDP": "udp", "SCTP": "sctp"}
+
+
+def top_level_include(text, path):
+    """Whether keepalived.conf includes `path` outside every block.
+
+    keepalived reads `virtual_server` only at the top level; the same line
+    inside a `vrrp_instance` is a different and broken configuration. Comments
+    start with `#` or `!`, as keepalived's own reader takes them.
+    """
+
+    depth = 0
+    for line in text.splitlines():
+        content = re.split(r"[#!]", line, maxsplit=1)[0]
+        if depth == 0 and content.split() == ["include", str(path)]:
+            return True
+        depth += content.count("{") - content.count("}")
+    return False
+
+
+def ipvs_endpoint(text):
+    """`192.0.2.1:514` or `[2001:db8::1]:514`, as ipvsadm -n prints one."""
+
+    host, _, port = text.rpartition(":")
+    if not host or not port.isdigit():
+        return None
+    return host.strip("[]"), int(port)
+
+
+def parse_ipvs_stats(text):
+    """`ipvsadm -Ln --stats --exact` as virtual servers and their receivers.
+
+    The shape is ipvsadm 1.31's own (`print_service_entry`): a service line is
+    the protocol, the address and port, and five counters - connections,
+    packets and bytes in and out - and each receiver below it is `->`, its
+    address and port, and the same five. `--exact` prints every counter as a
+    whole number. Messages travel one way, so in is what counts. A firewall
+    mark service has no address and is passed over.
+    """
+
+    services = []
+    current = None
+    for line in text.splitlines():
+        fields = line.split()
+        readable = len(fields) == 7 and all(value.isdigit() for value in fields[2:])
+        endpoint = ipvs_endpoint(fields[1]) if readable else None
+        if endpoint is None:
+            #
+            # A service line that cannot be read ends the one before it, so
+            # its receivers are never counted under somebody else's service.
+            #
+            if fields and fields[0] != "->":
+                current = None
+            continue
+        address, port = endpoint
+        packets, data = int(fields[3]), int(fields[5])
+        if fields[0] in IPVS_PROTOCOLS:
+            if len(services) >= MAX_IPVS_ROWS:
+                break
+            current = {
+                "protocol": IPVS_PROTOCOLS[fields[0]],
+                "address": address,
+                "port": port,
+                "packets": packets,
+                "bytes": data,
+                "receivers": [],
+            }
+            services.append(current)
+        elif fields[0] == "->" and current is not None:
+            if len(current["receivers"]) < MAX_IPVS_ROWS:
+                current["receivers"].append(
+                    {"address": address, "port": port, "packets": packets, "bytes": data}
+                )
+    return services
+
+
+def ipvs_summary(ipvs):
+    """The IPVS file in one line, in the address list's order of questions."""
+
+    if ipvs["published"] is False:
+        return "none published by this release"
+    if ipvs["published_sha256"] is None or ipvs["installed_sha256"] is None:
+        return "published, not installed" if ipvs["installed"] is False else "UNKNOWN"
+    if ipvs["published_sha256"] != ipvs["installed_sha256"]:
+        return "installed file differs from the release"
+    if ipvs["included"] is not True:
+        return "installed, not included at the top of keepalived.conf"
+    if ipvs["services"] is None:
+        return "in use, not counted (ipvsadm missing or failed)"
+    return "installed and in use"
+
+
+IPVS_NAMES = re.compile(r"^# object (\S+), pool (\S+)$")
+IPVS_BLOCK = re.compile(r"^\s*(virtual_server|real_server)\s+(\S+)\s+(\d+)\s*\{")
+
+
+def ipvs_key(address, port):
+    try:
+        return str(ipaddress.ip_address(address.strip("[]"))), port
+    except ValueError:
+        return None
+
+
+def ipvs_names(text):
+    """The installed file's names: (address, port) -> (object, pool, receivers in order).
+
+    The generator writes `# object <name>, pool <pool>` above each virtual
+    server (`ipvs_config.NAMES`); the receivers are the pool's servers in the
+    order written, `s1` first. A virtual server without the line is not ours
+    to name.
+    """
+
+    names = {}
+    pending = None
+    current = None
+    for line in text.splitlines():
+        named = IPVS_NAMES.match(line.strip())
+        if named:
+            pending = named.groups()
+            continue
+        block = IPVS_BLOCK.match(line)
+        if not block:
+            continue
+        kind, address, port = block.group(1), block.group(2), int(block.group(3))
+        key = ipvs_key(address, port)
+        if kind == "virtual_server":
+            current = None
+            if pending is not None and key is not None:
+                current = []
+                names[key] = (pending[0], pending[1], current)
+            pending = None
+        elif current is not None and key is not None:
+            current.append(key)
+    return names
+
+
+def name_ipvs(services, names):
+    """The kernel's services under the objects and pools the installed file names.
+
+    Each named service lists every receiver the file gives it, `s1` first: UP
+    with its counters when the kernel holds it, DOWN with none when keepalived
+    took it out after a failed check. A service the file does not name is
+    reported as the kernel holds it, with no names.
+    """
+
+    named = []
+    for service in services:
+        entry = dict(service, object=None, pool=None)
+        found = names.get(ipvs_key(service["address"], service["port"]))
+        held = {
+            ipvs_key(receiver["address"], receiver["port"]): receiver
+            for receiver in service["receivers"]
+        }
+        if found is None or service["protocol"] != "udp":
+            entry["receivers"] = [
+                dict(receiver, server=None, status="UP") for receiver in service["receivers"]
+            ]
+            named.append(entry)
+            continue
+        entry["object"], entry["pool"], order = found
+        receivers = []
+        for index, key in enumerate(order):
+            receiver = held.pop(key, None)
+            receivers.append(
+                {
+                    "address": key[0],
+                    "port": key[1],
+                    "server": f"s{index + 1}",
+                    "status": "DOWN" if receiver is None else "UP",
+                    "packets": None if receiver is None else receiver["packets"],
+                    "bytes": None if receiver is None else receiver["bytes"],
+                }
+            )
+        receivers.extend(dict(receiver, server=None, status="UP") for receiver in held.values())
+        entry["receivers"] = receivers
+        named.append(entry)
+    return named
+
+
+def virtual_servers(text):
+    """How many virtual servers a generated file holds: each begins a line of its own."""
+
+    return sum(1 for line in text.splitlines() if line.startswith("virtual_server "))
+
+
+def read_ipvs():
+    published, published_digest = address_list(PUBLISHED_IPVS)
+    installed, installed_digest = address_list(KEEPALIVED_IPVS)
+    text = read_config(KEEPALIVED_CONFIG)
+    present = IPVSADM.is_file()
+    services = None
+    if present:
+        r = run(str(IPVSADM), "-Ln", "--stats", "--exact")
+        #
+        # null when ipvsadm could not be asked, so a table that could not be
+        # read is never reported as one holding nothing.
+        #
+        services = parse_ipvs_stats(r.stdout) if r.returncode == 0 else None
+    installed_text = read_config(KEEPALIVED_IPVS) if installed else None
+    #
+    # How many virtual servers the release asks for. With the include missing,
+    # a file that holds some is syslog objects forwarded nowhere, while one
+    # that holds none is how the file arrives (review 26-10-08, F1).
+    #
+    published_text = read_config(PUBLISHED_IPVS) if published else None
+    published_servers = None if published_text is None else virtual_servers(published_text)
+    if services is not None:
+        services = name_ipvs(services, ipvs_names(installed_text or ""))
+    return {
+        "ipvsadm": present,
+        "published": published,
+        "published_sha256": published_digest,
+        "published_servers": published_servers,
+        "installed": installed,
+        "installed_sha256": installed_digest,
+        "included": None if text is None else top_level_include(text, KEEPALIVED_IPVS),
+        "services": services,
+    }
+
+
+#
+# What the dashboard shows as a node's CPU and memory (B239). Counters, not a
+# percentage: CPU use is a rate, and a rate needs two readings. The poller
+# keeps the previous one and works out the share between them, so nothing here
+# waits to measure. Memory is what the kernel says a new process could have
+# without swapping - `available` in `free`, not `free`, which leaves out the
+# cache the kernel gives back on demand. Each part is `null` when it cannot be
+# read, so an unreadable figure is never shown as zero.
+#
+def read_server_state_unapplied():
+    """Kept states HAProxy does not hold, by server GUID: {} for none, None when unreadable."""
+
+    try:
+        data = json.loads(SERVER_STATE_UNAPPLIED.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return None
+    servers = data.get("servers") if isinstance(data, dict) else None
+    if not isinstance(servers, dict):
+        return None
+    return {
+        guid: state
+        for guid, state in sorted(servers.items())[:MAX_STAT_ROWS]
+        if isinstance(guid, str) and SERVER_GUID.match(guid) and state in ("drain", "maint")
+    }
+
+
+def read_resources():
+    cpu = None
+    try:
+        fields = Path("/proc/stat").read_text().splitlines()[0].split()
+        if fields[0] == "cpu":
+            # user nice system idle iowait irq softirq steal; guest time is
+            # already counted in user and nice.
+            ticks = [int(value) for value in fields[1:9]]
+            cpu = {"total": sum(ticks), "idle": ticks[3] + ticks[4]}
+    except (OSError, ValueError, IndexError):
+        cpu = None
+    memory = None
+    try:
+        values = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            name, _, rest = line.partition(":")
+            if name in ("MemTotal", "MemAvailable"):
+                values[name] = int(rest.split()[0])
+        if len(values) == 2:
+            memory = {"total_kb": values["MemTotal"], "available_kb": values["MemAvailable"]}
+    except (OSError, ValueError, IndexError):
+        memory = None
+    try:
+        load = float(Path("/proc/loadavg").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        load = None
+    return {"cpu": cpu, "memory": memory, "load": load, "cpus": os.cpu_count()}
+
+
+def memory_summary(memory):
+    if not memory or not memory["total_kb"]:
+        return "unknown"
+    total = memory["total_kb"]
+    used = total - memory["available_kb"]
+    return f"{round(100 * used / total)} % used ({used // 1024} of {total // 1024} MB)"
+
+
+#
+# A directive and its argument, with the trailing comment keepalived allows.
+# The comment is why these are not `\s*$`: the configuration this project ships
+# writes `interface eth0  # CHANGE`, and a pattern that insists on the end of
+# the line reads that as no interface at all - which reports no VIP owner and
+# blocks every deploy, without saying why.
+#
+INTERFACE = re.compile(r"^\s*interface\s+(\S+)\s*(?:#.*)?$", re.MULTILINE)
+INCLUDE = re.compile(r"^include\s+(\S+)\s*(?:#.*)?$")
+ADDRESS = re.compile(r"^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(?:/\d+)?")
+VIP_BLOCK = re.compile(r"virtual_ipaddress\s*\{(.*?)\}", re.DOTALL)
+
+# One include deep is what this project's own layout uses. Deeper is not
+# followed, and an address that cannot be found is reported as unknown rather
+# than guessed at.
+MAX_INCLUDE_DEPTH = 1
+MAX_KEEPALIVED_BYTES = 1024 * 1024
+
+
+def read_config(path):
+    try:
+        if path.stat().st_size > MAX_KEEPALIVED_BYTES:
+            return None
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+
+def first_address(block, base, depth=0):
+    """The first address a virtual_ipaddress block puts on the interface.
+
+    Follows an `include`, because since the address list became a generated
+    file the block on a managed node holds exactly one line:
+
+        virtual_ipaddress {
+            include /etc/keepalived/addresses.conf
+        }
+
+    Reading only the block would then find no address, and this node would
+    report that it does not know whether it owns the VIP - which is not a
+    cosmetic answer: a deploy refuses to run without a known owner.
+    """
+
+    for line in block.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        include = INCLUDE.match(line)
+        if include:
+            if depth >= MAX_INCLUDE_DEPTH:
+                continue
+            path = Path(include.group(1))
+            if not path.is_absolute():
+                path = base / path
+            text = read_config(path)
+            if text is None:
+                continue
+            address = first_address(text, path.parent, depth + 1)
+            if address:
+                return address
+            continue
+
+        match = ADDRESS.match(line)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+def parse_keepalived():
+    text = read_config(KEEPALIVED_CONFIG)
+    if text is None:
+        return None, None
+
+    interface_match = INTERFACE.search(text)
+    interface = interface_match.group(1) if interface_match else None
+
+    vip = None
+    vip_block = VIP_BLOCK.search(text)
+    if vip_block:
+        vip = first_address(vip_block.group(1), KEEPALIVED_CONFIG.parent)
+
+    return interface, vip
+
+
+def owns_vip(interface, vip):
+    if not interface or not vip:
+        return None
+
+    r = run(
+        "/usr/sbin/ip",
+        "-j",
+        "-4",
+        "addr",
+        "show",
+        "dev",
+        interface,
+    )
+
+    if r.returncode != 0:
+        return None
+
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+
+    for iface in data:
+        for addr in iface.get("addr_info", []):
+            if addr.get("family") == "inet" and addr.get("local") == vip:
+                return True
+
+    return False
+
+
+def address_list(path):
+    """One address file as (present, digest). Two facts, told apart on purpose.
+
+    `present` False means the file is not there; a digest of None with
+    `present` True means it is there and could not be read or was too large.
+    The manager needs the difference: a release that publishes no address list
+    is not managing addresses from here at all, while one whose list cannot be
+    read is a question nobody has answered yet.
+    """
+
+    try:
+        if not path.is_file():
+            return False, None
+        if path.stat().st_size > MAX_KEEPALIVED_BYTES:
+            return True, None
+        return True, hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception:
+        return None, None
+
+
+def read_addresses():
+    """The keepalived address list as three measurements, not as a verdict.
+
+    The release carries the list, the node installs it, and keepalived.conf
+    includes it - three states that a single release hash cannot tell apart.
+    A deploy that activated the configuration and failed to activate the
+    addresses leaves the new hash in place with the old list restored, so the
+    hash alone reports that node as current. See B57 and the deploy matrix.
+
+    The include is reported and not compared: putting the line into
+    keepalived.conf is one deliberate step by a person, one node at a time, and
+    `haprion-pull-deploy` exits 0 when it is absent. It is a fact the reader
+    needs, not a target a deploy can reach.
+    """
+
+    published, published_digest = address_list(PUBLISHED_ADDRESSES)
+    installed, installed_digest = address_list(KEEPALIVED_ADDRESSES)
+
+    text = read_config(KEEPALIVED_CONFIG)
+    included = None if text is None else str(KEEPALIVED_ADDRESSES) in text
+
+    return {
+        "published": published,
+        "published_sha256": published_digest,
+        "installed": installed,
+        "installed_sha256": installed_digest,
+        "included": included,
+    }
+
+
+def address_summary(addresses):
+    """The address list in one line, for the person standing at the node.
+
+    Facts in the same order the deploy cares about them: does the release
+    publish a list, does the node carry that exact list, and is it in use.
+    """
+
+    if addresses["published"] is False:
+        return "none published by this release"
+    if addresses["published_sha256"] is None or addresses["installed_sha256"] is None:
+        if addresses["installed"] is False:
+            return "published, not installed"
+        return "UNKNOWN"
+    if addresses["published_sha256"] != addresses["installed_sha256"]:
+        return "installed list differs from the release"
+    if addresses["included"] is False:
+        return "installed, not included in keepalived.conf"
+    if addresses["included"] is None:
+        return "installed, include unknown"
+    return "installed and in use"
+
+
+def runtime_info():
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(2.0)
+        sock.connect(RUNTIME_SOCKET)
+        sock.sendall(b"show info\n")
+
+        chunks = []
+        while True:
+            data = sock.recv(65536)
+            if not data:
+                break
+            chunks.append(data)
+
+        sock.close()
+
+        text = b"".join(chunks).decode("utf-8", errors="replace")
+
+        info = {}
+        for line in text.splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            info[key.strip()] = value.strip()
+
+        return True, {
+            "version": info.get("Version"),
+            "uptime_sec": (
+                int(info["Uptime_sec"]) if info.get("Uptime_sec", "").isdigit() else None
+            ),
+            "shared_counters": shared_counters(
+                int(info["Pid"]) if info.get("Pid", "").isdigit() else None,
+                running_release_file(),
+            ),
+        }
+
+    except Exception:
+        return False, {
+            "version": None,
+            "uptime_sec": None,
+            "shared_counters": None,
+        }
+
+
+#
+# Whether the worker answering keeps its counters in the file `shm-stats-file`
+# names, so that they carry over a reload (N3, 2026-10-09). A reload starts
+# `Uptime_sec` from nought either way, and only this tells the metrics whether
+# the counters started again with it.
+#
+# Read from what is, not from what was asked for: the path the running
+# release's `global` names, and whether that worker has exactly that file
+# mapped shared. HAProxy opens it as root before the chroot, so the path is
+# the host's; a relative one is the master's working directory, which systemd
+# makes `/`. None when either cannot be read - unknown, not no.
+#
+SHM_STATS_FILE = re.compile(r"^\s*shm-stats-file\s+(\S+)\s*(?:#.*)?$")
+
+
+def shm_stats_path(config_text):
+    section = None
+    for line in config_text.splitlines():
+        if line[:1] and not line[:1].isspace() and not line.startswith("#"):
+            section = line.split()[0]
+            continue
+        if section == "global":
+            found = SHM_STATS_FILE.match(line)
+            if found:
+                return str(Path("/") / found.group(1))
+    return None
+
+
+def shared_counters(pid, release, proc=Path("/proc")):
+    if pid is None or release is None:
+        return None
+    try:
+        config_text = (release.parent / "haproxy.cfg").read_text(encoding="utf-8")
+        path = shm_stats_path(config_text)
+        if path is None:
+            return False
+        maps = (proc / str(pid) / "maps").read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    for line in maps.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) == 6 and fields[1] == "rw-s" and fields[5] == path:
+            return True
+    return False
+
+
+#
+# A pool's own row and one row per server, plus one row per frontend, from the
+# same socket `show info` already uses. This is HAProxy's own verdict - the
+# checks it has actually been running against the servers it was told about -
+# which is a different and more truthful answer than anything that probes from
+# somewhere else once.
+#
+# The CSV header names the columns rather than the positions being counted:
+# `show stat` has grown columns between versions, and a fixed index is a field
+# that quietly becomes another field after an upgrade.
+#
+MAX_STAT_ROWS = 500
+
+#
+# Why the frontends are reported at all, when they carry no health check: a
+# backend with three green servers and a frontend that never received the
+# request look identical from the server rows alone. That was measured, not
+# imagined - a site answered 503 with all three servers UP, and the only thing
+# that said which listener had answered was a counter per frontend. See B89.
+#
+# Why the counters keep HAProxy's own column names. A renamed counter is a
+# counter nobody can look up: `stot` and `hrsp_5xx` are searchable in
+# `configuration.txt`, `sessions_total` and `responses_5xx` are searchable
+# nowhere. The two fields below that *are* renamed carry a unit that HAProxy's
+# name does not state, which is a different thing from a translation.
+#
+# One list for both kinds of row rather than two. `show stat` leaves a column
+# empty where it does not apply - a frontend has no `econ`, a server no
+# `req_tot` - and `value` already answers None for an empty cell. Two hand-kept
+# lists would be two things to keep in step for no gain.
+#
+COUNTER_COLUMNS = (
+    "scur",
+    "stot",
+    "bin",
+    "bout",
+    "req_tot",
+    "qcur",
+    "ereq",
+    "econ",
+    "eresp",
+    "dreq",
+    "dresp",
+    "wretr",
+    "wredis",
+    "hrsp_2xx",
+    "hrsp_3xx",
+    "hrsp_4xx",
+    "hrsp_5xx",
+)
+
+
+def parse_stat(text):
+    """`show stat` output as frontends and pool members, or None if unreadable.
+
+    Kept apart from the socket so it can be run against captured output. The
+    reading and the parsing failing for the same reason - a node that answered
+    nothing and a node that answered something unparseable - are both None
+    here, because neither is a node with no listeners.
+    """
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines or not lines[0].startswith("#"):
+        return None
+
+    columns = [name.strip() for name in lines[0].lstrip("# ").split(",")]
+
+    def value(row, name):
+        try:
+            found = row[columns.index(name)].strip()
+        except (ValueError, IndexError):
+            return None
+        return found or None
+
+    def number(row, name):
+        found = value(row, name)
+        return int(found) if found is not None and found.isdigit() else None
+
+    def counters(row):
+        return {name: number(row, name) for name in COUNTER_COLUMNS}
+
+    frontends = []
+    servers = []
+    for line in lines[1 : MAX_STAT_ROWS + 1]:
+        row = line.split(",")
+        pool = value(row, "pxname")
+        member = value(row, "svname")
+        if pool is None or member is None:
+            continue
+        if member == "FRONTEND":
+            frontends.append(
+                {
+                    "frontend": pool,
+                    "status": value(row, "status"),
+                    "counters": counters(row),
+                }
+            )
+            continue
+        servers.append(
+            {
+                "backend": pool,
+                "server": member,
+                "status": value(row, "status"),
+                "check_status": value(row, "check_status"),
+                "check_code": value(row, "check_code"),
+                "check_duration_ms": number(row, "check_duration"),
+                "last_change_sec": number(row, "lastchg"),
+                "counters": counters(row),
+            }
+        )
+
+    return {"frontends": frontends, "servers": servers}
+
+
+#
+# Drain and maintenance as somebody set them (Fas 20, B263), from `show servers
+# state`. `show stat` cannot say it: a drained server whose check fails reads
+# DOWN there, the drain gone from sight (measured on 3.4.6, 26-10-09). The
+# admin column is a set of flags; only the two the runtime command sets are
+# read - forced maintenance 0x01 and forced drain 0x08. Maintenance clears a
+# drain, so a server is never both. Maintenance for any other reason (a failed
+# name resolution, a tracked server) is HAProxy's verdict, and `status` already
+# says it.
+#
+FORCED_MAINT = 0x01
+FORCED_DRAIN = 0x08
+
+
+def parse_servers_state(text):
+    """`show servers state` as each member's admin state, or None.
+
+    Keyed by pool and member, as `show stat` names them. Unreadable output is
+    None, which leaves every member's admin state unknown rather than ready.
+    """
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    header = next((line for line in lines if line.startswith("#")), None)
+    if header is None:
+        return None
+    columns = header.lstrip("# ").split()
+    try:
+        pool, member, admin = (
+            columns.index(name) for name in ("be_name", "srv_name", "srv_admin_state")
+        )
+    except ValueError:
+        return None
+
+    found = {}
+    rows = [line.split() for line in lines if not line.startswith("#")]
+    for row in rows[: MAX_STAT_ROWS + 1]:
+        if len(row) != len(columns) or not row[admin].isdigit():
+            continue
+        flags = int(row[admin])
+        found[(row[pool], row[member])] = {
+            "admin": (
+                "maint" if flags & FORCED_MAINT else "drain" if flags & FORCED_DRAIN else "ready"
+            ),
+        }
+    return found
+
+
+def with_admin_state(stat, states):
+    """Each member of a `show stat` reading with its admin state.
+
+    Null where `show servers state` could not be read or did not name the
+    member: unknown, which is not the same answer as ready.
+    """
+
+    if stat is None:
+        return None
+    for entry in stat["servers"]:
+        known = (states or {}).get((entry["backend"], entry["server"]), {})
+        entry["admin"] = known.get("admin")
+    return stat
+
+
+def ask_runtime(command):
+    """One command on the status socket, its answer as text, or None."""
+
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(2.0)
+        sock.connect(RUNTIME_SOCKET)
+        sock.sendall(command.encode() + b"\n")
+
+        chunks = []
+        while True:
+            data = sock.recv(65536)
+            if not data:
+                break
+            chunks.append(data)
+
+        sock.close()
+        return b"".join(chunks).decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def runtime_stat():
+    text = ask_runtime("show stat")
+    if text is None:
+        return None
+    states = ask_runtime("show servers state")
+    return with_admin_state(
+        parse_stat(text), None if states is None else parse_servers_state(states)
+    )
+
+
+def running_release_file():
+    """The RELEASE file of the configuration HAProxy runs, or None when unknown.
+
+    `current`'s, unless `haprion-pull-deploy` switched the link and has not
+    reloaded yet (review 2026-10-03, F2): its marker's first line then names
+    the release HAProxy still runs, and that one is reported, so the manager
+    sees the node as behind and the deploy it offers finishes the reload. A
+    marker that cannot be read, or names anything but a release directory,
+    reports nothing: this cannot tell what is in service.
+    """
+
+    if not CONFIG_PENDING.exists():
+        return CURRENT_RELEASE
+    try:
+        named = CONFIG_PENDING.read_text(encoding="utf-8").splitlines()[0].strip()
+    except Exception:
+        return None
+    running = Path(named)
+    if running.parent != RELEASES or not running.name or running.name.startswith("."):
+        return None
+    return running / "RELEASE"
+
+
+def read_release():
+    result = {
+        "version": None,
+        "hash": None,
+        "timestamp": None,
+        "cluster": None,
+    }
+
+    release_file = running_release_file()
+    if release_file is None or not release_file.is_file():
+        return result
+
+    try:
+        for line in release_file.read_text(encoding="utf-8").splitlines():
+            if "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip().lower()
+            value = value.strip()
+
+            if key in result:
+                result[key] = value
+
+    #
+    # A release file that cannot be read says nothing about the release; the
+    # fields stay None, which is how the manager reads "unknown".
+    #
+    except (OSError, ValueError):
+        return result
+
+    return result
+
+
+def leaf_fingerprint(text):
+    """SHA-256 of the first certificate in the file, lowercase hex.
+
+    The definition is identical to the manager's on purpose - the two values are
+    compared against each other, so a difference in what is hashed would make
+    every comparison meaningless.
+
+    The leaf's DER bytes, not the file: a published PEM is the private key
+    concatenated with the full chain, so hashing the file would change the
+    answer whenever the key encoding or the bundled intermediates changed,
+    without the certificate this node serves changing at all. The private key is
+    never hashed and never leaves this function.
+
+    First block rather than last, because a chain is written leaf-first. Taking
+    the last would fingerprint the CA and make every node look identical.
+    """
+
+    match = CERTIFICATE_BLOCK.search(text)
+    if match is None:
+        return None
+
+    try:
+        der = base64.b64decode("".join(match.group(1).split()), validate=True)
+    except Exception:
+        return None
+
+    if not der:
+        return None
+
+    return hashlib.sha256(der).hexdigest()
+
+
+def certificate_valid(path):
+    """Is it in its validity window right now? Measured, not assumed."""
+
+    return (
+        run("/usr/bin/openssl", "x509", "-in", str(path), "-noout", "-checkend", "0").returncode
+        == 0
+    )
+
+
+def read_certificates():
+    """What this node is carrying, by identity only.
+
+    Deliberately not enriched with subject, SANs or provenance. Whether a
+    certificate is ACME-renewed or static is knowable where certbot lives, not
+    on a node that only sees a file, so this reports what it can measure and
+    cert-list reports the rest. That is the `carried_certificate` contract.
+
+    A file that cannot be read or does not parse is left out rather than
+    reported as present with an unknown fingerprint: a certificate nobody could
+    identify must not be able to satisfy a comparison.
+    """
+
+    entries = []
+
+    #
+    # A certificate `haprion-cert-pull` installed but never got HAProxy to read
+    # is on disk and not in service. Its file says nothing about what clients
+    # are given, so it is left out like one that cannot be read - and the
+    # manager then sees the node as behind on it, and the deploy it offers is
+    # the run that finishes the reload. A marker that cannot be read leaves
+    # every certificate out: this cannot tell which are in service.
+    #
+    pending = set()
+    if CERT_PENDING.exists():
+        try:
+            pending = set(CERT_PENDING.read_text(encoding="ascii").split())
+        except Exception:
+            return entries
+
+    try:
+        paths = sorted(CERTS_DIR.glob("*.pem"))
+    except Exception:
+        return entries
+
+    for path in paths:
+        try:
+            if not path.is_file():
+                continue
+            if path.stat().st_size > MAX_CERTIFICATE_BYTES:
+                continue
+            fingerprint = leaf_fingerprint(path.read_text(encoding="ascii", errors="strict"))
+        #
+        # A file that cannot be read, or is not ASCII, is not a certificate
+        # this node can report on; the others still are.
+        #
+        except (OSError, ValueError):
+            continue
+
+        if fingerprint is None or path.name[: -len(".pem")] in pending:
+            continue
+
+        entries.append(
+            {
+                "id": path.name[: -len(".pem")],
+                "fingerprint_sha256": fingerprint,
+                "valid": certificate_valid(path),
+            }
+        )
+
+    return entries
+
+
+def read_validation():
+    if not VALIDATION_STATE.is_file():
+        return {
+            "valid": None,
+            "validated_at": None,
+        }
+
+    try:
+        data = json.loads(VALIDATION_STATE.read_text(encoding="utf-8"))
+        return {
+            "valid": data.get("valid"),
+            "validated_at": data.get("validated_at"),
+        }
+    except Exception:
+        return {
+            "valid": None,
+            "validated_at": None,
+        }
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-c", "--cluster", required=True)
+parser.add_argument("--json", action="store_true")
+args = parser.parse_args()
+
+if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", args.cluster):
+    print("ERROR: invalid cluster ID", file=sys.stderr)
+    sys.exit(64)
+
+interface, vip = parse_keepalived()
+vip_owner = owns_vip(interface, vip)
+
+haproxy_active = service_active("haproxy")
+keepalived_active = service_active("keepalived")
+
+try:
+    keepalived_state = KEEPALIVED_STATE.read_text(encoding="utf-8").strip()
+except Exception:
+    keepalived_state = None
+
+try:
+    ip_nonlocal_bind = Path("/proc/sys/net/ipv4/ip_nonlocal_bind").read_text().strip() == "1"
+except Exception:
+    ip_nonlocal_bind = None
+
+stats_ok, runtime = runtime_info()
+stat = runtime_stat()
+frontends = None if stat is None else stat["frontends"]
+servers = None if stat is None else stat["servers"]
+release = read_release()
+validation = read_validation()
+certificates = read_certificates()
+addresses = read_addresses()
+
+result = {
+    "schema_version": 1,
+    "node": socket.gethostname(),
+    "cluster": args.cluster,
+    "haproxy": {
+        "active": haproxy_active,
+    },
+    "keepalived": {
+        "active": keepalived_active,
+        "state": keepalived_state,
+        "addresses": addresses,
+    },
+    "vip": {
+        "address": vip,
+        "interface": interface,
+        "owner": vip_owner,
+    },
+    "ip_nonlocal_bind": ip_nonlocal_bind,
+    "release": release,
+    "config_validation": validation,
+    "stats_ok": stats_ok,
+    "runtime": runtime,
+    #
+    # `null` rather than an empty list when the socket could not be read, so a
+    # node that could not be asked is never reported as a node with no servers.
+    # The same holds for the listeners.
+    #
+    "frontends": frontends,
+    "servers": servers,
+    "certificates": certificates,
+    "installation": read_installation(),
+    "architecture": os.uname().machine,
+    "waf_engine": read_waf_engine(),
+    "dns_listener": read_dns_listener(),
+    "ipvs": read_ipvs(),
+    "resources": read_resources(),
+    "server_state_unapplied": read_server_state_unapplied(),
+    "packages": read_packages(),
+}
+
+if args.json:
+    print(json.dumps(result, separators=(",", ":"), sort_keys=True))
+else:
+    print(f"Node:              {result['node']}")
+    print(f"Cluster:           {result['cluster']}")
+    print(f"HAProxy:           {'ACTIVE' if haproxy_active else 'INACTIVE'}")
+    print(f"Keepalived:        {'ACTIVE' if keepalived_active else 'INACTIVE'}")
+    print(f"Keepalived state:  {keepalived_state or 'UNKNOWN'}")
+    print(f"Addresses:         {address_summary(addresses)}")
+    print(f"VIP:               {vip or 'UNKNOWN'}")
+    print(f"VIP owner:         {vip_owner}")
+    print(f"ip_nonlocal_bind:  {ip_nonlocal_bind}")
+    print(f"Runtime stats:     {'OK' if stats_ok else 'FAILED'}")
+    resources = result["resources"]
+    print(f"Memory:            {memory_summary(resources['memory'])}")
+    load = "unknown" if resources["load"] is None else f"{resources['load']:.2f}"
+    cpus = resources["cpus"]
+    count = "1 CPU" if cpus == 1 else f"{cpus or '?'} CPUs"
+    print(f"Load:              {load} on {count}, last minute")
+    waf = result["waf_engine"]
+    print(
+        f"WAF engine:        {waf['version'] or 'NOT INSTALLED'}"
+        f"{' (ACTIVE)' if waf['active'] else ''}"
+    )
+    dns = result["dns_listener"]
+    print(
+        f"DNS listener:      {dns['version'] or 'NOT INSTALLED'}"
+        f"{' (ACTIVE)' if dns['active'] else ''}"
+    )
+    for pool in (dns["counters"] or {}).get("pools", []):
+        print(
+            f"  {pool['pool']}  queries={pool['queries']}"
+            f"  refused={pool['refused']}  answered={pool['answered']}"
+        )
+    ipvs = result["ipvs"]
+    print(f"Syslog IPVS:       {ipvs_summary(ipvs)}")
+    for service in ipvs["services"] or []:
+        print(
+            f"  {service['protocol']} {service['address']}:{service['port']}"
+            f"  messages={service['packets']}  receivers={len(service['receivers'])}"
+        )
+    #
+    # Requests and 5xx per listener, because that is the pair that says whether
+    # a request reached this node at all - the question the removed stats page
+    # used to answer for a person standing here. See B90.
+    #
+    if frontends:
+        print("Frontends:")
+        for entry in frontends:
+            counters = entry["counters"]
+            requests = counters["req_tot"]
+            failed = counters["hrsp_5xx"]
+            print(
+                f"  {entry['frontend']}  {entry['status']}"
+                f"  req={'-' if requests is None else requests}"
+                f"  5xx={'-' if failed is None else failed}"
+            )
+    if servers:
+        print("Servers:")
+        for entry in servers:
+            check = entry["check_status"] or "-"
+            held = f"  [{entry['admin']}]" if entry.get("admin") in ("drain", "maint") else ""
+            print(f"  {entry['backend']}/{entry['server']}  {entry['status']}  ({check}){held}")
+
+sys.exit(0)

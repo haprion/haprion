@@ -86,7 +86,7 @@ done
 
 #
 # Written once. After that the file is the record: nodes are added and removed
-# through haproxy-node and the interface's Nodes card (B211), and fields this
+# through haprion-node and the interface's Nodes card (B211), and fields this
 # step does not render (address_prefix, vips, sources ...) are edited by hand.
 # Rendering it again from the answers file would drop all of that, so a
 # second run keeps it unless REWRITE_CLUSTER_FILE=yes asks for the answers'
@@ -143,13 +143,13 @@ fi
 #
 # The keys step 3 makes, named here so that the commands find them. Until
 # 2026-10-09 this step wrote neither status_identity nor probe_identity, and
-# `haproxy-status` - which refuses to run without the first - did not work on a
+# `haprion-status` - which refuses to run without the first - did not work on a
 # manager built from these scripts until the lines were added by hand.
 #
 if [[ -n "${STATUS_USER:-}" && -n "${NODE_STATUS_KEY:-}" ]]; then
     policy+="
 
-# Reads node status and nothing else; haproxy-deploy reads with it too.
+# Reads node status and nothing else; haprion-deploy reads with it too.
 status_identity:
   user: \"${STATUS_USER}\"
   key: \"${KEY_DIR}/${NODE_STATUS_KEY}\""
@@ -198,7 +198,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/opt/haprion/current/bin/haproxy-state-backup -c %i
+ExecStart=/opt/haprion/current/bin/haprion-state-backup -c %i
 User=root
 Group=root
 UMask=0077
@@ -222,7 +222,7 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native"
-    install_file /etc/systemd/system/haproxy-state-backup@.service root:root 644 "$backup_service"
+    install_file /etc/systemd/system/haprion-state-backup@.service root:root 644 "$backup_service"
     backup_timer="[Unit]
 Description=Schedule Haprion node state backup for cluster %i
 
@@ -232,7 +232,7 @@ Description=Schedule Haprion node state backup for cluster %i
 # own: an instance stays disabled until an administrator sets its schedule,
 # which writes a drop-in that replaces this line.
 OnCalendar=*-*-* 05:00:00
-Unit=haproxy-state-backup@%i.service
+Unit=haprion-state-backup@%i.service
 # No RandomizedDelaySec: the instances of one manager serialise on a lock
 # already, and the time an administrator set is the time the page promises.
 Persistent=yes
@@ -241,7 +241,7 @@ AccuracySec=1min"
 
 [Install]
 WantedBy=timers.target"
-    install_file /etc/systemd/system/haproxy-state-backup@.timer root:root 644 "$backup_timer"
+    install_file /etc/systemd/system/haprion-state-backup@.timer root:root 644 "$backup_timer"
     systemctl daemon-reload
 fi
 
@@ -338,9 +338,9 @@ else
         rm -f "$sudoers_staging"
         die "the rendered editing policy does not parse; nothing was installed"
     fi
-    install -o root -g root -m 440 "$sudoers_staging" /etc/sudoers.d/haproxy-config-edit
+    install -o root -g root -m 440 "$sudoers_staging" /etc/sudoers.d/haprion-config-edit
     rm -f "$sudoers_staging"
-    log "  installed /etc/sudoers.d/haproxy-config-edit  (visudo accepted it)"
+    log "  installed /etc/sudoers.d/haprion-config-edit  (visudo accepted it)"
     log "            editors: ${editors}"
 fi
 

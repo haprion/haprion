@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-cert-publish` - registered certificates to their targets.
+"""The privileged half of `haprion-cert-publish` - registered certificates to their targets.
 
 The same `publish` the certbot deploy hook runs, reached from a job instead of
 from a hook. The caller may narrow the run to certificates the registry already
@@ -42,7 +42,7 @@ from haproxy_mgmt.helper_protocol import (
 
 OPERATION = "cert_publish"
 PARAMETERS = frozenset({"certificates", "deploy"})
-HELPER = "/opt/haprion/current/bin/haproxy-cert-publish-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cert-publish-helper"
 SUDO = "/usr/bin/sudo"
 
 
@@ -152,7 +152,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=require_root,
-            helper_name="haproxy-cert-publish-helper",
+            helper_name="haprion-cert-publish-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

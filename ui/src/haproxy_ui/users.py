@@ -1,7 +1,7 @@
 """Settings -> Users: the accounts as a person reads them (Fas 13, §16.4 U4).
 
 The accounts live in the interface's own database, and the web writes them
-within the column grants of 0039. `haproxy-ui-user` stays the break-glass path
+within the column grants of 0039. `haprion-user` stays the break-glass path
 and does the same verbs; this module only turns rows into what the page draws.
 """
 

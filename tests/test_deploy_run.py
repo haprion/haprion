@@ -583,7 +583,7 @@ def preflight(*published: tuple[str, str], root: bool = True) -> CertificatePref
         if root
         else None,
         referenced=tuple(identifier for identifier, _ in published),
-        next_command="haproxy-cert-deploy -c alpha",
+        next_command="haprion-cert-deploy -c alpha",
     )
 
 
@@ -614,7 +614,7 @@ class CertificatePreflightTests(unittest.TestCase):
         self.assertIn("ERROR: [certificates_not_deployed]", shown)
         self.assertIn("node-a (missing example-net)", shown)
         self.assertIn("node-b (missing example-net)", shown)
-        self.assertIn("Run haproxy-cert-deploy -c alpha first, then deploy again", shown)
+        self.assertIn("Run haprion-cert-deploy -c alpha first, then deploy again", shown)
 
         report = LAST_REPORT[0]
         self.assertEqual(report.outcome.value, "blocked")
@@ -627,7 +627,7 @@ class CertificatePreflightTests(unittest.TestCase):
                     {"node": "node-a", "missing": ["example-net"], "stale": []},
                     {"node": "node-b", "missing": ["example-net"], "stale": []},
                 ],
-                "next_command": "haproxy-cert-deploy -c alpha",
+                "next_command": "haprion-cert-deploy -c alpha",
             },
         )
 

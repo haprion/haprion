@@ -1,6 +1,6 @@
 """Carry one receiver request from the worker to the helper's socket (B163).
 
-`haproxy-cert-receiver-helper` writes `/etc`: it runs `useradd`, and it
+`haprion-cert-receiver-helper` writes `/etc`: it runs `useradd`, and it
 rewrites an sshd drop-in and an nginx snippet. The worker's unit has
 `ProtectSystem=strict`, and a helper the worker starts through sudo inherits
 that mount namespace - so the first registration from the interface failed
@@ -71,7 +71,7 @@ def main(
     writer: TextIO = output_stream or sys.stdout
     errors: TextIO = error_stream or sys.stderr
     if argv:
-        errors.write("ERROR: haproxy-cert-receiver-ask accepts no command-line arguments\n")
+        errors.write("ERROR: haprion-cert-receiver-ask accepts no command-line arguments\n")
         return 64
 
     try:
@@ -107,7 +107,7 @@ def main(
                 cluster=None,
                 request_id=request_id,
                 code="dependency_unavailable",
-                message=f"{exc} Install haproxy-cert-receiver-helper.socket (07-platform-services).",
+                message=f"{exc} Install haprion-cert-receiver-helper.socket (07-platform-services).",
                 exit_code=EXIT_UNAVAILABLE,
             ),
         )

@@ -1,4 +1,4 @@
-"""`haproxy-history-reset` - start a cluster's version history over.
+"""`haprion-history-reset` - start a cluster's version history over.
 
 The name is the contract. This resets the HISTORY; the configuration is kept
 exactly as it is and becomes version 1. A command called "factory reset" would
@@ -28,7 +28,7 @@ It does NOT deploy. Sending a reload to production nodes is not something a
 command named "history-reset" should do quietly, and it is not urgent: the nodes
 are already running this exact configuration, since the configuration is what was
 kept. Only the release metadata differs. The deploy is printed as the next step,
-and `haproxy-config-status` keeps showing the difference until it is run.
+and `haprion-config-status` keeps showing the difference until it is run.
 """
 
 from __future__ import annotations
@@ -49,11 +49,11 @@ CONFIRMATION = "please reset me"
 BASELINE_MESSAGE = "Baseline after the build phase"
 OPERATION = "reset_history"
 
-HELPER = "/opt/haprion/current/bin/haproxy-history-reset-helper"
-PUBLISH = "/usr/local/bin/haproxy-publish"
+HELPER = "/opt/haprion/current/bin/haprion-history-reset-helper"
+PUBLISH = "/usr/local/bin/haprion-publish"
 SUDO = "/usr/bin/sudo"
 
-USAGE = "Usage:\n  haproxy-history-reset -c <cluster>"
+USAGE = "Usage:\n  haprion-history-reset -c <cluster>"
 
 type RunHelper = Callable[[str, bytes], tuple[int, str, str]]
 type PublishCall = Callable[[str], int]
@@ -179,14 +179,14 @@ def main(
             "\nERROR: the reset succeeded but publishing version 1 did not.\n"
             "Until it does, this cluster's published release refers to a version that\n"
             "no longer exists. Fix the cause and run:\n\n"
-            f'  haproxy-publish -c {cluster_id} "{BASELINE_MESSAGE}"\n'
+            f'  haprion-publish -c {cluster_id} "{BASELINE_MESSAGE}"\n'
         )
         return published
 
     writer.write(
         "\nThe nodes are already running this configuration - only the release metadata\n"
         "differs. Bring them into step with:\n\n"
-        f"  haproxy-deploy -c {cluster_id}\n"
+        f"  haprion-deploy -c {cluster_id}\n"
     )
     return 0
 

@@ -65,7 +65,7 @@ the validation-only certificate. Rendering them rather than hand-editing is the
 point: what the code reads and what you reviewed cannot drift apart.
 
 When `BACKUP_ROOT` is set it also installs the hardened
-`haproxy-state-backup@.service` template. A timer or *Back up now* starts one
+`haprion-state-backup@.service` template. A timer or *Back up now* starts one
 validated cluster instance; the service itself never accepts a path or node.
 
 It also installs the operator editing policy — the `sudoedit` rules that let the
@@ -131,7 +131,7 @@ key and forced command.
 Two more things, in this order, on a cluster that carries no traffic if you have
 one:
 
-1. `haproxy-deploy -c alpha` with the nodes already current. It should skip both
+1. `haprion-deploy -c alpha` with the nodes already current. It should skip both
    nodes and change nothing. A run that correctly does nothing tests the ordering
    logic for real.
 2. Publish a harmless change and deploy it. Confirm the non-owner is deployed

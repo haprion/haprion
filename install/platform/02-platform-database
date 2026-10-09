@@ -306,7 +306,7 @@ log "  ok       ${WEB_USER} cannot connect as ${DB_MIGRATION_ROLE}"
 echo
 step "Naming this environment for the account tool"
 #
-# haproxy-ui-user is given the database and the role here rather than deriving
+# haprion-user is given the database and the role here rather than deriving
 # them from the application's configuration. Each environment gets its own
 # root-owned file, so `-e prod` cannot be pointed at the dev database - or, in
 # the direction that actually matters, the reverse - by an environment variable
@@ -314,7 +314,7 @@ step "Naming this environment for the account tool"
 #
 ensure_dir /etc/haprion root:root 755
 install_file "/etc/haprion/ui-admin-${ENVIRONMENT}.conf" root:root 644 "$(cat <<EOF
-# Read by haproxy-ui-user -e ${ENVIRONMENT}. Written by 02-platform-database.
+# Read by haprion-user -e ${ENVIRONMENT}. Written by 02-platform-database.
 DB_NAME=${DB_NAME}
 DB_ROLE=${DB_MIGRATION_ROLE}
 DUMP_DIR=${PLATFORM_ROOT}/data/dumps

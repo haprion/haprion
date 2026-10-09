@@ -54,7 +54,7 @@ class TheList(unittest.TestCase):
             code, out, err = ask(policy_in(Path(raw)))
 
         self.assertEqual((code, err), (0, ""))
-        document = assert_contract("haproxy-cluster-list", out)
+        document = assert_contract("haprion-cluster-list", out)
         expected = list(
             yaml.safe_load((BASE / "examples" / "clusters.yaml").read_text())["clusters"]
         )

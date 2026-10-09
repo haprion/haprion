@@ -1,4 +1,4 @@
-"""`haproxy-config-status` - "what have I not sent yet, and what is published".
+"""`haprion-config-status` - "what have I not sent yet, and what is published".
 
 The requirement comes from B10 point 8: the two-tree model must not become
 visible only at the moment something breaks. The command has to be usable
@@ -36,7 +36,7 @@ from haproxy_mgmt.version_history import current_version
 RELEASE_HELPER = "/usr/local/sbin/haproxy-published-release"
 SUDO = "/usr/bin/sudo"
 
-USAGE = "Usage:\n  haproxy-config-status -c <cluster>\n"
+USAGE = "Usage:\n  haprion-config-status -c <cluster>\n"
 
 #
 # What the manual path owns, and what the interface owns. `managed/` is written
@@ -175,7 +175,7 @@ def main(
         writer.write("  Nothing unsent. Everything you have changed is published.\n")
     else:
         _listing(writer, "  Unsent - changes that have not become a version yet:", waiting)
-        writer.write(f'\n  Publish them with:\n    haproxy-publish -c {cluster_id} "<comment>"\n')
+        writer.write(f'\n  Publish them with:\n    haprion-publish -c {cluster_id} "<comment>"\n')
 
     if interface_owned:
         writer.write("\n")

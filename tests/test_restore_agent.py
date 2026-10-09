@@ -197,14 +197,14 @@ APPLY_FILES: list[Member] = [
     ("/etc/apt/sources.list.d/ubuntu.sources", "file", 0o644, 0, 0, "archive\n"),
     ("/etc/apt/sources.list.d/haproxy.sources", "file", 0o644, 0, 0, "haproxy\n"),
     ("/etc/sudoers.d", "directory", 0o750, 0, 0, b""),
-    ("/etc/sudoers.d/haproxy-node", "file", 0o440, 0, 0, "# rules\n"),
+    ("/etc/sudoers.d/haprion-node", "file", 0o440, 0, 0, "# rules\n"),
     ("/etc/haprion/node.conf", "file", 0o600, 0, 0, "CLUSTER=alpha\n"),
     ("/root/.ssh", "directory", 0o700, 0, 0, b""),
     ("/root/.ssh/known_hosts", "file", 0o644, 0, 0, "mgr key\n"),
     ("/var/lib/svc-backup/.ssh/authorized_keys", "file", 0o644, 0, 0, "restrict\n"),
     ("/etc/systemd/system/ipvsadm.service", "symlink", 0o777, 0, 0, "/dev/null"),
     ("/etc/default/grub.d/99-local.cfg", "file", 0o644, 0, 0, "local\n"),
-    (f"/var/lib/haproxy-restore/{RUN}/node-bundle.tar.gz", "file", 0o600, 0, 0, BUNDLE),
+    (f"/var/lib/haprion-restore/{RUN}/node-bundle.tar.gz", "file", 0o600, 0, 0, BUNDLE),
 ]
 
 APPLY_HEADER: dict[str, Any] = {
@@ -299,9 +299,9 @@ class Apply(AgentTest):
     def test_files_land_with_their_metadata_and_parents_are_created_plain(self) -> None:
         result = self.apply()
         self.assertTrue(result["ok"], result)
-        self.assertEqual(self.host.path("/etc/sudoers.d/haproxy-node").read_text(), "# rules\n")
+        self.assertEqual(self.host.path("/etc/sudoers.d/haprion-node").read_text(), "# rules\n")
         self.assertEqual(
-            self.host.path("/etc/sudoers.d/haproxy-node").stat().st_mode & 0o7777, 0o440
+            self.host.path("/etc/sudoers.d/haprion-node").stat().st_mode & 0o7777, 0o440
         )
         self.assertEqual(self.host.path("/etc/sudoers.d").stat().st_mode & 0o7777, 0o750)
         # A parent the export only created with mkdir -p is plain 0755 root here.
@@ -313,7 +313,7 @@ class Apply(AgentTest):
         self.apply()
         self.assertFalse(self.host.path("/etc/sudoers.d/90-cloud-init-users").exists())
         moved = self.host.path(
-            f"/var/lib/haproxy-restore/{RUN}/quarantine/etc/sudoers.d/90-cloud-init-users"
+            f"/var/lib/haprion-restore/{RUN}/quarantine/etc/sudoers.d/90-cloud-init-users"
         )
         self.assertTrue(moved.exists())
         self.assertEqual(
@@ -321,7 +321,7 @@ class Apply(AgentTest):
         )
 
     def test_runs_older_than_thirty_days_are_removed_when_a_run_begins_writing(self) -> None:
-        state = self.host.path("/var/lib/haproxy-restore")
+        state = self.host.path("/var/lib/haprion-restore")
         today = time.strftime("%y%m%d")
         old = time.strftime("%y%m%d", time.localtime(time.time() - 40 * 86400))
         recent = time.strftime("%y%m%d", time.localtime(time.time() - 20 * 86400))
@@ -450,11 +450,11 @@ class Apply(AgentTest):
         current = self.host.path("/etc/haproxy/current")
         self.assertTrue(current.is_symlink())
         config = self.host.path("/etc/haproxy/releases/00000000-000000/haproxy.cfg").read_text()
-        self.assertIn("bind unix@/run/haproxy-restore-bootstrap.sock mode 600", config)
+        self.assertIn("bind unix@/run/haprion-restore-bootstrap.sock mode 600", config)
         self.assertEqual(
             str(self.host.path("/etc/haproxy/haproxy.cfg").readlink()), "current/haproxy.cfg"
         )
-        moved = self.host.path(f"/var/lib/haproxy-restore/{RUN}/quarantine/etc/haproxy/haproxy.cfg")
+        moved = self.host.path(f"/var/lib/haprion-restore/{RUN}/quarantine/etc/haproxy/haproxy.cfg")
         self.assertEqual(moved.read_text(), "package default\n")
 
     def test_keepalived_is_masked_in_test_mode(self) -> None:
@@ -480,7 +480,7 @@ class Apply(AgentTest):
         result = self.apply()
         self.assertTrue(result["ok"], result)
         argv = self.prepared()
-        work = self.host.path(f"/var/lib/haproxy-restore/{RUN}/node-bundle")
+        work = self.host.path(f"/var/lib/haprion-restore/{RUN}/node-bundle")
         self.assertEqual(
             argv,
             [
@@ -498,13 +498,13 @@ class Apply(AgentTest):
         )
         # The bundle is extracted beside the run, never placed as a node file.
         self.assertFalse(self.host.path("/etc/node-bundle.tar.gz").exists())
-        self.assertNotIn(["/usr/local/sbin/haproxy-traffic-log-enable"], self.host.commands)
+        self.assertNotIn(["/usr/local/sbin/haprion-traffic-log-enable"], self.host.commands)
 
     def test_the_traffic_log_is_turned_on_by_the_bundle_when_it_was_on(self) -> None:
         header = dict(APPLY_HEADER, traffic_log=True)
         result = self.apply(header)
         self.assertTrue(result["ok"], result)
-        enable = self.host.commands.index(["/usr/local/sbin/haproxy-traffic-log-enable"])
+        enable = self.host.commands.index(["/usr/local/sbin/haprion-traffic-log-enable"])
         self.assertLess(self.host.commands.index(self.prepared()), enable)
 
     def test_the_node_preparation_s_warnings_are_reported_but_the_state_file_s(self) -> None:
@@ -553,7 +553,7 @@ class Apply(AgentTest):
         self.assertEqual(self.host.commands, [])
 
     def test_nothing_else_may_be_placed_in_the_restore_s_own_directory(self) -> None:
-        stray: Member = (f"/var/lib/haproxy-restore/{RUN}/answers.env", "file", 0o600, 0, 0, "x")
+        stray: Member = (f"/var/lib/haprion-restore/{RUN}/answers.env", "file", 0o600, 0, 0, "x")
         result = self.serve(APPLY_HEADER, payload([*APPLY_FILES, stray]))
         self.assertFalse(result["ok"])
         self.assertIn("own directory", result["error"])
@@ -584,14 +584,14 @@ class Network(AgentTest):
         self.assertEqual(
             self.host.path("/etc/netplan/50-cloud-init.yaml").read_text(), "network: {}\n"
         )
-        before = self.host.path(f"/var/lib/haproxy-restore/{RUN}/netplan-before/50-cloud-init.yaml")
+        before = self.host.path(f"/var/lib/haprion-restore/{RUN}/netplan-before/50-cloud-init.yaml")
         self.assertEqual(before.read_text(), "dhcp\n")
         runs = self.commands("systemd-run")
         self.assertEqual(
-            runs[0][1:3], [f"--unit=haproxy-restore-rollback-{RUN}", "--on-active=180"]
+            runs[0][1:3], [f"--unit=haprion-restore-rollback-{RUN}", "--on-active=180"]
         )
-        self.assertEqual(runs[1][1:3], [f"--unit=haproxy-restore-apply-{RUN}", "--on-active=3"])
-        self.assertEqual(result["rollback_unit"], f"haproxy-restore-rollback-{RUN}")
+        self.assertEqual(runs[1][1:3], [f"--unit=haprion-restore-apply-{RUN}", "--on-active=3"])
+        self.assertEqual(result["rollback_unit"], f"haprion-restore-rollback-{RUN}")
 
     def test_a_rejected_netplan_is_put_back_at_once(self) -> None:
         self.host.fail.add("netplan")
@@ -627,7 +627,7 @@ class Finish(AgentTest):
 
     def test_the_order_is_timer_haproxy_certificates_config_services_keys(self) -> None:
         self.host.active.update(
-            {f"haproxy-restore-rollback-{RUN}.timer": "active", "haproxy": "active"}
+            {f"haprion-restore-rollback-{RUN}.timer": "active", "haproxy": "active"}
         )
         result = self.serve(self.header(), payload(self.KEYS))
         self.assertTrue(result["ok"], result)
@@ -635,10 +635,10 @@ class Finish(AgentTest):
         self.assertEqual(
             sequence,
             [
-                ["systemctl", "stop", f"haproxy-restore-rollback-{RUN}.timer"],
+                ["systemctl", "stop", f"haprion-restore-rollback-{RUN}.timer"],
                 ["systemctl", "start", "haproxy"],
-                ["/usr/local/sbin/haproxy-cert-pull", "cert-a", "cert-b"],
-                ["/usr/local/sbin/haproxy-pull-deploy"],
+                ["/usr/local/sbin/haprion-cert-pull", "cert-a", "cert-b"],
+                ["/usr/local/sbin/haprion-pull-deploy"],
             ],
         )
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "operator key\n")
@@ -650,7 +650,7 @@ class Finish(AgentTest):
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
 
     def test_failing_services_keep_the_one_time_key(self) -> None:
-        self.host.active.update({f"haproxy-restore-rollback-{RUN}.timer": "active"})
+        self.host.active.update({f"haprion-restore-rollback-{RUN}.timer": "active"})
         result = self.serve(self.header(), payload(self.KEYS))
         self.assertFalse(result["ok"])
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
@@ -658,7 +658,7 @@ class Finish(AgentTest):
     def test_keepalived_is_started_for_a_real_restore(self) -> None:
         self.host.active.update(
             {
-                f"haproxy-restore-rollback-{RUN}.timer": "active",
+                f"haprion-restore-rollback-{RUN}.timer": "active",
                 "haproxy": "active",
                 "keepalived": "active",
             }
@@ -690,12 +690,12 @@ class Overwrite(AgentTest):
         super().setUp()
         # A running node: its product files, its release, a stray file of its own.
         for name, text in {
-            "/etc/sudoers.d/haproxy-node": "# node's rules\n",
+            "/etc/sudoers.d/haprion-node": "# node's rules\n",
             "/etc/haprion/node.conf": "CLUSTER=drifted\n",
             "/etc/haprion/node-installation.json": '{"node_api": 1}\n',
             "/etc/haprion/stray": "left by hand\n",
             "/etc/haprion/node.conf.replaced-20260101-000000": "old\n",
-            "/usr/local/sbin/haproxy-pull-deploy": "#!/bin/sh\nold\n",
+            "/usr/local/sbin/haprion-pull-deploy": "#!/bin/sh\nold\n",
         }.items():
             path = self.host.path(name)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -715,7 +715,7 @@ class Overwrite(AgentTest):
                 "op": "inspect",
                 "names": [],
                 "ids": [],
-                "hash": ["/etc/sudoers.d/haproxy-node", "/etc/missing"],
+                "hash": ["/etc/sudoers.d/haprion-node", "/etc/missing"],
                 "list": ["/etc/haprion", "/etc/systemd/system/haproxy.service.d"],
                 "packages": ["haproxy", "keepalived", "rsync"],
             }
@@ -723,7 +723,7 @@ class Overwrite(AgentTest):
         self.assertTrue(result["ok"], result)
         self.assertIsNone(result["hashes"]["/etc/missing"])
         self.assertEqual(
-            result["hashes"]["/etc/sudoers.d/haproxy-node"],
+            result["hashes"]["/etc/sudoers.d/haprion-node"],
             hashlib.sha256(b"# node's rules\n").hexdigest(),
         )
         self.assertIn("/etc/haprion/stray", result["hashes"])
@@ -744,7 +744,7 @@ class Overwrite(AgentTest):
         keys.parent.mkdir(parents=True, exist_ok=True)
         keys.write_bytes(
             archived
-            + b'from="192.0.2.7",restrict ssh-ed25519 AAAAone haproxy-restore-r260925-5cbabcd3\n'
+            + b'from="192.0.2.7",restrict ssh-ed25519 AAAAone haprion-restore-r260925-5cbabcd3\n'
         )
         header = {"op": "inspect", "names": [], "ids": [], "hash": ["/root/.ssh/authorized_keys"]}
         this_run = self.serve({**header, "run": "r260925-5cbabcd3"})
@@ -763,7 +763,7 @@ class Overwrite(AgentTest):
         self.assertEqual(steps[:2], ["copy", "keepalived"])
         self.assertEqual(self.host.commands[0], ["systemctl", "stop", "keepalived"])
         self.assertTrue(
-            self.host.path(f"/var/lib/haproxy-restore/{RUN}/before/files.tar").is_file()
+            self.host.path(f"/var/lib/haprion-restore/{RUN}/before/files.tar").is_file()
         )
 
     def test_the_nodes_software_and_release_are_left_alone(self) -> None:
@@ -786,7 +786,7 @@ class Overwrite(AgentTest):
         self.apply()
         self.assertFalse(self.host.path("/etc/haprion/stray").exists())
         self.assertTrue(
-            self.host.path(f"/var/lib/haproxy-restore/{RUN}/quarantine/etc/haprion/stray").exists()
+            self.host.path(f"/var/lib/haprion-restore/{RUN}/quarantine/etc/haprion/stray").exists()
         )
         self.assertTrue(self.host.path("/etc/haprion/node-installation.json").exists())
         self.assertTrue(self.host.path("/etc/haprion/node.conf.replaced-20260101-000000").exists())
@@ -802,7 +802,7 @@ class Overwrite(AgentTest):
         self.assertEqual(self.host.path("/etc/haprion/node.conf").read_text(), "CLUSTER=drifted\n")
         self.assertEqual(self.host.path("/etc/haprion/stray").read_text(), "left by hand\n")
         self.assertEqual(
-            self.host.path("/etc/sudoers.d/haproxy-node").read_text(), "# node's rules\n"
+            self.host.path("/etc/sudoers.d/haprion-node").read_text(), "# node's rules\n"
         )
         # What the overwrite added is set aside, not left behind.
         self.assertFalse(self.host.path("/etc/default/grub.d/99-local.cfg").exists())
@@ -819,7 +819,7 @@ class Overwrite(AgentTest):
 
     def test_a_copy_naming_a_path_outside_the_node_is_not_put_back(self) -> None:
         self.apply()
-        copy = self.host.path(f"/var/lib/haproxy-restore/{RUN}/before/files.tar")
+        copy = self.host.path(f"/var/lib/haprion-restore/{RUN}/before/files.tar")
         with tarfile.open(copy, "a") as archive:
             info = tarfile.TarInfo("../escaped")
             archive.addfile(info, io.BytesIO(b""))
@@ -830,7 +830,7 @@ class Overwrite(AgentTest):
 
     def test_a_failed_rollback_says_go_to_the_console(self) -> None:
         self.host.fail = {"bash"}
-        self.host.path("/var/lib/haproxy-restore").mkdir(parents=True)
+        self.host.path("/var/lib/haprion-restore").mkdir(parents=True)
         original = restore_agent.rollback_files
 
         def broken(*_args: object) -> None:

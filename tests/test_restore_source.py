@@ -10,7 +10,7 @@ from haproxy_mgmt.backup_archive import ArchiveError
 from tests.restore_fixture import FILES, SERVICE_ACCOUNTS, build
 
 BASE = Path(__file__).resolve().parents[1]
-EXPORTER = BASE / "install/node/haproxy-state-export"
+EXPORTER = BASE / "install/node/haprion-state-export"
 
 
 class TheRootsAreTheExportersOwn(unittest.TestCase):
@@ -54,7 +54,7 @@ class ReadingAnArchive(unittest.TestCase):
             "/home/operator/.ssh/authorized_keys",
             "/var/lib/svc-backup/.ssh/authorized_keys",
             "/etc/ssh/ssh_host_ed25519_key",
-            "/usr/local/sbin/haproxy-pull-deploy",
+            "/usr/local/sbin/haprion-pull-deploy",
             "/etc/default/grub.d/99-local.cfg",
         ):
             self.assertIn(path, owned)

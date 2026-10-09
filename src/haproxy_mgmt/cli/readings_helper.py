@@ -1,4 +1,4 @@
-"""`haproxy-readings-helper` - the poller's manager-local readings in one call (review 26-10-08, N2).
+"""`haprion-readings-helper` - the poller's manager-local readings in one call (review 26-10-08, N2).
 
 Six of the poller's readings touch nothing but the manager: the version
 listing, the backup archives, the certificate list, the network description,
@@ -50,7 +50,7 @@ from haproxy_mgmt.helper_protocol import (
 
 OPERATION = "readings"
 PARAMETERS = frozenset({"reads"})
-HELPER = "/opt/haprion/current/bin/haproxy-readings-helper"
+HELPER = "/opt/haprion/current/bin/haprion-readings-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_NOT_ROOT = 77
 #
@@ -164,7 +164,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-readings-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-readings-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

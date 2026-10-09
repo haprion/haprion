@@ -1,6 +1,6 @@
 """The node's WAF engine steps, exercised as the shell they actually are.
 
-The functions are extracted from `install/node/haproxy-pull-deploy` verbatim and
+The functions are extracted from `install/node/haprion-pull-deploy` verbatim and
 run with `systemctl`, `journalctl`, `ss` and the engine replaced by recording
 stubs - the same method as the keepalived step. The engine's own answers are
 the lines it was measured to log (2026-10-02, Coraza SPOA v0.9.0):
@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-pull-deploy"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-pull-deploy"
 FUNCTIONS = ("validate_waf_candidate", "waf_listening", "waf_journal", "sync_waf_engine")
 
 #
@@ -274,7 +274,7 @@ class TheWafEngineSteps(unittest.TestCase):
         self.assertIn("systemctl enable --quiet coraza-spoa.service", self.calls())
 
 
-STATUS = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
+STATUS = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 
 
 class TheStatusReport(unittest.TestCase):

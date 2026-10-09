@@ -5,7 +5,7 @@ receiver and one of two actions: `add`, with the transport and either the
 public key text or the https allowlist, or `remove`. What each means - the
 account, the directory, the lock in `authorized_keys` or the nginx block -
 is `cert_receiver`'s, exactly as when the operator types
-`haproxy-cert-receiver` (user-manual.md, 'Registering a receiver'); this helper only carries
+`haprion-cert-receiver` (user-manual.md, 'Registering a receiver'); this helper only carries
 the request across the privilege boundary and hands back the same layers
 and the same instructions.
 
@@ -17,7 +17,7 @@ step on the receiving host in the middle, which is a terminal's operation.
 Not run through sudo (B163). It writes `/etc`, and the worker's sandbox keeps
 `/etc` read-only for anything the worker starts; so it answers on
 `/run/haprion/cert-receiver.sock` from a unit of its own, and the worker
-sends the request there with `haproxy-cert-receiver-ask`.
+sends the request there with `haprion-cert-receiver-ask`.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ from haproxy_mgmt.helper_protocol import (
 )
 
 OPERATION = "cert_receiver"
-HELPER = "/opt/haprion/current/bin/haproxy-cert-receiver-helper"
+HELPER = "/opt/haprion/current/bin/haprion-cert-receiver-helper"
 
 PARAMETERS = frozenset({"receiver", "action", "transport", "public_key", "allow"})
 ACTIONS = frozenset({"add", "remove"})
@@ -144,7 +144,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=require_root,
-            helper_name="haproxy-cert-receiver-helper",
+            helper_name="haprion-cert-receiver-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

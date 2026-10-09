@@ -24,7 +24,7 @@ valid_abs_path "$PLATFORM_ROOT" || die "not an absolute path without '..': ${PLA
 for user in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
     id -u "$user" >/dev/null 2>&1 \
         || die "service account ${user} does not exist. Render and apply the
-  sysusers fragment first: haproxy-render-sysusers --policy <file>"
+  sysusers fragment first: haprion-render-sysusers --policy <file>"
 done
 
 #

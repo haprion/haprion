@@ -272,7 +272,7 @@ fi
 #
 if [[ -n "${WORKER_USER:-}" ]] && systemctl cat "${WORKER_USER}.service" >/dev/null 2>&1; then
     step "Holding the worker's claims"
-    drain=(bin/haproxy-ui-drain -e "${ENVIRONMENT:-prod}")
+    drain=(bin/haprion-drain -e "${ENVIRONMENT:-prod}")
     "${drain[@]}" pause --wait "${DRAIN_SECONDS:-900}"
     # shellcheck disable=SC2064 # the command is fixed now, not when the trap runs
     trap "$(printf '%q ' "${drain[@]}") resume || true" EXIT
@@ -378,7 +378,7 @@ step "The account tool"
 # link at every invocation, while a symlink written now would have to be
 # rewritten by every future release to stay honest.
 #
-install_file /usr/local/sbin/haproxy-ui-user root:root 755 "$(cat <<EOF
+install_file /usr/local/sbin/haprion-user root:root 755 "$(cat <<EOF
 #!/bin/bash
 #
 # Accounts for the web interface. Installed by install-ui-release.
@@ -387,7 +387,7 @@ install_file /usr/local/sbin/haproxy-ui-user root:root 755 "$(cat <<EOF
 # it. Root only; it connects as the migration role, which is the only identity
 # allowed to write the account table.
 #
-exec ${PLATFORM_ROOT}/current/venv/bin/haproxy-ui-user "\$@"
+exec ${PLATFORM_ROOT}/current/venv/bin/haprion-user "\$@"
 EOF
 )"
 
@@ -401,15 +401,15 @@ step "The first account"
 # A warning rather than a stop: the release is already active, and an
 # installation that has not migrated yet makes the account after it has.
 #
-/usr/local/sbin/haproxy-ui-user -e "$ENVIRONMENT" init-admin \
-    || warn "no first account was made; after ./migrate, run: haproxy-ui-user -e ${ENVIRONMENT} init-admin"
+/usr/local/sbin/haprion-user -e "$ENVIRONMENT" init-admin \
+    || warn "no first account was made; after ./migrate, run: haprion-user -e ${ENVIRONMENT} init-admin"
 
 step "The drain command"
 #
 # What the rollback command holds the worker's claims with. A rendered copy for
 # the reason the rollback command is one.
 #
-install_file /usr/local/sbin/haproxy-ui-drain root:root 755 "$(cat bin/haproxy-ui-drain)"
+install_file /usr/local/sbin/haprion-drain root:root 755 "$(cat bin/haprion-drain)"
 
 step "The rollback command"
 #
@@ -417,8 +417,8 @@ step "The rollback command"
 # command that lives inside the release it is rolling away from is a command
 # that can be replaced by the very switch it is performing.
 #
-install_file /usr/local/sbin/haproxy-ui-rollback root:root 755 \
-    "$(sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" bin/haproxy-ui-rollback)"
+install_file /usr/local/sbin/haprion-rollback root:root 755 \
+    "$(sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" bin/haprion-rollback)"
 
 echo
 log "release ${release_id} is current"

@@ -436,7 +436,7 @@ class SigningIn(LoginTestCase):
                 "limit": 14,
                 "nodes": [],
                 "schedule": {
-                    "unit": "haproxy-state-backup@alpha.timer",
+                    "unit": "haprion-state-backup@alpha.timer",
                     "known": True,
                     "enabled": True,
                     "active": True,

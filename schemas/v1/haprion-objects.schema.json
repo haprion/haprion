@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-objects.schema.json",
+  "title": "haprion-objects JSON result",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "objects"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed"
+          ]
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/objects_result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "done"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/objects_result"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "object": {
+      "type": "object",
+      "required": [
+        "name",
+        "document",
+        "readable",
+        "problem",
+        "protocol",
+        "hostnames"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "document": {
+          "type": "string",
+          "maxLength": 262144
+        },
+        "readable": {
+          "type": "boolean"
+        },
+        "problem": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 4096
+        },
+        "protocol": {
+          "oneOf": [
+            {
+              "enum": [
+                "http",
+                "https",
+                "tcp",
+                "dns",
+                "syslog"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hostnames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "backend_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "redirect_http": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "vip": {
+          "description": "The VIP the object is served on, worked out by the generator's rule against the cluster's network description (B222). Null where that description could not be read; address null where it has no VIP of that name. Absent from an older release.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name",
+                "address",
+                "default"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 63
+                },
+                "address": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "default": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "source": {
+          "description": "The address the object connects to backends from. Null where it leaves from no fixed address or the network could not be read; name null when the address is the VIP's own.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name",
+                "address"
+              ],
+              "properties": {
+                "name": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 63
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "address": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "servers": {
+          "description": "Every backend server as host:port, in document order.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "health_checked": {
+          "description": "Whether any backend is health checked; null where the document could not be read.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "runtime_backends": {
+          "description": "The names the generator gives this object's backends, pools then redirects (B250); null where the document could not be read. Absent from an older release.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "objects_result": {
+      "type": "object",
+      "required": [
+        "commit",
+        "generated_at",
+        "objects"
+      ],
+      "properties": {
+        "commit": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generated_at": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/object"
+          }
+        },
+        "fingerprint": {
+          "description": "What the listing depends on - commit, network description and engine - as one digest (B222). A caller sends it back as unchanged_since. Absent from an older release.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unchanged": {
+          "description": "Present and true only when the caller sent unchanged_since and it still matches: objects is then empty and the caller keeps the listing it holds.",
+          "const": true
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

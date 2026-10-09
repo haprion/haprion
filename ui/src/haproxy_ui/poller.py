@@ -86,7 +86,7 @@ class Source:
     #
     # A reading of its own helper, behind its own sudo rule - the two that
     # reach the nodes. None for a manager-local reading, which is asked for
-    # with the others in one `haproxy-readings-helper` call (N2) and says the
+    # with the others in one `haprion-readings-helper` call (N2) and says the
     # parameters its helper takes in `reading`.
     #
     run: RunHelper | None

@@ -4,16 +4,16 @@
 
 | Script | What it does |
 |---|---|
-| `haproxy-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
-| `haproxy-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates |
-| `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
-| `haproxy-node-status` | reports version, health, carried certificates, pool members and keepalived state |
-| `haproxy-health-probe` | tries a health check against named servers, from this node, and reports whether they answered |
-| `haproxy-keepalived-state` | records the keepalived transition to a state file |
-| `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
-| `haproxy-traffic-log-read` | returns bounded, whole JSONL records for one validated UTC day and cursor, or the WAF engine's journal lines after a journal cursor (`waf <cursor>`) |
-| `haproxy-traffic-log-enable` | installs or removes the node's rsyslog route and its retention timer |
-| `haproxy-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
+| `haprion-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
+| `haprion-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates |
+| `haprion-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
+| `haprion-node-status` | reports version, health, carried certificates, pool members and keepalived state |
+| `haprion-health-probe` | tries a health check against named servers, from this node, and reports whether they answered |
+| `haprion-keepalived-state` | records the keepalived transition to a state file |
+| `haprion-state-export` | writes this node's permanent state to stdout as a gzipped tar |
+| `haprion-traffic-log-read` | returns bounded, whole JSONL records for one validated UTC day and cursor, or the WAF engine's journal lines after a journal cursor (`waf <cursor>`) |
+| `haprion-traffic-log-enable` | installs or removes the node's rsyslog route and its retention timer |
+| `haprion-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
 
 ## Nothing environment-specific is compiled in
 
@@ -38,14 +38,14 @@ The file is mode 600 root-owned for a specific reason: it names the account and
 key this node fetches configuration with, so whoever can edit it can point the
 node at a different source.
 
-This matters more than it looks. Before it existed, `haproxy-pull-deploy` was
+This matters more than it looks. Before it existed, `haprion-pull-deploy` was
 maintained as three separate copies that differed only in one line — the
 publication path — and each copy looked perfectly correct on its own. That is
 the kind of drift that survives for years.
 
 ## Bundle inventory
 
-`haproxy-state-export` was the last one out. It carried a hardcoded list of local
+`haprion-state-export` was the last one out. It carried a hardcoded list of local
 accounts — real operator names, which is why it could not be published — and that
 list is now `BACKUP_ACCOUNTS` in `node.conf`. The hardcoded version had a second
 problem the accounts hid: an account added after it was written was silently left
@@ -53,7 +53,7 @@ out of every backup.
 
 The traffic-log reader is attested as part of the same bundle. Its account, read group and empty
 `authorized_keys` file are prepared by step 4. Step 4 does not turn the stream on: run
-`sudo haproxy-traffic-log-enable` on a node whose published configuration enables the second log
+`sudo haprion-traffic-log-enable` on a node whose published configuration enables the second log
 stream, and `--disable` to take it away again. It also installs the daily retention timer. The
 collector key is still to come; until the route is installed no structured traffic file is written,
 and the empty account accepts no connection either way.

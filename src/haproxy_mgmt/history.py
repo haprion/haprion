@@ -1,13 +1,13 @@
 """The shared version-history read model, in the frozen `list` result shape.
 
-`haproxy-list` prints this for a human and the interface's helper returns it as
+`haprion-list` prints this for a human and the interface's helper returns it as
 JSON, so both are built here rather than assembled twice. Two readers of the same
 history that count or label versions differently would disagree about what
 "version 7" means - and the number is not stored anywhere, it is counted, which
 makes an independent second implementation the easiest kind of drift to
 introduce and the hardest to notice.
 
-The shape is `schemas/v1/haproxy-list.schema.json`, frozen in phase 0. `current`
+The shape is `schemas/v1/haprion-list.schema.json`, frozen in phase 0. `current`
 there means the newest saved version - what a publish would build on - and is a
 separate question from which version the nodes are running. The published
 release is reported alongside it, under keys the schema allows, so a reader can

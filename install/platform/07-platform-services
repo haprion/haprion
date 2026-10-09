@@ -100,15 +100,15 @@ step "The web service's way to the probe"
 # that platform is built not to have.
 #
 if [[ "${PROBE_SOCKET:-no}" == "yes" ]]; then
-    install_file "/etc/systemd/system/haproxy-probe-helper@.service" root:root 644 \
-        "$(cat 'examples/haproxy-probe-helper@.service.example')"
-    install_file "/etc/systemd/system/haproxy-probe-helper.socket" root:root 644 \
-        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haproxy-probe-helper.socket.example)"
+    install_file "/etc/systemd/system/haprion-probe-helper@.service" root:root 644 \
+        "$(cat 'examples/haprion-probe-helper@.service.example')"
+    install_file "/etc/systemd/system/haprion-probe-helper.socket" root:root 644 \
+        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-probe-helper.socket.example)"
     systemctl daemon-reload
-    systemctl enable --quiet haproxy-probe-helper.socket
-    systemctl restart haproxy-probe-helper.socket
-    systemctl is-active --quiet haproxy-probe-helper.socket \
-        || die "haproxy-probe-helper.socket did not start"
+    systemctl enable --quiet haprion-probe-helper.socket
+    systemctl restart haprion-probe-helper.socket
+    systemctl is-active --quiet haprion-probe-helper.socket \
+        || die "haprion-probe-helper.socket did not start"
     log "  listening on /run/haprion/probe.sock  (group ${WEB_USER})"
 else
     log "  skipped: PROBE_SOCKET is not yes, so this platform cannot probe"
@@ -125,15 +125,15 @@ step "The web service's way to a name lookup"
 # different one, and the socket's path is one per host.
 #
 if [[ "${ENVIRONMENT:-prod}" == "prod" ]]; then
-    install_file "/etc/systemd/system/haproxy-resolve-helper@.service" root:root 644 \
-        "$(cat 'examples/haproxy-resolve-helper@.service.example')"
-    install_file "/etc/systemd/system/haproxy-resolve-helper.socket" root:root 644 \
-        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haproxy-resolve-helper.socket.example)"
+    install_file "/etc/systemd/system/haprion-resolve-helper@.service" root:root 644 \
+        "$(cat 'examples/haprion-resolve-helper@.service.example')"
+    install_file "/etc/systemd/system/haprion-resolve-helper.socket" root:root 644 \
+        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-resolve-helper.socket.example)"
     systemctl daemon-reload
-    systemctl enable --quiet haproxy-resolve-helper.socket
-    systemctl restart haproxy-resolve-helper.socket
-    systemctl is-active --quiet haproxy-resolve-helper.socket \
-        || die "haproxy-resolve-helper.socket did not start"
+    systemctl enable --quiet haprion-resolve-helper.socket
+    systemctl restart haprion-resolve-helper.socket
+    systemctl is-active --quiet haprion-resolve-helper.socket \
+        || die "haprion-resolve-helper.socket did not start"
     log "  listening on /run/haprion/resolve.sock  (group ${WEB_USER})"
 else
     log "  skipped: ENVIRONMENT is ${ENVIRONMENT}, and names are looked up on production only"
@@ -147,15 +147,15 @@ step "The web service's way to an exportable certificate's key"
 # key of an exportable entry and of no other, and writes nothing.
 #
 if [[ "${ENVIRONMENT:-prod}" == "prod" ]]; then
-    install_file "/etc/systemd/system/haproxy-cert-export-helper@.service" root:root 644 \
-        "$(cat 'examples/haproxy-cert-export-helper@.service.example')"
-    install_file "/etc/systemd/system/haproxy-cert-export-helper.socket" root:root 644 \
-        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haproxy-cert-export-helper.socket.example)"
+    install_file "/etc/systemd/system/haprion-cert-export-helper@.service" root:root 644 \
+        "$(cat 'examples/haprion-cert-export-helper@.service.example')"
+    install_file "/etc/systemd/system/haprion-cert-export-helper.socket" root:root 644 \
+        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-cert-export-helper.socket.example)"
     systemctl daemon-reload
-    systemctl enable --quiet haproxy-cert-export-helper.socket
-    systemctl restart haproxy-cert-export-helper.socket
-    systemctl is-active --quiet haproxy-cert-export-helper.socket \
-        || die "haproxy-cert-export-helper.socket did not start"
+    systemctl enable --quiet haprion-cert-export-helper.socket
+    systemctl restart haprion-cert-export-helper.socket
+    systemctl is-active --quiet haprion-cert-export-helper.socket \
+        || die "haprion-cert-export-helper.socket did not start"
     log "  listening on /run/haprion/cert-export.sock  (group ${WEB_USER})"
 else
     log "  skipped: ENVIRONMENT is ${ENVIRONMENT}, and certificates are exported on production only"
@@ -168,21 +168,21 @@ step "The worker's way to the receiver helper"
 # namespace, and registering a receiver writes /etc: useradd, an sshd drop-in,
 # an nginx snippet. So the helper answers on a root-owned socket, group the
 # worker's account, from a short-lived unit outside that sandbox. The worker's
-# client, haproxy-cert-receiver-ask, carries the request there.
+# client, haprion-cert-receiver-ask, carries the request there.
 #
 # Installed wherever the worker is: a platform with a worker has a receivers
 # page, and a page whose job fails with "not installed" is worse than one that
 # works. Nothing here reaches the nodes.
 #
-install_file "/etc/systemd/system/haproxy-cert-receiver-helper@.service" root:root 644 \
-    "$(cat 'examples/haproxy-cert-receiver-helper@.service.example')"
-install_file "/etc/systemd/system/haproxy-cert-receiver-helper.socket" root:root 644 \
-    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haproxy-cert-receiver-helper.socket.example)"
+install_file "/etc/systemd/system/haprion-cert-receiver-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-cert-receiver-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-cert-receiver-helper.socket" root:root 644 \
+    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haprion-cert-receiver-helper.socket.example)"
 systemctl daemon-reload
-systemctl enable --quiet haproxy-cert-receiver-helper.socket
-systemctl restart haproxy-cert-receiver-helper.socket
-systemctl is-active --quiet haproxy-cert-receiver-helper.socket \
-    || die "haproxy-cert-receiver-helper.socket did not start"
+systemctl enable --quiet haprion-cert-receiver-helper.socket
+systemctl restart haprion-cert-receiver-helper.socket
+systemctl is-active --quiet haprion-cert-receiver-helper.socket \
+    || die "haprion-cert-receiver-helper.socket did not start"
 log "  listening on /run/haprion/cert-receiver.sock  (group ${WORKER_USER})"
 
 step "The worker's way to the node helper"
@@ -191,48 +191,48 @@ step "The worker's way to the node helper"
 # node writes root's known_hosts, the pull accounts' authorized_keys, the
 # cluster file and the traffic collector's files, none of which a helper the
 # worker starts through sudo may write. So it answers on a root-owned socket,
-# group the worker's account; haproxy-node-ask carries the request there.
+# group the worker's account; haprion-node-ask carries the request there.
 #
-install_file "/etc/systemd/system/haproxy-node-helper@.service" root:root 644 \
-    "$(cat 'examples/haproxy-node-helper@.service.example')"
-install_file "/etc/systemd/system/haproxy-node-helper.socket" root:root 644 \
-    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haproxy-node-helper.socket.example)"
+install_file "/etc/systemd/system/haprion-node-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-node-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-node-helper.socket" root:root 644 \
+    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haprion-node-helper.socket.example)"
 systemctl daemon-reload
-systemctl enable --quiet haproxy-node-helper.socket
-systemctl restart haproxy-node-helper.socket
-systemctl is-active --quiet haproxy-node-helper.socket \
-    || die "haproxy-node-helper.socket did not start"
+systemctl enable --quiet haprion-node-helper.socket
+systemctl restart haprion-node-helper.socket
+systemctl is-active --quiet haprion-node-helper.socket \
+    || die "haprion-node-helper.socket did not start"
 log "  listening on /run/haprion/cluster-node.sock  (group ${WORKER_USER})"
 
 step "The worker's way to the interface certificate"
 #
 # The same reason as the receiver helper (B163, B188): the certificate helpers
 # the worker starts through sudo run inside its ProtectSystem=strict namespace,
-# and haproxy-ui-tls writes /etc/haprion/tls. So the last step of
+# and haprion-tls writes /etc/haprion/tls. So the last step of
 # publishing the interface certificate - naming it by ID - is asked of a root
 # unit on its own socket. The renewal timer installs directly.
 #
-install_file "/etc/systemd/system/haproxy-ui-tls-helper@.service" root:root 644 \
-    "$(cat 'examples/haproxy-ui-tls-helper@.service.example')"
-install_file "/etc/systemd/system/haproxy-ui-tls-helper.socket" root:root 644 \
-    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haproxy-ui-tls-helper.socket.example)"
+install_file "/etc/systemd/system/haprion-tls-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-tls-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-tls-helper.socket" root:root 644 \
+    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haprion-tls-helper.socket.example)"
 systemctl daemon-reload
-systemctl enable --quiet haproxy-ui-tls-helper.socket
-systemctl restart haproxy-ui-tls-helper.socket
-systemctl is-active --quiet haproxy-ui-tls-helper.socket \
-    || die "haproxy-ui-tls-helper.socket did not start"
+systemctl enable --quiet haprion-tls-helper.socket
+systemctl restart haprion-tls-helper.socket
+systemctl is-active --quiet haprion-tls-helper.socket \
+    || die "haprion-tls-helper.socket did not start"
 log "  listening on /run/haprion/ui-tls.sock  (group ${WORKER_USER})"
 
 step "The worker's way to backup jobs"
-install_file "/etc/systemd/system/haproxy-backup-job-helper@.service" root:root 644 \
-    "$(cat 'examples/haproxy-backup-job-helper@.service.example')"
-install_file "/etc/systemd/system/haproxy-backup-job-helper.socket" root:root 644 \
-    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haproxy-backup-job-helper.socket.example)"
+install_file "/etc/systemd/system/haprion-backup-job-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-backup-job-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-backup-job-helper.socket" root:root 644 \
+    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haprion-backup-job-helper.socket.example)"
 systemctl daemon-reload
-systemctl enable --quiet haproxy-backup-job-helper.socket
-systemctl restart haproxy-backup-job-helper.socket
-systemctl is-active --quiet haproxy-backup-job-helper.socket \
-    || die "haproxy-backup-job-helper.socket did not start"
+systemctl enable --quiet haprion-backup-job-helper.socket
+systemctl restart haprion-backup-job-helper.socket
+systemctl is-active --quiet haprion-backup-job-helper.socket \
+    || die "haprion-backup-job-helper.socket did not start"
 log "  listening on /run/haprion/backup-job.sock  (group ${WORKER_USER})"
 
 step "The worker's way to node restore jobs"
@@ -241,15 +241,15 @@ step "The worker's way to node restore jobs"
 # under /var/lib and reaches its target as root over SSH, and a helper the
 # worker started through sudo would run inside the worker's read-only mounts.
 #
-install_file "/etc/systemd/system/haproxy-node-restore-helper@.service" root:root 644 \
-    "$(cat 'examples/haproxy-node-restore-helper@.service.example')"
-install_file "/etc/systemd/system/haproxy-node-restore-helper.socket" root:root 644 \
-    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haproxy-node-restore-helper.socket.example)"
+install_file "/etc/systemd/system/haprion-node-restore-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-node-restore-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-node-restore-helper.socket" root:root 644 \
+    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haprion-node-restore-helper.socket.example)"
 systemctl daemon-reload
-systemctl enable --quiet haproxy-node-restore-helper.socket
-systemctl restart haproxy-node-restore-helper.socket
-systemctl is-active --quiet haproxy-node-restore-helper.socket \
-    || die "haproxy-node-restore-helper.socket did not start"
+systemctl enable --quiet haprion-node-restore-helper.socket
+systemctl restart haprion-node-restore-helper.socket
+systemctl is-active --quiet haprion-node-restore-helper.socket \
+    || die "haprion-node-restore-helper.socket did not start"
 log "  listening on /run/haprion/node-restore.sock  (group ${WORKER_USER})"
 
 #
@@ -374,33 +374,33 @@ refuse() {
 # asks as the accounts that exist and would most like to have it.
 #
 refuse "$WEB_USER" "cannot run the status helper" \
-    sudo -n /opt/haprion/current/bin/haproxy-status-helper
+    sudo -n /opt/haprion/current/bin/haprion-status-helper
 refuse "$WORKER_USER" "cannot run the status helper" \
-    sudo -n /opt/haprion/current/bin/haproxy-status-helper
+    sudo -n /opt/haprion/current/bin/haprion-status-helper
 refuse "$WEB_USER" "cannot run the inventory helper" \
-    sudo -n /opt/haprion/current/bin/haproxy-inventory-helper
+    sudo -n /opt/haprion/current/bin/haprion-inventory-helper
 refuse "$WORKER_USER" "cannot run the inventory helper" \
-    sudo -n /opt/haprion/current/bin/haproxy-inventory-helper
+    sudo -n /opt/haprion/current/bin/haprion-inventory-helper
 refuse "$WEB_USER" "cannot run the readings helper" \
-    sudo -n /opt/haprion/current/bin/haproxy-readings-helper
+    sudo -n /opt/haprion/current/bin/haprion-readings-helper
 refuse "$WORKER_USER" "cannot run the readings helper" \
-    sudo -n /opt/haprion/current/bin/haproxy-readings-helper
+    sudo -n /opt/haprion/current/bin/haprion-readings-helper
 refuse "$WEB_USER" "has no DNS profile helper grant" \
-    sudo -n -l /opt/haprion/current/bin/haproxy-dns-profile-apply-helper
+    sudo -n -l /opt/haprion/current/bin/haprion-dns-profile-apply-helper
 refuse "$POLLER_USER" "has no DNS profile helper grant" \
-    sudo -n -l /opt/haprion/current/bin/haproxy-dns-profile-apply-helper
+    sudo -n -l /opt/haprion/current/bin/haprion-dns-profile-apply-helper
 refuse "$WEB_USER" "has no NDES profile helper grant" \
-    sudo -n -l /opt/haprion/current/bin/haproxy-ndes-profile-apply-helper
+    sudo -n -l /opt/haprion/current/bin/haprion-ndes-profile-apply-helper
 refuse "$POLLER_USER" "has no NDES profile helper grant" \
-    sudo -n -l /opt/haprion/current/bin/haproxy-ndes-profile-apply-helper
+    sudo -n -l /opt/haprion/current/bin/haprion-ndes-profile-apply-helper
 refuse "$WEB_USER" "has no NDES enrollment helper grant" \
-    sudo -n -l /opt/haprion/current/bin/haproxy-cert-scep-helper
+    sudo -n -l /opt/haprion/current/bin/haprion-cert-scep-helper
 refuse "$POLLER_USER" "has no NDES enrollment helper grant" \
-    sudo -n -l /opt/haprion/current/bin/haproxy-cert-scep-helper
+    sudo -n -l /opt/haprion/current/bin/haprion-cert-scep-helper
 refuse "$WEB_USER" "has no certificate delete grant" \
-    sudo -n -l /opt/haprion/current/bin/haproxy-cert-delete-helper
+    sudo -n -l /opt/haprion/current/bin/haprion-cert-delete-helper
 refuse "$POLLER_USER" "has no certificate delete grant" \
-    sudo -n -l /opt/haprion/current/bin/haproxy-cert-delete-helper
+    sudo -n -l /opt/haprion/current/bin/haprion-cert-delete-helper
 if [[ -d "${PLATFORM_ROOT}/secrets/dns-profile-keys" ]]; then
     while IFS= read -r key; do
         refuse "$WEB_USER" "cannot read a DNS profile private key" test -r "$key"

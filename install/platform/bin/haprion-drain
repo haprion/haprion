@@ -1,0 +1,139 @@
+#!/bin/bash
+#
+# haprion-drain - hold the worker's claims while the worker is restarted.
+#
+#     haprion-drain -e <environment> pause [--wait <seconds>]
+#     haprion-drain -e <environment> resume
+#
+# Restarting the worker ends the job it is running. For most jobs that is
+# recovered from: the worker judges an abandoned job by what it can read and
+# runs it again or says it is unknown. A node restore or a backup is different -
+# its root helper carries on behind its socket, and the job ends `unknown` for a
+# run that changed a node. The release used to check once, before preparing,
+# that none was running; the restart came minutes later, and a job could start
+# in between (review 2026-10-04, CR-12).
+#
+# `pause` stops new claims and then waits until no job is running, or refuses
+# after `--wait` seconds (default 900) and lifts the pause again. `resume` lifts
+# it. The pause carries an end time - the wait and five minutes more - so a run
+# killed before it could resume does not stop the queue for good.
+#
+# The pause is set holding a SHARE lock on the job table, which every claim's
+# update conflicts with: a claim either committed before the pause, and its job
+# is then waited for, or it reads the pause. A second SELECT just before the
+# restart would only have made the window smaller.
+#
+set -Eeuo pipefail
+
+#
+# Overridable for the database tests only; sudo does not pass it through.
+#
+CONFIG_DIRECTORY="${HAPROXY_UI_DRAIN_CONFIG:-/etc/haprion}"
+
+log()  { echo "[$(date '+%H:%M:%S')] $*"; }
+warn() { echo "WARNING: $*" >&2; }
+die()  { echo "ERROR: $*" >&2; exit "${2:-1}"; }
+usage() { sed -n '5,6p' "$0" | sed 's/^# \?//'; exit 64; }
+
+[[ $EUID -eq 0 || -n "${HAPROXY_UI_DRAIN_CONFIG:-}" ]] || die "run this with sudo"
+
+environment=""
+wait_seconds=900
+[[ "${1:-}" == "-e" ]] || usage
+environment="${2:-}"
+command="${3:-}"
+shift 3 || usage
+case "$command" in
+    pause)
+        if [[ "${1:-}" == "--wait" ]]; then
+            wait_seconds="${2:-}"
+            shift 2 || usage
+        fi
+        ;;
+    resume) ;;
+    *) usage ;;
+esac
+[[ $# -eq 0 ]] || usage
+[[ "$environment" =~ ^[a-z0-9]+$ ]] || die "environment names are alphanumeric" 64
+[[ "$wait_seconds" =~ ^[0-9]+$ && "$wait_seconds" -ge 1 ]] || die "--wait takes whole seconds" 64
+
+config="${CONFIG_DIRECTORY}/ui-admin-${environment}.conf"
+[[ -r "$config" ]] || die "cannot read ${config}" 78
+# shellcheck disable=SC1090
+source "$config"
+for name in DB_NAME DB_ROLE; do
+    [[ -n "${!name:-}" ]] || die "${name} is not set in ${config}" 78
+done
+
+psql_as() {
+    PGOPTIONS='-c client_min_messages=warning' \
+        psql -U "$DB_ROLE" -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 "$@"
+}
+
+#
+# What is running under a live lease. A job whose worker is already gone is the
+# worker's recovery to judge, and waiting for its lease would wait for nothing.
+#
+running() {
+    psql_as -c "
+        select string_agg(operation || ' (job ' || id || ')', ', ' order by id)
+          from job
+         where state = 'running' and lease_until > statement_timestamp()"
+}
+
+resume() {
+    psql_as -c "update job_claim_gate set paused_until = null, paused_by = null" >/dev/null
+    log "  claims resumed"
+}
+
+gate_present="$(psql_as -c "select to_regclass('public.job_claim_gate') is not null")" \
+    || die "cannot read the database ${DB_NAME}"
+
+if [[ "$gate_present" != "t" ]]; then
+    #
+    # A schema from before 0060, when a release rolls back across it or a
+    # bridge activates. There is nothing to pause, so this does what the
+    # release did before: refuses while a restore or a backup runs.
+    #
+    [[ "$command" == "resume" ]] && exit 0
+    busy="$(psql_as -c "
+        select string_agg(operation || ' (job ' || id || ')', ', ' order by id)
+          from job
+         where state = 'running' and lease_until > statement_timestamp()
+           and (operation like 'node_restore%' or operation = 'backup_run')")"
+    [[ -z "$busy" ]] || die "wait for ${busy} to finish; the worker is about to restart" 75
+    warn "this schema has no claim pause; nothing is held while the worker restarts"
+    exit 0
+fi
+
+if [[ "$command" == "resume" ]]; then
+    resume
+    exit 0
+fi
+
+psql_as >/dev/null <<SQL
+begin;
+lock table job in share mode;
+update job_claim_gate
+   set paused_until = statement_timestamp() + make_interval(secs => ${wait_seconds} + 300),
+       paused_by = 'release on $(hostname -s)';
+commit;
+SQL
+log "  claims paused"
+
+deadline=$((SECONDS + wait_seconds))
+said=""
+while :; do
+    busy="$(running)"
+    [[ -z "$busy" ]] && break
+    if (( SECONDS >= deadline )); then
+        resume
+        die "still running after ${wait_seconds} s: ${busy}. Nothing was restarted; try again when it is done" 75
+    fi
+    if [[ "$busy" != "$said" ]]; then
+        log "  waiting for ${busy}"
+        said="$busy"
+    fi
+    sleep 2
+done
+log "  no job is running"

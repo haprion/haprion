@@ -1,0 +1,55 @@
+# Where the interface asks for a health probe.
+#
+# Why a socket and not a sudo rule
+# --------------------------------
+# The probe helper needs root, for one reason: the probe identity's private key
+# is root-owned, because no application identity may hold a key that reaches a
+# node. The web service is the caller, and the web service is built so that it
+# cannot gain privilege at all - NoNewPrivileges=yes, an empty capability
+# bounding set, RestrictSUIDSGID=yes. Under NoNewPrivileges a setuid sudo does
+# not fail because a rule is missing; it fails before it reads sudoers, and it
+# fails however the rule is written.
+#
+# So the privilege stays where it is and the request travels instead. What is on
+# the other end of this socket takes no arguments and does exactly one thing, so
+# reaching it is worth no more than the sudo rule would have been.
+#
+# Who may connect
+# ---------------
+# The socket is root-owned, group WEB_USER, mode 0660: one account, named
+# explicitly. The development platform's web account is deliberately not given
+# access - it has no business reaching the real nodes - and its interface says
+# so plainly rather than showing an empty result.
+#
+# The directory is /run/haprion, created at every boot by
+# /etc/tmpfiles.d/haproxy-mgmt.conf. /run is tmpfs and cleared on boot, which is
+# what we want: a socket must not outlive the service answering on it.
+#
+# Installed as /etc/systemd/system/haprion-probe-helper.socket, then
+# `systemctl enable --now haprion-probe-helper.socket`.
+
+[Unit]
+Description=Socket the Haprion interface asks for a health probe on
+Documentation=file:///opt/haprion/current
+
+[Socket]
+ListenStream=/run/haprion/probe.sock
+SocketUser=root
+SocketGroup=WEB_USER
+SocketMode=0660
+
+# One connection is one request, so each gets its own short-lived instance of
+# the template unit and no state is carried between two of them.
+Accept=yes
+
+# A probe asks both nodes and may sit through a timeout for as many as twenty
+# targets. This bounds how many of those can be in flight at once, so a page
+# reloaded in a hurry cannot become a queue of ssh processes.
+MaxConnections=8
+
+# The socket file goes away with the unit rather than being left behind for the
+# next boot to trip over.
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-cert-issue.schema.json",
+  "title": "haprion-cert-issue JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "cert_issue" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed", "blocked"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/issue_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/issue_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "issue_result": {
+      "type": "object",
+      "required": ["id", "lineage", "domains", "method", "targets", "certbot_seconds", "total_seconds", "publish"],
+      "properties": {
+        "id": { "$ref": "haprion-cert-publish.schema.json#/$defs/certificate_id" },
+        "lineage": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "domains": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "maxLength": 255 } },
+        "method": { "enum": ["dns-01", "http-01"] },
+        "targets": { "$ref": "#/$defs/targets" },
+        "certbot_seconds": { "type": "number", "minimum": 0 },
+        "total_seconds": { "type": "number", "minimum": 0 },
+        "publish": { "$ref": "haprion-cert-publish.schema.json#/$defs/publish_result" },
+        "renewed": { "description": "Additive (C9c): true when the lineage existed and was asked for again now, forced before its time; the entry is what it was.", "type": "boolean" },
+        "interface": { "description": "Additive (B188): true when the certificate is the manager's own interface certificate; it then has no targets.", "type": "boolean" },
+        "exportable": { "description": "Additive (B255): true when the certificate is to be taken out and installed by hand; it then has no targets and one name.", "type": "boolean" },
+        "retired": { "oneOf": [{ "$ref": "haprion-cert-publish.schema.json#/$defs/retired_interface" }, { "type": "null" }] }
+      },
+      "additionalProperties": true
+    },
+    "targets": {
+      "type": "object",
+      "required": ["clusters", "receivers"],
+      "properties": {
+        "clusters": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/cluster_id" } },
+        "receivers": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$" } }
+      },
+      "additionalProperties": true
+    }
+  }
+}

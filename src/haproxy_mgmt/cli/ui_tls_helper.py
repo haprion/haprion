@@ -2,7 +2,7 @@
 
 The helpers the worker starts through sudo - issue, enroll, import - run in
 the worker's sandbox, and `ProtectSystem=strict` keeps `/etc/haprion`
-read-only for them: `haproxy-ui-tls` could neither write the pair nor make its
+read-only for them: `haprion-tls` could neither write the pair nor make its
 rollback directory. So the last step of publishing the interface certificate
 is asked of this helper, on `/run/haprion/ui-tls.sock`, from a unit of
 its own outside the sandbox (B163's pattern).
@@ -72,7 +72,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=require_root,
-            helper_name="haproxy-ui-tls-helper",
+            helper_name="haprion-tls-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

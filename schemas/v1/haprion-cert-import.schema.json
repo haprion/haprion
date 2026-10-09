@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-cert-import.schema.json",
+  "title": "haprion-cert-import JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "cert_import" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed", "blocked"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/import_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/import_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "import_result": {
+      "type": "object",
+      "required": ["certificate", "fingerprint_sha256", "common_name", "sans", "issuer", "not_before", "not_after", "chain_length", "replaced", "publish"],
+      "properties": {
+        "certificate": { "$ref": "haprion-cert-publish.schema.json#/$defs/certificate_id" },
+        "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "common_name": { "type": ["string", "null"], "maxLength": 255 },
+        "sans": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 255 } },
+        "issuer": { "type": "string", "maxLength": 1024 },
+        "not_before": { "type": "string", "format": "date-time" },
+        "not_after": { "type": "string", "format": "date-time" },
+        "chain_length": { "type": "integer", "minimum": 0 },
+        "replaced": { "type": "boolean" },
+        "publish": { "$ref": "haprion-cert-publish.schema.json#/$defs/publish_result" },
+        "interface": { "description": "Additive (B188): present and true when this certificate is the manager's own interface certificate.", "const": true },
+        "retired": { "$ref": "haprion-cert-publish.schema.json#/$defs/retired_interface" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

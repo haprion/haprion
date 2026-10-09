@@ -117,7 +117,7 @@ def node_status(
                 "timestamp": "2026-01-02T03:04:05+00:00",
             },
             #
-            # The shapes `haproxy-node-status` actually emits, not a stand-in.
+            # The shapes `haprion-node-status` actually emits, not a stand-in.
             # These two carried `{"ok": true}` for months, which no node has ever
             # produced: the fixture was invented rather than copied, and the
             # tests built on it could not have caught a real node's document
@@ -325,7 +325,7 @@ class HelperReadingTests(HelperFixture):
         # changed shape here would surface as a dashboard that is wrong rather
         # than as a test that failed.
         #
-        envelope = assert_contract("haproxy-status", out)
+        envelope = assert_contract("haprion-status", out)
         self.assertEqual(envelope["outcome"], "done")
         self.assertEqual(envelope["request_id"], REQUEST_ID)
         self.assertEqual(
@@ -338,7 +338,7 @@ class HelperReadingTests(HelperFixture):
         code, out, _ = self.run_helper(request(), version_reader=lambda: None)
         self.assertEqual(code, 0)
         self.assertIsNone(
-            assert_contract("haproxy-status", out)["result"]["summary"]["validator_version"]
+            assert_contract("haprion-status", out)["result"]["summary"]["validator_version"]
         )
 
     def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
@@ -350,7 +350,7 @@ class HelperReadingTests(HelperFixture):
 
         self.assertEqual(code, 64)
         self.assertIn("unknown cluster", err)
-        document = assert_contract("haproxy-status", out)
+        document = assert_contract("haprion-status", out)
         self.assertEqual(document["operation"], "status")
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["request_id"], REQUEST_ID)
@@ -463,7 +463,7 @@ class HelperReadingTests(HelperFixture):
             request(), waf=True, node_reader=self.engines(b_active=False)
         )
         self.assertEqual(code, 0)
-        envelope = assert_contract("haproxy-status", out)
+        envelope = assert_contract("haprion-status", out)
         self.assertEqual(envelope["outcome"], "done")
         self.assertIs(envelope["result"]["summary"]["waf_published"], True)
         self.assertEqual(
@@ -474,7 +474,7 @@ class HelperReadingTests(HelperFixture):
     def test_a_stopped_engine_without_rules_is_how_it_should_be(self) -> None:
         code, out, _ = self.run_helper(request(), node_reader=self.engines(b_active=False))
         self.assertEqual(code, 0)
-        envelope = assert_contract("haproxy-status", out)
+        envelope = assert_contract("haprion-status", out)
         self.assertIs(envelope["result"]["summary"]["waf_published"], False)
         self.assertEqual(envelope["warnings"], [])
 
@@ -483,7 +483,7 @@ class HelperReadingTests(HelperFixture):
             request(), dns=True, node_reader=self.listeners(b_active=False)
         )
         self.assertEqual(code, 0)
-        envelope = assert_contract("haproxy-status", out)
+        envelope = assert_contract("haprion-status", out)
         self.assertIs(envelope["result"]["summary"]["dns_published"], True)
         self.assertEqual(
             [(w["code"], w["node"]) for w in envelope["warnings"]],
@@ -507,7 +507,7 @@ class HelperReadingTests(HelperFixture):
             )
         self.assertEqual(code, 0)
         self.assertEqual([call.args for call in looked.call_args_list], [("ns1.example.com",)])
-        envelope = assert_contract("haproxy-status", out)
+        envelope = assert_contract("haprion-status", out)
         return [(w["code"], w["message"]) for w in envelope["warnings"]]
 
     def test_a_named_server_that_still_resolves_as_published_says_nothing(self) -> None:
@@ -538,7 +538,7 @@ class HelperReadingTests(HelperFixture):
     def test_a_stopped_dnsdist_without_a_listener_is_how_it_should_be(self) -> None:
         code, out, _ = self.run_helper(request(), node_reader=self.listeners(b_active=False))
         self.assertEqual(code, 0)
-        envelope = assert_contract("haproxy-status", out)
+        envelope = assert_contract("haprion-status", out)
         self.assertIs(envelope["result"]["summary"]["dns_published"], False)
         self.assertEqual(envelope["warnings"], [])
 
@@ -613,7 +613,7 @@ class CallerTests(HelperFixture):
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
 
         self.assertIn("Addresses:    in use", out)
-        self.assertIn("Addresses:    BEHIND the release - run haproxy-deploy", out)
+        self.assertIn("Addresses:    BEHIND the release - run haprion-deploy", out)
 
     def test_the_ipvs_file_has_a_line_of_its_own(self) -> None:
         stale = dict(IPVS, installed_sha256="b2" * 32)
@@ -634,7 +634,7 @@ class CallerTests(HelperFixture):
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
 
         self.assertIn("Syslog IPVS:  installed, not included at the top of keepalived.conf", out)
-        self.assertIn("Syslog IPVS:  BEHIND the release - run haproxy-deploy", out)
+        self.assertIn("Syslog IPVS:  BEHIND the release - run haprion-deploy", out)
 
     def test_virtual_servers_keepalived_does_not_read_are_said_and_not_current(self) -> None:
         """Review 26-10-08 F1: forwarded nowhere, so the node is not running its release."""
@@ -712,7 +712,7 @@ class CallerTests(HelperFixture):
             )
         )
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
-        self.assertIn("BEHIND - run haproxy-deploy", out)
+        self.assertIn("BEHIND - run haprion-deploy", out)
         self.assertIn("at least one node is not running the published version", out)
 
     def test_a_node_on_an_older_haproxy_is_named_and_so_is_the_validator(self) -> None:

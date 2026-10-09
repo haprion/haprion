@@ -10,23 +10,23 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install/node/haproxy-node-status"
+SCRIPT = Path(__file__).resolve().parents[1] / "install/node/haprion-node-status"
 INSTALLER = Path(__file__).resolve().parents[1] / "install/04-node-prepare"
 READING = re.compile(r"^def read_installation\(\):.*?(?=^def run\()", re.DOTALL | re.MULTILINE)
 NODE_SCRIPTS = (
-    "haproxy-pull-deploy",
-    "haproxy-cert-pull",
-    "haproxy-cert-remove",
-    "haproxy-cert-trigger",
-    "haproxy-node-status",
-    "haproxy-health-probe",
-    "haproxy-keepalived-state",
-    "haproxy-state-export",
-    "haproxy-traffic-log-read",
-    "haproxy-traffic-log-enable",
-    "haproxy-traffic-log-prune",
-    "haproxy-server-state",
-    "haproxy-server-state-trigger",
+    "haprion-pull-deploy",
+    "haprion-cert-pull",
+    "haprion-cert-remove",
+    "haprion-cert-trigger",
+    "haprion-node-status",
+    "haprion-health-probe",
+    "haprion-keepalived-state",
+    "haprion-state-export",
+    "haprion-traffic-log-read",
+    "haprion-traffic-log-enable",
+    "haprion-traffic-log-prune",
+    "haprion-server-state",
+    "haprion-server-state-trigger",
 )
 
 
@@ -80,7 +80,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
     def test_installer_and_status_attest_the_same_node_bundle(self) -> None:
         match = re.search(r"^SCRIPTS=\(\n(.*?)^\)", INSTALLER.read_text(), re.MULTILINE | re.DOTALL)
         assert match is not None
-        installed = tuple(re.findall(r"^\s+(haproxy-[a-z0-9-]+)$", match.group(1), re.MULTILINE))
+        installed = tuple(re.findall(r"^\s+(haprion-[a-z0-9-]+)$", match.group(1), re.MULTILINE))
         self.assertEqual(installed, NODE_SCRIPTS)
 
     def test_the_status_script_reads_the_same_list_it_is_installed_with(self) -> None:
@@ -97,7 +97,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
             r"^NODE_SCRIPTS = \(\n(.*?)^\)", SCRIPT.read_text(), re.MULTILINE | re.DOTALL
         )
         assert match is not None
-        listed = tuple(re.findall(r'^\s+"(haproxy-[a-z0-9-]+)",$', match.group(1), re.MULTILINE))
+        listed = tuple(re.findall(r'^\s+"(haprion-[a-z0-9-]+)",$', match.group(1), re.MULTILINE))
         self.assertEqual(listed, NODE_SCRIPTS)
         self.assertEqual(BUNDLED, NODE_SCRIPTS)
 
@@ -150,7 +150,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
 
     def test_a_changed_script_is_not_hidden_by_its_metadata(self) -> None:
         self.install()
-        (self.sbin / "haproxy-node-status").write_bytes(b"changed\n")
+        (self.sbin / "haprion-node-status").write_bytes(b"changed\n")
         result = self.read()
         self.assertIs(result["scripts_current"], False)
 
@@ -164,13 +164,13 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.assertEqual(self.read(), result)
 
     def test_missing_metadata_still_inventories_installed_scripts(self) -> None:
-        (self.sbin / "haproxy-node-status").write_bytes(b"installed\n")
+        (self.sbin / "haprion-node-status").write_bytes(b"installed\n")
         result = self.read()
         self.assertEqual(
-            result["scripts"]["haproxy-node-status"]["installed_sha256"],
+            result["scripts"]["haprion-node-status"]["installed_sha256"],
             hashlib.sha256(b"installed\n").hexdigest(),
         )
-        self.assertIsNone(result["scripts"]["haproxy-node-status"]["expected_sha256"])
+        self.assertIsNone(result["scripts"]["haprion-node-status"]["expected_sha256"])
 
 
 if __name__ == "__main__":

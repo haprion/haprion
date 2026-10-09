@@ -1,7 +1,7 @@
-"""The privileged half of `haproxy-publish`.
+"""The privileged half of `haprion-publish`.
 
 Takes no arguments. What is published arrives as a structured request on stdin,
-for the reason PRIVILEGE.md gives and `haproxy-history-reset-helper` already
+for the reason PRIVILEGE.md gives and `haprion-history-reset-helper` already
 follows: a sudoers rule that matched a cluster name would need a wildcard in
 argument matching, and wildcards there are forbidden. One no-argument rule
 covers every cluster, and adding a cluster does not touch sudoers.
@@ -13,7 +13,7 @@ finished artifact. Root cannot be handed something to install:
 * it derives the node artifact from the COMMITTED candidate with the same code
   the caller uses, so "what was validated is what gets installed" is a property
   of the construction rather than a promise
-* it validates in the same sandbox as `haproxy-validate-candidate-helper` - no
+* it validates in the same sandbox as `haprion-validate-candidate-helper` - no
   network, no capabilities, the candidate bound read-only - which is strictly
   stronger than the shell path, where `haproxy -c` ran as root
 
@@ -271,7 +271,7 @@ def _result(
         "comment": comment,
         "validation": {"valid": valid, "issues": []},
         "deployment_required": deployment_required,
-        "next_command": f"haproxy-deploy -c {cluster}" if deployment_required else None,
+        "next_command": f"haprion-deploy -c {cluster}" if deployment_required else None,
         #
         # Outside the frozen fields, and allowed to be: v1 ignores unknown keys.
         # The candidate digest is what ties a stored result to the exact bytes

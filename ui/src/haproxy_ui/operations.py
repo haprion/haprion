@@ -661,7 +661,7 @@ def _certificate_operation(
         # One receiver and one action (B142). The transport and the pasted
         # public key, or the https allowlist, are checked for shape here; what
         # they mean - the account, the directory, the lock - is the helper's,
-        # as when the operator types `haproxy-cert-receiver`. The key is text
+        # as when the operator types `haprion-cert-receiver`. The key is text
         # from the form and never a path: a helper that took a path would
         # read any file root can.
         #
@@ -1041,7 +1041,7 @@ def prepare(
         # One node of one cluster, added from its enrollment block or removed
         # by name (B211). Shape only here; the block's meaning - the keys, the
         # six files, the proof that the node answers as itself - is the
-        # helper's, as when the operator types `haproxy-node`. Not through
+        # helper's, as when the operator types `haprion-node`. Not through
         # sudo, for the receiver's reason: the helper writes root's
         # known_hosts and the pull accounts' keys, outside this unit's sandbox.
         #
@@ -1079,7 +1079,7 @@ def prepare(
         # The same socket and the same division as `cluster_node`: the shape is
         # checked here, and what the fields mean - a free name and node path, a
         # certificate the registry has, two blocks made for this cluster - is
-        # the helper's, as when the operator types `haproxy-cluster`.
+        # the helper's, as when the operator types `haprion-cluster`.
         #
         _only(payload, "action", *DEFINITION_FIELDS)
         action = payload.get("action")

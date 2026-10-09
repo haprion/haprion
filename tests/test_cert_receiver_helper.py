@@ -51,7 +51,7 @@ class HelperFixture(ReceiverFixture):
         )
         raw = out.getvalue()
         if raw.strip():
-            assert_contract("haproxy-cert-receiver", raw)
+            assert_contract("haprion-cert-receiver", raw)
         return code, (json.loads(raw) if raw.strip() else None), err.getvalue()
 
 
@@ -209,7 +209,7 @@ class TheBoundary(HelperFixture):
 
         examples = Path(__file__).resolve().parents[1] / "install/platform/examples"
         rules = (examples / "haproxy-ui-worker.sudoers.example").read_text(encoding="utf-8")
-        service = (examples / "haproxy-cert-receiver-helper@.service.example").read_text(
+        service = (examples / "haprion-cert-receiver-helper@.service.example").read_text(
             encoding="utf-8"
         )
         self.assertNotIn(cert_receiver_helper.HELPER, rules)

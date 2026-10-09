@@ -8,7 +8,7 @@ Two operations, one helper and one socket:
 
 What each means - the files, the repository, the proof that every node answers
 as itself, the refusals - is `node_enrollment`'s and `cluster_definition`'s,
-exactly as when the operator types `haproxy-node` or `haproxy-cluster`; this
+exactly as when the operator types `haprion-node` or `haprion-cluster`; this
 helper only carries the request across the privilege boundary.
 
 Before either, under the same locks, a change an earlier run did not finish -
@@ -21,7 +21,7 @@ writes root's `known_hosts` and git configuration, the pull accounts'
 `authorized_keys` and the operator editing policy, outside anything the
 worker's sandbox leaves writable. It answers on
 `/run/haprion/cluster-node.sock` from a unit of its own, and the worker
-sends the request there with `haproxy-node-ask`. The terminal commands run it
+sends the request there with `haprion-node-ask`. The terminal commands run it
 directly, as root.
 """
 
@@ -65,7 +65,7 @@ from haproxy_mgmt.status_collect import NodeResponse, ask_node
 
 OPERATION = "cluster_node"
 DEFINE = "cluster_define"
-HELPER = "/opt/haprion/current/bin/haproxy-node-helper"
+HELPER = "/opt/haprion/current/bin/haprion-node-helper"
 PARAMETERS = {
     OPERATION: frozenset({"action", "block", "host", "node"}),
     DEFINE: frozenset(
@@ -117,7 +117,7 @@ def build_request(
     host: str | None = None,
     node: str | None = None,
 ) -> str:
-    """The exact bounded node request the worker and `haproxy-node` send."""
+    """The exact bounded node request the worker and `haprion-node` send."""
 
     parameters: dict[str, JsonValue] = {"action": action}
     for name, value in (("block", block), ("host", host), ("node", node)):
@@ -140,7 +140,7 @@ def build_define_request(
     address_prefix: int | None = None,
     address_interface: str | None = None,
 ) -> str:
-    """The exact bounded cluster request the worker and `haproxy-cluster` send."""
+    """The exact bounded cluster request the worker and `haprion-cluster` send."""
 
     parameters: dict[str, JsonValue] = {"action": action}
     if action == "add":
@@ -307,7 +307,7 @@ def main(
     try:
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
-            raise HelperProtocolError("haproxy-node-helper must run as root", exit_code=77)
+            raise HelperProtocolError("haprion-node-helper must run as root", exit_code=77)
         #
         # Read once, then parsed as the operation it names: the two share a
         # socket, and each is held to its own parameters.

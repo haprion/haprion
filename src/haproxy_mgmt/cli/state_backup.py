@@ -1,4 +1,4 @@
-"""``haproxy-state-backup`` - fetch complete DR state from configured nodes."""
+"""``haprion-state-backup`` - fetch complete DR state from configured nodes."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from haproxy_mgmt.state_backup import BackupResult, BackupRunError, run
 
 EXIT_USAGE = 64
 EXIT_NOT_ROOT = 77
-USAGE = "Usage: haproxy-state-backup [-c <cluster>]\n"
+USAGE = "Usage: haprion-state-backup [-c <cluster>]\n"
 
 type Runner = Callable[[str, Cluster, DeployIdentity | None, Path | None, int], BackupResult]
 
@@ -64,7 +64,7 @@ def main(
         return EXIT_USAGE
 
     if require_root and os.geteuid() != 0:
-        errors.write("ERROR: haproxy-state-backup must run as root\n")
+        errors.write("ERROR: haprion-state-backup must run as root\n")
         return EXIT_NOT_ROOT
 
     try:

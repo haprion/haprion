@@ -1,6 +1,6 @@
 """What a node makes of dnsdist's counters (Fas 19a B4, 26-10-06).
 
-The parsing is extracted from `install/node/haproxy-node-status` verbatim and
+The parsing is extracted from `install/node/haprion-node-status` verbatim and
 run against text in dnsdist 2.1.2's own shape, as `test_node_runtime_stat`
 does for `show stat`: the script is installed on the nodes rather than
 imported. `test_dnsdist_behaviour` runs the same function against a real
@@ -20,7 +20,7 @@ from jsonschema import Draft202012Validator
 
 from haproxy_mgmt import dnsdist_config
 
-SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 PARSING = re.compile(r"^DNS_METRICS = .*?(?=^def dns_counters\()", re.DOTALL | re.MULTILINE)
 
 
@@ -111,7 +111,7 @@ class ReadingDnsdistCounters(unittest.TestCase):
 
     def test_what_it_reports_is_what_the_status_contract_describes(self) -> None:
         schema = json.loads(
-            (SCRIPT.parents[2] / "schemas" / "v1" / "haproxy-status.schema.json").read_text()
+            (SCRIPT.parents[2] / "schemas" / "v1" / "haprion-status.schema.json").read_text()
         )
         listener = Draft202012Validator(
             schema["$defs"]["node_status"]["properties"]["dns_listener"]

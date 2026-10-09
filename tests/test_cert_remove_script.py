@@ -1,6 +1,6 @@
 """The node's half of a certificate deletion, run for real in a temporary tree.
 
-`haproxy-cert-remove` and the verb `haproxy-cert-trigger` dispatches to it.
+`haprion-cert-remove` and the verb `haprion-cert-trigger` dispatches to it.
 The scripts are run by bash with their fixed paths rewritten to a scratch
 directory, so what is held is the behaviour and not a reading of the text: an
 ID the installed configuration still names is refused before anything is
@@ -16,8 +16,8 @@ import unittest
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parents[1]
-REMOVE = BASE / "install" / "node" / "haproxy-cert-remove"
-TRIGGER = BASE / "install" / "node" / "haproxy-cert-trigger"
+REMOVE = BASE / "install" / "node" / "haprion-cert-remove"
+TRIGGER = BASE / "install" / "node" / "haprion-cert-trigger"
 
 #
 # A `sudo` that records what it was asked to run and runs it. The scripts
@@ -47,25 +47,25 @@ class ScriptFixture(unittest.TestCase):
         #
         # The scripts as installed, with the fixed paths pointed here.
         #
-        self.remove = self.root / "bin" / "haproxy-cert-remove"
+        self.remove = self.root / "bin" / "haprion-cert-remove"
         self.remove.write_text(
             REMOVE.read_text()
             .replace('CERTS_DIR="/etc/haproxy/certs"', f'CERTS_DIR="{self.certs}"')
             .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.haproxy}"')
-            .replace("/run/lock/haproxy-cert-pull.lock", str(self.root / "lock" / "cert.lock"))
+            .replace("/run/lock/haprion-cert-pull.lock", str(self.root / "lock" / "cert.lock"))
         )
         self.remove.chmod(0o755)
-        self.pull = self.root / "bin" / "haproxy-cert-pull"
+        self.pull = self.root / "bin" / "haprion-cert-pull"
         self.pull.write_text('#!/bin/sh\necho pull "$@"\n')
         self.pull.chmod(0o755)
-        self.trigger = self.root / "bin" / "haproxy-cert-trigger"
+        self.trigger = self.root / "bin" / "haprion-cert-trigger"
         self.trigger.write_text(
             TRIGGER.read_text()
             .replace(
-                'PULL_HELPER="/usr/local/sbin/haproxy-cert-pull"', f'PULL_HELPER="{self.pull}"'
+                'PULL_HELPER="/usr/local/sbin/haprion-cert-pull"', f'PULL_HELPER="{self.pull}"'
             )
             .replace(
-                'REMOVE_HELPER="/usr/local/sbin/haproxy-cert-remove"',
+                'REMOVE_HELPER="/usr/local/sbin/haprion-cert-remove"',
                 f'REMOVE_HELPER="{self.remove}"',
             )
         )

@@ -38,7 +38,7 @@ SYSTEMCTL = "/usr/bin/systemctl"
 # a cluster ID that passed the same check the configuration applies.
 #
 SCHEDULE_DROPIN = "schedule.conf"
-TIMER_INSTANCE = re.compile(rf"^haproxy-state-backup@{CLUSTER_ID.pattern[1:-1]}\.timer$")
+TIMER_INSTANCE = re.compile(rf"^haprion-state-backup@{CLUSTER_ID.pattern[1:-1]}\.timer$")
 
 #
 # `systemctl show` never blocks on anything, but a hung dbus would otherwise

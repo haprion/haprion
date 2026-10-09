@@ -120,7 +120,7 @@ class IssueError(Exception):
 
     `details` is the envelope's `error.details`: evidence that does not fit a
     sentence. certbot's output goes there, under `diagnostics`, the same key
-    `haproxy-publish` puts the compiler's answer under - the interface already
+    `haprion-publish` puts the compiler's answer under - the interface already
     reads that key, and a message is capped at 2048 bytes while certbot's
     account of a failed DNS challenge is routinely longer.
     """

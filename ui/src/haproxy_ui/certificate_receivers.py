@@ -440,7 +440,7 @@ def payload(
 ) -> dict[str, Any]:
     """The `cert_receiver` add payload, or a sentence about the form.
 
-    The same refusals `haproxy-cert-receiver add` gives, said before the job
+    The same refusals `haprion-cert-receiver add` gives, said before the job
     is queued; the helper says them again in its own words for a payload
     that got past this.
     """
@@ -516,6 +516,6 @@ def removal(receiver_id: str, existing: Sequence[ReceiverRow]) -> dict[str, Any]
     if row.legacy:
         raise ReceiverProblem(
             f"{receiver_id} was registered before this page and is migrated from the "
-            "terminal (haproxy-cert-receiver migrate); it is not removed from here."
+            "terminal (haprion-cert-receiver migrate); it is not removed from here."
         )
     return {"receiver": receiver_id, "action": "remove"}

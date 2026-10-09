@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-inventory.schema.json",
+  "title": "haprion-inventory JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "inventory" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/inventory_result" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/inventory_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "proxy": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "managed",
+        "source",
+        "protocol",
+        "enabled",
+        "hostnames",
+        "bind_ports",
+        "backend_count"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "managed": { "type": "boolean" },
+        "source": { "type": "string", "enum": ["managed", "core", "manual", "runtime"] },
+        "protocol": { "type": "string", "enum": ["http", "https", "tcp"] },
+        "enabled": { "type": "boolean" },
+        "hostnames": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 253 },
+          "uniqueItems": true
+        },
+        "bind_ports": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "uniqueItems": true
+        },
+        "backend_count": { "type": "integer", "minimum": 0 },
+        "backends": {
+          "description": "The names the runtime knows this proxy's pools by, which is what a counter or a log line can be looked up under. Absent from a manager too old to report them, which is why it is not required.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "reservations": {
+      "type": "object",
+      "required": ["hostnames", "tcp_ports"],
+      "properties": {
+        "hostnames": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 253 },
+          "uniqueItems": true
+        },
+        "tcp_listeners": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 3, "maxLength": 60 },
+          "uniqueItems": true
+        },
+        "tcp_ports": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "inventory_result": {
+      "type": "object",
+      "required": ["version", "hash", "generated_at", "proxies", "reservations"],
+      "properties": {
+        "version": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/version" },
+            { "type": "null" }
+          ]
+        },
+        "hash": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/hash" },
+            { "type": "null" }
+          ]
+        },
+        "generated_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "proxies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/proxy" }
+        },
+        "reservations": { "$ref": "#/$defs/reservations" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

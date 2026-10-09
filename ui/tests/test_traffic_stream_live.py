@@ -37,7 +37,7 @@ from haproxy_mgmt.proxy_model import load_proxy
 from haproxy_ui.traffic_logs import parse
 
 ROOT = Path(__file__).resolve().parents[2]
-ENABLE = ROOT / "install" / "node" / "haproxy-traffic-log-enable"
+ENABLE = ROOT / "install" / "node" / "haprion-traffic-log-enable"
 HOSTNAME = "shop.example.com"
 NODE_LOG_ROOT = "/var/log/haprion/"
 _PR_SET_PDEATHSIG = 1

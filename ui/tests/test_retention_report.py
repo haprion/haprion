@@ -6,7 +6,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+SCRIPT = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
 FUNCTIONS = (
     "eval \"$(sed -n '/^log()/p;/^partition_report_query() {/,/^}/p;"
     '/^traffic_report() {/,/^}/p\' "$0")"; '

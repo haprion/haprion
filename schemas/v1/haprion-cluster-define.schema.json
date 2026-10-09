@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-cluster-define.schema.json",
+  "title": "haprion-node-helper JSON result for a cluster",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "cluster_define" },
+        "outcome": { "enum": ["done", "failed", "blocked"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/cluster_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/cluster_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "cluster_result": {
+      "description": "One cluster created with its first two nodes, or removed: its nodes, which files changed, the host keys the nodes answered with (a creation), and the archive its repository, publish directory and backups were moved to (a removal). `warnings` is what went wrong after the change was made, such as a backup timer that could not be stopped. `blocked` is a node that did not answer as itself (everything put back) or a cluster already busy.",
+      "type": "object",
+      "required": ["action", "cluster", "nodes", "files", "archive", "host_key_fingerprints", "warnings"],
+      "properties": {
+        "action": { "enum": ["added", "removed"] },
+        "cluster": { "type": "string", "maxLength": 63 },
+        "nodes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["name", "host"],
+            "properties": {
+              "name": { "type": "string", "maxLength": 63 },
+              "host": { "type": "string", "maxLength": 253 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "files": { "type": "array", "maxItems": 12, "items": { "type": "string", "maxLength": 128 } },
+        "archive": { "oneOf": [{ "type": "string", "maxLength": 96 }, { "type": "null" }] },
+        "host_key_fingerprints": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$" }
+        },
+        "warnings": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 2048 } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -38,7 +38,7 @@ class NodeView:
     #
     # Why this node's HAProxy is older than it should be - behind the cluster's
     # newest, or behind the version this host validates with (Fas 16 punkt 3b).
-    # The same sentence `haproxy-status` prints; None when there is nothing to say.
+    # The same sentence `haprion-status` prints; None when there is nothing to say.
     #
     runtime_note: str | None = None
     runtime_title: str | None = None

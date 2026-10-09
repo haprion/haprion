@@ -43,11 +43,11 @@ from tests.test_node_restore import (
 RUN_ID = "r260101-0000abcd"
 TEST = {"hostname": "node-test", "address": "192.0.2.29/24", "vip": "198.51.100.254/32"}
 COMMANDS = {
-    PREPARE: "haproxy-node-restore-prepare",
-    PREVIEW: "haproxy-node-restore-preview",
-    RUN: "haproxy-node-restore",
-    DISCARD: "haproxy-node-restore-discard",
-    STATUS: "haproxy-node-restore-status",
+    PREPARE: "haprion-node-restore-prepare",
+    PREVIEW: "haprion-node-restore-preview",
+    RUN: "haprion-node-restore",
+    DISCARD: "haprion-node-restore-discard",
+    STATUS: "haprion-node-restore-status",
 }
 
 
@@ -163,7 +163,7 @@ class ThreeJobs(HelperTest):
             },
         )
         self.assertEqual(code, 0)
-        self.assertIn(f"haproxy-restore-{RUN_ID}", document["result"]["paste"])
+        self.assertIn(f"haprion-restore-{RUN_ID}", document["result"]["paste"])
         self.assertEqual(document["result"]["mode"], "test")
         self.assertTrue((self.root / RUN_ID / "key").is_file())
 
@@ -429,7 +429,7 @@ class Ask(unittest.TestCase):
             socket_path="/nonexistent/node-restore.sock",
         )
         self.assertEqual(code, 78)
-        document = assert_contract("haproxy-node-restore-preview", output.getvalue())
+        document = assert_contract("haprion-node-restore-preview", output.getvalue())
         self.assertEqual(document["error"]["code"], "dependency_unavailable")
 
     def busy(self, operation: str, parameters: dict[str, Any]) -> tuple[int, str]:
@@ -466,7 +466,7 @@ class Ask(unittest.TestCase):
     def test_a_busy_socket_is_asked_again_later_for_status(self) -> None:
         code, output = self.busy(STATUS, {"run": RUN_ID})
         self.assertEqual(code, 75)
-        document = assert_contract("haproxy-node-restore-status", output)
+        document = assert_contract("haprion-node-restore-status", output)
         self.assertEqual(document["error"]["code"], "restore_busy")
 
     def test_a_busy_socket_stays_unknown_for_a_step_that_acts(self) -> None:
@@ -481,7 +481,7 @@ class Ask(unittest.TestCase):
         # session's, and the client outlasts one session before it says so.
         unit = (
             Path(__file__).resolve().parents[1]
-            / "install/platform/examples/haproxy-node-restore-helper@.service.example"
+            / "install/platform/examples/haprion-node-restore-helper@.service.example"
         ).read_text()
         self.assertIn("Type=exec", unit)
         self.assertNotIn("\nRuntimeMaxSec=", unit)

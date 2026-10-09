@@ -248,7 +248,7 @@ def inventory_result(
     *,
     generated_at: datetime | None = None,
 ) -> dict[str, object]:
-    """Return the frozen ``haproxy-inventory`` result for one published tree.
+    """Return the frozen ``haprion-inventory`` result for one published tree.
 
     No RELEASE stamp means no configuration has been published yet.  Returning
     a valid empty result makes that state explicit without treating a new

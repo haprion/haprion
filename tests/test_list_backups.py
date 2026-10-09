@@ -1,4 +1,4 @@
-"""``haproxy-list-backups``: what it reports, and what it refuses to look at.
+"""``haprion-list-backups``: what it reports, and what it refuses to look at.
 
 The envelopes built here are validated against `schemas/v1`, so the test fails
 if the implementation and the frozen contract drift apart - the fixtures under
@@ -26,7 +26,7 @@ from haproxy_mgmt.cli import list_backups, list_backups_helper
 from haproxy_mgmt.config import ConfigError, Node
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
-SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haproxy-list-backups.schema.json"
+SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haprion-list-backups.schema.json"
 
 # What the command asked the helper: cluster, limit and node.
 type Asked = tuple[str, int | None, str | None]
@@ -197,7 +197,7 @@ class HelperTests(unittest.TestCase):
         """The count beside the timer comes from the file the pruning reads."""
 
         timer = {
-            "unit": "haproxy-state-backup@alpha.timer",
+            "unit": "haprion-state-backup@alpha.timer",
             "known": True,
             "enabled": True,
             "active": True,
@@ -215,7 +215,7 @@ class HelperTests(unittest.TestCase):
             root = Path(directory)
             for node in NODES:
                 _archive(root / node.name, "2026-08-29_05-00-00")
-            document, code = self._run(root, {"limit": 10}, timer="haproxy-state-backup.timer")
+            document, code = self._run(root, {"limit": 10}, timer="haprion-state-backup.timer")
 
         self.assertEqual(code, 0)
         self.assertEqual(document["result"]["schedule"]["retention"], 60)
@@ -401,7 +401,7 @@ class CommandTests(unittest.TestCase):
         document = self._document()
         assert isinstance(document["result"], dict)
         document["result"]["schedule"] = {
-            "unit": "haproxy-state-backup.timer",
+            "unit": "haprion-state-backup.timer",
             "known": True,
             "enabled": True,
             "active": True,
@@ -421,7 +421,7 @@ class CommandTests(unittest.TestCase):
         document = self._document()
         assert isinstance(document["result"], dict)
         document["result"]["schedule"] = {
-            "unit": "haproxy-state-backup.timer",
+            "unit": "haprion-state-backup.timer",
             "known": True,
             "enabled": False,
             "active": False,
@@ -452,7 +452,7 @@ class CommandTests(unittest.TestCase):
         document = self._document()
         assert isinstance(document["result"], dict)
         document["result"]["schedule"] = {
-            "unit": "haproxy-state-backup.timer",
+            "unit": "haprion-state-backup.timer",
             "known": False,
             "enabled": False,
             "active": False,
@@ -463,7 +463,7 @@ class CommandTests(unittest.TestCase):
         }
         rendered, _, _, _ = self._run_with(document, ["-c", "alpha"])
 
-        self.assertIn("haproxy-state-backup.timer is not known to systemd", rendered)
+        self.assertIn("haprion-state-backup.timer is not known to systemd", rendered)
 
     def test_all_asks_for_every_retained_backup(self) -> None:
         #

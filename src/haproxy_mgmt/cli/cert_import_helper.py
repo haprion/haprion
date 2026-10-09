@@ -1,9 +1,9 @@
-"""`haproxy-cert-import-helper` - one uploaded file across the root boundary (C9, B165).
+"""`haprion-cert-import-helper` - one uploaded file across the root boundary (C9, B165).
 
 The worker's way to `cert_import` for a file the interface received. The
 request carries the file sealed against the installation's public key; this
 helper holds the private half, opens the box, takes the material apart and
-imports it exactly as `haproxy-cert-import` does from files on disk. The
+imports it exactly as `haprion-cert-import` does from files on disk. The
 plaintext exists in this process and in the store it writes, nowhere else:
 the result names the certificate, never the key.
 
@@ -86,7 +86,7 @@ def main(
             input_stream=input_stream,
             argv=argv,
             require_root=require_root,
-            helper_name="haproxy-cert-import-helper",
+            helper_name="haprion-cert-import-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
@@ -152,7 +152,7 @@ def main(
                     "no_key",
                     f"the file holds no private key and {certificate_id!r} has none on the "
                     "manager. Upload the file with its key, or import the pair with "
-                    "haproxy-cert-import.",
+                    "haprion-cert-import.",
                 )
             keys = [existing]
             material = assemble_for(certificates, keys, pending=True)

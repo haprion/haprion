@@ -196,7 +196,7 @@ class CommandTests(unittest.TestCase):
             _, output, _, _ = self.run_command(draft, f"y\n{CONFIRMATION}\n")
             self.assertNotIn("Deploying", output)
             self.assertIn("already running this configuration", output)
-            self.assertIn("haproxy-deploy -c alpha", output)
+            self.assertIn("haprion-deploy -c alpha", output)
 
     def test_a_refusal_on_the_other_side_is_shown_verbatim(self) -> None:
         with TemporaryDirectory() as raw:
@@ -215,7 +215,7 @@ class CommandTests(unittest.TestCase):
             code, output, _, _ = self.run_command(draft, f"y\n{CONFIRMATION}\n", publish_code=65)
             self.assertEqual(code, 65)
             self.assertIn("refers to a version that", output)
-            self.assertIn("haproxy-publish -c alpha", output)
+            self.assertIn("haprion-publish -c alpha", output)
 
 
 if __name__ == "__main__":

@@ -549,7 +549,7 @@ def profile_jobs(connection: Connection[Any], operation: str) -> list[Job]:
     the latest is the newest job that applied a revision. Read per profile
     rather than as the newest N of the operation, so no number of jobs for
     other profiles can push a profile's evidence out of reach - the same rows
-    the retention keeps (`haproxy-ui-retention`, `profile_evidence`).
+    the retention keeps (`haprion-retention`, `profile_evidence`).
     """
 
     with connection.cursor(row_factory=class_row(Job)) as cursor:

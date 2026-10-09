@@ -1,9 +1,9 @@
-"""`haproxy-cert-issue` - one ACME certificate, from nothing to its targets.
+"""`haprion-cert-issue` - one ACME certificate, from nothing to its targets.
 
 Runs as root. The command line carries a domain, a method and target names;
 everything certbot is told beyond that is fixed in the engine or read from
 the runtime policy. The clusters named are rolled out at the end, with the
-same `haproxy-cert-deploy` the certbot hook uses.
+same `haprion-cert-deploy` the certbot hook uses.
 
 The result carries how long it took, in two numbers: certbot alone, and the
 whole run. Phase 11 lives or dies on the second one being under five minutes.
@@ -32,7 +32,7 @@ EXIT_USAGE = 64
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-cert-issue --domain <name> --method dns-01|http-01\n"
+    "  haprion-cert-issue --domain <name> --method dns-01|http-01\n"
     "                     [--dns-profile <id>] [--cluster <id>]...\n"
     "                     [--receiver <id>]... [--format <id>=<form>]...\n"
     "                     [--interface | --exportable] [--json]\n"
@@ -55,7 +55,7 @@ USAGE = (
     "  --receiver <id>       A registered receiver to publish to. May be repeated.\n"
     "  --format <id>=<form>  How that receiver is written: pem (default) or pkcs12.\n"
     "  --interface           This manager's own interface certificate: no targets,\n"
-    "                        installed with haproxy-ui-tls. Takes the mark from the\n"
+    "                        installed with haprion-tls. Takes the mark from the\n"
     "                        one that had it, which is deleted once this one serves.\n"
     "  --exportable          For a device never connected to this manager: one name,\n"
     "                        no targets, an RSA key that may be exported from the\n"
@@ -251,7 +251,7 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haproxy-cert-issue must run as root", EXIT_NOT_ROOT)
+        return refuse("not_root", "haprion-cert-issue must run as root", EXIT_NOT_ROOT)
     try:
         formats = cert_job.format_flags(format_flags, receivers)
     except HelperProtocolError as exc:

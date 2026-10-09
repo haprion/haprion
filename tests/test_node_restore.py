@@ -238,7 +238,7 @@ class Preview(RestoreTest):
         self.assertEqual(
             summary["node_bundle"], {"root": self.bundle.root, "commit": self.bundle.commit}
         )
-        self.assertIn("/usr/local/sbin/haproxy-pull-deploy", summary["plan"]["from_bundle"])
+        self.assertIn("/usr/local/sbin/haprion-pull-deploy", summary["plan"]["from_bundle"])
 
     def test_a_release_without_a_node_bundle_stops_the_restore(self) -> None:
         """B180: a CLI release installed without --node-bundle cannot prepare a node."""
@@ -471,7 +471,7 @@ class Run(RestoreTest):
         self.assertIn('NODE_PATH_alpha="node-a"', header["answers"])
         self.assertIn(f'PUBLISH_ROOT="{PUBLISH_ROOT}"', header["answers"])
         self.assertFalse(header["traffic_log"])
-        self.assertIn(f"/var/lib/haproxy-restore/{run}/node-bundle.tar.gz", members(carried))
+        self.assertIn(f"/var/lib/haprion-restore/{run}/node-bundle.tar.gz", members(carried))
         # The bundle writes these in the running release's version, not the archive's.
         self.assertFalse(any(path.startswith("/usr/local/sbin/") for path in members(carried)))
         self.assertNotIn("/etc/haprion/node-installation.json", members(carried))

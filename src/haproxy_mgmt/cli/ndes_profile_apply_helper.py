@@ -44,7 +44,7 @@ def main(
             input_stream=input_stream,
             argv=sys.argv[1:] if argv is None else argv,
             require_root=require_root,
-            helper_name="haproxy-ndes-profile-apply-helper",
+            helper_name="haprion-ndes-profile-apply-helper",
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

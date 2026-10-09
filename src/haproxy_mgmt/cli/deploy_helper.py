@@ -1,4 +1,4 @@
-"""The privileged half of `haproxy-deploy` - the whole reconcile loop.
+"""The privileged half of `haprion-deploy` - the whole reconcile loop.
 
 Takes no arguments; the cluster and the two options arrive as a structured
 request on stdin. Same form and same reason as the other helpers: PRIVILEGE.md
@@ -230,7 +230,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-deploy-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-deploy-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,
@@ -337,7 +337,7 @@ def main(
                     else target_for(cluster, policy.certificate_root)
                 ),
                 referenced=tuple(cluster.certificate_ids),
-                next_command=f"haproxy-cert-deploy -c {request.cluster}",
+                next_command=f"haprion-cert-deploy -c {request.cluster}",
             )
         except CertificateError as exc:
             return refuse("certificate_missing", str(exc), EXIT_CERTIFICATE_MISSING)

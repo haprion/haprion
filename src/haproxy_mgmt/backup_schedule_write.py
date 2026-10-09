@@ -50,7 +50,7 @@ type Read = Callable[[str], dict[str, object] | None]
 def timer_unit(cluster_id: str) -> str:
     if not CLUSTER_ID.fullmatch(cluster_id):
         raise ScheduleWriteError("cluster is not a valid cluster ID")
-    return f"haproxy-state-backup@{cluster_id}.timer"
+    return f"haprion-state-backup@{cluster_id}.timer"
 
 
 def schedule(parameters: Mapping[str, object]) -> Schedule:

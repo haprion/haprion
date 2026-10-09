@@ -160,7 +160,7 @@ class TheRequestBothCallersBuild(unittest.TestCase):
         self.assertEqual(request["parameters"]["timeout_ms"], 3000)
 
     def test_the_command_line_caller_builds_the_same_document(self) -> None:
-        """The interface and `haproxy-probe` must not drift apart."""
+        """The interface and `haprion-probe` must not drift apart."""
 
         from haproxy_mgmt.cli import probe
 

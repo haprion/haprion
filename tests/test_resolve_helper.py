@@ -1,4 +1,4 @@
-"""`haproxy-resolve-helper` and the web's way to it (B253, 2026-10-06).
+"""`haprion-resolve-helper` and the web's way to it (B253, 2026-10-06).
 
 The web is built to reach nothing past localhost, so a dns server's name in the
 editor and the preview is looked up here, with the manager's resolver, the one
@@ -45,7 +45,7 @@ def run(names: object) -> tuple[int, dict[str, Any], str]:
         error_stream=err,
         lookup=fake_lookup,
     )
-    return code, assert_contract("haproxy-resolve", out.getvalue()), out.getvalue()
+    return code, assert_contract("haprion-resolve", out.getvalue()), out.getvalue()
 
 
 class TheHelper(unittest.TestCase):

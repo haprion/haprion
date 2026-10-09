@@ -2,7 +2,7 @@
 
 Phase 11's gate is stated in minutes: a form, a button, and a usable
 certificate on the chosen targets in under five. This is the form. What it
-collects is exactly what `haproxy-cert-issue` accepts - a domain, a challenge
+collects is exactly what `haprion-cert-issue` accepts - a domain, a challenge
 method, and targets the registry already knows - and nothing it collects is
 trusted further than the queue: the helper checks every field again against
 the runtime policy, which the interface cannot read.

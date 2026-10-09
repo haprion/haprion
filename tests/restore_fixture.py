@@ -1,4 +1,4 @@
-"""A state archive shaped like the one install/node/haproxy-state-export writes.
+"""A state archive shaped like the one install/node/haprion-state-export writes.
 
 Built the way the exporter builds it: under umask 077, with each copied path's
 parents created by `mkdir -p` and so recorded as 0700 - the property the restore
@@ -127,7 +127,7 @@ FILES: dict[str, tuple[str, int]] = {
     "/etc/netplan/50-cloud-init.yaml": (NETPLAN, 0o600),
     "/etc/sysctl.d/60-haproxy.conf": ("net.ipv4.ip_nonlocal_bind = 1\n", 0o644),
     "/etc/apt/sources.list.d/haproxy.sources": ("Types: deb\n", 0o644),
-    "/etc/sudoers.d/haproxy-node": ("# rules\n", 0o440),
+    "/etc/sudoers.d/haprion-node": ("# rules\n", 0o440),
     "/etc/sudoers.d/90-cloud-init-users": ("# image\n", 0o440),
     "/etc/sysctl.d/99-cloudimg-ipv6.conf": ("net.ipv6.conf.all.use_tempaddr = 0\n", 0o644),
     "/etc/ssh/sshd_config.d/60-cloudimg-settings.conf": ("PasswordAuthentication no\n", 0o644),

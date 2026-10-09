@@ -1,0 +1,608 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haprion-status.schema.json",
+  "title": "haprion-status JSON result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ok",
+    "outcome",
+    "operation",
+    "cluster",
+    "request_id",
+    "result",
+    "warnings",
+    "error"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schema_version"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["done", "partial", "failed"]
+    },
+    "operation": {
+      "const": "status"
+    },
+    "cluster": {
+      "oneOf": [
+        { "$ref": "common.schema.json#/$defs/cluster_id" },
+        { "type": "null" }
+      ]
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/$defs/request_id"
+    },
+    "result": {
+      "oneOf": [
+        { "$ref": "#/$defs/status_result" },
+        { "type": "null" }
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/warning"
+      }
+    },
+    "error": {
+      "oneOf": [
+        { "$ref": "common.schema.json#/$defs/error" },
+        { "type": "null" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "outcome": { "const": "done" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "ok": { "const": true },
+          "result": { "$ref": "#/$defs/status_result" },
+          "error": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "outcome": { "const": "partial" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "ok": { "const": false },
+          "result": { "$ref": "#/$defs/status_result" },
+          "warnings": { "minItems": 1 },
+          "error": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "outcome": { "const": "failed" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "properties": {
+          "ok": { "const": false },
+          "error": { "$ref": "common.schema.json#/$defs/error" }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "node_error": {
+      "allOf": [
+        { "$ref": "common.schema.json#/$defs/error" },
+        {
+          "properties": {
+            "code": {
+              "enum": ["ssh_unreachable", "node_status_invalid_json", "node_status_invalid"]
+            }
+          }
+        }
+      ]
+    },
+    "node_status": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "node",
+        "cluster",
+        "haproxy",
+        "keepalived",
+        "vip",
+        "ip_nonlocal_bind",
+        "release",
+        "config_validation",
+        "stats_ok",
+        "runtime",
+        "certificates"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "common.schema.json#/$defs/schema_version" },
+        "node": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "cluster": { "$ref": "common.schema.json#/$defs/cluster_id" },
+        "haproxy": {
+          "type": "object",
+          "required": ["active"],
+          "properties": { "active": { "type": "boolean" } },
+          "additionalProperties": true
+        },
+        "keepalived": {
+          "type": "object",
+          "required": ["active", "state"],
+          "properties": {
+            "active": { "type": "boolean" },
+            "state": {
+              "type": ["string", "null"],
+              "enum": ["MASTER", "BACKUP", "FAULT", "UNKNOWN", null]
+            },
+            "addresses": {
+              "type": "object",
+              "required": [
+                "published",
+                "published_sha256",
+                "installed",
+                "installed_sha256",
+                "included"
+              ],
+              "properties": {
+                "published": { "type": ["boolean", "null"] },
+                "published_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+                "installed": { "type": ["boolean", "null"] },
+                "installed_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+                "included": { "type": ["boolean", "null"] }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "vip": {
+          "type": "object",
+          "required": ["address", "interface", "owner"],
+          "properties": {
+            "address": { "type": ["string", "null"], "format": "ipv4" },
+            "interface": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+            "owner": { "type": ["boolean", "null"] }
+          },
+          "additionalProperties": true
+        },
+        "ip_nonlocal_bind": { "type": "boolean" },
+        "release": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["cluster", "version", "hash", "timestamp"],
+              "properties": {
+                "cluster": { "$ref": "common.schema.json#/$defs/cluster_id" },
+                "version": { "$ref": "common.schema.json#/$defs/version" },
+                "hash": { "$ref": "common.schema.json#/$defs/hash" },
+                "timestamp": { "$ref": "common.schema.json#/$defs/timestamp" }
+              },
+              "additionalProperties": true
+            },
+            { "type": "null" }
+          ]
+        },
+        "config_validation": {
+          "type": "object",
+          "required": ["valid", "validated_at"],
+          "properties": {
+            "valid": { "type": ["boolean", "null"] },
+            "validated_at": {
+              "oneOf": [
+                { "$ref": "common.schema.json#/$defs/timestamp" },
+                { "type": "null" }
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "stats_ok": { "type": "boolean" },
+        "runtime": {
+          "type": "object",
+          "required": ["version", "uptime_sec"],
+          "properties": {
+            "version": { "type": ["string", "null"], "maxLength": 255 },
+            "uptime_sec": { "type": ["integer", "null"], "minimum": 0 },
+            "shared_counters": {
+              "description": "Whether the HAProxy worker answering keeps its counters in the file shm-stats-file names, so that frontend and server counters carry over a reload while uptime_sec starts again. Read from the running release's global section and the worker's own mappings; null when either could not be read, absent from a node installed before it was reported.",
+              "type": ["boolean", "null"]
+            }
+          },
+          "additionalProperties": true
+        },
+        "certificates": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/carried_certificate" }
+        },
+        "architecture": {
+          "description": "The node's machine architecture, as the kernel names it (`x86_64`). Absent from nodes installed before it was reported.",
+          "type": "string"
+        },
+        "waf_engine": {
+          "description": "The WAF engine (B230, B231): the installed package's version, null when it is not installed, and whether a release with rules has started it. Absent from nodes installed before it was reported, which the interface treats as a node without the engine.",
+          "type": "object",
+          "required": [
+            "version",
+            "active"
+          ],
+          "properties": {
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64
+            },
+            "active": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "dns_listener": {
+          "description": "dnsdist, which serves the cluster's dns listeners (B249): the installed package's version, null when it is not installed, and whether a release with a listener has started it. Absent from nodes installed before it was reported, which the interface treats as a node without it.",
+          "type": "object",
+          "required": [
+            "version",
+            "active"
+          ],
+          "properties": {
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64
+            },
+            "active": {
+              "type": "boolean"
+            },
+            "counters": {
+              "description": "dnsdist's own counters, read from its statistics on loopback, null when it is stopped or did not answer, and absent from a node installed before they were reported. Counted per pool under the pool's name: every query reaching the object's listener, those over TCP, those refused for allow_from, and the pool's servers' responses added up as answered. Per server its queries, responses as answered, dnsdist's running average latency in microseconds, and UP or DOWN. uptime_sec is dnsdist's own, since it restarts apart from HAProxy.",
+              "type": ["object", "null"],
+              "required": ["uptime_sec", "pools", "servers"],
+              "properties": {
+                "uptime_sec": { "type": ["integer", "null"], "minimum": 0 },
+                "pools": {
+                  "type": "array",
+                  "maxItems": 500,
+                  "items": {
+                    "type": "object",
+                    "required": ["pool", "queries", "tcp_queries", "refused", "answered"],
+                    "properties": {
+                      "pool": { "type": "string", "minLength": 1, "maxLength": 255 },
+                      "queries": { "type": "integer", "minimum": 0 },
+                      "tcp_queries": { "type": ["integer", "null"], "minimum": 0 },
+                      "refused": { "type": "integer", "minimum": 0 },
+                      "answered": { "type": ["integer", "null"], "minimum": 0 }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "servers": {
+                  "type": "array",
+                  "maxItems": 500,
+                  "items": {
+                    "type": "object",
+                    "required": ["pool", "server", "status", "queries", "answered"],
+                    "properties": {
+                      "pool": { "type": "string", "minLength": 1, "maxLength": 255 },
+                      "server": { "type": "string", "minLength": 1, "maxLength": 255 },
+                      "status": { "enum": ["UP", "DOWN", null] },
+                      "queries": { "type": ["integer", "null"], "minimum": 0 },
+                      "answered": { "type": ["integer", "null"], "minimum": 0 },
+                      "latency_us": { "type": ["integer", "null"], "minimum": 0, "description": "Sent by node bundles before 26-10-06 and read by nothing (B253); allowed so an older node still validates." }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "packages": {
+          "description": "Installed versions of the packages beside HAProxy's process, as dpkg reports them (26-10-09): HAProxy's own package, keepalived, dnsdist, the WAF engine and the OpenSSL library HAProxy links (libssl3t64, or libssl3). Null where a package is not installed; absent from a node reporting before it. Compared across a cluster's nodes in dpkg's order.",
+          "type": "object",
+          "properties": {
+            "haproxy": { "type": ["string", "null"], "maxLength": 64 },
+            "keepalived": { "type": ["string", "null"], "maxLength": 64 },
+            "dnsdist": { "type": ["string", "null"], "maxLength": 64 },
+            "waf_engine": { "type": ["string", "null"], "maxLength": 64 },
+            "openssl": { "type": ["string", "null"], "maxLength": 64 }
+          },
+          "additionalProperties": false
+        },
+        "server_state_unapplied": {
+          "description": "Drain or maintenance kept for a server on this node that HAProxy does not hold after a reload or a start (review 26-10-09, F1), by the server's GUID; empty when every kept state is in force, null when the node's record cannot be read, absent from a node reporting before it.",
+          "type": ["object", "null"],
+          "maxProperties": 500,
+          "propertyNames": { "pattern": "^srv:[a-z][a-z0-9_-]{0,39}\\.[0-9a-f]{16}$" },
+          "additionalProperties": { "enum": ["drain", "maint"] }
+        },
+        "ipvs": {
+          "description": "The syslog objects' IPVS virtual servers (B256): the file the release publishes, the one installed as /etc/keepalived/ipvs.conf, each present or not with its sha256, and whether keepalived.conf includes it at its top level - the address list's measurements. ipvsadm says whether the counting tool is installed; services are the kernel's virtual servers and receivers from ipvsadm -Ln --stats --exact, packets and bytes in, null when ipvsadm is missing or failed. A service the installed file names carries its object and pool, and lists every receiver the file gives it as s1, s2, ... in order: UP with its counters while the kernel holds it, DOWN without them once keepalived's check took it out. A service the file does not name has null names and the kernel's receivers. published_servers counts the published file's virtual servers (null when it is absent or unreadable, absent from nodes reporting before 26-10-08): with included false, any is syslog objects forwarded nowhere. Absent from nodes installed before it was reported, which are not held to the file.",
+          "type": "object",
+          "required": [
+            "ipvsadm",
+            "published",
+            "published_sha256",
+            "installed",
+            "installed_sha256",
+            "included",
+            "services"
+          ],
+          "properties": {
+            "ipvsadm": { "type": "boolean" },
+            "published": { "type": ["boolean", "null"] },
+            "published_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+            "published_servers": { "type": ["integer", "null"], "minimum": 0 },
+            "installed": { "type": ["boolean", "null"] },
+            "installed_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+            "included": { "type": ["boolean", "null"] },
+            "services": {
+              "type": ["array", "null"],
+              "maxItems": 500,
+              "items": {
+                "type": "object",
+                "required": ["protocol", "address", "port", "packets", "bytes", "object", "pool", "receivers"],
+                "properties": {
+                  "protocol": { "enum": ["tcp", "udp", "sctp"] },
+                  "object": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+                  "pool": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+                  "address": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+                  "packets": { "type": "integer", "minimum": 0 },
+                  "bytes": { "type": "integer", "minimum": 0 },
+                  "receivers": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                      "type": "object",
+                      "required": ["address", "port", "server", "status", "packets", "bytes"],
+                      "properties": {
+                        "address": { "type": "string", "minLength": 1, "maxLength": 64 },
+                        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+                        "server": { "type": ["string", "null"], "minLength": 1, "maxLength": 16 },
+                        "status": { "enum": ["UP", "DOWN"] },
+                        "packets": { "type": ["integer", "null"], "minimum": 0 },
+                        "bytes": { "type": ["integer", "null"], "minimum": 0 }
+                      },
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "description": "The node's CPU and memory (B239): the running CPU counters from /proc/stat (all time and idle time, in ticks since boot), MemTotal and MemAvailable in kB, the one-minute load average and the number of CPUs. Each part is null when it could not be read. CPU use is a rate and needs two readings, so it is worked out by whoever keeps the previous one. Absent from nodes installed before it was reported.",
+          "type": "object",
+          "required": ["cpu", "memory", "load", "cpus"],
+          "properties": {
+            "cpu": {
+              "type": ["object", "null"],
+              "required": ["total", "idle"],
+              "properties": {
+                "total": { "type": "integer", "minimum": 0 },
+                "idle": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            },
+            "memory": {
+              "type": ["object", "null"],
+              "required": ["total_kb", "available_kb"],
+              "properties": {
+                "total_kb": { "type": "integer", "minimum": 0 },
+                "available_kb": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            },
+            "load": { "type": ["number", "null"], "minimum": 0 },
+            "cpus": { "type": ["integer", "null"], "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "installation": {
+          "description": "The node bundle's compatibility level and a digest check of every script installed with it. Absent from nodes installed before this measurement existed.",
+          "type": "object",
+          "required": ["node_api", "scripts_current", "scripts"],
+          "properties": {
+            "node_api": { "type": ["integer", "null"], "minimum": 1 },
+            "scripts_current": { "type": "boolean" },
+            "scripts": {
+              "type": "object",
+              "propertyNames": { "pattern": "^(haprion|haproxy)-[a-z0-9-]+$" },
+              "additionalProperties": {
+                "type": "object",
+                "required": ["expected_sha256", "installed_sha256", "current"],
+                "properties": {
+                  "expected_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+                  "installed_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+                  "current": { "type": "boolean" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "servers": {
+          "description": "One row per pool member as the runtime reports it, null when the socket could not be read, and absent from a node still running an older status script.",
+          "type": ["array", "null"],
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "required": ["backend", "server", "status"],
+            "properties": {
+              "backend": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "server": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "status": { "type": ["string", "null"], "maxLength": 32 },
+              "check_status": { "type": ["string", "null"], "maxLength": 32 },
+              "check_code": { "type": ["string", "null"], "maxLength": 8 },
+              "check_duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+              "last_change_sec": { "type": ["integer", "null"], "minimum": 0 },
+              "counters": { "$ref": "#/$defs/runtime_counters" },
+              "admin": {
+                "description": "Drain or maintenance as set on the runtime (B263), from show servers state: maint and drain are the forced flags, ready neither; status says DOWN for a drained server whose check fails, so this is the only place the drain shows. Null when show servers state could not be read or did not name the member; absent from a node reporting before 26-10-09.",
+                "enum": ["ready", "drain", "maint", null]
+              },
+              "weight": {
+                "description": "Sent by node bundles of 26-10-09 (b6eb767) and read by nothing (review 26-10-09, F6: the Servers card shows the object's weight); allowed so such a node still validates.",
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "maximum": 256
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "frontends": {
+          "description": "One row per listener as the runtime counts it, null when the socket could not be read, and absent from a node still running a status script from before listeners were reported. A frontend runs no health check, so there is no verdict here - only what arrived.",
+          "type": ["array", "null"],
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "required": ["frontend"],
+            "properties": {
+              "frontend": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "status": { "type": ["string", "null"], "maxLength": 32 },
+              "counters": { "$ref": "#/$defs/runtime_counters" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "runtime_counters": {
+      "description": "HAProxy's own `show stat` counter columns for one row, under their own names, so a value can be looked up in HAProxy's documentation. Null where the column does not apply to this kind of row - a frontend has no `econ`, a server no `req_tot` - which is not the same fact as a counter standing at zero.",
+      "type": "object",
+      "additionalProperties": { "type": ["integer", "null"], "minimum": 0 }
+    },
+    "node_result": {
+      "type": "object",
+      "required": ["name", "mgmt_host", "reachable", "status_ok", "status", "error"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "mgmt_host": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "reachable": { "type": "boolean" },
+        "status_ok": { "type": "boolean" },
+        "status": {
+          "oneOf": [
+            { "$ref": "#/$defs/node_status" },
+            { "type": "null" }
+          ]
+        },
+        "error": {
+          "oneOf": [
+            { "$ref": "#/$defs/node_error" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "reachable": { "const": false },
+            "status_ok": { "const": false },
+            "status": { "type": "null" },
+            "error": { "$ref": "#/$defs/node_error" }
+          }
+        },
+        {
+          "properties": {
+            "reachable": { "const": true },
+            "status_ok": { "const": false },
+            "status": { "type": "null" },
+            "error": { "$ref": "#/$defs/node_error" }
+          }
+        },
+        {
+          "properties": {
+            "reachable": { "const": true },
+            "status_ok": { "const": true },
+            "status": { "$ref": "#/$defs/node_status" },
+            "error": { "type": "null" }
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "configured_nodes",
+        "reachable_nodes",
+        "valid_status_nodes",
+        "vip_owner_count",
+        "vip_owners",
+        "vip_unknown_nodes",
+        "vip_state"
+      ],
+      "properties": {
+        "configured_nodes": { "type": "integer", "minimum": 1 },
+        "reachable_nodes": { "type": "integer", "minimum": 0 },
+        "valid_status_nodes": { "type": "integer", "minimum": 0 },
+        "vip_owner_count": { "type": "integer", "minimum": 0 },
+        "vip_owners": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "vip_unknown_nodes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "vip_state": {
+          "type": "string",
+          "enum": ["incomplete", "unknown", "no_owner", "single_owner", "split_brain"]
+        },
+        "waf_published": {
+          "description": "Whether the published release carries WAF rules (`waf/`), so whether each node's WAF engine should be running (review 2026-10-04 F3). Absent when the published tree could not be read, and from an engine older than the field.",
+          "type": "boolean"
+        },
+        "dns_published": {
+          "description": "Whether the published release carries a dns listener (`dns/`), so whether each node's dnsdist should be running (B249). Absent when the published tree could not be read, and from an engine older than the field.",
+          "type": "boolean"
+        },
+        "validator_version": {
+          "description": "The HAProxy version the management host validates candidates with, as `haproxy -v` names it; null when it could not be read. Absent from an engine older than the field.",
+          "type": ["string", "null"],
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": true
+    },
+    "status_result": {
+      "type": "object",
+      "required": ["nodes", "summary"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/node_result" }
+        },
+        "summary": { "$ref": "#/$defs/summary" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

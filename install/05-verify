@@ -64,17 +64,17 @@ for key in "$CONFIG_DEPLOY_KEY" "$NODE_STATUS_KEY" ${CERT_DEPLOY_KEY:+"$CERT_DEP
 done
 
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
-    check "$([[ "$(systemctl show -p LoadState --value haproxy-state-backup@verify.service 2>/dev/null)" == loaded ]] && echo yes || echo no)" \
+    check "$([[ "$(systemctl show -p LoadState --value haprion-state-backup@verify.service 2>/dev/null)" == loaded ]] && echo yes || echo no)" \
         "cluster backup service template is loaded"
 fi
 
 step "Clusters"
 
-command -v haproxy-config-status >/dev/null \
-    || die "haproxy-config-status is not installed - do step 2 of docs/install.md first"
+command -v haprion-config-status >/dev/null \
+    || die "haprion-config-status is not installed - do step 2 of docs/install.md first"
 
 for cluster in $(each_cluster); do
-    if out="$(haproxy-config-status -c "$cluster" 2>&1)"; then
+    if out="$(haprion-config-status -c "$cluster" 2>&1)"; then
         pass "config status for ${cluster}" "$(grep -oE 'Published version: *[0-9]+' <<<"$out" | tr -s ' ')"
     else
         bad "config status for ${cluster}" "$(head -1 <<<"$out")"
@@ -115,7 +115,7 @@ The installation answers. That is not the same as it working.
 Two more things, in this order, and preferably on a cluster that carries no
 traffic:
 
-  1. haproxy-deploy -c <cluster>   with the nodes already current. It should skip
+  1. haprion-deploy -c <cluster>   with the nodes already current. It should skip
      both nodes and change nothing. A run that correctly does nothing is a real
      test of the ordering logic
   2. publish a harmless change and deploy it. Confirm the non-owner is deployed

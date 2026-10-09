@@ -121,7 +121,7 @@ class DeployReport:
         }
 
     def as_envelope(self, cluster: str | None, *, request_id: str | None = None) -> dict[str, Any]:
-        """The frozen `haproxy-deploy` envelope.
+        """The frozen `haprion-deploy` envelope.
 
         A partial run must carry at least one warning and a blocked or failed one
         must carry an error; the envelope helper enforces both, so an incomplete

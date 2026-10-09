@@ -162,7 +162,7 @@ class Site:
             home=lambda account: root / account,
         )
         (root / ".journal").mkdir()
-        self.sudoers = root / "haproxy-config-edit"
+        self.sudoers = root / "haprion-config-edit"
         self.sudoers.write_text(SUDOERS.format(root=self.config_root))
         self.gitconfig = root / "gitconfig"
         self.gitconfig.write_text("")
@@ -388,7 +388,7 @@ class RemovingACluster(unittest.TestCase):
                     cluster_definition.SYSTEMCTL,
                     "disable",
                     "--now",
-                    "haproxy-state-backup@alpha.timer",
+                    "haprion-state-backup@alpha.timer",
                 ],
                 site.ran,
             )
@@ -472,7 +472,7 @@ REQUEST_ID = "77777777-7777-4777-8777-777777777777"
 
 @unittest.skipUnless(Path(GIT).exists(), "git is not installed where the tests run")
 class TheHelper(unittest.TestCase):
-    """The request the worker and `haproxy-cluster` send, answered in the contract's envelope."""
+    """The request the worker and `haprion-cluster` send, answered in the contract's envelope."""
 
     def run_helper(
         self, site: Site, request: str, *, ask: AskNode | None = None
@@ -495,7 +495,7 @@ class TheHelper(unittest.TestCase):
             tools=site.tools,
             ask=ask or answering_as("gamma"),
         )
-        return code, assert_contract("haproxy-cluster-define", out.getvalue())
+        return code, assert_contract("haprion-cluster-define", out.getvalue())
 
     def creation(self, **overrides: Any) -> str:
         fields: dict[str, Any] = {
@@ -623,7 +623,7 @@ class TheCommand(unittest.TestCase):
         self.assertEqual(parameters["address_prefix"], 24)
         self.assertNotIn("address_interface", parameters)
         self.assertIn("Created gamma with node-c, node-d.", out.getvalue())
-        self.assertIn("haproxy-cert-deploy -c gamma and haproxy-deploy -c gamma", out.getvalue())
+        self.assertIn("haprion-cert-deploy -c gamma and haprion-deploy -c gamma", out.getvalue())
 
     def test_remove_names_the_archive_and_says_the_nodes_keep_serving(self) -> None:
         def run(request: str) -> subprocess.CompletedProcess[str]:
@@ -633,7 +633,7 @@ class TheCommand(unittest.TestCase):
                 "result": {
                     "action": "removed",
                     "archive": "alpha-20260930-101500",
-                    "warnings": ["haproxy-state-backup@alpha.timer could not be stopped"],
+                    "warnings": ["haprion-state-backup@alpha.timer could not be stopped"],
                 },
             }
             return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
@@ -644,7 +644,7 @@ class TheCommand(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("archived as alpha-20260930-101500", out.getvalue())
         self.assertIn("keep serving", out.getvalue())
-        self.assertIn("WARNING: haproxy-state-backup@alpha.timer", out.getvalue())
+        self.assertIn("WARNING: haprion-state-backup@alpha.timer", out.getvalue())
 
     def test_a_refusal_is_printed_as_its_sentence(self) -> None:
         def run(_request: str) -> subprocess.CompletedProcess[str]:

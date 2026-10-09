@@ -19,7 +19,7 @@ expected body (the node never reads a body, deliberately - a key on a proxy
 node that returned one would be a way to read pages through it). Silence about
 either would be the probe answering a question it was not asked. The TLS
 handshake is HAProxy's own since 2026-09-30: no SNI, the chain verified and
-the host name not, as `haproxy-health-probe` on the node says.
+the host name not, as `haprion-health-probe` on the node says.
 
 Nothing here reaches a node, and nothing here is privileged. It builds a
 request, writes it to the socket the probe service answers on, and reads what

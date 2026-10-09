@@ -286,7 +286,7 @@ class TheHelper(ExportableFixture):
         code, answer = self.ask(format="pfx", password=BUNDLE_PASSWORD)
 
         self.assertEqual(code, 0)
-        document = assert_contract("haproxy-cert-export", answer)
+        document = assert_contract("haprion-cert-export", answer)
         self.assertNotIn(BUNDLE_PASSWORD, answer)
         pkcs12.load_key_and_certificates(
             base64.b64decode(document["result"]["content_base64"]), BUNDLE_PASSWORD.encode()
@@ -300,7 +300,7 @@ class TheHelper(ExportableFixture):
         code, answer = self.ask(id="shop.example", format="pem-key")
 
         self.assertEqual(code, 65)
-        document = assert_contract("haproxy-cert-export", answer)
+        document = assert_contract("haprion-cert-export", answer)
         self.assertEqual(document["error"]["code"], "not_exportable")
 
 

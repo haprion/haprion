@@ -1,0 +1,37 @@
+#!/bin/bash
+#
+# The forced command for the server state key (Fas 20, B263).
+#
+# Runs unprivileged, as the trigger account, like haprion-cert-trigger: it turns
+# the client's request into a validated argument list and only then escalates,
+# so root never parses anything a client sent. The root helper validates the
+# same words again; this wrapper protects against a leaked key, the second check
+# against this wrapper being replaced or bypassed.
+#
+#     server-state <guid> <ready|drain|maint>
+#
+set -Eeuo pipefail
+
+HELPER="/usr/local/sbin/haprion-server-state"
+# The generator's server GUID (`guid.server_guid`); the helper holds the same pattern.
+GUID_PATTERN='^srv:[a-z][a-z0-9_-]{0,39}\.[0-9a-f]{16}$'
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 64
+}
+
+request="${SSH_ORIGINAL_COMMAND:-}"
+[[ -n "$request" ]] || fail "no server state request was sent"
+
+# Word splitting is what is wanted here, and only here.
+read -r -a parts <<< "$request"
+(( ${#parts[@]} == 3 )) || fail "expected: server-state <guid> <ready|drain|maint>"
+[[ "${parts[0]}" == "server-state" ]] || fail "unknown request: ${parts[0]}"
+[[ "${parts[1]}" =~ $GUID_PATTERN ]] || fail "invalid server GUID"
+case "${parts[2]}" in
+    ready|drain|maint) ;;
+    *) fail "invalid state: expected ready, drain or maint" ;;
+esac
+
+exec sudo -n "$HELPER" set "${parts[1]}" "${parts[2]}"

@@ -1,4 +1,4 @@
-"""The privileged, read-only half of ``haproxy-list-backups``.
+"""The privileged, read-only half of ``haprion-list-backups``.
 
 The backup root is root-owned because the archives inside it hold password
 hashes and private SSH keys. This helper is what lets an unprivileged caller
@@ -109,7 +109,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-list-backups-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-list-backups-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

@@ -128,7 +128,7 @@ class ThePage(ImportPageTestCase):
         self.assertIn('name="cluster" value="alpha"', page)
         self.assertIn('name="receiver" value="lb-01.example.net"', page)
         self.assertIn("opened only by root", page)
-        self.assertIn("haproxy-cert-import", page)
+        self.assertIn("haprion-cert-import", page)
         self.assertIn("Import the certificate", page)
 
     def test_the_listing_links_to_it_for_an_admin_only(self) -> None:

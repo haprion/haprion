@@ -1,4 +1,4 @@
-"""`haproxy-cert-publish` - publish registered certificates to their targets.
+"""`haprion-cert-publish` - publish registered certificates to their targets.
 
 Runs as root, directly: its callers are certbot's deploy hook, which is root,
 and an operator at a root shell. It takes no request on stdin and offers no
@@ -8,7 +8,7 @@ choose targets but cannot invent them" a property of this command rather than
 of its callers.
 
 With `--deploy`, every cluster that received a new version is rolled out
-afterwards with `haproxy-cert-deploy`, the same command an operator runs by
+afterwards with `haprion-cert-deploy`, the same command an operator runs by
 hand, found beside this one in the installed release - and so is every cluster
 an earlier run published to without a rollout that answered 0, so running the
 command again finishes what a failed rollout left (`cert_pending`). That is what the certbot
@@ -41,11 +41,11 @@ from haproxy_mgmt.envelope import Message, envelope, failure, new_request_id
 OPERATION = "cert_publish"
 EXIT_NOT_ROOT = 77
 EXIT_USAGE = 64
-CERT_DEPLOY = "haproxy-cert-deploy"
+CERT_DEPLOY = "haprion-cert-deploy"
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-cert-publish [--certificate <id>]... [--deploy] [--json]\n"
+    "  haprion-cert-publish [--certificate <id>]... [--deploy] [--json]\n"
     "\n"
     "Publishes every certificate in the registry to every cluster and receiver\n"
     "it names, writing only what changed. Runs as root.\n"
@@ -56,7 +56,7 @@ USAGE = (
     "  --deploy\n"
     "        Roll out every cluster that received a new version, and every\n"
     "        cluster an earlier run published to without a successful rollout,\n"
-    "        with haproxy-cert-deploy. This is what the certbot deploy hook passes.\n"
+    "        with haprion-cert-deploy. This is what the certbot deploy hook passes.\n"
     "  --json\n"
     "        Print the result envelope on stdout instead of a summary.\n"
 )
@@ -91,7 +91,7 @@ def _usage(writer: TextIO) -> int:
 
 
 def default_deployer(errors: TextIO) -> Deployer:
-    """`haproxy-cert-deploy -c <cluster>`, from the same bin directory as this command.
+    """`haprion-cert-deploy -c <cluster>`, from the same bin directory as this command.
 
     Beside this executable rather than on PATH: the hook runs from certbot's
     environment, whose PATH is not the operator's, and "the release this
@@ -184,7 +184,7 @@ def main(
         return exit_code
 
     if require_root and os.geteuid() != 0:
-        return refuse("not_root", "haproxy-cert-publish must run as root", EXIT_NOT_ROOT)
+        return refuse("not_root", "haprion-cert-publish must run as root", EXIT_NOT_ROOT)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)

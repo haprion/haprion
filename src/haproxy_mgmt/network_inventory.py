@@ -3,7 +3,7 @@
 The tables an object points at - the addresses it can be served on, the
 addresses it can leave from, and the groups it can be restricted to - shaped
 for a caller that is not the generator. The interface reads this; so does an
-operator running ``haproxy-network``, and both get the same answer because
+operator running ``haprion-network``, and both get the same answer because
 there is only one function producing it.
 
 Two fields exist for the reader rather than for the configuration. ``origin``

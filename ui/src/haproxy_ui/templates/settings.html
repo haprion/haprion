@@ -37,7 +37,7 @@
     <div><dt>Renewal</dt><dd>{% if entry and not mismatch and entry.source_label != "Imported" %}Automatic{% else %}By hand{% endif %}</dd></div>
   </dl>
   {% else %}
-  <p class="table-note">The served certificate could not be read. The listing is refreshed by the poller; if this stays, check <code>haproxy-ui-tls show</code> on the manager.</p>
+  <p class="table-note">The served certificate could not be read. The listing is refreshed by the poller; if this stays, check <code>haprion-tls show</code> on the manager.</p>
   {% endif %}
   {% if mismatch %}
   <p class="preview-notice settings-notice"><span class="status-orb status-warning" aria-hidden="true"></span><strong><code>{{ entry.identifier }}</code> is marked for the interface, but nginx serves another certificate.</strong></p>

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "revert",
+  "cluster": "alpha",
+  "request_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "result": {
+    "changed": true,
+    "from_version": 8,
+    "restored_version": 6,
+    "new_version": 9,
+    "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "published_at": "2026-08-24T09:10:00Z",
+    "deployment_required": true,
+    "next_command": "haprion-deploy -c alpha"
+  },
+  "warnings": [
+    {
+      "code": "deployment_required",
+      "message": "The reverted configuration is published but not deployed"
+    }
+  ],
+  "error": null
+}

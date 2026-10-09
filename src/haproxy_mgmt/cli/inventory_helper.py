@@ -1,4 +1,4 @@
-"""The privileged, read-only half of ``haproxy-inventory``.
+"""The privileged, read-only half of ``haprion-inventory``.
 
 The poller may ask for a cluster by ID, but the helper chooses the repository
 and the release inside the privilege boundary.  It reads the exact commit named
@@ -54,7 +54,7 @@ def main(
         require_no_arguments(argv)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError(
-                "haproxy-inventory-helper must run as root", exit_code=EXIT_NOT_ROOT
+                "haprion-inventory-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
         request = read_helper_request(
             input_stream or sys.stdin.buffer,

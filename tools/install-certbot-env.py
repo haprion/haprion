@@ -32,7 +32,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-DEFAULT_TARGET = Path("/opt/haproxy-certbot")
+DEFAULT_TARGET = Path("/opt/haprion-certbot")
 DEFAULT_PYTHON = Path("/usr/bin/python3")
 PROJECT_NAME = "haproxy-manager-certbot-env"
 # The lock names certbot once, as a package; its version is the release's.
@@ -350,7 +350,7 @@ def install_environment(
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the locked certbot environment under /opt/haproxy-certbot"
+        description="Build the locked certbot environment under /opt/haprion-certbot"
     )
     parser.add_argument("--project", required=True, type=Path, help="directory with uv.lock")
     parser.add_argument("--uv", required=True, type=Path, help="the uv binary to build with")

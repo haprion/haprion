@@ -160,7 +160,7 @@ class WaitingChangeTests(StatusFixture):
 
         self.assertIn("  Unsent - changes that have not become a version yet:\n", shown)
         self.assertIn(f"    {'core/gone.cfg':<40} deleted\n", shown)
-        self.assertIn('    haproxy-publish -c alpha "<comment>"\n', shown)
+        self.assertIn('    haprion-publish -c alpha "<comment>"\n', shown)
 
     def test_a_new_directory_is_listed_file_by_file(self) -> None:
         #

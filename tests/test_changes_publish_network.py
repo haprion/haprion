@@ -91,7 +91,7 @@ class NetworkPublicationTests(NetworkPublishFixture):
             code, document, err = self.publish_network(policy, self.request())
 
             self.assertEqual((code, err), (0, ""))
-            assert_contract("haproxy-changes-publish", json.dumps(document))
+            assert_contract("haprion-changes-publish", json.dumps(document))
             self.assertEqual(document["operation"], "changes_publish")
             self.assertTrue(document["result"]["changed"])
             self.assertEqual((self.repo / "managed/network.yaml").read_text(), NETWORK)

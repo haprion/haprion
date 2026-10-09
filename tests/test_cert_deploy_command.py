@@ -325,7 +325,7 @@ class RefusalContractTests(HelperFixture):
         code, out, _ = self.run_helper(request(json=True), policy_path=policy)
 
         self.assertEqual(code, 78)
-        document = assert_contract("haproxy-cert-deploy", out)
+        document = assert_contract("haprion-cert-deploy", out)
         self.assertEqual(document["operation"], "cert_deploy")
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["request_id"], REQUEST_ID)
@@ -337,7 +337,7 @@ class RefusalContractTests(HelperFixture):
 
         code, out, _ = self.run_helper(request(json=True), policy_path=policy)
 
-        document = assert_contract("haproxy-cert-deploy", out)
+        document = assert_contract("haprion-cert-deploy", out)
         self.assertEqual(code, 68)
         self.assertEqual(document["error"]["code"], "certificate_missing")
         self.assertEqual(self.requests, [])
@@ -347,7 +347,7 @@ class RefusalContractTests(HelperFixture):
             code, out, _ = self.run_helper(request(json=True))
 
         self.assertEqual(code, 75)
-        document = assert_contract("haproxy-cert-deploy", out)
+        document = assert_contract("haprion-cert-deploy", out)
         self.assertEqual(document["outcome"], "blocked")
         self.assertEqual(document["error"]["code"], "operation_locked")
         self.assertEqual(self.requests, [])

@@ -765,7 +765,7 @@ class RenewingALineage(IssueFixture):
 
         code, out, err = helper({"domain": "example.net", "renew": True})
         self.assertEqual(code, 0, err)
-        document = assert_contract("haproxy-cert-issue", out)
+        document = assert_contract("haprion-cert-issue", out)
         self.assertTrue(document["result"]["renewed"])
         self.assertEqual(document["result"]["method"], "dns-01")
         self.assertEqual(

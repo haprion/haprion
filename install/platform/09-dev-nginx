@@ -54,10 +54,10 @@ TLS_KEY=${TLS_KEY}
 SERVER_NAME=${SERVER_NAME}
 EOF
 )"
-install -o root -g root -m 755 bin/haproxy-ui-tls /usr/local/sbin/haproxy-ui-tls
+install -o root -g root -m 755 bin/haprion-tls /usr/local/sbin/haprion-tls
 install_file /usr/local/sbin/haproxy-ui-dev-tls root:root 755 "#!/bin/bash
 set -Eeuo pipefail
-exec /usr/local/sbin/haproxy-ui-tls --config ${TLS_CONF} \"\$@\""
+exec /usr/local/sbin/haprion-tls --config ${TLS_CONF} \"\$@\""
 
 step "Development site"
 rendered="$(sed -e "s|SERVER_NAME|${SERVER_NAME}|g" \

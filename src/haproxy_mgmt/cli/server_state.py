@@ -1,4 +1,4 @@
-"""`haproxy-server-state` - drain, maintenance or ready for an object's servers.
+"""`haprion-server-state` - drain, maintenance or ready for an object's servers.
 
 The thin half, as the calling user: it turns arguments into the request the
 interface's worker sends too (`server_state_helper.build_request`), hands it to
@@ -30,18 +30,18 @@ from haproxy_mgmt.server_state import STATES
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-server-state -c <cluster> -o <object> <ready|drain|maint> "
+    "  haprion-server-state -c <cluster> -o <object> <ready|drain|maint> "
     "<host:port|pool/host:port>... [--json]\n"
     "\n"
     "Examples:\n"
-    "  haproxy-server-state -c alpha -o shop drain 198.51.100.10:8080\n"
-    "  haproxy-server-state -c alpha -o shop ready 198.51.100.10:8080 198.51.100.11:8080\n"
-    "  haproxy-server-state -c alpha -o portal maint api/198.51.100.20:9000 --json\n"
+    "  haprion-server-state -c alpha -o shop drain 198.51.100.10:8080\n"
+    "  haprion-server-state -c alpha -o shop ready 198.51.100.10:8080 198.51.100.11:8080\n"
+    "  haprion-server-state -c alpha -o portal maint api/198.51.100.20:9000 --json\n"
 )
 
 
 def run_helper(request: str) -> subprocess.CompletedProcess[str]:
-    """Through sudo without `-n`, as `haproxy-probe`: a person has a terminal to answer it on."""
+    """Through sudo without `-n`, as `haprion-probe`: a person has a terminal to answer it on."""
 
     return subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
         [SUDO, "--", HELPER],

@@ -1,4 +1,4 @@
-"""`haproxy-probe` - ask the nodes whether a health check would reach a pool.
+"""`haprion-probe` - ask the nodes whether a health check would reach a pool.
 
 The thin half. It runs as the calling user, turns arguments into a structured
 request, and prints what the helper produced. It decides nothing: which nodes
@@ -6,7 +6,7 @@ are asked, and with which identity, is the helper's to know.
 
 The question this command exists to answer
 ------------------------------------------
-`haproxy-status` says whether the nodes are healthy and `show stat` on a node
+`haprion-status` says whether the nodes are healthy and `show stat` on a node
 says what HAProxy currently thinks of a pool it is already serving. Neither
 answers the question somebody has while writing an object: would this check,
 against these servers, from this source address, actually work - before it is
@@ -26,22 +26,22 @@ from haproxy_mgmt.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS
 from haproxy_mgmt.probe_socket import build_request
 from haproxy_mgmt.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 
-HELPER = "/opt/haprion/current/bin/haproxy-probe-helper"
+HELPER = "/opt/haprion/current/bin/haprion-probe-helper"
 SUDO = "/usr/bin/sudo"
 OPERATION = "probe"
 ALLOWED_MIN_VERSIONS = frozenset(BACKEND_MIN_VERSION.values())
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-probe -c <cluster> -t <host:port>[,<host:port>...] "
+    "  haprion-probe -c <cluster> -t <host:port>[,<host:port>...] "
     "[--http <path>] [--host <name>] [--tls [--verify] [--min-version <version>]] "
     "[--source <address>] [--json]\n"
-    "  haproxy-probe -c <cluster> -t <address:port>[,...] --udp [--json]\n"
+    "  haprion-probe -c <cluster> -t <address:port>[,...] --udp [--json]\n"
     "\n"
     "Examples:\n"
-    "  haproxy-probe -c alpha -t 198.51.100.10:8080\n"
-    "  haproxy-probe -c alpha -t 198.51.100.10:8443 --tls --http /healthz --json\n"
-    "  haproxy-probe -c alpha -t 198.51.100.20:514 --udp\n"
+    "  haprion-probe -c alpha -t 198.51.100.10:8080\n"
+    "  haprion-probe -c alpha -t 198.51.100.10:8443 --tls --http /healthz --json\n"
+    "  haprion-probe -c alpha -t 198.51.100.20:514 --udp\n"
 )
 
 
@@ -57,7 +57,7 @@ def run_probe_helper(
 
     Through sudo, because a person running this command has a terminal and a
     `%sudo` rule - so sudo may ask for the password, on the terminal, as
-    `haproxy-cert-deploy` lets it. There is no NOPASSWD rule for this helper,
+    `haprion-cert-deploy` lets it. There is no NOPASSWD rule for this helper,
     and `-n` made the command fail for anyone without a cached sudo. The
     interface reaches the same helper over a socket instead - its account is
     built so that it cannot gain privilege at all - but both build the request

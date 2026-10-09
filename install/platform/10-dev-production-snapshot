@@ -40,7 +40,7 @@ development_group="$PLATFORM_GROUP"
 [[ -L "${development_root}/current" ]] || \
     die "${development_root}/current does not exist; install a development release first"
 
-snapshot_command="${development_root}/current/venv/bin/haproxy-ui-production-snapshot"
+snapshot_command="${development_root}/current/venv/bin/haprion-production-snapshot"
 [[ -x "$snapshot_command" ]] || die "development release has no production snapshot command; deploy it first"
 
 step "Capturing the production display snapshot"

@@ -53,7 +53,7 @@ SCHEMA_VERSION = 1
 PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 MAX_REVISION = 1_000_000
 MAX_CIPHERTEXT = 65536
-HELPER = "/opt/haprion/current/bin/haproxy-dns-profile-apply-helper"
+HELPER = "/opt/haprion/current/bin/haprion-dns-profile-apply-helper"
 SUDO = "/usr/bin/sudo"
 
 

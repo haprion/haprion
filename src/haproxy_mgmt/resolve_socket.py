@@ -2,7 +2,7 @@
 
 The generator takes a `dnsdist_config.Lookup`, and where it runs in the web -
 the editor and the preview - this is the one it is given: each name goes over
-`/run/haprion/resolve.sock` to `haproxy-resolve-helper`, which looks it up
+`/run/haprion/resolve.sock` to `haprion-resolve-helper`, which looks it up
 the way the publish will. The web itself reaches nothing beyond localhost.
 
 A service that cannot be asked is said as such, not as a name that does not

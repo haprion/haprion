@@ -207,7 +207,7 @@ class AUdpTarget(HelperFixture):
 
 
 class ThePersonsUdpCheck(unittest.TestCase):
-    """`haproxy-probe --udp`, the command's half of the form's button (Fas 19b B5)."""
+    """`haprion-probe --udp`, the command's half of the form's button (Fas 19b B5)."""
 
     def sent(self, argv: list[str]) -> tuple[list[dict[str, object]], int]:
         with mock.patch.object(probe, "run_probe_helper") as run:

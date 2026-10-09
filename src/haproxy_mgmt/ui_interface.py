@@ -5,13 +5,13 @@ The manager's interface certificate is an ordinary registry entry marked
 other certificate uses; the one thing that differs is where it is published.
 A cluster certificate becomes a file the nodes pull. This one becomes the pair
 nginx serves the interface with, and that pair has had one installer since the
-platform was built: `haproxy-ui-tls install`, with its checks, its `nginx -t`,
+platform was built: `haprion-tls install`, with its checks, its `nginx -t`,
 its reload and its rollback. This module hands the material to that command and
 does not grow a second path.
 
 What it adds in front of the command
 ------------------------------------
-Two refusals `haproxy-ui-tls` does not make, because an operator at a root
+Two refusals `haprion-tls` does not make, because an operator at a root
 shell choosing a file is trusted to have chosen the right one and a renewal
 timer is not:
 
@@ -25,7 +25,7 @@ timer is not:
 Where it runs
 -------------
 As root, outside the worker's sandbox: from the renewal timer and an operator's
-`haproxy-cert-publish` directly, and from the interface through its own socket
+`haprion-cert-publish` directly, and from the interface through its own socket
 helper (D3), because the worker's sandbox cannot write the pair's directory.
 """
 
@@ -47,7 +47,7 @@ from haproxy_mgmt.certificates import CertificateError, leaf_block, leaf_fingerp
 from haproxy_mgmt.envelope import new_request_id
 
 UI_TLS_CONFIG = Path("/etc/haprion/ui-tls.conf")
-UI_TLS_COMMAND = Path("/usr/local/sbin/haproxy-ui-tls")
+UI_TLS_COMMAND = Path("/usr/local/sbin/haprion-tls")
 INSTALL_TIMEOUT = 120
 
 #
@@ -70,7 +70,7 @@ class InterfaceConfig:
 
 
 def read_config(path: Path = UI_TLS_CONFIG) -> InterfaceConfig:
-    """`TLS_CERT`, `TLS_KEY` and `SERVER_NAME`, as `haproxy-ui-tls` reads them."""
+    """`TLS_CERT`, `TLS_KEY` and `SERVER_NAME`, as `haprion-tls` reads them."""
 
     try:
         text = path.read_text(encoding="utf-8")
@@ -147,7 +147,7 @@ def install(
 
     #
     # The key is written only to a directory this process just made, mode 0700,
-    # and removed with it. `haproxy-ui-tls` copies the pair into place itself;
+    # and removed with it. `haprion-tls` copies the pair into place itself;
     # the paths it is given are never the served ones.
     #
     with tempfile.TemporaryDirectory(prefix="haproxy-ui-tls-") as directory:
@@ -174,7 +174,7 @@ def install(
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise PublishError("install_failed", f"haproxy-ui-tls could not run: {exc}") from exc
+            raise PublishError("install_failed", f"haprion-tls could not run: {exc}") from exc
     if completed.returncode != 0:
         #
         # The command's own last word, which is its reason: it prints
@@ -182,7 +182,7 @@ def install(
         #
         said = [line for line in (completed.stderr or "").splitlines() if line.strip()]
         reason = said[-1] if said else f"exit {completed.returncode}"
-        raise PublishError("install_failed", f"haproxy-ui-tls refused the certificate: {reason}")
+        raise PublishError("install_failed", f"haprion-tls refused the certificate: {reason}")
     return True
 
 
@@ -236,7 +236,7 @@ def socket_installer(*, path: str = SOCKET_PATH, timeout: float = SOCKET_TIMEOUT
         except helper_socket.HelperUnavailable as exc:
             raise PublishError(
                 "dependency_unavailable",
-                f"{exc} Install haproxy-ui-tls-helper.socket (07-platform-services).",
+                f"{exc} Install haprion-tls-helper.socket (07-platform-services).",
             ) from exc
         try:
             document = json.loads(answer)

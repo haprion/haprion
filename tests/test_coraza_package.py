@@ -103,7 +103,7 @@ class Packages(unittest.TestCase):
 
     def test_the_engine_package_holds_the_binary_the_unit_and_the_licence(self) -> None:
         deb = self.build_coraza(self.coraza_source(), "out")
-        self.assertEqual(deb.name, "haprion-coraza-spoa_9.9.9-5_amd64.deb")
+        self.assertEqual(deb.name, "haprion-coraza-spoa_9.9.9-6_amd64.deb")
         rows = listing(deb)
         self.assertEqual(rows["/usr/sbin/coraza-spoa"], "-rwxr-xr-x root/root")
         self.assertEqual(
@@ -117,7 +117,7 @@ class Packages(unittest.TestCase):
             rows["/usr/lib/systemd/journald@haprion-waf.conf.d/haprion.conf"],
             "-rw-r--r-- root/root",
         )
-        self.assertEqual(field(deb, "Version"), "9.9.9-5")
+        self.assertEqual(field(deb, "Version"), "9.9.9-6")
         self.assertEqual(field(deb, "Architecture"), "amd64")
 
     def test_the_unit_waits_for_a_release_and_runs_without_privilege(self) -> None:

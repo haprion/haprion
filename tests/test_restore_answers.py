@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt import restore_answers, restore_source
+from haproxy_mgmt import accounts, restore_answers, restore_source
 from haproxy_mgmt.restore_answers import AnswersError
 from tests.restore_fixture import FILES, NODE_CONF, build
 
@@ -35,7 +35,7 @@ class Deriving(unittest.TestCase):
         script = (
             f"set -euo pipefail; source {LIB}; source {work / 'answers.env'}; "
             f'render_node_conf {cluster} "$NODE_PATH_{cluster}" '
-            f"{restore_answers.LOGREAD_GROUP}"
+            f"{accounts.LOGS_GROUP}"
         )
         completed = subprocess.run(  # noqa: S603 - fixed interpreter, script built here
             ["/bin/bash", "-c", script], check=True, capture_output=True, text=True
@@ -78,7 +78,8 @@ class WhatStopsTheDerivation(Deriving):
 
     def test_service_accounts_out_of_order_are_refused(self) -> None:
         node_conf = NODE_CONF.replace(
-            'BACKUP_ACCOUNTS="svc-trigger svc-status', 'BACKUP_ACCOUNTS="svc-status svc-trigger'
+            'BACKUP_ACCOUNTS="_haprion-trigger _haprion-status',
+            'BACKUP_ACCOUNTS="_haprion-status _haprion-trigger',
         )
         with self.assertRaisesRegex(AnswersError, "begin with its service accounts"):
             self.answers(node_conf)

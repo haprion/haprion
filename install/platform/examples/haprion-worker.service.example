@@ -6,11 +6,11 @@ Wants=network-online.target
 
 [Service]
 Type=exec
-User=haproxy-ui-worker
-Group=haproxy-ui-worker
+User=_haprion-worker
+Group=_haprion-worker
 
 Environment=HAPROXY_UI_CONFIG=/apps/haproxy-manager/config/ui.toml
-ExecStart=/apps/haproxy-manager/current/venv/bin/haproxy-ui-worker
+ExecStart=/apps/haproxy-manager/current/venv/bin/haprion-worker
 
 Restart=on-failure
 RestartSec=5
@@ -25,7 +25,7 @@ RestartSec=5
 # not just to the Python process that calls it. That is why this file had to
 # open rather than the helper being hardened separately.
 #
-# Where the real limit now lives: /etc/sudoers.d/haproxy-ui-worker, which names
+# Where the real limit now lives: /etc/sudoers.d/haprion-worker, which names
 # each mutation helper and permits no arguments at all. The sandbox never was what
 # stopped this account from deploying - the absence of a sudo rule was. Widening
 # here does not widen what may be run; only that file does.

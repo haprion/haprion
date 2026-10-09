@@ -6,10 +6,10 @@ is already there rather than rewriting it, and the only mutable thing in the
 tree is the `current` link, which is replaced atomically.
 
 Ownership is not incidental. The nodes fetch releases over SSH as the identity
-`haproxy-pull`, which is deliberately NOT a member of `haproxy-mgmt`: that
+`_haprion-pull`, which is deliberately NOT a member of `haprion`: that
 identity is reachable from the nodes, and the membership would also have given
 it read access to the source repositories and to the cluster definitions. The
-published tree is therefore `root:haproxy-pull` 750, mirroring the certificate
+published tree is therefore `root:_haprion-pull` 750, mirroring the certificate
 path. Releases used to be written `root:root` 755, which made the tree world
 readable and undid the tightening on every publish; deployment broke on
 2026-08-24 when the last world readability was removed.
@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from haproxy_mgmt import accounts
 from haproxy_mgmt.release_layout import (
     NODE_DIRECTORIES,
     ReleaseMetadata,
@@ -38,7 +39,7 @@ from haproxy_mgmt.release_layout import (
 # apart is guarded by tests, not by hope - see test_release_install.py here and
 # test_published_permissions.py in the regression suite.
 #
-PUBLISH_GROUP = "haproxy-pull"
+PUBLISH_GROUP = accounts.PULL
 
 DIRECTORY_MODE = 0o750
 FILE_MODE = 0o640

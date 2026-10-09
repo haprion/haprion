@@ -17,13 +17,7 @@ need_root
 load_answers "${1:-}"
 require_vars PLATFORM_ROOT WEB_USER
 
-#
-# The unit is named after the account it runs as. That is not a convention for
-# its own sake: it means a second environment on the same machine gets its own
-# units by having its own accounts, with nothing to keep in step by hand - and
-# in production the two names were already identical, so nothing is renamed.
-#
-unit_name="${WEB_USER}"
+unit_name="${WEB_UNIT%.service}"
 WEB_PORT="${WEB_PORT:-8080}"
 
 unit="/etc/systemd/system/${unit_name}.service"
@@ -32,14 +26,13 @@ unit="/etc/systemd/system/${unit_name}.service"
 
 step "Unit"
 #
-# Rendered from the example rather than copied, so the accounts and paths come
-# from the answers file like everything else. The example is what a reader
-# reviews; this is what runs.
+# Rendered from the example rather than copied, so the paths come from the
+# answers file like everything else. The example is what a reader reviews; this
+# is what runs.
 #
 rendered="$(sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" \
-                -e "s|haproxy-ui-web|${WEB_USER}|g" \
                 -e "s|--port 8080|--port ${WEB_PORT}|" \
-                examples/haproxy-ui-web.service.example)"
+                examples/haprion-web.service.example)"
 install_file "$unit" root:root 644 "$rendered"
 
 systemctl daemon-reload

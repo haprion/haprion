@@ -11,7 +11,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -78,15 +77,13 @@ class Installation:
         self.cluster_file.write_text(yaml.safe_dump(clusters, sort_keys=False))
         policy = yaml.safe_load((BASE / "examples" / "runtime-policy.yaml").read_text())
         policy["cluster_file"] = str(self.cluster_file)
-        policy["pull_account"] = "svc-pull"
         if certificates:
             policy["certificate_root"] = "/srv/certdist"
-            policy["cert_pull_account"] = "svc-cert-pull"
         policy_file = root / "runtime-policy.yaml"
         policy_file.write_text(yaml.safe_dump(policy, sort_keys=False))
         self.policy = load_policy(policy_file, require_secure=False)
 
-        for account in ("svc-pull", "svc-cert-pull"):
+        for account in ("_haprion-pull", "_haprion-cert-pull"):
             (root / account / ".ssh").mkdir(parents=True)
             (root / account / ".ssh" / "authorized_keys").write_text(EXISTING_LINE)
         self.known_hosts = root / "known_hosts"
@@ -210,7 +207,7 @@ class AddingANode(unittest.TestCase):
             self.assertEqual(len(outcome.files), 6)
             nodes = site.runtime().cluster("alpha").nodes
             self.assertEqual(nodes[-1], Node(name="node-c", mgmt_host="node-c.example.com"))
-            pull = (site.root / "svc-pull/.ssh/authorized_keys").read_text()
+            pull = (site.root / "_haprion-pull/.ssh/authorized_keys").read_text()
             self.assertIn(EXISTING_LINE, pull)
             self.assertIn(
                 'restrict,command="/usr/bin/rrsync -ro /srv/haproxy-manager/published" '
@@ -219,7 +216,7 @@ class AddingANode(unittest.TestCase):
             )
             self.assertIn(
                 f'-ro /srv/certdist" {CERT_KEY} node-c certificate pull',
-                (site.root / "svc-cert-pull/.ssh/authorized_keys").read_text(),
+                (site.root / "_haprion-cert-pull/.ssh/authorized_keys").read_text(),
             )
             self.assertEqual(
                 enrollment.known_hosts_without(site.known_hosts.read_bytes(), "node-c.example.com")
@@ -308,16 +305,6 @@ class AddingANode(unittest.TestCase):
             with self.assertRaisesRegex(EnrollmentError, "at most 8"):
                 site.add()
 
-    def test_without_a_pull_account_nodes_are_added_by_hand(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            site = Installation(Path(raw))
-            site.policy = replace(site.policy, pull_account=None)
-
-            with self.assertRaises(EnrollmentError) as caught:
-                site.add()
-
-            self.assertEqual(caught.exception.code, "dependency_unavailable")
-
     def test_an_installation_without_a_collector_changes_four_files(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = Installation(Path(raw), collector=False)
@@ -327,7 +314,7 @@ class AddingANode(unittest.TestCase):
     def test_each_file_keeps_its_mode(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = Installation(Path(raw))
-            keys = site.root / "svc-pull/.ssh/authorized_keys"
+            keys = site.root / "_haprion-pull/.ssh/authorized_keys"
             os.chmod(keys, 0o600)
             #
             # Not the 0600 a new temporary file is created with, so keeping the
@@ -367,7 +354,7 @@ class RemovingANode(unittest.TestCase):
             self.assertNotIn(
                 "node-c", [node.name for node in site.runtime().cluster("alpha").nodes]
             )
-            for account in ("svc-pull", "svc-cert-pull"):
+            for account in ("_haprion-pull", "_haprion-cert-pull"):
                 keys = (site.root / account / ".ssh/authorized_keys").read_text()
                 self.assertNotIn("node-c", keys)
                 self.assertIn("node-a config pull", keys)

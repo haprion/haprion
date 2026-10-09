@@ -20,7 +20,7 @@
 # explicitly.
 #
 # The directory is /run/haprion, created at every boot by
-# /etc/tmpfiles.d/haproxy-mgmt.conf. /run is tmpfs and cleared on boot, which is
+# /etc/tmpfiles.d/haprion.conf. /run is tmpfs and cleared on boot, which is
 # what we want: a socket must not outlive the service answering on it.
 #
 # Installed as /etc/systemd/system/haprion-probe-helper.socket, then

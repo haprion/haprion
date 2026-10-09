@@ -188,10 +188,7 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
             python.chmod(0o755)
         (self.root / "current").symlink_to(self.root / "releases/current-release")
         self.answers = work / "answers.env"
-        self.answers.write_text(
-            f"PLATFORM_ROOT={self.root}\nDB_NAME=ui\nDB_MIGRATION_ROLE=ui_owner\n"
-            "WEB_USER=web\nWORKER_USER=worker\nPOLLER_USER=poller\n"
-        )
+        self.answers.write_text(f"PLATFORM_ROOT={self.root}\n")
         self.record = work / "arguments"
         self.wrapper = work / "platform/check-compatibility"
 

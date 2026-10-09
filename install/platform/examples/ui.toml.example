@@ -51,7 +51,7 @@ interval_seconds = 20
 # Connections use the local socket and peer authentication. There is no user and
 # no password here, and no place to put one: each service account is named after
 # its database role, so the kernel establishes who is connecting.
-name = "haproxy_ui"
+name = "haprion"
 socket_directory = "/var/run/postgresql"
 
 [listen]

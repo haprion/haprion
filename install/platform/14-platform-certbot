@@ -48,13 +48,13 @@ step "The worker's sandbox"
 # Checked before anything is built: a unit without them makes every issuance
 # fail on certbot's log lock, and step 07 is what installs the unit.
 #
-worker_unit="/etc/systemd/system/${WORKER_USER}.service"
-[[ -f "$worker_unit" ]] || die "${worker_unit} is missing; run 07-platform-services first"
+worker_unit_file="/etc/systemd/system/${WORKER_UNIT}"
+[[ -f "$worker_unit_file" ]] || die "${worker_unit_file} is missing; run 07-platform-services first"
 for path in /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt /etc/haprion/dns-profiles; do
-    grep -Eq "^ReadWritePaths=(.* )?${path}( .*)?$" "$worker_unit" \
-        || die "${worker_unit} does not open ${path}; rerun 07-platform-services with this source tree"
+    grep -Eq "^ReadWritePaths=(.* )?${path}( .*)?$" "$worker_unit_file" \
+        || die "${worker_unit_file} does not open ${path}; rerun 07-platform-services with this source tree"
 done
-log "  ok       ${worker_unit} opens certbot's directories"
+log "  ok       ${worker_unit_file} opens certbot's directories"
 
 step "Building the environment"
 previous="$(readlink "${TARGET}/current" 2>/dev/null || true)"

@@ -270,7 +270,7 @@ fi
 # Lifted again however this script ends. Only once a worker is installed - a
 # first installation has none yet.
 #
-if [[ -n "${WORKER_USER:-}" ]] && systemctl cat "${WORKER_USER}.service" >/dev/null 2>&1; then
+if systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
     step "Holding the worker's claims"
     drain=(bin/haprion-drain)
     "${drain[@]}" pause --wait "${DRAIN_SECONDS:-900}"
@@ -316,9 +316,7 @@ fi
 # worker and poller are installed by step 7, after the first release.
 #
 step "Starting the background services"
-for background_user in "${WORKER_USER:-}" "${POLLER_USER:-}"; do
-    [[ -n "$background_user" ]] || continue
-    background_unit="${background_user}.service"
+for background_unit in "$WORKER_UNIT" "$POLLER_UNIT"; do
     if systemctl cat "$background_unit" >/dev/null 2>&1; then
         systemctl restart "$background_unit"
         log "  restarted ${background_unit}"
@@ -327,7 +325,7 @@ for background_user in "${WORKER_USER:-}" "${POLLER_USER:-}"; do
     fi
 done
 
-unit="${WEB_USER}.service"
+unit="$WEB_UNIT"
 if systemctl cat "$unit" >/dev/null 2>&1; then
     step "Starting"
     #

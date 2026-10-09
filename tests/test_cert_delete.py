@@ -89,7 +89,7 @@ class DeleteFixture(Fixture):
         key.write_text("dummy\n", encoding="utf-8")
         key.chmod(0o600)
         policy = yaml.safe_load(policy_path.read_text())
-        policy["cert_deploy_identity"] = {"user": "svc-cert", "key": str(key)}
+        policy["cert_deploy_identity"] = {"key": str(key)}
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         return policy_path
 

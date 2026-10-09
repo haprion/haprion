@@ -297,7 +297,7 @@ class CurrentLinkTests(InstallFixture):
 class GroupTests(unittest.TestCase):
     def test_the_publish_group_is_the_one_the_nodes_use(self) -> None:
         """Guards the constant against drifting from the shell copies."""
-        self.assertEqual(PUBLISH_GROUP, "haproxy-pull")
+        self.assertEqual(PUBLISH_GROUP, "_haprion-pull")
 
     def test_a_missing_group_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

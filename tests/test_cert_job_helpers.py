@@ -154,7 +154,7 @@ class TheBoundaryEveryOneOfThemHolds(HelperFixture):
 
         rules = (
             Path(__file__).resolve().parents[1]
-            / "install/platform/examples/haproxy-ui-worker.sudoers.example"
+            / "install/platform/examples/haprion-worker.sudoers.example"
         ).read_text(encoding="utf-8")
         for module, _ in self.MODULES:
             with self.subTest(helper=module.OPERATION):
@@ -450,7 +450,7 @@ class WhatRetargetingAnswers(HelperFixture):
         key.write_text("dummy\n", encoding="utf-8")
         key.chmod(0o600)
         policy = yaml.safe_load(self.policy_path.read_text())
-        policy["cert_deploy_identity"] = {"user": "svc-cert", "key": str(key)}
+        policy["cert_deploy_identity"] = {"key": str(key)}
         self.policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
 
         def node(identity: Any, host: str, certificate_id: str) -> tuple[int, str]:

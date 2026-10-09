@@ -43,10 +43,16 @@ NODE_SCRIPTS = (
     "haprion-server-state-trigger",
 )
 #
-# Data rather than programs, so 0644: the shell library the scripts source,
-# and the repository key `lib.sh` installs dnsdist with (B249).
+# Data rather than programs, so 0644: the shell library the scripts source and
+# the fixed account names it reads (B266), the node's sysusers fragment, and
+# the repository key `lib.sh` installs dnsdist with (B249).
 #
-NOT_EXECUTABLE = ("install/lib.sh", "install/apt-keys/powerdns-dnsdist.asc")
+NOT_EXECUTABLE = (
+    "install/lib.sh",
+    "install/accounts.sh",
+    "install/sysusers/haprion-node.conf",
+    "install/apt-keys/powerdns-dnsdist.asc",
+)
 PAYLOAD = (
     "install/04-node-prepare",
     *NOT_EXECUTABLE,

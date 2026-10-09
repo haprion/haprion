@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import safe_yaml
+from haproxy_mgmt import accounts, safe_yaml
 
 DEFAULT_POLICY_PATH = Path("/etc/haprion/runtime-policy.yaml")
 MAX_CONFIG_BYTES = 1024 * 1024
@@ -175,20 +175,17 @@ class PathPolicy:
     #
     # The web interface's worker account (B207, 2026-09-29): the one caller
     # whose `requested_by` a version records as who published it. Anyone else
-    # is recorded as the account sudo proves. Optional; without it every
-    # version names the account that ran the helper.
+    # is recorded as the account sudo proves.
     #
-    interface_account: str | None = None
+    interface_account: str = accounts.WORKER
 
     #
     # The accounts the nodes fetch as (B211): `rrsync -ro` of the published
     # tree and of the certificate tree, one `authorized_keys` line per node.
-    # Named here because adding or removing a node writes those lines, and the
-    # names exist nowhere else a command reads - the installer chose them. A
-    # policy without them has nodes added by hand, as before.
+    # Fixed since B266; no longer read from the policy.
     #
-    pull_account: str | None = None
-    cert_pull_account: str | None = None
+    pull_account: str = accounts.PULL
+    cert_pull_account: str = accounts.CERT_PULL
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,9 +221,8 @@ class NdesPolicy:
 class DeployIdentity:
     """Who the manager becomes to reach a node, and with which key.
 
-    Environment-specific, so it lives in configuration and never in code: the
-    account name and the key path identify a real installation, and a repository
-    that is going to be public must not carry either.
+    The account is fixed per purpose (B266, `accounts.IDENTITY_ACCOUNTS`); the
+    key path is the installation's and lives in the policy.
 
     Optional in the policy. Every other command works without it, and a
     deployment that needs it says exactly what is missing rather than failing on
@@ -971,18 +967,6 @@ USERNAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 TIMER_UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.timer$")
 
 
-def _optional_account(data: Mapping[str, Any], key: str) -> str | None:
-    """An account name the installation may or may not have declared."""
-
-    raw = data.get(key)
-    if raw is None:
-        return None
-    name = _required_string(data, key, "runtime policy")
-    if not USERNAME.fullmatch(name):
-        raise ConfigError(f"runtime policy {key} is not a valid account name")
-    return name
-
-
 def _optional_timer(data: Mapping[str, Any], key: str) -> str | None:
     """A systemd timer unit the installation may or may not have declared.
 
@@ -1026,12 +1010,14 @@ def _deploy_identity(data: Mapping[str, Any], key: str) -> DeployIdentity | None
 
     location = f"runtime policy.{key}"
     entry = _mapping(raw, location)
-    _only_keys(entry, {"user", "key"}, location)
-    user = _required_string(entry, "user", location)
-    if not USERNAME.fullmatch(user):
-        raise ConfigError(f"{location}.user is not a valid account name")
+    #
+    # `user` is refused rather than ignored: the account is fixed (B266), and a
+    # policy still naming one was written for an installation that has not been
+    # migrated.
+    #
+    _only_keys(entry, {"key"}, location)
     return DeployIdentity(
-        user=user,
+        user=accounts.IDENTITY_ACCOUNTS[key],
         key=_absolute_path(_required_string(entry, "key", location), f"{location}.key"),
     )
 
@@ -1059,9 +1045,6 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "receiver_root",
             "acme",
             "ndes",
-            "interface_account",
-            "pull_account",
-            "cert_pull_account",
         },
         "runtime policy",
     )
@@ -1095,9 +1078,6 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         receiver_root=_optional_root(data, "receiver_root"),
         acme=_acme_policy(data),
         ndes=_ndes_policy(data),
-        interface_account=_optional_account(data, "interface_account"),
-        pull_account=_optional_account(data, "pull_account"),
-        cert_pull_account=_optional_account(data, "cert_pull_account"),
     )
 
 

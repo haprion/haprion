@@ -357,7 +357,7 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
         prepare = (BASE / "install" / "04-node-prepare").read_text()
 
         self.assertIn(
-            'ensure_dir "$TRAFFIC_LOG_ROOT" "${RSYSLOG_WRITER}:${LOGREAD_GROUP}" 2750', prepare
+            'ensure_dir "$TRAFFIC_LOG_ROOT" "${RSYSLOG_WRITER}:${LOGS_GROUP}" 2750', prepare
         )
 
     @unittest.skipUnless(shutil.which("rsyslogd"), "rsyslog is not installed here")

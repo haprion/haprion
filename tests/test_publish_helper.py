@@ -67,9 +67,7 @@ class Recorder:
 class PublishFixture(unittest.TestCase):
     """Shared setup only; no test methods, so subclasses do not re-run each other."""
 
-    def runtime(
-        self, root: Path, *, linked_worktree: bool = False, interface_account: str | None = None
-    ) -> Path:
+    def runtime(self, root: Path, *, linked_worktree: bool = False) -> Path:
         config_root = root / "config"
         publish_root = root / "published"
         cert_root = root / "validation-certs"
@@ -95,8 +93,6 @@ class PublishFixture(unittest.TestCase):
             "publish_root": str(publish_root),
             "validation_certs_root": str(cert_root),
         }
-        if interface_account is not None:
-            policy["interface_account"] = interface_account
         policy_path = root / "runtime-policy.yaml"
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         self.run_root = root / "run"

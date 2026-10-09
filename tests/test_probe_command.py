@@ -95,7 +95,6 @@ class HelperFixture(unittest.TestCase):
         }
         if identity:
             document["probe_identity"] = {
-                "user": "svc-probe",
                 "key": str(self.root / "probe.key"),
             }
         self.policy.write_text(yaml.safe_dump(document), encoding="utf-8")

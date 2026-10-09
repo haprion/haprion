@@ -1,7 +1,0 @@
-schema_version: 1
-account_prefix: svc-
-config_group: svc-mgmt
-roles:
-  web: svc-web
-  worker: svc-worker
-  poller: svc-poller

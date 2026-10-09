@@ -1,6 +1,6 @@
 # Lets the interface's worker run the fourteen bounded mutations, and nothing else.
 #
-# Its own rule, for the same reason the poller has one. %haproxy-mgmt holds the
+# Its own rule, for the same reason the poller has one. %haprion holds the
 # operators and %sudo holds the humans; a service account must not reach a
 # privilege because somebody else needed it. This is the separate decision.
 #
@@ -60,27 +60,27 @@
 #
 # Installed 0440 root:root, and accepted by visudo before it is put in place.
 
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-deploy-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-deploy-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-revert-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-changes-publish-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-issue-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-publish-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-target-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-dns-profile-apply-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-delete-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-deploy-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-deploy-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-revert-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-changes-publish-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-issue-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-publish-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-target-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-dns-profile-apply-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-delete-helper ""
 
 # NDES profiles: ciphertext arrives only on stdin.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-ndes-profile-apply-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-ndes-profile-apply-helper ""
 
 # NDES enrollment: the challenge is read from the root-only profile record, never from the request.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-scep-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-scep-helper ""
 
 # Certificate upload (B165): the file, sealed for root, arrives only on stdin.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-import-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-import-helper ""
 
 # Signing request (C9b): the key is made in the import store and never leaves it; the CSR comes back.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-request-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-request-helper ""
 
 # Drain, maintenance and ready (B263): one object's servers on every node, found in the newest version first.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-server-state-helper ""
+_haprion-worker ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-server-state-helper ""

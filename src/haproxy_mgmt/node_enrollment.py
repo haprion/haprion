@@ -362,12 +362,6 @@ def plan_add(
     locations: Locations,
     require_secure: bool = True,
 ) -> list[Change]:
-    if policy.pull_account is None:
-        raise EnrollmentError(
-            "dependency_unavailable",
-            "the runtime policy names no pull_account, so nodes are added by hand here",
-            78,
-        )
     if cluster not in runtime.clusters:
         raise EnrollmentError("cluster_unknown", f"there is no cluster {cluster!r}")
     if enrollment.cluster != cluster:
@@ -390,7 +384,7 @@ def plan_add(
         raise EnrollmentError("cluster_full", f"a cluster has at most {MAX_NODES} nodes")
     cert_account, cert_root = policy.cert_pull_account, policy.certificate_root
     cert_key = enrollment.cert_pull_key
-    wants_cert = cert_account is not None and cert_root is not None
+    wants_cert = cert_root is not None
     if wants_cert and cert_key is None:
         raise EnrollmentError(
             "enrollment_invalid",
@@ -506,8 +500,6 @@ def plan_remove(
         (policy.pull_account, CONFIG_PURPOSE),
         (policy.cert_pull_account, CERT_PURPOSE),
     ):
-        if account is None:
-            continue
         path = locations.authorized_keys(account)
         keys = _read(path)
         changes.append(

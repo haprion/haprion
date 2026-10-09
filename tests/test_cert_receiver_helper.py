@@ -208,7 +208,7 @@ class TheBoundary(HelperFixture):
         """B163: reached over a socket, so the rule is absent and the unit names the path."""
 
         examples = Path(__file__).resolve().parents[1] / "install/platform/examples"
-        rules = (examples / "haproxy-ui-worker.sudoers.example").read_text(encoding="utf-8")
+        rules = (examples / "haprion-worker.sudoers.example").read_text(encoding="utf-8")
         service = (examples / "haprion-cert-receiver-helper@.service.example").read_text(
             encoding="utf-8"
         )

@@ -131,13 +131,11 @@ class Site:
             "certificate_root": str(root / "certdist"),
             "certificate_registry": str(self.registry),
             "backup_root": str(self.backup_root),
-            "pull_account": "svc-pull",
-            "cert_pull_account": "svc-cert-pull",
         }
         self.policy_file = root / "runtime-policy.yaml"
         self.policy_file.write_text(yaml.safe_dump(policy))
         self.policy = load_policy(self.policy_file, require_secure=False)
-        for account in ("svc-pull", "svc-cert-pull"):
+        for account in ("_haprion-pull", "_haprion-cert-pull"):
             (root / account / ".ssh").mkdir(parents=True)
             (root / account / ".ssh/authorized_keys").write_text(
                 f'restrict,command="x" {key(90)} node-a config pull\n'
@@ -280,7 +278,7 @@ class CreatingACluster(unittest.TestCase):
             self.assertEqual(safe, [f"{site.config_root}/gamma.git", f"{site.config_root}/gamma"])
             self.assertIn(
                 "node-d certificate pull",
-                (site.root / "svc-cert-pull/.ssh/authorized_keys").read_text(),
+                (site.root / "_haprion-cert-pull/.ssh/authorized_keys").read_text(),
             )
             self.assertEqual(len(outcome.fingerprints), 2)
 
@@ -381,7 +379,9 @@ class RemovingACluster(unittest.TestCase):
             self.assertFalse((site.backup_root / "node-a").exists())
             self.assertFalse((site.retention / "alpha.json").exists())
             self.assertNotIn("alpha", site.sudoers.read_text())
-            self.assertNotIn("node-a", (site.root / "svc-pull/.ssh/authorized_keys").read_text())
+            self.assertNotIn(
+                "node-a", (site.root / "_haprion-pull/.ssh/authorized_keys").read_text()
+            )
             self.assertNotIn("alpha", site.registry.read_text())
             self.assertIn(
                 [

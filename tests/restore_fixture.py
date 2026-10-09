@@ -16,10 +16,10 @@ from pathlib import Path
 
 from haproxy_mgmt.backup_archive import REQUIRED_PATHS
 
-SERVICE_ACCOUNTS = ("svc-trigger", "svc-status", "svc-backup", "svc-logread")
+SERVICE_ACCOUNTS = ("_haprion-trigger", "_haprion-status", "_haprion-backup", "_haprion-logread")
 
 # Rendered by install/lib.sh's render_node_conf; a test holds the two together.
-NODE_CONF = """# Node configuration for haproxy-manager. Rendered by install/04-node-prepare.
+NODE_CONF = """# Node configuration for Haprion. Rendered by install/04-node-prepare.
 #
 # Read by the node-side scripts in /usr/local/sbin. Root-owned and not writable
 # by anyone else: it names the account and key used to fetch configuration, so
@@ -29,15 +29,15 @@ CLUSTER="alpha"
 MANAGER="mgr.example.com"
 
 # Where this node fetches its published configuration from.
-CONFIG_PULL_USER="svc-pull"
+CONFIG_PULL_USER="_haprion-pull"
 CONFIG_PULL_KEY="/etc/haprion/keys/config-pull"
 CONFIG_REMOTE_PATH="alpha/current/node-a/"
 
 # Local accounts and groups a state backup captures. A rebuilt node with no way
 # to log in is not a restored node, so operator accounts belong here too.
-BACKUP_SERVICE_ACCOUNTS="svc-trigger svc-status svc-backup svc-logread"
-BACKUP_ACCOUNTS="svc-trigger svc-status svc-backup svc-logread operator"
-BACKUP_GROUPS="haproxy-logread"
+BACKUP_SERVICE_ACCOUNTS="_haprion-trigger _haprion-status _haprion-backup _haprion-logread"
+BACKUP_ACCOUNTS="_haprion-trigger _haprion-status _haprion-backup _haprion-logread operator"
+BACKUP_GROUPS="_haprion-logs"
 
 # The operator's own files a state backup carries besides the product's -
 # absolute paths, space-separated. A listed path that is missing fails the backup.
@@ -46,7 +46,7 @@ EXTRA_BACKUP_PATHS="/etc/default/grub.d/99-local.cfg"
 # Where this node fetches certificates from. A separate account and key: a node
 # that may read configuration has no business reading certificates it was not
 # asked for.
-CERT_PULL_USER="svc-cert-pull"
+CERT_PULL_USER="_haprion-cert-pull"
 CERT_PULL_KEY="/etc/haprion/keys/cert-pull"
 """
 
@@ -98,14 +98,14 @@ def _groups() -> str:
         f"uid={990 - index}({name}) gid={990 - index}({name}) groups={990 - index}({name})"
         for index, name in enumerate(SERVICE_ACCOUNTS)
     ]
-    lines[-1] += ",985(haproxy-logread)"
+    lines[-1] += ",985(_haprion-logs)"
     lines.append("uid=1000(operator) gid=1000(operator) groups=1000(operator),27(sudo)")
     return "\n".join(lines) + "\n"
 
 
 def _group_definitions() -> str:
     lines = [f"{name}:x:{990 - index}:" for index, name in enumerate(SERVICE_ACCOUNTS)]
-    lines += ["haproxy-logread:x:985:svc-logread", "operator:x:1000:"]
+    lines += ["_haprion-logs:x:985:_haprion-logread", "operator:x:1000:"]
     return "\n".join(sorted(lines)) + "\n"
 
 
@@ -138,7 +138,7 @@ FILES: dict[str, tuple[str, int]] = {
     "/etc/ssh/ssh_host_ed25519_key": ("host private\n", 0o600),
     "/etc/ssh/ssh_host_ed25519_key.pub": ("ssh-ed25519 AAAA node-a\n", 0o644),
     "/root/.ssh/authorized_keys": ("ssh-ed25519 AAAA operator\n", 0o600),
-    "/var/lib/svc-backup/.ssh/authorized_keys": ("restrict ssh-ed25519 AAAA\n", 0o644),
+    "/var/lib/_haprion-backup/.ssh/authorized_keys": ("restrict ssh-ed25519 AAAA\n", 0o644),
     "/home/operator/.ssh/authorized_keys": ("ssh-ed25519 AAAA operator\n", 0o600),
     "/etc/default/grub.d/99-local.cfg": ("GRUB_CMDLINE_LINUX_DEFAULT=x\n", 0o644),
     "/etc/cloud/cloud-init.disabled": ("", 0o644),

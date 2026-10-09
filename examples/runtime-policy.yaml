@@ -4,17 +4,16 @@ config_root: /srv/haproxy-manager/config-repositories
 publish_root: /srv/haproxy-manager/published
 validation_certs_root: /srv/haproxy-manager/validation-certs
 
-# Who the manager becomes to reach a node, and with which key. Optional: only
-# the deploy path uses it, and every other command works without it.
+# The key the manager reaches a node with. The account on the node is fixed
+# (_haprion-trigger here). Optional: only the deploy path uses it, and every
+# other command works without it.
 deploy_identity:
-  user: svc-app
   key: /root/.ssh/id_ed25519_example_deploy
 
 # Root-only node DR archives. The backup identity reaches only the node's
 # argumentless state-export forced command and is separate from deploy/status.
 backup_root: /srv/state-backups
 backup_identity:
-  user: svc-backup
   key: /root/.ssh/id_ed25519_node_backup
 
 # The certificate registry (see certificates.yaml). Optional: without it a
@@ -36,9 +35,3 @@ backup_identity:
 # acme:
 #   dns_cloudflare_credentials: /etc/letsencrypt/cloudflare/example.ini
 #   webroot: /var/www/acme
-
-# The web interface's worker account. A version it publishes records the
-# signed-in person it names as who published it; any other caller of a helper
-# is recorded as the account sudo proves, whatever its request says. Leave it
-# out and every version names the account that ran the helper.
-# interface_account: svc-app

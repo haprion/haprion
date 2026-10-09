@@ -22,22 +22,13 @@ need_root
 load_answers "${1:-}"
 require_vars PLATFORM_ROOT DB_NAME WEB_USER WORKER_USER POLLER_USER
 
-#
-# Units and the sudoers file are named after the accounts, so a second
-# environment on the same machine collides with nothing. In production the names
-# were already identical.
-#
-units=("$WORKER_USER" "$POLLER_USER")
-sudoers_name="$POLLER_USER"
+units=("${WORKER_UNIT%.service}" "${POLLER_UNIT%.service}")
 
 link="${PLATFORM_ROOT}/current"
 [[ -L "$link" ]] || die "${link} does not exist. Install a release first."
 
 render() {
-    sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" \
-        -e "s|haproxy-ui-worker|${WORKER_USER}|g" \
-        -e "s|haproxy-ui-poller|${POLLER_USER}|g" \
-        "$1"
+    sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" "$1"
 }
 
 step "The poller's one privilege"
@@ -48,15 +39,14 @@ step "The poller's one privilege"
 # only then moved into place.
 #
 sudoers_staging="$(mktemp)"
-sed "s|POLLER_USER|${POLLER_USER}|g" examples/haproxy-ui-poller.sudoers.example \
-    > "$sudoers_staging"
+cat examples/haprion-poller.sudoers.example > "$sudoers_staging"
 if ! visudo -cqf "$sudoers_staging"; then
     rm -f "$sudoers_staging"
     die "the rendered sudoers rule does not parse; nothing was installed"
 fi
-install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${sudoers_name}"
+install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${POLLER_SUDOERS}"
 rm -f "$sudoers_staging"
-log "  installed /etc/sudoers.d/${sudoers_name}  (visudo accepted it)"
+log "  installed /etc/sudoers.d/${POLLER_SUDOERS}  (visudo accepted it)"
 
 step "The worker's privileges"
 #
@@ -65,21 +55,13 @@ step "The worker's privileges"
 # existed, so the editor's publish button would have met sudo's refusal on its
 # first use. A rule that lives only in an operator's memory drifts from the
 # release that needs it.
-#
-# Rendered, exactly like the poller's rule above it. It was copied verbatim from
-# an example that named `haproxy-ui-worker` in every line, while being installed
-# as /etc/sudoers.d/${WORKER_USER} - so a platform whose worker is called
-# something else got a file visudo accepts and sudo ignores, and every write
-# failed pointing at the helper rather than at the rule.
-#
 sudoers_staging="$(mktemp)"
-sed "s|WORKER_USER|${WORKER_USER}|g" examples/haproxy-ui-worker.sudoers.example \
-    > "$sudoers_staging"
+cat examples/haprion-worker.sudoers.example > "$sudoers_staging"
 if ! visudo -cqf "$sudoers_staging"; then
     rm -f "$sudoers_staging"
     die "the worker sudoers rule does not parse; nothing was installed"
 fi
-install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${WORKER_USER}"
+install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${WORKER_SUDOERS}"
 rm -f "$sudoers_staging"
 log "  installed /etc/sudoers.d/${WORKER_USER}  (visudo accepted it)"
 
@@ -272,10 +254,10 @@ ensure_dir /etc/haprion/ndes-profiles root:root 700
 ensure_dir /etc/haprion/ndes-requests root:root 700
 
 step "Units"
-install_file "/etc/systemd/system/${WORKER_USER}.service" root:root 644 \
-    "$(render "examples/haproxy-ui-worker.service.example")"
-install_file "/etc/systemd/system/${POLLER_USER}.service" root:root 644 \
-    "$(render "examples/haproxy-ui-poller.service.example")"
+install_file "/etc/systemd/system/${WORKER_UNIT}" root:root 644 \
+    "$(render "examples/haprion-worker.service.example")"
+install_file "/etc/systemd/system/${POLLER_UNIT}" root:root 644 \
+    "$(render "examples/haprion-poller.service.example")"
 systemctl daemon-reload
 log "  reloaded systemd"
 
@@ -286,8 +268,8 @@ step "Starting"
 # unit file leaves the old settings in place while reporting success, which is
 # how a sandbox fix can look like it did not work.
 #
-systemctl enable --quiet "${WORKER_USER}.service" "${POLLER_USER}.service"
-systemctl restart "${WORKER_USER}.service" "${POLLER_USER}.service"
+systemctl enable --quiet "$WORKER_UNIT" "$POLLER_UNIT"
+systemctl restart "$WORKER_UNIT" "$POLLER_UNIT"
 for unit in "${units[@]}"; do
     systemctl is-active --quiet "${unit}.service" \
         || { systemctl status --no-pager --lines=20 "${unit}.service" || true;
@@ -336,7 +318,7 @@ for _ in $(seq 30); do
     sleep 1
 done
 [[ "$all_cached" -eq 1 ]] || {
-    journalctl -u "${POLLER_USER}.service" --no-pager --lines=20 || true
+    journalctl -u "$POLLER_UNIT" --no-pager --lines=20 || true
     die "the poller wrote no fresh rows for every cached read within 30 seconds"
 }
 for table in "${CACHES[@]}"; do

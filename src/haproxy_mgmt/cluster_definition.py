@@ -534,26 +534,21 @@ def _node_changes(
             ),
             "root's known_hosts",
         )
-        if policy.pull_account is not None:
-            path = locations.authorized_keys(policy.pull_account)
-            line = node_enrollment.pull_line(
-                policy.publish_root,
-                enrollment.config_pull_key,
-                node.name,
-                node_enrollment.CONFIG_PURPOSE,
-            )
-            put(
-                path,
-                node_enrollment.keys_with(
-                    current(path), line, node.name, node_enrollment.CONFIG_PURPOSE
-                ),
-                f"{policy.pull_account}'s authorized_keys",
-            )
-        if (
-            policy.cert_pull_account is not None
-            and policy.certificate_root is not None
-            and enrollment.cert_pull_key
-        ):
+        path = locations.authorized_keys(policy.pull_account)
+        line = node_enrollment.pull_line(
+            policy.publish_root,
+            enrollment.config_pull_key,
+            node.name,
+            node_enrollment.CONFIG_PURPOSE,
+        )
+        put(
+            path,
+            node_enrollment.keys_with(
+                current(path), line, node.name, node_enrollment.CONFIG_PURPOSE
+            ),
+            f"{policy.pull_account}'s authorized_keys",
+        )
+        if policy.certificate_root is not None and enrollment.cert_pull_key:
             path = locations.authorized_keys(policy.cert_pull_account)
             line = node_enrollment.pull_line(
                 policy.certificate_root,
@@ -593,13 +588,12 @@ def _node_changes(
             (policy.pull_account, node_enrollment.CONFIG_PURPOSE),
             (policy.cert_pull_account, node_enrollment.CERT_PURPOSE),
         ):
-            if account is not None:
-                path = locations.authorized_keys(account)
-                put(
-                    path,
-                    node_enrollment.keys_without(current(path), node.name, purpose),
-                    f"{account}'s authorized_keys",
-                )
+            path = locations.authorized_keys(account)
+            put(
+                path,
+                node_enrollment.keys_without(current(path), node.name, purpose),
+                f"{account}'s authorized_keys",
+            )
         if collector:
             put(
                 locations.collector_config,
@@ -735,11 +729,11 @@ def plan_add(
     tools: Tools,
     require_secure: bool = True,
 ) -> list[Change]:
-    if policy.pull_account is None or policy.certificate_registry is None:
+    if policy.certificate_registry is None:
         raise EnrollmentError(
             "dependency_unavailable",
-            "the runtime policy names no pull_account or no certificate_registry, so clusters are "
-            "created by hand here",
+            "the runtime policy names no certificate_registry, so clusters are created by hand "
+            "here",
             78,
         )
     if spec.cluster in runtime.clusters:

@@ -70,7 +70,6 @@ getent passwd "$RSYSLOG_WRITER" >/dev/null \
 
 SBIN="/usr/local/sbin"
 NODE_CONF="/etc/haprion/node.conf"
-LOGREAD_GROUP="haproxy-logread"
 TRAFFIC_LOG_ROOT="/var/log/haprion"
 # The engine package's LogNamespace=, read by haprion-traffic-log-read.
 WAF_JOURNAL_NAMESPACE="haproxy-waf"
@@ -103,6 +102,7 @@ SCRIPTS=(
 NODE_API=1
 
 step "Service accounts"
+apply_sysusers sysusers/haprion-node.conf
 
 #
 # System accounts with a home directory only so authorized_keys has somewhere to
@@ -130,13 +130,9 @@ step "Service accounts"
 ensure_account() {
     local user="$1"
     local home="/home/${user}"
-    if id -u "$user" >/dev/null 2>&1; then
-        log "  ok       ${user}"
-    else
-        useradd --system --home-dir "$home" --shell /bin/bash "$user"
-        passwd --lock "$user" >/dev/null
-        log "  created  ${user}"
-    fi
+    id -u "$user" >/dev/null 2>&1 \
+        || die "${user} does not exist; sysusers/haprion-node.conf makes it"
+    log "  ok       ${user}"
     ensure_dir "$home" root:root 755
     local entry
     while IFS= read -r -d '' entry; do
@@ -183,22 +179,22 @@ if [[ -n "${SERVER_STATE_PUBKEY:-}" ]]; then
 fi
 ensure_account "$STATUS_USER"
 ensure_account "$BACKUP_USER"
-ensure_group "$LOGREAD_GROUP"
-explicit_members="$(getent group "$LOGREAD_GROUP" | cut -d: -f4)"
+ensure_group "$LOGS_GROUP"
+explicit_members="$(getent group "$LOGS_GROUP" | cut -d: -f4)"
 for member in ${explicit_members//,/ }; do
     [[ "$member" == "$LOGREAD_USER" ]] \
-        || die "${LOGREAD_GROUP} already grants traffic-log access to ${member}"
+        || die "${LOGS_GROUP} already grants traffic-log access to ${member}"
 done
 ensure_account "$LOGREAD_USER"
-usermod -a -G "$LOGREAD_GROUP" "$LOGREAD_USER"
+usermod -a -G "$LOGS_GROUP" "$LOGREAD_USER"
 #
 # 2750, not 750. rsyslog drops to syslog:syslog before it opens a log file, so
 # it cannot chown one into a group it is not a member of. The set-group-id bit
-# makes every traffic file inherit haproxy-logread on creation, which is what
+# makes every traffic file inherit _haprion-logs on creation, which is what
 # lets the reader account read it - without widening the syslog account.
 #
-ensure_dir "$TRAFFIC_LOG_ROOT" "${RSYSLOG_WRITER}:${LOGREAD_GROUP}" 2750
-log "  member    ${LOGREAD_USER} -> ${LOGREAD_GROUP}"
+ensure_dir "$TRAFFIC_LOG_ROOT" "${RSYSLOG_WRITER}:${LOGS_GROUP}" 2750
+log "  member    ${LOGREAD_USER} -> ${LOGS_GROUP}"
 #
 # The WAF engine logs into a journal namespace of its own (its package, from
 # revision 2), and the reader reads it there. The same group is granted read on
@@ -211,7 +207,7 @@ log "  member    ${LOGREAD_USER} -> ${LOGREAD_GROUP}"
 WAF_JOURNAL_TMPFILES="/etc/tmpfiles.d/haproxy-manager-waf.conf"
 install_file "$WAF_JOURNAL_TMPFILES" root:root 644 "# Installed by install/04-node-prepare.
 d /var/log/journal/%m.${WAF_JOURNAL_NAMESPACE} 2755 root systemd-journal -
-a+ /var/log/journal/%m.${WAF_JOURNAL_NAMESPACE} - - - - d:group:${LOGREAD_GROUP}:r-x,group:${LOGREAD_GROUP}:r-x"
+a+ /var/log/journal/%m.${WAF_JOURNAL_NAMESPACE} - - - - d:group:${LOGS_GROUP}:r-x,group:${LOGS_GROUP}:r-x"
 systemd-tmpfiles --create "$WAF_JOURNAL_TMPFILES"
 log "  applied  ${WAF_JOURNAL_TMPFILES}"
 
@@ -239,20 +235,19 @@ ensure_dir /etc/haproxy/certs    root:root 750
 # entry is written the way the journal's above is, and `chmod 750` from
 # ensure_dir leaves its execute bit standing (the mask stays r-x).
 #
-WAF_ENGINE_GROUP="haproxy-waf"
-ensure_group "$WAF_ENGINE_GROUP"
-[[ -z "$(getent group "$WAF_ENGINE_GROUP" | cut -d: -f4)" ]] \
-    || die "${WAF_ENGINE_GROUP} has members; only the WAF engine may pass through /etc/haproxy/releases"
+ensure_group "$WAF_GROUP"
+[[ -z "$(getent group "$WAF_GROUP" | cut -d: -f4)" ]] \
+    || die "${WAF_GROUP} has members; only the WAF engine may pass through /etc/haproxy/releases"
 WAF_ENGINE_TMPFILES="/etc/tmpfiles.d/haproxy-manager-waf-engine.conf"
 install_file "$WAF_ENGINE_TMPFILES" root:root 644 "# Installed by install/04-node-prepare.
-a+ /etc/haproxy/releases - - - - group:${WAF_ENGINE_GROUP}:--x"
+a+ /etc/haproxy/releases - - - - group:${WAF_GROUP}:--x"
 systemd-tmpfiles --create "$WAF_ENGINE_TMPFILES"
 log "  applied  ${WAF_ENGINE_TMPFILES}"
 WAF_ENGINE_DROPIN="/etc/systemd/system/coraza-spoa.service.d/haproxy-manager.conf"
 ensure_dir "${WAF_ENGINE_DROPIN%/*}" root:root 755
 install_file "$WAF_ENGINE_DROPIN" root:root 644 "# Installed by install/04-node-prepare.
 [Service]
-SupplementaryGroups=${WAF_ENGINE_GROUP}"
+SupplementaryGroups=${WAF_GROUP}"
 systemctl daemon-reload
 log "  applied  ${WAF_ENGINE_DROPIN}"
 #
@@ -265,7 +260,6 @@ log "  applied  ${WAF_ENGINE_DROPIN}"
 # below starts nothing. Whether it runs is the deploy's decision, as the WAF
 # engine's is.
 #
-DNS_GROUP="haproxy-dns"
 ensure_group "$DNS_GROUP"
 [[ -z "$(getent group "$DNS_GROUP" | cut -d: -f4)" ]] \
     || die "${DNS_GROUP} has members; only dnsdist may pass through /etc/haproxy/releases"
@@ -436,8 +430,7 @@ EXTRA_BACKUP_PATHS="${extra_paths[*]}"
 node_path="$(cluster_value NODE_PATH "$CLUSTER")"
 [[ -n "$node_path" ]] || die "NODE_PATH_${CLUSTER} is not set in the answers file"
 
-[[ -z "${CERT_PULL_USER:-}" ]] || require_vars NODE_CERT_PULL_KEY
-node_conf="$(render_node_conf "$CLUSTER" "$node_path" "$LOGREAD_GROUP")"
+node_conf="$(render_node_conf "$CLUSTER" "$node_path" "$LOGS_GROUP")"
 
 ensure_dir "$(dirname "$NODE_CONF")" root:root 755
 install_file "$NODE_CONF" root:root 600 "$node_conf"
@@ -692,7 +685,7 @@ echo "  /home/${PULL_USER}/.ssh/authorized_keys    (owner ${PULL_USER}, mode 600
 echo
 echo "restrict,command=\"rrsync -ro ${PUBLISH_ROOT}\" $(pub "${NODE_CONFIG_PULL_KEY}.pub")"
 echo
-if [[ -n "${NODE_CERT_PULL_KEY:-}" && -n "${CERT_PULL_USER:-}" && -n "${CERTIFICATE_ROOT:-}" ]]; then
+if [[ -n "${NODE_CERT_PULL_KEY:-}" && -n "${CERTIFICATE_ROOT:-}" ]]; then
     echo "  /home/${CERT_PULL_USER}/.ssh/authorized_keys   (owner ${CERT_PULL_USER}, mode 600)"
     echo
     echo "restrict,command=\"rrsync -ro ${CERTIFICATE_ROOT}\" $(pub "${NODE_CERT_PULL_KEY}.pub")"

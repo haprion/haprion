@@ -329,8 +329,8 @@ class HelperBehaviourTests(HelperFixture):
         key.write_text("not a key\n", encoding="utf-8")
         policy_path = self.runtime()
         policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
-        policy["deploy_identity"] = {"user": "svc-app", "key": str(key)}
-        policy["status_identity"] = {"user": "svc-app", "key": str(key)}
+        policy["deploy_identity"] = {"key": str(key)}
+        policy["status_identity"] = {"key": str(key)}
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
 
         class Refused:

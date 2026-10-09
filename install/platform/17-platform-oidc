@@ -39,10 +39,8 @@ for role in "$WEB_USER" "${WORKER_USER:-}" "${POLLER_USER:-}" "${COLLECTOR_USER:
         || die "OIDC_USER must be distinct from the other service accounts"
 done
 id -u "$OIDC_USER" >/dev/null 2>&1 \
-    || die "service account ${OIDC_USER} does not exist. Add it to the identity policy as
-  roles.oidc, render the sysusers fragment and apply it:
-  haprion-render-sysusers --policy <file> > /etc/sysusers.d/haproxy-manager.conf
-  systemd-sysusers"
+    || die "service account ${OIDC_USER} does not exist. Run ../01-manager-prepare
+  first; it applies sysusers/haprion.conf."
 
 KEY_DIR="/etc/haprion/oidc"
 PUBLIC_DIR="${PLATFORM_ROOT}/config/oidc-keys"

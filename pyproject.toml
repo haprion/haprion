@@ -27,7 +27,6 @@ dev = [
 [project.scripts]
 haprion-cluster-config = "haproxy_mgmt.cli.cluster_config:main"
 haprion-cluster-list-helper = "haproxy_mgmt.cli.cluster_list_helper:main"
-haprion-render-sysusers = "haproxy_mgmt.cli.render_sysusers:main"
 haprion-validate-candidate-helper = "haproxy_mgmt.cli.validate_candidate_helper:main"
 haprion-history-reset = "haproxy_mgmt.cli.history_reset:main"
 haprion-history-reset-helper = "haproxy_mgmt.cli.history_reset_helper:main"

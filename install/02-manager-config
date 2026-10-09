@@ -16,8 +16,8 @@ source ./lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CONFIG_GROUP \
-             CLUSTERS TRIGGER_USER KEY_DIR CONFIG_DEPLOY_KEY
+require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CLUSTERS KEY_DIR \
+             CONFIG_DEPLOY_KEY
 
 POLICY_FILE="/etc/haprion/runtime-policy.yaml"
 
@@ -122,7 +122,6 @@ publish_root: ${PUBLISH_ROOT}
 validation_certs_root: ${VALIDATION_ROOT}
 
 deploy_identity:
-  user: \"${TRIGGER_USER}\"
   key: \"${KEY_DIR}/${CONFIG_DEPLOY_KEY}\""
 
 if [[ -n "${CERTIFICATE_ROOT:-}" ]]; then
@@ -136,7 +135,6 @@ certificate_root: ${CERTIFICATE_ROOT}
 # A separate identity: a key that can push configuration must not be able to
 # push certificates.
 cert_deploy_identity:
-  user: \"${TRIGGER_USER}\"
   key: \"${KEY_DIR}/${CERT_DEPLOY_KEY}\""
 fi
 
@@ -146,21 +144,19 @@ fi
 # `haprion-status` - which refuses to run without the first - did not work on a
 # manager built from these scripts until the lines were added by hand.
 #
-if [[ -n "${STATUS_USER:-}" && -n "${NODE_STATUS_KEY:-}" ]]; then
+if [[ -n "${NODE_STATUS_KEY:-}" ]]; then
     policy+="
 
 # Reads node status and nothing else; haprion-deploy reads with it too.
 status_identity:
-  user: \"${STATUS_USER}\"
   key: \"${KEY_DIR}/${NODE_STATUS_KEY}\""
 fi
 
-if [[ -n "${STATUS_USER:-}" && -n "${NODE_PROBE_KEY:-}" ]]; then
+if [[ -n "${NODE_PROBE_KEY:-}" ]]; then
     policy+="
 
 # Asks a node to try a health check; the same account as status, its own key.
 probe_identity:
-  user: \"${STATUS_USER}\"
   key: \"${KEY_DIR}/${NODE_PROBE_KEY}\""
 fi
 
@@ -169,12 +165,11 @@ if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
 
 # Drain, maintenance and ready per server (B263); the trigger account, its own key.
 server_state_identity:
-  user: \"${TRIGGER_USER}\"
   key: \"${KEY_DIR}/${SERVER_STATE_KEY}\""
 fi
 
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
-    require_vars BACKUP_USER NODE_BACKUP_KEY
+    require_vars NODE_BACKUP_KEY
     valid_abs_path "$BACKUP_ROOT" || die "not an absolute path without '..': ${BACKUP_ROOT}"
     ensure_dir "$BACKUP_ROOT" "root:root" 700
     policy+="
@@ -183,7 +178,6 @@ if [[ -n "${BACKUP_ROOT:-}" ]]; then
 # forced-command identity fetches them, and only root can traverse this root.
 backup_root: ${BACKUP_ROOT}
 backup_identity:
-  user: \"${BACKUP_USER}\"
   key: \"${KEY_DIR}/${NODE_BACKUP_KEY}\""
 fi
 

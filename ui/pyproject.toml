@@ -40,8 +40,8 @@ dependencies = [
 #
 [project.scripts]
 haprion-user = "haproxy_ui.admin:_entry"
-haproxy-ui-poller = "haproxy_ui.poller:_entry"
-haproxy-ui-worker = "haproxy_ui.worker:_entry"
+haprion-poller = "haproxy_ui.poller:_entry"
+haprion-worker = "haproxy_ui.worker:_entry"
 
 [dependency-groups]
 dev = [

@@ -38,7 +38,7 @@ class ReadingAnArchive(unittest.TestCase):
     def test_parents_created_by_mkdir_are_never_owned(self) -> None:
         source = self.read()
         owned = {entry.path for entry in source.owned()}
-        for parent in ("/etc", "/root", "/home", "/home/operator", "/var/lib/svc-backup"):
+        for parent in ("/etc", "/root", "/home", "/home/operator", "/var/lib/_haprion-backup"):
             self.assertNotIn(parent, owned)
             self.assertIn(parent, source.parents())
         # The parents really were recorded as 0700 - the trap this guards.
@@ -52,7 +52,7 @@ class ReadingAnArchive(unittest.TestCase):
             "/etc/haprion/keys/config-pull",
             "/root/.ssh",
             "/home/operator/.ssh/authorized_keys",
-            "/var/lib/svc-backup/.ssh/authorized_keys",
+            "/var/lib/_haprion-backup/.ssh/authorized_keys",
             "/etc/ssh/ssh_host_ed25519_key",
             "/usr/local/sbin/haprion-pull-deploy",
             "/etc/default/grub.d/99-local.cfg",
@@ -76,11 +76,11 @@ class ReadingAnArchive(unittest.TestCase):
         self.assertTrue(operator.password_hash and operator.password_hash.startswith("$y$"))
         self.assertFalse(operator.service)
         self.assertEqual({name for name, a in accounts.items() if a.service}, set(SERVICE_ACCOUNTS))
-        self.assertIn("haproxy-logread", accounts["svc-logread"].groups)
+        self.assertIn("_haprion-logs", accounts["_haprion-logread"].groups)
 
     def test_groups_carry_their_ids(self) -> None:
         groups = {group.name: group.gid for group in self.read().groups}
-        self.assertEqual(groups["haproxy-logread"], 985)
+        self.assertEqual(groups["_haprion-logs"], 985)
 
     def test_os_release_and_hostname(self) -> None:
         source = self.read()

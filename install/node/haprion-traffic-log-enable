@@ -16,7 +16,7 @@
 set -Eeuo pipefail
 
 LOG_ROOT="/var/log/haprion"
-LOG_GROUP="haproxy-logread"
+LOG_GROUP="_haprion-logs"
 # Ubuntu's 49-haproxy.conf matches every tag starting with "haproxy" and stops.
 # A rule installed after it never sees a message - which is exactly how the
 # first build failed - so this file has to sort before it.

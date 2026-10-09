@@ -115,15 +115,17 @@ class NodeInstallationReadingTests(unittest.TestCase):
 
         installer = INSTALLER.read_text()
         # Pass, not list, and only for a group with no members.
-        self.assertIn("a+ /etc/haproxy/releases - - - - group:${WAF_ENGINE_GROUP}:--x", installer)
-        self.assertIn('WAF_ENGINE_GROUP="haproxy-waf"', installer)
+        self.assertIn("a+ /etc/haproxy/releases - - - - group:${WAF_GROUP}:--x", installer)
+        self.assertIn(
+            "readonly WAF_GROUP=_haprion-waf", (INSTALLER.parent / "accounts.sh").read_text()
+        )
         self.assertIn("has members; only the WAF engine may pass", installer)
         # Given to the engine beside its package, which names no account of ours.
         self.assertIn(
             'WAF_ENGINE_DROPIN="/etc/systemd/system/coraza-spoa.service.d/haproxy-manager.conf"',
             installer,
         )
-        self.assertIn("SupplementaryGroups=${WAF_ENGINE_GROUP}", installer)
+        self.assertIn("SupplementaryGroups=${WAF_GROUP}", installer)
         # After the directory exists, so a fresh node gets the entry too.
         self.assertLess(
             installer.index("ensure_dir /etc/haproxy/releases root:root 750"),

@@ -13,6 +13,9 @@
 
 set -Eeuo pipefail
 
+# shellcheck source=accounts.sh
+source "$(dirname "${BASH_SOURCE[0]}")/accounts.sh"
+
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 step() { echo; echo "== $*"; }
 warn() { echo "WARNING: $*" >&2; }
@@ -30,10 +33,36 @@ need_not_root() {
 # The answers file is shell, so a typo is a syntax error rather than a silently
 # empty variable. It is sourced in a subshell first to check exactly that.
 #
+#
+# The project's accounts and groups (B266): one sysusers fragment from
+# install/sysusers/, installed where systemd reads it at boot and applied now.
+# systemd-sysusers creates what is missing and leaves what exists - an account
+# made by an earlier installation keeps its UID and everything it owns.
+#
+apply_sysusers() {
+    local fragment="$1" target
+    target="/etc/sysusers.d/$(basename "$fragment")"
+    [[ -f "$fragment" ]] || die "missing ${fragment}"
+    install_file "$target" root:root 644 "$(cat "$fragment")"
+    systemd-sysusers "$target" || die "systemd-sysusers could not apply ${target}"
+    log "  applied  ${target}"
+}
+
 load_answers() {
-    local file="${1:-}"
+    local file="${1:-}" name
     [[ -n "$file" ]] || die "usage: $(basename "$0") <answers-file>"
     [[ -r "$file" ]] || die "answers file not readable: $file"
+    #
+    # Account, group and database names are fixed since B266 (accounts.sh). An
+    # answers file still setting one is from before that, and is refused by name
+    # rather than failing on a readonly variable or being silently overruled.
+    #
+    for name in "${RETIRED_ANSWERS[@]}"; do
+        if grep -Eq "^[[:space:]]*(export[[:space:]]+)?${name}=" "$file"; then
+            die "${file} sets ${name}, which is no longer an answer (B266): the names are fixed.
+  Remove the line; see install/accounts.sh for the name used now."
+        fi
+    done
     ( set -e; # shellcheck disable=SC1090
       source "$file" ) >/dev/null 2>&1 || die "answers file is not valid shell: $file"
     # shellcheck disable=SC1090
@@ -267,7 +296,7 @@ node_host() { echo "${1##*:}"; }
 #
 render_node_conf() {
     local cluster="$1" node_path="$2" logread_group="$3" node_conf
-    node_conf="# Node configuration for haproxy-manager. Rendered by install/04-node-prepare.
+    node_conf="# Node configuration for Haprion. Rendered by install/04-node-prepare.
 #
 # Read by the node-side scripts in /usr/local/sbin. Root-owned and not writable
 # by anyone else: it names the account and key used to fetch configuration, so
@@ -290,7 +319,7 @@ BACKUP_GROUPS=\"${logread_group}${EXTRA_BACKUP_GROUPS:+ ${EXTRA_BACKUP_GROUPS}}\
 # The operator's own files a state backup carries besides the product's -
 # absolute paths, space-separated. A listed path that is missing fails the backup.
 EXTRA_BACKUP_PATHS=\"${EXTRA_BACKUP_PATHS:-}\""
-    if [[ -n "${CERT_PULL_USER:-}" ]]; then
+    if [[ -n "${NODE_CERT_PULL_KEY:-}" ]]; then
         node_conf+="
 
 # Where this node fetches certificates from. A separate account and key: a node

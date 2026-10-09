@@ -2,7 +2,7 @@
 #
 # The existing rules for this helper are granted to %sudo - the humans - and the
 # comments in them say why an application identity must not ride along on an
-# operator's rule: %haproxy-mgmt also holds the worker, and a service account
+# operator's rule: %haprion also holds the worker, and a service account
 # must not gain a privilege because somebody else needed one. This is that
 # separate decision, with its own rule.
 #
@@ -30,7 +30,7 @@
 #
 # Installed 0440 root:root, and accepted by visudo before it is put in place.
 
-POLLER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-status-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-inventory-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-readings-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cluster-list-helper ""
+_haprion-poller ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-status-helper ""
+_haprion-poller ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-inventory-helper ""
+_haprion-poller ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-readings-helper ""
+_haprion-poller ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cluster-list-helper ""

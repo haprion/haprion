@@ -6,8 +6,8 @@ Wants=network-online.target
 
 [Service]
 Type=exec
-User=haproxy-ui-web
-Group=haproxy-ui-web
+User=_haprion-web
+Group=_haprion-web
 
 # The release, not a checkout. Switching `current` and restarting is the whole
 # deployment; rolling back is switching it and restarting again.

@@ -1082,7 +1082,7 @@ class TheWorkerCanLookWhereItPublishes(unittest.TestCase):
     than remembered, like the other lists that live outside the code.
     """
 
-    UNIT = BASE / "install" / "platform" / "examples" / "haproxy-ui-worker.service.example"
+    UNIT = BASE / "install" / "platform" / "examples" / "haprion-worker.service.example"
 
     def bounding_set(self) -> list[str]:
         for line in self.UNIT.read_text(encoding="utf-8").splitlines():

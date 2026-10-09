@@ -102,7 +102,7 @@ class HelperFixture(unittest.TestCase):
             "certificate_root": str(dist_root),
         }
         if identity:
-            policy["cert_deploy_identity"] = {"user": "svc-app", "key": "/root/.ssh/id_ed25519"}
+            policy["cert_deploy_identity"] = {"key": "/root/.ssh/id_ed25519"}
 
         policy_path = self.root / "runtime-policy.yaml"
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")

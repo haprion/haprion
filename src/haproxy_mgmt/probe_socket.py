@@ -28,7 +28,7 @@ from haproxy_mgmt import helper_socket
 
 #
 # `/run` is tmpfs and cleared at boot on purpose - a socket must not outlive the
-# process that answers on it. `/etc/tmpfiles.d/haproxy-mgmt.conf` recreates the
+# process that answers on it. `/etc/tmpfiles.d/haprion.conf` recreates the
 # directory, and systemd creates the socket inside it.
 #
 SOCKET_PATH = "/run/haprion/probe.sock"

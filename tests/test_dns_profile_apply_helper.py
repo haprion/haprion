@@ -137,7 +137,7 @@ class Applying(ApplyFixture):
     def test_the_sudoers_rule_names_exactly_the_no_argument_helper(self) -> None:
         example = (
             Path(__file__).resolve().parents[1]
-            / "install/platform/examples/haproxy-ui-worker.sudoers.example"
+            / "install/platform/examples/haprion-worker.sudoers.example"
         ).read_text(encoding="utf-8")
         self.assertIn(f'{dns_profile_apply_helper.HELPER} ""', example)
 

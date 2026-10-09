@@ -27,7 +27,7 @@
 set -Eeuo pipefail
 
 CONFIG=/apps/haproxy-manager/config/ui.toml
-SERVICES=(haproxy-ui-web haproxy-ui-worker haproxy-ui-poller)
+SERVICES=(haprion-web haprion-worker haprion-poller)
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 step() { echo; echo "== $*"; }
@@ -181,7 +181,7 @@ if [[ -z "$answered" ]]; then
     ln -sfn "${releases}/${current}" "${link}.new"
     mv -T "${link}.new" "$link"
     systemctl restart "${SERVICES[@]}" || true
-    journalctl -u haproxy-ui-web.service --no-pager --lines=15 || true
+    journalctl -u haprion-web.service --no-pager --lines=15 || true
     die "rolled forward to ${current}; ${target} did not answer"
 fi
 

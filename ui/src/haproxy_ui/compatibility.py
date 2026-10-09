@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt import accounts
 from haproxy_mgmt.config import ConfigError as EngineConfigError
 from haproxy_mgmt.config import load_policy, load_runtime_config
 from haproxy_mgmt.traffic_collector import CollectorError
@@ -256,12 +257,13 @@ def check_sudoers(
     report: Report,
     *,
     root: Path,
+    name: str,
     user: str,
     helpers: tuple[str, ...],
     cli_root: Path,
     label: str,
 ) -> None:
-    path = root / user
+    path = root / name
     try:
         actual = active_sudo_rules(path.read_text(encoding="utf-8"))
         status = path.stat()
@@ -465,9 +467,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cli-root", required=True, type=Path)
     parser.add_argument("--database", required=True)
     parser.add_argument("--database-role", required=True)
-    parser.add_argument("--web-user", required=True)
-    parser.add_argument("--worker-user", required=True)
-    parser.add_argument("--poller-user", required=True)
     parser.add_argument("--clusters", required=True, nargs="*")
     parser.add_argument("--runtime-policy", type=Path)
     parser.add_argument("--collector-config", type=Path)
@@ -603,14 +602,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.skip_services:
         print("\n== Services")
-        for user in (args.worker_user, args.poller_user, args.web_user):
-            check_service(report, unit=f"{user}.service", release=ui_release)
+        for unit in (accounts.WORKER_UNIT, accounts.POLLER_UNIT, accounts.WEB_UNIT):
+            check_service(report, unit=unit, release=ui_release)
 
     print("\n== Sudo rules")
     check_sudoers(
         report,
         root=args.sudoers_root,
-        user=args.worker_user,
+        name=accounts.WORKER_SUDOERS,
+        user=accounts.WORKER,
         helpers=requirements.worker_helpers,
         cli_root=args.cli_root,
         label="worker sudoers",
@@ -618,14 +618,19 @@ def main(argv: list[str] | None = None) -> int:
     check_sudoers(
         report,
         root=args.sudoers_root,
-        user=args.poller_user,
+        name=accounts.POLLER_SUDOERS,
+        user=accounts.POLLER,
         helpers=requirements.poller_helpers,
         cli_root=args.cli_root,
         label="poller sudoers",
     )
-    web_rule = args.sudoers_root / args.web_user
-    if web_rule.exists():
-        report.fail("web sudoers", f"unexpected rule file {web_rule}")
+    web_rules = [
+        path
+        for path in (args.sudoers_root / accounts.WEB, args.sudoers_root / "haprion-web")
+        if path.exists()
+    ]
+    if web_rules:
+        report.fail("web sudoers", f"unexpected rule file {web_rules[0]}")
     else:
         report.pass_("web sudoers", "no rule file")
     for helper_name, socket_path in sorted(requirements.socket_helpers.items()):

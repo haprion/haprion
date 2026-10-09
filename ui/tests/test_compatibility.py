@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
+from haproxy_mgmt import accounts
 from haproxy_mgmt.cli import (
     backup_job_ask,
     backup_job_helper,
@@ -27,19 +28,19 @@ MANIFEST = ROOT / "ui/src/haproxy_ui/compatibility.json"
 class CompatibilityMetadataTests(unittest.TestCase):
     def test_the_running_ui_names_every_helper_its_services_need(self) -> None:
         requirements = compatibility.load_requirements(MANIFEST)
-        worker = (ROOT / "install/platform/examples/haproxy-ui-worker.sudoers.example").read_text()
-        poller = (ROOT / "install/platform/examples/haproxy-ui-poller.sudoers.example").read_text()
+        worker = (ROOT / "install/platform/examples/haprion-worker.sudoers.example").read_text()
+        poller = (ROOT / "install/platform/examples/haprion-poller.sudoers.example").read_text()
 
         self.assertEqual(
-            compatibility.active_sudo_rules(worker.replace("WORKER_USER", "svc-app")),
+            compatibility.active_sudo_rules(worker),
             compatibility.expected_sudo_rules(
-                "svc-app", requirements.worker_helpers, Path("/opt/haprion")
+                accounts.WORKER, requirements.worker_helpers, Path("/opt/haprion")
             ),
         )
         self.assertEqual(
-            compatibility.active_sudo_rules(poller.replace("POLLER_USER", "svc-app")),
+            compatibility.active_sudo_rules(poller),
             compatibility.expected_sudo_rules(
-                "svc-app", requirements.poller_helpers, Path("/opt/haprion")
+                accounts.POLLER, requirements.poller_helpers, Path("/opt/haprion")
             ),
         )
 

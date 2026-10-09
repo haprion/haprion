@@ -37,8 +37,8 @@ valid_abs_path "$TLS_KEY"  || die "TLS_KEY must be an absolute path"
 TRUSTED_PROXIES="${TRUSTED_PROXIES:-}"
 real_ip="$(render_real_ip "$TRUSTED_PROXIES")" || die "TRUSTED_PROXIES is not a list of addresses"
 
-systemctl is-active --quiet "${WEB_USER}.service" \
-    || die "${WEB_USER}.service is not running; run 04-platform-service first"
+systemctl is-active --quiet "$WEB_UNIT" \
+    || die "${WEB_UNIT} is not running; run 04-platform-service first"
 
 step "Where the pair lives"
 ensure_dir /etc/haprion root:root 755

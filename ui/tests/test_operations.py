@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from haproxy_mgmt import cert_issue
+from haproxy_mgmt import accounts, cert_issue
 from haproxy_mgmt.cli import (
     cert_receiver_helper,
     changes_publish,
@@ -653,12 +653,7 @@ class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
     The rule is a file outside this repository, written from an example inside
     it, and neither follows a release - so a helper added here reaches sudo's
     refusal on its first use, as the first objects publish helper did. The
-    example is what an installation renders, so it is the thing to hold in step.
-
-    It also has to be rendered rather than copied. It was installed as
-    /etc/sudoers.d/${WORKER_USER} while naming one fixed account in every line,
-    so a platform whose worker is called something else got a file visudo
-    accepts and sudo ignores.
+    example is what an installation installs, so it is the thing to hold in step.
     """
 
     def example(self) -> str:
@@ -667,7 +662,7 @@ class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
             / "install"
             / "platform"
             / "examples"
-            / "haproxy-ui-worker.sudoers.example"
+            / "haprion-worker.sudoers.example"
         )
         return path.read_text(encoding="utf-8")
 
@@ -690,11 +685,11 @@ class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
             with self.subTest(helper=helper):
                 self.assertIn(f'{helper} ""', granted)
 
-    def test_no_rule_names_an_account_the_installation_did_not_choose(self) -> None:
+    def test_every_rule_names_the_worker_and_no_other_account(self) -> None:
         self.assertTrue(self.rules(), "the example grants nothing")
         for rule in self.rules():
             with self.subTest(rule=rule):
-                self.assertTrue(rule.startswith("WORKER_USER "), rule)
+                self.assertTrue(rule.startswith(f"{accounts.WORKER} "), rule)
 
 
 class TheReceiverHelperIsNotReachedThroughSudo(unittest.TestCase):

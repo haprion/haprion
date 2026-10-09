@@ -152,7 +152,6 @@ class HelperFixture(unittest.TestCase):
         }
         if identity:
             document["server_state_identity"] = {
-                "user": "svc-app",
                 "key": str(self.root / "server-state.key"),
             }
         self.policy.write_text(yaml.safe_dump(document), encoding="utf-8")
@@ -513,8 +512,6 @@ class StepTwoNamesEveryIdentityStepThreeMakes(unittest.TestCase):
         "CONFIG_ROOT": "/srv/haproxy-manager/config",
         "PUBLISH_ROOT": "/srv/haproxy-manager/published",
         "VALIDATION_ROOT": "/srv/haproxy-manager/validation",
-        "TRIGGER_USER": "svc-trigger",
-        "STATUS_USER": "svc-status",
         "KEY_DIR": "/root/.ssh",
         "CONFIG_DEPLOY_KEY": "id_ed25519_config_deploy",
         "NODE_STATUS_KEY": "id_ed25519_node_status",
@@ -539,15 +536,15 @@ class StepTwoNamesEveryIdentityStepThreeMakes(unittest.TestCase):
 
         self.assertEqual(
             policy.status_identity,  # type: ignore[attr-defined]
-            DeployIdentity("svc-status", Path("/root/.ssh/id_ed25519_node_status")),
+            DeployIdentity("_haprion-status", Path("/root/.ssh/id_ed25519_node_status")),
         )
         self.assertEqual(
             policy.probe_identity,  # type: ignore[attr-defined]
-            DeployIdentity("svc-status", Path("/root/.ssh/id_ed25519_node_probe")),
+            DeployIdentity("_haprion-status", Path("/root/.ssh/id_ed25519_node_probe")),
         )
         self.assertEqual(
             policy.server_state_identity,  # type: ignore[attr-defined]
-            DeployIdentity("svc-trigger", Path("/root/.ssh/id_ed25519_server_state")),
+            DeployIdentity("_haprion-trigger", Path("/root/.ssh/id_ed25519_server_state")),
         )
 
     def test_an_optional_key_left_out_leaves_its_identity_out(self) -> None:

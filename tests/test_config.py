@@ -223,26 +223,27 @@ class DeployIdentityTests(unittest.TestCase):
     def test_a_declared_identity_is_read(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = load_policy(
-                self.policy(Path(raw), {"user": "svc-app", "key": "/root/.ssh/id_ed25519_example"}),
+                self.policy(Path(raw), {"key": "/root/.ssh/id_ed25519_example"}),
                 require_secure=False,
             )
 
         assert policy.deploy_identity is not None
-        self.assertEqual(policy.deploy_identity.user, "svc-app")
+        self.assertEqual(policy.deploy_identity.user, "_haprion-trigger")
         self.assertEqual(policy.deploy_identity.key, Path("/root/.ssh/id_ed25519_example"))
 
-    def test_an_invalid_account_name_is_refused(self) -> None:
-        for user in ("", "Has Spaces", "root/../x", "a" * 40):
-            with tempfile.TemporaryDirectory() as raw, self.assertRaises(ConfigError):
-                load_policy(
-                    self.policy(Path(raw), {"user": user, "key": "/root/.ssh/id"}),
-                    require_secure=False,
-                )
+    def test_a_named_account_is_refused(self) -> None:
+        # B266: the account is fixed per identity; a policy naming one is from
+        # an installation that has not been migrated.
+        with tempfile.TemporaryDirectory() as raw, self.assertRaises(ConfigError):
+            load_policy(
+                self.policy(Path(raw), {"user": "_haprion-trigger", "key": "/root/.ssh/id"}),
+                require_secure=False,
+            )
 
     def test_a_relative_key_path_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw, self.assertRaises(ConfigError):
             load_policy(
-                self.policy(Path(raw), {"user": "svc-app", "key": ".ssh/id"}),
+                self.policy(Path(raw), {"key": ".ssh/id"}),
                 require_secure=False,
             )
 
@@ -251,7 +252,6 @@ class DeployIdentityTests(unittest.TestCase):
             root = Path(raw)
             body = yaml.safe_load(self.policy(root, None).read_text(encoding="utf-8"))
             body["backup_identity"] = {
-                "user": "svc-backup",
                 "key": "/root/.ssh/id_ed25519_node_backup",
             }
             path = root / "runtime-policy.yaml"
@@ -259,36 +259,31 @@ class DeployIdentityTests(unittest.TestCase):
             policy = load_policy(path, require_secure=False)
 
         assert policy.backup_identity is not None
-        self.assertEqual(policy.backup_identity.user, "svc-backup")
+        self.assertEqual(policy.backup_identity.user, "_haprion-backup")
         self.assertEqual(policy.backup_identity.key, Path("/root/.ssh/id_ed25519_node_backup"))
 
-    def test_the_interface_account_is_optional_and_an_account_name(self) -> None:
-        #
-        # B207: the one caller whose `requested_by` a version records. Absent,
-        # every version names the account that ran the helper.
-        #
+    def test_the_accounts_are_fixed_and_no_longer_policy_fields(self) -> None:
+        # B266: the worker and the two pull accounts are the installation's own,
+        # with fixed names; a policy still naming one is refused, not obeyed.
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            self.assertIsNone(
-                load_policy(self.policy(root, None), require_secure=False).interface_account
-            )
-            for value, valid in (("svc-app", True), ("Has Spaces", False), ("", False), (7, False)):
-                with self.subTest(value=value):
+            policy = load_policy(self.policy(root, None), require_secure=False)
+            self.assertEqual(policy.interface_account, "_haprion-worker")
+            self.assertEqual(policy.pull_account, "_haprion-pull")
+            self.assertEqual(policy.cert_pull_account, "_haprion-cert-pull")
+            for field in ("interface_account", "pull_account", "cert_pull_account"):
+                with self.subTest(field=field):
                     body = yaml.safe_load(self.policy(root, None).read_text(encoding="utf-8"))
-                    body["interface_account"] = value
+                    body[field] = "svc-app"
                     path = root / "runtime-policy.yaml"
                     path.write_text(yaml.safe_dump(body), encoding="utf-8")
-                    if valid:
-                        policy = load_policy(path, require_secure=False)
-                        self.assertEqual(policy.interface_account, value)
-                    else:
-                        with self.assertRaises(ConfigError):
-                            load_policy(path, require_secure=False)
+                    with self.assertRaises(ConfigError):
+                        load_policy(path, require_secure=False)
 
     def test_an_unknown_field_in_the_identity_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw, self.assertRaises(ConfigError):
             load_policy(
-                self.policy(Path(raw), {"user": "svc-app", "key": "/root/id", "port": 22}),
+                self.policy(Path(raw), {"key": "/root/id", "port": 22}),
                 require_secure=False,
             )
 

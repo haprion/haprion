@@ -199,7 +199,7 @@ class HelperTests(unittest.TestCase):
 
             self.assertEqual(code, 78)
             self.assertEqual(out, "")
-            self.assertIn("group 'haproxy-mgmt' does not exist", err)
+            self.assertIn("group 'haprion' does not exist", err)
             self.assertEqual(git(draft, "rev-parse", "HEAD"), before)
 
     # ------------------------------------------------------------------ doing it

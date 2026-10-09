@@ -89,8 +89,5 @@ exec "${python_root}/venv/bin/python" -m haproxy_ui.compatibility \
     --cli-root "$CLI_ROOT" \
     --database "$DB_NAME" \
     --database-role "$DB_MIGRATION_ROLE" \
-    --web-user "$WEB_USER" \
-    --worker-user "$WORKER_USER" \
-    --poller-user "$POLLER_USER" \
     --clusters "${clusters[@]}" \
     "${extra_args[@]}"

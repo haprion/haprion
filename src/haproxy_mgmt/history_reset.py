@@ -31,11 +31,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from haproxy_mgmt import accounts
 from haproxy_mgmt.git_command import git
 
 DIRECTORY_MODE = 0o750
 FILE_MODE = 0o640
-OWNER_GROUP = "haproxy-mgmt"
+OWNER_GROUP = accounts.CONFIG_GROUP
 DEFAULT_BRANCH = "main"
 
 type ChangeOwner = Callable[[Path, int, int], None]

@@ -16,15 +16,14 @@ source ./lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CONFIG_GROUP CLUSTERS \
-             PULL_USER
+require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CLUSTERS
 
 for path in "$CONFIG_ROOT" "$PUBLISH_ROOT" "$VALIDATION_ROOT" "$CLUSTER_FILE"; do
     valid_abs_path "$path" || die "not an absolute path without '..': ${path}"
 done
 
-step "Configuration group"
-ensure_group "$CONFIG_GROUP"
+step "Accounts and groups"
+apply_sysusers sysusers/haprion.conf
 
 #
 # The accounts a NODE authenticates to when it fetches. They are reached only by
@@ -35,13 +34,9 @@ step "Pull accounts"
 
 ensure_pull_account() {
     local user="$1" purpose="$2"
-    if id -u "$user" >/dev/null 2>&1; then
-        log "  ok       ${user}  (${purpose})"
-    else
-        useradd --system --create-home --shell /bin/bash "$user"
-        passwd --lock "$user" >/dev/null
-        log "  created  ${user}  (${purpose})"
-    fi
+    id -u "$user" >/dev/null 2>&1 || die "${user} does not exist; sysusers/haprion.conf makes it"
+    ensure_dir "/home/${user}" "${user}:${user}" 755
+    log "  ok       ${user}  (${purpose})"
     ensure_dir "/home/${user}/.ssh" "${user}:${user}" 700
     local keys="/home/${user}/.ssh/authorized_keys"
     if [[ ! -f "$keys" ]]; then
@@ -59,8 +54,7 @@ command -v rrsync >/dev/null \
   tree, and without it the pull accounts have no safe forced command."
 
 ensure_pull_account "$PULL_USER" "nodes fetch published releases"
-[[ -n "${CERT_PULL_USER:-}" ]] \
-    && ensure_pull_account "$CERT_PULL_USER" "nodes fetch certificates"
+ensure_pull_account "$CERT_PULL_USER" "nodes fetch certificates"
 
 #
 # 0750 root:<group> for the config trees: the group reads and traverses, and

@@ -316,9 +316,9 @@ class ChangesPublishTests(ObjectsPublishFixture):
 
     def test_the_version_names_the_person_the_worker_acts_for(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            policy = self.runtime(Path(raw), interface_account="svc-app")
+            policy = self.runtime(Path(raw))
             self.seed()
-            with mock.patch.dict(os.environ, {"SUDO_USER": "svc-app"}):
+            with mock.patch.dict(os.environ, {"SUDO_USER": "_haprion-worker"}):
                 code, _document, err = self.publish(
                     policy, self.changes(settings=SETTINGS, requested_by="Ada Admin")
                 )

@@ -176,21 +176,20 @@ class ObjectPublicationTests(ObjectsPublishFixture):
     def test_the_version_names_who_asked_and_which_account_ran_it(self) -> None:
         #
         # B207: the person the interface's worker names, and the account sudo
-        # proves. Anyone else - an operator at the terminal, or any caller when
-        # the policy names no worker - is recorded as themselves, whatever the
-        # request says.
+        # proves. Anyone else - an operator at the terminal, or any other
+        # account - is recorded as themselves, whatever the request says.
         #
-        for worker, sudo_user, named, expected in (
-            ("svc-app", "svc-app", "Ada Admin", "Ada Admin"),
-            ("svc-app", "operator", "Ada Admin", "operator"),
-            (None, "svc-app", "Ada Admin", "svc-app"),
-            ("svc-app", "operator", None, "operator"),
+        for sudo_user, named, expected in (
+            ("_haprion-worker", "Ada Admin", "Ada Admin"),
+            ("operator", "Ada Admin", "operator"),
+            ("svc-app", "Ada Admin", "svc-app"),
+            ("operator", None, "operator"),
         ):
             with (
-                self.subTest(worker=worker, sudo_user=sudo_user, named=named),
+                self.subTest(sudo_user=sudo_user, named=named),
                 tempfile.TemporaryDirectory() as raw,
             ):
-                policy = self.runtime(Path(raw), interface_account=worker)
+                policy = self.runtime(Path(raw))
                 self.seed()
                 extra = {} if named is None else {"requested_by": named}
                 with mock.patch.dict(os.environ, {"SUDO_USER": sudo_user}):

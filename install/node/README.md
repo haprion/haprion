@@ -62,7 +62,7 @@ Retention deletes whole day files and never renames one. logrotate would move th
 reading between two names, with no instant at which both names resolve - a run landing in that gap
 reads an empty file and reports success, which is worse than an error.
 
-`/var/log/haprion` is `syslog:haproxy-logread` mode **2750**, and the set-group-id bit is
+`/var/log/haprion` is `syslog:_haprion-logs` mode **2750**, and the set-group-id bit is
 load-bearing. rsyslog drops to `syslog:syslog` before it opens a log file, so it cannot place a
 file in a group it does not belong to; letting the directory decide the group is what makes the
 files readable to the reader account without widening the `syslog` account.

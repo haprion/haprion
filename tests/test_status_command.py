@@ -186,7 +186,6 @@ class HelperFixture(unittest.TestCase):
         }
         if identity:
             document["status_identity"] = {
-                "user": "svc-status",
                 "key": str(self.root / "status.key"),
             }
         policy_path = self.root / "runtime-policy.yaml"

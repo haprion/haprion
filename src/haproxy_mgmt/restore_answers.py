@@ -21,14 +21,16 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from haproxy_mgmt import accounts
 from haproxy_mgmt.restore_source import RestoreSource, content
 
 NODE_CONF = "/etc/haprion/node.conf"
 #
-# 04-node-prepare's own name for the traffic log's read group; node.conf lists
-# it first in BACKUP_GROUPS.
+# The account names are fixed (B266), so the archive's must be these. One from
+# before the rename names others, and is refused rather than restored into a
+# layout it was not made for.
 #
-LOGREAD_GROUP = "haproxy-logread"
+SERVICE_ACCOUNTS = [accounts.TRIGGER, accounts.STATUS, accounts.BACKUP, accounts.LOGREAD]
 LINE = re.compile(r'^(?P<key>[A-Z_]+)="(?P<value>[^"]*)"$')
 SAFE = re.compile(r"^[A-Za-z0-9._@+/ -]*$")
 NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -104,41 +106,33 @@ def derive(source: RestoreSource, cluster: str, publish_root: Path) -> str:
         raise AnswersError(f"node.conf has a CONFIG_REMOTE_PATH a restore cannot read: {remote}")
 
     services = _names(values["BACKUP_SERVICE_ACCOUNTS"], "service account")
-    if len(services) != 4:
-        raise AnswersError("node.conf does not name exactly four service accounts")
-    accounts = _names(values["BACKUP_ACCOUNTS"], "account")
-    if accounts[:4] != services:
+    if services != SERVICE_ACCOUNTS:
+        raise AnswersError(
+            "node.conf names other service accounts than this release's; the archive is from "
+            "before the accounts were renamed (B266)"
+        )
+    listed = _names(values["BACKUP_ACCOUNTS"], "account")
+    if listed[:4] != services:
         raise AnswersError("node.conf's BACKUP_ACCOUNTS does not begin with its service accounts")
     groups = _names(values["BACKUP_GROUPS"], "group")
-    if not groups or groups[0] != LOGREAD_GROUP:
-        raise AnswersError(f"node.conf's BACKUP_GROUPS does not begin with {LOGREAD_GROUP}")
-    for key in ("CONFIG_PULL_USER", "CERT_PULL_USER"):
-        if key in values:
-            _names(values[key], "pull account")
+    if not groups or groups[0] != accounts.LOGS_GROUP:
+        raise AnswersError(f"node.conf's BACKUP_GROUPS does not begin with {accounts.LOGS_GROUP}")
+    for key, fixed in (("CONFIG_PULL_USER", accounts.PULL), ("CERT_PULL_USER", accounts.CERT_PULL)):
+        if key in values and values[key] != fixed:
+            raise AnswersError(f"node.conf's {key} is not {fixed}")
     if not publish_root.is_absolute() or not SAFE.fullmatch(str(publish_root)):
         raise AnswersError("this manager's publish root cannot be written to an answers file")
 
-    trigger, status, backup, logread = services
     lines = [
         "# Derived by a node restore from the archive's node.conf; not an operator's answers file.",
-        f'TRIGGER_USER="{trigger}"',
-        f'STATUS_USER="{status}"',
-        f'BACKUP_USER="{backup}"',
-        f'LOGREAD_USER="{logread}"',
-        f'PULL_USER="{values["CONFIG_PULL_USER"]}"',
         f'MANAGER_HOST="{values["MANAGER"]}"',
         f'NODE_CONFIG_PULL_KEY="{values["CONFIG_PULL_KEY"]}"',
         f'PUBLISH_ROOT="{publish_root}"',
         f'NODE_PATH_{cluster}="{node_path}"',
-        f'OPERATOR_ACCOUNTS="{" ".join(accounts[4:])}"',
+        f'OPERATOR_ACCOUNTS="{" ".join(listed[4:])}"',
         f'EXTRA_BACKUP_GROUPS="{" ".join(groups[1:])}"',
         f'EXTRA_BACKUP_PATHS="{values.get("EXTRA_BACKUP_PATHS", "")}"',
     ]
-    if "CERT_PULL_USER" in values:
-        if "CERT_PULL_KEY" not in values:
-            raise AnswersError("node.conf names CERT_PULL_USER without CERT_PULL_KEY")
-        lines += [
-            f'CERT_PULL_USER="{values["CERT_PULL_USER"]}"',
-            f'NODE_CERT_PULL_KEY="{values["CERT_PULL_KEY"]}"',
-        ]
+    if "CERT_PULL_KEY" in values:
+        lines.append(f'NODE_CERT_PULL_KEY="{values["CERT_PULL_KEY"]}"')
     return "\n".join(lines) + "\n"

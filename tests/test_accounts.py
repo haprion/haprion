@@ -209,5 +209,18 @@ class TheAdminFileIsReadNotRun(unittest.TestCase):
                 self.assertNotRegex(step.read_text(), r'(source|\.) "\$\{?config\}?"')
 
 
+class FixedNamesAreNotValidatedAsAnswers(unittest.TestCase):
+    """`valid_id` checks what an operator typed; a fixed name starts with `_`,
+    which it refuses. Step 13 stopped on `_haprion-collector` 26-10-09."""
+
+    def test_no_step_checks_a_fixed_name(self) -> None:
+        names = "|".join(SHELL_NAMES.values())
+        for step in sorted(
+            [*INSTALL.glob("0[0-9]-*"), *(INSTALL / "platform").glob("[0-9][0-9]-*")]
+        ):
+            with self.subTest(step=step.name):
+                self.assertNotRegex(step.read_text(), rf'valid_id "\$\{{?({names})\}}?"')
+
+
 if __name__ == "__main__":
     unittest.main()

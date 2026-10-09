@@ -31,11 +31,6 @@ source_tree="$(cd "$source_tree" && pwd)"
 tool="${source_tree}/tools/dns-profile-keys.py"
 [[ -f "$tool" ]] || die "${tool} is missing; this is not a source tree with the key tool"
 
-valid_id "$OIDC_USER" || die "invalid OIDC account: ${OIDC_USER}"
-for role in "$WEB_USER" "${WORKER_USER:-}" "${POLLER_USER:-}" "${COLLECTOR_USER:-}"; do
-    [[ -z "$role" || "$OIDC_USER" != "$role" ]] \
-        || die "OIDC_USER must be distinct from the other service accounts"
-done
 id -u "$OIDC_USER" >/dev/null 2>&1 \
     || die "service account ${OIDC_USER} does not exist. Run ../01-manager-prepare
   first; it applies sysusers/haprion.conf."

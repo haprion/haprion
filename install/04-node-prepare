@@ -23,11 +23,6 @@ CLUSTER="${2:-}"
 valid_id "$CLUSTER" || die "invalid cluster id: ${CLUSTER}"
 require_vars TRIGGER_USER STATUS_USER BACKUP_USER LOGREAD_USER PULL_USER MANAGER_HOST \
              NODE_CONFIG_PULL_KEY PUBLISH_ROOT
-valid_id "$LOGREAD_USER" || die "invalid traffic log reader account: ${LOGREAD_USER}"
-for existing_role in "$TRIGGER_USER" "$STATUS_USER" "$BACKUP_USER"; do
-    [[ "$LOGREAD_USER" != "$existing_role" ]] \
-        || die "LOGREAD_USER must be distinct from the other node service accounts"
-done
 if id -u "$LOGREAD_USER" >/dev/null 2>&1; then
     IFS=: read -r _ _ logread_uid _ _ logread_home logread_shell \
         < <(getent passwd "$LOGREAD_USER")

@@ -21,17 +21,10 @@ need_root
 load_answers "${1:-}"
 require_vars CLUSTERS
 
-valid_id "$COLLECTOR_USER" || die "invalid collector account: ${COLLECTOR_USER}"
-valid_id "$LOGREAD_USER" || die "invalid node traffic log account: ${LOGREAD_USER}"
-
 for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER" "$COLLECTOR_USER"; do
     id -u "$role" >/dev/null 2>&1 \
         || die "service account ${role} does not exist. Run ../01-manager-prepare
   first; it applies sysusers/haprion.conf."
-done
-for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
-    [[ "$COLLECTOR_USER" != "$role" ]] \
-        || die "COLLECTOR_USER must be distinct from the other service accounts"
 done
 
 IDENTITY_DIR="/etc/haprion/traffic-collector"

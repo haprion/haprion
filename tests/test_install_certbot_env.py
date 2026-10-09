@@ -17,6 +17,7 @@ import textwrap
 import unittest
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from unittest import mock
 
 INSTALLER_PATH = Path(__file__).resolve().parents[1] / "tools" / "install-certbot-env.py"
 SPEC = spec_from_file_location("install_certbot_env", INSTALLER_PATH)
@@ -192,6 +193,20 @@ class InstallCertbotEnvTests(unittest.TestCase):
         verifier.unlink()
         with self.assertRaisesRegex(installer.InstallError, "regular non-symlink file"):
             self.install("certbot-dns-alpha")
+
+    def test_without_a_source_tree_the_installed_engine_answers_the_catalogue(self) -> None:
+        """From the haprion-ui package there is no src/ beside certbot/ (26-10-09)."""
+
+        (self.work / "src").rmdir()
+        engine = self.work / "installed-engine"
+        engine.mkdir()
+        with mock.patch.object(installer, "INSTALLED_ENGINE", engine):
+            self.assertEqual(installer.engine_root(self.project), engine)
+        with (
+            mock.patch.object(installer, "INSTALLED_ENGINE", self.work / "absent"),
+            self.assertRaisesRegex(installer.InstallError, "no engine"),
+        ):
+            installer.engine_root(self.project)
 
 
 if __name__ == "__main__":

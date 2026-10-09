@@ -140,15 +140,32 @@ def verify_plugins(venv_python: Path, scratch: Path) -> list[str]:
     return list(report["loaded"])
 
 
+#
+# Where the integration verifier imports the engine's provider catalogue from
+# when there is no source tree beside the certbot project - as when step 14 runs
+# from the haprion-ui package (26-10-09): the installed CLI release.
+#
+INSTALLED_ENGINE = Path("/opt/haprion/current/lib")
+
+
+def engine_root(project: Path) -> Path:
+    """A directory holding `haproxy_mgmt`: the source tree, else the installed engine."""
+
+    for candidate in (project.parent / "src", INSTALLED_ENGINE):
+        if candidate.is_dir() and not candidate.is_symlink():
+            return candidate
+    raise InstallError(
+        f"no engine to verify against: neither {project.parent / 'src'} nor {INSTALLED_ENGINE}"
+    )
+
+
 def verify_integrations(venv_python: Path, project: Path, scratch: Path) -> list[str]:
     """Run catalogue-to-plugin checks inside the environment being installed."""
 
     verifier = project / "verify-integrations.py"
     if not verifier.is_file() or verifier.is_symlink():
         raise InstallError(f"{verifier} must be a regular non-symlink file")
-    source_root = project.parent / "src"
-    if not source_root.is_dir() or source_root.is_symlink():
-        raise InstallError(f"{source_root} must be a real source directory")
+    source_root = engine_root(project)
     report_path = scratch / "integrations.json"
     try:
         completed = subprocess.run(  # noqa: S603 - locked interpreter and project verifier

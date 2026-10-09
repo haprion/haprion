@@ -244,6 +244,152 @@ class TheHelperKeepsAServerWhereItWasPut(unittest.TestCase):
                 self.assertEqual(code, self.helper.EXIT_USAGE)
 
 
+def pem(directory: Path, name: str) -> str:
+    """A fresh self-signed certificate and its key, in one file as the nodes keep them."""
+
+    key, cert = directory / f"{name}.key", directory / f"{name}.crt"
+    subprocess.run(
+        [
+            "/usr/bin/openssl", "req", "-x509", "-newkey", "ec",
+            "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-subj", "/CN=shop.example.com",
+            "-days", "30", "-keyout", str(key), "-out", str(cert),
+        ],
+        check=True,
+        capture_output=True,
+    )  # fmt: skip
+    return cert.read_text() + key.read_text()
+
+
+@unittest.skipUnless(HAPROXY, "haproxy is not installed where the tests run")
+class TheHelperReplacesACertificateWithoutAReload(unittest.TestCase):
+    """Fas 20 P5: `set ssl cert` and `commit ssl cert`, against HAProxy 3.4."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="sslstate-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.certs = self.root / "certs"
+        self.certs.mkdir()
+        (self.certs / "shop.pem").write_text(pem(self.root, "old"))
+        (self.certs / "api.pem").write_text(pem(self.root, "api"))
+        (self.root / "list.txt").write_text(f"{self.certs}/shop.pem\n{self.certs}/api.pem\n")
+        self.config = self.root / "haproxy.cfg"
+        self.config.write_text(
+            "\n".join(
+                (
+                    "global",
+                    f"    stats socket {self.root}/manager.sock mode 600 level admin",
+                    "defaults",
+                    "    mode http",
+                    "    timeout connect 2s",
+                    "    timeout client 5s",
+                    "    timeout server 5s",
+                    "frontend fe",
+                    f"    bind 127.0.0.1:18590 ssl crt-list {self.root}/list.txt",
+                    "    http-request return status 200",
+                    "",
+                )
+            )
+        )
+        self.helper = load_helper()
+        for name, value in (
+            ("ADMIN_SOCKET", str(self.root / "manager.sock")),
+            ("LOCK_FILE", str(self.root / "lock")),
+            ("CERTS_DIR", self.certs),
+        ):
+            setattr(self.helper, name, value)
+        self.process = subprocess.Popen(  # noqa: S603 - fixed binary, scratch configuration
+            [HAPROXY, "-W", "-f", str(self.config), "-p", str(self.root / "pid")],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self.stop)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                self.pid = self.helper.worker_pid(self.helper.ask(["show info"]))
+                if self.pid:
+                    return
+            except self.helper.Unavailable:
+                pass
+            time.sleep(0.05)
+        self.fail("HAProxy did not answer on the admin socket")
+
+    def stop(self) -> None:
+        self.process.send_signal(signal.SIGTERM)
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=10)
+
+    def run_helper(self, *argv: str) -> tuple[int, str]:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = self.helper.main(list(argv))
+        return code, out.getvalue()
+
+    def served(self) -> str:
+        reply = self.helper.ask([f"show ssl cert {self.certs}/shop.pem"])
+        found = re.search(r"^SHA1 FingerPrint: ([0-9A-F]+)$", reply, re.MULTILINE)
+        return found.group(1) if found else ""
+
+    def test_the_new_file_is_served_by_the_same_worker(self) -> None:
+        new = pem(self.root, "new")
+        (self.certs / "shop.pem").write_text(new)
+
+        code, out = self.run_helper("update-certs", "shop")
+
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.served(), self.helper.fingerprint(new))
+        self.assertEqual(self.helper.worker_pid(self.helper.ask(["show info"])), self.pid)
+
+    def test_a_certificate_haproxy_does_not_hold_asks_for_a_reload(self) -> None:
+        (self.certs / "other.pem").write_text(pem(self.root, "other"))
+
+        code, out = self.run_helper("update-certs", "shop", "other")
+
+        self.assertEqual(code, self.helper.EXIT_NOT_HELD, out)
+        self.assertIn("other", out)
+
+    def test_a_file_haproxy_refuses_is_aborted_and_the_old_one_still_served(self) -> None:
+        before = self.served()
+        certificate_only = pem(self.root, "new").split("-" * 5 + "BEGIN PRIVATE KEY")[0]
+        (self.certs / "shop.pem").write_text(certificate_only)
+
+        code, out = self.run_helper("update-certs", "shop")
+
+        self.assertEqual(code, self.helper.EXIT_REFUSED, out)
+        self.assertEqual(self.served(), before)
+        self.assertEqual(self.helper.held_certificates()[1], set())
+
+    def test_a_transaction_a_stopped_run_left_open_is_aborted_first(self) -> None:
+        """HAProxy allows one at a time, so a leftover would block every later one."""
+
+        new = pem(self.root, "new")
+        #
+        # On another certificate: one left on the same name is merely updated.
+        #
+        name = f"{self.certs}/api.pem"
+        self.helper.ask([f"set ssl cert {name} <<\n{pem(self.root, 'stray').strip()}\n"])
+        self.assertEqual(self.helper.held_certificates()[1], {name})
+        (self.certs / "shop.pem").write_text(new)
+
+        code, out = self.run_helper("update-certs", "shop")
+
+        self.assertEqual(code, 0, out)
+        self.assertIn("aborting a transaction", out)
+        self.assertEqual(self.served(), self.helper.fingerprint(new))
+
+    def test_words_that_are_not_certificate_ids_are_refused(self) -> None:
+        for argv in (
+            ("update-certs",),
+            ("update-certs", "../etc/passwd"),
+            ("update-certs", "Shop"),
+        ):
+            with self.subTest(argv):
+                self.assertEqual(self.run_helper(*argv)[0], self.helper.EXIT_USAGE)
+
+
 class TheTriggerValidatesBeforeSudo(unittest.TestCase):
     """The forced command, run with a `sudo` that only records what it was asked."""
 

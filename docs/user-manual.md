@@ -1066,7 +1066,8 @@ certificate somebody else changed in between is not overwritten with a stale tar
 
 **Publishing** registers the certificate for the target, publishes its material there, and rolls
 each added cluster out once — a `haproxy-cert-deploy` for the cluster, so its nodes pull and
-**reload HAProxy**. A receiver fetches on its own schedule. A certificate already on a chosen
+**replace the certificate in the running HAProxy** (`set ssl cert`, no reload), or reload where it
+does not hold the certificate yet or refuses the new one. A receiver fetches on its own schedule. A certificate already on a chosen
 target is reported `unchanged`.
 
 **Removing** takes the target off the registry entry and removes the copy that target held: each
@@ -3723,7 +3724,7 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 |---|---|
 | `haproxy-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
 | `haproxy-cert-trigger` | unprivileged wrapper: validates the verb (`cert-pull` or `cert-remove`) and the certificate IDs, then escalates |
-| `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads; a run stopped between installing and reloading leaves `/run/haproxy-cert-pull.pending`, the node's status leaves those certificates out until the next run reloads |
+| `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, and replaces them in the running HAProxy through `haproxy-server-state update-certs` (`set ssl cert`/`commit ssl cert` on the admin socket), reloading instead when HAProxy does not hold one of them or refuses it; a run stopped between installing and reloading leaves `/run/haproxy-cert-pull.pending`, the node's status leaves those certificates out until the next run reloads |
 | `haproxy-cert-remove` | removes the requested certificates from `/etc/haproxy/certs`, refusing any the installed configuration still names; no reload |
 | `haproxy-node-status` | reports version, health, carried certificates, keepalived state and the address list |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
@@ -3733,7 +3734,7 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-traffic-log-enable` | installs or removes this node's rsyslog route and retention timer |
 | `haproxy-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
 | `haproxy-server-state-trigger` | unprivileged wrapper: validates `server-state <guid> <ready\|drain\|maint>`, then escalates |
-| `haproxy-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts |
+| `haproxy-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts; replaces certificates HAProxy already holds without a reload (`update-certs`) |
 
 Step 4 also writes `/etc/haproxy-manager/node-installation.json`. It records the
 node compatibility API and a SHA-256 digest for each of these thirteen scripts.

@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # Pull the certificates this cluster references, validate them, install them and
-# reload once.
+# put them into the running HAProxy - without a reload where HAProxy already
+# holds each one (Fas 20 P5), and with one reload otherwise.
 #
 # Replaces the single-certificate version. That one was hardcoded to one file in
 # two independent ways - the source path and the hostname checks - so it could
@@ -246,6 +247,23 @@ if ! haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d; then
     log "ERROR: HAProxy validation failed. Restoring the previous certificates."
     restore
     exit 1
+fi
+
+#
+# Replaced in the running process where it holds every one of them: no new
+# worker, no connection handed over. A certificate it does not hold yet - one
+# a deploy has only just named - and anything that goes wrong on the way are a
+# reload, as before; the files on disk are the new ones either way.
+#
+log "Replacing the certificates in the running HAProxy..."
+
+if "$SERVER_STATE" update-certs "${CHANGED[@]}"; then
+    rm -f "$PENDING"
+    log "Certificate deployment complete, without a reload."
+    for id in "${CHANGED[@]}"; do
+        openssl x509 -in "${CERTS_DIR}/${id}.pem" -noout -subject -dates -serial
+    done
+    exit 0
 fi
 
 log "Reloading HAProxy..."

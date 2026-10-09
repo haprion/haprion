@@ -4,6 +4,7 @@
     haproxy-server-state set <guid> <ready|drain|maint>
     haproxy-server-state reload
     haproxy-server-state reapply
+    haproxy-server-state update-certs <certificate-id>...
 
 Runs as root. `set` is what the manager asks for, through the trigger account's
 forced command (`haproxy-server-state-trigger`), which validated the words
@@ -35,6 +36,15 @@ them.
 One lock covers `set` and `reload`/`reapply`, so a drain asked for during a
 deploy is either in the file the reload reads or set on the new worker, never
 lost between the two.
+
+**`update-certs` puts new certificate files into the running HAProxy** (Fas 20
+P5): `set ssl cert` and `commit ssl cert` on the admin socket, after
+`haproxy-cert-pull` has written and validated the files. No reload, so no new
+worker and nothing to put back. It only replaces a certificate HAProxy already
+holds under that file's name - HAProxy refuses any other ("not referenced by the
+configuration", measured on 3.4.6) - and answers EXIT_NOT_HELD for it, so the
+caller reloads as before. Any other failure is aborted and answered too; the
+files on disk are the new ones either way, and a reload reads them.
 """
 
 from __future__ import annotations
@@ -72,6 +82,19 @@ GUID = re.compile(r"^srv:[a-z][a-z0-9_-]{0,39}\.[0-9a-f]{16}$")
 #
 FORCED_MAINT = 0x01
 FORCED_DRAIN = 0x08
+CERTS_DIR = Path("/etc/haproxy/certs")
+#
+# `haproxy-cert-pull`'s certificate ID.
+#
+CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
+#
+# Built rather than written out, as in `haproxy-node-status`: a PEM boundary in
+# the source is what the secret scanner exists to catch.
+#
+PEM = "-" * 5
+CERTIFICATE_BLOCK = re.compile(
+    PEM + "BEGIN CERTIFICATE" + PEM + ".+?" + PEM + "END CERTIFICATE" + PEM, re.DOTALL
+)
 WAIT_FOR_WORKER_SECONDS = 15
 LOCK_SECONDS = 60
 
@@ -79,6 +102,7 @@ EXIT_USAGE = 64
 EXIT_UNKNOWN_SERVER = 65
 EXIT_UNAVAILABLE = 69
 EXIT_REFUSED = 70
+EXIT_NOT_HELD = 3
 
 
 def log(message: str) -> None:
@@ -119,7 +143,9 @@ def worker_pid(answer: str) -> str | None:
 def config_files(root: Path | None) -> list[Path]:
     """The files HAProxy reads, in the order it reads them: the main file, then conf.d by name."""
 
-    main, directory = (CONFIG, CONFIG_DIR) if root is None else (root / "haproxy.cfg", root / "conf.d")
+    main, directory = (
+        (CONFIG, CONFIG_DIR) if root is None else (root / "haproxy.cfg", root / "conf.d")
+    )
     return [main, *sorted(p for p in directory.glob("*.cfg") if p.is_file())]
 
 
@@ -151,9 +177,13 @@ def servers_by_guid(root: Path | None) -> dict[str, tuple[str, str]]:
             if not line[0].isspace():
                 section = (words[0], words[1]) if len(words) > 1 else (words[0], "")
                 continue
-            if section and section[0] in ("backend", "listen") and words[0] == "server":
-                if "guid" in words[:-1]:
-                    found[words[words.index("guid") + 1]] = (section[1], words[1])
+            if (
+                section
+                and section[0] in ("backend", "listen")
+                and words[0] == "server"
+                and "guid" in words[:-1]
+            ):
+                found[words[words.index("guid") + 1]] = (section[1], words[1])
     return found
 
 
@@ -199,7 +229,9 @@ def write_wanted(wanted: dict[str, str]) -> None:
     handle, temporary = tempfile.mkstemp(dir=STATE_FILE.parent, prefix=".server-state.")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            json.dump({"schema_version": 1, "servers": dict(sorted(wanted.items()))}, stream, indent=1)
+            json.dump(
+                {"schema_version": 1, "servers": dict(sorted(wanted.items()))}, stream, indent=1
+            )
             stream.write("\n")
         os.chmod(temporary, 0o600)
         os.replace(temporary, STATE_FILE)
@@ -217,7 +249,9 @@ def lock() -> int:
             return descriptor
         except BlockingIOError:
             if time.monotonic() > deadline:
-                raise Unavailable("another server state change or reload is still running") from None
+                raise Unavailable(
+                    "another server state change or reload is still running"
+                ) from None
             time.sleep(0.1)
 
 
@@ -228,22 +262,37 @@ def answer(document: dict[str, object], code: int) -> int:
 
 def command_set(guid: str, state: str) -> int:
     if not GUID.match(guid) or state not in STATES:
-        return answer({"outcome": "refused", "message": "expected a server GUID and ready, drain or maint"}, EXIT_USAGE)
+        return answer(
+            {"outcome": "refused", "message": "expected a server GUID and ready, drain or maint"},
+            EXIT_USAGE,
+        )
     held = lock()
     try:
         servers = servers_by_guid(running_root())
         if guid not in servers:
             return answer(
-                {"guid": guid, "outcome": "refused", "message": "no server with that GUID in the configuration HAProxy runs"},
+                {
+                    "guid": guid,
+                    "outcome": "refused",
+                    "message": "no server with that GUID in the configuration HAProxy runs",
+                },
                 EXIT_UNKNOWN_SERVER,
             )
         backend, server = servers[guid]
-        reply = ask([f"set server {backend}/{server} state {state}", f"show servers state {backend}"])
+        reply = ask(
+            [f"set server {backend}/{server} state {state}", f"show servers state {backend}"]
+        )
         admin = admin_states(reply).get((backend, server))
         if admin is None or not holds(admin, state):
             return answer(
-                {"guid": guid, "backend": backend, "server": server, "state": state,
-                 "outcome": "failed", "message": f"HAProxy did not take it: {reply.strip()[:300]}"},
+                {
+                    "guid": guid,
+                    "backend": backend,
+                    "server": server,
+                    "state": state,
+                    "outcome": "failed",
+                    "message": f"HAProxy did not take it: {reply.strip()[:300]}",
+                },
                 EXIT_REFUSED,
             )
         wanted = read_wanted()
@@ -252,7 +301,10 @@ def command_set(guid: str, state: str) -> int:
         else:
             wanted[guid] = state
         write_wanted(wanted)
-        return answer({"guid": guid, "backend": backend, "server": server, "state": state, "outcome": "done"}, 0)
+        return answer(
+            {"guid": guid, "backend": backend, "server": server, "state": state, "outcome": "done"},
+            0,
+        )
     except Unavailable as error:
         return answer({"guid": guid, "outcome": "failed", "message": str(error)}, EXIT_UNAVAILABLE)
     finally:
@@ -271,7 +323,9 @@ def put_back(replacing: str | None) -> bool:
         log(f"{guid} is no longer in the configuration; forgetting its {wanted.pop(guid)}")
     if gone:
         write_wanted(wanted)
-    commands = [f"set server {servers[g][0]}/{servers[g][1]} state {s}" for g, s in sorted(wanted.items())]
+    commands = [
+        f"set server {servers[g][0]}/{servers[g][1]} state {s}" for g, s in sorted(wanted.items())
+    ]
     if not commands:
         return True
     deadline = time.monotonic() + WAIT_FOR_WORKER_SECONDS
@@ -306,7 +360,7 @@ def command_reload() -> int:
             before = worker_pid(ask(["show info"]))
         except Unavailable:
             before = None
-        reload = subprocess.run([SYSTEMCTL, "reload", "haproxy"], check=False)
+        reload = subprocess.run([SYSTEMCTL, "reload", "haproxy"], check=False)  # noqa: S603 - fixed path
         if reload.returncode != 0:
             return reload.returncode
         try:
@@ -329,6 +383,97 @@ def command_reapply() -> int:
         os.close(held)
 
 
+def held_certificates() -> tuple[set[str], set[str]]:
+    """The certificates HAProxy holds by file name, and those with a transaction open."""
+
+    held: set[str] = set()
+    open_transactions: set[str] = set()
+    section = ""
+    for line in ask(["show ssl cert"]).splitlines():
+        text = line.strip()
+        if text.startswith("#"):
+            section = text.lstrip("# ").lower()
+            continue
+        if not text:
+            continue
+        if section == "transaction":
+            open_transactions.add(text.lstrip("*"))
+        else:
+            held.add(text)
+    return held, open_transactions
+
+
+def fingerprint(pem: str) -> str:
+    """The SHA-1 of the first certificate in a PEM file, as `show ssl cert` writes it."""
+
+    import hashlib
+    import ssl
+
+    block = CERTIFICATE_BLOCK.search(pem)
+    if block is None:
+        raise ValueError("no certificate in the file")
+    return (
+        hashlib.sha1(ssl.PEM_cert_to_DER_cert(block.group(0)), usedforsecurity=False)
+        .hexdigest()
+        .upper()
+    )
+
+
+def update_one(name: str, pem: str) -> str | None:
+    """Replace one held certificate; None when HAProxy serves the file's, else why not."""
+
+    #
+    # A payload ends at the first empty line, so the file is sent without any.
+    #
+    payload = "\n".join(line for line in pem.splitlines() if line.strip())
+    reply = ask([f"set ssl cert {name} <<\n{payload}\n"])
+    if "Transaction created" not in reply and "Transaction updated" not in reply:
+        return f"set ssl cert: {reply.strip()[:300]}"
+    reply = ask([f"commit ssl cert {name}"])
+    if "Success!" not in reply:
+        ask([f"abort ssl cert {name}"])
+        return f"commit ssl cert: {reply.strip()[:300]}"
+    served = re.search(
+        r"^SHA1 FingerPrint: ([0-9A-F]+)$", ask([f"show ssl cert {name}"]), re.MULTILINE
+    )
+    if served is None or served.group(1) != fingerprint(pem):
+        return "HAProxy does not serve the file's certificate after the commit"
+    return None
+
+
+def command_update_certs(identifiers: list[str]) -> int:
+    if not identifiers or not all(CERTIFICATE_ID.match(name) for name in identifiers):
+        log("ERROR: expected one or more certificate IDs")
+        return EXIT_USAGE
+    held_lock = lock()
+    try:
+        held, open_transactions = held_certificates()
+        #
+        # Only this helper opens a transaction, under this lock, so one still
+        # open is a run that was stopped. HAProxy allows one at a time.
+        #
+        for name in sorted(open_transactions):
+            log(f"aborting a transaction an earlier run left open on {name}")
+            ask([f"abort ssl cert {name}"])
+        names = {identifier: str(CERTS_DIR / f"{identifier}.pem") for identifier in identifiers}
+        missing = sorted(identifier for identifier, name in names.items() if name not in held)
+        if missing:
+            log(f"HAProxy does not hold {', '.join(missing)} yet; a reload is needed")
+            return EXIT_NOT_HELD
+        for identifier, name in names.items():
+            problem = update_one(name, Path(name).read_text(encoding="ascii"))
+            if problem is not None:
+                log(f"ERROR: {identifier}: {problem}")
+                return EXIT_REFUSED
+            log(f"{identifier} replaced in the running HAProxy")
+        return 0
+    except (OSError, ValueError, Unavailable) as error:
+        log(f"ERROR: the certificates could not be replaced at runtime: {error}")
+        return EXIT_UNAVAILABLE
+    finally:
+        os.close(held_lock)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[0] == "set":
         return command_set(argv[1], argv[2])
@@ -336,6 +481,8 @@ def main(argv: list[str]) -> int:
         return command_reload()
     if argv == ["reapply"]:
         return command_reapply()
+    if argv[:1] == ["update-certs"]:
+        return command_update_certs(argv[1:])
     print(__doc__.split("\n\n")[1], file=sys.stderr)
     return EXIT_USAGE
 

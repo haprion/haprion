@@ -93,8 +93,13 @@ def certificate(directory: Path, name: str) -> bytes:
 
 SERVER_STATE_STUB = """#!/bin/sh
 # The node's server state helper as far as these scripts use it: every reload
-# goes through it (Fas 20, B263), and it reloads with systemctl.
+# goes through it (Fas 20, B263), and it reloads with systemctl. `update-certs`
+# (P5) answers what `$RUNTIME` says: 0 replaced, 3 not held, 70 refused.
 [ "$1" = reload ] && exec systemctl reload haproxy
+if [ "$1" = update-certs ]; then
+    echo "$*" >> "$RECORD"
+    exit "${RUNTIME:-3}"
+fi
 exit 64
 """
 
@@ -145,8 +150,9 @@ class CertPull(unittest.TestCase):
     def offer(self, content: bytes) -> None:
         (self.offered / "cert-a.pem").write_bytes(content)
 
-    def run_pull(self, **flags: bool) -> tuple[int, str]:
+    def run_pull(self, runtime: int = 3, **flags: bool) -> tuple[int, str]:
         environment = {
+            "RUNTIME": str(runtime),
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "OFFERED": str(self.offered),
             "RECORD": str(self.record),
@@ -183,6 +189,44 @@ class CertPull(unittest.TestCase):
         self.assertEqual((self.certs / "cert-a.pem").read_bytes(), self.new)
         self.assertEqual(self.reloads(), 1)
         self.assertFalse(self.pending.exists())
+
+    def test_a_certificate_haproxy_holds_is_replaced_without_a_reload(self) -> None:
+        """Fas 20 P5: `set ssl cert` and `commit` through the helper."""
+
+        (self.certs / "cert-a.pem").write_bytes(self.old)
+        self.offer(self.new)
+
+        code, output = self.run_pull(runtime=0)
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("without a reload", output)
+        self.assertEqual((self.certs / "cert-a.pem").read_bytes(), self.new)
+        self.assertIn("update-certs cert-a", self.record.read_text().splitlines())
+        self.assertEqual(self.reloads(), 0)
+        self.assertFalse(self.pending.exists())
+
+    def test_a_certificate_haproxy_does_not_hold_or_refuses_is_reloaded(self) -> None:
+        for answer in (3, 70, 69):
+            with self.subTest(answer):
+                self.record.unlink(missing_ok=True)
+                (self.certs / "cert-a.pem").write_bytes(self.old)
+                self.offer(self.new)
+
+                code, output = self.run_pull(runtime=answer)
+
+                self.assertEqual(code, 0, output)
+                self.assertEqual(self.reloads(), 1)
+                self.assertEqual((self.certs / "cert-a.pem").read_bytes(), self.new)
+                self.assertFalse(self.pending.exists())
+
+    def test_a_refused_check_never_reaches_the_running_haproxy(self) -> None:
+        (self.certs / "cert-a.pem").write_bytes(self.old)
+        self.offer(self.new)
+
+        code, _output = self.run_pull(runtime=0, fail=True)
+
+        self.assertEqual(code, 1)
+        self.assertNotIn("update-certs", self.record.read_text())
 
     def test_an_unchanged_certificate_is_not_reloaded(self) -> None:
         (self.certs / "cert-a.pem").write_bytes(self.new)

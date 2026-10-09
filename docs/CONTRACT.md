@@ -1,4 +1,4 @@
-# HAProxy Manager CLI/JSON contract v1
+# Haprion CLI/JSON contract v1
 
 This document freezes the semantics shared by the schemas in `schemas/v1/`. Field-level types,
 required fields, nullability, and enums are normative in the schema files. This document is

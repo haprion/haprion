@@ -1,6 +1,6 @@
-# HAProxy Manager
+# Haprion
 
-HAProxy Manager is an environment-neutral management engine and web interface for operating
+Haprion is an environment-neutral management engine and web interface for operating
 small HAProxy clusters safely. The command-line engine is the authoritative control plane; the
 web application calls the same versioned commands rather than implementing a second
 configuration path.

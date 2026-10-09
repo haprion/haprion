@@ -1,6 +1,6 @@
 # Disaster recovery
 
-> **This is a template, not a procedure that works as shipped.** HAProxy Manager can back up a
+> **This is a template, not a procedure that works as shipped.** Haprion can back up a
 > node and restore it onto a machine you provide. Everything around that - where the machine
 > comes from, how the management host itself survives, who fails over and when, what runs on a
 > node after it is back - belongs to your environment, and only you can decide it. Work through

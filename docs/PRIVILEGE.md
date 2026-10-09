@@ -1,4 +1,4 @@
-# HAProxy Manager privilege contract v1
+# Haprion privilege contract v1
 
 This contract defines the privilege boundary the installation enforces. It is intentionally
 environment-neutral. Production account names, paths selected by runtime configuration, SSH keys,

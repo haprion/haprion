@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% import "_sort.html" as sort %}
-{% block title %}{{ "WAF logs" if waf_page else "Traffic logs" }} — HAProxy Manager{% endblock %}
+{% block title %}{{ "WAF logs" if waf_page else "Traffic logs" }} — Haprion{% endblock %}
 {% block head_extra %}<script defer src="{{ url_for('static', path='/logs.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {% macro date_time_picker(name, label, value, default) %}

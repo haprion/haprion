@@ -1,5 +1,5 @@
 #
-# nginx site for the HAProxy Manager UI.
+# nginx site for the Haprion UI.
 #
 # This is the direct manager address, and it deliberately does not go through
 # the HAProxy pair. The UI is the tool used to repair that pair, so putting the

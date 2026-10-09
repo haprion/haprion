@@ -1,6 +1,6 @@
 # User manual
 
-Using and administering an installed HAProxy Manager environment, through the web interface
+Using and administering an installed Haprion environment, through the web interface
 and the authoritative command-line engine. For prerequisites, installation and environment
 configuration, see the [installation guide](install.md).
 
@@ -276,7 +276,7 @@ An object whose protocol is *Syslog (UDP)* is forwarded by the kernel's IPVS,
 configured by keepalived on the same nodes and VIPs, on port 514 unless another is
 written. The form offers it once every node of the cluster reports that
 `keepalived.conf` includes `/etc/keepalived/ipvs.conf` at its top level - see
-[Installing HAProxy Manager](install.md#5-install-optional-components); until then the
+[Installing Haprion](install.md#5-install-optional-components); until then the
 choice is greyed out. A node without the include refuses a release that carries a
 syslog object, `haproxy-status` says *NOT FORWARDING* there and counts the node as
 not running its release, and the object list shows *Include missing* with the node. A syslog object shares a port number
@@ -2462,7 +2462,7 @@ Three properties drive the whole design, and every step below follows from one o
 
 ### Prerequisites
 
-HAProxy Manager manages HAProxy's configuration; it does not install, patch or upgrade
+Haprion manages HAProxy's configuration; it does not install, patch or upgrade
 HAProxy itself. Before starting, you need:
 
 **On the management host**
@@ -3842,7 +3842,7 @@ the `current` symlink atomically, validates again through exactly the paths `sys
 then reloads. If either validation or the reload fails, the symlink is swapped back.
 
 `/run/lock` itself belongs to the operating system and is commonly mode `1777`. The node installer
-requires it to exist but never changes its owner or permissions; HAProxy Manager owns only its
+requires it to exist but never changes its owner or permissions; Haprion owns only its
 root-created lock files inside the directory.
 
 #### Installing and changing node scripts

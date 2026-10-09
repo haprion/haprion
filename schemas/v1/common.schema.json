@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.com/haproxy-manager/schemas/v1/common.schema.json",
-  "title": "HAProxy Manager common contract definitions",
+  "title": "Haprion common contract definitions",
   "$defs": {
     "schema_version": {
       "type": "integer",

@@ -192,7 +192,7 @@ install_file "$POLICY_FILE" "root:root" 644 "$policy"
 
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
     backup_service="[Unit]
-Description=HAProxy Manager node state backup for cluster %i
+Description=Haprion node state backup for cluster %i
 After=network-online.target
 Wants=network-online.target
 
@@ -224,7 +224,7 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native"
     install_file /etc/systemd/system/haproxy-state-backup@.service root:root 644 "$backup_service"
     backup_timer="[Unit]
-Description=Schedule HAProxy Manager node state backup for cluster %i
+Description=Schedule Haprion node state backup for cluster %i
 
 [Timer]
 # A timer without a calendar is a unit systemd refuses to load, and it says so

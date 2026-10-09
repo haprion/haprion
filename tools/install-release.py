@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install a verified HAProxy Manager wheel into an immutable release directory."""
+"""Install a verified Haprion wheel into an immutable release directory."""
 
 from __future__ import annotations
 
@@ -471,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
     except InstallError as exc:
         print(f"install-release: ERROR: {exc}", file=sys.stderr)
         return 1
-    print(f"Installed HAProxy Manager release: {release_id}")
+    print(f"Installed Haprion release: {release_id}")
     print(f"Current: {args.target / 'current'}")
     return 0
 

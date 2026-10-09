@@ -26,7 +26,7 @@ class IdentityPolicyTests(unittest.TestCase):
         self.assertEqual(policy.account("worker"), "svc-worker")
         rendered = render_sysusers(policy)
         self.assertIn("g svc-mgmt -\n", rendered)
-        self.assertIn('u svc-web - "HAProxy Manager web service"', rendered)
+        self.assertIn('u svc-web - "Haprion web service"', rendered)
         # "u!" would mark the accounts expired and break sudo for them (PAM
         # account stage); remote login is denied in sshd configuration instead.
         self.assertNotIn("u! ", rendered)
@@ -46,7 +46,7 @@ class IdentityPolicyTests(unittest.TestCase):
 
         self.assertEqual(policy.collector, "svc-collector")
         rendered = render_sysusers(policy)
-        self.assertIn('u svc-collector - "HAProxy Manager traffic log collector"', rendered)
+        self.assertIn('u svc-collector - "Haprion traffic log collector"', rendered)
         self.assertNotIn("m svc-collector", rendered)
 
     def test_optional_oidc_account_is_distinct_and_gets_no_config_membership(self) -> None:
@@ -69,7 +69,7 @@ class IdentityPolicyTests(unittest.TestCase):
 
         self.assertEqual(policy.oidc, "svc-oidc")
         rendered = render_sysusers(policy)
-        self.assertIn('u svc-oidc - "HAProxy Manager OIDC helper"', rendered)
+        self.assertIn('u svc-oidc - "Haprion OIDC helper"', rendered)
         self.assertNotIn("m svc-oidc", rendered)
 
     def test_unknown_role_lookup_is_rejected(self) -> None:

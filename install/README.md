@@ -1,4 +1,4 @@
-# Installing HAProxy Manager
+# Installing Haprion
 
 Five steps. Three run on the management host, one on each node, and the last one
 checks your work.

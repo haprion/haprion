@@ -23,7 +23,7 @@
 # Installed as /etc/systemd/system/haproxy-ui-tls-helper@.service.
 
 [Unit]
-Description=Install the HAProxy Manager interface certificate
+Description=Install the Haprion interface certificate
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Service]

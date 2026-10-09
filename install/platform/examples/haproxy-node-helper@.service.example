@@ -33,7 +33,7 @@
 # Installed as /etc/systemd/system/haproxy-node-helper@.service.
 
 [Unit]
-Description=Add or remove one node or one cluster of HAProxy Manager
+Description=Add or remove one node or one cluster of Haprion
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Service]

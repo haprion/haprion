@@ -1,3 +1,3 @@
-"""HAProxy Manager's UI-independent management engine."""
+"""Haprion's UI-independent management engine."""
 
 __version__ = "0.1.0"

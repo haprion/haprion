@@ -12,6 +12,6 @@
 # `u!` locks the password, and nologin because none of these ever logs in.
 # Unlike the node accounts, no forced command runs through their shell.
 
-u! haproxy-ui-dev-web - "HAProxy Manager dev web service" - /usr/sbin/nologin
-u! haproxy-ui-dev-worker - "HAProxy Manager dev worker service" - /usr/sbin/nologin
-u! haproxy-ui-dev-poller - "HAProxy Manager dev poller service" - /usr/sbin/nologin
+u! haproxy-ui-dev-web - "Haprion dev web service" - /usr/sbin/nologin
+u! haproxy-ui-dev-worker - "Haprion dev worker service" - /usr/sbin/nologin
+u! haproxy-ui-dev-poller - "Haprion dev poller service" - /usr/sbin/nologin

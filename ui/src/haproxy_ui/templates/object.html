@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}{{ object.name }} — HAProxy Manager{% endblock %}
+{% block title %}{{ object.name }} — Haprion{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/traffic.js') }}?v={{ asset_token }}"></script>
 {% if advanced_offered %}<script defer src="{{ url_for('static', path='/advanced.js') }}?v={{ asset_token }}"></script>{% endif %}

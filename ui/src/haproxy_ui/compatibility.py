@@ -460,7 +460,7 @@ def check_traffic_collector(report: Report, *, policy: Path, collector_config: P
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Check all installed HAProxy Manager components")
+    parser = argparse.ArgumentParser(description="Check all installed Haprion components")
     parser.add_argument("--platform-root", required=True, type=Path)
     parser.add_argument("--cli-root", required=True, type=Path)
     parser.add_argument("--database", required=True)

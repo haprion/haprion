@@ -18,7 +18,7 @@
 # /etc/systemd/system/haproxy-cert-export-helper.socket.
 
 [Unit]
-Description=Socket the HAProxy Manager interface exports a certificate's key through
+Description=Socket the Haprion interface exports a certificate's key through
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Socket]

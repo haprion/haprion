@@ -3,11 +3,11 @@
 <header class="app-header">
   <div class="app-topbar">
     <div class="chrome-inner">
-      <a class="brand" href="/" aria-label="HAProxy Manager dashboard">
+      <a class="brand" href="/" aria-label="Haprion dashboard">
         <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
           <path d="M6 8h13M6 16h20M6 24h13"></path><circle cx="22" cy="8" r="3"></circle><circle cx="10" cy="24" r="3"></circle>
         </svg>
-        <span>HAProxy <strong>Manager</strong></span>
+        <span><strong>Haprion</strong></span>
       </a>
       {# The header's search (B221): a plain form, so the result is a page with an address. #}
       <form class="header-search" method="get" action="/search" role="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m20 20-4.5-4.5"></path></svg><input type="search" name="q" value="{{ search_query | default('') }}" maxlength="120" placeholder="Search names and addresses" aria-label="Search proxies, addresses, certificates and nodes"></form>

@@ -29,7 +29,7 @@
 # `systemctl enable --now haproxy-probe-helper.socket`.
 
 [Unit]
-Description=Socket the HAProxy Manager interface asks for a health probe on
+Description=Socket the Haprion interface asks for a health probe on
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Socket]

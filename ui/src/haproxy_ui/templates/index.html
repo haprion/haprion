@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}Dashboard — HAProxy Manager{% endblock %}
+{% block title %}Dashboard — Haprion{% endblock %}
 {% block head_extra %}{% if live_seconds %}<meta name="haproxy-live" content="{{ live_seconds }}">{% endif %}{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>

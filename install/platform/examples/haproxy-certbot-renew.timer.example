@@ -1,5 +1,5 @@
 [Unit]
-Description=Run HAProxy Manager certbot renewal twice daily
+Description=Run Haprion certbot renewal twice daily
 
 # The distribution's schedule, kept: twice a day with up to twelve hours of
 # random delay, and a missed run made up after downtime.

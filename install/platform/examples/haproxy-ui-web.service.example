@@ -1,5 +1,5 @@
 [Unit]
-Description=HAProxy Manager web interface
+Description=Haprion web interface
 Documentation=file:///apps/haproxy-manager/current
 After=network-online.target postgresql.service
 Wants=network-online.target

@@ -69,7 +69,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         finally:
             connections.close()
 
-    app = FastAPI(title="HAProxy Manager", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(title="Haprion", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.config = settings
     # The source file is retained only so the display-only production snapshot
     # can use its fixed sibling. No path comes from a request or TOML setting.

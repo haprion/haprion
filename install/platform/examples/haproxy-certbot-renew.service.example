@@ -1,5 +1,5 @@
 [Unit]
-Description=HAProxy Manager certbot renewal
+Description=Haprion certbot renewal
 Documentation=file:///apps/haproxy-manager/current
 
 # The distribution's certbot.timer runs /usr/bin/certbot; this one runs the

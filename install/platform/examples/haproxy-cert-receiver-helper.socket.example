@@ -1,4 +1,4 @@
-# The socket the HAProxy Manager job worker asks for a receiver on.
+# The socket the Haprion job worker asks for a receiver on.
 #
 # Owned by root, connectable by the worker's account and nobody else. Each
 # connection starts one instance of haproxy-cert-receiver-helper@.service,
@@ -15,7 +15,7 @@
 # WORKER_USER rendered by 07-platform-services.
 
 [Unit]
-Description=Socket the HAProxy Manager job worker asks for a receiver on
+Description=Socket the Haprion job worker asks for a receiver on
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Socket]

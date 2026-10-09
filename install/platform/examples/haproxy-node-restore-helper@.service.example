@@ -2,7 +2,7 @@
 # It reads the root-only state archive, keeps the run's one-time key under
 # /var/lib/haproxy-mgmt/restore, and reaches the target VM over SSH.
 [Unit]
-Description=Run one HAProxy Manager node restore step
+Description=Run one Haprion node restore step
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Service]

@@ -28,7 +28,7 @@
 # Installed as /etc/systemd/system/haproxy-cert-receiver-helper@.service.
 
 [Unit]
-Description=Register or remove one HAProxy Manager certificate receiver
+Description=Register or remove one Haprion certificate receiver
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Service]

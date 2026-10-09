@@ -1,4 +1,4 @@
-# One lookup for the HAProxy Manager interface, answered by haproxy-resolve-helper (B253).
+# One lookup for the Haprion interface, answered by haproxy-resolve-helper (B253).
 #
 # Not root and no account of its own: a dynamic user, nothing to read but the
 # release, nothing to write, and a way out to the network - which is the
@@ -9,7 +9,7 @@
 # /etc/systemd/system/haproxy-resolve-helper@.service.
 
 [Unit]
-Description=Look up dns server names for the HAProxy Manager interface
+Description=Look up dns server names for the Haprion interface
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Service]

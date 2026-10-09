@@ -1,5 +1,5 @@
 [Unit]
-Description=HAProxy Manager status poller
+Description=Haprion status poller
 Documentation=file:///apps/haproxy-manager/current
 After=network-online.target postgresql.service
 Wants=network-online.target

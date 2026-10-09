@@ -10,7 +10,7 @@
 # /etc/systemd/system/haproxy-oidc-helper@.service.
 
 [Unit]
-Description=Ask the HAProxy Manager OIDC provider one thing
+Description=Ask the Haprion OIDC provider one thing
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Service]

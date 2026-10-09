@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}Node backups — HAProxy Manager{% endblock %}
+{% block title %}Node backups — Haprion{% endblock %}
 {% block content %}
 {% macro schedule_line(schedule) %}<span class="status-dot status-{{ schedule.tone }}" aria-hidden="true"></span><strong>{{ schedule.label }}</strong><span class="schedule-facts"><span title="{{ schedule.calendar }}">{{ schedule.readable }}{% if schedule.reader_time %} {{ clock }} ({{ schedule.reader_time }}){% endif %}</span>{% if schedule.retention %} · keeps {{ schedule.retention }} per node{% endif %} · last backup {{ schedule.last_run }}{% if schedule.outcome != '—' %} ({{ schedule.outcome }}){% endif %} · next {{ schedule.next_run }}</span>{% endmacro %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>

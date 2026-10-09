@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}Receivers — HAProxy Manager{% endblock %}
+{% block title %}Receivers — Haprion{% endblock %}
 {% block head_extra %}{% if certificate_job %}<meta name="haproxy-live" content="3"><noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {#

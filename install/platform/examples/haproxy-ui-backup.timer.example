@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily dump of the HAProxy Manager interface database
+Description=Daily dump of the Haprion interface database
 
 [Timer]
 OnCalendar=*-*-* 02:30:00

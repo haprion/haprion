@@ -17,7 +17,7 @@
 [project]
 name = "haproxy-manager-certbot-env"
 version = "0"
-description = "certbot and its DNS plugins for HAProxy Manager, locked as one set"
+description = "certbot and its DNS plugins for Haprion, locked as one set"
 requires-python = ">=3.12"
 dependencies = [
     # core - certbot and its own plugins, one version

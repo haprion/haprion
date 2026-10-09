@@ -1,4 +1,4 @@
-# Installing HAProxy Manager
+# Installing Haprion
 
 These are the steps for a first installation of the application: the CLI engine and the
 optional web interface. Configuration, usage, administration and maintenance are in the

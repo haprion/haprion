@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed scanner for the HAProxy Manager source tree.
+"""Fail-closed scanner for the Haprion source tree.
 
 The environment denylist is deliberately external to Git. Findings print only
 rule names and locations, never the matched content.

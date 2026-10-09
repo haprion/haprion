@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% if renewal and renewal.row.interface %}{% set section = 'settings' %}{% endif %}
-{% block title %}{% if renewal %}{{ renewal.title }}{% else %}Renew certificate{% endif %} — HAProxy Manager{% endblock %}
+{% block title %}{% if renewal %}{{ renewal.title }}{% else %}Renew certificate{% endif %} — Haprion{% endblock %}
 {% block content %}
 {#
   One row, renewed the way its source is made (C9c): certbot's round again,

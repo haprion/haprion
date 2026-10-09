@@ -21,7 +21,7 @@
 # Installed as /etc/systemd/system/haproxy-probe-helper@.service.
 
 [Unit]
-Description=Answer one HAProxy Manager health probe request
+Description=Answer one Haprion health probe request
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Service]

@@ -1,7 +1,7 @@
 # UI theme contract
 
 `base.html` always loads `static/app.css`, which is the single visual theme for
-every HAProxy Manager page. New views must reuse it rather than introducing a
+every Haprion page. New views must reuse it rather than introducing a
 page-specific font stack, colour palette, or dark-mode rules.
 
 ## Typography

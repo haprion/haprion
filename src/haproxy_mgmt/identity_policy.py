@@ -96,17 +96,15 @@ def render_sysusers(policy: IdentityPolicy) -> str:
     # instead of as a side effect of an expiry flag; the accounts also keep an
     # invalid password and a nologin shell.
     lines = [
-        "# Generated from the protected HAProxy Manager identity policy.",
+        "# Generated from the protected Haprion identity policy.",
         f"g {policy.config_group} -",
-        f'u {policy.web} - "HAProxy Manager web service" - /usr/sbin/nologin',
-        f'u {policy.worker} - "HAProxy Manager worker service" - /usr/sbin/nologin',
-        f'u {policy.poller} - "HAProxy Manager poller service" - /usr/sbin/nologin',
+        f'u {policy.web} - "Haprion web service" - /usr/sbin/nologin',
+        f'u {policy.worker} - "Haprion worker service" - /usr/sbin/nologin',
+        f'u {policy.poller} - "Haprion poller service" - /usr/sbin/nologin',
     ]
     if policy.collector is not None:
-        lines.append(
-            f'u {policy.collector} - "HAProxy Manager traffic log collector" - /usr/sbin/nologin'
-        )
+        lines.append(f'u {policy.collector} - "Haprion traffic log collector" - /usr/sbin/nologin')
     if policy.oidc is not None:
-        lines.append(f'u {policy.oidc} - "HAProxy Manager OIDC helper" - /usr/sbin/nologin')
+        lines.append(f'u {policy.oidc} - "Haprion OIDC helper" - /usr/sbin/nologin')
     lines.extend((f"m {policy.worker} {policy.config_group}", ""))
     return "\n".join(lines)

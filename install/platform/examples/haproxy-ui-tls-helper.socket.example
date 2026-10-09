@@ -14,7 +14,7 @@
 # WORKER_USER rendered by 07-platform-services.
 
 [Unit]
-Description=Socket the HAProxy Manager interface certificate is installed through
+Description=Socket the Haprion interface certificate is installed through
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Socket]

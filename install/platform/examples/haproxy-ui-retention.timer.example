@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily pruning and hourly rollup for HAProxy Manager
+Description=Daily pruning and hourly rollup for Haprion
 
 [Timer]
 # After the daily dump rather than before it, so the newest dump still holds the

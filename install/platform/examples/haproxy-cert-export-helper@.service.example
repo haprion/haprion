@@ -17,7 +17,7 @@
 # Installed as /etc/systemd/system/haproxy-cert-export-helper@.service.
 
 [Unit]
-Description=Export an HAProxy Manager certificate's key
+Description=Export an Haprion certificate's key
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Service]

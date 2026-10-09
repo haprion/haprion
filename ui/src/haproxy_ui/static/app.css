@@ -195,7 +195,9 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 
 .brand strong, .login-brand strong { color: var(--brand); font-weight: 700; }
 
-.brand-mark { width: 30px; height: 30px; color: var(--brand); stroke-width: 2.2; }
+/* One star in two halves: the active node and its standby, together one address. */
+.brand-mark { width: 30px; height: 30px; color: var(--brand); fill: currentcolor; stroke: none; }
+.brand-mark-standby { opacity: 0.6; }
 
 .primary-nav { background: var(--panel-soft); }
 /* One row where it fits; a second row rather than a page pushed sideways where it does not. */

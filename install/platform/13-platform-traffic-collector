@@ -21,19 +21,10 @@ need_root
 load_answers "${1:-}"
 require_vars PLATFORM_ROOT WEB_USER WORKER_USER POLLER_USER COLLECTOR_USER LOGREAD_USER \
              CLUSTERS DB_NAME
-ENVIRONMENT="${ENVIRONMENT:-prod}"
 
 valid_abs_path "$PLATFORM_ROOT" || die "not an absolute path without '..': ${PLATFORM_ROOT}"
 valid_id "$COLLECTOR_USER" || die "invalid collector account: ${COLLECTOR_USER}"
 valid_id "$LOGREAD_USER" || die "invalid node traffic log account: ${LOGREAD_USER}"
-
-#
-# Decided in the pull plan, not a preference. A development platform is built
-# not to reach the real nodes; giving it a key and an inventory would undo the
-# one property that makes it safe to rehearse against.
-#
-[[ "$ENVIRONMENT" == "prod" ]] \
-    || die "the traffic collector is production-only; ENVIRONMENT is ${ENVIRONMENT}"
 
 for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER" "$COLLECTOR_USER"; do
     id -u "$role" >/dev/null 2>&1 \

@@ -19,9 +19,6 @@
 # An installation that already has a pair keeps it; ROTATE=1 adds a second one
 # beside it, and the client secret is then saved again under the new key.
 #
-# Production only. The development platform is built not to reach the outside,
-# and its sign-in stays local.
-#
 set -Eeuo pipefail
 cd "$(dirname "$0")"
 # shellcheck source=../lib.sh
@@ -36,8 +33,6 @@ source_tree="$(cd "$source_tree" && pwd)"
 tool="${source_tree}/tools/dns-profile-keys.py"
 [[ -f "$tool" ]] || die "${tool} is missing; this is not a source tree with the key tool"
 
-[[ "${ENVIRONMENT:-prod}" == "prod" ]] \
-    || die "the OIDC helper is production-only; ENVIRONMENT is ${ENVIRONMENT}"
 valid_id "$OIDC_USER" || die "invalid OIDC account: ${OIDC_USER}"
 for role in "$WEB_USER" "${WORKER_USER:-}" "${POLLER_USER:-}" "${COLLECTOR_USER:-}"; do
     [[ -z "$role" || "$OIDC_USER" != "$role" ]] \

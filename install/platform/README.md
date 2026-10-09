@@ -44,28 +44,7 @@ the previous release is restored if the dry run fails.
 
 Step 15 makes the key pair that seals DNS provider credentials between the web
 interface and the root helper: private key under `secrets/`, public key under
-`config/`, never overwritten. Development gets its own pair from the same step.
-
-For an isolated dev platform the normal path stops at step 4, though steps 11
-and 15 are worth running there too. If developers
-need a direct browser address rather than an SSH tunnel, give the dev answers
-file its own `SERVER_NAME` and run the optional step 9 after its service is up:
-
-```bash
-sudo ./09-dev-nginx ../answers-dev.env
-```
-
-When realistic production values are useful for UI review, the optional step
-10 makes one explicit, root-owned snapshot from production into development:
-
-```bash
-sudo ./10-dev-production-snapshot ../answers-prod.env ../answers-dev.env
-```
-
-It is deliberately a manual action, not a poller or timer. The development web
-and poller accounts receive no production credentials, never contact
-production, and can only read the bounded static copy written under the dev
-platform's `config/` directory.
+`config/`, never overwritten.
 
 The order is not arbitrary. A release is first prepared without moving `current`.
 Its own immutable migration bundle prepares the schema, and its compatibility is
@@ -78,10 +57,6 @@ The final compatibility check is read-only. It reports the running UI and CLI
 releases, database revision, actual service processes, exact worker/poller sudo
 rules and every node bundle. Its verdict uses compatibility levels shipped by
 the running UI rather than requiring unrelated release hashes to be equal.
-For a non-production answers file it instead proves the deliberately smaller
-development boundary: UI release, database revision and web process. Development
-has no worker, poller, sudo rules or node list to check; treating their documented
-absence as an incompatibility would make the release path impossible to use there.
 
 After the first installation, use the coordinated update command instead of
 running the release and migration helpers separately:
@@ -95,8 +70,7 @@ sudo ./update-platform-release ../answers.env /path/to/source-tree
 Read it before running this command. In short: a commit that changes both the
 management engine and the UI releases the CLI wheel first — the platform check
 compares the independently installed CLI before it activates the UI candidate,
-so reversing the order stops the update after it has already migrated — and
-where both environments exist, development goes before production. A change
+so reversing the order stops the update after it has already migrated. A change
 confined to the UI needs only the applicable platform updates; rerun optional
 installers such as retention only when their installed files actually changed.
 
@@ -106,7 +80,7 @@ the candidate's target schema, migrates from the candidate's own bundle, verifie
 database privileges, activates, and checks the real processes. A failure after
 the symlink moves invokes the installed rollback command and proves the restored
 installation before it reports failure. After a proved update it prunes old
-releases: ten stay on a production platform, three on a development one
+releases: ten stay
 (`RELEASES_KEPT` in the answers file overrides, minimum two), always including
 the release just activated and the one it replaced.
 
@@ -264,12 +238,6 @@ script digests still match. The release IDs are printed for diagnosis but are
 not compared for equality; a UI-only correction must not force an unrelated CLI
 or node rollout.
 
-With a non-production answers file, the same command checks only what that
-platform installs: the UI release, database and web process. It also requires
-the web account to have no sudoers file. The absent worker, poller, standalone
-CLI access and nodes are the development isolation boundary, not skipped
-production checks.
-
 Before activation, name a prepared release explicitly. The check then reads that
 candidate's requirements and omits only the process check, because the processes
 correctly still run the previous release:
@@ -408,27 +376,6 @@ material. The shape is a drop directory the poller lists, an admin choosing a
 candidate, and a job carrying that candidate's id — the web process chooses
 *which*, never *what*. See B21 in the decision log.
 
-## Optional step 9 — direct development address
-
-The development service normally remains reachable only through an SSH tunnel.
-`./09-dev-nginx` is the deliberate exception for browser review: it requires a
-separate `SERVER_NAME` in the development answers file, checks that the name
-resolves before changing nginx, and renders a second virtual host to the dev
-loopback port. It never changes the production site, production certificate or
-the listener of either application.
-
-The step creates a separate TLS configuration and `haproxy-ui-dev-tls` command.
-It creates a self-signed development pair when no pair is supplied in
-`TLS_CERT`/`TLS_KEY`; install an internal-PKI pair later with:
-
-```bash
-sudo haproxy-ui-dev-tls install --cert /path/to/dev-ui.crt --key /path/to/dev-ui.key
-```
-
-The name must have a DNS record before the step runs. The separate hostname is
-also what prevents a browser from mixing development and production host-only
-session cookies.
-
 ## Step 7 — the worker and the poller
 
 `./07-platform-services` installs both as their own accounts, plus the two
@@ -493,7 +440,7 @@ asks for its password. Later releases find accounts and do nothing. More
 accounts:
 
 ```bash
-sudo haprion-user -e prod add operator --role admin
+sudo haprion-user add operator --role admin
 ```
 
 The password is typed at a terminal, twice; there is no flag for passing it as
@@ -502,8 +449,8 @@ list.
 
 `install-ui-release` installs the tool as a shim in `/usr/local/sbin` that
 resolves `current` at every invocation, so an application rollback takes the
-account tool back with it. `-e prod` reads
-`/etc/haprion/ui-admin-prod.conf`, written by step 2, which names the
+account tool back with it. It reads
+`/etc/haprion/ui-admin.conf`, written by step 2, which names the
 database and the role root connects as — the migration role, because no
 application role may write the account table.
 
@@ -551,10 +498,6 @@ account, and `data/dumps` beside it holds every session and every audit record
 in one file. The mirror directory is set-group-id so files land in the web
 account's group: the collector is not a member of that group and so could not
 otherwise create a file the interface can read.
-
-**No collector on a development platform.** The step refuses to run unless
-`ENVIRONMENT` is `prod`. A dev platform is built not to reach the real nodes,
-and a key plus an inventory would undo the property that makes it safe.
 
 ## Step 17 — the OIDC helper
 

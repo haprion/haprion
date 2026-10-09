@@ -51,29 +51,24 @@ class AdminError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Environment:
-    name: str
     database: str
     role: str
 
 
-def load_environment(name: str) -> Environment:
-    """Which database this environment is, read from a root-owned file.
+def load_environment() -> Environment:
+    """Which database this installation is, read from a root-owned file.
 
-    Deliberately not derived from the application's own configuration. Prod and
-    dev each have their own file, so `-e prod` cannot be made to mean the dev
-    database - or the reverse, which is the direction that matters - by an
-    environment variable or a working directory.
+    Deliberately not derived from the application's own configuration, so the
+    tool cannot be pointed at another database by an environment variable or a
+    working directory.
     """
 
-    if not name.isalnum():
-        raise AdminError(f"environment names are alphanumeric: {name!r}")
-    path = ADMIN_CONFIG_DIRECTORY / f"ui-admin-{name}.conf"
+    path = ADMIN_CONFIG_DIRECTORY / "ui-admin.conf"
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise AdminError(
-            f"cannot read {path}: {exc}\n"
-            f"  Environments are created by install/platform/02-platform-database."
+            f"cannot read {path}: {exc}\n  It is written by install/platform/02-platform-database."
         ) from exc
 
     values: dict[str, str] = {}
@@ -87,7 +82,7 @@ def load_environment(name: str) -> Environment:
     missing = sorted({"DB_NAME", "DB_ROLE"} - set(values))
     if missing:
         raise AdminError(f"{path} is missing: {', '.join(missing)}")
-    return Environment(name=name, database=values["DB_NAME"], role=values["DB_ROLE"])
+    return Environment(database=values["DB_NAME"], role=values["DB_ROLE"])
 
 
 def connect(environment: Environment) -> psycopg.Connection[tuple[Any, ...]]:
@@ -396,7 +391,7 @@ def command_list(environment: Environment, _: argparse.Namespace) -> int:
         rows = cursor.fetchall()
     if not rows:
         print("no accounts. Create the first one with:")
-        print(f"  sudo haprion-user -e {environment.name} add <username> --role admin")
+        print("  sudo haprion-user add <username> --role admin")
         return 0
     print(f"{'USERNAME':<24} {'ROLE':<8} {'KIND':<12} {'STATE':<9} {'CREATED':<12} SESSIONS")
     for username, role, disabled, source, break_glass, created, sessions in rows:
@@ -424,12 +419,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="haprion-user",
         description="Manage interface accounts. Root only; passwords are never arguments.",
-    )
-    parser.add_argument(
-        "-e",
-        "--environment",
-        default="prod",
-        help="which installation to act on (default: prod)",
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
 
@@ -482,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: run this with sudo", file=sys.stderr)
         return 77
     try:
-        environment = load_environment(args.environment)
+        environment = load_environment()
         return COMMANDS[args.command](environment, args)
     except AdminError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

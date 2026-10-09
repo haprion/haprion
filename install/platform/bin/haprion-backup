@@ -2,9 +2,9 @@
 #
 # haprion-backup - dump the interface database, and prove the dump is usable.
 #
-#     haprion-backup dump [-e <environment>]
-#     haprion-backup verify-restore [-e <environment>]
-#     haprion-backup list [-e <environment>]
+#     haprion-backup dump
+#     haprion-backup verify-restore
+#     haprion-backup list
 #
 # A dump nobody has restored is a belief, not a backup. `dump` therefore reads
 # every dump back with `pg_restore --list` before keeping it, and
@@ -39,18 +39,11 @@ usage() {
 
 [[ $EUID -eq 0 ]] || die "run this with sudo"
 
-environment=prod
 command="${1:-}"
 shift || true
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -e|--environment) environment="${2:-}"; shift 2 ;;
-        *) usage ;;
-    esac
-done
-[[ "$environment" =~ ^[a-z0-9]+$ ]] || die "environment names are alphanumeric"
+[[ $# -eq 0 ]] || usage
 
-config="${CONFIG_DIRECTORY}/ui-admin-${environment}.conf"
+config="${CONFIG_DIRECTORY}/ui-admin.conf"
 [[ -r "$config" ]] || { echo "ERROR: cannot read ${config}" >&2; exit 78; }
 # shellcheck disable=SC1090
 source "$config"

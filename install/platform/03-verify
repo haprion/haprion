@@ -32,10 +32,9 @@ source ../lib.sh
 need_root
 load_answers "${1:-}"
 #
-# The collector's login role is deliberately absent here. It exists only in
-# production, where step 13 proves its boundary with the account itself, and
-# requiring the variable here broke a development update for a value this file
-# never reads. What this file owns is the contract role: `app_collector` appears
+# The collector's login role is deliberately absent here: step 13 proves its
+# boundary with the account itself, and this file never reads the variable. What
+# this file owns is the contract role: `app_collector` appears
 # in the column matrix below like every other grantee.
 #
 require_vars DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER

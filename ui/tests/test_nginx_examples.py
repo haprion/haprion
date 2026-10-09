@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-EXAMPLES = ("haproxy-ui.nginx.example", "haproxy-ui-dev.nginx.example")
+EXAMPLES = ("haproxy-ui.nginx.example",)
 
 
 def directive(text: str, name: str) -> list[str]:

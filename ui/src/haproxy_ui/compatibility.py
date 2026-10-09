@@ -471,7 +471,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--clusters", required=True, nargs="*")
     parser.add_argument("--runtime-policy", type=Path)
     parser.add_argument("--collector-config", type=Path)
-    parser.add_argument("--environment", default="prod")
     parser.add_argument("--sudoers-root", type=Path, default=Path("/etc/sudoers.d"))
     parser.add_argument("--ui-release")
     parser.add_argument("--skip-database", action="store_true")
@@ -499,46 +498,43 @@ def main(argv: list[str] | None = None) -> int:
             else current_release(args.platform_root, "UI")
         )
         requirements = ui_requirements(ui_release)
-        cli_release = current_release(args.cli_root, "CLI") if args.environment == "prod" else None
-        installed_cli = cli_metadata(cli_release) if cli_release is not None else None
+        cli_release = current_release(args.cli_root, "CLI")
+        installed_cli = cli_metadata(cli_release)
     except CompatibilityError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     print("\n== Releases")
     report.pass_("UI release", ui_release.name)
-    if cli_release is None or installed_cli is None:
-        report.pass_("development boundary", "no standalone CLI, helpers or nodes")
+    installed_engine_api = engine_api(installed_cli)
+    if installed_engine_api >= requirements.engine_api:
+        report.pass_("CLI release", f"{cli_release.name}, engine API {installed_engine_api}")
     else:
-        installed_engine_api = engine_api(installed_cli)
-        if installed_engine_api >= requirements.engine_api:
-            report.pass_("CLI release", f"{cli_release.name}, engine API {installed_engine_api}")
-        else:
-            report.fail(
-                "CLI release",
-                f"{cli_release.name}, engine API {installed_engine_api}; "
-                f"requires {requirements.engine_api}",
-            )
-        installed_helpers = installed_entry_points(installed_cli)
-        required_helpers = set(
-            requirements.worker_helpers
-            + requirements.poller_helpers
-            + tuple(requirements.socket_helpers)
+        report.fail(
+            "CLI release",
+            f"{cli_release.name}, engine API {installed_engine_api}; "
+            f"requires {requirements.engine_api}",
         )
-        missing = sorted(required_helpers - installed_helpers)
-        if missing:
-            report.fail("CLI helpers", f"missing: {', '.join(missing)}")
+    installed_helpers = installed_entry_points(installed_cli)
+    required_helpers = set(
+        requirements.worker_helpers
+        + requirements.poller_helpers
+        + tuple(requirements.socket_helpers)
+    )
+    missing = sorted(required_helpers - installed_helpers)
+    if missing:
+        report.fail("CLI helpers", f"missing: {', '.join(missing)}")
+    else:
+        missing_files = sorted(
+            helper
+            for helper in required_helpers
+            if not (cli_release / "bin" / helper).is_file()
+            or not os.access(cli_release / "bin" / helper, os.X_OK)
+        )
+        if missing_files:
+            report.fail("CLI helpers", f"not executable: {', '.join(missing_files)}")
         else:
-            missing_files = sorted(
-                helper
-                for helper in required_helpers
-                if not (cli_release / "bin" / helper).is_file()
-                or not os.access(cli_release / "bin" / helper, os.X_OK)
-            )
-            if missing_files:
-                report.fail("CLI helpers", f"not executable: {', '.join(missing_files)}")
-            else:
-                report.pass_("CLI helpers", f"{len(required_helpers)} required helpers installed")
+            report.pass_("CLI helpers", f"{len(required_helpers)} required helpers installed")
 
     if args.upgrade_from_current and not args.ui_release:
         print("ERROR: --upgrade-from-current requires --ui-release", file=sys.stderr)
@@ -607,40 +603,33 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.skip_services:
         print("\n== Services")
-        service_users = (
-            (args.worker_user, args.poller_user, args.web_user)
-            if args.environment == "prod"
-            else (args.web_user,)
-        )
-        for user in service_users:
+        for user in (args.worker_user, args.poller_user, args.web_user):
             check_service(report, unit=f"{user}.service", release=ui_release)
 
     print("\n== Sudo rules")
-    if args.environment == "prod":
-        check_sudoers(
-            report,
-            root=args.sudoers_root,
-            user=args.worker_user,
-            helpers=requirements.worker_helpers,
-            cli_root=args.cli_root,
-            label="worker sudoers",
-        )
-        check_sudoers(
-            report,
-            root=args.sudoers_root,
-            user=args.poller_user,
-            helpers=requirements.poller_helpers,
-            cli_root=args.cli_root,
-            label="poller sudoers",
-        )
+    check_sudoers(
+        report,
+        root=args.sudoers_root,
+        user=args.worker_user,
+        helpers=requirements.worker_helpers,
+        cli_root=args.cli_root,
+        label="worker sudoers",
+    )
+    check_sudoers(
+        report,
+        root=args.sudoers_root,
+        user=args.poller_user,
+        helpers=requirements.poller_helpers,
+        cli_root=args.cli_root,
+        label="poller sudoers",
+    )
     web_rule = args.sudoers_root / args.web_user
     if web_rule.exists():
         report.fail("web sudoers", f"unexpected rule file {web_rule}")
     else:
         report.pass_("web sudoers", "no rule file")
-    if args.environment == "prod":
-        for helper_name, socket_path in sorted(requirements.socket_helpers.items()):
-            check_socket(report, helper=helper_name, socket_path=Path(socket_path))
+    for helper_name, socket_path in sorted(requirements.socket_helpers.items()):
+        check_socket(report, helper=helper_name, socket_path=Path(socket_path))
 
     print("\n== Nodes")
     if args.runtime_policy is not None and args.collector_config is not None:
@@ -649,12 +638,11 @@ def main(argv: list[str] | None = None) -> int:
             policy=args.runtime_policy,
             collector_config=args.collector_config,
         )
-    if cli_release is not None:
-        helper = cli_release / "bin/haprion-status-helper"
-        for cluster in args.clusters:
-            check_cluster_nodes(
-                report, cluster=cluster, helper=helper, required_api=requirements.node_api
-            )
+    helper = cli_release / "bin/haprion-status-helper"
+    for cluster in args.clusters:
+        check_cluster_nodes(
+            report, cluster=cluster, helper=helper, required_api=requirements.node_api
+        )
 
     print()
     if report.failures:

@@ -38,9 +38,9 @@ usage() {
 [[ $EUID -eq 0 ]] || die "run this with sudo"
 
 #
-# Production keeps the historical default.  A second, explicitly named config
-# lets a development vhost have its own key and hostname without pointing a
-# dev certificate command at production's pair by mistake.
+# The default is the interface's own pair. --config names another file under
+# /etc/haprion; the interface's TLS helper passes it explicitly.
+#
 if [[ "${1:-}" == "--config" ]]; then
     CONF="${2:-}"
     shift 2 || usage

@@ -13,9 +13,6 @@
 # running the step with ROTATE=1, which adds a second pair beside the first so
 # the runtime policy can list both while profiles are re-entered.
 #
-# Production and development each get their own pair: the step works under the
-# answers file's PLATFORM_ROOT and nothing else.
-#
 set -Eeuo pipefail
 cd "$(dirname "$0")"
 # shellcheck source=../lib.sh
@@ -77,27 +74,15 @@ fi
 step "The profile directory"
 #
 # Where the helper materialises a credential file per profile, root-only.
-# Production's alone: a development platform has no helper and no policy, and
-# this path is not under its root.
 #
-if [[ "${ENVIRONMENT:-prod}" == "dev" ]]; then
-    log "  skipped  ${PROFILE_DIR}  (development has no helper)"
-else
-    ensure_dir "$PROFILE_DIR" root:root 700
-fi
+ensure_dir "$PROFILE_DIR" root:root 700
 
 step "The runtime policy"
 #
-# Not edited here: the policy is the operator's file, and a development
-# platform has none. What the helper needs is the profile directory and every
+# Not edited here: the policy is the operator's file. What the helper needs is the profile directory and every
 # private key a stored profile may have been sealed against.
 #
-if [[ "${ENVIRONMENT:-prod}" == "dev" ]]; then
-    log "  skipped  ${POLICY}  (development has none)"
-    warn "give the development web interface the public key in ${PLATFORM_ROOT}/config/ui.toml:"
-    warn "    [dns_profiles]"
-    warn "    public_key = \"${PUBLIC_DIR}/<key id>.pub\""
-elif [[ -f "$POLICY" ]] && grep -Eq "^\s*dns_profiles:\s*$" "$POLICY"; then
+if [[ -f "$POLICY" ]] && grep -Eq "^\s*dns_profiles:\s*$" "$POLICY"; then
     for file in "${PRIVATE_DIR}"/*.key; do
         if grep -Eq "^\s*-\s*${file}\s*$" "$POLICY"; then
             log "  ok       ${POLICY} lists ${file}"

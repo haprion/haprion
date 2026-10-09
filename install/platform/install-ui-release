@@ -267,12 +267,12 @@ fi
 # Claims paused, and the running jobs waited for, before anything is switched
 # or restarted (CR-12): a restart ends the job the worker holds, and a node
 # restore or a backup then ends `unknown` while its root helper carries on.
-# Lifted again however this script ends. Only where a worker runs - the
-# development platform has none.
+# Lifted again however this script ends. Only once a worker is installed - a
+# first installation has none yet.
 #
 if [[ -n "${WORKER_USER:-}" ]] && systemctl cat "${WORKER_USER}.service" >/dev/null 2>&1; then
     step "Holding the worker's claims"
-    drain=(bin/haprion-drain -e "${ENVIRONMENT:-prod}")
+    drain=(bin/haprion-drain)
     "${drain[@]}" pause --wait "${DRAIN_SECONDS:-900}"
     # shellcheck disable=SC2064 # the command is fixed now, not when the trap runs
     trap "$(printf '%q ' "${drain[@]}") resume || true" EXIT
@@ -312,9 +312,8 @@ fi
 # only evidence, is evidence about a platform that is wholly on the new
 # release rather than a third of it.
 #
-# A missing unit is skipped rather than refused. The development platform runs
-# the web service alone and its worker and poller are deliberately absent, so
-# their absence is a choice somebody made, not a fault to stop a release for.
+# A missing unit is skipped rather than refused: on a first installation the
+# worker and poller are installed by step 7, after the first release.
 #
 step "Starting the background services"
 for background_user in "${WORKER_USER:-}" "${POLLER_USER:-}"; do
@@ -357,20 +356,6 @@ else
     log "  pending  ${unit} is installed and started by platform step 4"
 fi
 
-#
-# The root commands live at fixed paths in /usr/local/sbin, so only the
-# production installation puts them there. A development platform on the same
-# machine would otherwise point the operator's rollback command at the
-# development release - which is the one moment a wrong answer is expensive.
-#
-ENVIRONMENT="${ENVIRONMENT:-prod}"
-if [[ "$ENVIRONMENT" != "prod" ]]; then
-    echo
-    log "release ${release_id} is current"
-    log "skipping /usr/local/sbin commands: this is the ${ENVIRONMENT} platform"
-    exit 0
-fi
-
 step "The account tool"
 #
 # A shim rather than a symlink into the release. The tool must follow `current`,
@@ -401,8 +386,8 @@ step "The first account"
 # A warning rather than a stop: the release is already active, and an
 # installation that has not migrated yet makes the account after it has.
 #
-/usr/local/sbin/haprion-user -e "$ENVIRONMENT" init-admin \
-    || warn "no first account was made; after ./migrate, run: haprion-user -e ${ENVIRONMENT} init-admin"
+/usr/local/sbin/haprion-user init-admin \
+    || warn "no first account was made; after ./migrate, run: haprion-user init-admin"
 
 step "The drain command"
 #

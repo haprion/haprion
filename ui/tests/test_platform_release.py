@@ -48,10 +48,10 @@ class PreparedReleaseTests(unittest.TestCase):
         self.assertIn('extra_args+=(--ui-release "$release_id" --skip-services)', wrapper)
         self.assertIn("extra_args+=(--upgrade-from-current)", wrapper)
 
-    def test_the_development_platform_passes_its_boundary_to_the_check(self) -> None:
+    def test_the_check_has_no_environment_switch(self) -> None:
         wrapper = (ROOT / "install/platform/check-compatibility").read_text()
-        self.assertIn('environment="${ENVIRONMENT:-prod}"', wrapper)
-        self.assertIn('extra_args+=(--environment "$environment")', wrapper)
+        self.assertNotIn("ENVIRONMENT", wrapper)
+        self.assertNotIn("--environment", wrapper)
         self.assertNotIn("contains no clusters", wrapper)
 
     def test_enabled_traffic_logs_add_the_collector_inventory_check(self) -> None:
@@ -115,15 +115,15 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertIn("was restored but the installation is not compatible", self.update)
 
     def test_old_releases_are_pruned_only_after_the_update_is_proved(self) -> None:
-        """B156: retention runs after the final compatibility check, keeps ten
-        (three on a development platform), and never the release just
+        """B156: retention runs after the final compatibility check, keeps ten,
+        and never the release just
         activated or the one it replaced."""
 
         final_check = self.update.index('if ! ./check-compatibility "$answers"; then')
         prune = self.update.index('step "Pruning old releases"')
         self.assertLess(final_check, prune)
         self.assertIn('keep="${RELEASES_KEPT:-10}"', self.update)
-        self.assertIn('keep="${RELEASES_KEPT:-3}"', self.update)
+        self.assertNotIn("RELEASES_KEPT:-3", self.update)
         self.assertIn(
             '[[ "$old_release" == "$release_id" || "$old_release" == "$previous_id" ]] && continue',
             self.update,
@@ -202,7 +202,6 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
             "TRAFFIC_LOGS": traffic,
             "RECORD": str(self.record),
         }
-        environment.pop("ENVIRONMENT", None)
         completed = subprocess.run(  # noqa: S603 - the copied wrapper, fixed arguments
             ["/bin/bash", str(self.wrapper), str(self.answers), *arguments],
             env=environment,
@@ -241,4 +240,4 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         self.assertEqual(arguments[0], str(self.root / "releases/candidate/venv/bin/python"))
         for flag in ("--ui-release", "--skip-services", "--upgrade-from-current"):
             self.assertIn(flag, arguments)
-        self.assertEqual(arguments[arguments.index("--environment") + 1], "prod")
+        self.assertNotIn("--environment", arguments)

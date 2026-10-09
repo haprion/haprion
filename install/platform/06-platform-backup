@@ -17,10 +17,8 @@ source ../lib.sh
 need_root
 load_answers "${1:-}"
 require_vars PLATFORM_ROOT DB_NAME WEB_USER
-ENVIRONMENT="${ENVIRONMENT:-prod}"
-valid_id "$ENVIRONMENT" || die "ENVIRONMENT must be a short lowercase identifier"
 
-config="/etc/haprion/ui-admin-${ENVIRONMENT}.conf"
+config="/etc/haprion/ui-admin.conf"
 [[ -r "$config" ]] || die "${config} is missing. Run ./02-platform-database first."
 # shellcheck disable=SC1090
 DUMP_DIR="$(source "$config"; echo "${DUMP_DIR:-}")"
@@ -43,7 +41,7 @@ step "Timers"
 for unit in haprion-backup haprion-restore-check; do
     for kind in service timer; do
         install_file "/etc/systemd/system/${unit}.${kind}" root:root 644 \
-            "$(sed "s|ENVIRONMENT|${ENVIRONMENT}|g" "examples/${unit}.${kind}.example")"
+            "$(cat "examples/${unit}.${kind}.example")"
     done
 done
 systemctl daemon-reload
@@ -59,10 +57,10 @@ systemctl list-timers --no-pager --no-legend haprion-backup.timer \
     haprion-restore-check.timer | sed 's/^/  /'
 
 step "Proving it, now rather than at 02:30"
-/usr/local/sbin/haprion-backup dump -e "$ENVIRONMENT"
+/usr/local/sbin/haprion-backup dump
 
 step "Proving the dump restores"
-/usr/local/sbin/haprion-backup verify-restore -e "$ENVIRONMENT"
+/usr/local/sbin/haprion-backup verify-restore
 
 step "What must not be able to read a dump"
 newest="$(find "$DUMP_DIR" -maxdepth 1 -name '*.dump' -printf '%p\n' | sort -r | head -1)"

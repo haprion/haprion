@@ -9,10 +9,6 @@
 # different kind of action from writing a dump, and an installation that wants
 # one does not necessarily want the other.
 #
-# Unlike step 6 it is meant to be run for development too. A development
-# platform's job table grows exactly as production's does, and rehearsal traffic
-# is the traffic that fills it fastest.
-#
 set -Eeuo pipefail
 cd "$(dirname "$0")"
 # shellcheck source=../lib.sh
@@ -21,10 +17,8 @@ source ../lib.sh
 need_root
 load_answers "${1:-}"
 require_vars DB_NAME
-ENVIRONMENT="${ENVIRONMENT:-prod}"
-valid_id "$ENVIRONMENT" || die "ENVIRONMENT must be a short lowercase identifier"
 
-config="/etc/haprion/ui-admin-${ENVIRONMENT}.conf"
+config="/etc/haprion/ui-admin.conf"
 [[ -r "$config" ]] || die "${config} is missing. Run ./02-platform-database first."
 #
 # Read out of the admin config rather than out of the answers file, because that
@@ -40,21 +34,15 @@ install -o root -g root -m 755 bin/haprion-retention /usr/local/sbin/haprion-ret
 log "  installed /usr/local/sbin/haprion-retention"
 
 step "Timer"
-#
-# Named after the environment, which the backup units are not. Development runs
-# this step and does not run step 6, so these are the units that would collide
-# on a machine carrying both platforms - and two timers pruning each other's
-# database is a failure that would look like retention working.
-#
-unit="haprion-retention-${ENVIRONMENT}"
+unit="haprion-retention"
 for kind in service timer; do
     install_file "/etc/systemd/system/${unit}.${kind}" root:root 644 \
-        "$(sed "s|ENVIRONMENT|${ENVIRONMENT}|g" "examples/haprion-retention.${kind}.example")"
+        "$(cat "examples/haprion-retention.${kind}.example")"
 done
 systemctl daemon-reload
 log "  reloaded systemd"
 systemctl enable --quiet --now "${unit}.timer"
-log "  enabled  daily pruning and rollup for ${ENVIRONMENT}"
+log "  enabled  daily pruning and rollup"
 
 #
 # Asked of the running system rather than assumed from a clean enable. A timer
@@ -70,7 +58,7 @@ step "What the first run will remove"
 # does it deliberately - which is also the honest reading of a dry run: it means
 # something, or it is decoration.
 #
-/usr/local/sbin/haprion-retention prune -e "$ENVIRONMENT" --dry-run
+/usr/local/sbin/haprion-retention prune --dry-run
 
 step "What must not be able to do this"
 #
@@ -94,4 +82,4 @@ step "Done"
 log "  ${unit}.timer runs daily: prunes finished jobs older than a week, keeping the 20 most recent,"
 log "           rolls up metric hours, and rotates traffic-log partitions at the configured retention"
 log "  nothing has been deleted yet; run it now with:"
-log "    sudo haprion-retention prune -e ${ENVIRONMENT}"
+log "    sudo haprion-retention prune"

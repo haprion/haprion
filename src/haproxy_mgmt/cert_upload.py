@@ -4,8 +4,7 @@ The web process receives the file, seals it against the installation's public
 key - the same pair and the same `crypto_box_seal` that carry DNS provider
 credentials (B146) - and hands the ciphertext to a job. Nothing the web can
 read holds the plaintext after the request ends: not the job row, not the
-audit, not the snapshot to the development platform, whose own key pair
-cannot open a box sealed here. The root helper opens it, takes the material
+audit. The root helper opens it, takes the material
 apart with `cert_import` and imports it.
 
 What is sealed

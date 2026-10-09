@@ -2,8 +2,8 @@
 #
 # haprion-retention - keep the database bounded.
 #
-#     haprion-retention prune  [-e <environment>] [--days <n>] [--dry-run]
-#     haprion-retention report [-e <environment>] [--days <n>] [--exact]
+#     haprion-retention prune  [--days <n>] [--dry-run]
+#     haprion-retention report [--days <n>] [--exact]
 #
 # The job table grows without limit otherwise: it holds one row per management
 # request ever made, and nothing has ever removed one. The audit trail is what
@@ -167,11 +167,10 @@ SQL
 # runs it to find out whether it is safe to run `prune`.
 #
 #
-# Whether this environment has the metric tables at all.
+# Whether this database has the metric tables at all.
 #
-# One script serves every environment, and environments sit at different
-# migrations on purpose - a change is proved on dev before prod is touched. So
-# an environment without the metric tables is a normal state and not a fault,
+# The command is installed apart from the release, and a database still being
+# migrated may not have them yet. That is a normal state and not a fault,
 # and it must not take the job pruning down with it: without this, `prune` on an
 # unmigrated database fails on the missing function and returns before removing
 # a single job row.
@@ -551,8 +550,8 @@ SQL
         log "  ${METRIC_ROLLUP_TABLE}: added ${written} hour(s), complete before ${complete_before}"
     else
         #
-        # The command is one global file while environments may deliberately
-        # sit at different migrations during a rollout. Keep the old schema
+        # The command is installed apart from the release, so a database may
+        # sit at an older migration during a rollout. Keep the old schema
         # working until it reaches 0021; the corrected call order still rolls
         # these rows up before age-based pruning.
         #
@@ -667,14 +666,12 @@ metric_partitions_prune() {
 
 [[ $EUID -eq 0 ]] || die "run this with sudo"
 
-environment=prod
 dry_run=0
 exact_count=0
 command="${1:-}"
 shift || true
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -e|--environment) environment="${2:-}"; shift 2 ;;
         --days) KEEP_DAYS="${2:-}"; shift 2 ;;
         --dry-run) dry_run=1; shift ;;
         --exact) exact_count=1; shift ;;
@@ -682,10 +679,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ "$exact_count" -eq 0 || "$command" == "report" ]] || usage
-[[ "$environment" =~ ^[a-z0-9]+$ ]] || die "environment names are alphanumeric"
 [[ "$KEEP_DAYS" =~ ^[0-9]+$ && "$KEEP_DAYS" -ge 1 ]] || die "--days takes a whole number of days"
 
-config="${CONFIG_DIRECTORY}/ui-admin-${environment}.conf"
+config="${CONFIG_DIRECTORY}/ui-admin.conf"
 [[ -r "$config" ]] || { echo "ERROR: cannot read ${config}" >&2; exit 78; }
 # shellcheck disable=SC1090
 source "$config"

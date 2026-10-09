@@ -95,9 +95,8 @@ step "The web service's way to the probe"
 # group this account, answered by a short-lived instance of the helper that
 # takes no arguments and does one thing.
 #
-# Off unless the answers file asks for it. Handing this socket to a development
-# platform's web account would give it the real nodes, which is the one thing
-# that platform is built not to have.
+# Off unless the answers file asks for it: the socket gives the web account a
+# way to the real nodes.
 #
 if [[ "${PROBE_SOCKET:-no}" == "yes" ]]; then
     install_file "/etc/systemd/system/haprion-probe-helper@.service" root:root 644 \
@@ -121,23 +120,16 @@ step "The web service's way to a name lookup"
 # so the lookup goes over a socket, group this account, to a helper that runs
 # as a dynamic user with the network and nothing else.
 #
-# Production only, as the probe: the development platform's web account is a
-# different one, and the socket's path is one per host.
-#
-if [[ "${ENVIRONMENT:-prod}" == "prod" ]]; then
-    install_file "/etc/systemd/system/haprion-resolve-helper@.service" root:root 644 \
-        "$(cat 'examples/haprion-resolve-helper@.service.example')"
-    install_file "/etc/systemd/system/haprion-resolve-helper.socket" root:root 644 \
-        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-resolve-helper.socket.example)"
-    systemctl daemon-reload
-    systemctl enable --quiet haprion-resolve-helper.socket
-    systemctl restart haprion-resolve-helper.socket
-    systemctl is-active --quiet haprion-resolve-helper.socket \
-        || die "haprion-resolve-helper.socket did not start"
-    log "  listening on /run/haprion/resolve.sock  (group ${WEB_USER})"
-else
-    log "  skipped: ENVIRONMENT is ${ENVIRONMENT}, and names are looked up on production only"
-fi
+install_file "/etc/systemd/system/haprion-resolve-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-resolve-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-resolve-helper.socket" root:root 644 \
+    "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-resolve-helper.socket.example)"
+systemctl daemon-reload
+systemctl enable --quiet haprion-resolve-helper.socket
+systemctl restart haprion-resolve-helper.socket
+systemctl is-active --quiet haprion-resolve-helper.socket \
+    || die "haprion-resolve-helper.socket did not start"
+log "  listening on /run/haprion/resolve.sock  (group ${WEB_USER})"
 
 step "The web service's way to an exportable certificate's key"
 #
@@ -146,20 +138,16 @@ step "The web service's way to an exportable certificate's key"
 # asks over a socket, group this account, to a root helper that gives out the
 # key of an exportable entry and of no other, and writes nothing.
 #
-if [[ "${ENVIRONMENT:-prod}" == "prod" ]]; then
-    install_file "/etc/systemd/system/haprion-cert-export-helper@.service" root:root 644 \
-        "$(cat 'examples/haprion-cert-export-helper@.service.example')"
-    install_file "/etc/systemd/system/haprion-cert-export-helper.socket" root:root 644 \
-        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-cert-export-helper.socket.example)"
-    systemctl daemon-reload
-    systemctl enable --quiet haprion-cert-export-helper.socket
-    systemctl restart haprion-cert-export-helper.socket
-    systemctl is-active --quiet haprion-cert-export-helper.socket \
-        || die "haprion-cert-export-helper.socket did not start"
-    log "  listening on /run/haprion/cert-export.sock  (group ${WEB_USER})"
-else
-    log "  skipped: ENVIRONMENT is ${ENVIRONMENT}, and certificates are exported on production only"
-fi
+install_file "/etc/systemd/system/haprion-cert-export-helper@.service" root:root 644 \
+    "$(cat 'examples/haprion-cert-export-helper@.service.example')"
+install_file "/etc/systemd/system/haprion-cert-export-helper.socket" root:root 644 \
+    "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haprion-cert-export-helper.socket.example)"
+systemctl daemon-reload
+systemctl enable --quiet haprion-cert-export-helper.socket
+systemctl restart haprion-cert-export-helper.socket
+systemctl is-active --quiet haprion-cert-export-helper.socket \
+    || die "haprion-cert-export-helper.socket did not start"
+log "  listening on /run/haprion/cert-export.sock  (group ${WEB_USER})"
 
 step "The worker's way to the receiver helper"
 #

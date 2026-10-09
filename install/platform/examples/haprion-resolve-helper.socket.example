@@ -12,9 +12,6 @@
 # helper is not root - a dynamic account with nothing to read or write - so the
 # socket is narrow for the habit of it rather than to guard a privilege.
 #
-# Production only, as the probe's: the development platform's editor says a
-# name could not be looked up there.
-#
 # Installed by install/platform/07-platform-services as
 # /etc/systemd/system/haprion-resolve-helper.socket.
 

@@ -70,13 +70,13 @@ class ARealDatabase(unittest.TestCase):
 
         directory = Path(tempfile.mkdtemp(prefix="drain-"))
         self.addCleanup(shutil.rmtree, directory)
-        (directory / "ui-admin-test.conf").write_text(
+        (directory / "ui-admin.conf").write_text(
             f"DB_NAME={os.environ['HAPROXY_UI_TEST_DATABASE_NAME']}\n"
             f"DB_ROLE={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}\n"
         )
         script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-drain"
         return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
-            ["/bin/bash", str(script), "-e", "test", *arguments],
+            ["/bin/bash", str(script), *arguments],
             capture_output=True,
             text=True,
             check=False,
@@ -181,12 +181,12 @@ class ARealDatabase(unittest.TestCase):
             self.assertIsNotNone(claimed)
             directory = Path(tempfile.mkdtemp(prefix="drain-"))
             self.addCleanup(shutil.rmtree, directory)
-            (directory / "ui-admin-test.conf").write_text(
+            (directory / "ui-admin.conf").write_text(
                 f"DB_NAME={os.environ['HAPROXY_UI_TEST_DATABASE_NAME']}\n"
                 f"DB_ROLE={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}\n"
             )
             pausing = subprocess.Popen(  # noqa: S603 - fixed interpreter, the repository's script
-                ["/bin/bash", str(script), "-e", "test", "pause", "--wait", "3"],
+                ["/bin/bash", str(script), "pause", "--wait", "3"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -3679,7 +3679,7 @@ class TheAccountToolAgainstARealDatabase(unittest.TestCase):
             mock.patch.object(
                 admin,
                 "load_environment",
-                return_value=admin.Environment(name="test", database="test", role="test"),
+                return_value=admin.Environment(database="test", role="test"),
             ),
             mock.patch.object(admin, "connect", side_effect=lambda _e: self.connect()),
             mock.patch.dict(os.environ, {"SUDO_USER": "operator"}),

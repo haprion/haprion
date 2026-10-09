@@ -109,7 +109,7 @@ The first activation creates the `admin` account if no account exists and asks f
 password at the terminal. If installation ran without a terminal, create it afterwards:
 
 ```bash
-sudo haprion-user -e prod init-admin
+sudo haprion-user init-admin
 ```
 
 ## 5. Install optional components

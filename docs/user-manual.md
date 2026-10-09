@@ -318,7 +318,7 @@ Further accounts are a local root action too, or an admin's in the interface
 (below):
 
 ```bash
-sudo haprion-user -e prod add operator --role admin
+sudo haprion-user add operator --role admin
 ```
 
 The password is typed at the terminal, twice, and there is deliberately no flag
@@ -376,10 +376,9 @@ go with a deleted account; jobs and the audit trail name it as text and keep
 it. An account that signs in through an OIDC provider has no password here, and
 its role comes from the provider.
 
-`-e` names the environment, and each one is a root-owned file written by
-`02-platform-database`: `/etc/haprion/ui-admin-<environment>.conf`,
-holding the database name and the role to connect as. Prod and dev therefore
-cannot be confused by an environment variable or a working directory.
+The tool reads the database name and the role to connect as from a root-owned file written by
+`02-platform-database`, `/etc/haprion/ui-admin.conf`, so it cannot be pointed at another
+database by an environment variable or a working directory.
 
 **Root connects as the migration role**, the one that owns the schema, so the
 tool works when nobody can sign in. The web role may write accounts too (schema
@@ -1139,7 +1138,7 @@ inside the request that carries it, and queues a `cert_import` job whose payload
 ciphertext. `haprion-cert-import-helper`, run by the worker through its sudoers rule, opens the
 box with the private key and imports the material exactly as the command does. So the key is in
 clear in the web process for the length of one request and in the root helper; it is never in
-the database, the job row, the audit or the snapshot to a development platform, none of which
+the database, the job row or the audit, none of which
 the private key can reach. That is a narrower promise than *the web never sees a key*, and it is
 stated here because until this feature the interface refused a key on purpose; the command-line
 import remains the way in for whoever wants the key to stay off the web entirely.
@@ -1978,12 +1977,6 @@ longer outage correct; the schedule is no longer treated as proof that work
 finished. The installed command also remains usable against revision `0020`
 during a staged upgrade. There it rolls up before age-based pruning but cannot
 publish a completion boundary until migration `0021` exists.
-
-Unlike the backup step, this one is meant to be run for development too — a
-development platform's job table grows exactly as production's does, and
-rehearsal traffic fills it fastest. Its units are therefore named after the
-environment, since a machine carrying both platforms would otherwise have two
-timers pruning each other's database.
 
 ## Traffic logs and metrics
 
@@ -3343,9 +3336,6 @@ cannot be applied until it is. Remove the old pair last. The private key file is
 disaster-recovery material like the SSH identities in [SSH identities](#ssh-identities): without it every stored profile is
 unreadable, and the recovery is to re-enter them, not to restore a dump.
 
-A development platform gets its own pair from the same step with its own answers file, and no
-runtime policy entry, because it has no helper.
-
 #### Preparing Microsoft AD CS / NDES for CSR enrollment
 
 **Status:** enrollment from the manager is complete: encrypted NDES provider profiles, the
@@ -4190,12 +4180,6 @@ active sudo rules with the helpers the UI requires, and reads each node bundle
 through the existing status helper. It ends in one `COMPATIBLE` or `INCOMPATIBLE`
 verdict and changes no file, row, service or HAProxy release.
 
-For the development platform described below, the command follows its smaller
-installed boundary: UI release, database revision and web process, plus the
-absence of a sudo rule for the web account. Development deliberately has no
-worker, poller or node access, so an empty `clusters` list and those absent
-components are required isolation rather than missing production pieces.
-
 For an update, first run `install-ui-release --prepare`. The candidate is built
 and verified but `current` stays on the old release. Run `check-compatibility
 --release <release-id> --before-migration` to prove its CLI, helper and node
@@ -4439,10 +4423,6 @@ would mean opening `data/` for traversal by the web account, and `data/dumps`
 holds every session and every audit record in one file. The mirror directory is
 set-group-id, because the collector is deliberately outside the web account's
 group and could not otherwise create a file the interface can read.
-
-**No collector on a development platform.** The step refuses unless
-`ENVIRONMENT` is `prod`. A development platform is built not to reach the real
-nodes, and giving it a key and an inventory would undo exactly that.
 
 The step fetches nothing on its own. It prints one `authorized_keys` line to add
 to `svc-logread` on each node, and each node also needs its own log route
@@ -4727,9 +4707,9 @@ running it has a terminal and a `%sudo` rule. Both build the request with the
 same function, so the two paths cannot come to describe the same probe
 differently.
 
-**A development platform must not get this socket.** It reaches the real nodes.
-`PROBE_SOCKET=no` in its answers file is the default, and its interface then says
-the probe is unavailable rather than showing an empty result.
+**The socket reaches the real nodes**, so it is off unless asked for: `PROBE_SOCKET=no` in the
+answers file is the default, and the interface then says the probe is unavailable rather than
+showing an empty result.
 
 ##### The worker's way to the receiver helper
 
@@ -4847,71 +4827,6 @@ next pass on, and its colour follows its place in the file.
 while the helper cannot be read. A pass that cannot read the list polls the clusters it knew
 rather than none. An empty `ui.toml` list with no readable cluster file leaves the poller nothing
 to do, and it says so instead of starting.
-
-#### A development platform beside production
-
-The same steps install it, with a second answers file. Nothing is shared: its
-own accounts, its own database and roles, its own release tree, its own port.
-
-```bash
-sudo ./01-platform-prepare   answers-dev.env
-sudo ./02-platform-database  answers-dev.env
-sudo ./install-ui-release   answers-dev.env <source-tree>
-sudo ./migrate               answers-dev.env
-sudo ./04-platform-service   answers-dev.env
-sudo ./15-platform-dns-keys  answers-dev.env <source-tree>
-```
-
-Steps 5, 6 and 7 are deliberately **not** run for development. It does not need
-backups, and it must not have the poller's sudoers rule, because a development
-platform has no business reaching production's nodes.
-
-By default development has no nginx site and is reached over an SSH tunnel to
-its loopback port. If browser review needs a direct development address, add a
-distinct `SERVER_NAME` to the dev answers file, provision DNS for it, and run:
-
-```bash
-sudo ./09-dev-nginx answers-dev.env
-```
-
-Step 9 is deliberately separate from production's step 5: it makes a second
-nginx virtual host to the dev loopback port, with a separate certificate path
-and `haproxy-ui-dev-tls` command. It neither exposes the development port
-directly nor changes the production vhost or certificate. A self-signed pair is
-generated when no development pair has been supplied; an internal-PKI pair can
-later replace it through the dev-specific command.
-
-`ENVIRONMENT=dev` in the answers file also keeps the root commands in
-`/usr/local/sbin` pointing at production. A development install would otherwise
-aim the operator's rollback command at the development release, which is the one
-moment a wrong answer is expensive.
-
-##### Proving the two cannot reach each other
-
-```bash
-sudo ./08-verify-isolation answers.env answers-dev.env
-```
-
-Read-only and runnable at any time. It is every check that only exists in the
-gap between the two installations, so nothing else finds it: each platform's own
-privilege suite is green while asking only about its own accounts.
-
-It asks in **both** directions. The asymmetry people expect — development is the
-dangerous one — is not the only way this goes wrong: a production poller that
-could write to the development database would be reporting into a void.
-
-The first run failed on the database checks, in both directions, and the reason
-is worth knowing before building anything similar. Grants in the migrations name
-generic contract roles, `app_web` and friends, so that they never name a real
-service account. Generic means **shared**, and two platforms on one PostgreSQL
-cluster are both members of the same `app_web` — so `grant connect ... to
-app_web` had given every development account a route into production.
-
-`CONNECT` is not a column privilege, and it now goes to the environment's three
-**login** roles instead, granted by the installer that knows which environment
-it is installing. Column privileges stay in the migrations where they are
-versioned with the column. Who may enter a database is the installation's
-business; what they may do inside it is the schema's.
 
 ### Verifying the installation
 

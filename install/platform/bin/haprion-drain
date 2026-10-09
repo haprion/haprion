@@ -2,8 +2,8 @@
 #
 # haprion-drain - hold the worker's claims while the worker is restarted.
 #
-#     haprion-drain -e <environment> pause [--wait <seconds>]
-#     haprion-drain -e <environment> resume
+#     haprion-drain pause [--wait <seconds>]
+#     haprion-drain resume
 #
 # Restarting the worker ends the job it is running. For most jobs that is
 # recovered from: the worker judges an abandoned job by what it can read and
@@ -37,12 +37,9 @@ usage() { sed -n '5,6p' "$0" | sed 's/^# \?//'; exit 64; }
 
 [[ $EUID -eq 0 || -n "${HAPROXY_UI_DRAIN_CONFIG:-}" ]] || die "run this with sudo"
 
-environment=""
 wait_seconds=900
-[[ "${1:-}" == "-e" ]] || usage
-environment="${2:-}"
-command="${3:-}"
-shift 3 || usage
+command="${1:-}"
+shift || usage
 case "$command" in
     pause)
         if [[ "${1:-}" == "--wait" ]]; then
@@ -54,10 +51,9 @@ case "$command" in
     *) usage ;;
 esac
 [[ $# -eq 0 ]] || usage
-[[ "$environment" =~ ^[a-z0-9]+$ ]] || die "environment names are alphanumeric" 64
 [[ "$wait_seconds" =~ ^[0-9]+$ && "$wait_seconds" -ge 1 ]] || die "--wait takes whole seconds" 64
 
-config="${CONFIG_DIRECTORY}/ui-admin-${environment}.conf"
+config="${CONFIG_DIRECTORY}/ui-admin.conf"
 [[ -r "$config" ]] || die "cannot read ${config}" 78
 # shellcheck disable=SC1090
 source "$config"

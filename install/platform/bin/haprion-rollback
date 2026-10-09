@@ -147,8 +147,8 @@ step "Holding the worker's claims"
 #
 drain=/usr/local/sbin/haprion-drain
 if [[ -x "$drain" ]]; then
-    "$drain" -e prod pause --wait "${DRAIN_SECONDS:-900}"
-    trap '"$drain" -e prod resume || true' EXIT
+    "$drain" pause --wait "${DRAIN_SECONDS:-900}"
+    trap '"$drain" resume || true' EXIT
 else
     warn "  ${drain} is missing; the worker restarts without waiting for its jobs"
 fi

@@ -26,7 +26,7 @@ qualification is the certificate upload:
 the web process receives the file a person chose, seals it against the installation's public key
 inside that request, and hands the ciphertext to a job. The plaintext exists in the web process
 for the duration of the request and nowhere the web can read afterwards - not the job row, not
-the audit, not the snapshot to the development platform, whose own key pair cannot open it. The
+the audit. The
 root helper is the only thing that opens the box. The promise is therefore *never stored, never
 readable back*, not *never seen*; it is the same exposure DNS provider credentials carry, and the
 command-line import remains for whoever wants the key to stay off the web entirely. A signing

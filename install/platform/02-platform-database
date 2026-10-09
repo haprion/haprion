@@ -17,19 +17,7 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER
-
-#
-# Defaulted rather than required: an installation that never says otherwise is
-# the production one, and `-e prod` is what the documentation tells people to
-# type. A dev platform sets ENVIRONMENT=dev and gets its own account tool
-# namespace without any other difference.
-#
-ENVIRONMENT="${ENVIRONMENT:-prod}"
-valid_id "$ENVIRONMENT" || die "ENVIRONMENT must be a short lowercase identifier"
-if [[ "$ENVIRONMENT" == "prod" ]]; then
-    require_vars COLLECTOR_USER
-fi
+require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER COLLECTOR_USER
 
 [[ "$DB_NAME" =~ ^[a-z][a-z0-9_]{0,62}$ ]] || die "invalid database name: ${DB_NAME}"
 
@@ -125,9 +113,7 @@ ensure_login_role "$DB_MIGRATION_ROLE" ""
 ensure_login_role "$WEB_USER"    app_web
 ensure_login_role "$WORKER_USER" app_worker
 ensure_login_role "$POLLER_USER" app_poller
-if [[ "$ENVIRONMENT" == "prod" ]]; then
-    ensure_login_role "$COLLECTOR_USER" app_collector
-fi
+ensure_login_role "$COLLECTOR_USER" app_collector
 
 step "Database"
 if [[ "$(psql_super -c "select 1 from pg_database where datname = '${DB_NAME}'")" == "1" ]]; then
@@ -151,16 +137,11 @@ log "  ok       pg_trgm in ${DB_NAME}"
 #
 step "Database-level privileges"
 #
-# CONNECT goes to the LOGIN roles, not to the contract roles - and that
-# distinction is the whole of the isolation between environments.
-#
-# The contract roles are generic on purpose (B20): grants must not name service
-# accounts, because those name a real installation and this repository is meant
-# to be public. But generic means shared, and two platforms on one cluster are
-# both members of the same app_web. Granting connect there gave every
-# development account a way into the production database and back again -
-# measured on 2026-08-28 by 08-verify-isolation, which failed in both
-# directions.
+# CONNECT goes to the LOGIN roles, not to the contract roles. The contract roles
+# are generic on purpose (B20) and so shared by anything made a member of them;
+# granting connect there let a second platform's accounts into this database
+# and back again - measured on 2026-08-28, when a development platform still ran
+# beside production. A membership alone must never open the database.
 #
 # Column privileges stay where they belong, in the migrations, on the contract
 # roles. CONNECT is not a column privilege and was never theirs to hold.
@@ -170,17 +151,13 @@ revoke all on database "${DB_NAME}" from public;
 revoke all on schema public from public;
 revoke connect on database "${DB_NAME}" from app_web, app_worker, app_poller, app_collector;
 grant connect on database "${DB_NAME}"
-    to "${WEB_USER}", "${WORKER_USER}", "${POLLER_USER}";
+    to "${WEB_USER}", "${WORKER_USER}", "${POLLER_USER}", "${COLLECTOR_USER}";
 grant usage on schema public to app_web, app_worker, app_poller, app_collector;
 alter schema public owner to "${DB_MIGRATION_ROLE}";
 SQL
-log "  set      connect for this environment's three application login roles"
+log "  set      connect for the four application login roles"
 log "  revoked  connect from the shared contract roles"
 log "  revoked  everything from PUBLIC"
-if [[ "$ENVIRONMENT" == "prod" ]]; then
-    psql_super -d "$DB_NAME" -c "grant connect on database \"${DB_NAME}\" to \"${COLLECTOR_USER}\""
-    log "  set      collector connect for production"
-fi
 
 #
 # Peer authentication compares the OS user to the ROLE name, so the three
@@ -195,11 +172,10 @@ ident="$(sudo -u postgres psql -tAX -c 'show ident_file')"
 marker="# haproxy-manager platform"
 
 #
-# Matched on this environment's own line, not on the marker. The marker says
-# the file has been touched by this project at some point, which a second
-# environment on the same machine satisfies without having any authentication of
-# its own - and the step then reports ok while having done nothing. Measured on
-# 2026-08-28, installing the development platform beside production.
+# Matched on the line itself, not on the marker. The marker says the file has
+# been touched by this project at some point, which an older installation
+# satisfies without the line this one needs - and the step then reports ok while
+# having done nothing. Measured on 2026-08-28.
 #
 ident_line="haproxy_manager_migration   root   ${DB_MIGRATION_ROLE}"
 hba_line="local   ${DB_NAME}   ${DB_MIGRATION_ROLE}   peer   map=haproxy_manager_migration"
@@ -256,9 +232,7 @@ set_limits() {
 set_limits "$WEB_USER"    "5s"
 set_limits "$WORKER_USER" "15s"
 set_limits "$POLLER_USER" "10s"
-if [[ "$ENVIRONMENT" == "prod" ]]; then
-    set_limits "$COLLECTOR_USER" "15s"
-fi
+set_limits "$COLLECTOR_USER" "15s"
 
 step "Proving it"
 #
@@ -267,10 +241,7 @@ step "Proving it"
 # looks identical to an application bug, and a role that can create a table
 # looks like nothing at all until the day it does.
 #
-roles=("$WEB_USER" "$WORKER_USER" "$POLLER_USER")
-if [[ "$ENVIRONMENT" == "prod" ]]; then
-    roles+=("$COLLECTOR_USER")
-fi
+roles=("$WEB_USER" "$WORKER_USER" "$POLLER_USER" "$COLLECTOR_USER")
 for role in "${roles[@]}"; do
     sudo -u "$role" psql -d "$DB_NAME" -qtAX -c 'select 1' >/dev/null \
         || die "${role} cannot connect to ${DB_NAME}"
@@ -304,17 +275,16 @@ fi
 log "  ok       ${WEB_USER} cannot connect as ${DB_MIGRATION_ROLE}"
 
 echo
-step "Naming this environment for the account tool"
+step "Naming the database for the root commands"
 #
-# haprion-user is given the database and the role here rather than deriving
-# them from the application's configuration. Each environment gets its own
-# root-owned file, so `-e prod` cannot be pointed at the dev database - or, in
-# the direction that actually matters, the reverse - by an environment variable
-# or a working directory.
+# haprion-user and the other root commands are given the database and the role
+# here rather than deriving them from the application's configuration, so they
+# cannot be pointed at another database by an environment variable or a working
+# directory.
 #
 ensure_dir /etc/haprion root:root 755
-install_file "/etc/haprion/ui-admin-${ENVIRONMENT}.conf" root:root 644 "$(cat <<EOF
-# Read by haprion-user -e ${ENVIRONMENT}. Written by 02-platform-database.
+install_file /etc/haprion/ui-admin.conf root:root 644 "$(cat <<EOF
+# Read by haprion-user and the other root commands. Written by 02-platform-database.
 DB_NAME=${DB_NAME}
 DB_ROLE=${DB_MIGRATION_ROLE}
 DUMP_DIR=${PLATFORM_ROOT}/data/dumps

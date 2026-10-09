@@ -1016,6 +1016,11 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .server-table .node-column { width: 150px; }
 .server-table .count-column { width: 110px; }
 .server-table tbody tr { cursor: pointer; }
+/* As dense as the listings' rows (Proxies, Certificates: 6px), not the node
+   table's 13px it would inherit; and the lamp kept off its word, as on the
+   health table. */
+.server-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+.server-table .status-dot { margin-right: 8px; vertical-align: 1px; }
 /* The whole row opens its detail, so the whole row says so. */
 .registry-row { cursor: pointer; }
 .registry-table tbody tr.registry-open { background: var(--panel-soft); }

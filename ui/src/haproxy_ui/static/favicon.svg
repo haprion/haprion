@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The brand mark on a night-sky tile: the header's star, Betelgeuse and Rigel,
-  on the dark ground a tab strip of either colour leaves it legible against.
+  The header's star alone, Betelgeuse and Rigel, with its waists filled out a
+  little so each half still carries its colour at 16 px. No tile: a dark tile
+  vanished into a dark tab strip (2026-10-09), and the two colours stand on
+  light and dark strips alike.
 
   Local like the fonts and the stylesheet: the interface has to work while the
   network it manages is broken. Without a favicon the browser asks for
@@ -9,9 +11,6 @@
   page icon - which is the flicker the tab showed on each page load.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <rect width="24" height="24" rx="5.5" fill="#162231"/>
-  <g transform="translate(12 12) scale(0.74) translate(-12 -12)">
-    <path fill="#ff7a3d" d="M11.25 0.5C10.4 6 6.8 10 0.5 12C6.8 14 10.4 18 11.25 23.5Z"/>
-    <path fill="#5aa9ff" d="M12.75 0.5C13.6 6 17.2 10 23.5 12C17.2 14 13.6 18 12.75 23.5Z"/>
-  </g>
+  <path fill="#ff7a3d" d="M11.1 0.3C10.1 5.4 5.6 9.4 0.3 12C5.6 14.6 10.1 18.6 11.1 23.7Z"/>
+  <path fill="#5aa9ff" d="M12.9 0.3C13.9 5.4 18.4 9.4 23.7 12C18.4 14.6 13.9 18.6 12.9 23.7Z"/>
 </svg>

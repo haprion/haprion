@@ -1758,8 +1758,8 @@ when it has finished*.
 
 **A run has an hour.** From *prepare* to the start of *run*: past it the run has expired, the
 backup page stops listing it, its page takes nothing more, and the command and the helper refuse
-it and remove its directory - prepare a new one. Every call to either puts away the runs past
-their hour that no step is working in. A run that never began writing to the target goes whole;
+it and remove its directory - prepare a new one. Every call to either, and every node state
+backup, puts away the runs past their hour that no step is working in. A run that never began writing to the target goes whole;
 one that did loses its one-time key, `known_hosts` and preview at the hour and keeps
 `request.json`, `prepared.json`, `started.json` and `result.json` for seven days - as long as the
 web keeps its jobs - so its outcome can still be read with `status`. The pasted line
@@ -2750,8 +2750,11 @@ Backups page set another count, which the root socket helper records in
 `/etc/haprion/backup-retention/<cluster>.json` (root-only, 1–365). Every run
 reads that file, including the terminal `haprion-state-backup`, so a manual run prunes to the
 same count the schedule promised; a file that is present but unreadable stops the run rather
-than falling back to 14. The ordinary list and the backup UI show every retained archive per node
-and identify the source node because hostnames, network state and SSH identities are not
+than falling back to 14. The one exception to the count is an archive a node restore run can still
+restore - one prepared within the hour and not yet carried out, or being carried out now: it stays
+until that run is done, so the count is briefly one more. A run past its hour holds nothing, and
+each backup first puts such runs away as a restore command would. The ordinary list and the backup
+UI show every retained archive per node and identify the source node because hostnames, network state and SSH identities are not
 interchangeable between the pair.
 
 `backup_timer` names the legacy fleet-wide timer during migration. With `backup_identity`

@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import base64
 import dataclasses
-import fcntl
 import hashlib
 import io
 import ipaddress
@@ -57,6 +56,7 @@ from haproxy_mgmt import (
     restore_agent,
     restore_answers,
     restore_plan,
+    restore_runs,
     state_backup,
 )
 from haproxy_mgmt.backups import node_backups
@@ -67,7 +67,19 @@ from haproxy_mgmt.restore_plan import PlannedFile, RestorePlan, Target, TestProf
 from haproxy_mgmt.restore_source import RestoreSource, content, read
 from haproxy_mgmt.status_collect import ask_node, collect
 
-RUN_ROOT = state_backup.RESTORE_RUN_ROOT
+RUN_ROOT = restore_runs.RUN_ROOT
+#
+# A run's directory lives by `restore_runs`, which the backup's retention reads
+# too; the names stay here for the steps below and for the web page.
+#
+START_WINDOW = restore_runs.START_WINDOW
+RESULT_KEPT = restore_runs.RESULT_KEPT
+KEPT_FILES = restore_runs.KEPT_FILES
+prepared_at = restore_runs.prepared_at
+expired = restore_runs.expired
+sweep = restore_runs.sweep
+_Held = restore_runs.Held
+_retire = restore_runs.retire
 SSH = "/usr/bin/ssh"
 SSH_KEYGEN = "/usr/bin/ssh-keygen"
 SSH_KEYSCAN = "/usr/bin/ssh-keyscan"
@@ -83,25 +95,11 @@ ROLLBACK_SECONDS = 180
 #
 SESSION_TIMEOUT = 600.0
 #
-# From `prepare` to the start of `run`. Past it the run is gone and the operator
-# starts again (B182): a key nobody is about to use is a key
-# nobody should be holding. The web page reads the same constant.
-#
-START_WINDOW = 3600
-#
 # How long the target itself accepts the one-time key: the hour to start, and
 # room after it for a run started at the last minute. `finish` removes the line
 # from a node it restored; this is what removes it from one it did not.
 #
 KEY_LIFETIME = 2 * START_WINDOW
-#
-# A run that began writing keeps its outcome after its hour, as long as the
-# web keeps its jobs (a week), so a job that lost its answer can still ask
-# for it (review 2026-09-25, track 8). Only these files stay: the key,
-# known_hosts and the preview's plan go at the hour, as before.
-#
-RESULT_KEPT = 7 * 24 * 3600
-KEPT_FILES = frozenset({"request.json", "prepared.json", "started.json", "result.json"})
 
 
 class RestoreError(RuntimeError):
@@ -210,74 +208,6 @@ def run_directory(root: Path, run: str) -> Path:
         raise RestoreError(f"there is no restore run {run}")
     _private_directory(directory)
     return directory
-
-
-def prepared_at(directory: Path) -> float:
-    """When the run was prepared, as epoch seconds.
-
-    Runs prepared before B182 have no `prepared.json`; the request file was
-    written in the same breath and never again, so its time stands in.
-    """
-
-    try:
-        document = json.loads((directory / "prepared.json").read_text(encoding="utf-8"))
-        at = document["at"] if isinstance(document, dict) else None
-        if isinstance(at, int | float) and not isinstance(at, bool):
-            return float(at)
-    except (OSError, ValueError, KeyError):
-        pass
-    try:
-        return (directory / "request.json").stat().st_mtime
-    except OSError:
-        return directory.stat().st_mtime
-
-
-def expired(directory: Path, now: float) -> bool:
-    return now - prepared_at(directory) > START_WINDOW
-
-
-def _retire(directory: Path, now: float) -> bool:
-    """Put a run past its hour away; True when its directory is gone.
-
-    A run that began writing keeps its outcome files until RESULT_KEPT, and
-    everything else goes - the one-time key first among them. Any other run
-    past its hour goes whole.
-    """
-
-    began = (directory / "started.json").exists() or (directory / "result.json").exists()
-    if not began or now - prepared_at(directory) > RESULT_KEPT:
-        shutil.rmtree(directory)
-        return True
-    for entry in directory.iterdir():
-        if entry.name in KEPT_FILES:
-            continue
-        if entry.is_dir() and not entry.is_symlink():
-            shutil.rmtree(entry)
-        else:
-            entry.unlink()
-    return False
-
-
-class _Held:
-    """An exclusive lock on a run directory for as long as a step works in it.
-
-    `sweep` and `discard` take the same lock without waiting, so a run that is
-    being carried out is never removed from under itself.
-    """
-
-    def __init__(self, directory: Path, *, wait: bool) -> None:
-        self._fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            os.close(self._fd)
-            raise
-
-    def __enter__(self) -> _Held:
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        os.close(self._fd)
 
 
 def _unexpired(root: Path, run: str, now: float) -> Path:
@@ -1366,31 +1296,6 @@ def discard(root: Path, run_id: str) -> bool:
     except BlockingIOError as exc:
         raise RestoreError(f"run {run_id} is being worked on; wait for it to finish") from exc
     return True
-
-
-def sweep(root: Path, now: float) -> list[str]:
-    """Put away every run past its hour that no step holds; the runs removed whole.
-
-    A run that began writing loses its key and plan at the hour and keeps its
-    outcome for `status` until RESULT_KEPT; see `_retire`.
-    """
-
-    if not root.is_dir():
-        return []
-    removed = []
-    for directory in sorted(root.iterdir()):
-        if not directory.is_dir() or not restore_agent.RUN_ID.fullmatch(directory.name):
-            continue
-        try:
-            if not expired(directory, now):
-                continue
-            with _Held(directory, wait=False):
-                gone = _retire(directory, now)
-        except (BlockingIOError, FileNotFoundError):
-            continue
-        if gone:
-            removed.append(directory.name)
-    return removed
 
 
 def status(root: Path, run_id: str) -> dict[str, Any]:

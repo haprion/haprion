@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
+import time
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 from unittest import mock
 
-from haproxy_mgmt import state_backup
+from haproxy_mgmt import restore_runs, state_backup
 from haproxy_mgmt.backup_archive import ArchiveFacts
 from haproxy_mgmt.config import DeployIdentity, Node
 
@@ -87,28 +90,35 @@ class StateBackupTests(unittest.TestCase):
             self.assertEqual(kept[0].name, "2026-09-17_05-00-00.tar.gz")
             self.assertEqual(kept[-1].name, "2026-09-04_05-00-00.tar.gz")
 
+    @staticmethod
+    def _run(runs: Path, name: str, node: str, archive: str, *, at: float, **files: str) -> Path:
+        directory = runs / name
+        directory.mkdir(parents=True)
+        (directory / "request.json").write_text(
+            json.dumps({"node": node, "archive": archive}), encoding="utf-8"
+        )
+        (directory / "prepared.json").write_text(json.dumps({"at": at}), encoding="utf-8")
+        for file, text in files.items():
+            (directory / f"{file}.json").write_text(text, encoding="utf-8")
+        return directory
+
     def test_an_archive_a_restore_run_waits_on_is_never_pruned(self) -> None:
         """Review 2026-09-25, finding 3: the oldest kept archive is a fair choice
         to restore, and the next backup - the timer's or the overwrite's own -
         must not remove it from under the prepared run."""
 
+        now = time.time()
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw) / "archives"
             runs = Path(raw) / "restore"
             directory.mkdir()
             for day in range(1, 18):
                 (directory / f"2026-09-{day:02d}_05-00-00.tar.gz").write_bytes(b"archive")
-            for run, node, archive in (
-                ("r260925-aaaaaaaa", "n1", "2026-09-01_05-00-00"),
-                ("r260925-bbbbbbbb", "n2", "2026-09-02_05-00-00"),
-            ):
-                (runs / run).mkdir(parents=True)
-                (runs / run / "request.json").write_text(
-                    f'{{"node": "{node}", "archive": "{archive}"}}', encoding="utf-8"
-                )
+            self._run(runs, "r260925-aaaaaaaa", "n1", "2026-09-01_05-00-00", at=now - 60)
+            self._run(runs, "r260925-bbbbbbbb", "n2", "2026-09-02_05-00-00", at=now - 60)
             (runs / "r260925-cccccccc").mkdir()  # no request.json: protects nothing
 
-            held = state_backup.held_by_restores(runs)
+            held = restore_runs.waiting_on(runs, now)
             self.assertEqual(held, {("n1", "2026-09-01_05-00-00"), ("n2", "2026-09-02_05-00-00")})
             state_backup._retain(directory, 14, frozenset(v for name, v in held if name == "n1"))
 
@@ -118,9 +128,81 @@ class StateBackupTests(unittest.TestCase):
             # Another node's run protects nothing here.
             self.assertNotIn("2026-09-02_05-00-00.tar.gz", kept)
 
+    def test_only_a_run_that_can_still_restore_holds_its_archive(self) -> None:
+        """Found 2026-10-09: two runs from 2026-09-25 held an archive each for two
+        weeks, and the Backups page showed 15 where it promised 14."""
+
+        now = time.time()
+        hour = restore_runs.START_WINDOW
+        with tempfile.TemporaryDirectory() as raw:
+            runs = Path(raw)
+            self._run(runs, "r260925-aaaaaaaa", "n1", "a-expired", at=now - hour - 60)
+            self._run(runs, "r260925-bbbbbbbb", "n1", "b-done", at=now - 60, result="{}")
+            self._run(
+                runs,
+                "r260925-cccccccc",
+                "n1",
+                "c-ended",
+                at=now - 3 * hour,
+                started="{}",
+                result="{}",
+            )
+            working = self._run(runs, "r260925-dddddddd", "n1", "d-working", at=now - 2 * hour)
+            self._run(runs, "r260925-eeeeeeee", "n1", "e-waiting", at=now - 60)
+
+            with restore_runs.Held(working, wait=True):
+                held = restore_runs.waiting_on(runs, now)
+            self.assertEqual(held, {("n1", "d-working"), ("n1", "e-waiting")})
+            # Once the step lets go, a run past its hour holds nothing either.
+            self.assertEqual(restore_runs.waiting_on(runs, now), {("n1", "e-waiting")})
+
+    def test_a_backup_puts_old_runs_away_and_keeps_its_count(self) -> None:
+        now = datetime.now(UTC)
+        two_weeks = 14 * 24 * 3600
+        with (
+            mock.patch.object(state_backup, "_key_is_private", return_value=True),
+            mock.patch.object(state_backup, "_root_is_private", return_value=True),
+            mock.patch.object(state_backup, "_directory_is_private", return_value=True),
+            tempfile.TemporaryDirectory() as raw,
+        ):
+            root, runs = Path(raw) / "archives", Path(raw) / "restore"
+            directory = root / self.node.name
+            directory.mkdir(parents=True)
+            for day in range(1, 15):
+                (directory / f"2026-09-{day:02d}_05-00-00.tar.gz").write_bytes(b"archive")
+            old = self._run(
+                runs,
+                "r260925-aaaaaaaa",
+                self.node.name,
+                "2026-09-01_05-00-00",
+                at=now.timestamp() - two_weeks,
+                started="{}",
+                result="{}",
+            )
+
+            result = state_backup.run(
+                "alpha",
+                mock.Mock(nodes=(self.node,)),
+                self.identity,
+                root,
+                fetch=self.fetch,
+                validator=self.valid,
+                now=now,
+                lock_path=Path(raw) / "lock",
+                restore_root=runs,
+            )
+
+            self.assertEqual(result.nodes[0].outcome, "done")
+            kept = sorted(path.name for path in directory.glob("*.tar.gz"))
+            self.assertEqual(len(kept), 14)
+            self.assertNotIn("2026-09-01_05-00-00.tar.gz", kept)
+            self.assertFalse(old.exists())
+
     def test_no_restore_directory_protects_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            self.assertEqual(state_backup.held_by_restores(Path(raw) / "missing"), frozenset())
+            self.assertEqual(
+                restore_runs.waiting_on(Path(raw) / "missing", time.time()), frozenset()
+            )
 
     def test_a_failed_export_never_becomes_a_backup(self) -> None:
         def failed(
@@ -199,6 +281,7 @@ class TheArchiveIsNamedOnTheManagersClock(unittest.TestCase):
                     Path(raw),
                     now=moment,
                     lock_path=Path(raw) / "lock",
+                    restore_root=Path(raw) / "restore",
                 )
             self.assertEqual(result.version, "2026-09-21_22-54-47")
         finally:

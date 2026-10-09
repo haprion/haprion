@@ -10,7 +10,6 @@ never visible to the listing command.
 from __future__ import annotations
 
 import fcntl
-import json
 import os
 import selectors
 import stat
@@ -24,6 +23,7 @@ from time import monotonic
 from typing import BinaryIO, Literal
 from uuid import uuid4
 
+from haproxy_mgmt import restore_runs
 from haproxy_mgmt.backup_archive import MAX_ARCHIVE_BYTES, ArchiveError, ArchiveFacts, validate
 from haproxy_mgmt.backup_retention import DEFAULT_RETENTION
 from haproxy_mgmt.config import Cluster, DeployIdentity, Node
@@ -53,11 +53,6 @@ FETCH_TIMEOUT_SECONDS = 300.0
 # two-node cluster on the default therefore holds 28 archives in total.
 RETENTION = DEFAULT_RETENTION
 LOCK_PATH = Path("/run/lock/haprion-state-backup.lock")
-#
-# Where node restore runs live (`node_restore.RUN_ROOT` is this). Defined here
-# because retention reads it and `node_restore` already imports this module.
-#
-RESTORE_RUN_ROOT = Path("/var/lib/haprion/restore")
 
 
 class BackupRunError(RuntimeError):
@@ -226,34 +221,6 @@ def _commit_latest(directory: Path, archive: Path) -> None:
     temporary.replace(directory / "latest")
 
 
-def held_by_restores(run_root: Path) -> frozenset[tuple[str, str]]:
-    """The (node, archive version) pairs a prepared restore run is waiting on.
-
-    A run may sit prepared for an hour before it is carried out, and an
-    overwrite's preview takes a backup of its own. Either backup could prune
-    the very archive the run was prepared from - the oldest one kept is a
-    reasonable thing to restore (review 2026-09-25, finding 3). So retention
-    skips what a run names. A run directory that cannot be read protects
-    nothing: the run itself is then refused by its own step, in words.
-    """
-
-    held: set[tuple[str, str]] = set()
-    try:
-        runs = list(run_root.iterdir())
-    except OSError:
-        return frozenset()
-    for run in runs:
-        try:
-            request = json.loads((run / "request.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(request, dict):
-            node, archive = request.get("node"), request.get("archive")
-            if isinstance(node, str) and isinstance(archive, str):
-                held.add((node, archive))
-    return frozenset(held)
-
-
 def _retain(directory: Path, keep: int, held: frozenset[str] = frozenset()) -> None:
     archives = sorted(
         (
@@ -325,7 +292,7 @@ def run(
     validator: Callable[[Path], ArchiveFacts] = validate,
     now: datetime | None = None,
     lock_path: Path = LOCK_PATH,
-    restore_root: Path = RESTORE_RUN_ROOT,
+    restore_root: Path = restore_runs.RUN_ROOT,
 ) -> BackupResult:
     """Take a state archive from both configured nodes under one global lock."""
 
@@ -346,11 +313,21 @@ def run(
     # listing and drive retention, so one stamped in another zone would file
     # itself two hours into the past and be pruned before its elders.
     #
-    version = (now or datetime.now(UTC)).astimezone().strftime("%Y-%m-%d_%H-%M-%S")
+    taken = now or datetime.now(UTC)
+    version = taken.astimezone().strftime("%Y-%m-%d_%H-%M-%S")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        held = held_by_restores(restore_root)
+        #
+        # Runs past their hour first, as a restore step would: nothing else
+        # puts them away when no restore runs for weeks (found 2026-10-09,
+        # two runs from 2026-09-25 still on disk). Then the archives a run can
+        # still restore. A sweep that fails costs tidiness, not the backup:
+        # `waiting_on` reads the hour itself.
+        #
+        with suppress(OSError):
+            restore_runs.sweep(restore_root, taken.timestamp())
+        held = restore_runs.waiting_on(restore_root, taken.timestamp())
         nodes = tuple(
             _one_node(
                 node,

@@ -2669,6 +2669,7 @@ def _backend(
         name = _server_name(index)
         cookie = f" cookie {name}" if backend.cookie is not None else ""
         backup = " backup" if server.backup else ""
+        weight = f" weight {server.weight}" if server.weight is not None else ""
         limit = f" maxconn {backend.max_connections}" if backend.max_connections else ""
         #
         # Per server rather than per backend, because that is where HAProxy
@@ -2680,7 +2681,7 @@ def _backend(
             f"    server {name} {server.host}:{server.port}"
             f" guid {server_guid(proxy.name, backend.name, server)}"
             f"{_server_tls(backend, server)}{_server_address(server, resolvers)}"
-            f"{_server_check(backend, server)}{cookie}{backup}{limit}{ramp}"
+            f"{_server_check(backend, server)}{cookie}{weight}{backup}{limit}{ramp}"
         )
     #
     # Last, so the cluster's brake and the object's limit have run and the

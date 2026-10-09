@@ -1551,3 +1551,59 @@ class WhyANameWasRefused(unittest.TestCase):
                 "ftp2.example.com", MINIMAL.replace(b"name: shop", b"name: ftp2.example.com")
             )
         self.assertIn("'.' is not allowed", str(raised.exception))
+
+
+class AServersWeight(unittest.TestCase):
+    """B263: a server's share of the pool, 1 to 256, where an algorithm honours it."""
+
+    SERVER = "      - host: 192.0.2.10\n        port: 8080\n"
+
+    def weighted(self, value: str, balance: str = "roundrobin") -> bytes:
+        return with_lines(
+            ("balance: roundrobin", f"balance: {balance}"),
+            (self.SERVER, f"{self.SERVER}        weight: {value}\n"),
+        )
+
+    def test_a_weight_is_kept_and_none_is_haproxys_default(self) -> None:
+        self.assertEqual(
+            load_proxy("shop", self.weighted("50")).backends["web"].servers[0].weight, 50
+        )
+        self.assertIsNone(load_proxy("shop", MINIMAL).backends["web"].servers[0].weight)
+
+    def test_the_range_is_one_to_256(self) -> None:
+        for value in ("1", "256"):
+            with self.subTest(value):
+                load_proxy("shop", self.weighted(value))
+        for value in ("0", "257", "-1", "true", '"50"', "1.5"):
+            with self.subTest(value), self.assertRaises(ModelError) as raised:
+                load_proxy("shop", self.weighted(value))
+            self.assertIn("weight must be a whole number from 1 to 256", str(raised.exception))
+
+    def test_first_ignores_weights_so_it_refuses_them(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.weighted("50", balance="first"))
+
+        self.assertIn("balance first ignores weights", str(raised.exception))
+
+    def test_every_other_algorithm_takes_them(self) -> None:
+        for balance in ("roundrobin", "static-rr", "leastconn", "source", "uri", "random"):
+            with self.subTest(balance):
+                load_proxy("shop", self.weighted("50", balance=balance))
+
+    def test_dns_and_syslog_pools_have_no_weight(self) -> None:
+        for protocol, pool, words in (
+            ("dns", "allow_from: [192.0.2.0/24]\n", "a dns pool's servers have no weight"),
+            ("syslog", "", "a syslog pool's receivers have no weight"),
+        ):
+            document = f"""schema: 1
+name: pool
+listen: {{protocol: {protocol}, port: 514}}
+backend: pool-servers
+{pool}backends:
+  pool-servers:
+    balance: roundrobin
+    servers: [{{host: 198.51.100.53, port: 53, weight: 5}}]
+""".encode()
+            with self.subTest(protocol), self.assertRaises(ModelError) as raised:
+                load_proxy("pool", document)
+            self.assertIn(words, str(raised.exception))

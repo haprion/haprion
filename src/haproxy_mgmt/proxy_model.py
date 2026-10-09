@@ -215,6 +215,15 @@ BALANCE = (
 )
 
 #
+# A server's weight (B263), HAProxy's range less nought: 0 takes the server out
+# of balancing while it still takes persistent connections, which is a drain,
+# and a drain is something done to a server for a while rather than a setting
+# that outlives the reason for it. HAProxy's default is 1.
+#
+MIN_WEIGHT = 1
+MAX_WEIGHT = 256
+
+#
 # The algorithms that hash something the request carries by name, and therefore
 # need to be told which name.
 #
@@ -526,6 +535,8 @@ class Server:
     backup: bool = False
     address: str | None = None
     """A dns server's name looked up when the object was saved (B261): what dnsdist forwards to."""
+    weight: int | None = None
+    """Its share of the pool's traffic against the others' (B263); None is HAProxy's default, 1."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1118,7 +1129,7 @@ def _is_address(host: str) -> bool:
 
 def _server(value: Any, location: str) -> Server:
     data = _mapping(value, location)
-    _only_keys(data, {"host", "port", "backup", "address"}, location)
+    _only_keys(data, {"host", "port", "backup", "address", "weight"}, location)
     host = _required_string(data, "host", location)
     port = data.get("port")
     #
@@ -1139,11 +1150,21 @@ def _server(value: Any, location: str) -> Server:
         if _is_address(host):
             raise ModelError(f"{location}.address belongs beside a name, not an address")
         address = str(ipaddress.ip_address(address.strip("[]")))
+    weight = data.get("weight")
+    if weight is not None and (
+        not isinstance(weight, int)
+        or isinstance(weight, bool)
+        or not MIN_WEIGHT <= weight <= MAX_WEIGHT
+    ):
+        raise ModelError(
+            f"{location}.weight must be a whole number from {MIN_WEIGHT} to {MAX_WEIGHT}"
+        )
     return Server(
         host=host,
         port=port,
         backup=_boolean(data, "backup", location, default=False),
         address=address,
+        weight=weight,
     )
 
 
@@ -1410,6 +1431,15 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     addresses = [(member.host, member.port) for member in members]
     if len(set(addresses)) != len(addresses):
         raise ModelError(f"{location}.servers lists the same host and port twice")
+    #
+    # `first` fills one server before the next and ignores weights entirely
+    # (HAProxy 3.4.6's documentation): a weight there would be a number that
+    # changes nothing while reading as if it did.
+    #
+    if balance == "first" and any(member.weight is not None for member in members):
+        raise ModelError(
+            f"{location}: balance first ignores weights; remove them or choose another"
+        )
 
     tls = data.get("tls")
     backend_tls = None
@@ -2007,6 +2037,8 @@ def _refuse_non_syslog_pools(
                 f"{where}: IPVS has no backup receiver; use balance: firstAvailable, which "
                 f"sends every message to the first receiver that is up"
             )
+        if any(server.weight is not None for server in pool.servers):
+            raise ModelError(f"{where}: a syslog pool's receivers have no weight")
         if pool.health.type not in ("udp", "tcp", "disabled"):
             raise ModelError(f"{where}.health must be a udp or tcp check, or disabled")
         if pool.health.type == "tcp":
@@ -2061,6 +2093,8 @@ def _refuse_non_dns_pools(backends: Mapping[str, Backend], name: str) -> None:
                 f"{where}: dnsdist has no backup server; use balance: firstAvailable, which "
                 f"sends every query to the first server that is up"
             )
+        if any(server.weight is not None for server in pool.servers):
+            raise ModelError(f"{where}: a dns pool's servers have no weight")
         if pool.health.type not in ("dns", "disabled"):
             raise ModelError(f"{where}.health must be a dns check, or disabled")
         #

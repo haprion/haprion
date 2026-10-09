@@ -401,16 +401,17 @@ class Preview:
 
 
 def _servers(raw: str) -> list[dict[str, object]]:
-    """One `host:port` per line, `backup` after it for a standby member.
+    """One `host:port` per line, `weight N` and `backup` after it where wanted.
 
     Parsed here rather than in the model because this is the only place the
-    shorthand exists: the stored object spells host, port and backup out, and a
-    reader of that file should not have to know a form convention to understand
-    it.
+    shorthand exists: the stored object spells host, port, weight and backup
+    out, and a reader of that file should not have to know a form convention to
+    understand it.
 
-    `backup` is the model's whole remaining server field, so a backend written here
-    can say everything a backend may say. It was the last thing that made an
-    otherwise ordinary object impossible to open.
+    `backup` and `weight` are the model's whole remaining server fields, so a
+    backend written here can say everything a backend may say (B263 added the
+    weight). The two words may come in either order; the range of a weight is
+    the model's to judge, so a number out of range is refused with its words.
     """
 
     servers: list[dict[str, object]] = []
@@ -418,23 +419,33 @@ def _servers(raw: str) -> list[dict[str, object]]:
         entry = line.strip()
         if not entry:
             continue
+        address, *words = entry.split()
+        server: dict[str, object] = {}
         #
-        # Only the exact word counts as the marker. Anything else is part of a
-        # line that is not an address, and saying so names the real mistake -
-        # a line reading "not a server" is not a server carrying an unknown
-        # flag.
+        # Only the exact words count. Anything else is part of a line that is
+        # not an address, and saying so names the real mistake - a line reading
+        # "not a server" is not a server carrying an unknown flag.
         #
-        address, backup = entry, False
-        head, _, tail = entry.rpartition(" ")
-        if tail.lower() == "backup" and head.strip():
-            address, backup = head.strip(), True
+        position = 0
+        while position < len(words):
+            word = words[position].lower()
+            if word == "backup" and "backup" not in server:
+                server["backup"] = True
+                position += 1
+            elif word == "weight" and "weight" not in server:
+                value = words[position + 1] if position + 1 < len(words) else ""
+                if not value.isdigit():
+                    raise ValueError(
+                        f"{entry!r}: weight needs a number after it, such as weight 50"
+                    )
+                server["weight"] = int(value)
+                position += 2
+            else:
+                raise ValueError(f"{entry!r} is not a host and port, such as 198.51.100.10:8080")
         host, separator, port = address.rpartition(":")
         if not separator or not port.isdigit():
             raise ValueError(f"{entry!r} is not a host and port, such as 198.51.100.10:8080")
-        server: dict[str, object] = {"host": host, "port": int(port)}
-        if backup:
-            server["backup"] = True
-        servers.append(server)
+        servers.append({"host": host, "port": int(port), **server})
     if not servers:
         raise ValueError("a backend needs at least one server")
     #
@@ -1180,7 +1191,7 @@ class Unexpressible(Exception):
 
 
 def _server_lines(servers: Any, backend_name: str) -> str:
-    """One `host:port` line per server, with `backup` where it stands.
+    """One `host:port` line per server, with `weight` and `backup` where they stand.
 
     Written out rather than dropped: a form that showed a standby as an
     ordinary member would turn it into one on the first save, and both screens
@@ -1195,6 +1206,9 @@ def _server_lines(servers: Any, backend_name: str) -> str:
         if not isinstance(server, Mapping):
             raise Unexpressible(f"backends.{backend_name}.servers")
         line = f"{server.get('host', '')}:{server.get('port', '')}"
+        weight = server.get("weight")
+        if weight is not None:
+            line = f"{line} weight {weight}"
         lines.append(f"{line} backup" if server.get("backup") is True else line)
     return "\n".join(lines)
 

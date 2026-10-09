@@ -771,6 +771,53 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
 
         self.assertEqual(back["servers"], "198.51.100.10:8080\n198.51.100.11:8080 backup")
 
+    def test_a_weight_and_a_standby_in_either_order(self) -> None:
+        """B263: `weight N` and `backup` after the address, as a person might write them."""
+
+        document = self.document(
+            servers="198.51.100.10:8080 weight 50\n"
+            "198.51.100.11:8080 backup weight 5\n"
+            "198.51.100.12:8080 WEIGHT 7 backup"
+        )
+        servers = document["backends"]["web"]["servers"]
+
+        self.assertEqual(servers[0], {"host": "198.51.100.10", "port": 8080, "weight": 50})
+        self.assertEqual(
+            servers[1], {"host": "198.51.100.11", "port": 8080, "backup": True, "weight": 5}
+        )
+        self.assertEqual(
+            servers[2], {"host": "198.51.100.12", "port": 8080, "weight": 7, "backup": True}
+        )
+
+    def test_a_weight_needs_its_number_and_comes_once(self) -> None:
+        for line in (
+            "198.51.100.10:8080 weight",
+            "198.51.100.10:8080 weight fifty",
+            "198.51.100.10:8080 weight 5 weight 6",
+            "198.51.100.10:8080 backup backup",
+            "198.51.100.10:8080 heavy",
+        ):
+            with self.subTest(line), self.assertRaises(ValueError):
+                self.document(servers=line)
+
+    def test_a_weight_survives_the_round_trip(self) -> None:
+        written = build_document(
+            {
+                **DEFAULTS,
+                "name": "shop",
+                "hostnames": "shop.example.com",
+                "protocol": "http",
+                "backend": "web",
+                "servers": "198.51.100.10:8080 backup weight 5\n198.51.100.11:8080 weight 50",
+            }
+        )
+
+        back = form_from_document(written)
+
+        self.assertEqual(
+            back["servers"], "198.51.100.10:8080 weight 5 backup\n198.51.100.11:8080 weight 50"
+        )
+
 
 class WhereTheFormStops(unittest.TestCase):
     """One route and one backend, and the boundary is deliberate.

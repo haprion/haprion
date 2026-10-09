@@ -112,6 +112,28 @@ haproxy-deploy -c alpha
 A converged deploy skips nodes already current. See the installation guide for
 [cluster and network configuration](#cluster-definitions).
 
+### A pool's servers
+
+The *Servers* field takes one `address:port` or `hostname:port` per line, and two words after
+it where wanted, in either order:
+
+```
+198.51.100.10:8080 weight 50
+198.51.100.11:8080
+198.51.100.12:8080 backup
+```
+
+- **`weight N`**, 1 to 256, is the server's share of the pool's traffic against the others'
+  (HAProxy's default is 1, so a pool written without weights shares evenly). A pool balanced
+  with `first` refuses weights - that algorithm ignores them - and so do DNS and syslog pools,
+  whose engines have none. Nought is refused too: it is a drain, something done to a server for
+  a while, not a setting that outlives the reason for it. Changing a
+  weight keeps the server's counters; changing its address or port starts it as a new server.
+- **`backup`** makes it a standby: no traffic while any other server is up, all of it when none
+  is. A pool cannot be all standbys.
+
+The stored object spells both out (`weight: 50`, `backup: true`) under the server.
+
 ### Addresses, and what to call them
 
 If you arrive from a NetScaler or an F5, three addresses are worth naming before anything else,

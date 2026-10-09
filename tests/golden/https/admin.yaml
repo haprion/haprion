@@ -31,6 +31,7 @@ backends:
     servers:
       - host: admin-a.example.net
         port: 8443
+        weight: 20
       - host: standby.example.net
         port: 8443
         backup: true

@@ -222,5 +222,28 @@ class FixedNamesAreNotValidatedAsAnswers(unittest.TestCase):
                 self.assertNotRegex(step.read_text(), rf'valid_id "\$\{{?({names})\}}?"')
 
 
+class SysusersOnAHostWithoutTheDirectory(unittest.TestCase):
+    """/etc/sysusers.d does not exist on every host: step 4 stopped on a node 26-10-09."""
+
+    def test_the_fragment_is_installed_where_the_directory_did_not_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw) / "absent" / "sysusers.d"
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+                [
+                    "/bin/bash",
+                    "-c",
+                    f'set -Eeuo pipefail; source "{INSTALL / "lib.sh"}"; '
+                    'install_file() { printf "%s\\n" "$4" > "$1"; }; '
+                    "systemd-sysusers() { :; }; "
+                    f'SYSUSERS_DIR="{directory}" apply_sysusers "{NODE}"',
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual((directory / NODE.name).read_text(), NODE.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

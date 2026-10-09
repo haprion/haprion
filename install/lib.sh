@@ -41,7 +41,13 @@ need_not_root() {
 #
 apply_sysusers() {
     local fragment="$1" target
-    target="/etc/sysusers.d/$(basename "$fragment")"
+    #
+    # Created when absent: a host that has never had a local fragment may not
+    # have the directory at all (a node, 26-10-09). SYSUSERS_DIR is for tests.
+    #
+    local directory="${SYSUSERS_DIR:-/etc/sysusers.d}"
+    install -d -m 755 "$directory"
+    target="${directory}/$(basename "$fragment")"
     [[ -f "$fragment" ]] || die "missing ${fragment}"
     install_file "$target" root:root 644 "$(cat "$fragment")"
     systemd-sysusers "$target" || die "systemd-sysusers could not apply ${target}"

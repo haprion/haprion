@@ -165,7 +165,8 @@ the result is `PARTIAL`: the other node holds the state, and running the same co
 finishes it. A node that does not run the server yet - published but not deployed - says so.
 
 The card shows a node's own answer: `DRAIN` and `MAINT` for a server somebody took out, otherwise
-`UP` or `DOWN` from the health check. While the nodes are not yet on the object's newest version
+`UP` or `DOWN` from the health check. An object that leaves from a source address is checked only
+by the node holding the VIP, since only that node has the address; the other node reads `BACKUP`, as keepalived calls it. While the nodes are not yet on the object's newest version
 the states are not shown, since a pool edited since the deploy may have its servers in another
 order. A drained server is not a fault: the Proxies listing does not turn amber for it, and says
 how many are drained or in maintenance when you point at the lamp.

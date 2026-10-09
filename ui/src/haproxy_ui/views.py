@@ -1765,6 +1765,7 @@ def build_router(config: Config) -> APIRouter:
                     status_rows,
                     cluster=cluster,
                     current=detail.publication is not None and detail.publication.tone == "healthy",
+                    sourced=written is not None and written.sourced,
                 )
             if proxy is not None:
                 #

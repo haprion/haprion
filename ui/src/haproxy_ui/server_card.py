@@ -73,9 +73,18 @@ class ServerCard:
 
 NOT_CURRENT = Cell("—", "unknown", "The nodes do not run this version of the object yet")
 NOT_SAID = Cell("—", "unknown", "The node did not report this server")
+#
+# An object that leaves from a source address is checked only where that
+# address is: on the node holding the VIP. The other node's check binds an
+# address it does not have and fails - HAProxy telling the truth about the
+# binding and a lie about the server (the rule `health.backend_health`
+# applies). Its drain or maintenance is still its own, and still shown. BACKUP
+# is keepalived's word for that node, the one the dashboard's Failover column shows.
+#
+BACKUP = Cell("BACKUP", "unknown", "The object leaves from an address only the VIP holder carries")
 
 
-def cell(member: ServerHealth | None) -> Cell:
+def cell(member: ServerHealth | None, *, standby: bool = False) -> Cell:
     """A server as one node reports it: drain or maintenance first, then the check."""
 
     if member is None:
@@ -87,6 +96,8 @@ def cell(member: ServerHealth | None) -> Cell:
         if held == "maint":
             return Cell("MAINT", "unknown", title)
         return Cell("DRAIN", "warning", title)
+    if standby:
+        return BACKUP
     upper = check.upper()
     if upper.startswith("UP"):
         return Cell("UP", "healthy", check if check != "UP" else "")
@@ -107,12 +118,15 @@ def _members(entry: Mapping[str, Any]) -> list[ServerHealth]:
     ]
 
 
-def build(proxy: Proxy, rows: Iterable[Any], *, cluster: str, current: bool) -> ServerCard | None:
+def build(
+    proxy: Proxy, rows: Iterable[Any], *, cluster: str, current: bool, sourced: bool = False
+) -> ServerCard | None:
     """The card for one object, or None where it has no HAProxy servers.
 
     A dns or syslog object's servers are run by dnsdist and keepalived, which
     have no drain or maintenance (the helper refuses them), and an object with
-    only redirects has no servers at all.
+    only redirects has no servers at all. `sourced` is an object leaving
+    from a fixed address (`ObjectView.sourced`).
     """
 
     if proxy.listen.protocol in ("dns", "syslog"):
@@ -125,6 +139,7 @@ def build(proxy: Proxy, rows: Iterable[Any], *, cluster: str, current: bool) -> 
     result = reading.result if reading is not None and isinstance(reading.result, Mapping) else {}
     entries = result.get("nodes")
     nodes: list[tuple[str, dict[tuple[str, str], ServerHealth]]] = []
+    standby: list[bool] = []
     for entry in entries if isinstance(entries, Sequence) else ():
         if not isinstance(entry, Mapping):
             continue
@@ -134,6 +149,13 @@ def build(proxy: Proxy, rows: Iterable[Any], *, cluster: str, current: bool) -> 
                 {(member.backend, member.server): member for member in _members(entry)},
             )
         )
+        #
+        # Only a node that says it does not hold the VIP; one that says nothing
+        # keeps its own answer, as on the health lamp.
+        #
+        status = entry.get("status")
+        vip = status.get("vip") if isinstance(status, Mapping) else None
+        standby.append(sourced and isinstance(vip, Mapping) and vip.get("owner") is False)
 
     listed: list[ServerRow] = []
     for pool in pools:
@@ -159,7 +181,10 @@ def build(proxy: Proxy, rows: Iterable[Any], *, cluster: str, current: bool) -> 
                     shown=address if len(pools) == 1 else f"{pool}/{address}",
                     backup=server.backup,
                     weight=server.weight if server.weight is not None else DEFAULT_WEIGHT,
-                    cells=tuple(cell(member) if current else NOT_CURRENT for member in found),
+                    cells=tuple(
+                        cell(member, standby=aside) if current else NOT_CURRENT
+                        for member, aside in zip(found, standby, strict=True)
+                    ),
                     sessions=sum(sessions) if current and sessions else None,
                 )
             )

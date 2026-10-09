@@ -148,6 +148,34 @@ class TheCard(unittest.TestCase):
         self.assertTrue(all(cell.label == "—" for row in card.rows for cell in row.cells))
         self.assertTrue(all(row.sessions is None for row in card.rows))
 
+    def test_a_sourced_object_reads_backup_where_the_vip_is_not(self) -> None:
+        """26-10-09 in production: the other node's check cannot bind the address.
+
+        It said DOWN, which read as a node in trouble; it is a node whose check
+        has nothing to send from.
+        """
+
+        nodes = (
+            ("node-a", [member("s1", "UP"), member("s2", "UP")]),
+            ("node-b", [member("s1", "DOWN"), member("s2", "DOWN", "drain")]),
+        )
+        rows = server_card.build(
+            self.proxy, [reading(*nodes)], cluster="alpha", current=True, sourced=True
+        )
+        if rows is None:
+            self.fail("an https object with servers has a card")
+        found = {row.shown: [cell.label for cell in row.cells] for row in rows.rows}
+
+        self.assertEqual(found["192.0.2.12:8080"], ["UP", "BACKUP"])
+        # Its drain is set on every node, and said on every node.
+        self.assertEqual(found["192.0.2.10:8080"], ["UP", "DRAIN"])
+
+    def test_an_object_without_a_source_keeps_each_nodes_check(self) -> None:
+        card = self.build(("node-a", [member("s1", "UP")]), ("node-b", [member("s1", "DOWN")]))
+        rows = {row.shown: row for row in card.rows}
+
+        self.assertEqual([cell.label for cell in rows["192.0.2.12:8080"].cells], ["UP", "DOWN"])
+
     def test_two_pools_name_the_pool_on_each_row(self) -> None:
         proxy = load_proxy(
             "shop",

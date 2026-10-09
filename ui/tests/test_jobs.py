@@ -305,13 +305,15 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
     offer something the queue would refuse with a 409.
     """
 
-    def job(self, cluster: str, operation: str, state: str) -> Job:
+    def job(
+        self, cluster: str, operation: str, state: str, payload: dict[str, Any] | None = None
+    ) -> Job:
         return Job(
             id=1,
             request_id=uuid4(),
             operation=operation,
             cluster=cluster,
-            payload={},
+            payload=payload or {},
             state=state,
             created_at=datetime(2026, 9, 3, tzinfo=UTC),
             started_at=None,
@@ -346,6 +348,22 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
         )
 
         self.assertEqual(busy, {"alpha": "Deploying", "beta": "Publishing"})
+
+    def test_publish_and_deploy_names_both_halves(self) -> None:
+        """One job publishes, then deploys; "Publishing" alone hid the deploy."""
+
+        busy = jobs.in_flight(
+            [
+                self.job("alpha", "changes_publish", "running", {"deploy": True}),
+                self.job("beta", "changes_publish", "running", {"deploy": False}),
+                self.job("gamma", "deploy", "running"),
+            ]
+        )
+
+        self.assertEqual(
+            busy,
+            {"alpha": "Publishing and deploying", "beta": "Publishing", "gamma": "Deploying"},
+        )
 
     def test_an_operation_without_a_label_is_still_busy(self) -> None:
         """A cluster that looks idle while it is not is the worse mistake."""

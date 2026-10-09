@@ -924,5 +924,21 @@ def in_flight(jobs: Iterable[Job]) -> dict[str, str]:
             continue
         if job.state not in {"pending", "running"} or job.cluster in busy:
             continue
-        busy[job.cluster] = RUNNING_LABELS.get(job.operation, job.operation)
+        busy[job.cluster] = running_label(job)
     return busy
+
+
+#
+# A Publish & deploy is one job that publishes and then deploys (B257). The
+# worker records no phase in between, so the badge names both for the whole
+# job rather than saying "Publishing" while the nodes are being deployed.
+#
+PUBLISH_AND_DEPLOY = "Publishing and deploying"
+
+
+def running_label(job: Job) -> str:
+    """What a cluster's job is called while it is pending or running."""
+
+    if job.operation == "changes_publish" and deploys(job):
+        return PUBLISH_AND_DEPLOY
+    return RUNNING_LABELS.get(job.operation, job.operation)

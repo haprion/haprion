@@ -383,6 +383,76 @@ class TheSyslogCounters(unittest.TestCase):
         self.assertEqual(metrics.samples(self.reading(owner=False))[1], [])
 
 
+KEPT_MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0065_metric_counters_kept.py"
+
+
+class WhetherTheCountersWereKept(unittest.TestCase):
+    """N3: the node says whether HAProxy kept its counters over a reload; the rows say it on."""
+
+    def reading(self, shared: object) -> dict[str, object]:
+        runtime: dict[str, object] = {"version": "3.4.6", "uptime_sec": 5}
+        if shared is not ...:
+            runtime["shared_counters"] = shared
+        return {
+            "nodes": [
+                {
+                    "name": "a",
+                    "status": {
+                        "vip": {"owner": True},
+                        "runtime": runtime,
+                        "frontends": [{"frontend": "mgd-vip-https", "counters": {"req_tot": 9}}],
+                        "servers": [
+                            {"backend": "web", "server": "BACKEND", "counters": {"req_tot": 9}},
+                            {"backend": "web", "server": "s1", "counters": {"req_tot": 9}},
+                        ],
+                    },
+                }
+            ]
+        }
+
+    def kept(self, shared: object) -> list[tuple[str, bool | None]]:
+        frontends, members = metrics.samples(self.reading(shared))
+        return [(f.frontend, f.counters_kept) for f in frontends] + [
+            (m.member, m.counters_kept) for m in members
+        ]
+
+    def test_a_node_with_the_file_keeps_frontends_and_servers_but_not_the_pool_row(self) -> None:
+        """A backend carries no GUID while HAProxy alternates it (`guid.py`)."""
+
+        self.assertEqual(
+            self.kept(True), [("mgd-vip-https", True), ("BACKEND", False), ("s1", True)]
+        )
+
+    def test_a_node_without_it_keeps_nothing(self) -> None:
+        self.assertEqual(
+            self.kept(False), [("mgd-vip-https", False), ("BACKEND", False), ("s1", False)]
+        )
+
+    def test_a_node_that_did_not_say_is_unknown_everywhere(self) -> None:
+        """Null is the old rule in the database; it must not become a guessed false."""
+
+        for shared in (..., None, "yes"):
+            with self.subTest(shared=shared):
+                self.assertEqual(
+                    self.kept(shared),
+                    [("mgd-vip-https", None), ("BACKEND", None), ("s1", None)],
+                )
+
+    def test_the_migration_covers_the_counters_the_readers_sum(self) -> None:
+        source = KEPT_MIGRATION.read_text()
+        self.assertEqual(_tuple_named(source, "HAPROXY_COUNTERS"), db.STORED_DELTAS)
+        self.assertEqual(_tuple_named(source, "DNS_COUNTERS"), metrics.DNS_COUNTERS)
+        self.assertEqual(_tuple_named(source, "SYSLOG_COUNTERS"), metrics.SYSLOG_COUNTERS)
+        self.assertEqual(
+            (*db.STORED_DELTAS, *metrics.DNS_COUNTERS, *metrics.SYSLOG_COUNTERS), db.BACKEND_DELTAS
+        )
+
+    def test_the_reader_takes_the_name_the_node_reports(self) -> None:
+        schema = json.loads((ROOT / "schemas" / "v1" / "haproxy-status.schema.json").read_text())
+        runtime = schema["$defs"]["node_status"]["properties"]["runtime"]["properties"]
+        self.assertEqual(runtime["shared_counters"]["type"], ["boolean", "null"])
+
+
 class TheMetricTables(unittest.TestCase):
     def setUp(self) -> None:
         self.sql = MIGRATION.read_text()

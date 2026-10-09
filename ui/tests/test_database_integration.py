@@ -6026,3 +6026,181 @@ class ASyslogPoolIsCountedAsABackendIs(unittest.TestCase):
                     },
                 )
             connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class AReloadThatKeepsTheCountersIsNoRestart(unittest.TestCase):
+    """Migration 0065: `shm-stats-file` keeps the counters while the uptime starts again (N3).
+
+    Each series is a run of samples as the poller writes them, uptime, one
+    counter and whether the node said its counters were kept, with what the
+    trigger must store for each: whether it is a restart and the difference.
+    The figures are the ones measured on 3.4.6 in kind: a reload takes the
+    uptime from minutes to seconds and leaves a kept counter where it was.
+    """
+
+    CLUSTER = "kept"
+    #
+    # (member, kept, [(uptime, req_tot, restarted, delta), ...]); the first
+    # sample has nothing to pair with.
+    #
+    SERIES: tuple[tuple[str, bool | None, list[tuple[int, int, bool | None, int | None]]], ...] = (
+        #
+        # A server on a node with the file: a reload keeps the count, so the
+        # difference is only what came after; a real stop and start releases
+        # the file, the count falls, and that is a restart again.
+        #
+        (
+            "s1",
+            True,
+            [
+                (100, 50, None, None),
+                (160, 70, False, 20),
+                (5, 75, False, 5),
+                (2, 3, True, 3),
+                (62, 9, False, 6),
+            ],
+        ),
+        #
+        # The pool's own row, which has no GUID and starts again on every reload.
+        #
+        ("BACKEND", False, [(100, 50, None, None), (160, 70, False, 20), (5, 4, True, 4)]),
+        #
+        # A node or poller from before: today's rule, unchanged.
+        #
+        ("s2", None, [(100, 50, None, None), (5, 8, True, 8)]),
+    )
+
+    @staticmethod
+    def connect(role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def setUp(self) -> None:
+        self.start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(
+            hours=2
+        )
+        with self.connect() as connection:
+            for table in ("metric_backend_member", "metric_frontend"):
+                for day in (self.start.date(), (self.start + timedelta(hours=3)).date()):
+                    connection.execute("select metric_partition(%s, %s::date)", (table, day))
+                connection.execute(
+                    psycopg.sql.SQL("delete from {} where cluster = %s").format(
+                        psycopg.sql.Identifier(table)
+                    ),
+                    (self.CLUSTER,),
+                )
+
+    def stored(self, table: str, where: str, value: str) -> list[tuple[bool | None, int | None]]:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            rows = connection.execute(
+                psycopg.sql.SQL(
+                    "select restarted, delta_req_tot from {} where cluster = %s and {} = %s "
+                    "order by observed_at"
+                ).format(psycopg.sql.Identifier(table), psycopg.sql.Identifier(where)),
+                (self.CLUSTER, value),
+            ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
+    def test_the_backend_rows_count_what_came_after_a_kept_reload(self) -> None:
+        with self.connect() as connection:
+            for member, kept, samples in self.SERIES:
+                for step, (uptime, count, _restarted, _delta) in enumerate(samples):
+                    connection.execute(
+                        "insert into metric_backend_member (cluster, node, backend, member, "
+                        "observed_at, uptime_sec, counters_kept, req_tot) "
+                        "values (%s, 'a', 'web', %s, %s, %s, %s, %s)",
+                        (
+                            self.CLUSTER,
+                            member,
+                            self.start + timedelta(minutes=step),
+                            uptime,
+                            kept,
+                            count,
+                        ),
+                    )
+        for member, _kept, samples in self.SERIES:
+            with self.subTest(member=member):
+                self.assertEqual(
+                    self.stored("metric_backend_member", "member", member),
+                    [(restarted, delta) for _uptime, _count, restarted, delta in samples],
+                )
+
+    def test_a_frontend_counts_the_same_way(self) -> None:
+        _member, kept, samples = self.SERIES[0]
+        with self.connect() as connection:
+            for step, (uptime, count, _restarted, _delta) in enumerate(samples):
+                connection.execute(
+                    "insert into metric_frontend (cluster, node, frontend, owns_vip, "
+                    "observed_at, uptime_sec, counters_kept, req_tot) "
+                    "values (%s, 'a', 'mgd-vip-https', true, %s, %s, %s, %s)",
+                    (self.CLUSTER, self.start + timedelta(minutes=step), uptime, kept, count),
+                )
+        self.assertEqual(
+            self.stored("metric_frontend", "frontend", "mgd-vip-https"),
+            [(restarted, delta) for _uptime, _count, restarted, delta in samples],
+        )
+
+    def test_a_reload_is_summed_into_the_hour_as_traffic_not_as_a_restart(self) -> None:
+        """0055's sums read `restarted`; a kept reload leaves the hour clean."""
+
+        with self.connect() as connection:
+            for step, (uptime, count) in enumerate(((100, 50), (160, 70), (5, 75))):
+                connection.execute(
+                    "insert into metric_backend_member (cluster, node, backend, member, "
+                    "observed_at, uptime_sec, counters_kept, req_tot) "
+                    "values (%s, 'a', 'web', 's3', %s, %s, true, %s)",
+                    (self.CLUSTER, self.start + timedelta(minutes=step), uptime, count),
+                )
+        with self.connect() as connection:
+            row = connection.execute(
+                "select sum(delta_req_tot), bool_or(restarted) from metric_backend_hour_delta "
+                "where cluster = %s and member = 's3'",
+                (self.CLUSTER,),
+            ).fetchone()
+        self.assertEqual(row, (25, False))
+
+    def test_the_poller_may_say_whether_the_counters_were_kept(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            connection.execute(
+                "insert into metric_backend_member (cluster, node, backend, member, "
+                "uptime_sec, counters_kept, req_tot) values (%s, 'p', 'web', 's1', 1, true, 1)",
+                (self.CLUSTER,),
+            )
+            connection.execute(
+                "insert into metric_frontend (cluster, node, frontend, owns_vip, "
+                "uptime_sec, counters_kept, req_tot) values (%s, 'p', 'fe', true, 1, true, 1)",
+                (self.CLUSTER,),
+            )
+
+    def test_downgrade_restores_the_old_rule_and_upgrade_the_new(self) -> None:
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0065_metric_counters_kept.py", cursor)
+                migration.downgrade()
+                for minutes, uptime, count in ((2, 100, 50), (3, 5, 60)):
+                    cursor.execute(
+                        "insert into metric_backend_member (cluster, node, backend, member, "
+                        "observed_at, uptime_sec, req_tot) "
+                        "values (%s, 'b', 'web', 's1', %s, %s, %s)",
+                        (self.CLUSTER, self.start + timedelta(minutes=minutes), uptime, count),
+                    )
+                cursor.execute(
+                    "select restarted, delta_req_tot from metric_backend_member "
+                    "where cluster = %s and node = 'b' order by observed_at desc limit 1",
+                    (self.CLUSTER,),
+                )
+                self.assertEqual(cursor.fetchone(), (True, 60))
+                migration.upgrade()
+                cursor.execute(
+                    "insert into metric_backend_member (cluster, node, backend, member, "
+                    "observed_at, uptime_sec, counters_kept, req_tot) "
+                    "values (%s, 'b', 'web', 's1', %s, 2, true, 64)",
+                    (self.CLUSTER, self.start + timedelta(minutes=4)),
+                )
+                cursor.execute(
+                    "select restarted, delta_req_tot from metric_backend_member "
+                    "where cluster = %s and node = 'b' order by observed_at desc limit 1",
+                    (self.CLUSTER,),
+                )
+                self.assertEqual(cursor.fetchone(), (False, 4))
+            connection.rollback()

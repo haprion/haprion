@@ -2044,6 +2044,38 @@ publish refused or failed renames nothing - and a name given to a backend again 
 dashboard reading the exporter sees a new series under the new name - HAProxy's
 counters begin again with it.
 
+#### Counters across a reload
+
+Every deploy reloads HAProxy, and a reloaded HAProxy starts its counters from
+nought unless the cluster's `core/haproxy.cfg` names a file to keep them in:
+
+```
+global
+    shm-stats-file /run/haproxy/stats.shm
+```
+
+A new cluster's core has the line. HAProxy then keeps each frontend's,
+listener's and server's counters in that file and finds them again after a
+reload by the GUID the generator gives every object, so a deploy no longer puts
+a step into a dashboard reading the exporter. Changing a server's address is a
+different server and starts again; reordering a pool moves nothing.
+
+- **A pool's own figures still start again on every reload.** HAProxy 3.4.6
+  carries a backend's own counters badly - each reload attaches the backend to
+  the other of two places in the file, so its totals show the figures of the
+  process before last - and so the generator gives backends no GUID until it
+  does. Its servers are carried; a redirect, which has no server, is not.
+- **A restart still resets everything.** HAProxy gives the file up when it is
+  stopped properly, and `/run` is emptied when the node starts. HAProxy opens
+  the file as root before it changes into its chroot, so the path is the
+  node's own; the validation on the manager gives a check an empty
+  `/run/haproxy` to make the file in, so another path is refused there.
+- **The interface's own figures were right before and stay right.** A node reports
+  whether its HAProxy has the file in use (`runtime.shared_counters` in
+  `haproxy-status --json`), and the metrics count a reload as a restart only
+  when the counters did start again: when they were not kept, or when one of
+  them went down.
+
 **A DNS object's card** is counted by dnsdist rather than HAProxy, under the
 pool's name like any other: Queries (everything that reached the listener),
 Answered (what its servers answered), Refused (refused for `allow_from`),
@@ -2294,6 +2326,9 @@ better done elsewhere. The details are in the section linked.
   balanced because dnsdist understands it and passes the client on inside the query
   ([DNS objects](#dns-objects)); syslog because it is never answered
   ([Syslog objects](#syslog-objects)).
+- **A pool's own counters start again on every reload**, while its servers' and the
+  frontends' are kept: HAProxy 3.4.6 does not carry a backend's own counters correctly
+  ([Counters across a reload](#counters-across-a-reload)).
 - **Syslog over TCP or TLS is not forwarded**, and nothing restricts who may send to a
   syslog object; the network between the nodes and the receivers must let the senders'
   addresses through ([Syslog objects](#syslog-objects)).

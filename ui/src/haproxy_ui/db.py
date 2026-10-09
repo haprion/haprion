@@ -2679,6 +2679,7 @@ def record_metric_samples(
                         "frontend": sample.frontend,
                         "owns_vip": sample.owns_vip,
                         "uptime_sec": sample.uptime_sec,
+                        "counters_kept": sample.counters_kept,
                         "status": sample.status,
                         **_counter_values(sample.counters),
                     }
@@ -2701,6 +2702,7 @@ def record_metric_samples(
                         "check_status": sample.check_status,
                         "check_code": sample.check_code,
                         "uptime_sec": sample.uptime_sec,
+                        "counters_kept": sample.counters_kept,
                         "status": sample.status,
                         **_counter_values(sample.counters, member_columns),
                     }
@@ -2729,7 +2731,7 @@ def _sample_insert(
     named the table alone would silently widen the next time one is added.
     """
 
-    columns = ("cluster", *identifying, "uptime_sec", "status", *counters)
+    columns = ("cluster", *identifying, "uptime_sec", "counters_kept", "status", *counters)
     return sql.SQL("insert into {table} ({columns}) values ({values})").format(
         table=sql.Identifier(table),
         columns=sql.SQL(", ").join(sql.Identifier(name) for name in columns),

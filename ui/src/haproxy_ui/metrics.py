@@ -110,6 +110,7 @@ class FrontendSample:
     uptime_sec: int | None
     status: str | None
     counters: Mapping[str, int] = field(default_factory=dict)
+    counters_kept: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +123,7 @@ class MemberSample:
     check_status: str | None
     check_code: str | None
     counters: Mapping[str, int] = field(default_factory=dict)
+    counters_kept: bool | None = None
 
 
 def _text(value: object) -> str | None:
@@ -195,6 +197,14 @@ def samples(result: Mapping[str, Any]) -> tuple[list[FrontendSample], list[Membe
 
         runtime = status.get("runtime")
         uptime = _count(runtime.get("uptime_sec")) if isinstance(runtime, Mapping) else None
+        #
+        # Whether HAProxy keeps this node's counters across a reload (N3): its
+        # uptime starts again either way, and this says whether the counters
+        # did. A pool's own row never does - backends carry no GUID while
+        # HAProxy cannot carry them (`guid.py`) - so it is false there.
+        #
+        shared = runtime.get("shared_counters") if isinstance(runtime, Mapping) else None
+        kept = shared if isinstance(shared, bool) else None
 
         for row in _entries(status.get("frontends")):
             if not isinstance(row, Mapping):
@@ -210,6 +220,7 @@ def samples(result: Mapping[str, Any]) -> tuple[list[FrontendSample], list[Membe
                     uptime_sec=uptime,
                     status=_text(row.get("status")),
                     counters=_counters(row.get("counters")),
+                    counters_kept=kept,
                 )
             )
 
@@ -233,6 +244,7 @@ def samples(result: Mapping[str, Any]) -> tuple[list[FrontendSample], list[Membe
                     check_status=_text(row.get("check_status")),
                     check_code=_text(row.get("check_code")),
                     counters=_counters(row.get("counters")),
+                    counters_kept=False if kept is not None and member == POOL_ROW else kept,
                 )
             )
 

@@ -682,17 +682,17 @@ whose User-Agent contains `sqlmap`, from anyone outside `office`. A rule that na
 since it would refuse everything the object serves. Header values are matched
 as text, never as patterns.
 
-**A rule's path is read as the backend will read it**, as nginx matches its
-locations: percent-decoded, with runs of slashes made one. `/%61dmin`,
-`//admin` and `/admin%2Fusers` meet a rule on `/admin`. A path with a `.` or
-`..` segment once decoded - `/./admin`, `/x/../admin`, `/%2e%2e/admin` - is
-answered 400 and recorded `path-dots:deny` on an object with a refusing path
-rule (`path-dots:log` when its path rules only look); browsers resolve such
-segments before they send. The backend still receives the path as it was
-sent. A rule's own path is therefore written decoded, without `%`, `//`, `.`
-or `..`. Two things are the backend's own and not matched here: letter case
-(`/Admin`) and path parameters (`/admin;x`, which some Java servers read as
-`/admin`) - a rule meant to cover them needs the backend to refuse them too.
+**A rule's path is read as the least strict backend will read it**: percent-decoded, with runs of
+slashes made one, as nginx matches its locations; in lower case, as IIS ignores case; with
+`;parameters` cut from each segment, as Java servers do; and with dots and spaces cut from a
+segment's end, as Windows does. `/%61dmin`, `//admin`, `/admin%2Fusers`, `/Admin`, `/admin;x` and
+`/admin.` all meet a rule on `/admin`. A path with a `.` or `..` segment once decoded - `/./admin`,
+`/x/../admin`, `/%2e%2e/admin` - is answered 400 and recorded `path-dots:deny`, and one with a
+control character - `%00`, a line break - is answered 400 and recorded `path-chars:deny`, on an
+object with a refusing path rule (`:log` when its path rules only look); browsers send neither. The
+backend still receives the path as it was sent. A rule's own path is therefore written decoded,
+without `%`, `//`, `;`, `.` or `..` and with no segment ending in a dot; its case does not matter.
+Behind a backend that does tell `/Admin` from `/admin`, a rule on one refuses both.
 
 **Countries.** Wherever a group or a range may be named - `allow_from`,
 `deny_from` and a rule's `source` - a country may be too, as `country:SE`

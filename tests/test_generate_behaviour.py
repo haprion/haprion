@@ -2597,6 +2597,30 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
             with self.subTest(target):
                 self.assertEqual(self.ask(target), (200, ""))
 
+    def test_a_path_rule_reads_the_path_as_the_least_strict_backend_will(self) -> None:
+        # Review 26-10-09 F1: IIS ignores case and a segment's trailing dots and
+        # spaces, Java cuts `;parameters`; each passed a rule on /admin before.
+        for target in (
+            "/Admin",
+            "/ADMIN/users",
+            "/admin;x",
+            "/admin;jsessionid=1/users",
+            "/admin%3Bx",
+            "/admin.",
+            "/admin%20",
+            "/admin.%20/users",
+        ):
+            with self.subTest(target):
+                self.assertEqual(
+                    self.ask(target, method="POST", body=b"x"), (403, "admin-post:deny")
+                )
+        for target in ("/admin%00", "/x%0d%0ay", "/a%7Fb"):
+            with self.subTest(target):
+                self.assertEqual(self.ask(target), (400, "path-chars:deny"))
+        for target in ("/administrator", "/a.b/c", "/Static/x"):
+            with self.subTest(target):
+                self.assertEqual(self.ask(target, method="POST", body=b"x"), (200, ""))
+
     def test_a_logged_rule_lets_the_request_through_and_names_itself(self) -> None:
         self.assertEqual(
             self.ask(headers={"User-Agent": "sqlmap/1.8, like curl"}), (200, "scanner:log")

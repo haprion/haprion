@@ -493,7 +493,7 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
         )
 
     def test_the_names_the_generator_writes_are_not_a_rule_s(self) -> None:
-        for name in ("deny-from", "body-limit", "body-unbounded", "path-dots"):
+        for name in ("deny-from", "body-limit", "body-unbounded", "path-dots", "path-chars"):
             with self.subTest(name):
                 self.assertIn(
                     "generator itself", self.refused(f"deny_rules:\n  - name: {name}\n    path: /x")
@@ -510,6 +510,19 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
         self.assertEqual(
             self.load("deny_rules:\n  - name: a\n    path: /.well-known/a..b").deny_rules[0].path,
             "/.well-known/a..b",
+        )
+
+    def test_a_rule_path_that_could_never_match_is_refused(self) -> None:
+        # Review 26-10-09 F1: `;parameters` and a segment's trailing dots are cut first.
+        for path in ("/admin;x", "/admin./x", "/admin."):
+            with self.subTest(path):
+                self.assertIn(
+                    "no %, //, ;, . or ..",
+                    self.refused(f"deny_rules:\n  - name: a\n    path: '{path}'"),
+                )
+        self.assertEqual(
+            self.load("deny_rules:\n  - name: a\n    path: /Admin/v1.2/x").deny_rules[0].path,
+            "/Admin/v1.2/x",
         )
 
     def test_two_rules_may_not_share_a_name(self) -> None:

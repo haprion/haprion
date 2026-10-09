@@ -2389,6 +2389,7 @@ RESERVED_RULE_NAMES = (
     "crs",
     "waf-engine",
     "path-dots",
+    "path-chars",
 )
 #
 # A rule list long enough to be a mistake rather than a policy, and short
@@ -2478,11 +2479,21 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
         # (review 2026-10-04 F2), so a path written any other way could never
         # match - and a rule that silently matches nothing refuses nothing.
         #
+        #
+        # And with `;parameters` and a segment's trailing dots cut (review
+        # 26-10-09, F1), so neither can be written either. Case is free: a
+        # rule matches whatever the case.
+        #
         segments = path.split("/")[1:]
-        if "%" in path or "//" in path or any(part in (".", "..") for part in segments):
+        if (
+            "%" in path
+            or "//" in path
+            or ";" in path
+            or any(part in (".", "..") or part.endswith(".") for part in segments)
+        ):
             raise ModelError(
-                f"{location}.path must be written as it reads decoded: no %, //, . or .. "
-                f"(requests are matched after decoding)"
+                f"{location}.path must be written as it reads decoded: no %, //, ;, . or .. "
+                f"and no segment ending in a dot (requests are matched after decoding)"
             )
         path = path.rstrip("/") or "/"
         if match not in MATCH_MODES:

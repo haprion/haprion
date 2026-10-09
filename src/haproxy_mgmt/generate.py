@@ -1864,7 +1864,24 @@ def _verdict(condition: str, name: str, mode: str) -> list[str]:
 # and `%2e%2e` (measured). Dot segments are not resolved but refused - see
 # `_access_path_rules`. The backend still gets the path as it was sent.
 #
+# And read as the backends that are least strict read it (review 26-10-09, F1):
+# lowercased, as IIS ignores case; with `;parameters` cut from each segment, as
+# Java servers do (`/admin;jsessionid=1`); and with dots and spaces cut from a
+# segment's end, as Windows does (`/admin.`, `/admin%20`). Measured on 3.4.6:
+# each of those passed a rule on `/admin` before. A rule on `/admin` then also
+# refuses `/Admin` behind a backend that tells them apart - a path nobody uses.
+# Regular expressions without groups, which converter arguments cannot hold.
+#
+ACCESS_PATH_EXPRESSION = (
+    r"path,url_dec,lower,regsub(;[^/]*,,g),regsub([.\x20]+/,/,g),"
+    r"regsub([.\x20]+$,,g),regsub(/+,/,g)"
+)
 ACCESS_PATH = "var(txn.access_path)"
+#
+# A control character once decoded - `%00`, a line break - which no browser
+# sends and some servers cut a path at. Refused as dot segments are.
+#
+CONTROL_CHARACTER = r"%(0[0-9a-f]|1[0-9a-f]|7f)"
 #
 # A `.` or `..` segment once decoded. A regular expression with no groups cannot
 # resolve them however often it is applied (`/././…` always leaves one), and
@@ -1876,7 +1893,7 @@ DOT_SEGMENT = r"(^|/)\.\.?(/|$)"
 
 
 def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
-    """The decoded path the access rules read, and the refusal of dot segments.
+    """The path the access rules read, and the refusal of dot segments and control characters.
 
     Only on an object with a rule on a path other than every path. The refusal
     is 400, as nginx answers a path that leaves the root, and follows the rules
@@ -1892,18 +1909,22 @@ def _access_path_rules(proxy: Proxy, host: str) -> list[str]:
     if not rules:
         return []
     dots = _acl_name(proxy.name, "path-dots")
-    condition = f"{host} {dots}"
+    controls = _acl_name(proxy.name, "path-chars")
     lines = [
-        f"    http-request set-var(txn.access_path) path,url_dec,regsub(/+,/,g) if {host}",
+        f"    http-request set-var(txn.access_path) {ACCESS_PATH_EXPRESSION} if {host}",
         f"    acl {dots} path,url_dec -m reg {DOT_SEGMENT}",
+        f"    acl {controls} path -m reg -i {CONTROL_CHARACTER}",
     ]
-    if any(rule.mode == "deny" for rule in rules):
-        return [
-            *lines,
-            f"    http-request set-var(txn.rule) str(path-dots:deny) if {condition}",
-            f"    http-request deny deny_status 400 if {condition}",
-        ]
-    return [*lines, *_verdict(condition, "path-dots", "log")]
+    for acl, name in ((dots, "path-dots"), (controls, "path-chars")):
+        condition = f"{host} {acl}"
+        if any(rule.mode == "deny" for rule in rules):
+            lines += [
+                f"    http-request set-var(txn.rule) str({name}:deny) if {condition}",
+                f"    http-request deny deny_status 400 if {condition}",
+            ]
+        else:
+            lines += _verdict(condition, name, "log")
+    return lines
 
 
 def _access_rules(
@@ -1934,14 +1955,14 @@ def _access_rules(
                 pass
             elif rule.path_match == "exact":
                 lines += [
-                    f"    acl {acl} {ACCESS_PATH} -m str {rule.path}",
-                    f"    acl {acl} {ACCESS_PATH} -m str {rule.path}/",
+                    f"    acl {acl} {ACCESS_PATH} -m str {rule.path.lower()}",
+                    f"    acl {acl} {ACCESS_PATH} -m str {rule.path.lower()}/",
                 ]
                 condition.append(acl)
             else:
                 lines += [
-                    f"    acl {acl} {ACCESS_PATH} -m str {rule.path}",
-                    f"    acl {acl} {ACCESS_PATH} -m beg {rule.path}/",
+                    f"    acl {acl} {ACCESS_PATH} -m str {rule.path.lower()}",
+                    f"    acl {acl} {ACCESS_PATH} -m beg {rule.path.lower()}/",
                 ]
                 condition.append(acl)
         if rule.methods:
@@ -2008,8 +2029,8 @@ def _waf_body_rules(proxy: Proxy, waf: Waf, host: str) -> list[str]:
             if path == "/":
                 return []
             lines += [
-                f"    acl {acl} path,url_dec,regsub(/+,/,g) -m str {path}",
-                f"    acl {acl} path,url_dec,regsub(/+,/,g) -m beg {path}/",
+                f"    acl {acl} {ACCESS_PATH_EXPRESSION} -m str {path.lower()}",
+                f"    acl {acl} {ACCESS_PATH_EXPRESSION} -m beg {path.lower()}/",
             ]
         condition += f" !{acl}"
     if waf.mode == "block":

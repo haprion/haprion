@@ -19,10 +19,8 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT WEB_USER WORKER_USER POLLER_USER COLLECTOR_USER LOGREAD_USER \
-             CLUSTERS DB_NAME
+require_vars CLUSTERS
 
-valid_abs_path "$PLATFORM_ROOT" || die "not an absolute path without '..': ${PLATFORM_ROOT}"
 valid_id "$COLLECTOR_USER" || die "invalid collector account: ${COLLECTOR_USER}"
 valid_id "$LOGREAD_USER" || die "invalid node traffic log account: ${LOGREAD_USER}"
 
@@ -40,7 +38,7 @@ IDENTITY_DIR="/etc/haprion/traffic-collector"
 COLLECTOR_KEY="${IDENTITY_DIR}/id_ed25519"
 COLLECTOR_KNOWN_HOSTS="${IDENTITY_DIR}/known_hosts"
 COLLECTOR_CONFIG="/etc/haprion/traffic-collector.json"
-LOG_ROOT="${PLATFORM_ROOT}/logs"
+LOG_ROOT="${UI_DATA}/logs"
 MIRROR="${LOG_ROOT}/mirror"
 STAGING="${LOG_ROOT}/staging"
 ROOT_KNOWN_HOSTS="${ROOT_KNOWN_HOSTS:-/root/.ssh/known_hosts}"
@@ -49,9 +47,9 @@ UNIT="haprion-traffic-collector"
 step "Where the mirror lives"
 
 #
-# A sibling of data/, not a directory inside it. Reaching a mirror under
-# data/logs would mean opening data/ for traversal by the web account, and
-# data/dumps holds every session and every audit record in one file. B123.
+# Beside the dumps, which hold every session and every audit record in one
+# file: the web account traverses the data directory to reach the mirror, so
+# the dumps are closed by their own mode (0700), checked below. B123.
 #
 ensure_dir "$LOG_ROOT" root:root 755
 
@@ -214,8 +212,7 @@ step "Timer"
 
 for kind in service timer; do
     install_file "/etc/systemd/system/${UNIT}.${kind}" root:root 644 \
-        "$(sed -e "s|PLATFORM_ROOT|${PLATFORM_ROOT}|g" -e "s|COLLECTOR_USER|${COLLECTOR_USER}|g" \
-            "examples/${UNIT}.${kind}.example")"
+        "$(sed -e "s|COLLECTOR_USER|${COLLECTOR_USER}|g" "examples/${UNIT}.${kind}.example")"
 done
 systemctl daemon-reload
 log "  reloaded systemd"
@@ -257,10 +254,13 @@ done
 for role in "$WORKER_USER" "$POLLER_USER"; do
     deny "$role" "traverse into the mirror" sh -c "cd '${MIRROR}'"
 done
-deny "$COLLECTOR_USER" "traverse into secrets" sh -c "cd '${PLATFORM_ROOT}/secrets'"
-deny "$COLLECTOR_USER" "read the interface configuration" cat "${PLATFORM_ROOT}/config/ui.toml"
+for role in "$WEB_USER" "$COLLECTOR_USER"; do
+    deny "$role" "traverse into the dumps" sh -c "cd '${UI_DATA}/dumps'"
+done
+deny "$COLLECTOR_USER" "traverse into secrets" sh -c "cd '${UI_SECRETS}'"
+deny "$COLLECTOR_USER" "read the interface configuration" cat "$UI_CONFIG"
 deny "$COLLECTOR_USER" "write into the release tree" \
-    sh -c "touch '${PLATFORM_ROOT}/releases/.collector-probe'"
+    sh -c "touch '${UI_ROOT}/releases/.collector-probe'"
 #
 # Guarded rather than assumed. A check that passes because the client is not
 # installed proves nothing about the boundary, and would keep passing after

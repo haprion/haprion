@@ -1,6 +1,6 @@
 [Unit]
 Description=Haprion status poller
-Documentation=file:///apps/haproxy-manager/current
+Documentation=file:///opt/haprion-ui/current
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -9,8 +9,8 @@ Type=exec
 User=_haprion-poller
 Group=_haprion-poller
 
-Environment=HAPROXY_UI_CONFIG=/apps/haproxy-manager/config/ui.toml
-ExecStart=/apps/haproxy-manager/current/venv/bin/haprion-poller
+Environment=HAPROXY_UI_CONFIG=/etc/haprion/ui.toml
+ExecStart=/opt/haprion-ui/current/venv/bin/haprion-poller
 
 # A second poller exits on the advisory lock rather than running alongside the
 # first, so a restart loop cannot double the load on every node.

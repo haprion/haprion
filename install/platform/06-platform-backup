@@ -16,7 +16,6 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT DB_NAME WEB_USER
 
 config="/etc/haprion/ui-admin.conf"
 [[ -r "$config" ]] || die "${config} is missing. Run ./02-platform-database first."

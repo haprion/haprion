@@ -17,9 +17,6 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT PLATFORM_GROUP WEB_USER WORKER_USER POLLER_USER
-
-valid_abs_path "$PLATFORM_ROOT" || die "not an absolute path without '..': ${PLATFORM_ROOT}"
 
 for user in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
     id -u "$user" >/dev/null 2>&1 \
@@ -45,46 +42,39 @@ for user in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
 done
 
 #
-# Config, secrets and data live OUTSIDE the releases on purpose: a release is
-# replaced wholesale and rolled back by pointing `current` elsewhere, so
-# anything that must survive that cannot live inside one.
+# Code, configuration, secrets and data in four places rather than one tree, so
+# each sits where Debian puts its kind (B266): a release is replaced wholesale
+# and rolled back by pointing `current` elsewhere, and anything that must
+# survive that cannot live inside one.
 #
 step "Directory tree"
-ensure_dir "$PLATFORM_ROOT"              root:root              755
-ensure_dir "${PLATFORM_ROOT}/releases"   root:root              755
-ensure_dir "${PLATFORM_ROOT}/config"     "root:${PLATFORM_GROUP}" 750
+ensure_dir "$UI_ROOT"              root:root 755
+ensure_dir "${UI_ROOT}/releases"   root:root 755
+ensure_dir "$(dirname "$UI_CONFIG")" root:root 755
 
 #
-# Nothing under secrets/ is group-readable. Files here are granted to one
-# identity at a time, by that file's own ownership, when there is a reason -
-# never by putting the directory within a group's reach and deciding later.
+# Nothing under the secrets directory is group-readable. Files here are granted
+# to one identity at a time, by that file's own ownership, when there is a
+# reason - never by putting the directory within a group's reach and deciding
+# later.
 #
-ensure_dir "${PLATFORM_ROOT}/secrets"    root:root              700
+ensure_dir "$UI_SECRETS"           root:root 700
 
 #
-# Backups are read by whatever restores them, which is a human with root. No
-# application identity has a reason to read a dump: it contains every session
-# and every audit record in one file.
+# Traversable, so the web account can reach the traffic-log mirror that step 13
+# makes under logs/. The dumps beside it hold every session and every audit
+# record in one file, and are read by whatever restores them - a human with
+# root - so they are closed by their own mode, not by this directory's.
 #
-ensure_dir "${PLATFORM_ROOT}/data"       root:root              750
-ensure_dir "${PLATFORM_ROOT}/data/dumps" root:root              700
-
-#
-# There is deliberately no logs/ directory under data/. Traffic logs live in
-# ${PLATFORM_ROOT}/logs, a sibling, created by 13-platform-traffic-collector.
-#
-# An earlier version reserved data/logs here. Reaching it would mean opening
-# data/ for traversal by the web account, and data/dumps beside it holds every
-# session and every audit record in one file - so the reservation quietly
-# required weakening the boundary above it. A platform installed before this
-# change may still carry an empty data/logs; it is unused and safe to remove.
+ensure_dir "$UI_DATA"              root:root 755
+ensure_dir "${UI_DATA}/dumps"      root:root 700
 
 #
 # Written from the example only if it is absent. A configuration file that an
 # installation rewrites on every run is one nobody dares edit.
 #
 step "Configuration"
-config="${PLATFORM_ROOT}/config/ui.toml"
+config="$UI_CONFIG"
 if [[ -f "$config" ]]; then
     chown "root:${PLATFORM_GROUP}" "$config"
     chmod 640 "$config"
@@ -96,19 +86,17 @@ else
     # that says it listens where the first one already does.
     #
     install -o root -g "$PLATFORM_GROUP" -m 640 /dev/null "$config"
-    sed -e "s|^port = 8080$|port = ${WEB_PORT:-8080}|" \
-        -e "s|^name = \"haproxy_ui\"$|name = \"${DB_NAME}\"|" \
-        examples/ui.toml.example > "$config"
+    sed -e "s|^port = 8080$|port = ${WEB_PORT:-8080}|" examples/ui.toml.example > "$config"
     log "  created  ${config}  (from the example - review it)"
 fi
 
 step "Release layout"
-if [[ -L "${PLATFORM_ROOT}/current" ]]; then
-    log "  ok       ${PLATFORM_ROOT}/current -> $(readlink "${PLATFORM_ROOT}/current")"
-elif [[ -e "${PLATFORM_ROOT}/current" ]]; then
-    die "${PLATFORM_ROOT}/current exists and is not a symlink"
+if [[ -L "${UI_ROOT}/current" ]]; then
+    log "  ok       ${UI_ROOT}/current -> $(readlink "${UI_ROOT}/current")"
+elif [[ -e "${UI_ROOT}/current" ]]; then
+    die "${UI_ROOT}/current exists and is not a symlink"
 else
-    log "  pending  ${PLATFORM_ROOT}/current  (created by the first release install)"
+    log "  pending  ${UI_ROOT}/current  (created by the first release install)"
 fi
 
 echo

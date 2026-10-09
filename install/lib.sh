@@ -59,8 +59,8 @@ load_answers() {
     #
     for name in "${RETIRED_ANSWERS[@]}"; do
         if grep -Eq "^[[:space:]]*(export[[:space:]]+)?${name}=" "$file"; then
-            die "${file} sets ${name}, which is no longer an answer (B266): the names are fixed.
-  Remove the line; see install/accounts.sh for the name used now."
+            die "${file} sets ${name}, which is no longer an answer (B266): names and places are fixed.
+  Remove the line; see install/accounts.sh for what is used now."
         fi
     done
     ( set -e; # shellcheck disable=SC1090

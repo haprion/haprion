@@ -17,7 +17,6 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER COLLECTOR_USER
 
 [[ "$DB_NAME" =~ ^[a-z][a-z0-9_]{0,62}$ ]] || die "invalid database name: ${DB_NAME}"
 
@@ -287,8 +286,8 @@ install_file /etc/haprion/ui-admin.conf root:root 644 "$(cat <<EOF
 # Read by haprion-user and the other root commands. Written by 02-platform-database.
 DB_NAME=${DB_NAME}
 DB_ROLE=${DB_MIGRATION_ROLE}
-DUMP_DIR=${PLATFORM_ROOT}/data/dumps
-UI_CONFIG=${PLATFORM_ROOT}/config/ui.toml
+DUMP_DIR=${UI_DATA}/dumps
+UI_CONFIG=${UI_CONFIG}
 EOF
 )"
 

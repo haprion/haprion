@@ -21,17 +21,15 @@ need_root
 answers="${1:-}"
 load_answers "$answers"
 shift
-require_vars DB_NAME DB_MIGRATION_ROLE
 
 release_id=""
 if [[ "${1:-}" == "--release" ]]; then
     [[ -n "${2:-}" ]] || die "--release needs a release id"
     release_id="$2"
     shift 2
-    require_vars PLATFORM_ROOT
     [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
         || die "invalid release id: ${release_id}"
-    migration_root="${PLATFORM_ROOT}/releases/${release_id}/migration"
+    migration_root="${UI_ROOT}/releases/${release_id}/migration"
     [[ -f "${migration_root}/alembic.ini" && -f "${migration_root}/migrations/env.py" ]] \
         || die "release ${release_id} has no migration bundle; prepare it first"
 fi

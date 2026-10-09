@@ -2,9 +2,13 @@
 # Mirrors each node's structured traffic log to the manager. Rendered by
 # 13-platform-traffic-collector.
 Description=Mirror HAProxy node traffic logs to the manager
-Documentation=file:///apps/haproxy-manager/current
+Documentation=file:///opt/haprion/current
 After=network-online.target
 Wants=network-online.target
+# Waits for the data directory's mount when it is one (the user manual's
+# "Where the data lives"): without it a late volume leaves this writing to the
+# root filesystem underneath it.
+RequiresMountsFor=/var/lib/haprion-ui
 
 [Service]
 Type=oneshot
@@ -30,7 +34,7 @@ ProtectSystem=strict
 # the other: systemd bind-mounts each ReadWritePaths entry separately, so a
 # rename between them is EXDEV even though one filesystem backs both. Every
 # temporary file is written in the directory it is renamed into.
-ReadWritePaths=PLATFORM_ROOT/logs/mirror PLATFORM_ROOT/logs/staging
+ReadWritePaths=/var/lib/haprion-ui/logs/mirror /var/lib/haprion-ui/logs/staging
 # tmpfs rather than yes: the key lives under /etc, not under a home directory,
 # so there is nothing to punch a hole for. This unit reads no home at all.
 ProtectHome=tmpfs

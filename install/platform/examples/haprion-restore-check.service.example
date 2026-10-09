@@ -2,9 +2,13 @@
 # Restores the newest dump into a scratch database and compares it with the live
 # one. A dump nobody has restored is a belief, not a backup.
 Description=Verify that the newest interface dump restores
-Documentation=file:///apps/haproxy-manager-dev/src/haproxy-manager/docs/user-manual.md
+Documentation=file:///opt/haprion-ui/current
 After=postgresql.service
 Requires=postgresql.service
+# Waits for the data directory's mount when it is one (the user manual's
+# "Where the data lives"): without it a late volume leaves this writing to the
+# root filesystem underneath it.
+RequiresMountsFor=/var/lib/haprion-ui
 
 [Service]
 Type=oneshot

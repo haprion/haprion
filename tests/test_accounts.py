@@ -48,6 +48,10 @@ SHELL_NAMES = {
     "POLLER_UNIT": "POLLER_UNIT",
     "WORKER_SUDOERS": "WORKER_SUDOERS",
     "POLLER_SUDOERS": "POLLER_SUDOERS",
+    "UI_ROOT": "UI_ROOT",
+    "UI_CONFIG": "UI_CONFIG",
+    "UI_SECRETS": "UI_SECRETS",
+    "UI_DATA": "UI_DATA",
 }
 
 
@@ -138,6 +142,8 @@ class TheNamesAgree(unittest.TestCase):
 
     def test_service_accounts_carry_the_underscore_and_the_operators_group_does_not(self) -> None:
         for name, value in module_names().items():
+            if name.startswith("UI_"):
+                continue  # places, not names
             with self.subTest(name=name):
                 if name in ("CONFIG_GROUP", "DATABASE") or name.endswith(("_UNIT", "_SUDOERS")):
                     self.assertFalse(value.startswith("_"))
@@ -161,6 +167,11 @@ class AnOldAnswersFile(unittest.TestCase):
         done = self.load('MANAGER_HOST="mgr.example.com"\nWEB_USER=svc-web\n')
         self.assertNotEqual(done.returncode, 0)
         self.assertIn("sets WEB_USER, which is no longer an answer", done.stderr)
+
+    def test_one_still_naming_the_platform_root_is_refused(self) -> None:
+        done = self.load('MANAGER_HOST="mgr.example.com"\nPLATFORM_ROOT=/srv/platform\n')
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("sets PLATFORM_ROOT, which is no longer an answer", done.stderr)
 
     def test_one_without_account_names_loads(self) -> None:
         done = self.load('MANAGER_HOST="mgr.example.com"\n')

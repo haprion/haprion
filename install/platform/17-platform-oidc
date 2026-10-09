@@ -13,7 +13,7 @@
 # This step makes:
 #
 #   /etc/haprion/oidc/<key id>.key    OIDC_USER, 0600 (directory 0500)
-#   PLATFORM_ROOT/config/oidc-keys/<id>.pub   root:PLATFORM_GROUP, 0640
+#   /etc/haprion/oidc-keys/<id>.pub    root:PLATFORM_GROUP, 0640
 #   haprion-oidc-helper.socket and @.service  the socket group is WEB_USER
 #
 # An installation that already has a pair keeps it; ROTATE=1 adds a second one
@@ -25,8 +25,6 @@ cd "$(dirname "$0")"
 source ../lib.sh
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT PLATFORM_GROUP WEB_USER OIDC_USER
-
 source_tree="${2:-}"
 [[ -n "$source_tree" && -d "$source_tree" ]] || die "usage: $0 <answers-file> <source-tree>"
 source_tree="$(cd "$source_tree" && pwd)"
@@ -43,7 +41,7 @@ id -u "$OIDC_USER" >/dev/null 2>&1 \
   first; it applies sysusers/haprion.conf."
 
 KEY_DIR="/etc/haprion/oidc"
-PUBLIC_DIR="${PLATFORM_ROOT}/config/oidc-keys"
+PUBLIC_DIR="/etc/haprion/oidc-keys"
 BINARY="/opt/haprion/current/bin/haprion-oidc-helper"
 
 step "The helper"
@@ -59,7 +57,7 @@ else
 fi
 
 step "Directories"
-[[ -d "${PLATFORM_ROOT}/config" ]] || die "${PLATFORM_ROOT}/config is missing; run 01-platform-prepare first"
+[[ -f "$UI_CONFIG" ]] || die "${UI_CONFIG} is missing; run 01-platform-prepare first"
 ensure_dir "$PUBLIC_DIR" "root:${PLATFORM_GROUP}" 750
 #
 # Root's while the pair is written, the helper's afterwards: the key tool
@@ -116,10 +114,10 @@ step "The web's half"
 for file in "$PUBLIC_DIR"/*.pub; do
     key_id="$(basename "$file" .pub)"
 done
-if grep -Eq '^\s*\[oidc\]\s*$' "${PLATFORM_ROOT}/config/ui.toml"; then
-    log "  ok       [oidc] in ${PLATFORM_ROOT}/config/ui.toml"
+if grep -Eq '^\s*\[oidc\]\s*$' "$UI_CONFIG"; then
+    log "  ok       [oidc] in ${UI_CONFIG}"
 else
-    warn "give the web interface the public key in ${PLATFORM_ROOT}/config/ui.toml and restart it:"
+    warn "give the web interface the public key in ${UI_CONFIG} and restart it:"
     warn "    [oidc]"
     warn "    public_key = \"${PUBLIC_DIR}/${key_id}.pub\""
 fi

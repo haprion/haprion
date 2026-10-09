@@ -19,7 +19,7 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT WEB_USER SERVER_NAME
+require_vars SERVER_NAME
 
 #
 # Defaulted rather than required, so an existing answers file keeps working.

@@ -26,7 +26,7 @@
 #
 set -Eeuo pipefail
 
-CONFIG=/apps/haproxy-manager/config/ui.toml
+CONFIG=/etc/haprion/ui.toml
 SERVICES=(haprion-web haprion-worker haprion-poller)
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
@@ -38,7 +38,7 @@ usage() { sed -n '3,8p' "$0" | sed 's/^# \?//'; exit 64; }
 
 [[ $EUID -eq 0 ]] || die "run this with sudo"
 
-platform_root=/apps/haproxy-manager
+platform_root=/opt/haprion-ui
 releases="${platform_root}/releases"
 link="${platform_root}/current"
 [[ -L "$link" ]] || die "${link} does not exist"

@@ -7,11 +7,11 @@
 # The web interface collects a DNS provider's credentials once, seals them
 # against this installation's public key, and stores only the ciphertext; the
 # root helper that runs certbot is the one holder of the private key. This step
-# makes that pair: the private key root-only under secrets/, the public key
-# group-readable under config/, both named by the key's identifier. An
-# installation that already has a pair gets nothing new - a key is replaced by
-# running the step with ROTATE=1, which adds a second pair beside the first so
-# the runtime policy can list both while profiles are re-entered.
+# makes that pair: the private key root-only under the secrets directory, the
+# public key group-readable beside ui.toml, both named by the key's identifier.
+# An installation that already has a pair gets nothing new - a key is replaced
+# by running the step with ROTATE=1, which adds a second pair beside the first
+# so the runtime policy can list both while profiles are re-entered.
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -20,15 +20,14 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT PLATFORM_GROUP
 source_tree="${2:-}"
 [[ -n "$source_tree" && -d "$source_tree" ]] || die "usage: $0 <answers-file> <source-tree>"
 source_tree="$(cd "$source_tree" && pwd)"
 tool="${source_tree}/tools/dns-profile-keys.py"
 [[ -f "$tool" ]] || die "${tool} is missing; this is not a source tree with the key tool"
 
-PRIVATE_DIR="${PLATFORM_ROOT}/secrets/dns-profile-keys"
-PUBLIC_DIR="${PLATFORM_ROOT}/config/dns-profile-keys"
+PRIVATE_DIR="${UI_SECRETS}/dns-profile-keys"
+PUBLIC_DIR="/etc/haprion/dns-profile-keys"
 POLICY="/etc/haprion/runtime-policy.yaml"
 PROFILE_DIR="/etc/haprion/dns-profiles"
 
@@ -45,8 +44,8 @@ else
 fi
 
 step "Directories"
-[[ -d "${PLATFORM_ROOT}/secrets" && -d "${PLATFORM_ROOT}/config" ]] \
-    || die "${PLATFORM_ROOT}/secrets and config are missing; run 01-platform-prepare first"
+[[ -d "$UI_SECRETS" && -f "$UI_CONFIG" ]] \
+    || die "${UI_SECRETS} and ${UI_CONFIG} are missing; run 01-platform-prepare first"
 ensure_dir "$PRIVATE_DIR" root:root 700
 ensure_dir "$PUBLIC_DIR"  "root:${PLATFORM_GROUP}" 750
 
@@ -98,7 +97,7 @@ else
     for file in "${PRIVATE_DIR}"/*.key; do
         warn "        - ${file}"
     done
-    warn "and give the web interface the public key in ${PLATFORM_ROOT}/config/ui.toml:"
+    warn "and give the web interface the public key in ${UI_CONFIG}:"
     warn "    [dns_profiles]"
     warn "    public_key = \"${PUBLIC_DIR}/<key id>.pub\""
 fi

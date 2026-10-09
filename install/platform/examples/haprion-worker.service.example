@@ -1,6 +1,6 @@
 [Unit]
 Description=Haprion job worker
-Documentation=file:///apps/haproxy-manager/current
+Documentation=file:///opt/haprion-ui/current
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -9,8 +9,8 @@ Type=exec
 User=_haprion-worker
 Group=_haprion-worker
 
-Environment=HAPROXY_UI_CONFIG=/apps/haproxy-manager/config/ui.toml
-ExecStart=/apps/haproxy-manager/current/venv/bin/haprion-worker
+Environment=HAPROXY_UI_CONFIG=/etc/haprion/ui.toml
+ExecStart=/opt/haprion-ui/current/venv/bin/haprion-worker
 
 Restart=on-failure
 RestartSec=5

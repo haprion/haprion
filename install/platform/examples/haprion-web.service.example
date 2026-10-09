@@ -1,6 +1,6 @@
 [Unit]
 Description=Haprion web interface
-Documentation=file:///apps/haproxy-manager/current
+Documentation=file:///opt/haprion-ui/current
 After=network-online.target postgresql.service
 Wants=network-online.target
 
@@ -11,8 +11,8 @@ Group=_haprion-web
 
 # The release, not a checkout. Switching `current` and restarting is the whole
 # deployment; rolling back is switching it and restarting again.
-Environment=HAPROXY_UI_CONFIG=/apps/haproxy-manager/config/ui.toml
-ExecStart=/apps/haproxy-manager/current/venv/bin/uvicorn \
+Environment=HAPROXY_UI_CONFIG=/etc/haprion/ui.toml
+ExecStart=/opt/haprion-ui/current/venv/bin/uvicorn \
     --factory haproxy_ui.app:create_app \
     --host 127.0.0.1 --port 8080 \
     --no-server-header --proxy-headers --forwarded-allow-ips=127.0.0.1

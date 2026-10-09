@@ -20,16 +20,11 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT DB_NAME WEB_USER WORKER_USER POLLER_USER
 
 units=("${WORKER_UNIT%.service}" "${POLLER_UNIT%.service}")
 
-link="${PLATFORM_ROOT}/current"
+link="${UI_ROOT}/current"
 [[ -L "$link" ]] || die "${link} does not exist. Install a release first."
-
-render() {
-    sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" "$1"
-}
 
 step "The poller's one privilege"
 #
@@ -255,9 +250,9 @@ ensure_dir /etc/haprion/ndes-requests root:root 700
 
 step "Units"
 install_file "/etc/systemd/system/${WORKER_UNIT}" root:root 644 \
-    "$(render "examples/haprion-worker.service.example")"
+    "$(cat examples/haprion-worker.service.example)"
 install_file "/etc/systemd/system/${POLLER_UNIT}" root:root 644 \
-    "$(render "examples/haprion-poller.service.example")"
+    "$(cat examples/haprion-poller.service.example)"
 systemctl daemon-reload
 log "  reloaded systemd"
 
@@ -371,12 +366,12 @@ refuse "$WEB_USER" "has no certificate delete grant" \
     sudo -n -l /opt/haprion/current/bin/haprion-cert-delete-helper
 refuse "$POLLER_USER" "has no certificate delete grant" \
     sudo -n -l /opt/haprion/current/bin/haprion-cert-delete-helper
-if [[ -d "${PLATFORM_ROOT}/secrets/dns-profile-keys" ]]; then
+if [[ -d "${UI_SECRETS}/dns-profile-keys" ]]; then
     while IFS= read -r key; do
         refuse "$WEB_USER" "cannot read a DNS profile private key" test -r "$key"
         refuse "$WORKER_USER" "cannot read a DNS profile private key" test -r "$key"
         refuse "$POLLER_USER" "cannot read a DNS profile private key" test -r "$key"
-    done < <(find "${PLATFORM_ROOT}/secrets/dns-profile-keys" -maxdepth 1 -type f -name '*.key')
+    done < <(find "${UI_SECRETS}/dns-profile-keys" -maxdepth 1 -type f -name '*.key')
 fi
 refuse "$POLLER_USER" "cannot write a job row" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \

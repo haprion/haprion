@@ -34,9 +34,7 @@ class PreparedReleaseTests(unittest.TestCase):
         self.assertIn("script.py.mako", self.installer)
 
     def test_migrate_can_name_one_prepared_release(self) -> None:
-        self.assertIn(
-            'migration_root="${PLATFORM_ROOT}/releases/${release_id}/migration"', self.migrate
-        )
+        self.assertIn('migration_root="${UI_ROOT}/releases/${release_id}/migration"', self.migrate)
         self.assertIn('exec "$alembic" -c alembic.ini "$@"', self.migrate)
 
     def test_release_id_cannot_escape_the_release_root(self) -> None:
@@ -171,7 +169,8 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
     them while sending an installed release's module flags it did not know:
     only running it shows what it hands the module. The wrapper is copied
     unchanged; its `../lib.sh` is the real one with the root check alone left
-    out, because `$EUID` cannot be faked.
+    out, because `$EUID` cannot be faked, and its `accounts.sh` the real one
+    with the release root moved into the test's directory.
     """
 
     def setUp(self) -> None:
@@ -179,8 +178,13 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         self.addCleanup(shutil.rmtree, work)
         (work / "platform").mkdir()
         shutil.copy2(ROOT / "install/platform/check-compatibility", work / "platform")
-        (work / "lib.sh").write_text(f'source "{ROOT / "install/lib.sh"}"\nneed_root() {{ :; }}\n')
         self.root = work / "root"
+        (work / "lib.sh").write_text((ROOT / "install/lib.sh").read_text() + "need_root() { :; }\n")
+        (work / "accounts.sh").write_text(
+            (ROOT / "install/accounts.sh")
+            .read_text()
+            .replace("readonly UI_ROOT=/opt/haprion-ui", f"readonly UI_ROOT={self.root}")
+        )
         for release in ("current-release", "candidate"):
             python = self.root / "releases" / release / "venv/bin/python"
             python.parent.mkdir(parents=True)
@@ -188,7 +192,7 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
             python.chmod(0o755)
         (self.root / "current").symlink_to(self.root / "releases/current-release")
         self.answers = work / "answers.env"
-        self.answers.write_text(f"PLATFORM_ROOT={self.root}\n")
+        self.answers.write_text("")
         self.record = work / "arguments"
         self.wrapper = work / "platform/check-compatibility"
 

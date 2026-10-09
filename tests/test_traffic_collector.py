@@ -1073,8 +1073,8 @@ class WhatTheInstallationStepWrites(unittest.TestCase):
                 "svc-logread",
                 "/etc/haprion/traffic-collector/id_ed25519",
                 "/etc/haprion/traffic-collector/known_hosts",
-                "/apps/haproxy-manager/logs/mirror",
-                "/apps/haproxy-manager/logs/staging",
+                "/var/lib/haprion-ui/logs/mirror",
+                "/var/lib/haprion-ui/logs/staging",
                 "haproxy_ui",
                 "/var/run/postgresql",
                 *inventory,
@@ -1106,8 +1106,8 @@ class WhatTheInstallationStepWrites(unittest.TestCase):
                 ("beta", "node-c", "node-c.example.com"),
             ],
         )
-        self.assertEqual(config.mirror, Path("/apps/haproxy-manager/logs/mirror"))
-        self.assertEqual(config.staging, Path("/apps/haproxy-manager/logs/staging"))
+        self.assertEqual(config.mirror, Path("/var/lib/haprion-ui/logs/mirror"))
+        self.assertEqual(config.staging, Path("/var/lib/haprion-ui/logs/staging"))
 
     def test_a_node_whose_name_is_its_hostname_is_rendered_whole(self) -> None:
         """`node_host` returns the whole entry when there is no colon."""
@@ -1137,11 +1137,7 @@ class TheCollectorUnits(unittest.TestCase):
         self.rendered = {}
         for kind in ("service", "timer"):
             source = INSTALL / "examples" / f"haprion-traffic-collector.{kind}.example"
-            self.rendered[kind] = (
-                source.read_text()
-                .replace("PLATFORM_ROOT", "/apps/haproxy-manager")
-                .replace("COLLECTOR_USER", "_haprion-collector")
-            )
+            self.rendered[kind] = source.read_text().replace("COLLECTOR_USER", "_haprion-collector")
 
     def test_it_runs_as_the_collector_and_may_gain_nothing(self) -> None:
         service = self.rendered["service"]
@@ -1153,11 +1149,11 @@ class TheCollectorUnits(unittest.TestCase):
             "ExecStart=/opt/haprion/current/bin/haprion-traffic-collector",
             service,
         )
-        self.assertNotIn("/apps/haproxy-manager/current/venv", service)
+        self.assertNotIn("/opt/haprion-ui/current/venv", service)
 
     def test_it_may_write_only_the_mirror_and_staging(self) -> None:
         self.assertIn(
-            "ReadWritePaths=/apps/haproxy-manager/logs/mirror /apps/haproxy-manager/logs/staging",
+            "ReadWritePaths=/var/lib/haprion-ui/logs/mirror /var/lib/haprion-ui/logs/staging",
             self.rendered["service"],
         )
         self.assertIn("ProtectSystem=strict", self.rendered["service"])

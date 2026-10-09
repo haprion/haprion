@@ -21,6 +21,7 @@ class RedactionHappensBeforePersistence(unittest.TestCase):
                 password_assignment,
                 "read /root/.ssh/id_example",
                 "read /run/secrets/example",
+                "read /etc/haprion/ui-secrets/dns-profile-keys/example.key",
                 "read /etc/ssl/private/example.pem",
                 "read /srv/certificates/haproxy/example.pem",
                 "read /srv/haprion/validation/certs/example.pem",
@@ -35,12 +36,13 @@ class RedactionHappensBeforePersistence(unittest.TestCase):
             "synthetic-password-value",
             "id_example",
             "/run/secrets/",
+            "/etc/haprion/ui-secrets/",
             "/etc/ssl/private/",
             "/srv/certificates/",
             "/srv/haprion/validation/",
         ):
             self.assertNotIn(private, excerpt)
-        self.assertGreaterEqual(excerpt.count(diagnostics.REDACTED), 8)
+        self.assertGreaterEqual(excerpt.count(diagnostics.REDACTED), 9)
 
     def test_a_private_key_cut_at_either_capture_edge_is_still_masked(self) -> None:
         beginning = "-----BEGIN " + "PRIVATE KEY-----\nsynthetic-key-prefix"

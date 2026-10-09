@@ -16,7 +16,6 @@ source ../lib.sh
 need_root
 load_answers "${1:-}"
 shift
-require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER
 
 release_id=""
 before_migration=0
@@ -37,12 +36,12 @@ done
 [[ "$before_migration" -eq 0 || -n "$release_id" ]] \
     || die "--before-migration requires --release"
 
-python_root="${PLATFORM_ROOT}/current"
+python_root="${UI_ROOT}/current"
 extra_args=()
 if [[ -n "$release_id" ]]; then
     [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
         || die "invalid release id: ${release_id}"
-    python_root="${PLATFORM_ROOT}/releases/${release_id}"
+    python_root="${UI_ROOT}/releases/${release_id}"
     extra_args+=(--ui-release "$release_id" --skip-services)
 fi
 if [[ "$before_migration" -eq 1 ]]; then
@@ -51,7 +50,7 @@ fi
 
 CLI_ROOT="${CLI_ROOT:-/opt/haprion}"
 ui_lines="$("${python_root}/venv/bin/python" - \
-    "${PLATFORM_ROOT}/config/ui.toml" <<'PY'
+    "$UI_CONFIG" <<'PY'
 import sys
 from pathlib import Path
 
@@ -85,7 +84,7 @@ if [[ "$traffic_logs_enabled" == "enabled" ]]; then
 fi
 
 exec "${python_root}/venv/bin/python" -m haproxy_ui.compatibility \
-    --platform-root "$PLATFORM_ROOT" \
+    --platform-root "$UI_ROOT" \
     --cli-root "$CLI_ROOT" \
     --database "$DB_NAME" \
     --database-role "$DB_MIGRATION_ROLE" \

@@ -74,16 +74,16 @@ port = 8080
 # The unfiltered page shows the newest database records. Filters use the
 # retained daily partitions and show the newest max_lines matches (1-10000).
 # enabled = true
-# directory = "/apps/haproxy-manager/logs/mirror"
+# directory = "/var/lib/haprion-ui/logs/mirror"
 # max_lines = 500
 # retention_days = 7
 
 # [dns_profiles]
 # The public half of the key pair platform step 15 made. DNS provider
 # credentials entered in the interface are sealed against it before they are
-# stored; the private half is root's, under secrets/, and this process never
+# stored; the private half is root's, among the secrets, and this process never
 # reads it. Absent, the interface offers no provider profiles.
-# public_key = "/apps/haproxy-manager/config/dns-profile-keys/<key id>.pub"
+# public_key = "/etc/haprion/dns-profile-keys/<key id>.pub"
 
 
 # [oidc]
@@ -91,4 +91,4 @@ port = 8080
 # secret typed in the interface is sealed against it before it is stored; the
 # OIDC helper holds the private half and this process never reads it. Absent,
 # Settings -> Users -> OIDC configuration says the helper is not installed.
-# public_key = "/apps/haproxy-manager/config/oidc-keys/<key id>.pub"
+# public_key = "/etc/haprion/oidc-keys/<key id>.pub"

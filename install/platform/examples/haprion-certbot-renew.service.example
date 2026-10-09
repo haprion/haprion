@@ -1,6 +1,6 @@
 [Unit]
 Description=Haprion certbot renewal
-Documentation=file:///apps/haproxy-manager/current
+Documentation=file:///opt/haprion/current
 
 # The distribution's certbot.timer runs /usr/bin/certbot; this one runs the
 # locked environment's, against the same /etc/letsencrypt. One certbot owns the

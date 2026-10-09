@@ -43,8 +43,8 @@ profile-aware dry-run renewal wrapper, and moves renewal onto it. Rerun with a n
 the previous release is restored if the dry run fails.
 
 Step 15 makes the key pair that seals DNS provider credentials between the web
-interface and the root helper: private key under `secrets/`, public key under
-`config/`, never overwritten.
+interface and the root helper: private key under `/etc/haprion/ui-secrets/`,
+public key under `/etc/haprion/dns-profile-keys/`, never overwritten.
 
 The order is not arbitrary. A release is first prepared without moving `current`.
 Its own immutable migration bundle prepares the schema, and its compatibility is
@@ -86,10 +86,23 @@ the release just activated and the one it replaced.
 
 ## Step 1 — the filesystem
 
-Creates the release layout and the directories that outlive a release. Config,
-secrets and data sit *beside* the releases rather than inside one, because a
-release is replaced wholesale and rolled back by pointing `current` somewhere
-else; anything that must survive that cannot live within it.
+Creates the release layout and the directories that outlive a release, each
+where Debian puts its kind:
+
+```text
+/opt/haprion-ui/releases/<version>-<commit>/   the releases, and current
+/etc/haprion/ui.toml                           root-owned, readable by the platform group
+/etc/haprion/ui-secrets/                       root-only, granted one file at a time
+/var/lib/haprion-ui/dumps/                     database backups, root-only
+/var/lib/haprion-ui/logs/                      the traffic-log mirror (step 13)
+```
+
+Configuration, secrets and data live *outside* the releases, because a release
+is replaced wholesale and rolled back by pointing `current` somewhere else;
+anything that must survive that cannot live within it. The places are fixed,
+not answers. What grows with traffic belongs on a volume of its own, mounted at
+`/var/lib/haprion-ui` rather than configured elsewhere — see
+[Where the data lives](../../docs/user-manual.md#where-the-data-lives).
 
 It also creates the read-only group the three services use to reach
 configuration. A shared **group**, where a shared **user** would be the mistake:
@@ -320,7 +333,7 @@ one the process believes it has. Running as the wrong role otherwise looks
 exactly like running correctly, until something is denied — or allowed.
 
 The example `ui.toml` has management writes on; a file without the line reads
-as off. That flag lives in `config/ui.toml` rather than in a release, because
+as off. That flag lives in `/etc/haprion/ui.toml` rather than in a release, because
 turning it off is the documented rollback for the write path, and that should
 not require a build.
 
@@ -427,7 +440,7 @@ row counts against the live database table by table, requires the account table
 to be non-empty, and reads one password hash back in full — counts can match
 while the contents are unusable.
 
-`/apps/haproxy-manager/data/dumps` still has to be picked up by an off-machine
+`/var/lib/haprion-ui/dumps` still has to be picked up by an off-machine
 backup. Nothing there survives losing the host.
 
 ## The first account
@@ -474,7 +487,7 @@ management host already reaches every node over SSH for configuration, status
 and certificates, so this adds one key on a path the product already requires.
 
 **The collector is not one of the three application accounts and joins no filesystem group.**
-Its database role can only insert traffic rows; it has no sudo rule and cannot read `secrets/`, `ui.toml` or
+Its database role can only insert traffic rows; it has no sudo rule and cannot read `ui-secrets/`, `ui.toml`, the dumps or
 any other identity's key. What it owns is one SSH key whose far end is a forced
 command that can do nothing but return one validated day of one node's traffic
 log. The step proves that boundary rather than describing it, with traversal
@@ -492,12 +505,13 @@ The step takes the keys this host already accepted for its existing paths, and
 refuses to continue if a node is missing from them — the honest fix is to accept
 that one deliberately, once, through the path that already exists.
 
-**The mirror is a sibling of `data/`, not a directory inside it.** Reaching a
-mirror under `data/logs` would mean opening `data/` for traversal by the web
-account, and `data/dumps` beside it holds every session and every audit record
-in one file. The mirror directory is set-group-id so files land in the web
-account's group: the collector is not a member of that group and so could not
-otherwise create a file the interface can read.
+**The dumps beside the mirror are closed by their own mode.** The web account
+traverses `/var/lib/haprion-ui` to reach the mirror, and `dumps/` there holds
+every session and every audit record in one file, so it is `0700 root` and the
+step proves that neither the web account nor the collector can enter it. The
+mirror directory is set-group-id so files land in the web account's group: the
+collector is not a member of that group and so could not otherwise create a
+file the interface can read.
 
 ## Step 17 — the OIDC helper
 
@@ -509,7 +523,7 @@ nothing else, and keeps doing so: every request to the provider goes through
 
 The step makes the key pair the web seals the client secret against: the
 private key in `/etc/haprion/oidc/` (the helper's account, 0600, in a
-0500 directory), the public key in `config/oidc-keys/`. A second run keeps the
+0500 directory), the public key in `/etc/haprion/oidc-keys/`. A second run keeps the
 pair; `ROTATE=1` adds one, and the client secret is then saved again. It
 installs the socket (group `_haprion-web`) and the per-request service.
 

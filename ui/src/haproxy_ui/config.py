@@ -20,7 +20,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONFIG_PATH = Path("/apps/haproxy-manager/config/ui.toml")
+from haproxy_mgmt import accounts
+
+DEFAULT_CONFIG_PATH = Path(accounts.UI_CONFIG)
+DEFAULT_LOG_DIRECTORY = f"{accounts.UI_DATA}/logs/mirror"
 MAX_CONFIG_BYTES = 1024 * 1024
 
 ALLOWED_KEYS = frozenset(
@@ -194,20 +197,18 @@ class Config:
     poller: Poller
     #
     # Off unless a deployment says otherwise, and defaulted to the mirror the
-    # platform step creates. Not data/logs: reaching that would mean opening
-    # data/ for traversal by this account, and data/dumps beside it holds every
-    # session and every audit record in one file (B123).
+    # platform step creates (B123).
     #
     traffic_logs: TrafficLogs = TrafficLogs(
         enabled=False,
-        directory=Path("/apps/haproxy-manager/logs/mirror"),
+        directory=Path(DEFAULT_LOG_DIRECTORY),
         max_lines=500,
         retention_days=7,
     )
     #
     # The public half of the pair platform step 15 made (B146): what DNS
     # provider credentials entered here are sealed against before they are
-    # stored. The private half is root's, under secrets/, and this process
+    # stored. The private half is root's, among the secrets, and this process
     # never learns it. Absent, the interface offers no provider profiles.
     #
     dns_profiles_public_key: Path | None = None
@@ -332,7 +333,7 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
     if demo_fixture and clusters:
         raise ConfigError("demo_fixture requires clusters = []")
 
-    log_directory_value = traffic_logs.get("directory", "/apps/haproxy-manager/logs/mirror")
+    log_directory_value = traffic_logs.get("directory", DEFAULT_LOG_DIRECTORY)
     if not isinstance(log_directory_value, str) or not log_directory_value:
         raise ConfigError("traffic_logs.directory must be a non-empty string")
     log_directory = Path(log_directory_value)

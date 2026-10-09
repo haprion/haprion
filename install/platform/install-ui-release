@@ -29,8 +29,6 @@ if [[ "${1:-}" == "--prepare" ]]; then
 fi
 load_answers "${1:-}"
 source_tree="${2:-}"
-require_vars PLATFORM_ROOT PLATFORM_GROUP WEB_USER
-
 [[ -n "$source_tree" ]] \
     || die "usage: $(basename "$0") [--prepare] <answers-file> <source-tree>"
 [[ -d "${source_tree}/ui" ]] || die "not a source tree: ${source_tree}"
@@ -56,7 +54,7 @@ version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "${source_tree}/ui/pyproject.tom
 release_id="${version}-${commit}"
 log "  ok       ${release_id}"
 
-release="${PLATFORM_ROOT}/releases/${release_id}"
+release="${UI_ROOT}/releases/${release_id}"
 
 step "Building"
 if [[ -d "$release" ]]; then
@@ -279,7 +277,7 @@ if systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
 fi
 
 step "Activating"
-link="${PLATFORM_ROOT}/current"
+link="${UI_ROOT}/current"
 #
 # `readlink` without -f, deliberately. -f canonicalises a path even when the
 # link is absent, so it answers with the link's own path and the "was ..." line
@@ -370,7 +368,7 @@ install_file /usr/local/sbin/haprion-user root:root 755 "$(cat <<EOF
 # it. Root only; it connects as the migration role, which is the only identity
 # allowed to write the account table.
 #
-exec ${PLATFORM_ROOT}/current/venv/bin/haprion-user "\$@"
+exec ${UI_ROOT}/current/venv/bin/haprion-user "\$@"
 EOF
 )"
 
@@ -400,8 +398,7 @@ step "The rollback command"
 # command that lives inside the release it is rolling away from is a command
 # that can be replaced by the very switch it is performing.
 #
-install_file /usr/local/sbin/haprion-rollback root:root 755 \
-    "$(sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" bin/haprion-rollback)"
+install_file /usr/local/sbin/haprion-rollback root:root 755 "$(cat bin/haprion-rollback)"
 
 echo
 log "release ${release_id} is current"

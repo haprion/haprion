@@ -1,4 +1,4 @@
-"""The installation's own accounts, groups and database names, fixed (B266).
+"""The installation's own accounts, groups, database names and places, fixed (B266).
 
 They used to be answers - each installation named its own - and every script,
 sudoers file and unit then had to be rendered from those answers. Fixed, the
@@ -37,6 +37,14 @@ POLLER_SUDOERS = "haprion-poller"
 # account: root reaches it through pg_ident.
 DATABASE = "haprion"
 MIGRATION_ROLE = "_haprion-migrate"
+
+# Where the web platform lives: Debian's places for code, configuration and
+# state. What grows with traffic is put on a volume of its own by mounting it
+# at these paths, never by moving them.
+UI_ROOT = "/opt/haprion-ui"
+UI_CONFIG = "/etc/haprion/ui.toml"
+UI_SECRETS = "/etc/haprion/ui-secrets"
+UI_DATA = "/var/lib/haprion-ui"
 
 # Each node.
 TRIGGER = "_haprion-trigger"

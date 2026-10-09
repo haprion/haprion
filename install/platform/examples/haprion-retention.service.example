@@ -1,7 +1,7 @@
 [Unit]
 # Keeps jobs and metric history bounded. Rendered by 11-platform-retention.
 Description=Roll up metrics and prune bounded Haprion history
-Documentation=file:///apps/haproxy-manager-dev/src/haproxy-manager/docs/user-manual.md
+Documentation=file:///opt/haprion-ui/current
 After=postgresql.service
 Requires=postgresql.service
 

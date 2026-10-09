@@ -26,7 +26,7 @@ _SECRET_ASSIGNMENT = re.compile(
     r"(?im)(\b[a-z0-9_.-]*(?:token|password|secret)[a-z0-9_.-]*\s*(?:=|:)\s*)[^\r\n]*"
 )
 _SENSITIVE_PATH = re.compile(
-    r"(?i)(?<![^\s\"'<>])(?=[^\s\"'<>]*(?:\.ssh(?:/|$)|/secrets/|"
+    r"(?i)(?<![^\s\"'<>])(?=[^\s\"'<>]*(?:\.ssh(?:/|$)|/secrets/|/ui-secrets(?:/|$)|"
     r"/etc/ssl/private/|/srv/certificates(?:/|$)|"
     r"/srv/haprion/validation(?:/|$)))[^\s\"'<>]+"
 )

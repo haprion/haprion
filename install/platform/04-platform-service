@@ -15,24 +15,20 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT WEB_USER
 
 unit_name="${WEB_UNIT%.service}"
 WEB_PORT="${WEB_PORT:-8080}"
 
 unit="/etc/systemd/system/${unit_name}.service"
-[[ -L "${PLATFORM_ROOT}/current" ]] \
-    || die "${PLATFORM_ROOT}/current does not exist. Install a release first."
+[[ -L "${UI_ROOT}/current" ]] \
+    || die "${UI_ROOT}/current does not exist. Install a release first."
 
 step "Unit"
 #
-# Rendered from the example rather than copied, so the paths come from the
-# answers file like everything else. The example is what a reader reviews; this
-# is what runs.
+# Rendered from the example rather than copied, so the port comes from the
+# answers file. The example is what a reader reviews; this is what runs.
 #
-rendered="$(sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" \
-                -e "s|--port 8080|--port ${WEB_PORT}|" \
-                examples/haprion-web.service.example)"
+rendered="$(sed -e "s|--port 8080|--port ${WEB_PORT}|" examples/haprion-web.service.example)"
 install_file "$unit" root:root 644 "$rendered"
 
 systemctl daemon-reload

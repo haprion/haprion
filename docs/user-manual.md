@@ -3191,7 +3191,7 @@ acme:
   dns_profiles:
     directory: /etc/haprion/dns-profiles
     private_keys:
-      - /srv/platform/secrets/dns-profile-keys/0123456789abcdef.key
+      - /etc/haprion/ui-secrets/dns-profile-keys/0123456789abcdef.key
 ```
 
 `certbot` names the binary the helper runs: the locked environment's, once [The certbot environment](#the-certbot-environment) has installed it.
@@ -3297,8 +3297,8 @@ Platform step 15 makes the pair, under the platform root of the answers file it 
 sudo ./install/platform/15-platform-dns-keys answers.env /path/to/source-tree
 ```
 
-The private key lands in `secrets/dns-profile-keys/<key id>.key`, root-only; the public key in
-`config/dns-profile-keys/<key id>.pub`, readable by the platform group. The key id is a digest of
+The private key lands in `/etc/haprion/ui-secrets/dns-profile-keys/<key id>.key`, root-only; the
+public key in `/etc/haprion/dns-profile-keys/<key id>.pub`, readable by the platform group. The key id is a digest of
 the public key, so it is read off either file rather than assigned, and a stored profile names the
 id it was sealed against. Both files are one tagged line, and a private key placed where a public
 one belongs is refused by its tag. The step proves the pair by sealing and opening a message
@@ -3312,14 +3312,14 @@ acme:
   dns_profiles:
     directory: /etc/haprion/dns-profiles
     private_keys:
-      - /srv/platform/secrets/dns-profile-keys/0123456789abcdef.key
+      - /etc/haprion/ui-secrets/dns-profile-keys/0123456789abcdef.key
 ```
 
-and the web interface's `config/ui.toml` names the public key:
+and the web interface's `/etc/haprion/ui.toml` names the public key:
 
 ```toml
 [dns_profiles]
-public_key = "/srv/platform/config/dns-profile-keys/0123456789abcdef.pub"
+public_key = "/etc/haprion/dns-profile-keys/0123456789abcdef.pub"
 ```
 
 A new runtime policy key costs a CLI release before the policy is edited, and a platform release
@@ -4083,20 +4083,24 @@ is what you follow; this section explains the shape.
 #### What is installed where
 
 ```text
-/apps/haproxy-manager/
+/opt/haprion-ui/
 ├── current -> releases/<version>-<commit>/
 ├── releases/<version>-<commit>/venv/
-├── releases/<version>-<commit>/migration/
-├── config/          ui.toml, root-owned, readable by the platform group
-├── secrets/         root-only, granted one file at a time
-└── data/
-    ├── dumps/       database backups, root-only
-    └── logs/
+└── releases/<version>-<commit>/migration/
+/etc/haprion/
+├── ui.toml          root-owned, readable by the platform group
+├── ui-secrets/      root-only, granted one file at a time
+├── dns-profile-keys/, oidc-keys/   public keys, readable by the platform group
+└── ui-admin.conf    the database and role the root commands use
+/var/lib/haprion-ui/
+├── dumps/           database backups, root-only
+└── logs/            the traffic-log mirror
 ```
 
-Config, secrets and data sit **beside** the releases rather than inside one. A
-release is replaced wholesale and rolled back by pointing `current` elsewhere,
-so anything that has to survive that cannot live within it.
+Configuration, secrets and data live **outside** the releases, each where
+Debian puts its kind. A release is replaced wholesale and rolled back by
+pointing `current` elsewhere, so anything that has to survive that cannot live
+within it. The places are fixed rather than answers, like the account names.
 
 A release is a commit, and the installer refuses to build one from a source tree
 with uncommitted changes. It is built at its final path against the system
@@ -4157,8 +4161,16 @@ logs. A full root filesystem stops far more than Haprion - journald, apt,
 logins - so a busy week must fill a volume that was sized for it, not `/`. The
 reference host has a separate volume mounted at `/apps` for exactly this, and
 everything that grows lives on it, each under the path the package expects
-through a bind mount, as below. The platform's `data/` directory (dumps and the
-mirror) belongs on the same volume.
+through a bind mount, as below. The platform's `/var/lib/haprion-ui` (dumps and
+the mirror) belongs on the same volume, mounted the same way:
+
+```text
+# /etc/fstab
+/apps/haprion-ui  /var/lib/haprion-ui  none  bind,x-systemd.requires-mounts-for=/apps  0 0
+```
+
+The units that write there wait for that mount (`RequiresMountsFor`), so a
+volume that comes up late does not leave a dump on the root filesystem under it.
 
 Put the cluster's storage on that volume, and keep the
 package's path. The reference host mounts the platform volume at `/apps`, and
@@ -4429,8 +4441,8 @@ small identity and a timer that asks each node for its own traffic log. Optional
 production only, and last: nothing else on the platform depends on it.
 
 ```text
-${PLATFORM_ROOT}/logs/mirror     collector writes freshness metadata, the interface reads
-${PLATFORM_ROOT}/logs/staging    the collector's alone
+/var/lib/haprion-ui/logs/mirror     collector writes freshness metadata, the interface reads
+/var/lib/haprion-ui/logs/staging    the collector's alone
 /etc/haprion/traffic-collector/{id_ed25519,known_hosts}
 /etc/haprion/traffic-collector.json
 ```
@@ -4463,9 +4475,10 @@ evidence.
 pinned key yet, the step refuses and says so; accept that one deliberately,
 once, through the path that already exists.
 
-**The mirror is a sibling of `data/`.** Reaching a mirror under `data/logs`
-would mean opening `data/` for traversal by the web account, and `data/dumps`
-holds every session and every audit record in one file. The mirror directory is
+**The dumps beside the mirror are closed by their own mode.** The web account
+traverses `/var/lib/haprion-ui` to reach the mirror, and `dumps/` there holds
+every session and every audit record in one file, so it is `0700 root`; the step
+proves neither the web account nor the collector can enter it. The mirror directory is
 set-group-id, because the collector is deliberately outside the web account's
 group and could not otherwise create a file the interface can read.
 

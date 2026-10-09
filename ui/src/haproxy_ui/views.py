@@ -1836,7 +1836,7 @@ def build_router(config: Config) -> APIRouter:
         # this object that not every node took is said until the next one.
         #
         servers_busy: str | None = None
-        servers_partial = False
+        servers_missed = ""
         if servers is not None:
             with request.app.state.pool.connection() as connection:
                 recent = db.recent_jobs(connection, cluster=cluster)
@@ -1849,11 +1849,17 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 None,
             )
-            servers_partial = (
-                last is not None
-                and last.state not in {"pending", "running"}
-                and last.outcome != "done"
-            )
+            #
+            # What the last one did, in its own words (review 26-10-09, F7):
+            # `partial` is a node that did not take it, anything else that is
+            # not `done` is a change that was not made at all - a refusal before
+            # any node was asked among them.
+            #
+            if last is not None and last.state not in {"pending", "running"}:
+                if last.outcome == "partial":
+                    servers_missed = "Not every node took the last change."
+                elif last.outcome != "done":
+                    servers_missed = "The last change was not made."
         return TEMPLATES.TemplateResponse(
             request,
             "object.html",
@@ -1862,7 +1868,7 @@ def build_router(config: Config) -> APIRouter:
                 "servers": servers,
                 "servers_notice": SERVER_NOTICES.get(request.query_params.get("servers", "")),
                 "servers_busy": servers_busy,
-                "servers_partial": servers_partial,
+                "servers_missed": servers_missed,
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),

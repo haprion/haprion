@@ -42,7 +42,6 @@ def _public_web(sessions: tuple[int, int, int]) -> list[dict[str, Any]]:
             "status": status,
             "check_status": "L4OK",
             "admin": admin,
-            "weight": 1,
             "counters": {"scur": count},
         }
         for index, (status, admin, count) in enumerate(

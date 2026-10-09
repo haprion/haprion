@@ -290,6 +290,32 @@ class EveryNodeIsAskedForEveryServer(HelperFixture):
         assert document is not None
         self.assertEqual(document["outcome"], "partial")
 
+    def test_a_node_that_hangs_is_not_asked_again(self) -> None:
+        """Review 26-10-09, F4: thirty seconds per server ran past the worker's limit."""
+
+        asked: list[tuple[str, str]] = []
+
+        def ask(
+            node: Node, identity: DeployIdentity, guid: str, state: str
+        ) -> subprocess.CompletedProcess[str]:
+            asked.append((node.name, guid))
+            if node.name == self.nodes[0]:
+                raise subprocess.TimeoutExpired(["ssh"], 30)
+            return node_said(guid, state)
+
+        _, document, _ = self.run_helper(
+            "shop", ["web/198.51.100.10:8080", "web/198.51.100.11:8080"], "drain", ask=ask
+        )
+
+        assert document is not None
+        self.assertEqual(document["outcome"], "partial")
+        self.assertEqual([guid for node, guid in asked if node == self.nodes[0]], [WEB_10])
+        self.assertEqual([guid for node, guid in asked if node == self.nodes[1]], [WEB_10, WEB_11])
+        result = document["result"]
+        assert isinstance(result, dict)
+        hung = next(entry for entry in result["nodes"] if entry["node"] == self.nodes[0])
+        self.assertIn("not asked", hung["servers"][1]["message"])
+
 
 class NothingIsSentForARequestThatIsWrong(HelperFixture):
     def refused(

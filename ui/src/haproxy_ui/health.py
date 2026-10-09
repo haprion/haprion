@@ -339,6 +339,31 @@ def _admin(value: Any) -> str | None:
     return value if isinstance(value, str) and value in ADMIN_STATES else None
 
 
+def vip_owner(status: Any) -> bool | None:
+    """Whether a node says it holds its cluster's VIP; None when it did not say."""
+
+    vip = status.get("vip") if isinstance(status, Mapping) else None
+    held = vip.get("owner") if isinstance(vip, Mapping) else None
+    return held if isinstance(held, bool) else None
+
+
+def answers_for(held_only: bool, owner: bool | None) -> bool:
+    """Whether a node's check answers for an object's servers.
+
+    An object that leaves from a source address can only be checked from the
+    node that carries it. The other one runs the same check, binds an address
+    it does not have, and reports the backend down - which is HAProxy telling
+    the truth about the binding and a lie about the backend. A syslog object
+    leaves from no address, but its messages pass only the VIP holder, and the
+    same holds (Fas 19b B5). A node that did not say whether it owns the VIP
+    answers: hiding a node on a fact nobody stated is worse than one row too
+    many. One rule for the lamp, the editor's card and the Servers card (review
+    26-10-09, F3).
+    """
+
+    return not (held_only and owner is False)
+
+
 def member_health(row: Mapping[str, Any]) -> ServerHealth:
     """One server row of a stored status document, read the way the engine reads it."""
 
@@ -352,7 +377,6 @@ def member_health(row: Mapping[str, Any]) -> ServerHealth:
         last_change_sec=_count(row.get("last_change_sec")),
         counters=_counters(row.get("counters")),
         admin=_admin(row.get("admin")),
-        weight=_count(row.get("weight")),
     )
 
 
@@ -397,34 +421,16 @@ def backend_health(
             for row in rows_for_node
             if row.get("backend") in (name, legacy) and _is_member(row)
         )
-        status = entry.get("status")
-        vip = status.get("vip") if isinstance(status, dict) else None
-        held = vip.get("owner") if isinstance(vip, dict) else None
         nodes.append(
             NodeMembers(
                 node=str(entry.get("name", "")),
                 members=members,
                 said=said,
-                vip_owner=held if isinstance(held, bool) else None,
+                vip_owner=vip_owner(entry.get("status")),
             )
         )
 
-    #
-    # An object that leaves from a source address can only be checked from the
-    # node that carries it. The other one runs the same check, binds an address
-    # it does not have, and reports the backend down - which is HAProxy telling the
-    # truth about the binding and a lie about the backend.
-    #
-    # A node that did not say whether it owns the VIP is kept. Hiding a node on
-    # a fact nobody stated is worse than one row too many.
-    #
-    #
-    # A syslog object (`held_only`, Fas 19b B5) leaves from no address, but its
-    # messages pass only the node holding the VIP, and the page answers for
-    # that node as it does for every other object (26-10-08).
-    #
-    if source or held_only:
-        nodes = [node for node in nodes if node.vip_owner is not False]
+    nodes = [node for node in nodes if answers_for(bool(source) or held_only, node.vip_owner)]
 
     return BackendHealth(
         backend=name,
@@ -679,19 +685,10 @@ def object_healths(
             owner = _owner(backend, names, owners or {})
             if owner is not None and owner in names:
                 grouped.setdefault(owner, []).append(member)
-        #
-        # The same rule the editor's card applies, and for the same reason: an
-        # object that leaves from a source address can only be answered for by
-        # the node that carries it. A node that says it does not is not a
-        # verdict on the backend. One that says nothing is kept - hiding a node on
-        # a fact nobody stated is worse than one row too many.
-        #
-        status = entry.get("status")
-        vip = status.get("vip") if isinstance(status, dict) else None
-        holds = vip.get("owner") if isinstance(vip, dict) else None
+        holds = vip_owner(entry.get("status"))
         node = str(entry.get("name") or entry.get("node") or "")
         for obj, mine in grouped.items():
-            if objects[obj][1] and holds is False:
+            if not answers_for(objects[obj][1], holds):
                 continue
             nodes[obj] += 1
             for member in mine:

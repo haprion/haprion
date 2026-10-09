@@ -176,6 +176,24 @@ class TheCard(unittest.TestCase):
 
         self.assertEqual([cell.label for cell in rows["192.0.2.12:8080"].cells], ["UP", "DOWN"])
 
+    def test_a_kept_state_the_node_could_not_put_back_is_lost(self) -> None:
+        """Review 26-10-09, F1: a reload said `done` and the server took traffic."""
+
+        from haproxy_mgmt.guid import server_guid
+
+        server = next(s for s in self.proxy.backends["web"].servers if s.host == "192.0.2.12")
+        guid = server_guid("shop", "web", server)
+        status = reading(("node-a", [member("s1", "UP", "ready")]), ("node-b", []))
+        status.result["nodes"][0]["status"]["server_state_unapplied"] = {guid: "drain"}
+
+        for current in (True, False):
+            card = server_card.build(self.proxy, [status], cluster="alpha", current=current)
+            if card is None:
+                self.fail("an https object with servers has a card")
+            row = next(row for row in card.rows if row.shown == "192.0.2.12:8080")
+            self.assertEqual((row.cells[0].label, row.cells[0].tone), ("DRAIN LOST", "critical"))
+            self.assertNotEqual(row.cells[1].label, "DRAIN LOST")
+
     def test_two_pools_name_the_pool_on_each_row(self) -> None:
         proxy = load_proxy(
             "shop",
@@ -303,6 +321,48 @@ class TheButtons(DraftReading):
         self.assertIn('value="web/192.0.2.12:8080"', page.text)
         self.assertIn("DRAIN", page.text)
         self.assertIn('name="state" value="maint"', page.text)
+
+    def test_read_only_draws_no_boxes_to_tick(self) -> None:
+        """Review 26-10-09, F5: a box with no button behind it offers nothing."""
+
+        self.account = replace(self.account, role="admin")
+        client = self.client(replace(configuration(), demo_fixture=True, management_writes=False))
+        self.sign_in(client)
+        page = client.get("/proxies/edge-demo/public-web")
+
+        self.assertIn("<h3>Servers</h3>", page.text)
+        self.assertNotIn('name="server"', page.text)
+        self.assertNotIn("data-select-rows", page.text)
+
+    def test_the_last_change_is_said_as_it_ended(self) -> None:
+        """Review 26-10-09, F7: a refusal is not a node that missed it."""
+
+        for outcome, said in (
+            ("partial", "Not every node took the last change."),
+            ("failed", "The last change was not made."),
+            ("done", None),
+        ):
+            with self.subTest(outcome):
+                job = replace(
+                    queued(operation="server_state", cluster="edge-demo"),
+                    state=outcome,
+                    outcome=outcome,
+                    payload={
+                        "object": "public-web",
+                        "servers": ["web/192.0.2.10:8080"],
+                        "state": "drain",
+                    },
+                )
+                with mock.patch("haproxy_ui.db.recent_jobs", return_value=[job]):
+                    page = self.writing_client().get("/proxies/edge-demo/public-web")
+                for sentence in (
+                    "Not every node took the last change.",
+                    "The last change was not made.",
+                ):
+                    if sentence == said:
+                        self.assertIn(sentence, page.text)
+                    else:
+                        self.assertNotIn(sentence, page.text)
 
     def test_a_job_in_flight_replaces_the_buttons(self) -> None:
         running = replace(queued(operation="deploy", cluster="edge-demo"), state="running")

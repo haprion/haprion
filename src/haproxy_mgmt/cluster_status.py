@@ -70,7 +70,6 @@ class ServerHealth:
     # drained server whose check fails reads DOWN there.
     #
     admin: str | None = None
-    weight: int | None = None
 
     @property
     def up(self) -> bool:
@@ -267,7 +266,6 @@ def _servers(status: Mapping[str, Any]) -> tuple[ServerHealth, ...] | None:
                 last_change_sec=_count(item.get("last_change_sec")),
                 counters=_counters(item.get("counters")),
                 admin=_admin(item.get("admin")),
-                weight=_count(item.get("weight")),
             )
         )
     return tuple(members)

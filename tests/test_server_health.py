@@ -154,8 +154,8 @@ class WhatTheNodeSaidAboutItsServers(unittest.TestCase):
                 servers=[{"backend": "web", "server": "s1", "status": "DOWN", **row}]
             )
 
-        drained = server(admin="drain", weight=50)
-        self.assertEqual((drained.admin, drained.weight), ("drain", 50))
+        drained = server(admin="drain")
+        self.assertEqual(drained.admin, "drain")
         self.assertTrue(drained.held)
         self.assertFalse(server(admin="ready").held)
         #

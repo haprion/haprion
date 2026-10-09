@@ -25,9 +25,10 @@ from typing import Any
 
 from haproxy_mgmt.cluster_status import ServerHealth
 from haproxy_mgmt.generate import backend_name, legacy_backend_name
+from haproxy_mgmt.guid import server_guid
 from haproxy_mgmt.proxy_model import Proxy
 
-from haproxy_ui.health import member_health
+from haproxy_ui.health import answers_for, member_health, vip_owner
 
 #
 # HAProxy's own weight for a server line that names none.
@@ -77,11 +78,24 @@ NOT_SAID = Cell("—", "unknown", "The node did not report this server")
 # An object that leaves from a source address is checked only where that
 # address is: on the node holding the VIP. The other node's check binds an
 # address it does not have and fails - HAProxy telling the truth about the
-# binding and a lie about the server (the rule `health.backend_health`
-# applies). Its drain or maintenance is still its own, and still shown. BACKUP
+# binding and a lie about the server (`health.answers_for`). Its drain or maintenance is still its own, and still shown. BACKUP
 # is keepalived's word for that node, the one the dashboard's Failover column shows.
 #
 BACKUP = Cell("BACKUP", "unknown", "The object leaves from an address only the VIP holder carries")
+
+
+def lost(state: str) -> Cell:
+    """A drain or maintenance the node keeps for the server but HAProxy does not hold.
+
+    A reload or a start that could not put it back (review 26-10-09, F1): the
+    server takes traffic on this node although somebody took it out.
+    """
+
+    return Cell(
+        f"{state.upper()} LOST",
+        "critical",
+        f"Kept as {state} on this node, but HAProxy does not hold it. Set it again.",
+    )
 
 
 def cell(member: ServerHealth | None, *, standby: bool = False) -> Cell:
@@ -140,6 +154,7 @@ def build(
     entries = result.get("nodes")
     nodes: list[tuple[str, dict[tuple[str, str], ServerHealth]]] = []
     standby: list[bool] = []
+    unapplied: list[Mapping[str, Any]] = []
     for entry in entries if isinstance(entries, Sequence) else ():
         if not isinstance(entry, Mapping):
             continue
@@ -149,13 +164,10 @@ def build(
                 {(member.backend, member.server): member for member in _members(entry)},
             )
         )
-        #
-        # Only a node that says it does not hold the VIP; one that says nothing
-        # keeps its own answer, as on the health lamp.
-        #
         status = entry.get("status")
-        vip = status.get("vip") if isinstance(status, Mapping) else None
-        standby.append(sourced and isinstance(vip, Mapping) and vip.get("owner") is False)
+        kept = status.get("server_state_unapplied") if isinstance(status, Mapping) else None
+        unapplied.append(kept if isinstance(kept, Mapping) else {})
+        standby.append(not answers_for(sourced, vip_owner(status)))
 
     listed: list[ServerRow] = []
     for pool in pools:
@@ -175,6 +187,7 @@ def build(
                 if member is not None and "scur" in member.counters
             ]
             address = f"{server.host}:{server.port}"
+            guid = server_guid(proxy.name, pool, server)
             listed.append(
                 ServerRow(
                     target=f"{pool}/{address}",
@@ -182,8 +195,12 @@ def build(
                     backup=server.backup,
                     weight=server.weight if server.weight is not None else DEFAULT_WEIGHT,
                     cells=tuple(
-                        cell(member, standby=aside) if current else NOT_CURRENT
-                        for member, aside in zip(found, standby, strict=True)
+                        lost(str(kept[guid]))
+                        if kept.get(guid) in ("drain", "maint")
+                        else cell(member, standby=aside)
+                        if current
+                        else NOT_CURRENT
+                        for member, aside, kept in zip(found, standby, unapplied, strict=True)
                     ),
                     sessions=sum(sessions) if current and sessions else None,
                 )

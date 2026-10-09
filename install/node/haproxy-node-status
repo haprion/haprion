@@ -21,6 +21,12 @@ RUNTIME_SOCKET = "/run/haproxy/ui-status.sock"
 CURRENT_RELEASE = Path("/etc/haproxy/current/RELEASE")
 RELEASES = Path("/etc/haproxy/releases")
 CONFIG_PENDING = Path("/run/haproxy-pull-deploy.pending")
+#
+# Written by `haproxy-server-state` when a kept drain or maintenance could not
+# be put back after a reload or a start (review 26-10-09, F1).
+#
+SERVER_STATE_UNAPPLIED = Path("/run/haproxy-manager-server-state.unapplied")
+SERVER_GUID = re.compile(r"^srv:[a-z][a-z0-9_-]{0,39}\.[0-9a-f]{16}$")
 VALIDATION_STATE = Path("/run/haproxy/last-validation.json")
 CERTS_DIR = Path("/etc/haproxy/certs")
 CERT_PENDING = Path("/run/haproxy-cert-pull.pending")
@@ -533,6 +539,25 @@ def read_ipvs():
 # cache the kernel gives back on demand. Each part is `null` when it cannot be
 # read, so an unreadable figure is never shown as zero.
 #
+def read_server_state_unapplied():
+    """Kept states HAProxy does not hold, by server GUID: {} for none, None when unreadable."""
+
+    try:
+        data = json.loads(SERVER_STATE_UNAPPLIED.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return None
+    servers = data.get("servers") if isinstance(data, dict) else None
+    if not isinstance(servers, dict):
+        return None
+    return {
+        guid: state
+        for guid, state in sorted(servers.items())[:MAX_STAT_ROWS]
+        if isinstance(guid, str) and SERVER_GUID.match(guid) and state in ("drain", "maint")
+    }
+
+
 def read_resources():
     cpu = None
     try:
@@ -977,7 +1002,7 @@ FORCED_DRAIN = 0x08
 
 
 def parse_servers_state(text):
-    """`show servers state` as each member's admin state and weight, or None.
+    """`show servers state` as each member's admin state, or None.
 
     Keyed by pool and member, as `show stat` names them. Unreadable output is
     None, which leaves every member's admin state unknown rather than ready.
@@ -989,9 +1014,8 @@ def parse_servers_state(text):
         return None
     columns = header.lstrip("# ").split()
     try:
-        pool, member, admin, weight = (
-            columns.index(name)
-            for name in ("be_name", "srv_name", "srv_admin_state", "srv_uweight")
+        pool, member, admin = (
+            columns.index(name) for name in ("be_name", "srv_name", "srv_admin_state")
         )
     except ValueError:
         return None
@@ -1006,15 +1030,14 @@ def parse_servers_state(text):
             "admin": (
                 "maint" if flags & FORCED_MAINT else "drain" if flags & FORCED_DRAIN else "ready"
             ),
-            "weight": int(row[weight]) if row[weight].isdigit() else None,
         }
     return found
 
 
 def with_admin_state(stat, states):
-    """Each member of a `show stat` reading with its admin state and weight.
+    """Each member of a `show stat` reading with its admin state.
 
-    Both null where `show servers state` could not be read or did not name the
+    Null where `show servers state` could not be read or did not name the
     member: unknown, which is not the same answer as ready.
     """
 
@@ -1023,7 +1046,6 @@ def with_admin_state(stat, states):
     for entry in stat["servers"]:
         known = (states or {}).get((entry["backend"], entry["server"]), {})
         entry["admin"] = known.get("admin")
-        entry["weight"] = known.get("weight")
     return stat
 
 
@@ -1310,6 +1332,7 @@ result = {
     "dns_listener": read_dns_listener(),
     "ipvs": read_ipvs(),
     "resources": read_resources(),
+    "server_state_unapplied": read_server_state_unapplied(),
 }
 
 if args.json:

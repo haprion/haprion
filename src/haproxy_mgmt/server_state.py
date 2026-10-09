@@ -114,6 +114,8 @@ class Answer:
     """`done`, `refused` (the node does not run this server) or `failed`."""
 
     message: str | None = None
+    reached: bool = True
+    """False when nothing came back from the node: no connection, or no answer in time."""
 
 
 def _host(value: str) -> str:
@@ -232,7 +234,9 @@ def read_answer(node: str, target: Target, completed: subprocess.CompletedProces
     if not isinstance(document, Mapping):
         stderr = (completed.stderr or "").strip().splitlines()
         reason = stderr[-1][:300] if stderr else "no answer"
-        return Answer(node, target, "failed", f"the node could not be reached ({reason})")
+        return Answer(
+            node, target, "failed", f"the node could not be reached ({reason})", reached=False
+        )
 
     said = document.get("message")
     message = said[:300] if isinstance(said, str) and said else None
@@ -261,21 +265,42 @@ def apply(
     """Every node's answer for every server, nodes at once and servers in order.
 
     One node failing is not the cluster failing: both are asked whatever the
-    first one said. A node that could not be reached for one server is still
-    asked for the next - the second call is cheap, and the answer may differ.
+    first one said. A node that could not be reached, or did not answer in
+    time, is not asked for the servers after it (review 26-10-09, F4): each
+    call waits up to CALL_TIMEOUT_SECONDS, and a node that hangs would hold
+    the job for that long per server - past the worker's limit for a large
+    pool, which would leave a job the other node finished as `unknown`.
     """
 
     if state not in STATES:
         raise ServerStateError("bad_input", f"state must be one of {', '.join(STATES)}")
 
     def one(node: Node) -> list[Answer]:
-        answers = []
+        answers: list[Answer] = []
         for target in targets:
+            silent = next((answer for answer in answers if not answer.reached), None)
+            if silent is not None:
+                answers.append(
+                    Answer(
+                        node.name,
+                        target,
+                        "failed",
+                        f"not asked: the node did not answer for {silent.target.written}",
+                        reached=False,
+                    )
+                )
+                continue
             try:
                 completed = ask(node, identity, target.guid, state)
             except subprocess.TimeoutExpired:
                 answers.append(
-                    Answer(node.name, target, "failed", "the node did not answer in time")
+                    Answer(
+                        node.name,
+                        target,
+                        "failed",
+                        "the node did not answer in time",
+                        reached=False,
+                    )
                 )
                 continue
             answers.append(read_answer(node.name, target, completed))

@@ -164,12 +164,12 @@ class ReadingAdminState(unittest.TestCase):
         self.merge = namespace["with_admin_state"]
         self.parse = namespace["parse_stat"]
 
-    def test_each_member_reads_its_admin_state_and_weight(self) -> None:
+    def test_each_member_reads_its_admin_state(self) -> None:
         found = self.states(SERVERS_STATE)
 
-        self.assertEqual(found[("b", "s1")], {"admin": "maint", "weight": 50})
-        self.assertEqual(found[("b", "s2")], {"admin": "ready", "weight": 1})
-        self.assertEqual(found[("b", "s3")], {"admin": "drain", "weight": 1})
+        self.assertEqual(found[("b", "s1")], {"admin": "maint"})
+        self.assertEqual(found[("b", "s2")], {"admin": "ready"})
+        self.assertEqual(found[("b", "s3")], {"admin": "drain"})
         self.assertEqual(found[("c", "x2")]["admin"], "maint")
 
     def test_a_drained_server_that_is_down_still_reads_drained(self) -> None:
@@ -187,11 +187,53 @@ class ReadingAdminState(unittest.TestCase):
         for states in (None, self.states(SERVERS_STATE)):
             merged = self.merge(stat, states)
             self.assertIsNone(merged["servers"][0]["admin"])
-            self.assertIsNone(merged["servers"][0]["weight"])
 
     def test_output_without_the_columns_is_refused(self) -> None:
         self.assertIsNone(self.states(""))
         self.assertIsNone(self.states("1\n# be_id be_name srv_name\n2 b s1\n"))
+
+
+UNAPPLIED_READER = re.compile(
+    r"^def read_server_state_unapplied\(\):.*?(?=^def read_resources\()", re.DOTALL | re.MULTILINE
+)
+
+
+class ReadingUnappliedStates(unittest.TestCase):
+    """Review 26-10-09, F1: a kept drain a reload could not put back is reported."""
+
+    def setUp(self) -> None:
+        import json
+        import tempfile
+
+        found = UNAPPLIED_READER.search(SCRIPT.read_text())
+        assert found, "the reader is no longer where the test extracts it from"
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "unapplied"
+        namespace: dict[str, Any] = {
+            "json": json,
+            "SERVER_STATE_UNAPPLIED": self.path,
+            "SERVER_GUID": re.compile(r"^srv:[a-z][a-z0-9_-]{0,39}\.[0-9a-f]{16}$"),
+            "MAX_STAT_ROWS": 500,
+        }
+        exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
+        self.read = namespace["read_server_state_unapplied"]
+
+    def test_no_file_is_nothing_unapplied(self) -> None:
+        self.assertEqual(self.read(), {})
+
+    def test_the_kept_states_are_reported_and_anything_else_dropped(self) -> None:
+        self.path.write_text(
+            '{"schema_version": 1, "servers": {"srv:shop.1111111111111111": "drain",'
+            ' "srv:shop.2222222222222222": "ready", "not-a-guid": "maint"}}'
+        )
+
+        self.assertEqual(self.read(), {"srv:shop.1111111111111111": "drain"})
+
+    def test_an_unreadable_record_is_unknown(self) -> None:
+        self.path.write_text("not json")
+
+        self.assertIsNone(self.read())
 
 
 if __name__ == "__main__":

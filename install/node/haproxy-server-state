@@ -68,6 +68,14 @@ CONFIG = Path("/etc/haproxy/haproxy.cfg")
 CONFIG_DIR = Path("/etc/haproxy/conf.d")
 RELEASES = Path("/etc/haproxy/releases")
 CONFIG_PENDING = Path("/run/haproxy-pull-deploy.pending")
+#
+# The kept states HAProxy does not hold after a reload or a start (review
+# 26-10-09, F1): written when putting them back fails, emptied when it works,
+# and reported by `haproxy-node-status`. Without it a deploy that lost a drain
+# said `done` and nothing showed the server taking traffic again. In /run, as a
+# reboot is a start, and the start puts every kept state back or writes this.
+#
+UNAPPLIED = Path("/run/haproxy-manager-server-state.unapplied")
 SYSTEMCTL = "/usr/bin/systemctl"
 
 STATES = ("ready", "drain", "maint")
@@ -181,13 +189,25 @@ def servers_by_guid(root: Path | None) -> dict[str, tuple[str, str]]:
 
 
 def admin_states(answer: str) -> dict[tuple[str, str], int]:
-    """srv_admin_state by backend and server, from `show servers state` output."""
+    """srv_admin_state by backend and server, from `show servers state` output.
+
+    Columns by the header's names, as `haproxy-node-status` reads them: the
+    output has grown columns between versions before (review 26-10-09, F2).
+    """
 
     states: dict[tuple[str, str], int] = {}
+    columns: list[str] = []
     for line in answer.splitlines():
         fields = line.split()
-        if len(fields) > 6 and fields[0].isdigit():
-            states[(fields[1], fields[3])] = int(fields[6])
+        if line.startswith("#"):
+            columns = line.lstrip("# ").split()
+            continue
+        if not columns or len(fields) != len(columns):
+            continue
+        row = dict(zip(columns, fields, strict=True))
+        admin = row.get("srv_admin_state", "")
+        if "be_name" in row and "srv_name" in row and admin.isdigit():
+            states[(row["be_name"], row["srv_name"])] = int(admin)
     return states
 
 
@@ -231,6 +251,34 @@ def write_wanted(wanted: dict[str, str]) -> None:
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+def record_unapplied(unapplied: dict[str, str]) -> None:
+    """Write the kept states HAProxy does not hold, or remove the file when there are none."""
+
+    if not unapplied:
+        UNAPPLIED.unlink(missing_ok=True)
+        return
+    handle, temporary = tempfile.mkstemp(dir=UNAPPLIED.parent, prefix=".server-state-unapplied.")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump({"schema_version": 1, "servers": dict(sorted(unapplied.items()))}, stream)
+            stream.write("\n")
+        # Root only, as the kept states themselves; the status script reads it as root.
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, UNAPPLIED)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def read_unapplied() -> dict[str, str]:
+    try:
+        data = json.loads(UNAPPLIED.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    servers = data.get("servers") if isinstance(data, dict) else None
+    return dict(servers) if isinstance(servers, dict) else {}
 
 
 def lock() -> int:
@@ -294,6 +342,12 @@ def command_set(guid: str, state: str) -> int:
         else:
             wanted[guid] = state
         write_wanted(wanted)
+        #
+        # HAProxy holds it now, whatever an earlier reload failed to do.
+        #
+        unapplied = read_unapplied()
+        if unapplied.pop(guid, None) is not None:
+            record_unapplied(unapplied)
         return answer(
             {"guid": guid, "backend": backend, "server": server, "state": state, "outcome": "done"},
             0,
@@ -305,10 +359,15 @@ def command_set(guid: str, state: str) -> int:
 
 
 def put_back(replacing: str | None) -> bool:
-    """Set every kept state on the worker that is not `replacing`. True when all of them took."""
+    """Set every kept state on the worker that is not `replacing`. True when all of them took.
+
+    Whatever did not take is written to UNAPPLIED, and the file is emptied when
+    everything did.
+    """
 
     wanted = read_wanted()
     if not wanted:
+        record_unapplied({})
         return True
     servers = servers_by_guid(None)
     gone = sorted(guid for guid in wanted if guid not in servers)
@@ -320,6 +379,7 @@ def put_back(replacing: str | None) -> bool:
         f"set server {servers[g][0]}/{servers[g][1]} state {s}" for g, s in sorted(wanted.items())
     ]
     if not commands:
+        record_unapplied({})
         return True
     deadline = time.monotonic() + WAIT_FOR_WORKER_SECONDS
     while True:
@@ -332,18 +392,20 @@ def put_back(replacing: str | None) -> bool:
             break
         if time.monotonic() > deadline:
             log("ERROR: the new HAProxy worker did not answer; kept states are NOT in force")
+            record_unapplied(wanted)
             return False
         time.sleep(0.05)
     states = admin_states(reply)
-    ok = True
+    unapplied: dict[str, str] = {}
     for guid, state in sorted(wanted.items()):
         backend, server = servers[guid]
         if holds(states.get((backend, server), -1), state):
             log(f"{state} on {backend}/{server} ({guid})")
         else:
             log(f"ERROR: {backend}/{server} ({guid}) should be {state} and is not")
-            ok = False
-    return ok
+            unapplied[guid] = state
+    record_unapplied(unapplied)
+    return not unapplied
 
 
 def command_reload() -> int:
@@ -356,10 +418,15 @@ def command_reload() -> int:
         reload = subprocess.run([SYSTEMCTL, "reload", "haproxy"], check=False)  # noqa: S603 - fixed path
         if reload.returncode != 0:
             return reload.returncode
+        #
+        # The reload itself worked, so the deploy did: its exit stays 0. What
+        # did not take is in UNAPPLIED, which the node's status reports.
+        #
         try:
             put_back(before)
         except (OSError, Unavailable) as error:
             log(f"ERROR: kept states could not be put back: {error}")
+            record_unapplied(read_wanted())
         return 0
     finally:
         os.close(held)
@@ -371,6 +438,7 @@ def command_reapply() -> int:
         return 0 if put_back(None) else 1
     except (OSError, Unavailable) as error:
         log(f"ERROR: kept states could not be put back: {error}")
+        record_unapplied(read_wanted())
         return 1
     finally:
         os.close(held)

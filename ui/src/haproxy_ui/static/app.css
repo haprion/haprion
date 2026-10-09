@@ -1011,11 +1011,13 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .registry-table.selectable-table { min-width: 1190px; }
 /* The object page's Servers card (B263): the box, the server taking what is
    left, one column per node and two narrow counts. */
-.server-table th:nth-child(1), .server-table td:nth-child(1) { width: 44px; padding-left: 18px; padding-right: 0; }
-.server-table th:nth-child(2), .server-table td:nth-child(2) { width: auto; padding-left: 8px; }
+/* `th.`/`td.` to match `.node-table th:nth-child(1)` (250px) and win by order. */
+.server-table th.select-column, .server-table td.select-column { width: 44px; padding-left: 18px; padding-right: 0; }
+.server-table th.server-column, .server-table td.server-column { width: auto; }
+.server-table.selectable-rows th.server-column, .server-table.selectable-rows td.server-column { padding-left: 8px; }
 .server-table .node-column { width: 150px; }
 .server-table .count-column { width: 110px; }
-.server-table tbody tr { cursor: pointer; }
+.server-table.selectable-rows tbody tr { cursor: pointer; }
 /* As dense as the listings' rows (Proxies, Certificates: 6px), not the node
    table's 13px it would inherit; and the lamp kept off its word, as on the
    health table. */

@@ -314,6 +314,13 @@
           },
           "additionalProperties": false
         },
+        "server_state_unapplied": {
+          "description": "Drain or maintenance kept for a server on this node that HAProxy does not hold after a reload or a start (review 26-10-09, F1), by the server's GUID; empty when every kept state is in force, null when the node's record cannot be read, absent from a node reporting before it.",
+          "type": ["object", "null"],
+          "maxProperties": 500,
+          "propertyNames": { "pattern": "^srv:[a-z][a-z0-9_-]{0,39}\\.[0-9a-f]{16}$" },
+          "additionalProperties": { "enum": ["drain", "maint"] }
+        },
         "ipvs": {
           "description": "The syslog objects' IPVS virtual servers (B256): the file the release publishes, the one installed as /etc/keepalived/ipvs.conf, each present or not with its sha256, and whether keepalived.conf includes it at its top level - the address list's measurements. ipvsadm says whether the counting tool is installed; services are the kernel's virtual servers and receivers from ipvsadm -Ln --stats --exact, packets and bytes in, null when ipvsadm is missing or failed. A service the installed file names carries its object and pool, and lists every receiver the file gives it as s1, s2, ... in order: UP with its counters while the kernel holds it, DOWN without them once keepalived's check took it out. A service the file does not name has null names and the kernel's receivers. published_servers counts the published file's virtual servers (null when it is absent or unreadable, absent from nodes reporting before 26-10-08): with included false, any is syslog objects forwarded nowhere. Absent from nodes installed before it was reported, which are not held to the file.",
           "type": "object",
@@ -445,7 +452,7 @@
                 "enum": ["ready", "drain", "maint", null]
               },
               "weight": {
-                "description": "The member's weight on the runtime (srv_uweight), null when unread; absent from a node reporting before 26-10-09.",
+                "description": "Sent by node bundles of 26-10-09 (b6eb767) and read by nothing (review 26-10-09, F6: the Servers card shows the object's weight); allowed so such a node still validates.",
                 "type": ["integer", "null"],
                 "minimum": 0,
                 "maximum": 256

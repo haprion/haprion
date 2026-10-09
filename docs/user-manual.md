@@ -168,7 +168,10 @@ The card shows a node's own answer: `DRAIN` and `MAINT` for a server somebody to
 `UP` or `DOWN` from the health check. An object that leaves from a source address is checked only
 by the node holding the VIP, since only that node has the address; the other node reads `BACKUP`, as keepalived calls it. While the nodes are not yet on the object's newest version
 the states are not shown, since a pool edited since the deploy may have its servers in another
-order. A drained server is not a fault: the Proxies listing does not turn amber for it, and says
+order. A node that keeps a drain or maintenance it could not put back after a reload or a start - its
+HAProxy did not answer in time, or the admin socket is missing - reports it, and the card reads
+`DRAIN LOST` or `MAINT LOST` in red on that node: the server takes traffic there. Press the button
+again; the deploy itself is not undone. A drained server is not a fault: the Proxies listing does not turn amber for it, and says
 how many are drained or in maintenance when you point at the lamp.
 
 ### Addresses, and what to call them

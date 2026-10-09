@@ -93,6 +93,7 @@ class TheHelperKeepsAServerWhereItWasPut(unittest.TestCase):
             ("CONFIG", self.config),
             ("CONFIG_DIR", self.root / "conf.d"),
             ("CONFIG_PENDING", self.root / "pending"),
+            ("UNAPPLIED", self.root / "unapplied"),
             ("SYSTEMCTL", str(systemctl)),
         ):
             setattr(self.helper, name, value)
@@ -215,6 +216,42 @@ class TheHelperKeepsAServerWhereItWasPut(unittest.TestCase):
 
         self.assertEqual(code, 0, out)
         self.assertTrue(self.state_of("mgd-shop-web", "s1") & self.helper.FORCED_MAINT)
+
+    def unapplied(self) -> dict[str, str]:
+        if not self.helper.UNAPPLIED.exists():
+            return {}
+        servers: dict[str, str] = json.loads(self.helper.UNAPPLIED.read_text())["servers"]
+        return servers
+
+    def test_a_reload_that_cannot_put_a_state_back_says_so(self) -> None:
+        """Review 26-10-09, F1: it said `done` and the server took traffic again."""
+
+        self.run_helper("set", WEB_B, "drain")
+        self.helper.WAIT_FOR_WORKER_SECONDS = 0.5
+        self.helper.ADMIN_SOCKET = str(self.root / "absent.sock")
+
+        code, out = self.run_helper("reload")
+
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.unapplied(), {WEB_B: "drain"})
+
+    def test_setting_it_again_or_a_reload_that_works_clears_it(self) -> None:
+        self.run_helper("set", WEB_B, "drain")
+        self.helper.record_unapplied({WEB_B: "drain", WEB_A: "maint"})
+
+        self.run_helper("set", WEB_B, "drain")
+        self.assertEqual(self.unapplied(), {WEB_A: "maint"})
+
+        self.run_helper("reload")
+        self.assertEqual(self.unapplied(), {})
+        self.assertFalse(self.helper.UNAPPLIED.exists())
+
+    def test_admin_states_are_read_by_column_name(self) -> None:
+        """Review 26-10-09, F2: a column added before srv_admin_state must not shift it."""
+
+        answer = "1\n# be_id be_name srv_id srv_name extra srv_admin_state\n2 web 1 s1 x 8\n"
+
+        self.assertEqual(self.helper.admin_states(answer), {("web", "s1"): 8})
 
     def test_a_guid_the_running_configuration_lacks_is_refused(self) -> None:
         code, out = self.run_helper("set", "srv:gone.4444444444444444", "drain")

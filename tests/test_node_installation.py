@@ -83,6 +83,24 @@ class NodeInstallationReadingTests(unittest.TestCase):
         installed = tuple(re.findall(r"^\s+(haproxy-[a-z0-9-]+)$", match.group(1), re.MULTILINE))
         self.assertEqual(installed, NODE_SCRIPTS)
 
+    def test_the_status_script_reads_the_same_list_it_is_installed_with(self) -> None:
+        """26-10-09: the list in the status script itself was never compared.
+
+        The reader above runs with this file's list, so the node's own one could
+        lag behind the installer's - and a node given two new scripts rejected
+        its own metadata and reported no API and nothing current.
+        """
+
+        from haproxy_mgmt.node_bundle import NODE_SCRIPTS as BUNDLED
+
+        match = re.search(
+            r"^NODE_SCRIPTS = \(\n(.*?)^\)", SCRIPT.read_text(), re.MULTILINE | re.DOTALL
+        )
+        assert match is not None
+        listed = tuple(re.findall(r'^\s+"(haproxy-[a-z0-9-]+)",$', match.group(1), re.MULTILINE))
+        self.assertEqual(listed, NODE_SCRIPTS)
+        self.assertEqual(BUNDLED, NODE_SCRIPTS)
+
     def test_installer_does_not_repermission_the_system_lock_directory(self) -> None:
         installer = INSTALLER.read_text()
 

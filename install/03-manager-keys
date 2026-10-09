@@ -101,7 +101,7 @@ for cluster in $(each_cluster); do
         echo
         echo "  /home/${STATUS_USER}/.ssh/authorized_keys     (owner root, mode 644)"
         echo
-        echo "restrict,command=\"sudo -n /usr/local/sbin/haprion-node-status -c ${cluster} --json\" $(pub "$NODE_STATUS_KEY")"
+        echo "restrict,command=\"sudo -n /usr/local/sbin/haprion-node-status --json\" $(pub "$NODE_STATUS_KEY")"
         #
         # The probe rides on the status account and not on the trigger account,
         # and it is still its own key with its own forced command. It needs no

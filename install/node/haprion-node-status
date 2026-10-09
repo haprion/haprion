@@ -31,6 +31,8 @@ VALIDATION_STATE = Path("/run/haproxy/last-validation.json")
 CERTS_DIR = Path("/etc/haproxy/certs")
 CERT_PENDING = Path("/run/haprion-cert-pull.pending")
 NODE_INSTALLATION = Path("/etc/haprion/node-installation.json")
+NODE_CONF = Path("/etc/haprion/node.conf")
+CLUSTER_LINE = re.compile(r'^CLUSTER="([a-z0-9][a-z0-9_-]{0,31})"$')
 SBIN = Path("/usr/local/sbin")
 MAX_INSTALLATION_BYTES = 64 * 1024
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -1299,14 +1301,33 @@ def read_validation():
         }
 
 
+def read_cluster():
+    """The cluster this node was installed into, as 04-node-prepare wrote it.
+
+    Read here rather than taken as an argument, so the sudo rule and the forced
+    command are the same on every node (B266). The manager compares it with the
+    cluster it asked about, which also catches a node installed into the wrong
+    one.
+    """
+    try:
+        lines = NODE_CONF.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return None
+    for line in lines:
+        found = CLUSTER_LINE.fullmatch(line.strip())
+        if found:
+            return found.group(1)
+    return None
+
+
 parser = argparse.ArgumentParser()
-parser.add_argument("-c", "--cluster", required=True)
 parser.add_argument("--json", action="store_true")
 args = parser.parse_args()
 
-if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", args.cluster):
-    print("ERROR: invalid cluster ID", file=sys.stderr)
-    sys.exit(64)
+cluster = read_cluster()
+if cluster is None:
+    print(f"ERROR: {NODE_CONF} names no cluster; run install/04-node-prepare", file=sys.stderr)
+    sys.exit(1)
 
 interface, vip = parse_keepalived()
 vip_owner = owns_vip(interface, vip)
@@ -1336,7 +1357,7 @@ addresses = read_addresses()
 result = {
     "schema_version": 1,
     "node": socket.gethostname(),
-    "cluster": args.cluster,
+    "cluster": cluster,
     "haproxy": {
         "active": haproxy_active,
     },

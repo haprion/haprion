@@ -459,7 +459,7 @@ ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-pull-deploy
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-cert-pull
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-cert-remove
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-server-state set *
-${STATUS_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-node-status -c ${CLUSTER} --json
+${STATUS_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-node-status --json
 ${BACKUP_USER} ALL=(root) NOPASSWD: ${SBIN}/haprion-state-export"
 
 tmp="$(mktemp)"

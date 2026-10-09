@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-node-status"
-PARSING = re.compile(r"^MAX_STAT_ROWS = .*?(?=^def runtime_stat\()", re.DOTALL | re.MULTILINE)
+PARSING = re.compile(r"^MAX_STAT_ROWS = .*?(?=^def ask_runtime\()", re.DOTALL | re.MULTILINE)
 
 #
 # A real header from HAProxy 3.4.4, cut to the columns this parser names plus
@@ -136,6 +136,62 @@ class ReadingShowStat(unittest.TestCase):
         parsed = self.stat(*rows)
 
         self.assertEqual(len(parsed["servers"]), 500)
+
+
+#
+# `show servers state` from HAProxy 3.4.6, captured 26-10-09 with s1 drained
+# and then put in maintenance, s2 untouched, s3 drained, and c/x2 written
+# `disabled` in the configuration.
+#
+SERVERS_STATE = """1
+# be_id be_name srv_id srv_name srv_addr srv_op_state srv_admin_state srv_uweight srv_iweight srv_time_since_last_change srv_check_status srv_check_result srv_check_health srv_check_state srv_agent_state bk_f_forced_id srv_f_forced_id srv_fqdn srv_port srvrecord srv_use_ssl srv_check_port srv_check_addr srv_agent_addr srv_agent_port
+2 b 1 s1 127.0.0.1 0 1 50 50 1 8 2 0 14 0 0 0 - 1 - 0 0 - - 0
+2 b 2 s2 127.0.0.1 0 0 1 1 1 8 2 0 6 0 0 0 - 2 - 0 0 - - 0
+2 b 3 s3 127.0.0.1 2 8 1 1 1 1 0 0 0 0 0 0 - 3 - 0 0 - - 0
+4 c 2 x2 127.0.0.1 0 5 1 1 1 1 0 0 8 0 0 0 - 6 - 0 0 - - 0
+"""  # noqa: E501 - HAProxy's own line
+
+
+class ReadingAdminState(unittest.TestCase):
+    """Drain and maintenance, which `show stat` loses for a server that is down (B263)."""
+
+    def setUp(self) -> None:
+        found = PARSING.search(SCRIPT.read_text())
+        assert found, "the parsing is no longer where the test extracts it from"
+        namespace: dict[str, Any] = {}
+        exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
+        self.states = namespace["parse_servers_state"]
+        self.merge = namespace["with_admin_state"]
+        self.parse = namespace["parse_stat"]
+
+    def test_each_member_reads_its_admin_state_and_weight(self) -> None:
+        found = self.states(SERVERS_STATE)
+
+        self.assertEqual(found[("b", "s1")], {"admin": "maint", "weight": 50})
+        self.assertEqual(found[("b", "s2")], {"admin": "ready", "weight": 1})
+        self.assertEqual(found[("b", "s3")], {"admin": "drain", "weight": 1})
+        self.assertEqual(found[("c", "x2")]["admin"], "maint")
+
+    def test_a_drained_server_that_is_down_still_reads_drained(self) -> None:
+        """The case `show stat` cannot answer: its status column says DOWN."""
+
+        stat = self.parse(f"{HEADER}\n{row(pxname='b', svname='s3', status='DOWN')}\n")
+        merged = self.merge(stat, self.states(SERVERS_STATE))
+
+        self.assertEqual(merged["servers"][0]["status"], "DOWN")
+        self.assertEqual(merged["servers"][0]["admin"], "drain")
+
+    def test_unread_is_unknown_and_not_ready(self) -> None:
+        stat = self.parse(f"{HEADER}\n{row(pxname='b', svname='s9', status='UP')}\n")
+
+        for states in (None, self.states(SERVERS_STATE)):
+            merged = self.merge(stat, states)
+            self.assertIsNone(merged["servers"][0]["admin"])
+            self.assertIsNone(merged["servers"][0]["weight"])
+
+    def test_output_without_the_columns_is_refused(self) -> None:
+        self.assertIsNone(self.states(""))
+        self.assertIsNone(self.states("1\n# be_id be_name srv_name\n2 b s1\n"))
 
 
 if __name__ == "__main__":

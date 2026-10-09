@@ -964,12 +964,79 @@ def parse_stat(text):
     return {"frontends": frontends, "servers": servers}
 
 
-def runtime_stat():
+#
+# Drain and maintenance as somebody set them (Fas 20, B263), from `show servers
+# state`. `show stat` cannot say it: a drained server whose check fails reads
+# DOWN there, the drain gone from sight (measured on 3.4.6, 26-10-09). The
+# admin column is a set of flags; only the two the runtime command sets are
+# read - forced maintenance 0x01 and forced drain 0x08. Maintenance clears a
+# drain, so a server is never both. Maintenance for any other reason (a failed
+# name resolution, a tracked server) is HAProxy's verdict, and `status` already
+# says it.
+#
+FORCED_MAINT = 0x01
+FORCED_DRAIN = 0x08
+
+
+def parse_servers_state(text):
+    """`show servers state` as each member's admin state and weight, or None.
+
+    Keyed by pool and member, as `show stat` names them. Unreadable output is
+    None, which leaves every member's admin state unknown rather than ready.
+    """
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    header = next((line for line in lines if line.startswith("#")), None)
+    if header is None:
+        return None
+    columns = header.lstrip("# ").split()
+    try:
+        pool, member, admin, weight = (
+            columns.index(name)
+            for name in ("be_name", "srv_name", "srv_admin_state", "srv_uweight")
+        )
+    except ValueError:
+        return None
+
+    found = {}
+    rows = [line.split() for line in lines if not line.startswith("#")]
+    for row in rows[: MAX_STAT_ROWS + 1]:
+        if len(row) != len(columns) or not row[admin].isdigit():
+            continue
+        flags = int(row[admin])
+        found[(row[pool], row[member])] = {
+            "admin": (
+                "maint" if flags & FORCED_MAINT else "drain" if flags & FORCED_DRAIN else "ready"
+            ),
+            "weight": int(row[weight]) if row[weight].isdigit() else None,
+        }
+    return found
+
+
+def with_admin_state(stat, states):
+    """Each member of a `show stat` reading with its admin state and weight.
+
+    Both null where `show servers state` could not be read or did not name the
+    member: unknown, which is not the same answer as ready.
+    """
+
+    if stat is None:
+        return None
+    for entry in stat["servers"]:
+        known = (states or {}).get((entry["backend"], entry["server"]), {})
+        entry["admin"] = known.get("admin")
+        entry["weight"] = known.get("weight")
+    return stat
+
+
+def ask_runtime(command):
+    """One command on the status socket, its answer as text, or None."""
+
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(2.0)
         sock.connect(RUNTIME_SOCKET)
-        sock.sendall(b"show stat\n")
+        sock.sendall(command.encode() + b"\n")
 
         chunks = []
         while True:
@@ -979,11 +1046,19 @@ def runtime_stat():
             chunks.append(data)
 
         sock.close()
-        text = b"".join(chunks).decode("utf-8", errors="replace")
+        return b"".join(chunks).decode("utf-8", errors="replace")
     except Exception:
         return None
 
-    return parse_stat(text)
+
+def runtime_stat():
+    text = ask_runtime("show stat")
+    if text is None:
+        return None
+    states = ask_runtime("show servers state")
+    return with_admin_state(
+        parse_stat(text), None if states is None else parse_servers_state(states)
+    )
 
 
 def running_release_file():
@@ -1296,6 +1371,7 @@ else:
         print("Servers:")
         for entry in servers:
             check = entry["check_status"] or "-"
-            print(f"  {entry['backend']}/{entry['server']}  {entry['status']}  ({check})")
+            held = f"  [{entry['admin']}]" if entry.get("admin") in ("drain", "maint") else ""
+            print(f"  {entry['backend']}/{entry['server']}  {entry['status']}  ({check}){held}")
 
 sys.exit(0)

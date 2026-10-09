@@ -139,7 +139,9 @@ The stored object spells both out (`weight: 50`, `backup: true`) under the serve
 ### Drain and maintenance
 
 Taking a server out for a while - patching it, replacing it - is not a change to the object.
-It is set on the nodes, on every node of the cluster at once:
+It is set on the nodes, on every node of the cluster at once. On the object's page, the
+**Servers** card lists each server with its state on each node, its open sessions and its weight;
+tick the servers and press **Drain**, **Maintenance** or **Ready**. The same from the command line:
 
 ```
 sudo haproxy-server-state -c alpha -o shop drain 198.51.100.10:8080
@@ -161,6 +163,12 @@ Each node keeps the state through deploys, certificate rollouts and restarts unt
 new address or port is a new server and starts ready. One node that did not answer is named, and
 the result is `PARTIAL`: the other node holds the state, and running the same command again
 finishes it. A node that does not run the server yet - published but not deployed - says so.
+
+The card shows a node's own answer: `DRAIN` and `MAINT` for a server somebody took out, otherwise
+`UP` or `DOWN` from the health check. While the nodes are not yet on the object's newest version
+the states are not shown, since a pool edited since the deploy may have its servers in another
+order. A drained server is not a fault: the Proxies listing does not turn amber for it, and says
+how many are drained or in maintenance when you point at the lamp.
 
 ### Addresses, and what to call them
 

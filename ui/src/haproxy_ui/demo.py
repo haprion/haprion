@@ -30,11 +30,40 @@ from haproxy_ui.db import (
 CLUSTERS = ("edge-demo", "service-demo")
 
 
+#
+# `public-web`'s pool as both edge nodes report it: two servers up and the
+# third drained (B263), with the sessions each node holds.
+#
+def _public_web(sessions: tuple[int, int, int]) -> list[dict[str, Any]]:
+    return [
+        {
+            "backend": "web",
+            "server": f"s{index + 1}",
+            "status": status,
+            "check_status": "L4OK",
+            "admin": admin,
+            "weight": 1,
+            "counters": {"scur": count},
+        }
+        for index, (status, admin, count) in enumerate(
+            zip(("UP", "UP", "DRAIN"), ("ready", "ready", "drain"), sessions, strict=True)
+        )
+    ]
+
+
 def _node(
-    name: str, *, owner: bool, version: int, current: bool, cpu: int, memory: int
+    name: str,
+    *,
+    owner: bool,
+    version: int,
+    current: bool,
+    cpu: int,
+    memory: int,
+    servers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     # A node with 1 GiB; `memory` is the share in use (B239).
     total = 1_048_576
+    extra: dict[str, Any] = {"servers": servers} if servers is not None else {}
     return {
         "name": name,
         "mgmt_host": f"{name}.demo.example",
@@ -56,6 +85,7 @@ def _node(
                 "load": cpu / 100,
                 "cpus": 1,
             },
+            **extra,
         },
     }
 
@@ -71,8 +101,24 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
             outcome="done",
             result={
                 "nodes": [
-                    _node("edge-a", owner=True, version=24, current=True, cpu=3, memory=38),
-                    _node("edge-b", owner=False, version=24, current=True, cpu=1, memory=36),
+                    _node(
+                        "edge-a",
+                        owner=True,
+                        version=24,
+                        current=True,
+                        cpu=3,
+                        memory=38,
+                        servers=_public_web((14, 12, 3)),
+                    ),
+                    _node(
+                        "edge-b",
+                        owner=False,
+                        version=24,
+                        current=True,
+                        cpu=1,
+                        memory=36,
+                        servers=_public_web((0, 0, 0)),
+                    ),
                 ],
                 "summary": {
                     "configured_nodes": 2,
@@ -786,7 +832,11 @@ def _engine_fields(cluster: str, entries: list[dict[str, Any]]) -> list[dict[str
     }
     listed: Any = objects_result(files, "0" * 40, network=network)["objects"]
     computed = {entry["name"]: entry for entry in listed}
-    fields = ("vip", "source", "servers", "health_checked")
+    #
+    # `runtime_backends` too: the nodes report `public-web`'s pool as `web`
+    # (B263's servers), and only the objects say whose pool that is.
+    #
+    fields = ("vip", "source", "servers", "health_checked", "runtime_backends")
     return [{**entry, **{key: computed[entry["name"]][key] for key in fields}} for entry in entries]
 
 

@@ -1578,6 +1578,11 @@ class AServersWeight(unittest.TestCase):
             with self.subTest(value), self.assertRaises(ModelError) as raised:
                 load_proxy("shop", self.weighted(value))
             self.assertIn("weight must be a whole number from 1 to 256", str(raised.exception))
+            #
+            # Nought is what somebody writes to take a server out; the
+            # refusal says where that is done instead (B263).
+            #
+            self.assertEqual("drain it under Servers" in str(raised.exception), value == "0")
 
     def test_first_ignores_weights_so_it_refuses_them(self) -> None:
         with self.assertRaises(ModelError) as raised:

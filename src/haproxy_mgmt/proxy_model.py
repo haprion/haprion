@@ -1156,8 +1156,17 @@ def _server(value: Any, location: str) -> Server:
         or isinstance(weight, bool)
         or not MIN_WEIGHT <= weight <= MAX_WEIGHT
     ):
+        #
+        # Nought is a drain, and a drain is not written into the object.
+        #
+        drain = (
+            "; to take the server out for a while, drain it under Servers on the "
+            "object's page or with haproxy-server-state"
+            if weight == 0 and not isinstance(weight, bool)
+            else ""
+        )
         raise ModelError(
-            f"{location}.weight must be a whole number from {MIN_WEIGHT} to {MAX_WEIGHT}"
+            f"{location}.weight must be a whole number from {MIN_WEIGHT} to {MAX_WEIGHT}{drain}"
         )
     return Server(
         host=host,

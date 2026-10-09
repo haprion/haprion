@@ -1009,6 +1009,13 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 */
 .registry-table { min-width: 1150px; }
 .registry-table.selectable-table { min-width: 1190px; }
+/* The object page's Servers card (B263): the box, the server taking what is
+   left, one column per node and two narrow counts. */
+.server-table th:nth-child(1), .server-table td:nth-child(1) { width: 44px; padding-left: 18px; padding-right: 0; }
+.server-table th:nth-child(2), .server-table td:nth-child(2) { width: auto; padding-left: 8px; }
+.server-table .node-column { width: 150px; }
+.server-table .count-column { width: 110px; }
+.server-table tbody tr { cursor: pointer; }
 /* The whole row opens its detail, so the whole row says so. */
 .registry-row { cursor: pointer; }
 .registry-table tbody tr.registry-open { background: var(--panel-soft); }

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from haproxy_mgmt.cluster_status import ServerHealth, ipvs_unread
+from haproxy_mgmt.cluster_status import ADMIN_STATES, ServerHealth, ipvs_unread
 from haproxy_mgmt.generate import PREFIX, legacy_backend_name
 
 #
@@ -154,7 +154,11 @@ class BackendHealth:
 
     @property
     def failing(self) -> tuple[NodeMembers, ...]:
-        return tuple(node for node in self.nodes if any(not member.up for member in node.members))
+        return tuple(
+            node
+            for node in self.nodes
+            if any(not member.up and not member.held for member in node.members)
+        )
 
 
 def _members(status: Any) -> tuple[bool, list[dict[str, Any]]]:
@@ -323,6 +327,35 @@ def _count(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _counters(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(name): number for name, count in value.items() if (number := _count(count)) is not None
+    }
+
+
+def _admin(value: Any) -> str | None:
+    return value if isinstance(value, str) and value in ADMIN_STATES else None
+
+
+def member_health(row: Mapping[str, Any]) -> ServerHealth:
+    """One server row of a stored status document, read the way the engine reads it."""
+
+    return ServerHealth(
+        backend=str(row.get("backend")),
+        server=str(row.get("server")),
+        status=_text(row.get("status")),
+        check_status=_text(row.get("check_status")),
+        check_code=_text(row.get("check_code")),
+        check_duration_ms=_count(row.get("check_duration_ms")),
+        last_change_sec=_count(row.get("last_change_sec")),
+        counters=_counters(row.get("counters")),
+        admin=_admin(row.get("admin")),
+        weight=_count(row.get("weight")),
+    )
+
+
 def backend_health(
     rows: Iterable[Any],
     *,
@@ -360,15 +393,7 @@ def backend_health(
             continue
         said, rows_for_node = _members(entry.get("status"))
         members = tuple(
-            ServerHealth(
-                backend=str(row.get("backend")),
-                server=str(row.get("server")),
-                status=_text(row.get("status")),
-                check_status=_text(row.get("check_status")),
-                check_code=_text(row.get("check_code")),
-                check_duration_ms=_count(row.get("check_duration_ms")),
-                last_change_sec=_count(row.get("last_change_sec")),
-            )
+            member_health(row)
             for row in rows_for_node
             if row.get("backend") in (name, legacy) and _is_member(row)
         )
@@ -636,6 +661,11 @@ def object_healths(
     #
     reachable: dict[str, dict[tuple[str, str], bool]] = {name: {} for name in names}
     complaining: dict[str, set[str]] = {name: set() for name in names}
+    #
+    # Drained or in maintenance on purpose (B263): not a fault, so not counted
+    # either way on the node that holds it, and named in the lamp's sentence.
+    #
+    held: dict[str, set[tuple[str, str]]] = {name: set() for name in names}
     nodes: dict[str, int] = dict.fromkeys(names, 0)
     for entry in entries if isinstance(entries, Sequence) else ():
         if not isinstance(entry, dict):
@@ -667,6 +697,9 @@ def object_healths(
             for member in mine:
                 key = (str(member["backend"]), str(member["server"]))
                 reported = str(member.get("status", "") or "")
+                if member_health(member).held:
+                    held[obj].add(key)
+                    continue
                 if reported.strip().lower() == UNCHECKED:
                     #
                     # Nothing is checking this server, so the node has no opinion
@@ -686,6 +719,7 @@ def object_healths(
             reachable=reachable[name],
             complaining=complaining[name],
             nodes=nodes[name],
+            held=len(held[name]),
         )
         for name in names
     }
@@ -698,7 +732,16 @@ def _lamp(
     reachable: Mapping[tuple[str, str], bool],
     complaining: Collection[str],
     nodes: int,
+    held: int = 0,
 ) -> ObjectHealth:
+    #
+    # Every server taken out on purpose (B263) serves nothing new, checked or
+    # not, and that is what the lamp says before anything else.
+    #
+    total = len(healthy)
+    if held and total == 0:
+        return ObjectHealth("warning", "Held", "Every server is drained or in maintenance", 0, held)
+    aside = f" · {held} drained or in maintenance" if held else ""
     #
     # An object with no health check gets an unlit lamp rather than a colour.
     # HAProxy reports an unchecked server as UP - it has nothing to say
@@ -707,9 +750,8 @@ def _lamp(
     # not checked at all.
     #
     if checked is False:
-        return ObjectHealth("unknown", "", "This object defines no health check", 0, 0)
+        return ObjectHealth("unknown", "", f"This object defines no health check{aside}", 0, 0)
 
-    total = len(healthy)
     if total == 0:
         return ObjectHealth(
             tone="unknown",
@@ -725,7 +767,11 @@ def _lamp(
     seen = "one node" if nodes == 1 else f"{nodes} nodes"
     if up == total:
         return ObjectHealth(
-            "healthy", f"{up}/{total} up", f"Every server is up, as seen by {seen}", up, total
+            "healthy",
+            f"{up}/{total} up",
+            f"Every server is up, as seen by {seen}{aside}",
+            up,
+            total,
         )
     #
     # Named, because a server up on one node and down on the other is a
@@ -740,12 +786,12 @@ def _lamp(
     #
     if unreachable == total:
         return ObjectHealth(
-            "critical", f"0/{total} up", f"No {servers} reachable{reported}", up, total
+            "critical", f"0/{total} up", f"No {servers} reachable{reported}{aside}", up, total
         )
     return ObjectHealth(
         "warning",
         f"{up}/{total} up",
-        f"{total - up} of {total} {servers} not up everywhere{reported}",
+        f"{total - up} of {total} {servers} not up everywhere{reported}{aside}",
         up,
         total,
     )

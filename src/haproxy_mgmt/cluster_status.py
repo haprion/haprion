@@ -64,6 +64,13 @@ class ServerHealth:
     # same fact as a counter standing at zero, and `.get` keeps them apart.
     #
     counters: Mapping[str, int] = field(default_factory=dict)
+    #
+    # Drain or maintenance as somebody set it (B263): `ready`, `drain` or
+    # `maint`, None from a node that did not say. `status` cannot carry it - a
+    # drained server whose check fails reads DOWN there.
+    #
+    admin: str | None = None
+    weight: int | None = None
 
     @property
     def up(self) -> bool:
@@ -74,6 +81,20 @@ class ServerHealth:
         """
 
         return (self.status or "").upper().startswith(("UP", "NO CHECK"))
+
+    @property
+    def held(self) -> bool:
+        """Whether somebody took this server out of service on purpose.
+
+        Then it is not a fault, whatever its check says. From the admin state
+        where the node reports one; from an older node, the status column's
+        own MAINT or DRAIN - but not `MAINT (resolution)` or `MAINT (via …)`,
+        which are HAProxy's verdicts and not anybody's choice.
+        """
+
+        if self.admin is not None:
+            return self.admin in ("drain", "maint")
+        return (self.status or "").upper() in ("MAINT", "DRAIN")
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,9 +266,18 @@ def _servers(status: Mapping[str, Any]) -> tuple[ServerHealth, ...] | None:
                 check_duration_ms=_count(item.get("check_duration_ms")),
                 last_change_sec=_count(item.get("last_change_sec")),
                 counters=_counters(item.get("counters")),
+                admin=_admin(item.get("admin")),
+                weight=_count(item.get("weight")),
             )
         )
     return tuple(members)
+
+
+ADMIN_STATES = ("ready", "drain", "maint")
+
+
+def _admin(value: object) -> str | None:
+    return value if isinstance(value, str) and value in ADMIN_STATES else None
 
 
 def _counters(value: object) -> Mapping[str, int]:

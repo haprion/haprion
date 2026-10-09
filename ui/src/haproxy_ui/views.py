@@ -52,6 +52,7 @@ from haproxy_mgmt import (
     dnsdist_config,
     proxy_model,
     resolve_socket,
+    server_state,
     status_collect,
 )
 from haproxy_mgmt import cluster_settings as cluster_settings_module
@@ -109,6 +110,7 @@ from haproxy_ui import (
     operations,
     proxies,
     search_index,
+    server_card,
     snapshot,
     timing,
     traffic_log_table,
@@ -710,6 +712,16 @@ def require_session(request: Request) -> AuthenticatedSession:
     if session is None:
         raise HTTPException(status_code=303, headers={"Location": "/login"})
     return session
+
+
+#
+# Why the Servers card's buttons did nothing, by `?servers=` (B263). A queued
+# job needs no sentence: the buttons give way to its spinner.
+#
+SERVER_NOTICES = {
+    "none": "Tick the servers first.",
+    "busy": "A job is already running for this cluster. Try again when it has finished.",
+}
 
 
 #
@@ -1420,6 +1432,87 @@ def build_router(config: Config) -> APIRouter:
             csrf_token=csrf_token,
         )
 
+    @router.post("/proxies/{cluster}/{name}/servers")
+    async def proxy_servers(
+        request: Request,
+        cluster: str,
+        name: str,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        idempotency_key: Annotated[str, Form(max_length=64)],
+        state: Annotated[str, Form(max_length=16)],
+    ) -> Response:
+        """Queue drain, maintenance or ready for the ticked servers (B263).
+
+        The helper finds every server in the object's newest version again
+        before a node is asked, so what is checked here is the shape only.
+        """
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        listed = next((one for one in listed_clusters(request, config) if one == cluster), None)
+        if listed is None or not proxy_model.NAME.fullmatch(name):
+            return PlainTextResponse("Not found", status_code=404)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        back = f"/proxies/{listed}/{name}"
+        posted = await request.form()
+        #
+        # One past the bound, so the helper's own limit refuses a request
+        # over it rather than this quietly sending part of one.
+        #
+        chosen = list(dict.fromkeys(str(entry)[:300] for entry in posted.getlist("server")))[
+            : server_state.MAX_SERVERS + 1
+        ]
+        if not chosen:
+            return RedirectResponse(f"{back}?servers=none", status_code=303)
+        payload = {"object": name, "servers": chosen, "state": state}
+        try:
+            operations.prepare(
+                operation=server_state.OPERATION,
+                cluster=listed,
+                request_id=uuid4(),
+                payload=payload,
+            )
+        except operations.BadPayload:
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation=server_state.OPERATION,
+                    cluster=listed,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.ClusterBusy:
+                connection.rollback()
+                return RedirectResponse(f"{back}?servers=busy", status_code=303)
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=listed,
+                request_id=job.request_id,
+                detail={
+                    "operation": server_state.OPERATION,
+                    "job": job.id,
+                    "object": name,
+                    "state": state,
+                    "servers": chosen,
+                },
+            )
+            connection.commit()
+        return RedirectResponse(back, status_code=303)
+
     @router.get("/proxies/{cluster}/{name}", response_class=HTMLResponse)
     def proxy_object(request: Request, cluster: str, name: str) -> Response:
         """One proxy as it is written, beside the row the nodes are serving.
@@ -1656,6 +1749,7 @@ def build_router(config: Config) -> APIRouter:
         # a resolver's figures rather than HAProxy's.
         #
         figures = metrics.HTTP_FIGURES
+        servers: server_card.ServerCard | None = None
         if detail.stored is not None:
             try:
                 proxy = load_proxy(name, detail.stored.document.encode())
@@ -1663,6 +1757,15 @@ def build_router(config: Config) -> APIRouter:
                 proxy = None
             if proxy is not None:
                 figures = OBJECT_FIGURES.get(proxy.listen.protocol, metrics.HTTP_FIGURES)
+                #
+                # Drain, maintenance and ready (B263), under the stored object.
+                #
+                servers = server_card.build(
+                    proxy,
+                    status_rows,
+                    cluster=cluster,
+                    current=detail.publication is not None and detail.publication.tone == "healthy",
+                )
             if proxy is not None:
                 #
                 # One card per backend the object has now, each reading the
@@ -1726,11 +1829,39 @@ def build_router(config: Config) -> APIRouter:
                 for index, backend in enumerate(served)
             ]
         moved = moved_dns_servers(status_rows, cluster=cluster, pools=served)
+        #
+        # The card's buttons give way to whatever the cluster is busy with, as
+        # on every page that queues a job; and the last drain or maintenance of
+        # this object that not every node took is said until the next one.
+        #
+        servers_busy: str | None = None
+        servers_partial = False
+        if servers is not None:
+            with request.app.state.pool.connection() as connection:
+                recent = db.recent_jobs(connection, cluster=cluster)
+            servers_busy = jobs.in_flight(recent).get(cluster)
+            last = next(
+                (
+                    job
+                    for job in recent
+                    if job.operation == server_state.OPERATION and job.payload.get("object") == name
+                ),
+                None,
+            )
+            servers_partial = (
+                last is not None
+                and last.state not in {"pending", "running"}
+                and last.outcome != "done"
+            )
         return TEMPLATES.TemplateResponse(
             request,
             "object.html",
             {
                 "dns_moved": moved,
+                "servers": servers,
+                "servers_notice": SERVER_NOTICES.get(request.query_params.get("servers", "")),
+                "servers_busy": servers_busy,
+                "servers_partial": servers_partial,
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),

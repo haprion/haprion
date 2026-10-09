@@ -439,7 +439,17 @@
               "check_code": { "type": ["string", "null"], "maxLength": 8 },
               "check_duration_ms": { "type": ["integer", "null"], "minimum": 0 },
               "last_change_sec": { "type": ["integer", "null"], "minimum": 0 },
-              "counters": { "$ref": "#/$defs/runtime_counters" }
+              "counters": { "$ref": "#/$defs/runtime_counters" },
+              "admin": {
+                "description": "Drain or maintenance as set on the runtime (B263), from show servers state: maint and drain are the forced flags, ready neither; status says DOWN for a drained server whose check fails, so this is the only place the drain shows. Null when show servers state could not be read or did not name the member; absent from a node reporting before 26-10-09.",
+                "enum": ["ready", "drain", "maint", null]
+              },
+              "weight": {
+                "description": "The member's weight on the runtime (srv_uweight), null when unread; absent from a node reporting before 26-10-09.",
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "maximum": 256
+              }
             },
             "additionalProperties": true
           }

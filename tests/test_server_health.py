@@ -146,6 +146,27 @@ class WhatTheNodeSaidAboutItsServers(unittest.TestCase):
         ]
         self.assertEqual((self.first_server(servers=rows)).counters, {"stot": 7, "econ": 0})
 
+    def test_drain_and_maintenance_are_read_beside_the_check(self) -> None:
+        """B263: a drained server whose check fails says DOWN in `status`."""
+
+        def server(**row: object) -> ServerHealth:
+            return self.first_server(
+                servers=[{"backend": "web", "server": "s1", "status": "DOWN", **row}]
+            )
+
+        drained = server(admin="drain", weight=50)
+        self.assertEqual((drained.admin, drained.weight), ("drain", 50))
+        self.assertTrue(drained.held)
+        self.assertFalse(server(admin="ready").held)
+        #
+        # A word the node does not send is no answer, and an older node's
+        # status column is read instead.
+        #
+        self.assertIsNone(server(admin="disabled").admin)
+        self.assertIsNone(server().admin)
+        self.assertTrue(server(status="MAINT").held)
+        self.assertFalse(server(status="MAINT (resolution)").held)
+
 
 class WhatTheNodeSaidAboutItsListeners(unittest.TestCase):
     """A frontend has no verdict, only what arrived.

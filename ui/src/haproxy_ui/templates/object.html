@@ -3,6 +3,7 @@
 {% block content %}
 <script defer src="{{ url_for('static', path='/traffic.js') }}?v={{ asset_token }}"></script>
 {% if advanced_offered %}<script defer src="{{ url_for('static', path='/advanced.js') }}?v={{ asset_token }}"></script>{% endif %}
+{% if servers %}<script defer src="{{ url_for('static', path='/servers.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>{% endif %}
 {#
   A snapshot deliberately carries no objects, so "not read yet" would send a
   reader looking for a poller fault that is not there. Said once, and used
@@ -90,6 +91,33 @@
   <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div>{% if snapshot_omits %}<strong>Not carried in a snapshot</strong><span>A production snapshot leaves out stored objects on purpose - the document names every backend address behind a site, which no other source in the file exposes.</span>{% else %}<strong>Nothing stored</strong><span>{{ object.detail }}</span>{% endif %}</div></div>
   {% endif %}
 </article>
+
+{#
+  Drain, maintenance and ready (Fas 20, B263): operation, not configuration,
+  so it is here and not in the editor. The buttons give way to whatever the
+  cluster is busy with, and `waiting.js` draws the page again when it is done.
+#}
+{% if servers %}
+<article class="cluster-card {{ object.accent | accent_class }}"{% if servers.observed_at %} data-observed="{{ servers.observed_at.isoformat() }}"{% endif %}>
+  <form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/servers">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <header class="cluster-header">
+    <div class="cluster-identity"><div><h3>Servers</h3><p>{{ 'Pool' if servers.pools | length == 1 else 'Pools' }} {% for pool in servers.pools %}<code>{{ pool }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p></div></div>
+    {% if management_writes %}{% if servers_busy %}<div class="cluster-state"><span class="status-badge status-badge-info" data-busy="{{ object.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ servers_busy }}</span></div>{% else %}<div class="action-buttons"><button class="secondary-button" type="submit" name="state" value="drain">Drain</button><button class="secondary-button" type="submit" name="state" value="maint">Maintenance</button><button class="secondary-button" type="submit" name="state" value="ready">Ready</button></div>{% endif %}{% endif %}
+  </header>
+  {% if servers_notice %}<p class="preview-notice form-problem">{{ servers_notice }}</p>{% elif servers_partial %}<p class="preview-notice form-problem">Not every node took the last change. <a href="/jobs">See Jobs</a></p>{% endif %}
+  <div class="table-scroll"><table class="node-table server-table" data-select-rows>
+    <thead><tr><th class="select-column"><span class="visually-hidden">Select</span></th><th>Server</th>{% for node in servers.nodes %}<th class="node-column">{{ node }}</th>{% endfor %}<th class="count-column">Sessions</th><th class="count-column">Weight</th></tr></thead>
+    <tbody>
+      {% for row in servers.rows %}
+      <tr><td class="select-column" data-label="Select"><label class="select-box"><input type="checkbox" name="server" value="{{ row.target }}" aria-label="Select {{ row.shown }}"></label></td><td data-label="Server"><strong>{{ row.shown }}{% if row.backup %} backup{% endif %}</strong></td>{% for cell in row.cells %}<td data-label="{{ servers.nodes[loop.index0] }}"{% if cell.title %} title="{{ cell.title }}"{% endif %}><span class="status-dot status-{{ cell.tone }}"></span>{{ cell.label }}</td>{% endfor %}<td data-label="Sessions">{{ row.sessions if row.sessions is not none else '—' }}</td><td data-label="Weight">{{ row.weight }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  </form>
+</article>
+{% endif %}
 
 {#
   Traffic before the frontend card, because it is about this object and the

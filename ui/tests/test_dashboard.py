@@ -32,13 +32,20 @@ def reading(name: str, *, age_seconds: int = 15, poll_error: str | None = None) 
 class HaproxyVersions(unittest.TestCase):
     """Fas 16 punkt 3b: a node on an older HAProxy is named on its Runtime cell."""
 
-    def view(self, versions: tuple[str, str], validator: str | None) -> Any:
+    def view(
+        self,
+        versions: tuple[str, str],
+        validator: str | None,
+        packages: tuple[dict[str, str], dict[str, str]] | None = None,
+    ) -> Any:
         status = reading("done-single-owner.json")
         result = dict(status.result)
         nodes = [dict(node) for node in result["nodes"]]
-        for node, version in zip(nodes, versions, strict=True):
+        for index, (node, version) in enumerate(zip(nodes, versions, strict=True)):
             node["status"] = dict(node["status"])
             node["status"]["runtime"] = {"version": version, "uptime_sec": 60}
+            if packages is not None:
+                node["status"]["packages"] = packages[index]
         result["nodes"] = nodes
         result["summary"] = {**result["summary"], "validator_version": validator}
         changed = ClusterStatus(
@@ -67,6 +74,21 @@ class HaproxyVersions(unittest.TestCase):
     def test_a_newer_validator_is_named_on_every_node(self) -> None:
         notes, _ = self.view(("3.4.4-1", "3.4.4-1"), "3.4.6-1")
         self.assertEqual(notes, ["Manager validates with 3.4.6"] * 2)
+
+    def test_a_node_patched_a_day_after_its_partner_is_named_per_package(self) -> None:
+        """26-10-09: the packages beside HAProxy, in dpkg's order."""
+
+        notes, cluster = self.view(
+            ("3.4.6-1", "3.4.6-1"),
+            None,
+            (
+                {"keepalived": "2.3.4-1", "openssl": "3.5.5-1ubuntu3.10"},
+                {"keepalived": "2.3.3-1", "openssl": "3.5.5-1ubuntu3.10"},
+            ),
+        )
+        self.assertEqual(notes, [None, "Behind: keepalived"])
+        self.assertEqual(cluster.nodes[1].runtime_title, "keepalived behind 2.3.4-1")
+        self.assertEqual(cluster.label, "Healthy")
 
 
 class HealthDerivation(unittest.TestCase):

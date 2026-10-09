@@ -218,6 +218,11 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
             if node.get("status_ok")
         },
         summary.get("validator_version"),
+        {
+            str(node.get("name")): (node.get("status") or {}).get("packages")
+            for node in result.get("nodes") or []
+            if node.get("status_ok")
+        },
     )
     for node in result.get("nodes") or []:
         writer.write(f"{node['name']} ({node['mgmt_host']})\n")

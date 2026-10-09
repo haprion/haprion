@@ -166,6 +166,43 @@ def read_waf_engine():
 # the same way.
 #
 DNS_PACKAGE = "dnsdist"
+
+
+#
+# The packages a node's traffic passes through besides HAProxy, whose own
+# version is the running process's (`runtime.version`). Reported so the
+# manager can say when the nodes of one cluster run different versions - a
+# node patched a day before the other on purpose, or one forgotten (26-10-09).
+# OpenSSL is the library HAProxy links (the system's libssl3t64, measured
+# 26-10-09: the PPA's HAProxy is built against it), named by the release it is
+# in. Versions are compared as dpkg orders them, whichever source a package
+# comes from - the distribution, a PPA, PowerDNS's repository or ours.
+#
+PACKAGES = {
+    #
+    # HAProxy's package as well as its process: a rebuild of the same upstream
+    # release - `3.4.6-1ppa2` after `-1ppa1` - changes only the package, and a
+    # process that was not restarted after a patch shows only in the runtime.
+    #
+    "haproxy": ("haproxy",),
+    "keepalived": ("keepalived",),
+    "dnsdist": (DNS_PACKAGE,),
+    "waf_engine": (WAF_PACKAGE,),
+    "openssl": ("libssl3t64", "libssl3"),
+}
+
+
+def read_packages():
+    """Each package's installed version, or null where it is not installed."""
+
+    found = {}
+    for key, names in PACKAGES.items():
+        found[key] = next(
+            (version for name in names if (version := package_version(name)) is not None), None
+        )
+    return found
+
+
 DNS_UNIT = "dnsdist.service"
 
 
@@ -1333,6 +1370,7 @@ result = {
     "ipvs": read_ipvs(),
     "resources": read_resources(),
     "server_state_unapplied": read_server_state_unapplied(),
+    "packages": read_packages(),
 }
 
 if args.json:

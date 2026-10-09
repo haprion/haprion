@@ -2257,6 +2257,23 @@ can accept a directive the nodes then reject — the deploy fails on the first n
 so nothing breaks, but the check stopped doing its job. When you upgrade, do the nodes first and
 the management host last, and the validator is never the newer of the two.
 
+**One node at a time is fine, and it is shown.** Patching one node and leaving the other a day or
+two - to try a release before the second node gets it, with the old one still there to go back to -
+works: nothing here refuses a deploy over it. The dashboard says it on the node that is behind, in
+its Runtime cell, until both match; `haproxy-status` says the same on that node's version line:
+
+- `Behind 3.4.7` - its HAProxy process is an older release than another node's. The running
+  process, not the package: a node patched and not restarted still says it.
+- `Behind: keepalived, OpenSSL` - an older package than another node's, for HAProxy's own package,
+  keepalived, dnsdist, the WAF engine and the OpenSSL library HAProxy links. Pointing at the line
+  gives the versions. Compared as dpkg compares them, the whole version: a security update that
+  changes only the revision (`3.5.5-1ubuntu3.7` to `-1ubuntu3.10`) or a PPA rebuild of the same
+  release (`3.4.6-1ppa1` to `-1ppa2`) counts, whichever source the package comes from.
+- `Manager validates with 3.4.7` - the management host's HAProxy is newer than this node's; see
+  the order above.
+
+A package one node does not have is not compared, and the kernel is not either.
+
 Package sources and pinning are described under
 [Where the package comes from](#where-the-package-comes-from).
 

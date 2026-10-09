@@ -236,5 +236,36 @@ class ReadingUnappliedStates(unittest.TestCase):
         self.assertIsNone(self.read())
 
 
+PACKAGE_READER = re.compile(
+    r"^PACKAGES = \{.*?^def read_packages\(\):.*?^    return found\n", re.DOTALL | re.MULTILINE
+)
+
+
+class ReadingPackages(unittest.TestCase):
+    """26-10-09: what a node runs beside HAProxy's process, for the version notes."""
+
+    def test_each_package_is_read_and_openssl_by_either_name(self) -> None:
+        found = PACKAGE_READER.search(SCRIPT.read_text())
+        assert found, "the reader is no longer where the test extracts it from"
+        installed = {"haproxy": "3.4.6-1ppa1~resolute", "libssl3": "3.0.13-0ubuntu3.5"}
+        namespace: dict[str, Any] = {
+            "DNS_PACKAGE": "dnsdist",
+            "WAF_PACKAGE": "haproxy-manager-coraza-spoa",
+            "package_version": installed.get,
+        }
+        exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
+
+        self.assertEqual(
+            namespace["read_packages"](),
+            {
+                "haproxy": "3.4.6-1ppa1~resolute",
+                "keepalived": None,
+                "dnsdist": None,
+                "waf_engine": None,
+                "openssl": "3.0.13-0ubuntu3.5",
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

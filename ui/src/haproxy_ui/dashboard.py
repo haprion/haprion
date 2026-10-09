@@ -41,6 +41,7 @@ class NodeView:
     # The same sentence `haproxy-status` prints; None when there is nothing to say.
     #
     runtime_note: str | None = None
+    runtime_title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,17 +362,35 @@ def _cluster_view(
         tuple(_node_view(value) for value in node_values) if isinstance(node_values, list) else ()
     )
     if isinstance(node_values, list):
-        behind = haproxy_versions.notes(
-            {
-                _text(value.get("name")): _mapping(
-                    _mapping(value.get("status")).get("runtime")
-                ).get("version")
-                for value in node_values
-                if isinstance(value, Mapping) and value.get("status_ok") is True
-            },
-            summary.get("validator_version"),
+        running = {
+            _text(value.get("name")): _mapping(_mapping(value.get("status")).get("runtime")).get(
+                "version"
+            )
+            for value in node_values
+            if isinstance(value, Mapping) and value.get("status_ok") is True
+        }
+        packages = {
+            _text(value.get("name")): _mapping(value.get("status")).get("packages")
+            for value in node_values
+            if isinstance(value, Mapping) and value.get("status_ok") is True
+        }
+        validator = summary.get("validator_version")
+        #
+        # One line in the cell, the exact versions in its title (26-10-09): a
+        # full package version did not fit beside the runtime at 1280.
+        #
+        behind = haproxy_versions.notes(running, validator, packages, short=True)
+        exact = haproxy_versions.notes(running, validator, packages)
+        nodes = tuple(
+            replace(
+                node,
+                runtime_note=behind.get(node.name),
+                runtime_title=exact.get(node.name)
+                if exact.get(node.name) != behind.get(node.name)
+                else None,
+            )
+            for node in nodes
         )
-        nodes = tuple(replace(node, runtime_note=behind.get(node.name)) for node in nodes)
         if summary.get("waf_published") is True:
             #
             # The release has WAF rules and this node's engine is not running

@@ -50,6 +50,15 @@ def _public_web(sessions: tuple[int, int, int]) -> list[dict[str, Any]]:
     ]
 
 
+PACKAGES = {
+    "haproxy": "3.4.6-1ppa1~resolute",
+    "keepalived": "2.3.4-1",
+    "dnsdist": "2.1.10-1pdns.ubuntu26.04",
+    "waf_engine": "0.9.0-4",
+    "openssl": "3.5.5-1ubuntu3.10",
+}
+
+
 def _node(
     name: str,
     *,
@@ -59,10 +68,16 @@ def _node(
     cpu: int,
     memory: int,
     servers: list[dict[str, Any]] | None = None,
+    packages: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     # A node with 1 GiB; `memory` is the share in use (B239).
     total = 1_048_576
     extra: dict[str, Any] = {"servers": servers} if servers is not None else {}
+    #
+    # The packages beside HAProxy; service-b is a day behind its partner on two
+    # of them, as a node patched second is (26-10-09).
+    #
+    extra["packages"] = packages or PACKAGES
     return {
         "name": name,
         "mgmt_host": f"{name}.demo.example",
@@ -139,7 +154,19 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
             result={
                 "nodes": [
                     _node("service-a", owner=True, version=24, current=True, cpu=12, memory=41),
-                    _node("service-b", owner=False, version=23, current=False, cpu=2, memory=88),
+                    _node(
+                        "service-b",
+                        owner=False,
+                        version=23,
+                        current=False,
+                        cpu=2,
+                        memory=88,
+                        packages={
+                            **PACKAGES,
+                            "dnsdist": "2.1.2-1pdns.ubuntu26.04",
+                            "openssl": "3.5.5-1ubuntu3.7",
+                        },
+                    ),
                 ],
                 "summary": {
                     "configured_nodes": 2,

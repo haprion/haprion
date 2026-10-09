@@ -314,6 +314,18 @@
           },
           "additionalProperties": false
         },
+        "packages": {
+          "description": "Installed versions of the packages beside HAProxy's process, as dpkg reports them (26-10-09): HAProxy's own package, keepalived, dnsdist, the WAF engine and the OpenSSL library HAProxy links (libssl3t64, or libssl3). Null where a package is not installed; absent from a node reporting before it. Compared across a cluster's nodes in dpkg's order.",
+          "type": "object",
+          "properties": {
+            "haproxy": { "type": ["string", "null"], "maxLength": 64 },
+            "keepalived": { "type": ["string", "null"], "maxLength": 64 },
+            "dnsdist": { "type": ["string", "null"], "maxLength": 64 },
+            "waf_engine": { "type": ["string", "null"], "maxLength": 64 },
+            "openssl": { "type": ["string", "null"], "maxLength": 64 }
+          },
+          "additionalProperties": false
+        },
         "server_state_unapplied": {
           "description": "Drain or maintenance kept for a server on this node that HAProxy does not hold after a reload or a start (review 26-10-09, F1), by the server's GUID; empty when every kept state is in force, null when the node's record cannot be read, absent from a node reporting before it.",
           "type": ["object", "null"],

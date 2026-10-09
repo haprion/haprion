@@ -79,6 +79,7 @@ NODE_SCRIPTS = (
 CONTENTS: dict[str, tuple[str, int]] = {
     **{f"usr/sbin/{name}": (f"install/node/{name}", 0o755) for name in NODE_SCRIPTS},
     f"{INSTALL_DIR[1:]}/04-node-prepare": ("install/04-node-prepare", 0o755),
+    f"{INSTALL_DIR[1:]}/migrate-legacy-node": ("install/migrate-legacy-node", 0o755),
     f"{INSTALL_DIR[1:]}/lib.sh": ("install/lib.sh", 0o644),
     f"{INSTALL_DIR[1:]}/accounts.sh": ("install/accounts.sh", 0o644),
     f"{INSTALL_DIR[1:]}/sysusers/haprion-node.conf": (

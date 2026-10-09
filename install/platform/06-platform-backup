@@ -19,8 +19,7 @@ load_answers "${1:-}"
 
 config="/etc/haprion/ui-admin.conf"
 [[ -r "$config" ]] || die "${config} is missing. Run ./02-platform-database first."
-# shellcheck disable=SC1090
-DUMP_DIR="$(source "$config"; echo "${DUMP_DIR:-}")"
+DUMP_DIR="$(admin_value "$config" DUMP_DIR)"
 [[ -n "$DUMP_DIR" ]] || die "DUMP_DIR is not in ${config}.
   Rerun ./02-platform-database ${1}; it writes that file."
 

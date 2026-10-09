@@ -178,5 +178,36 @@ class AnOldAnswersFile(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
 
 
+class TheAdminFileIsReadNotRun(unittest.TestCase):
+    """`ui-admin.conf` names DB_NAME, which accounts.sh holds read-only (B266).
+
+    Sourced by a step that has loaded lib.sh, the assignment is fatal: step 6
+    stopped there on a running installation 26-10-09. Steps read single values instead.
+    """
+
+    def test_a_value_is_read_beside_a_read_only_name(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            config = Path(raw) / "ui-admin.conf"
+            config.write_text("# comment\nDB_NAME=haprion\nDB_ROLE=_haprion-migrate\nDUMP_DIR=/d\n")
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+                [
+                    "/bin/bash",
+                    "-c",
+                    f'set -Eeuo pipefail; source "{INSTALL / "lib.sh"}"; '
+                    f'admin_value "{config}" DUMP_DIR; admin_value "{config}" DB_ROLE',
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.splitlines(), ["/d", "_haprion-migrate"])
+
+    def test_no_step_runs_the_admin_file(self) -> None:
+        for step in sorted((INSTALL / "platform").glob("[0-9][0-9]-*")):
+            with self.subTest(step=step.name):
+                self.assertNotRegex(step.read_text(), r'(source|\.) "\$\{?config\}?"')
+
+
 if __name__ == "__main__":
     unittest.main()

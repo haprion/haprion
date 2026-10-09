@@ -80,6 +80,15 @@ require_vars() {
 # Indirect lookup of a per-cluster answer, e.g. cluster_value NODES alpha.
 #
 #
+# One value from /etc/haprion/ui-admin.conf, read rather than run. The file
+# names DB_NAME, which accounts.sh holds read-only, so sourcing it from a step
+# is fatal (26-10-09). The last assignment wins, as it would in a shell.
+#
+admin_value() {
+    sed -n "s/^${2}=//p" "$1" | tail -n 1
+}
+
+#
 # The port the web service listens on, read from ui.toml by the running
 # release's own parser - the file the service itself reads, so a health check
 # cannot ask a port the service was never told.

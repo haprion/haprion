@@ -25,8 +25,7 @@ config="/etc/haprion/ui-admin.conf"
 # is where the command itself reads it: a check that consulted a second source
 # could pass while the command talks to something else.
 #
-# shellcheck disable=SC1090
-DB_ROLE="$(source "$config"; echo "${DB_ROLE:-}")"
+DB_ROLE="$(admin_value "$config" DB_ROLE)"
 [[ -n "$DB_ROLE" ]] || die "DB_ROLE is not in ${config}"
 
 step "The command"

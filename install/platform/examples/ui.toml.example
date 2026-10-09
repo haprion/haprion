@@ -21,12 +21,6 @@ management_writes = true
 # It may only be enabled with management_writes=false and clusters=[].
 # demo_fixture = true
 
-# Development only: displays a manually captured, root-owned one-way snapshot
-# from production. It never permits this environment to reach production, and
-# may only be enabled with management_writes=false, clusters=[] and no demo
-# fixture. Capture it explicitly with platform step 10 before enabling it.
-# production_snapshot = true
-
 # Which clusters the poller asks about. Named here rather than discovered,
 # because the application accounts cannot read the engine's configuration - that
 # tree is private, and a poller reaching into it directly is what the privilege
@@ -74,8 +68,8 @@ port = 8080
 # node rather than hiding behind an empty table.
 #
 # Requires platform step 13 and each node's own route. Cannot be combined with
-# demo_fixture or production_snapshot: a development platform has no collector,
-# no key and no node access, so a mirror it could read arrived some other way.
+# demo_fixture: the fixture has no collector, no key and no node access, so a
+# mirror it could read arrived some other way.
 #
 # The unfiltered page shows the newest database records. Filters use the
 # retained daily partitions and show the newest max_lines matches (1-10000).

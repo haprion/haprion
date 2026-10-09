@@ -390,7 +390,6 @@ def build_object_detail(
     vip_is_default: bool = False,
     now: datetime | None = None,
     stale_after: timedelta,
-    captured: bool = False,
 ) -> ObjectDetail:
     """Combine one cluster's cached objects with the published row of the same name."""
 
@@ -450,9 +449,7 @@ def build_object_detail(
         observed_iso=reading.observed_at.astimezone(UTC).isoformat()
         if reading is not None
         else None,
-        age_label=observation_label(reading.observed_at, now, captured=captured)
-        if reading is not None
-        else "Never",
+        age_label=observation_label(reading.observed_at, now) if reading is not None else "Never",
         stale=stale,
         available=available,
         detail=detail,

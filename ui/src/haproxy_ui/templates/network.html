@@ -11,7 +11,7 @@
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div class="heading-title"><h1>Network</h1><p class="page-lede">Where traffic arrives, where it leaves from, and who may reach it.</p></div>
-  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
+  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 <div class="cluster-list">
@@ -42,7 +42,7 @@
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2"></circle><circle cx="5" cy="19" r="2"></circle><circle cx="19" cy="19" r="2"></circle><path d="M12 7v5M12 12H5v5M12 12h7v5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
     {% else %}
 
-    {% set editing = management_writes and role == 'admin' and cluster.editable and not demo_fixture and not production_snapshot %}
+    {% set editing = management_writes and role == 'admin' and cluster.editable and not demo_fixture %}
     {% if not editing %}
 
     <h4 class="network-subhead">Virtual addresses</h4>

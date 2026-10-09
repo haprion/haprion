@@ -18,49 +18,11 @@ from unittest import mock
 from uuid import UUID, uuid4
 
 from haproxy_ui import demo, metrics
-from haproxy_ui.db import ClusterInventory, Job, ProxyDraft
-from haproxy_ui.snapshot import ProductionSnapshot
+from haproxy_ui.db import Job, ProxyDraft
 from tests.test_cluster_traffic import measurement
 from tests.test_login import LoginTestCase, configuration
 
 CAPTURED = datetime(2026, 9, 2, 9, 0, tzinfo=UTC)
-#
-# One cluster serving one proxy, and no objects row at all - which is what a
-# snapshot holds.
-#
-SNAPSHOT = ProductionSnapshot(
-    captured_at=CAPTURED,
-    clusters=("alpha",),
-    status_rows=(),
-    inventory_rows=(
-        ClusterInventory(
-            cluster="alpha",
-            observed_at=CAPTURED,
-            outcome="done",
-            result={
-                "version": 12,
-                "proxies": [
-                    {
-                        "name": "app",
-                        "protocol": "https",
-                        "managed": True,
-                        "enabled": True,
-                        "hostnames": ["app.example.com"],
-                        "bind_ports": [443],
-                        "backend_count": 2,
-                    }
-                ],
-            },
-            warnings=[],
-            error=None,
-            poll_error=None,
-        ),
-    ),
-    history_rows=(),
-    certificate_rows=(),
-    backup_rows=(),
-    network_rows=(),
-)
 
 
 class DraftReading(LoginTestCase):
@@ -157,28 +119,6 @@ class OpeningAnObject(DraftReading):
 
         self.assertEqual(page.status_code, 303)
         self.assertEqual(page.headers["location"], "/login")
-
-
-class InSnapshotMode(DraftReading):
-    """Dev runs against a captured production snapshot, which carries no objects.
-
-    The reason is in `OBJECTS_SOURCE`: a snapshot is a file copied into the
-    development platform, and a stored document names every backend address the
-    cluster talks to. The page must say that rather than "not read yet", which
-    reads as a poller that is failing and sends somebody looking for a fault
-    that is not there.
-    """
-
-    def test_the_page_says_the_snapshot_leaves_objects_out(self) -> None:
-        client = self.client(replace(configuration(), production_snapshot=True))
-        self.sign_in(client)
-
-        with mock.patch("haproxy_ui.snapshot.load_production_snapshot", return_value=SNAPSHOT):
-            page = client.get("/proxies/alpha/app")
-
-        self.assertEqual(page.status_code, 200)
-        self.assertIn("Not carried in a snapshot", page.text)
-        self.assertNotIn("have not been read yet", page.text)
 
 
 class TheOverviewOrdering(LoginTestCase):

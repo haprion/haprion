@@ -328,36 +328,15 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TheFreshnessLineDoesNotClaimTheWallClock(unittest.TestCase):
-    """A snapshot's readings are judged against its capture, and say so.
-
-    Judging them against the capture is right and argued for in
-    `views.read_source`: measured against the wall clock every cluster in a
-    snapshot is stale forever, and a warning that is always lit stops being
-    read. But the label followed the clock into saying "Observed just now" about
-    data that was two days old, one line above a badge stating its true age.
-    Found by the code review on 2026-08-31 as F6.
-    """
+class TheFreshnessLine(unittest.TestCase):
+    """A card says how long ago its reading was observed."""
 
     def test_a_live_reading_says_when_it_was_observed(self) -> None:
         now = datetime.now(UTC)
 
-        label = dashboard.observation_label(now - timedelta(minutes=3), now, captured=False)
+        label = dashboard.observation_label(now - timedelta(minutes=3), now)
 
         self.assertEqual(label, "Observed 3m ago")
-
-    def test_a_captured_reading_says_it_was_current_when_taken(self) -> None:
-        captured_at = datetime.now(UTC) - timedelta(hours=42)
-
-        label = dashboard.observation_label(captured_at, captured_at, captured=True)
-
-        self.assertEqual(label, "Current at capture")
-        #
-        # The relative age is the snapshot's, not the cluster's, and the badge
-        # states it once. Repeating it per cluster is what made the page
-        # contradict itself.
-        #
-        self.assertNotIn("ago", label)
 
 
 def with_resources(

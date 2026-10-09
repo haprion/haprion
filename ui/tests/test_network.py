@@ -39,7 +39,7 @@ STALE_AFTER = timedelta(seconds=120)
 
 def overview(clusters: tuple[str, ...] = demo.CLUSTERS) -> tuple[NetworkClusterView, ...]:
     return build_network_overview(
-        clusters, demo.network_rows(NOW), now=NOW, stale_after=STALE_AFTER, captured=False
+        clusters, demo.network_rows(NOW), now=NOW, stale_after=STALE_AFTER
     )
 
 

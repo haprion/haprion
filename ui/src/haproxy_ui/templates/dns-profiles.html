@@ -12,7 +12,7 @@
 #}
 <section class="page-heading">
   <div class="heading-title"><h1>DNS providers</h1><p class="page-lede">Credentials for DNS-01 challenges, sealed for the certificate helper.</p></div>
-  <div class="heading-badges">{% if public_key %}<a class="secondary-button" href="/dns-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+  <div class="heading-badges">{% if public_key %}<a class="secondary-button" href="/dns-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 {% if not public_key %}

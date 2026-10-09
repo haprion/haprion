@@ -6,7 +6,7 @@
 <script defer src="{{ url_for('static', path='/backups.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div class="heading-title"><h1>Node backups</h1><p class="page-lede">State archives taken from each HAProxy node — its configuration, keys and service state.</p></div>
-  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
+  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 <section class="metric-grid backup-summary" aria-label="Backup summary">
@@ -22,7 +22,7 @@
       <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at | shown_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
     {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
-    {% set editable = management_writes and role == 'admin' and not demo_fixture and not production_snapshot %}
+    {% set editable = management_writes and role == 'admin' and not demo_fixture %}
     {% if cluster.schedule or editable %}
     <div class="schedule-block{% if not cluster.schedule %} schedule-block-bare{% endif %}">
       {% if cluster.schedule %}{% set schedule = cluster.schedule %}

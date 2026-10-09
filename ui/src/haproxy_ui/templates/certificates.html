@@ -97,7 +97,7 @@
     no strip, and the two provider buttons stay here: they need no registry,
     and a page with nothing to pin needs no pinned row.
   #}
-  <div class="heading-badges">{% if management_writes and role == 'admin' and not certificates.registry %}{{ page_actions() }}{% endif %}{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
+  <div class="heading-badges">{% if management_writes and role == 'admin' and not certificates.registry %}{{ page_actions() }}{% endif %}{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 {#

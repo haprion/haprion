@@ -161,7 +161,6 @@ class TheRegistryView(unittest.TestCase):
             [registry_reading(interface_entry())],
             now=NOW,
             stale_after=timedelta(minutes=5),
-            captured=True,
         )
         registry = overview.registry
         if registry is None:
@@ -187,7 +186,6 @@ class TheRegistryView(unittest.TestCase):
             ],
             now=NOW,
             stale_after=timedelta(minutes=5),
-            captured=True,
         )
         if overview.registry is None or overview.registry.interface is None:
             self.fail("no interface entry")

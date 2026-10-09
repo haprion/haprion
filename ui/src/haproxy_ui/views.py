@@ -111,7 +111,6 @@ from haproxy_ui import (
     proxies,
     search_index,
     server_card,
-    snapshot,
     timing,
     traffic_log_table,
     traffic_logs,
@@ -354,20 +353,6 @@ def _traffic_marks(request: Request, marked: metrics.Selection) -> dict[str, obj
     }
 
 
-def snapshot_age(captured_at: datetime | None) -> str:
-    """How old the snapshot is, or empty for a mode that has no snapshot.
-
-    Stated once, next to the badge that already says the page is showing one.
-    Per-cluster freshness is measured against the capture, so this is the only
-    place the wall clock appears in snapshot mode - and it is the only place it
-    means anything, because it is the only number the operator can act on.
-    """
-
-    if captured_at is None:
-        return ""
-    return dashboard.relative_age(captured_at, datetime.now(UTC))
-
-
 #
 # How stale the inactivity clock is allowed to get before it is written again.
 # Without this every authenticated request would be a write, which turns a
@@ -410,17 +395,15 @@ EXPIRED = (
 
 @dataclass(frozen=True, slots=True)
 class Source:
-    """Where one kind of cached reading comes from, in each of the three modes.
+    """Where one kind of cached reading comes from, in each of the two modes.
 
-    A page must never choose its own source: development can be showing the
-    synthetic fixture or an operator-made production snapshot, and a view that
-    reached the database directly would quietly show real rows on a page
-    labelled as fixture data. Stated once, per kind of reading, so a new page
+    A page must never choose its own source: an interface can be showing the
+    synthetic fixture, and a view that reached the database directly would
+    quietly show real rows on a page labelled as fixture data. Stated once, per kind of reading, so a new page
     picks a source rather than inventing one.
     """
 
     demo_rows: Callable[[], Iterable[Any]]
-    snapshot_rows: Callable[[snapshot.ProductionSnapshot], Iterable[Any]]
     cached_rows: Callable[[Any], Iterable[Any]]
     scoped_rows: Callable[[Any, str], Iterable[Any]] | None = None
 
@@ -432,58 +415,40 @@ class Source:
 #
 STATUS_SOURCE = Source(
     demo.status_rows,
-    lambda taken: taken.status_rows,
     lambda connection: db.cluster_statuses(connection),
 )
 INVENTORY_SOURCE = Source(
     demo.inventory_rows,
-    lambda taken: taken.inventory_rows,
     lambda connection: db.cluster_inventories(connection),
 )
 HISTORY_SOURCE = Source(
     demo.history_rows,
-    lambda taken: taken.history_rows,
     lambda connection: db.cluster_histories(connection),
     lambda connection, cluster: db.cluster_histories(connection, cluster=cluster),
 )
 BACKUP_SOURCE = Source(
     demo.backup_rows,
-    lambda taken: taken.backup_rows,
     lambda connection: db.cluster_backups(connection),
 )
 CERTIFICATE_SOURCE = Source(
     demo.certificate_rows,
-    lambda taken: taken.certificate_rows,
     lambda connection: db.cluster_certificates(connection),
     lambda connection, cluster: db.cluster_certificates(connection, cluster=cluster),
 )
 NETWORK_SOURCE = Source(
     demo.network_rows,
-    lambda taken: taken.network_rows,
     lambda connection: db.cluster_networks(connection),
     lambda connection, cluster: db.cluster_networks(connection, cluster=cluster),
 )
 #
-# A production snapshot carries no objects, and that is a decision rather than
-# an omission. The snapshot is a file copied into the development platform,
-# where more people can read it, so every other source in it is rebuilt field by
-# field and bounded. A stored object is the one thing that cannot be reduced
-# that way and still be worth reading - it is the document itself, carrying
-# every backend address the cluster talks to, which no other source in the
-# snapshot exposes. Dev exercises this page against the fixture instead.
-#
-#
-# The cluster's own settings (Fas 15). A production snapshot carries none: it
-# is for reading production's shape in dev, and these are edited in place.
+# The cluster's own settings (Fas 15).
 #
 SETTINGS_SOURCE = Source(
     demo.settings_rows,
-    lambda taken: (),
     lambda connection: db.cluster_settings(connection),
 )
 OBJECTS_SOURCE = Source(
     demo.object_rows,
-    lambda taken: (),
     lambda connection: db.cluster_objects(connection),
     lambda connection, cluster: db.cluster_objects(connection, cluster=cluster),
 )
@@ -510,14 +475,6 @@ def listed_clusters(request: Request, config: Config) -> tuple[str, ...]:
 
     if config.demo_fixture:
         return demo.CLUSTERS
-    if config.production_snapshot:
-        try:
-            return snapshot.load_production_snapshot(
-                snapshot.path_for_config(request.app.state.config_path)
-            ).clusters
-        except snapshot.SnapshotError:
-            # The page that reads the snapshot says what is wrong with it.
-            return ()
     #
     # The clusters the poller last read from the cluster file (B206), so one
     # created or removed from Settings is on the pages at the next pass.
@@ -541,21 +498,8 @@ def read_source(
     *,
     cluster: str | None = None,
     clusters: tuple[str, ...] | None = None,
-) -> tuple[tuple[str, ...], Iterable[Any], datetime | None]:
-    """The clusters to render, their newest readings, and the clock to judge them by.
-
-    The third value is the moment the readings describe, and it is set only for
-    a snapshot. A snapshot is deliberately static, so measured against the wall
-    clock every reading in it goes stale two poll intervals after it was taken,
-    on every page, forever. That is formally true and useless: a badge that is
-    always lit teaches the reader to stop seeing it, and it would be lit for the
-    one thing the reader cannot act on - dev cannot poll production.
-
-    Measured against the capture instead, the badge says what it says everywhere
-    else: whether production's own readings were current when they were taken.
-    The age of the snapshot is a separate fact, and the page states it beside
-    the mode badge rather than smearing it across every cluster.
-    """
+) -> tuple[tuple[str, ...], Iterable[Any]]:
+    """The clusters to render and their newest readings."""
 
     if config.demo_fixture:
         # The fixture times its readings from the moment it is read, so it needs
@@ -567,24 +511,10 @@ def read_source(
                 for row in source.demo_rows()
                 if cluster is None or getattr(row, "cluster", None) == cluster
             ],
-            None,
-        )
-    if config.production_snapshot:
-        captured = snapshot.load_production_snapshot(
-            snapshot.path_for_config(request.app.state.config_path)
-        )
-        return (
-            captured.clusters,
-            [
-                row
-                for row in source.snapshot_rows(captured)
-                if cluster is None or getattr(row, "cluster", None) == cluster
-            ],
-            captured.captured_at,
         )
     listed, from_file = _cluster_list(request, config) if clusters is None else (clusters, True)
     if cluster is not None and cluster not in listed:
-        return listed, (), None
+        return listed, ()
     with request.app.state.pool.connection() as connection:
         rows = (
             source.scoped_rows(connection, cluster)
@@ -602,7 +532,7 @@ def read_source(
     #
     if from_file:
         rows = [row for row in rows if getattr(row, "cluster", None) in listed]
-    return listed, rows, None
+    return listed, rows
 
 
 def client_address(request: Request) -> str:
@@ -767,19 +697,12 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, status_rows, captured_at = read_source(request, config, STATUS_SOURCE)
-        _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
+        clusters, status_rows = read_source(request, config, STATUS_SOURCE)
+        _, network_rows = read_source(request, config, NETWORK_SOURCE)
         dashboard_view = dashboard.build_dashboard(
             clusters,
             status_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            #
-            # The snapshot's readings describe the instant it was taken, so
-            # the freshness line says that rather than claiming the wall
-            # clock. Staleness is still judged the same way.
-            #
-            captured=captured_at is not None,
             network_readings=network_rows,
         )
         moment = datetime.now(UTC)
@@ -860,18 +783,12 @@ def build_router(config: Config) -> APIRouter:
                 "certificate_blocks": jobs.certificate_blocks(recent),
                 "section": "dashboard",
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": snapshot_age(captured_at),
                 #
                 # The page redraws itself once per poll (live.js), so the CPU,
                 # memory and freshness on it move without a reload. Not for a
-                # snapshot or the demo data: nothing behind those changes.
+                # the demo data: nothing behind it changes.
                 #
-                "live_seconds": (
-                    None
-                    if config.production_snapshot or config.demo_fixture
-                    else config.poller.interval_seconds
-                ),
+                "live_seconds": (None if config.demo_fixture else config.poller.interval_seconds),
             },
         )
 
@@ -903,18 +820,11 @@ def build_router(config: Config) -> APIRouter:
         changed shape halfway through a deploy.
         """
 
-        clusters, inventory_rows, captured_at = read_source(request, config, INVENTORY_SOURCE)
+        clusters, inventory_rows = read_source(request, config, INVENTORY_SOURCE)
         overview = proxies.build_proxy_overview(
             clusters,
             inventory_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            #
-            # The snapshot's readings describe the instant it was taken, so
-            # the freshness line says that rather than claiming the wall
-            # clock. Staleness is still judged the same way.
-            #
-            captured=captured_at is not None,
         )
         #
         # The listing is built from published frontends, so an object that has
@@ -923,7 +833,7 @@ def build_router(config: Config) -> APIRouter:
         # merged into the same table: they are a different state, and half a
         # table of empty ports and backend counts would say so badly.
         #
-        _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
+        _, object_rows = read_source(request, config, OBJECTS_SOURCE)
         rows = {reading.cluster: reading for reading in object_rows}
         #
         # Objects, not frontends. The generator names a frontend after the
@@ -938,7 +848,7 @@ def build_router(config: Config) -> APIRouter:
         # reason: it is measured on the node rather than derived from a release
         # the nodes may not have pulled yet.
         #
-        _, health_rows, _ = read_source(request, config, STATUS_SOURCE)
+        _, health_rows = read_source(request, config, STATUS_SOURCE)
         #
         # Read from the same rows as the lamps. Publishing does not deploy, and
         # the listing was the one page that never said so for an object that
@@ -1153,7 +1063,6 @@ def build_router(config: Config) -> APIRouter:
             },
             "failed": failed,
             "removed": removed,
-            "captured_at": captured_at,
         }
 
     #
@@ -1194,7 +1103,6 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         listing = _proxy_listing(request, session.role)
-        captured_at = listing.pop("captured_at")
         sort, asked = proxies.TABLE.chosen(request)
         response = TEMPLATES.TemplateResponse(
             request,
@@ -1208,8 +1116,6 @@ def build_router(config: Config) -> APIRouter:
                 "discarded": request.query_params.get("discarded", ""),
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": snapshot_age(captured_at),
                 "proxy_sort": sort,
                 "proxy_sorts": proxies.TABLE.links(sort),
                 "proxy_paging": proxies.pages_asked(request.query_params),
@@ -1387,8 +1293,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "proxies",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -1528,27 +1432,23 @@ def build_router(config: Config) -> APIRouter:
         if session.role != "admin":
             return PlainTextResponse("Refused", status_code=403)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, object_rows, captured_at = read_source(request, config, OBJECTS_SOURCE)
+        clusters, object_rows = read_source(request, config, OBJECTS_SOURCE)
         if cluster not in clusters:
             raise HTTPException(status_code=404)
-        _, inventory_rows, _ = read_source(request, config, INVENTORY_SOURCE)
+        _, inventory_rows = read_source(request, config, INVENTORY_SOURCE)
         overview = proxies.build_proxy_overview(
             clusters,
             inventory_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
         published = tuple(
             proxy for view in overview.clusters if view.cluster == cluster for proxy in view.proxies
         )
-        _, history_rows, _ = read_source(request, config, HISTORY_SOURCE)
+        _, history_rows = read_source(request, config, HISTORY_SOURCE)
         listing = history.build_history_overview(
             clusters,
             history_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
         versions = tuple(
             version
@@ -1561,13 +1461,11 @@ def build_router(config: Config) -> APIRouter:
         # release as live while every node still pulls the previous one is the
         # one thing this card must not do.
         #
-        _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
+        _, status_rows = read_source(request, config, STATUS_SOURCE)
         board = dashboard.build_dashboard(
             clusters,
             status_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
         serving = next((view for view in board.clusters if view.cluster == cluster), None)
         #
@@ -1588,7 +1486,7 @@ def build_router(config: Config) -> APIRouter:
         # another address. The default below is for an object with no stored
         # document, served from configuration not written here.
         #
-        _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
+        _, network_rows = read_source(request, config, NETWORK_SOURCE)
         network_rows = tuple(network_rows)
         object_rows = tuple(object_rows)
         written = next(
@@ -1609,9 +1507,7 @@ def build_router(config: Config) -> APIRouter:
                 for view in network.build_network_overview(
                     clusters,
                     network_rows,
-                    now=captured_at,
                     stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-                    captured=captured_at is not None,
                 )
                 if view.cluster == cluster
             ),
@@ -1652,9 +1548,7 @@ def build_router(config: Config) -> APIRouter:
             if resolved
             else (vip.address if vip else None),
             vip_is_default=resolved.vip_is_default if resolved else vip is not None,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
         #
         # A draft makes a name a page too. An object that has only ever been
@@ -1913,8 +1807,6 @@ def build_router(config: Config) -> APIRouter:
                 "spark_height": metrics.SPARK_HEIGHT,
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": snapshot_age(captured_at),
             },
         )
 
@@ -1972,7 +1864,7 @@ def build_router(config: Config) -> APIRouter:
         if session.role != "admin":
             return PlainTextResponse("Refused", status_code=403)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, _rows, captured_at = read_source(request, config, STATUS_SOURCE)
+        clusters, _rows = read_source(request, config, STATUS_SOURCE)
         if only is not None and only not in clusters:
             raise HTTPException(status_code=404)
         wanted = [only] if only is not None else list(clusters)
@@ -1982,7 +1874,7 @@ def build_router(config: Config) -> APIRouter:
         # made it, which is right for counters that must survive an edit and
         # unreadable on a page.
         #
-        _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
+        _, object_rows = read_source(request, config, OBJECTS_SOURCE)
 
         chosen = metrics.window(request.query_params.get("traffic"))
         #
@@ -2317,8 +2209,6 @@ def build_router(config: Config) -> APIRouter:
                 "spark_height": metrics.SPARK_HEIGHT,
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": snapshot_age(captured_at),
             },
         )
 
@@ -2336,7 +2226,7 @@ def build_router(config: Config) -> APIRouter:
         asked = request.query_params.get("page", "1")
         page = min(int(asked), MAX_SEARCH_PAGE) if asked.isdecimal() and int(asked) > 0 else 1
         results = search_index.Results(query, (), 0, 1)
-        if query and (config.demo_fixture or config.production_snapshot):
+        if query and config.demo_fixture:
             #
             # Neither mode has rows in the database: the readings are a
             # fixture or a file. The same functions the poller uses build the
@@ -2345,7 +2235,7 @@ def build_router(config: Config) -> APIRouter:
             clusters = listed_clusters(request, config)
             entries = search_index.cluster_entries(clusters)
             for operation, source in SEARCHED_SOURCES:
-                _, rows, _ = read_source(request, config, source)
+                _, rows = read_source(request, config, source)
                 for row in rows:
                     if row.outcome in ("done", "partial") and isinstance(row.result, Mapping):
                         entries += (
@@ -2372,8 +2262,6 @@ def build_router(config: Config) -> APIRouter:
                 "results": results,
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -2462,7 +2350,7 @@ def build_router(config: Config) -> APIRouter:
         #
         server_addresses: dict[tuple[str, str, str], str] = {}
         if config.traffic_logs.enabled:
-            _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
+            _, object_rows = read_source(request, config, OBJECTS_SOURCE)
             for object_row in object_rows:
                 parsed = []
                 for obj in objects.cluster_object_views(object_row):
@@ -2595,7 +2483,7 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, certificate_rows, captured_at = read_source(request, config, CERTIFICATE_SOURCE)
+        clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
         #
         # The node status too, for the one question the certificate listing
         # cannot answer: whether the nodes are carrying what was published. The
@@ -2603,19 +2491,12 @@ def build_router(config: Config) -> APIRouter:
         # fingerprints, and the registry view needs both to say anything
         # truthful about a cluster target.
         #
-        _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
+        _, status_rows = read_source(request, config, STATUS_SOURCE)
         overview = certificates.build_certificate_overview(
             clusters,
             certificate_rows,
             status_readings=status_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            #
-            # The snapshot's readings describe the instant it was taken, so
-            # the freshness line says that rather than claiming the wall
-            # clock. Staleness is still judged the same way.
-            #
-            captured=captured_at is not None,
         )
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection, limit=100)
@@ -2681,8 +2562,6 @@ def build_router(config: Config) -> APIRouter:
                 "management_writes": config.management_writes,
                 "section": "certificates",
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": snapshot_age(captured_at),
                 "certificate_sort": sort,
                 "certificate_sorts": {
                     view: certificates.TABLE.links(sort, {"view": view})
@@ -2939,8 +2818,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -3315,8 +3192,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -3458,13 +3333,11 @@ def build_router(config: Config) -> APIRouter:
     def _certificate_choices(request: Request, config: Config) -> certificate_form.IssueChoices:
         """The targets the form may offer, read the way the listing reads them."""
 
-        clusters, certificate_rows, captured_at = read_source(request, config, CERTIFICATE_SOURCE)
+        clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
         overview = certificates.build_certificate_overview(
             clusters,
             certificate_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
         usable_profiles: tuple[str, ...] = ()
         profiles_required = config.dns_profiles_public_key is not None
@@ -3583,8 +3456,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -3595,13 +3466,11 @@ def build_router(config: Config) -> APIRouter:
     ) -> Mapping[str, certificates.RegistryCertificateView]:
         """The registry as the listing draws it, by ID, for the cleanup page."""
 
-        clusters, certificate_rows, captured_at = read_source(request, config, CERTIFICATE_SOURCE)
+        clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
         overview = certificates.build_certificate_overview(
             clusters,
             certificate_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
         if overview.registry is None:
             return {}
@@ -3646,8 +3515,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -3689,8 +3556,6 @@ def build_router(config: Config) -> APIRouter:
                 else "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -3840,8 +3705,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -3966,13 +3829,11 @@ def build_router(config: Config) -> APIRouter:
     # - Receivers (B142, 2026-09-18) ------------------------------------------
 
     def _registry_overview(request: Request) -> certificates.RegistryView | None:
-        clusters, certificate_rows, captured_at = read_source(request, config, CERTIFICATE_SOURCE)
+        clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
         overview = certificates.build_certificate_overview(
             clusters,
             certificate_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
         return overview.registry
 
@@ -3995,8 +3856,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -4122,12 +3981,12 @@ def build_router(config: Config) -> APIRouter:
                 "sso": oidc_web.summary(provider),
                 "sso_on": provider is not None and provider.enabled,
                 "cluster_settings": cluster_settings_page.card_views(
-                    *read_source(request, config, SETTINGS_SOURCE)[:2],
+                    *read_source(request, config, SETTINGS_SOURCE),
                     waiting=network.awaiting_deploy(recent, part="settings"),
                     running=jobs.in_flight(recent),
                 ),
                 "cluster_nodes": cluster_nodes.card_rows(
-                    *read_source(request, config, STATUS_SOURCE)[:2]
+                    *read_source(request, config, STATUS_SOURCE)
                 ),
                 "location_data": location_data.card(
                     read_source(request, config, OBJECTS_SOURCE)[1]
@@ -4172,13 +4031,11 @@ def build_router(config: Config) -> APIRouter:
     #
 
     def _backup_overview(request: Request) -> Any:
-        clusters, backup_rows, captured_at = read_source(request, config, BACKUP_SOURCE)
+        clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
         return backups.build_backup_overview(
             clusters,
             backup_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
 
     def _restore_waiting(request: Request) -> bool:
@@ -4457,7 +4314,7 @@ def build_router(config: Config) -> APIRouter:
     def _settings_reading(request: Request, cluster: str) -> Any:
         """This cluster's cached reading, or None when it is not listed or not read."""
 
-        clusters, rows, _captured = read_source(request, config, SETTINGS_SOURCE)
+        clusters, rows = read_source(request, config, SETTINGS_SOURCE)
         if cluster not in clusters:
             return None
         return next((row for row in rows if row.cluster == cluster and row.outcome == "done"), None)
@@ -4638,7 +4495,7 @@ def build_router(config: Config) -> APIRouter:
     #
 
     def _status_row(request: Request, cluster: str) -> Any | None:
-        clusters, rows, _ = read_source(request, config, STATUS_SOURCE)
+        clusters, rows = read_source(request, config, STATUS_SOURCE)
         if cluster not in clusters:
             return None
         return next((row for row in rows if row.cluster == cluster), None)
@@ -5815,7 +5672,7 @@ def build_router(config: Config) -> APIRouter:
             recent = db.profile_jobs(connection, "dns_profile_apply")
         public_key = _dns_public_key()
         catalogue = {provider.id: provider for provider in dns_profile_form.providers()}
-        _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
+        _, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
         references = certificates.profile_references(certificate_rows, field="dns_profile")
         statuses = {
             profile.id: dns_profile_form.without_stale_refusal(
@@ -5849,8 +5706,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -5917,8 +5772,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -6163,8 +6016,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -6192,8 +6043,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -6205,7 +6054,7 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             profiles = db.ndes_profiles(connection)
             recent = db.profile_jobs(connection, "ndes_profile_apply")
-        _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
+        _, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
         references = certificates.profile_references(certificate_rows, field="ndes_profile")
         statuses = {
             p.id: dns_profile_form.without_stale_refusal(
@@ -6227,8 +6076,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -6435,8 +6282,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": "",
             },
         )
 
@@ -6502,18 +6347,11 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, backup_rows, captured_at = read_source(request, config, BACKUP_SOURCE)
+        clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
         overview = backups.build_backup_overview(
             clusters,
             backup_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            #
-            # The snapshot's readings describe the instant it was taken, so
-            # the freshness line says that rather than claiming the wall
-            # clock. Staleness is still judged the same way.
-            #
-            captured=captured_at is not None,
         )
         with request.app.state.pool.connection() as connection:
             running = jobs.in_flight(db.recent_jobs(connection))
@@ -6552,21 +6390,17 @@ def build_router(config: Config) -> APIRouter:
                 "section": "backups",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": snapshot_age(captured_at),
             },
         )
 
     # - Node restore (§15.2, B175) -----------------------------------------
 
     def _backup_cluster(request: Request, cluster: str) -> backups.BackupClusterView | None:
-        clusters, backup_rows, captured_at = read_source(request, config, BACKUP_SOURCE)
+        clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
         overview = backups.build_backup_overview(
             clusters,
             backup_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
         return next((view for view in overview.clusters if view.cluster == cluster), None)
 
@@ -6624,7 +6458,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "backups",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
             },
         )
 
@@ -6657,7 +6490,6 @@ def build_router(config: Config) -> APIRouter:
                 "section": "backups",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
             },
         )
 
@@ -7002,15 +6834,13 @@ def build_router(config: Config) -> APIRouter:
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
-        clusters, history_rows, captured_at = read_source(request, config, HISTORY_SOURCE)
+        clusters, history_rows = read_source(request, config, HISTORY_SOURCE)
         if cluster not in clusters:
             return HTMLResponse("Not found", status_code=404)
         overview = history.build_history_overview(
             clusters,
             history_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
         )
         shown = next(
             (
@@ -7038,8 +6868,6 @@ def build_router(config: Config) -> APIRouter:
                 "version": shown[1],
                 "changes": version_changes_view.build(found),
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": snapshot_age(captured_at),
             },
         )
 
@@ -7049,18 +6877,11 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, history_rows, captured_at = read_source(request, config, HISTORY_SOURCE)
+        clusters, history_rows = read_source(request, config, HISTORY_SOURCE)
         overview = history.build_history_overview(
             clusters,
             history_rows,
-            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            #
-            # The snapshot's readings describe the instant it was taken, so
-            # the freshness line says that rather than claiming the wall
-            # clock. Staleness is still judged the same way.
-            #
-            captured=captured_at is not None,
         )
         with request.app.state.pool.connection() as connection:
             running = jobs.in_flight(db.recent_jobs(connection))
@@ -7098,8 +6919,6 @@ def build_router(config: Config) -> APIRouter:
                 "management_writes": config.management_writes,
                 "section": "history",
                 "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": snapshot_age(captured_at),
             },
         )
 
@@ -8136,9 +7955,7 @@ class EditorState:
 
 
 def _editor_state(request: Request, config: Config, cluster: str) -> EditorState:
-    clusters, object_rows, captured_at = read_source(
-        request, config, OBJECTS_SOURCE, cluster=cluster
-    )
+    clusters, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
     if cluster not in clusters:
         raise HTTPException(status_code=404)
     stale_after = timedelta(seconds=config.poller.interval_seconds * 2)
@@ -8146,7 +7963,7 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
     result = reading.result if reading is not None and isinstance(reading.result, dict) else {}
     commit = result.get("commit")
 
-    _, network_rows, _ = read_source(
+    _, network_rows = read_source(
         request, config, NETWORK_SOURCE, cluster=cluster, clusters=clusters
     )
     #
@@ -8161,15 +7978,13 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
             for view in network.build_network_overview(
                 (cluster,),
                 network_rows,
-                now=captured_at,
                 stale_after=stale_after,
-                captured=captured_at is not None,
             )
             if view.cluster == cluster
         ),
         None,
     )
-    _, certificate_rows, _ = read_source(
+    _, certificate_rows = read_source(
         request, config, CERTIFICATE_SOURCE, cluster=cluster, clusters=clusters
     )
     held = next(
@@ -8178,15 +7993,13 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
             for view in certificates.build_certificate_overview(
                 (cluster,),
                 certificate_rows,
-                now=captured_at,
                 stale_after=stale_after,
-                captured=captured_at is not None,
             ).clusters
             if view.cluster == cluster
         ),
         None,
     )
-    _, history_rows, _ = read_source(
+    _, history_rows = read_source(
         request, config, HISTORY_SOURCE, cluster=cluster, clusters=clusters
     )
     released = next(
@@ -8195,9 +8008,7 @@ def _editor_state(request: Request, config: Config, cluster: str) -> EditorState
             for view in history.build_history_overview(
                 (cluster,),
                 history_rows,
-                now=captured_at,
                 stale_after=stale_after,
-                captured=captured_at is not None,
             ).clusters
             if view.cluster == cluster
             for version in view.versions
@@ -8308,7 +8119,7 @@ def _editor_page(
     # rather than for the check: it is an observation, not a verdict on the
     # document, and an object that has never been deployed simply has none.
     #
-    _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
+    _, status_rows = read_source(request, config, STATUS_SOURCE)
     backend = health.backend_health(
         status_rows,
         cluster=cluster,
@@ -8445,8 +8256,6 @@ def _editor_page(
             ),
             "management_writes": config.management_writes,
             "demo_fixture": config.demo_fixture,
-            "production_snapshot": config.production_snapshot,
-            "snapshot_age": None,
         },
     )
 
@@ -8530,7 +8339,7 @@ def _moved_servers(
 ) -> list[str]:
     """The status's word that one of this object's dns servers moved (B253)."""
 
-    _, rows, _ = read_source(request, config, STATUS_SOURCE)
+    _, rows = read_source(request, config, STATUS_SOURCE)
     return moved_dns_servers(rows, cluster=cluster, pools=stored.runtime_backends or ())
 
 
@@ -9082,7 +8891,7 @@ class Package:
 def _pending_count(request: Request, config: Config, cluster: str) -> int:
     """How many saved changes one cluster has, each cleared once its publish is read (B257)."""
 
-    _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
+    _, object_rows = read_source(request, config, OBJECTS_SOURCE, cluster=cluster)
     objects_row = next((row for row in object_rows if row.cluster == cluster), None)
     heads = _reading_heads(request, config, cluster)
     with request.app.state.pool.connection() as connection:
@@ -9698,8 +9507,8 @@ def _listed_versions(connection: Any, cluster: str) -> dict[str, int]:
 def _reading_heads(request: Request, config: Config, cluster: str) -> dict[str, str | None]:
     """The commit the network and the settings readings of one cluster stand at."""
 
-    _, network_rows, _ = read_source(request, config, NETWORK_SOURCE, cluster=cluster)
-    _, settings_rows, _ = read_source(request, config, SETTINGS_SOURCE)
+    _, network_rows = read_source(request, config, NETWORK_SOURCE, cluster=cluster)
+    _, settings_rows = read_source(request, config, SETTINGS_SOURCE)
     return {
         "network": _reading_head(next((r for r in network_rows if r.cluster == cluster), None)),
         "settings": _reading_head(
@@ -9981,8 +9790,6 @@ def _refusal_page(
             "back_label": back.lstrip("/") or "the dashboard",
             "section": back.lstrip("/").split("/")[0],
             "demo_fixture": config.demo_fixture,
-            "production_snapshot": config.production_snapshot,
-            "snapshot_age": None,
         },
         status_code=400,
     )
@@ -10028,7 +9835,7 @@ def _network_page(request: Request, config: Config) -> Response:
     if session is None:
         return RedirectResponse("/login", status_code=303)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
-    clusters, network_rows, captured_at = read_source(request, config, NETWORK_SOURCE)
+    clusters, network_rows = read_source(request, config, NETWORK_SOURCE)
     #
     # A saved description is what the form shows and what the next publish
     # carries (B257), so it is drawn in place of the published one and said so.
@@ -10038,9 +9845,7 @@ def _network_page(request: Request, config: Config) -> Response:
     overview = network.build_network_overview(
         clusters,
         network_rows,
-        now=captured_at,
         stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-        captured=captured_at is not None,
     )
     #
     # Published is not deployed, and this page had no way to say so: publishing
@@ -10057,13 +9862,11 @@ def _network_page(request: Request, config: Config) -> Response:
     # correct itself when somebody deploys from the command line, and why it
     # needs no memory of what was pressed here.
     #
-    _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
+    _, status_rows = read_source(request, config, STATUS_SOURCE)
     board = dashboard.build_dashboard(
         clusters,
         status_rows,
-        now=captured_at,
         stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-        captured=captured_at is not None,
     )
     serving = {view.cluster: view for view in board.clusters}
     awaiting = network.awaiting_deploy(recent)
@@ -10094,8 +9897,6 @@ def _network_page(request: Request, config: Config) -> Response:
             "targets": {name: view.target_version for name, view in serving.items()},
             "management_writes": config.management_writes,
             "demo_fixture": config.demo_fixture,
-            "production_snapshot": config.production_snapshot,
-            "snapshot_age": snapshot_age(captured_at),
         },
     )
 
@@ -10328,7 +10129,7 @@ def _waf_documents(
 ) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
     """Each object's stored document, and its draft's where it has one (not a removal)."""
 
-    _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
+    _, object_rows = read_source(request, config, OBJECTS_SOURCE)
     stored: dict[tuple[str, str], str] = {}
     readings: dict[str, Any] = {}
     for row in object_rows:

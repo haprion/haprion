@@ -570,13 +570,6 @@ def _cluster_view(
     configured: bool,
     now: datetime,
     stale_after: timedelta,
-    #
-    # True only in snapshot mode, where the readings describe a moment that has
-    # passed and `now` is that moment rather than the wall clock. It changes
-    # what the freshness line says, not how staleness is judged. See
-    # `dashboard.observation_label`.
-    #
-    captured: bool = False,
 ) -> BackupClusterView:
     result = _mapping(reading.result)
     entries = result.get("nodes")
@@ -603,7 +596,7 @@ def _cluster_view(
         detail=detail,
         observed_at=reading.observed_at,
         observed_iso=reading.observed_at.astimezone(UTC).isoformat(),
-        age_label=observation_label(reading.observed_at, now, captured=captured),
+        age_label=observation_label(reading.observed_at, now),
         stale=stale,
         nodes=tuple(nodes),
         #
@@ -634,13 +627,6 @@ def build_backup_overview(
     *,
     now: datetime | None = None,
     stale_after: timedelta,
-    #
-    # True only in snapshot mode, where the readings describe a moment that has
-    # passed and `now` is that moment rather than the wall clock. It changes
-    # what the freshness line says, not how staleness is judged. See
-    # `dashboard.observation_label`.
-    #
-    captured: bool = False,
 ) -> BackupOverview:
     """Combine configured clusters and their newest cached backup listing."""
 
@@ -652,15 +638,11 @@ def build_backup_overview(
         clusters.append(
             _empty(cluster, configured=True)
             if reading is None
-            else _cluster_view(
-                reading, configured=True, now=now, stale_after=stale_after, captured=captured
-            )
+            else _cluster_view(reading, configured=True, now=now, stale_after=stale_after)
         )
     for cluster in sorted(rows):
         clusters.append(
-            _cluster_view(
-                rows[cluster], configured=False, now=now, stale_after=stale_after, captured=captured
-            )
+            _cluster_view(rows[cluster], configured=False, now=now, stale_after=stale_after)
         )
 
     nodes = tuple(node for cluster in clusters for node in cluster.nodes)

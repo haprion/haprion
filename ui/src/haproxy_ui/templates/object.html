@@ -4,19 +4,13 @@
 <script defer src="{{ url_for('static', path='/traffic.js') }}?v={{ asset_token }}"></script>
 {% if advanced_offered %}<script defer src="{{ url_for('static', path='/advanced.js') }}?v={{ asset_token }}"></script>{% endif %}
 {% if servers %}<script defer src="{{ url_for('static', path='/servers.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>{% endif %}
-{#
-  A snapshot deliberately carries no objects, so "not read yet" would send a
-  reader looking for a poller fault that is not there. Said once, and used
-  wherever the page would otherwise explain the absence.
-#}
-{% set snapshot_omits = production_snapshot and not object.stored %}
 <section class="page-heading">
   <div class="heading-title">
     <p class="page-breadcrumb"><a href="/proxies">Proxies</a> · {{ object.cluster }}</p>
     <h1>{{ object.name }}</h1>
-    <p class="page-lede">{% if snapshot_omits %}Stored objects are not carried in a production snapshot{% else %}{{ object.detail }}{% endif %}</p>
+    <p class="page-lede">{{ object.detail }}</p>
   </div>
-  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
+  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 {#
@@ -88,7 +82,7 @@
     <pre class="config-block"><code>{{ object.stored.document }}</code></pre>
   </details>
   {% else %}
-  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div>{% if snapshot_omits %}<strong>Not carried in a snapshot</strong><span>A production snapshot leaves out stored objects on purpose - the document names every backend address behind a site, which no other source in the file exposes.</span>{% else %}<strong>Nothing stored</strong><span>{{ object.detail }}</span>{% endif %}</div></div>
+  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>Nothing stored</strong><span>{{ object.detail }}</span></div></div>
   {% endif %}
 </article>
 

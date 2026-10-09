@@ -13,7 +13,7 @@
 #}
 <section class="page-heading">
   <div class="heading-title"><h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New DNS provider profile{% endif %}</h1><p class="page-lede">{% if existing %}The new values are sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous values stay in effect until it finishes.{% else %}The values are sealed against the installation's key before they are stored, and only the certificate helper can open them.{% endif %}</p></div>
-  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 {% if problem %}

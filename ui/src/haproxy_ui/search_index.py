@@ -11,9 +11,8 @@ Nothing here reads a document. The objects helper reports each object's VIP,
 source and servers, worked out by the generator's own rule (B222), so this is a
 reshaping of fields and not a second reader of the same file.
 
-The same functions build the rows for the demo fixture and the production
-snapshot, which have no rows in the database; those modes filter them in
-memory with `matching`.
+The same functions build the rows for the demo fixture, which has no rows in
+the database; it filters them in memory with `matching`.
 """
 
 from __future__ import annotations
@@ -317,7 +316,7 @@ def grouped(hits: Sequence[Hit]) -> tuple[Group, ...]:
 def matching(
     entries: Iterable[Entry], query: str, *, role: str, clusters: Iterable[str], page: int = 1
 ) -> Results:
-    """The search done in memory, for the demo fixture and the snapshot.
+    """The search done in memory, for the demo fixture.
 
     The same grouping and order as the database query in `db.search`, so the
     two modes draw the same page.

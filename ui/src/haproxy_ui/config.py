@@ -33,7 +33,6 @@ ALLOWED_KEYS = frozenset(
         "clusters",
         "poller",
         "demo_fixture",
-        "production_snapshot",
         "traffic_logs",
         "dns_profiles",
         "oidc",
@@ -179,12 +178,9 @@ class Config:
     # a read-only interface, which is not a rollback that should require a build.
     #
     management_writes: bool
-    # A deliberate development-only display source. It is never a poller input,
-    # and can only coexist with the read-only, no-real-cluster configuration.
+    # A synthetic display source for review and tests. It is never a poller
+    # input, and can only coexist with the read-only, no-real-cluster configuration.
     demo_fixture: bool
-    # An explicit, root-produced copy of production observations. It is a
-    # static display source, never a route from this environment to production.
-    production_snapshot: bool
     session: Session
     throttle: Throttle
     #
@@ -335,15 +331,6 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
         raise ConfigError("demo_fixture requires management_writes = false")
     if demo_fixture and clusters:
         raise ConfigError("demo_fixture requires clusters = []")
-    production_snapshot = data.get("production_snapshot", False)
-    if not isinstance(production_snapshot, bool):
-        raise ConfigError("production_snapshot must be true or false")
-    if production_snapshot and writes:
-        raise ConfigError("production_snapshot requires management_writes = false")
-    if production_snapshot and clusters:
-        raise ConfigError("production_snapshot requires clusters = []")
-    if production_snapshot and demo_fixture:
-        raise ConfigError("production_snapshot cannot be combined with demo_fixture")
 
     log_directory_value = traffic_logs.get("directory", "/apps/haproxy-manager/logs/mirror")
     if not isinstance(log_directory_value, str) or not log_directory_value:
@@ -352,12 +339,10 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
     if not log_directory.is_absolute() or ".." in log_directory.parts:
         raise ConfigError("traffic_logs.directory must be an absolute path without '..'")
     #
-    # A development platform has no collector, no key and no node access, so a
-    # mirror it could read would have to have arrived some other way. Refusing
-    # is better than rendering whatever that was.
+    # The fixture has no collector, no key and no node access, so a mirror it
+    # could read would have to have arrived some other way. Refusing is better
+    # than rendering whatever that was.
     #
-    if traffic_logs.get("enabled") and production_snapshot:
-        raise ConfigError("traffic_logs cannot be combined with production_snapshot")
     if traffic_logs.get("enabled") and demo_fixture:
         raise ConfigError("traffic_logs cannot be combined with demo_fixture")
 
@@ -387,7 +372,6 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
         listen=Listen(host=_string(listen, "host", "listen"), port=port),
         management_writes=writes,
         demo_fixture=demo_fixture,
-        production_snapshot=production_snapshot,
         session=Session(
             inactivity_minutes=_bounded_int(
                 session, "inactivity_minutes", "session", low=1, high=1440, default=600

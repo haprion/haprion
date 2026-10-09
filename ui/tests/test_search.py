@@ -142,7 +142,7 @@ class TheRowsFromAReading(unittest.TestCase):
 
 
 class SearchingInMemory(unittest.TestCase):
-    """The demo and snapshot modes, which have no rows in the database."""
+    """The demo fixture, which has no rows in the database."""
 
     def find(
         self, query: str, *, role: str = "admin", page: int = 1, names: int = 0

@@ -10,7 +10,7 @@
 #}
 <section class="page-heading">
   <div class="heading-title"><h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New NDES profile{% endif %}</h1><p class="page-lede">{% if existing %}The new challenge is sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous one stays in effect until it finishes.{% else %}The challenge is sealed against the installation's key before it is stored, and only the enrollment helper can open it.{% endif %}</p></div>
-  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 {% if problem %}

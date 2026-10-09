@@ -42,7 +42,6 @@ dependencies = [
 haprion-user = "haproxy_ui.admin:_entry"
 haproxy-ui-poller = "haproxy_ui.poller:_entry"
 haproxy-ui-worker = "haproxy_ui.worker:_entry"
-haprion-production-snapshot = "haproxy_ui.snapshot:_entry"
 
 [dependency-groups]
 dev = [

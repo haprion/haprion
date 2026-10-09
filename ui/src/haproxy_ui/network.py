@@ -465,9 +465,8 @@ def build_network_overview(
     clusters: Iterable[str],
     readings: Iterable[ClusterNetwork],
     *,
-    now: datetime | None,
+    now: datetime | None = None,
     stale_after: timedelta,
-    captured: bool,
 ) -> tuple[NetworkClusterView, ...]:
     """One card per configured cluster, whether or not it has been read yet."""
 
@@ -484,7 +483,7 @@ def build_network_overview(
             _view(
                 reading,
                 stale=age > stale_after,
-                age_label=observation_label(reading.observed_at, moment, captured=captured),
+                age_label=observation_label(reading.observed_at, moment),
             )
         )
     return tuple(views)

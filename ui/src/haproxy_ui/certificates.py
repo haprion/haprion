@@ -634,13 +634,6 @@ def _cluster_view(
     configured: bool,
     now: datetime,
     stale_after: timedelta,
-    #
-    # True only in snapshot mode, where the readings describe a moment that has
-    # passed and `now` is that moment rather than the wall clock. It changes
-    # what the freshness line says, not how staleness is judged. See
-    # `dashboard.observation_label`.
-    #
-    captured: bool = False,
     targets: Mapping[str, tuple[TargetView, ...]] | None = None,
     carriage: NodeCarriage | None = None,
 ) -> CertificateClusterView:
@@ -665,7 +658,7 @@ def _cluster_view(
         detail=detail,
         observed_at=reading.observed_at,
         observed_iso=reading.observed_at.astimezone(UTC).isoformat(),
-        age_label=observation_label(reading.observed_at, now, captured=captured),
+        age_label=observation_label(reading.observed_at, now),
         stale=stale,
         referenced_count=sum(entry.referenced for entry in certificates),
         available_count=sum(not entry.referenced for entry in certificates),
@@ -1271,18 +1264,11 @@ def build_certificate_overview(
     #
     # The node status, for the one thing the certificate listing cannot answer:
     # whether the nodes are actually carrying what the manager published. Empty
-    # by default so a caller that has no status - the snapshot fixtures, and
+    # by default so a caller that has no status - the demo fixture, and
     # every existing test - gets the page it had before, with deployment
     # reported as unknown rather than as a failure.
     #
     status_readings: Iterable[Any] = (),
-    #
-    # True only in snapshot mode, where the readings describe a moment that has
-    # passed and `now` is that moment rather than the wall clock. It changes
-    # what the freshness line says, not how staleness is judged. See
-    # `dashboard.observation_label`.
-    #
-    captured: bool = False,
 ) -> CertificateOverview:
     """Combine configured clusters and their newest cached certificate listing.
 
@@ -1315,7 +1301,6 @@ def build_certificate_overview(
                 configured=True,
                 now=now,
                 stale_after=stale_after,
-                captured=captured,
                 targets=targets,
                 carriage=carriage.get(cluster),
             )
@@ -1327,7 +1312,6 @@ def build_certificate_overview(
                 configured=False,
                 now=now,
                 stale_after=stale_after,
-                captured=captured,
                 targets=targets,
                 carriage=carriage.get(cluster),
             )

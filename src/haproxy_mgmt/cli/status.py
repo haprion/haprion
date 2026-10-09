@@ -30,7 +30,7 @@ from haproxy_mgmt.cluster_status import StatusError, keepalived_state, parse_sta
 from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.status_collect import EXIT_UNAVAILABLE, OPERATION
 
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-status-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-status-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (

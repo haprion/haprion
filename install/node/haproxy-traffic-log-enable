@@ -2,7 +2,7 @@
 #
 # Turn the node's structured traffic log on or off. Run this ON A NODE, as root,
 # after 04-node-prepare has created the reader account, the read group and
-# /var/log/haproxy-manager.
+# /var/log/haprion.
 #
 #     sudo haproxy-traffic-log-enable                # install and activate
 #     sudo haproxy-traffic-log-enable --disable      # remove and deactivate
@@ -15,7 +15,7 @@
 #
 set -Eeuo pipefail
 
-LOG_ROOT="/var/log/haproxy-manager"
+LOG_ROOT="/var/log/haprion"
 LOG_GROUP="haproxy-logread"
 # Ubuntu's 49-haproxy.conf matches every tag starting with "haproxy" and stops.
 # A rule installed after it never sees a message - which is exactly how the
@@ -81,7 +81,7 @@ render_rule() {
 # after the rollover.
 
 template(name="haproxy-manager-traffic-file" type="string"
-         string="/var/log/haproxy-manager/traffic-%$now-utc%.jsonl")
+         string="/var/log/haprion/traffic-%$now-utc%.jsonl")
 # Only the message, from its second character. HAProxy already emits one
 # complete JSON object per record, and a syslog header in front of it would
 # make the file something other than the JSONL the reader and the interface
@@ -127,8 +127,8 @@ render_apparmor() {
 # grants nothing new today. It is written anyway: the traffic log's dependency
 # on that permission is otherwise invisible, and a site that narrows the broad
 # wildcard would break the log with no rule naming what it needed.
-/var/log/haproxy-manager/ r,
-/var/log/haproxy-manager/traffic-*.jsonl rw,
+/var/log/haprion/ r,
+/var/log/haprion/traffic-*.jsonl rw,
 CONF
 }
 

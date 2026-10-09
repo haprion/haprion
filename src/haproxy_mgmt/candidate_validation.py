@@ -79,7 +79,7 @@ MAX_FILE_BYTES = 1024 * 1024
 # same certificate, the same run root, the same sandbox. The environment is
 # therefore prepared here rather than in either command.
 #
-DEFAULT_RUN_ROOT = Path("/run/haproxy-manager-validation")
+DEFAULT_RUN_ROOT = Path("/run/haprion-validation")
 VALIDATION_CERTIFICATE = "validation.pem"
 
 

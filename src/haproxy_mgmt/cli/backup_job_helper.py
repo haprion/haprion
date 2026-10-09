@@ -26,7 +26,7 @@ from haproxy_mgmt.helper_protocol import (
 RUN = "backup_run"
 SCHEDULE = "backup_schedule"
 OPERATIONS = frozenset({RUN, SCHEDULE})
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-backup-job-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-backup-job-helper"
 EXIT_NOT_ROOT = 77
 
 __all__ = ["HELPER", "RUN", "SCHEDULE", "build_run_request", "build_schedule_request", "main"]

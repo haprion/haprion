@@ -11,7 +11,7 @@ from haproxy_mgmt.cli.node_restore_helper import OPERATIONS, STATUS
 from haproxy_mgmt.envelope import failure
 from haproxy_mgmt.helper_protocol import MAX_REQUEST_BYTES, write_document
 
-SOCKET_PATH = "/run/haproxy-mgmt/node-restore.sock"
+SOCKET_PATH = "/run/haprion/node-restore.sock"
 #
 # Under the worker's 900 s, so a restore that runs long is answered by this
 # client rather than cut off by the worker without an answer. A restore is

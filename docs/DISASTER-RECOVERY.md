@@ -109,7 +109,7 @@ These exist only on the management host. Losing them is not recoverable from the
 | Cluster configuration history and drafts | the configuration repositories (1.2) | every change since the last copy is gone |
 | ACME account key | `/etc/letsencrypt/accounts` | certificates can be issued again, as new certificates, under a new account |
 | The DNS profile private key | `secrets/dns-profile-keys/` under the platform root (1.4.5) | every stored DNS and NDES profile is unreadable and must be registered again |
-| Imported and NDES-enrolled keys | `/etc/haproxy-manager/certificates/<id>/` | those certificates must be replaced, and every receiver fetches the new ones |
+| Imported and NDES-enrolled keys | `/etc/haprion/certificates/<id>/` | those certificates must be replaced, and every receiver fetches the new ones |
 | The management host's SSH identities | the root-owned keys the runtime policy names (1.6) | every node's `authorized_keys` must be rewritten by hand |
 | The interface's database dumps | the platform backup directory (4.7) | accounts, history and job records are gone |
 
@@ -120,7 +120,7 @@ After restoring the management host, before restoring any node:
   `git worktree repair` fixes it.
 - Check the CLI release. A node restore prepares the node with the node bundle of the management
   host's own release, and a host restored from an older backup would give the restored node older
-  scripts than its neighbour. `/opt/haproxy-mgmt/current/INSTALLATION.json` names the release's
+  scripts than its neighbour. `/opt/haprion/current/INSTALLATION.json` names the release's
   bundle (`node_bundle.commit`); it must be the one the nodes were last prepared with, so note that
   at every node roll-out: `<...>`. Node status cannot tell you: it compares a node's scripts with
   that node's own record. After a restore, `sha256sum /usr/local/sbin/haproxy-*` on both nodes

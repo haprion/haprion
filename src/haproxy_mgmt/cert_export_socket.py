@@ -1,6 +1,6 @@
 """How the web asks for an exportable certificate's key (B255).
 
-Over `/run/haproxy-mgmt/cert-export.sock` to `haproxy-cert-export-helper`, which
+Over `/run/haprion/cert-export.sock` to `haproxy-cert-export-helper`, which
 runs as root and gives out the key of an entry the registry marks exportable,
 and of no other. A service that cannot be asked is said as such, not as a
 refusal of the certificate.
@@ -16,7 +16,7 @@ import uuid
 from haproxy_mgmt import helper_socket
 from haproxy_mgmt.cert_export import Export, ExportError
 
-SOCKET_PATH = "/run/haproxy-mgmt/cert-export.sock"
+SOCKET_PATH = "/run/haprion/cert-export.sock"
 #
 # Reading two files and one openssl run: well under a second when measured
 # (2026-10-06). Bounded so a helper that hangs becomes a sentence.

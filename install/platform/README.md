@@ -380,7 +380,7 @@ one, so a rerun does not take the receivers with it.
 encrypted from the first login. The session cookie is `Secure` and is therefore
 never sent over plain HTTP; running without TLS is not a weaker setup here, it is
 a login that does not work. `TLS_CERT` and `TLS_KEY` in the answers file default
-to `/etc/haproxy-manager/tls/`; point them at a pair your clients trust and the
+to `/etc/haprion/tls/`; point them at a pair your clients trust and the
 self-signed path never runs.
 
 The step finishes by asking three questions of the running system rather than
@@ -449,14 +449,14 @@ Set `clusters` in `ui.toml` before running this; with an empty list the poller
 has nothing to do and says so instead of starting.
 
 On production the step also installs the web's way to a name lookup (B253):
-`haproxy-resolve-helper.socket` (`/run/haproxy-mgmt/resolve.sock`, group
+`haproxy-resolve-helper.socket` (`/run/haprion/resolve.sock`, group
 `WEB_USER`) and the per-request `haproxy-resolve-helper@.service`, a dynamic
 user with the network and nothing else. The editor and the preview look a dns
 server's name up through it; the web itself reaches only localhost. The CLI
 release must carry `haproxy-resolve-helper`.
 
 And the web's way to an exportable certificate's key (B255):
-`haproxy-cert-export-helper.socket` (`/run/haproxy-mgmt/cert-export.sock`, group
+`haproxy-cert-export-helper.socket` (`/run/haprion/cert-export.sock`, group
 `WEB_USER`) and the per-request `haproxy-cert-export-helper@.service`, root with a
 read-only sandbox and no network. It gives out the key of a registry entry marked
 `exportable` and of no other, and writes nothing. The CLI release must carry
@@ -503,7 +503,7 @@ list.
 `install-ui-release` installs the tool as a shim in `/usr/local/sbin` that
 resolves `current` at every invocation, so an application rollback takes the
 account tool back with it. `-e prod` reads
-`/etc/haproxy-manager/ui-admin-prod.conf`, written by step 2, which names the
+`/etc/haprion/ui-admin-prod.conf`, written by step 2, which names the
 database and the role root connects as — the migration role, because no
 application role may write the account table.
 
@@ -561,11 +561,11 @@ and a key plus an inventory would undo the property that makes it safe.
 `./17-platform-oidc <answers-file> <source-tree>` prepares sign-in through an
 OpenID Connect provider (schema `0041`). The web service reaches localhost and
 nothing else, and keeps doing so: every request to the provider goes through
-`/run/haproxy-mgmt/oidc.sock` to `haproxy-oidc-helper`, which runs as
+`/run/haprion/oidc.sock` to `haproxy-oidc-helper`, which runs as
 `OIDC_USER` — an account of its own, not root, in no group, with no sudo rule.
 
 The step makes the key pair the web seals the client secret against: the
-private key in `/etc/haproxy-manager/oidc/` (the helper's account, 0600, in a
+private key in `/etc/haprion/oidc/` (the helper's account, 0600, in a
 0500 directory), the public key in `config/oidc-keys/`. A second run keeps the
 pair; `ROTATE=1` adds one, and the client secret is then saved again. It
 installs the socket (group `WEB_USER`) and the per-request service.

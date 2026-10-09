@@ -474,7 +474,7 @@ class Run(RestoreTest):
         self.assertIn(f"/var/lib/haproxy-restore/{run}/node-bundle.tar.gz", members(carried))
         # The bundle writes these in the running release's version, not the archive's.
         self.assertFalse(any(path.startswith("/usr/local/sbin/") for path in members(carried)))
-        self.assertNotIn("/etc/haproxy-manager/node-installation.json", members(carried))
+        self.assertNotIn("/etc/haprion/node-installation.json", members(carried))
 
     def test_a_change_after_the_preview_refuses_before_writing(self) -> None:
         run = self.previewed()
@@ -554,7 +554,7 @@ class Overwrite(RestoreTest):
             "hashes": hashes,
             "listing": {
                 "/etc/netplan": ["/etc/netplan/50-cloud-init.yaml"],
-                "/etc/haproxy-manager": [],
+                "/etc/haprion": [],
                 "/etc/systemd/system/haproxy.service.d": [],
             },
             "product_installed": list(restore_plan.PRODUCT_PACKAGES),
@@ -678,7 +678,7 @@ class Overwrite(RestoreTest):
         apply, finish = FakeSession.calls[1][1], FakeSession.calls[2][1]
         self.assertTrue(apply["overwrite"])
         self.assertEqual(apply["packages"], [])
-        self.assertIn("/etc/haproxy-manager/node-installation.json", apply["keep"])
+        self.assertIn("/etc/haprion/node-installation.json", apply["keep"])
         self.assertEqual((finish["overwrite"], finish["network"]), (True, False))
 
     def test_a_failed_backup_needs_the_operators_tick(self) -> None:

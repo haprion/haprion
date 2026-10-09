@@ -31,7 +31,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-DEFAULT_LOCK_ROOT = Path("/run/haproxy-mgmt/locks")
+DEFAULT_LOCK_ROOT = Path("/run/haprion/locks")
 
 #
 # Under /run on purpose: it is cleared on boot, so a lock can never outlive the

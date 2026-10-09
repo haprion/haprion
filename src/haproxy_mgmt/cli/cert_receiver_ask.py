@@ -32,7 +32,7 @@ from haproxy_mgmt.cli.cert_receiver_helper import OPERATION
 from haproxy_mgmt.envelope import failure
 from haproxy_mgmt.helper_protocol import MAX_REQUEST_BYTES, write_document
 
-SOCKET_PATH = "/run/haproxy-mgmt/cert-receiver.sock"
+SOCKET_PATH = "/run/haprion/cert-receiver.sock"
 
 # A registration resolves the receiver's name, runs useradd, checks and
 # reloads sshd or nginx, and writes the registry. Seconds, not minutes; the

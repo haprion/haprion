@@ -29,7 +29,7 @@ from haproxy_mgmt.dns_profile_keys import (
 from haproxy_mgmt.dns_profiles import ProfileError, check_profile_id, check_revision
 
 OPERATION = "ndes_profile_apply"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-ndes-profile-apply-helper"
 MAX_CIPHERTEXT = 16384
 MAX_RECORD = 16384
 SCHEMA_VERSION = 1

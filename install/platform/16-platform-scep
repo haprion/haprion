@@ -9,6 +9,6 @@ if [[ $# != 2 ]]; then
 fi
 source_tree="$(cd ../.. && pwd)"
 python3 "${source_tree}/tools/install-scep-client.py" --bundle "$1" --sha256 "$2"
-ensure_dir /etc/haproxy-manager/ndes-profiles root:root 700
-ensure_dir /etc/haproxy-manager/ndes-requests root:root 700
+ensure_dir /etc/haprion/ndes-profiles root:root 700
+ensure_dir /etc/haprion/ndes-requests root:root 700
 log "SCEP client installed; configure runtime policy.ndes and create the NDES profile in the app."

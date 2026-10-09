@@ -187,9 +187,7 @@ class NodeBundleTransportContractTests(unittest.TestCase):
         self.assertIn('sudo test -x "$STATE_BACKUP"', self.script)
         # The engine's own command, scoped to the cluster the bundle goes to:
         # the other cluster is neither written nor archived.
-        self.assertIn(
-            "STATE_BACKUP=/opt/haproxy-mgmt/current/bin/haproxy-state-backup", self.script
-        )
+        self.assertIn("STATE_BACKUP=/opt/haprion/current/bin/haproxy-state-backup", self.script)
         self.assertNotIn("/usr/local/sbin", self.script)
 
     def test_staging_has_a_narrow_shape_and_is_deleted(self) -> None:

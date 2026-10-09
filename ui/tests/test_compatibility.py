@@ -33,13 +33,13 @@ class CompatibilityMetadataTests(unittest.TestCase):
         self.assertEqual(
             compatibility.active_sudo_rules(worker.replace("WORKER_USER", "svc-app")),
             compatibility.expected_sudo_rules(
-                "svc-app", requirements.worker_helpers, Path("/opt/haproxy-mgmt")
+                "svc-app", requirements.worker_helpers, Path("/opt/haprion")
             ),
         )
         self.assertEqual(
             compatibility.active_sudo_rules(poller.replace("POLLER_USER", "svc-app")),
             compatibility.expected_sudo_rules(
-                "svc-app", requirements.poller_helpers, Path("/opt/haproxy-mgmt")
+                "svc-app", requirements.poller_helpers, Path("/opt/haprion")
             ),
         )
 

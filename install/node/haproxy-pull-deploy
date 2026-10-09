@@ -8,7 +8,7 @@ set -Eeuo pipefail
 # accounts is compiled in - that is what let three hand-maintained variants of
 # this script collapse into one.
 #
-NODE_CONF="/etc/haproxy-manager/node.conf"
+NODE_CONF="/etc/haprion/node.conf"
 
 [[ -r "$NODE_CONF" ]] || {
     echo "ERROR: ${NODE_CONF} is missing. Run install/04-node-prepare." >&2

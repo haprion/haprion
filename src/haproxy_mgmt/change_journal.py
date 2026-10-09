@@ -43,7 +43,7 @@ from typing import Any
 
 from haproxy_mgmt.config import CLUSTER_ID
 
-JOURNAL = Path("/var/lib/haproxy-mgmt/change-journal.json")
+JOURNAL = Path("/var/lib/haprion/change-journal.json")
 SCHEMA_VERSION = 1
 HELD_SIGNALS = frozenset({signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
 

@@ -45,7 +45,7 @@ USAGE = (
     "  haproxy-list -c <cluster> --diff <version>   what one version changed\n"
 )
 OPERATION = "list"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-list-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-list-helper"
 SUDO = "/usr/bin/sudo"
 
 #

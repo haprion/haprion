@@ -20,7 +20,7 @@
       ],
       "network": [],
       "equal_directories": [
-        "/etc/haproxy-manager",
+        "/etc/haprion",
         "/etc/systemd/system/haproxy.service.d"
       ],
       "left_out": [
@@ -52,7 +52,7 @@
       "rewrites": [],
       "from_bundle": [
         "/usr/local/sbin/haproxy-pull-deploy",
-        "/etc/haproxy-manager/node-installation.json"
+        "/etc/haprion/node-installation.json"
       ],
       "traffic_log": true,
       "changed": [
@@ -60,7 +60,7 @@
       ],
       "unchanged": 41,
       "quarantined": [
-        "/etc/haproxy-manager/stray"
+        "/etc/haprion/stray"
       ],
       "network_unchanged": true
     },

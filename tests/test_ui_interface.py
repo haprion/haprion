@@ -53,14 +53,14 @@ class TheConfiguration(unittest.TestCase):
     def test_the_installer_s_own_file_is_read(self) -> None:
         self.path.write_text(
             "# Read by haproxy-ui-tls. Written by 05-platform-nginx.\n"
-            "TLS_CERT=/etc/haproxy-manager/tls/ui.crt\n"
-            "TLS_KEY=/etc/haproxy-manager/tls/ui.key\n"
+            "TLS_CERT=/etc/haprion/tls/ui.crt\n"
+            "TLS_KEY=/etc/haprion/tls/ui.key\n"
             "SERVER_NAME=Mgr.example.net\n"
         )
 
         config = ui_interface.read_config(self.path)
 
-        self.assertEqual(config.cert, Path("/etc/haproxy-manager/tls/ui.crt"))
+        self.assertEqual(config.cert, Path("/etc/haprion/tls/ui.crt"))
         self.assertEqual(config.server_name, "mgr.example.net")
 
     def test_anything_a_shell_would_evaluate_is_refused(self) -> None:

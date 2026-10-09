@@ -20,7 +20,7 @@ class Deriving(unittest.TestCase):
         work = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, work)
         files = dict(FILES)
-        files["/etc/haproxy-manager/node.conf"] = (node_conf, 0o600)
+        files["/etc/haprion/node.conf"] = (node_conf, 0o600)
         return restore_source.read(build(work, files=files))
 
     def answers(self, node_conf: str = NODE_CONF, cluster: str = "alpha") -> str:

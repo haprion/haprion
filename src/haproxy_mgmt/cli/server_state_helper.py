@@ -56,7 +56,7 @@ from haproxy_mgmt.server_state import (
 
 PARAMETERS = frozenset({"object", "servers", "state"})
 
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-server-state-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-server-state-helper"
 SUDO = "/usr/bin/sudo"
 
 EXIT_NOT_ROOT = 77

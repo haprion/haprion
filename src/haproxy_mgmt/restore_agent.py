@@ -90,7 +90,7 @@ APT_LOCK_SECONDS = 600
 APT_LOCK_PAUSE = 10.0
 APT_WAIT = ("-o", f"DPkg::Lock::Timeout={APT_LOCK_SECONDS}")
 APT_LOCKED = "Could not get lock"
-NODE_CONF = "/etc/haproxy-manager/node.conf"
+NODE_CONF = "/etc/haprion/node.conf"
 #
 # The release's node bundle (B180), sent in the apply payload at this name in
 # the run's own directory, and extracted beside it. Its 04-node-prepare writes
@@ -147,7 +147,7 @@ SNAPSHOT_FILES = (
     "/etc/systemd/system/haproxy-traffic-log-prune.service",
     "/etc/systemd/system/haproxy-traffic-log-prune.timer",
 )
-SNAPSHOT_TREES = ("/usr/local/sbin", "/etc/haproxy-manager")
+SNAPSHOT_TREES = ("/usr/local/sbin", "/etc/haprion")
 #
 # 04-node-prepare's rollback copies, `<file>.replaced-<date>-<time>`: the node's
 # own history. Quarantine leaves them where they are (B178); the plan's pattern.

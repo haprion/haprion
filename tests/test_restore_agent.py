@@ -158,7 +158,7 @@ class FakeHost(Host):
         if argv[0] == "bash" and argv[1].endswith("/install/04-node-prepare"):
             errors = self.prepare_stderr
             if self.rendered_node_conf is not None:
-                self.path("/etc/haproxy-manager/node.conf").write_text(self.rendered_node_conf)
+                self.path("/etc/haprion/node.conf").write_text(self.rendered_node_conf)
         if check and code != 0:
             raise Failed(f"{argv[0]} failed")
         return subprocess.CompletedProcess(argv, code, out, errors)
@@ -198,7 +198,7 @@ APPLY_FILES: list[Member] = [
     ("/etc/apt/sources.list.d/haproxy.sources", "file", 0o644, 0, 0, "haproxy\n"),
     ("/etc/sudoers.d", "directory", 0o750, 0, 0, b""),
     ("/etc/sudoers.d/haproxy-node", "file", 0o440, 0, 0, "# rules\n"),
-    ("/etc/haproxy-manager/node.conf", "file", 0o600, 0, 0, "CLUSTER=alpha\n"),
+    ("/etc/haprion/node.conf", "file", 0o600, 0, 0, "CLUSTER=alpha\n"),
     ("/root/.ssh", "directory", 0o700, 0, 0, b""),
     ("/root/.ssh/known_hosts", "file", 0o644, 0, 0, "mgr key\n"),
     ("/var/lib/svc-backup/.ssh/authorized_keys", "file", 0o644, 0, 0, "restrict\n"),
@@ -678,8 +678,8 @@ OVERWRITE_HEADER: dict[str, Any] = {
     "keepalived": "start",
     "overwrite": True,
     "packages": ["rsync"],
-    "equal_directories": ["/etc/haproxy-manager"],
-    "keep": ["/etc/haproxy-manager/node-installation.json"],
+    "equal_directories": ["/etc/haprion"],
+    "keep": ["/etc/haprion/node-installation.json"],
 }
 
 
@@ -691,10 +691,10 @@ class Overwrite(AgentTest):
         # A running node: its product files, its release, a stray file of its own.
         for name, text in {
             "/etc/sudoers.d/haproxy-node": "# node's rules\n",
-            "/etc/haproxy-manager/node.conf": "CLUSTER=drifted\n",
-            "/etc/haproxy-manager/node-installation.json": '{"node_api": 1}\n',
-            "/etc/haproxy-manager/stray": "left by hand\n",
-            "/etc/haproxy-manager/node.conf.replaced-20260101-000000": "old\n",
+            "/etc/haprion/node.conf": "CLUSTER=drifted\n",
+            "/etc/haprion/node-installation.json": '{"node_api": 1}\n',
+            "/etc/haprion/stray": "left by hand\n",
+            "/etc/haprion/node.conf.replaced-20260101-000000": "old\n",
             "/usr/local/sbin/haproxy-pull-deploy": "#!/bin/sh\nold\n",
         }.items():
             path = self.host.path(name)
@@ -716,7 +716,7 @@ class Overwrite(AgentTest):
                 "names": [],
                 "ids": [],
                 "hash": ["/etc/sudoers.d/haproxy-node", "/etc/missing"],
-                "list": ["/etc/haproxy-manager", "/etc/systemd/system/haproxy.service.d"],
+                "list": ["/etc/haprion", "/etc/systemd/system/haproxy.service.d"],
                 "packages": ["haproxy", "keepalived", "rsync"],
             }
         )
@@ -726,9 +726,9 @@ class Overwrite(AgentTest):
             result["hashes"]["/etc/sudoers.d/haproxy-node"],
             hashlib.sha256(b"# node's rules\n").hexdigest(),
         )
-        self.assertIn("/etc/haproxy-manager/stray", result["hashes"])
+        self.assertIn("/etc/haprion/stray", result["hashes"])
         self.assertEqual(result["listing"]["/etc/systemd/system/haproxy.service.d"], [])
-        self.assertIn("/etc/haproxy-manager/stray", result["listing"]["/etc/haproxy-manager"])
+        self.assertIn("/etc/haprion/stray", result["listing"]["/etc/haprion"])
         self.assertEqual(result["product_installed"], ["haproxy", "rsync"])
 
     def test_root_s_keys_are_compared_without_this_run_s_one_time_key(self) -> None:
@@ -784,19 +784,13 @@ class Overwrite(AgentTest):
 
     def test_the_products_directory_is_made_the_archives(self) -> None:
         self.apply()
-        self.assertFalse(self.host.path("/etc/haproxy-manager/stray").exists())
+        self.assertFalse(self.host.path("/etc/haprion/stray").exists())
         self.assertTrue(
-            self.host.path(
-                f"/var/lib/haproxy-restore/{RUN}/quarantine/etc/haproxy-manager/stray"
-            ).exists()
+            self.host.path(f"/var/lib/haproxy-restore/{RUN}/quarantine/etc/haprion/stray").exists()
         )
-        self.assertTrue(self.host.path("/etc/haproxy-manager/node-installation.json").exists())
-        self.assertTrue(
-            self.host.path("/etc/haproxy-manager/node.conf.replaced-20260101-000000").exists()
-        )
-        self.assertEqual(
-            self.host.path("/etc/haproxy-manager/node.conf").read_text(), "CLUSTER=alpha\n"
-        )
+        self.assertTrue(self.host.path("/etc/haprion/node-installation.json").exists())
+        self.assertTrue(self.host.path("/etc/haprion/node.conf.replaced-20260101-000000").exists())
+        self.assertEqual(self.host.path("/etc/haprion/node.conf").read_text(), "CLUSTER=alpha\n")
         # The directories the product shares with the image keep the image's files.
         self.assertTrue(self.host.path("/etc/sudoers.d/90-cloud-init-users").exists())
 
@@ -805,10 +799,8 @@ class Overwrite(AgentTest):
         result = self.apply()
         self.assertFalse(result["ok"])
         self.assertTrue(result["rolled_back"], result)
-        self.assertEqual(
-            self.host.path("/etc/haproxy-manager/node.conf").read_text(), "CLUSTER=drifted\n"
-        )
-        self.assertEqual(self.host.path("/etc/haproxy-manager/stray").read_text(), "left by hand\n")
+        self.assertEqual(self.host.path("/etc/haprion/node.conf").read_text(), "CLUSTER=drifted\n")
+        self.assertEqual(self.host.path("/etc/haprion/stray").read_text(), "left by hand\n")
         self.assertEqual(
             self.host.path("/etc/sudoers.d/haproxy-node").read_text(), "# node's rules\n"
         )
@@ -865,9 +857,7 @@ class Overwrite(AgentTest):
         self.apply()
         result = self.serve({"op": "rollback", "run": RUN})
         self.assertTrue(result["ok"], result)
-        self.assertEqual(
-            self.host.path("/etc/haproxy-manager/node.conf").read_text(), "CLUSTER=drifted\n"
-        )
+        self.assertEqual(self.host.path("/etc/haprion/node.conf").read_text(), "CLUSTER=drifted\n")
 
     def finish(self) -> dict[str, Any]:
         header = {
@@ -915,9 +905,7 @@ class Overwrite(AgentTest):
         result = self.finish()
         self.assertFalse(result["ok"])
         self.assertTrue(result["rolled_back"], result)
-        self.assertEqual(
-            self.host.path("/etc/haproxy-manager/node.conf").read_text(), "CLUSTER=drifted\n"
-        )
+        self.assertEqual(self.host.path("/etc/haprion/node.conf").read_text(), "CLUSTER=drifted\n")
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
 
 

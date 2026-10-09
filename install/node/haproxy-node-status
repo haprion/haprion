@@ -25,12 +25,12 @@ CONFIG_PENDING = Path("/run/haproxy-pull-deploy.pending")
 # Written by `haproxy-server-state` when a kept drain or maintenance could not
 # be put back after a reload or a start (review 26-10-09, F1).
 #
-SERVER_STATE_UNAPPLIED = Path("/run/haproxy-manager-server-state.unapplied")
+SERVER_STATE_UNAPPLIED = Path("/run/haprion-server-state.unapplied")
 SERVER_GUID = re.compile(r"^srv:[a-z][a-z0-9_-]{0,39}\.[0-9a-f]{16}$")
 VALIDATION_STATE = Path("/run/haproxy/last-validation.json")
 CERTS_DIR = Path("/etc/haproxy/certs")
 CERT_PENDING = Path("/run/haproxy-cert-pull.pending")
-NODE_INSTALLATION = Path("/etc/haproxy-manager/node-installation.json")
+NODE_INSTALLATION = Path("/etc/haprion/node-installation.json")
 SBIN = Path("/usr/local/sbin")
 MAX_INSTALLATION_BYTES = 64 * 1024
 SHA256 = re.compile(r"^[0-9a-f]{64}$")

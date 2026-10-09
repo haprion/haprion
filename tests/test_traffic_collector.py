@@ -1071,8 +1071,8 @@ class WhatTheInstallationStepWrites(unittest.TestCase):
                 "-c",
                 source,
                 "svc-logread",
-                "/etc/haproxy-manager/traffic-collector/id_ed25519",
-                "/etc/haproxy-manager/traffic-collector/known_hosts",
+                "/etc/haprion/traffic-collector/id_ed25519",
+                "/etc/haprion/traffic-collector/known_hosts",
                 "/apps/haproxy-manager/logs/mirror",
                 "/apps/haproxy-manager/logs/staging",
                 "haproxy_ui",
@@ -1150,7 +1150,7 @@ class TheCollectorUnits(unittest.TestCase):
         self.assertIn("NoNewPrivileges=yes", service)
         self.assertIn("CapabilityBoundingSet=\n", service)
         self.assertIn(
-            "ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-ui-traffic-collector",
+            "ExecStart=/opt/haprion/current/bin/haproxy-ui-traffic-collector",
             service,
         )
         self.assertNotIn("/apps/haproxy-manager/current/venv", service)

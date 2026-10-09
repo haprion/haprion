@@ -20,7 +20,7 @@ Not run through sudo, for the reason the receiver helper gives (B163): it
 writes root's `known_hosts` and git configuration, the pull accounts'
 `authorized_keys` and the operator editing policy, outside anything the
 worker's sandbox leaves writable. It answers on
-`/run/haproxy-mgmt/cluster-node.sock` from a unit of its own, and the worker
+`/run/haprion/cluster-node.sock` from a unit of its own, and the worker
 sends the request there with `haproxy-node-ask`. The terminal commands run it
 directly, as root.
 """
@@ -65,7 +65,7 @@ from haproxy_mgmt.status_collect import NodeResponse, ask_node
 
 OPERATION = "cluster_node"
 DEFINE = "cluster_define"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-node-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-node-helper"
 PARAMETERS = {
     OPERATION: frozenset({"action", "block", "host", "node"}),
     DEFINE: frozenset(

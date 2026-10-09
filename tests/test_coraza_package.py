@@ -204,7 +204,7 @@ class Packages(unittest.TestCase):
         deb = self.tool.build_crs(self.sources, out, source=self.crs_source())
         self.assertEqual(deb.name, "haproxy-manager-crs_9.9.9-1_all.deb")
         rows = listing(deb)
-        share = "/usr/share/haproxy-manager/crs"
+        share = "/usr/share/haprion/crs"
         for path in (
             f"{share}/crs-setup.conf.example",
             f"{share}/rules/REQUEST-901-INITIALIZATION.conf",

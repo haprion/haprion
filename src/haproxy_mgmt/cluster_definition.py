@@ -67,7 +67,7 @@ from haproxy_mgmt.node_enrollment import (
 ARCHIVE = ".removed"
 SUDOERS_EDIT = Path("/etc/sudoers.d/haproxy-config-edit")
 ROOT_GITCONFIG = Path("/root/.gitconfig")
-RETENTION_ROOT = Path("/etc/haproxy-manager/backup-retention")
+RETENTION_ROOT = Path("/etc/haprion/backup-retention")
 GIT_CONFIG_NOTHING_TO_UNSET = 5
 VISUDO = "/usr/sbin/visudo"
 SYSTEMCTL = "/usr/bin/systemctl"

@@ -29,11 +29,11 @@
 
 [Unit]
 Description=Register or remove one Haprion certificate receiver
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Service]
 Type=exec
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-cert-receiver-helper
+ExecStart=/opt/haprion/current/bin/haproxy-cert-receiver-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

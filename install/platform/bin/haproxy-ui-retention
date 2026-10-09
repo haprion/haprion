@@ -19,7 +19,7 @@
 #
 set -Eeuo pipefail
 
-CONFIG_DIRECTORY=/etc/haproxy-manager
+CONFIG_DIRECTORY=/etc/haprion
 
 #
 # The decided retention: one week. A management request older than that has

@@ -18,11 +18,11 @@
 
 [Unit]
 Description=Export an Haprion certificate's key
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Service]
 Type=exec
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-cert-export-helper
+ExecStart=/opt/haprion/current/bin/haproxy-cert-export-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

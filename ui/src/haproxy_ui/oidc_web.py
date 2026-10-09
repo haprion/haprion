@@ -31,7 +31,7 @@ from haproxy_mgmt.dns_profile_keys import KeyFileError, read_public_key
 
 from haproxy_ui.db import OidcProvider
 
-SOCKET_PATH = "/run/haproxy-mgmt/oidc.sock"
+SOCKET_PATH = "/run/haprion/oidc.sock"
 #
 # The helper's unit ends it after 45 seconds (RuntimeMaxSec), whatever the
 # provider does; the web waits as long and then says so.

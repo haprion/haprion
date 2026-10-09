@@ -36,7 +36,7 @@ set -Eeuo pipefail
 # accounts is compiled in - that is what let three hand-maintained variants of
 # this script collapse into one.
 #
-NODE_CONF="/etc/haproxy-manager/node.conf"
+NODE_CONF="/etc/haprion/node.conf"
 #
 # Every reload goes through the server state helper (Fas 20, B263): it reloads,
 # waits for the new worker and puts back any server kept in drain or

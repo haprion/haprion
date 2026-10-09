@@ -57,7 +57,7 @@ LOCK_PATH = Path("/run/lock/haproxy-state-backup.lock")
 # Where node restore runs live (`node_restore.RUN_ROOT` is this). Defined here
 # because retention reads it and `node_restore` already imports this module.
 #
-RESTORE_RUN_ROOT = Path("/var/lib/haproxy-mgmt/restore")
+RESTORE_RUN_ROOT = Path("/var/lib/haprion/restore")
 
 
 class BackupRunError(RuntimeError):

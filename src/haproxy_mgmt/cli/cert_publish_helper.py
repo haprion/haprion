@@ -42,7 +42,7 @@ from haproxy_mgmt.helper_protocol import (
 
 OPERATION = "cert_publish"
 PARAMETERS = frozenset({"certificates", "deploy"})
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cert-publish-helper"
 SUDO = "/usr/bin/sudo"
 
 

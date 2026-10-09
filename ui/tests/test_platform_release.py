@@ -58,8 +58,8 @@ class PreparedReleaseTests(unittest.TestCase):
         wrapper = (ROOT / "install/platform/check-compatibility").read_text()
 
         self.assertIn("config.traffic_logs.enabled", wrapper)
-        self.assertIn("--runtime-policy /etc/haproxy-manager/runtime-policy.yaml", wrapper)
-        self.assertIn("--collector-config /etc/haproxy-manager/traffic-collector.json", wrapper)
+        self.assertIn("--runtime-policy /etc/haprion/runtime-policy.yaml", wrapper)
+        self.assertIn("--collector-config /etc/haprion/traffic-collector.json", wrapper)
 
     def test_the_inventory_check_is_asked_of_the_checked_release(self) -> None:
         # The wrapper runs from a checkout that moves on; the release it checks
@@ -225,8 +225,8 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         code, errors = self.check(module="new")
         self.assertEqual(code, 0, errors)
         arguments = self.recorded()
-        self.assertIn("/etc/haproxy-manager/traffic-collector.json", arguments)
-        self.assertIn("/etc/haproxy-manager/runtime-policy.yaml", arguments)
+        self.assertIn("/etc/haprion/traffic-collector.json", arguments)
+        self.assertIn("/etc/haprion/runtime-policy.yaml", arguments)
         self.assertEqual(arguments[arguments.index("--clusters") + 1], "alpha")
 
     def test_without_traffic_logs_nothing_about_them_is_asked(self) -> None:

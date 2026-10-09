@@ -10,7 +10,7 @@ The installed rsyslogd is confined by AppArmor to /etc/rsyslog.d; a copy of the
 same binary under another path is not, which is the only way to run the real
 parser and the real rule over files this suite owns. Two substitutions are made
 and both are asserted: HAProxy's `/dev/log` becomes the rig's socket, and the
-rule's `/var/log/haproxy-manager/` becomes the rig's directory. Nothing else
+rule's `/var/log/haprion/` becomes the rig's directory. Nothing else
 about the configuration is the suite's; it is the generator's output.
 """
 
@@ -39,7 +39,7 @@ from haproxy_ui.traffic_logs import parse
 ROOT = Path(__file__).resolve().parents[2]
 ENABLE = ROOT / "install" / "node" / "haproxy-traffic-log-enable"
 HOSTNAME = "shop.example.com"
-NODE_LOG_ROOT = "/var/log/haproxy-manager/"
+NODE_LOG_ROOT = "/var/log/haprion/"
 _PR_SET_PDEATHSIG = 1
 
 OBJECT = """

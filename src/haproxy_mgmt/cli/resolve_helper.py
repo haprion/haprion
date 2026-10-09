@@ -8,7 +8,7 @@ nothing but localhost (`IPAddressDeny=any`): there a lookup worked only because
 the manager's resolver happened to be systemd-resolved's stub on 127.0.0.53,
 and on a host whose `resolv.conf` names a server elsewhere it would have
 refused names that resolve. So the web asks here, over
-`/run/haproxy-mgmt/resolve.sock`, and this answers with the manager's own
+`/run/haprion/resolve.sock`, and this answers with the manager's own
 resolver - the one the status uses to say a name has moved.
 
 Not root, and nothing to hold: a dynamic account, no files, and the network

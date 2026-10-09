@@ -101,7 +101,7 @@ SCRIPT_DIR = "/usr/local/sbin"
 TRAFFIC_LOG_RULE = "/etc/rsyslog.d/48-haproxy-manager-traffic.conf"
 FROM_BUNDLE = frozenset(
     {
-        "/etc/haproxy-manager/node-installation.json",
+        "/etc/haprion/node-installation.json",
         TRAFFIC_LOG_RULE,
         "/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic",
         "/etc/systemd/system/haproxy-traffic-log-prune.service",
@@ -114,7 +114,7 @@ FROM_BUNDLE = frozenset(
 # them goes to quarantine on the node, never deleted. The directories the
 # product shares with the image are not among them (B178).
 #
-PRODUCT_DIRECTORIES = ("/etc/haproxy-manager", "/etc/systemd/system/haproxy.service.d")
+PRODUCT_DIRECTORIES = ("/etc/haprion", "/etc/systemd/system/haproxy.service.d")
 # 04-node-prepare's rollback copies: history of the old node, not its state.
 REPLACED = re.compile(r"\.replaced-\d{8}-\d{6}$")
 

@@ -19,7 +19,7 @@ from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.helper_protocol import write_document
 
 OPERATION = "cert_list"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cert-list-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
 USAGE = "Usage:\n  haproxy-cert-list -c <cluster> [--registry] [--json]\n"

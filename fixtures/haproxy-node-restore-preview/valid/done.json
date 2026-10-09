@@ -61,7 +61,7 @@
       ],
       "from_bundle": [
         "/usr/local/sbin/haproxy-pull-deploy",
-        "/etc/haproxy-manager/node-installation.json"
+        "/etc/haprion/node-installation.json"
       ],
       "traffic_log": true
     },

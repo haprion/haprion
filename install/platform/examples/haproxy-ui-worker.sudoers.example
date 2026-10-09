@@ -60,27 +60,27 @@
 #
 # Installed 0440 root:root, and accepted by visudo before it is put in place.
 
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-changes-publish-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper ""
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-deploy-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-deploy-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-revert-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-changes-publish-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-issue-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-publish-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-target-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-dns-profile-apply-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-delete-helper ""
 
 # NDES profiles: ciphertext arrives only on stdin.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-ndes-profile-apply-helper ""
 
 # NDES enrollment: the challenge is read from the root-only profile record, never from the request.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-scep-helper ""
 
 # Certificate upload (B165): the file, sealed for root, arrives only on stdin.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-import-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-import-helper ""
 
 # Signing request (C9b): the key is made in the import store and never leaves it; the CSR comes back.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-request-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-request-helper ""
 
 # Drain, maintenance and ready (B263): one object's servers on every node, found in the newest version first.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-server-state-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-server-state-helper ""

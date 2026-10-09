@@ -92,8 +92,8 @@ keys=()
 # check went green here and red in CI on 2026-08-28.
 #
 # shellcheck source=/dev/null
-[[ -r /etc/haproxy-manager/ui-tls.conf ]] && \
-    keys+=("$(source /etc/haproxy-manager/ui-tls.conf; echo "$TLS_KEY")")
+[[ -r /etc/haprion/ui-tls.conf ]] && \
+    keys+=("$(source /etc/haprion/ui-tls.conf; echo "$TLS_KEY")")
 while IFS= read -r key; do keys+=("$key"); done < <(
     find /root/.ssh -maxdepth 1 -name 'id_*' ! -name '*.pub' -printf '%p\n' 2>/dev/null
 )

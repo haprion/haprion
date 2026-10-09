@@ -4,7 +4,7 @@ The web cannot read the certificate store, and it is meant not to: the store is
 root's, and no application identity reads a key back. The one exception is an
 entry the registry marks `exportable` - one host, no targets, made to be
 installed by hand somewhere this manager never reaches. The web asks for it
-here, over `/run/haproxy-mgmt/cert-export.sock`; this runs as root, refuses
+here, over `/run/haprion/cert-export.sock`; this runs as root, refuses
 every entry without the mark, and answers with the file.
 
 The answer is the one document a request gets, and nothing is kept: no copy of

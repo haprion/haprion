@@ -22,11 +22,11 @@
 
 [Unit]
 Description=Answer one Haprion health probe request
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Service]
 Type=exec
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-probe-helper
+ExecStart=/opt/haprion/current/bin/haproxy-probe-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

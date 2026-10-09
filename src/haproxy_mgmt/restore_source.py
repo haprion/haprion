@@ -51,7 +51,7 @@ EXPORT_ROOTS = (
     "/etc/apt/preferences.d",
     "/etc/apt/keyrings",
     "/etc/sudoers.d",
-    "/etc/haproxy-manager",
+    "/etc/haprion",
     "/etc/ssh/sshd_config",
     "/etc/ssh/sshd_config.d",
     "/root/.ssh",
@@ -350,7 +350,7 @@ def read(path: Path) -> RestoreSource:
             _text(archive, "meta/users.txt"),
             _memberships(_text(archive, "meta/groups.txt")),
             hashes,
-            _service_accounts(_text(archive, "rootfs/etc/haproxy-manager/node.conf")),
+            _service_accounts(_text(archive, "rootfs/etc/haprion/node.conf")),
         )
         return RestoreSource(
             archive=path,

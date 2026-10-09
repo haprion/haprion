@@ -21,7 +21,7 @@ from haproxy_mgmt.helper_protocol import write_document
 from haproxy_mgmt.proxy_model import ModelError, advanced_placement
 
 OPERATION = "objects"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-objects-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-objects-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
 EXIT_NOT_FOUND = 66

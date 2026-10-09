@@ -31,7 +31,7 @@ from haproxy_mgmt import helper_socket
 # process that answers on it. `/etc/tmpfiles.d/haproxy-mgmt.conf` recreates the
 # directory, and systemd creates the socket inside it.
 #
-SOCKET_PATH = "/run/haproxy-mgmt/probe.sock"
+SOCKET_PATH = "/run/haprion/probe.sock"
 
 #
 # Generous, because the far side asks both nodes and each may sit through its

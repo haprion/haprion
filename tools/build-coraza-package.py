@@ -484,7 +484,7 @@ def build_crs(source_dir: Path, output_dir: Path, *, source: Source = CRS) -> Pa
         work = Path(directory)
         tree, epoch = unpack(archive, source, work / "src")
         root = work / "root"
-        share = "usr/share/haproxy-manager/crs"
+        share = "usr/share/haprion/crs"
         write(
             root,
             f"{share}/crs-setup.conf.example",

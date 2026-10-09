@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-DEFAULT_LOCK_PATH = Path("/run/haproxy-mgmt/locks/cert-publish.lock")
+DEFAULT_LOCK_PATH = Path("/run/haprion/locks/cert-publish.lock")
 LOCK_WAIT_SECONDS = 120
 
 

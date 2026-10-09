@@ -30,7 +30,7 @@ MANAGER="mgr.example.com"
 
 # Where this node fetches its published configuration from.
 CONFIG_PULL_USER="svc-pull"
-CONFIG_PULL_KEY="/etc/haproxy-manager/keys/config-pull"
+CONFIG_PULL_KEY="/etc/haprion/keys/config-pull"
 CONFIG_REMOTE_PATH="alpha/current/node-a/"
 
 # Local accounts and groups a state backup captures. A rebuilt node with no way
@@ -47,7 +47,7 @@ EXTRA_BACKUP_PATHS="/etc/default/grub.d/99-local.cfg"
 # that may read configuration has no business reading certificates it was not
 # asked for.
 CERT_PULL_USER="svc-cert-pull"
-CERT_PULL_KEY="/etc/haproxy-manager/keys/cert-pull"
+CERT_PULL_KEY="/etc/haprion/keys/cert-pull"
 """
 
 NETPLAN = """network:
@@ -131,9 +131,9 @@ FILES: dict[str, tuple[str, int]] = {
     "/etc/sudoers.d/90-cloud-init-users": ("# image\n", 0o440),
     "/etc/sysctl.d/99-cloudimg-ipv6.conf": ("net.ipv6.conf.all.use_tempaddr = 0\n", 0o644),
     "/etc/ssh/sshd_config.d/60-cloudimg-settings.conf": ("PasswordAuthentication no\n", 0o644),
-    "/etc/haproxy-manager/node.conf": (NODE_CONF, 0o600),
-    "/etc/haproxy-manager/node-installation.json": ('{"node_api": 1}\n', 0o644),
-    "/etc/haproxy-manager/keys/config-pull": ("private\n", 0o600),
+    "/etc/haprion/node.conf": (NODE_CONF, 0o600),
+    "/etc/haprion/node-installation.json": ('{"node_api": 1}\n', 0o644),
+    "/etc/haprion/keys/config-pull": ("private\n", 0o600),
     "/etc/ssh/sshd_config": ("PermitRootLogin prohibit-password\n", 0o644),
     "/etc/ssh/ssh_host_ed25519_key": ("host private\n", 0o600),
     "/etc/ssh/ssh_host_ed25519_key.pub": ("ssh-ed25519 AAAA node-a\n", 0o644),
@@ -183,7 +183,7 @@ def build(
         for path, (text, mode) in chosen.items():
             _write(stage / f"rootfs{path}", text, mode)
         # Copied directories carry their own mode, as `cp -a` preserves it.
-        for directory in ("/etc/netplan", "/etc/sysctl.d", "/etc/haproxy-manager", "/root/.ssh"):
+        for directory in ("/etc/netplan", "/etc/sysctl.d", "/etc/haprion", "/root/.ssh"):
             target = stage / f"rootfs{directory}"
             if target.is_dir():
                 target.chmod(0o700 if directory == "/root/.ssh" else 0o755)

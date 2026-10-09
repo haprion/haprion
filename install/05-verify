@@ -30,7 +30,7 @@ check() { if [[ "$1" == "yes" ]]; then pass "$2" "${3:-}"; else bad "$2" "${3:-}
 
 step "Files and permissions"
 
-for path in "$CLUSTER_FILE" /etc/haproxy-manager/runtime-policy.yaml; do
+for path in "$CLUSTER_FILE" /etc/haprion/runtime-policy.yaml; do
     if [[ -f "$path" ]]; then
         owner="$(stat -c '%U' "$path")"
         mode="$(stat -c '%a' "$path")"

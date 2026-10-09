@@ -21,7 +21,7 @@
 # access - it has no business reaching the real nodes - and its interface says
 # so plainly rather than showing an empty result.
 #
-# The directory is /run/haproxy-mgmt, created at every boot by
+# The directory is /run/haprion, created at every boot by
 # /etc/tmpfiles.d/haproxy-mgmt.conf. /run is tmpfs and cleared on boot, which is
 # what we want: a socket must not outlive the service answering on it.
 #
@@ -30,10 +30,10 @@
 
 [Unit]
 Description=Socket the Haprion interface asks for a health probe on
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Socket]
-ListenStream=/run/haproxy-mgmt/probe.sock
+ListenStream=/run/haprion/probe.sock
 SocketUser=root
 SocketGroup=WEB_USER
 SocketMode=0660

@@ -45,10 +45,10 @@ for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
         || die "COLLECTOR_USER must be distinct from the other service accounts"
 done
 
-IDENTITY_DIR="/etc/haproxy-manager/traffic-collector"
+IDENTITY_DIR="/etc/haprion/traffic-collector"
 COLLECTOR_KEY="${IDENTITY_DIR}/id_ed25519"
 COLLECTOR_KNOWN_HOSTS="${IDENTITY_DIR}/known_hosts"
-COLLECTOR_CONFIG="/etc/haproxy-manager/traffic-collector.json"
+COLLECTOR_CONFIG="/etc/haprion/traffic-collector.json"
 LOG_ROOT="${PLATFORM_ROOT}/logs"
 MIRROR="${LOG_ROOT}/mirror"
 STAGING="${LOG_ROOT}/staging"
@@ -214,7 +214,7 @@ install_file "$COLLECTOR_CONFIG" "root:${COLLECTOR_USER}" 640 "$config"
 # than absent: the timer would then fail every minute for a reason nothing here
 # reported.
 #
-/opt/haproxy-mgmt/current/bin/haproxy-ui-traffic-collector \
+/opt/haprion/current/bin/haproxy-ui-traffic-collector \
     --check-config "$COLLECTOR_CONFIG" \
     | sed 's/^/  /' \
     || die "the collector rejected the configuration this step wrote"

@@ -11,13 +11,13 @@
 
 [Unit]
 Description=Ask the Haprion OIDC provider one thing
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Service]
 Type=exec
 User=OIDC_USER
 Group=OIDC_USER
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-oidc-helper
+ExecStart=/opt/haprion/current/bin/haproxy-oidc-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

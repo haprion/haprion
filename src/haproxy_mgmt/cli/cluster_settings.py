@@ -28,7 +28,7 @@ from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.helper_protocol import write_document
 
 OPERATION = "cluster_settings"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cluster-settings-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cluster-settings-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
 USAGE = (

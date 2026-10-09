@@ -58,7 +58,7 @@ RUN = "node_restore"
 DISCARD = "node_restore_discard"
 STATUS = "node_restore_status"
 OPERATIONS = frozenset({PREPARE, PREVIEW, RUN, DISCARD, STATUS})
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-node-restore-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-node-restore-helper"
 EXIT_NOT_ROOT = 77
 
 KEYS = {

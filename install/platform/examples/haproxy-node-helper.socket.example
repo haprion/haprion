@@ -14,10 +14,10 @@
 
 [Unit]
 Description=Socket the Haprion job worker asks to change a cluster's nodes on
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Socket]
-ListenStream=/run/haproxy-mgmt/cluster-node.sock
+ListenStream=/run/haprion/cluster-node.sock
 SocketUser=root
 SocketGroup=WORKER_USER
 SocketMode=0660

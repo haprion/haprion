@@ -19,7 +19,7 @@ load_answers "${1:-}"
 require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CONFIG_GROUP \
              CLUSTERS TRIGGER_USER KEY_DIR CONFIG_DEPLOY_KEY
 
-POLICY_FILE="/etc/haproxy-manager/runtime-policy.yaml"
+POLICY_FILE="/etc/haprion/runtime-policy.yaml"
 
 step "Cluster definitions"
 
@@ -198,7 +198,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-state-backup -c %i
+ExecStart=/opt/haprion/current/bin/haproxy-state-backup -c %i
 User=root
 Group=root
 UMask=0077

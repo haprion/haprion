@@ -20,10 +20,10 @@
 
 [Unit]
 Description=Socket the Haprion interface looks dns server names up through
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Socket]
-ListenStream=/run/haproxy-mgmt/resolve.sock
+ListenStream=/run/haprion/resolve.sock
 SocketUser=root
 SocketGroup=WEB_USER
 SocketMode=0660

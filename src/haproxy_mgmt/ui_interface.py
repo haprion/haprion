@@ -46,7 +46,7 @@ from haproxy_mgmt.cert_publish import Material, PublishError, Report
 from haproxy_mgmt.certificates import CertificateError, leaf_block, leaf_fingerprint
 from haproxy_mgmt.envelope import new_request_id
 
-UI_TLS_CONFIG = Path("/etc/haproxy-manager/ui-tls.conf")
+UI_TLS_CONFIG = Path("/etc/haprion/ui-tls.conf")
 UI_TLS_COMMAND = Path("/usr/local/sbin/haproxy-ui-tls")
 INSTALL_TIMEOUT = 120
 
@@ -194,7 +194,7 @@ def install(
 # send bytes could send any certificate.
 #
 OPERATION = "ui_tls_install"
-SOCKET_PATH = "/run/haproxy-mgmt/ui-tls.sock"
+SOCKET_PATH = "/run/haprion/ui-tls.sock"
 #
 # `nginx -t` and a reload, behind two openssl calls. Seconds; the bound is
 # for a unit that never answers.

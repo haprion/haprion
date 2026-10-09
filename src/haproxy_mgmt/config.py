@@ -14,7 +14,7 @@ import yaml
 
 from haproxy_mgmt import safe_yaml
 
-DEFAULT_POLICY_PATH = Path("/etc/haproxy-manager/runtime-policy.yaml")
+DEFAULT_POLICY_PATH = Path("/etc/haprion/runtime-policy.yaml")
 MAX_CONFIG_BYTES = 1024 * 1024
 CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 

@@ -17,10 +17,10 @@
 
 [Unit]
 Description=Socket the Haprion interface asks its OIDC provider through
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Socket]
-ListenStream=/run/haproxy-mgmt/oidc.sock
+ListenStream=/run/haprion/oidc.sock
 SocketUser=root
 SocketGroup=WEB_USER
 SocketMode=0660

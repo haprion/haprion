@@ -2666,7 +2666,7 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
 
 
 WAF_ENGINE = Path("/usr/sbin/coraza-spoa")
-WAF_RULES = Path("/usr/share/haproxy-manager/crs")
+WAF_RULES = Path("/usr/share/haprion/crs")
 
 WAF_OBJECT = """
 schema: 1

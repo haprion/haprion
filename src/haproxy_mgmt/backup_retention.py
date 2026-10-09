@@ -25,7 +25,7 @@ from uuid import uuid4
 
 from haproxy_mgmt.config import CLUSTER_ID
 
-RETENTION_ROOT = Path("/etc/haproxy-manager/backup-retention")
+RETENTION_ROOT = Path("/etc/haprion/backup-retention")
 #
 # Fourteen daily archives per node cover two weeks. It is the default a cluster
 # has before anyone sets one, and the value the fleet-wide script always used.

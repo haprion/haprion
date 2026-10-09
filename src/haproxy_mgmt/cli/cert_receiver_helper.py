@@ -16,7 +16,7 @@ step on the receiving host in the middle, which is a terminal's operation.
 
 Not run through sudo (B163). It writes `/etc`, and the worker's sandbox keeps
 `/etc` read-only for anything the worker starts; so it answers on
-`/run/haproxy-mgmt/cert-receiver.sock` from a unit of its own, and the worker
+`/run/haprion/cert-receiver.sock` from a unit of its own, and the worker
 sends the request there with `haproxy-cert-receiver-ask`.
 """
 
@@ -48,7 +48,7 @@ from haproxy_mgmt.helper_protocol import (
 )
 
 OPERATION = "cert_receiver"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-receiver-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cert-receiver-helper"
 
 PARAMETERS = frozenset({"receiver", "action", "transport", "public_key", "allow"})
 ACTIONS = frozenset({"add", "remove"})

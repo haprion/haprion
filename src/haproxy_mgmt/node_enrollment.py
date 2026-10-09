@@ -65,8 +65,8 @@ from haproxy_mgmt.status_collect import NodeResponse
 BLOCK_PREFIX = "haproxy-node-v1:"
 RRSYNC = "/usr/bin/rrsync"
 ROOT_KNOWN_HOSTS = Path("/root/.ssh/known_hosts")
-COLLECTOR_CONFIG = Path("/etc/haproxy-manager/traffic-collector.json")
-COLLECTOR_KNOWN_HOSTS = Path("/etc/haproxy-manager/traffic-collector/known_hosts")
+COLLECTOR_CONFIG = Path("/etc/haprion/traffic-collector.json")
+COLLECTOR_KNOWN_HOSTS = Path("/etc/haprion/traffic-collector/known_hosts")
 
 #
 # The comments the fetch lines carry, one per purpose. They are how a node's

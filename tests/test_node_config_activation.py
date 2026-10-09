@@ -105,7 +105,7 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
         self.script = self.bin / "haproxy-pull-deploy"
         self.script.write_text(
             DEPLOY.read_text()
-            .replace('NODE_CONF="/etc/haproxy-manager/node.conf"', f'NODE_CONF="{conf}"')
+            .replace('NODE_CONF="/etc/haprion/node.conf"', f'NODE_CONF="{conf}"')
             .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.haproxy}"')
             .replace('PENDING="/run/haproxy-pull-deploy.pending"', f'PENDING="{self.pending}"')
             .replace("/run/lock/haproxy-deploy.lock", str(self.root / "deploy.lock"))

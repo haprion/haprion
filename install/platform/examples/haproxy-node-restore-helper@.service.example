@@ -1,13 +1,13 @@
 # Runs one node restore step as root, outside the worker's read-only mount namespace.
 # It reads the root-only state archive, keeps the run's one-time key under
-# /var/lib/haproxy-mgmt/restore, and reaches the target VM over SSH.
+# /var/lib/haprion/restore, and reaches the target VM over SSH.
 [Unit]
 Description=Run one Haprion node restore step
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Service]
 Type=exec
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-node-restore-helper
+ExecStart=/opt/haprion/current/bin/haproxy-node-restore-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

@@ -132,7 +132,7 @@ class Locations:
     sshd_dropin: Path = Path("/etc/ssh/sshd_config.d/haproxy-manager-receivers.conf")
     nginx_snippet: Path = Path("/etc/nginx/snippets/haproxy-manager-receivers.conf")
     ui_site: Path = Path("/etc/nginx/sites-available/haproxy-ui")
-    ui_tls: Path = Path("/etc/haproxy-manager/ui-tls.conf")
+    ui_tls: Path = Path("/etc/haprion/ui-tls.conf")
 
 
 def run_command(argv: Sequence[str]) -> tuple[int, str]:

@@ -75,10 +75,10 @@ class ReceiverFixture(Fixture):
         self.runner = Runner()
         self.etc = self.root / "etc"
         (self.etc / "nginx" / "sites-enabled").mkdir(parents=True)
-        (self.etc / "haproxy-manager").mkdir(parents=True)
-        (self.etc / "haproxy-manager" / "ui-tls.conf").write_text(
-            "TLS_CERT=/etc/haproxy-manager/tls/ui.crt\n"
-            "TLS_KEY=/etc/haproxy-manager/tls/ui.key\n"
+        (self.etc / "haprion").mkdir(parents=True)
+        (self.etc / "haprion" / "ui-tls.conf").write_text(
+            "TLS_CERT=/etc/haprion/tls/ui.crt\n"
+            "TLS_KEY=/etc/haprion/tls/ui.key\n"
             "SERVER_NAME=mgr.example.net\n",
             encoding="utf-8",
         )
@@ -86,7 +86,7 @@ class ReceiverFixture(Fixture):
             sshd_dropin=self.etc / "ssh" / "sshd_config.d" / "haproxy-manager-receivers.conf",
             nginx_snippet=self.etc / "nginx" / "snippets" / "haproxy-manager-receivers.conf",
             ui_site=self.etc / "nginx" / "sites-available" / "haproxy-ui",
-            ui_tls=self.etc / "haproxy-manager" / "ui-tls.conf",
+            ui_tls=self.etc / "haprion" / "ui-tls.conf",
         )
         # The interface's site as 05-platform-nginx renders it: with the line
         # that makes the snippet reachable at all.

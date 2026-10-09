@@ -7,7 +7,7 @@
 #
 # The callers are the certificate helpers the worker starts through sudo:
 # they run as root but inside the worker's ProtectSystem=strict namespace,
-# where /etc/haproxy-manager is read-only (B163). The renewal timer and an
+# where /etc/haprion is read-only (B163). The renewal timer and an
 # operator's haproxy-cert-publish run outside it and install directly.
 #
 # Installed as /etc/systemd/system/haproxy-ui-tls-helper.socket, with
@@ -15,10 +15,10 @@
 
 [Unit]
 Description=Socket the Haprion interface certificate is installed through
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Socket]
-ListenStream=/run/haproxy-mgmt/ui-tls.sock
+ListenStream=/run/haprion/ui-tls.sock
 SocketUser=root
 SocketGroup=WORKER_USER
 SocketMode=0660

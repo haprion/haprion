@@ -834,7 +834,7 @@ class OverwritingANode(RestoreRouteTestCase):
         self.assertIn("/etc/keepalived/keepalived.conf", page)
         self.assertIn("1 of 42 files", page)
         self.assertNotIn("Not from the archive", page)
-        self.assertIn("/etc/haproxy-manager/stray", page)
+        self.assertIn("/etc/haprion/stray", page)
         self.assertIn("Unchanged · not applied", page)
         self.assertIn("node-a holds it; keepalived stops first and it moves to node-b", page)
         self.assertIn("none could be taken", page)

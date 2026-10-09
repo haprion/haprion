@@ -28,7 +28,7 @@ from haproxy_mgmt.helper_protocol import HelperProtocolError, write_document
 PARAMETERS = frozenset(
     {"id", "domains", "key_type", "clusters", "receivers", "formats", "interface"}
 )
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-request-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cert-request-helper"
 SUDO = "/usr/bin/sudo"
 MAX_DOMAINS = 32
 MAX_DOMAIN_BYTES = 255

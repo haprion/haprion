@@ -26,7 +26,7 @@ from haproxy_mgmt.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS
 from haproxy_mgmt.probe_socket import build_request
 from haproxy_mgmt.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-probe-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-probe-helper"
 SUDO = "/usr/bin/sudo"
 OPERATION = "probe"
 ALLOWED_MIN_VERSIONS = frozenset(BACKEND_MIN_VERSION.values())

@@ -11,7 +11,7 @@ from haproxy_mgmt.cli.backup_job_helper import OPERATIONS
 from haproxy_mgmt.envelope import failure
 from haproxy_mgmt.helper_protocol import MAX_REQUEST_BYTES, write_document
 
-SOCKET_PATH = "/run/haproxy-mgmt/backup-job.sock"
+SOCKET_PATH = "/run/haprion/backup-job.sock"
 TIMEOUT_SECONDS = 720.0
 
 

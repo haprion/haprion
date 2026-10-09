@@ -38,7 +38,7 @@ import psycopg
 
 from haproxy_ui import auth, users
 
-ADMIN_CONFIG_DIRECTORY = Path("/etc/haproxy-manager")
+ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
 
 # The floor is shared with the web's own password change; see auth.

@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERIFY="${SCRIPT_DIR}/node-bundle.py"
-STATE_BACKUP=/opt/haproxy-mgmt/current/bin/haproxy-state-backup
+STATE_BACKUP=/opt/haprion/current/bin/haproxy-state-backup
 
 bundle=""
 expected_sha=""
@@ -122,8 +122,8 @@ preflight="
         [[ \"\$(dpkg --print-architecture)\" == '${package_arch}' ]] \
             || { echo 'ERROR: the package is built for ${package_arch}, not for this node' >&2; exit 1; }
     fi
-    if sudo test -f /etc/haproxy-manager/node.conf; then
-        sudo grep -Fqx 'CLUSTER=\"${cluster}\"' /etc/haproxy-manager/node.conf \
+    if sudo test -f /etc/haprion/node.conf; then
+        sudo grep -Fqx 'CLUSTER=\"${cluster}\"' /etc/haprion/node.conf \
             || { echo 'ERROR: existing node belongs to another cluster' >&2; exit 1; }
     fi
     echo 'node preflight: PASS'
@@ -186,8 +186,8 @@ if [[ "$backup_after" == "yes" ]]; then
 else
     echo "state backup after: skipped on request (take one after the cluster's last node)"
 fi
-if [[ -x /opt/haproxy-mgmt/current/bin/haproxy-status ]]; then
-    /opt/haproxy-mgmt/current/bin/haproxy-status -c "$cluster"
+if [[ -x /opt/haprion/current/bin/haproxy-status ]]; then
+    /opt/haprion/current/bin/haproxy-status -c "$cluster"
 else
     echo "WARNING: haproxy-status is unavailable; run the installation check manually" >&2
 fi

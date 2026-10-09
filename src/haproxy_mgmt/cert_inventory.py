@@ -63,7 +63,7 @@ LETSENCRYPT_LIVE = LETSENCRYPT_ROOT / "live"
 # ID with the same two files certbot's live directory has. Root-only. The
 # import helper (C6) is the only writer; everything here only reads.
 #
-IMPORT_STORE = Path("/etc/haproxy-manager/certificates")
+IMPORT_STORE = Path("/etc/haprion/certificates")
 FULLCHAIN = "fullchain.pem"
 PRIVKEY = "privkey.pem"
 #

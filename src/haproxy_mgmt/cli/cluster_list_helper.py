@@ -34,7 +34,7 @@ from haproxy_mgmt.helper_protocol import (
 )
 
 OPERATION = "cluster_list"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cluster-list-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cluster-list-helper"
 EXIT_NOT_ROOT = 77
 SUDO = "/usr/bin/sudo"
 

@@ -30,7 +30,7 @@ from haproxy_mgmt.cli.caller import usage
 
 OPERATION = "deploy_cluster"
 
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-deploy-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-deploy-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (

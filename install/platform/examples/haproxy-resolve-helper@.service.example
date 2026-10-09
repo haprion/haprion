@@ -10,12 +10,12 @@
 
 [Unit]
 Description=Look up dns server names for the Haprion interface
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Service]
 Type=exec
 DynamicUser=yes
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-resolve-helper
+ExecStart=/opt/haprion/current/bin/haproxy-resolve-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

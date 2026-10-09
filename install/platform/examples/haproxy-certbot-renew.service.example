@@ -8,5 +8,5 @@ Documentation=file:///apps/haproxy-manager/current
 # it cannot load - so the distribution's timer is masked when this is enabled.
 [Service]
 Type=oneshot
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-cert-renew
+ExecStart=/opt/haprion/current/bin/haproxy-cert-renew
 PrivateTmp=true

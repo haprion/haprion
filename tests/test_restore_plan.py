@@ -119,12 +119,12 @@ class ANewVm(Planning):
         plan = restore_plan.build(self.source(), "new_vm", TARGET)
         paths = {file.path for file in plan.files}
         self.assertFalse(any(path.startswith("/usr/local/sbin/") for path in paths))
-        self.assertNotIn("/etc/haproxy-manager/node-installation.json", paths)
+        self.assertNotIn("/etc/haprion/node-installation.json", paths)
         self.assertIn("/usr/local/sbin/haproxy-pull-deploy", plan.from_bundle)
-        self.assertIn("/etc/haproxy-manager/node-installation.json", plan.from_bundle)
+        self.assertIn("/etc/haprion/node-installation.json", plan.from_bundle)
         # node.conf and the pull key are the node's own and do come back.
-        self.assertIn("/etc/haproxy-manager/node.conf", paths)
-        self.assertIn("/etc/haproxy-manager/keys/config-pull", paths)
+        self.assertIn("/etc/haprion/node.conf", paths)
+        self.assertIn("/etc/haprion/keys/config-pull", paths)
         self.assertFalse(plan.traffic_log)
 
     def test_the_traffic_log_is_turned_on_again_rather_than_copied(self) -> None:
@@ -139,9 +139,9 @@ class ANewVm(Planning):
 
     def test_rollback_copies_of_the_old_node_stay_behind(self) -> None:
         files = dict(FILES)
-        files["/etc/haproxy-manager/node.conf.replaced-20260101-120000"] = ("old\n", 0o600)
+        files["/etc/haprion/node.conf.replaced-20260101-120000"] = ("old\n", 0o600)
         plan = restore_plan.build(self.source(files), "new_vm", TARGET)
-        self.assertIn("/etc/haproxy-manager/node.conf.replaced-20260101-120000", plan.left_out)
+        self.assertIn("/etc/haprion/node.conf.replaced-20260101-120000", plan.left_out)
 
     def test_an_operators_own_script_is_not_taken_for_the_bundles(self) -> None:
         files = dict(FILES)
@@ -311,11 +311,11 @@ class Overwrite(Planning):
             "hashes": hashes,
             "listing": {
                 "/etc/netplan": ("/etc/netplan/50-cloud-init.yaml",),
-                "/etc/haproxy-manager": (
-                    "/etc/haproxy-manager/keys",
-                    "/etc/haproxy-manager/keys/config-pull",
-                    "/etc/haproxy-manager/node.conf",
-                    "/etc/haproxy-manager/node-installation.json",
+                "/etc/haprion": (
+                    "/etc/haprion/keys",
+                    "/etc/haprion/keys/config-pull",
+                    "/etc/haprion/node.conf",
+                    "/etc/haprion/node-installation.json",
                 ),
             },
             "installed": restore_plan.PRODUCT_PACKAGES,
@@ -380,11 +380,11 @@ class Overwrite(Planning):
 
     def test_what_the_archive_lacks_in_the_products_directories_goes_to_quarantine(self) -> None:
         listing = dict(self.live().listing)
-        listing["/etc/haproxy-manager"] = (
-            *listing["/etc/haproxy-manager"],
-            "/etc/haproxy-manager/node.conf.replaced-20260101-000000",
-            "/etc/haproxy-manager/stray",
-            "/etc/haproxy-manager/stray/file",
+        listing["/etc/haprion"] = (
+            *listing["/etc/haprion"],
+            "/etc/haprion/node.conf.replaced-20260101-000000",
+            "/etc/haprion/stray",
+            "/etc/haprion/stray/file",
         )
         listing["/etc/systemd/system/haproxy.service.d"] = (
             "/etc/systemd/system/haproxy.service.d/override.conf",
@@ -393,16 +393,14 @@ class Overwrite(Planning):
         self.assertEqual(
             plan.quarantined,
             (
-                "/etc/haproxy-manager/stray",
+                "/etc/haprion/stray",
                 "/etc/systemd/system/haproxy.service.d/override.conf",
             ),
         )
         # 04-node-prepare's rollback copies are the node's history and stay (B178).
-        self.assertNotIn(
-            "/etc/haproxy-manager/node.conf.replaced-20260101-000000", plan.quarantined
-        )
+        self.assertNotIn("/etc/haprion/node.conf.replaced-20260101-000000", plan.quarantined)
         # The bundle's own file is kept, not moved and written again.
-        self.assertNotIn("/etc/haproxy-manager/node-installation.json", plan.quarantined)
+        self.assertNotIn("/etc/haprion/node-installation.json", plan.quarantined)
         self.assertEqual(plan.equal_directories, restore_plan.PRODUCT_DIRECTORIES)
 
     def test_only_an_overwrite_summary_carries_the_comparison(self) -> None:
@@ -449,9 +447,7 @@ class TheBundlesFilesAreTheEnableScriptsOwn(unittest.TestCase):
         text = (BASE / "install/node/haproxy-traffic-log-enable").read_text(encoding="utf-8")
         written = set(re.findall(r'^[A-Z_]+="(/etc/[^"]+)"$', text, re.MULTILINE))
         in_plan = {
-            path
-            for path in restore_plan.FROM_BUNDLE
-            if not path.startswith("/etc/haproxy-manager/")
+            path for path in restore_plan.FROM_BUNDLE if not path.startswith("/etc/haprion/")
         }
         self.assertEqual(written, in_plan)
 

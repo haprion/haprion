@@ -20,7 +20,7 @@ require_vars PLATFORM_ROOT DB_NAME WEB_USER
 ENVIRONMENT="${ENVIRONMENT:-prod}"
 valid_id "$ENVIRONMENT" || die "ENVIRONMENT must be a short lowercase identifier"
 
-config="/etc/haproxy-manager/ui-admin-${ENVIRONMENT}.conf"
+config="/etc/haprion/ui-admin-${ENVIRONMENT}.conf"
 [[ -r "$config" ]] || die "${config} is missing. Run ./02-platform-database first."
 # shellcheck disable=SC1090
 DUMP_DIR="$(source "$config"; echo "${DUMP_DIR:-}")"

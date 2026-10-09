@@ -17,7 +17,7 @@ from haproxy_mgmt.cli.node_helper import OPERATION
 from haproxy_mgmt.envelope import failure
 from haproxy_mgmt.helper_protocol import MAX_REQUEST_BYTES, write_document
 
-SOCKET_PATH = "/run/haproxy-mgmt/cluster-node.sock"
+SOCKET_PATH = "/run/haprion/cluster-node.sock"
 #
 # Six small files and one status read of the node, whose own bound is sixty
 # seconds. The margin is for a node that connects and then says nothing.

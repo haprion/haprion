@@ -25,9 +25,9 @@ if [[ ! "$WEB_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( WEB_PORT > 65535 )); then
     die "WEB_PORT must be a TCP port"
 fi
 
-TLS_CERT="${TLS_CERT:-/etc/haproxy-manager/dev-tls/ui.crt}"
-TLS_KEY="${TLS_KEY:-/etc/haproxy-manager/dev-tls/ui.key}"
-TLS_CONF=/etc/haproxy-manager/ui-dev-tls.conf
+TLS_CERT="${TLS_CERT:-/etc/haprion/dev-tls/ui.crt}"
+TLS_KEY="${TLS_KEY:-/etc/haprion/dev-tls/ui.key}"
+TLS_CONF=/etc/haprion/ui-dev-tls.conf
 SITE=/etc/nginx/sites-available/haproxy-ui-dev
 ENABLED=/etc/nginx/sites-enabled/haproxy-ui-dev
 
@@ -44,7 +44,7 @@ getent ahosts "$SERVER_NAME" >/dev/null \
 log "  ok       ${SERVER_NAME} resolves"
 
 step "Development TLS configuration"
-ensure_dir /etc/haproxy-manager root:root 755
+ensure_dir /etc/haprion root:root 755
 ensure_dir "$(dirname "$TLS_CERT")" root:root 700
 ensure_dir "$(dirname "$TLS_KEY")" root:root 700
 install_file "$TLS_CONF" root:root 644 "$(cat <<EOF

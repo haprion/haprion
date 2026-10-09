@@ -69,9 +69,9 @@ getent passwd "$RSYSLOG_WRITER" >/dev/null \
     || die "rsyslog writes as '${RSYSLOG_WRITER}', which does not exist; reinstall rsyslog"
 
 SBIN="/usr/local/sbin"
-NODE_CONF="/etc/haproxy-manager/node.conf"
+NODE_CONF="/etc/haprion/node.conf"
 LOGREAD_GROUP="haproxy-logread"
-TRAFFIC_LOG_ROOT="/var/log/haproxy-manager"
+TRAFFIC_LOG_ROOT="/var/log/haprion"
 # The engine package's LogNamespace=, read by haproxy-traffic-log-read.
 WAF_JOURNAL_NAMESPACE="haproxy-waf"
 
@@ -295,7 +295,7 @@ log "  applied  ${DNS_DROPIN}"
 # the helper logs it, and the status shows the server as it really is. Reloads
 # are covered by the deploy and certificate scripts calling the helper.
 #
-SERVER_STATE_DIR="/var/lib/haproxy-manager"
+SERVER_STATE_DIR="/var/lib/haprion"
 ensure_dir "$SERVER_STATE_DIR" root:root 700
 HAPROXY_DROPIN="/etc/systemd/system/haproxy.service.d/haproxy-manager-server-state.conf"
 ensure_dir "${HAPROXY_DROPIN%/*}" root:root 755
@@ -409,7 +409,7 @@ print(
 )
 PY
 )"
-install_file /etc/haproxy-manager/node-installation.json root:root 644 "$node_installation"
+install_file /etc/haprion/node-installation.json root:root 644 "$node_installation"
 log "  recorded node API ${NODE_API} and ${#SCRIPTS[@]} script digests"
 
 step "Node configuration"

@@ -134,7 +134,7 @@ class CertPull(unittest.TestCase):
         self.script = self.bin / "haproxy-cert-pull"
         self.script.write_text(
             PULL.read_text(encoding="utf-8")
-            .replace('NODE_CONF="/etc/haproxy-manager/node.conf"', f'NODE_CONF="{conf}"')
+            .replace('NODE_CONF="/etc/haprion/node.conf"', f'NODE_CONF="{conf}"')
             .replace('CERTS_DIR="/etc/haproxy/certs"', f'CERTS_DIR="{self.certs}"')
             .replace('PENDING="/run/haproxy-cert-pull.pending"', f'PENDING="{self.pending}"')
             .replace("/run/lock/haproxy-cert-pull.lock", str(self.root / "cert.lock"))

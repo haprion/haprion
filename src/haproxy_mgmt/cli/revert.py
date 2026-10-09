@@ -33,7 +33,7 @@ from haproxy_mgmt.version_history import count_versions, version_commit, version
 
 OPERATION = "revert_version"
 
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-revert-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-revert-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (

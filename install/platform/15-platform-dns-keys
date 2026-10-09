@@ -32,8 +32,8 @@ tool="${source_tree}/tools/dns-profile-keys.py"
 
 PRIVATE_DIR="${PLATFORM_ROOT}/secrets/dns-profile-keys"
 PUBLIC_DIR="${PLATFORM_ROOT}/config/dns-profile-keys"
-POLICY="/etc/haproxy-manager/runtime-policy.yaml"
-PROFILE_DIR="/etc/haproxy-manager/dns-profiles"
+POLICY="/etc/haprion/runtime-policy.yaml"
+PROFILE_DIR="/etc/haprion/dns-profiles"
 
 step "The interpreter"
 #

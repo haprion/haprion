@@ -1,6 +1,6 @@
 """The OIDC helper: the one part of the interface that talks to the provider (O3, B196).
 
-Answers on `/run/haproxy-mgmt/oidc.sock`, one instance per connection, as an
+Answers on `/run/haprion/oidc.sock`, one instance per connection, as an
 account of its own - the identity policy's `oidc` role, not root. Nothing it does needs root, and
 what it reads comes from a provider an administrator chose, so it runs with as
 little as the job allows: the private key that opens the client secret, and a
@@ -59,7 +59,7 @@ PARAMETERS = frozenset(
 # The key the web seals the client secret against; its public half is what
 # the web reads. The directory is this helper's account's alone.
 #
-KEY_DIRECTORY = Path("/etc/haproxy-manager/oidc")
+KEY_DIRECTORY = Path("/etc/haprion/oidc")
 KEY_ID = re.compile(r"^[0-9a-f]{16}$")
 CLAIM_PATH = re.compile(r"^[A-Za-z0-9_:./-]{1,128}$")
 TOKEN = re.compile(r"^[A-Za-z0-9._~-]{16,512}$")

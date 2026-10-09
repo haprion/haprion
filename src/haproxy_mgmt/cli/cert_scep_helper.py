@@ -43,7 +43,7 @@ PARAMETERS = frozenset(
         "exportable",
     }
 )
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cert-scep-helper"
 SUDO = "/usr/bin/sudo"
 MAX_DOMAINS = 32
 MAX_DOMAIN_BYTES = 255

@@ -21,7 +21,7 @@ re-verification of a rebuild from this repository, and documentation. What is bu
   granting the web or poller config-group membership
 - a path-free candidate-validation helper foundation with deterministic hashing and a hardened
   transient-service sandbox
-- a hash-verified, versioned and immutable installation layout under `/opt/haproxy-mgmt`
+- a hash-verified, versioned and immutable installation layout under `/opt/haprion`
 - reproducible development, security, test, and package-build gates
 - every management command running through the packaged CLI, including status, which reports
   whether the nodes are running the published configuration without starting a deployment to
@@ -127,5 +127,5 @@ Changes to migrations, grants or database read/write paths also run against a di
 PostgreSQL cluster with `ui/tools/test-database`; its accounts and isolation boundary are described
 in [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md#disposable-database-integration-gate).
 
-Versioned installation and rollback under `/opt/haproxy-mgmt` are described in
+Versioned installation and rollback under `/opt/haprion` are described in
 [`docs/install.md`](docs/install.md) and [`docs/user-manual.md`](docs/user-manual.md).

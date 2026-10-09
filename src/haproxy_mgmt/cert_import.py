@@ -4,7 +4,7 @@ The second of the two ways a certificate reaches the registry (§14.3, B134).
 ACME goes through certbot; everything else - an internal PKI, a purchased
 certificate, a wildcard exported from a Windows CA - comes in here, as
 material the maintainer already holds. The import store
-(`/etc/haproxy-manager/certificates/<id>/`) is laid out like certbot's
+(`/etc/haprion/certificates/<id>/`) is laid out like certbot's
 `live/`, so the publisher and the listing read both sources the same way.
 
 What an import is

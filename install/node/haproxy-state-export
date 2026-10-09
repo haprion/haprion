@@ -21,7 +21,7 @@ umask 077
 # operator accounts and could not be published - and quietly missed any account
 # added after it was written.
 #
-NODE_CONF="/etc/haproxy-manager/node.conf"
+NODE_CONF="/etc/haprion/node.conf"
 
 [[ -r "$NODE_CONF" ]] || {
     echo "ERROR: ${NODE_CONF} is missing. Run install/04-node-prepare." >&2
@@ -108,7 +108,7 @@ copy_path /etc/sudoers.d
 
 # What this node believes about itself: its cluster, its management host, and
 # the account and key it fetches configuration with.
-copy_path /etc/haproxy-manager
+copy_path /etc/haprion
 
 # ------------------------------------------------------------
 # SSH server and this node's SSH identity
@@ -312,8 +312,8 @@ REQUIRED_DR_PATHS=(
     /etc/keepalived/addresses.conf
     /etc/default/haproxy
     /etc/sysctl.d/60-haproxy.conf
-    /etc/haproxy-manager/node.conf
-    /etc/haproxy-manager/node-installation.json
+    /etc/haprion/node.conf
+    /etc/haprion/node-installation.json
     /etc/ssh/sshd_config
     /etc/ssh/ssh_host_ed25519_key
     /etc/ssh/ssh_host_ed25519_key.pub

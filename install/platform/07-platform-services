@@ -109,7 +109,7 @@ if [[ "${PROBE_SOCKET:-no}" == "yes" ]]; then
     systemctl restart haproxy-probe-helper.socket
     systemctl is-active --quiet haproxy-probe-helper.socket \
         || die "haproxy-probe-helper.socket did not start"
-    log "  listening on /run/haproxy-mgmt/probe.sock  (group ${WEB_USER})"
+    log "  listening on /run/haprion/probe.sock  (group ${WEB_USER})"
 else
     log "  skipped: PROBE_SOCKET is not yes, so this platform cannot probe"
 fi
@@ -134,7 +134,7 @@ if [[ "${ENVIRONMENT:-prod}" == "prod" ]]; then
     systemctl restart haproxy-resolve-helper.socket
     systemctl is-active --quiet haproxy-resolve-helper.socket \
         || die "haproxy-resolve-helper.socket did not start"
-    log "  listening on /run/haproxy-mgmt/resolve.sock  (group ${WEB_USER})"
+    log "  listening on /run/haprion/resolve.sock  (group ${WEB_USER})"
 else
     log "  skipped: ENVIRONMENT is ${ENVIRONMENT}, and names are looked up on production only"
 fi
@@ -156,7 +156,7 @@ if [[ "${ENVIRONMENT:-prod}" == "prod" ]]; then
     systemctl restart haproxy-cert-export-helper.socket
     systemctl is-active --quiet haproxy-cert-export-helper.socket \
         || die "haproxy-cert-export-helper.socket did not start"
-    log "  listening on /run/haproxy-mgmt/cert-export.sock  (group ${WEB_USER})"
+    log "  listening on /run/haprion/cert-export.sock  (group ${WEB_USER})"
 else
     log "  skipped: ENVIRONMENT is ${ENVIRONMENT}, and certificates are exported on production only"
 fi
@@ -183,7 +183,7 @@ systemctl enable --quiet haproxy-cert-receiver-helper.socket
 systemctl restart haproxy-cert-receiver-helper.socket
 systemctl is-active --quiet haproxy-cert-receiver-helper.socket \
     || die "haproxy-cert-receiver-helper.socket did not start"
-log "  listening on /run/haproxy-mgmt/cert-receiver.sock  (group ${WORKER_USER})"
+log "  listening on /run/haprion/cert-receiver.sock  (group ${WORKER_USER})"
 
 step "The worker's way to the node helper"
 #
@@ -202,13 +202,13 @@ systemctl enable --quiet haproxy-node-helper.socket
 systemctl restart haproxy-node-helper.socket
 systemctl is-active --quiet haproxy-node-helper.socket \
     || die "haproxy-node-helper.socket did not start"
-log "  listening on /run/haproxy-mgmt/cluster-node.sock  (group ${WORKER_USER})"
+log "  listening on /run/haprion/cluster-node.sock  (group ${WORKER_USER})"
 
 step "The worker's way to the interface certificate"
 #
 # The same reason as the receiver helper (B163, B188): the certificate helpers
 # the worker starts through sudo run inside its ProtectSystem=strict namespace,
-# and haproxy-ui-tls writes /etc/haproxy-manager/tls. So the last step of
+# and haproxy-ui-tls writes /etc/haprion/tls. So the last step of
 # publishing the interface certificate - naming it by ID - is asked of a root
 # unit on its own socket. The renewal timer installs directly.
 #
@@ -221,7 +221,7 @@ systemctl enable --quiet haproxy-ui-tls-helper.socket
 systemctl restart haproxy-ui-tls-helper.socket
 systemctl is-active --quiet haproxy-ui-tls-helper.socket \
     || die "haproxy-ui-tls-helper.socket did not start"
-log "  listening on /run/haproxy-mgmt/ui-tls.sock  (group ${WORKER_USER})"
+log "  listening on /run/haprion/ui-tls.sock  (group ${WORKER_USER})"
 
 step "The worker's way to backup jobs"
 install_file "/etc/systemd/system/haproxy-backup-job-helper@.service" root:root 644 \
@@ -233,7 +233,7 @@ systemctl enable --quiet haproxy-backup-job-helper.socket
 systemctl restart haproxy-backup-job-helper.socket
 systemctl is-active --quiet haproxy-backup-job-helper.socket \
     || die "haproxy-backup-job-helper.socket did not start"
-log "  listening on /run/haproxy-mgmt/backup-job.sock  (group ${WORKER_USER})"
+log "  listening on /run/haprion/backup-job.sock  (group ${WORKER_USER})"
 
 step "The worker's way to node restore jobs"
 #
@@ -250,7 +250,7 @@ systemctl enable --quiet haproxy-node-restore-helper.socket
 systemctl restart haproxy-node-restore-helper.socket
 systemctl is-active --quiet haproxy-node-restore-helper.socket \
     || die "haproxy-node-restore-helper.socket did not start"
-log "  listening on /run/haproxy-mgmt/node-restore.sock  (group ${WORKER_USER})"
+log "  listening on /run/haprion/node-restore.sock  (group ${WORKER_USER})"
 
 #
 # A rule from before the socket existed is worse than no rule: it cannot work,
@@ -279,9 +279,9 @@ step "Directories the worker's sandbox opens"
 # has to be here before the unit is. Root-only, like the profile directory.
 # Certbot's directories and the distribution root are checked by step 14.
 #
-ensure_dir /etc/haproxy-manager/certificates root:root 700
-ensure_dir /etc/haproxy-manager/ndes-profiles root:root 700
-ensure_dir /etc/haproxy-manager/ndes-requests root:root 700
+ensure_dir /etc/haprion/certificates root:root 700
+ensure_dir /etc/haprion/ndes-profiles root:root 700
+ensure_dir /etc/haprion/ndes-requests root:root 700
 
 step "Units"
 install_file "/etc/systemd/system/${WORKER_USER}.service" root:root 644 \
@@ -374,33 +374,33 @@ refuse() {
 # asks as the accounts that exist and would most like to have it.
 #
 refuse "$WEB_USER" "cannot run the status helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-status-helper
+    sudo -n /opt/haprion/current/bin/haproxy-status-helper
 refuse "$WORKER_USER" "cannot run the status helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-status-helper
+    sudo -n /opt/haprion/current/bin/haproxy-status-helper
 refuse "$WEB_USER" "cannot run the inventory helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper
+    sudo -n /opt/haprion/current/bin/haproxy-inventory-helper
 refuse "$WORKER_USER" "cannot run the inventory helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper
+    sudo -n /opt/haprion/current/bin/haproxy-inventory-helper
 refuse "$WEB_USER" "cannot run the readings helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-readings-helper
+    sudo -n /opt/haprion/current/bin/haproxy-readings-helper
 refuse "$WORKER_USER" "cannot run the readings helper" \
-    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-readings-helper
+    sudo -n /opt/haprion/current/bin/haproxy-readings-helper
 refuse "$WEB_USER" "has no DNS profile helper grant" \
-    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper
+    sudo -n -l /opt/haprion/current/bin/haproxy-dns-profile-apply-helper
 refuse "$POLLER_USER" "has no DNS profile helper grant" \
-    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper
+    sudo -n -l /opt/haprion/current/bin/haproxy-dns-profile-apply-helper
 refuse "$WEB_USER" "has no NDES profile helper grant" \
-    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper
+    sudo -n -l /opt/haprion/current/bin/haproxy-ndes-profile-apply-helper
 refuse "$POLLER_USER" "has no NDES profile helper grant" \
-    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper
+    sudo -n -l /opt/haprion/current/bin/haproxy-ndes-profile-apply-helper
 refuse "$WEB_USER" "has no NDES enrollment helper grant" \
-    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper
+    sudo -n -l /opt/haprion/current/bin/haproxy-cert-scep-helper
 refuse "$POLLER_USER" "has no NDES enrollment helper grant" \
-    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper
+    sudo -n -l /opt/haprion/current/bin/haproxy-cert-scep-helper
 refuse "$WEB_USER" "has no certificate delete grant" \
-    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper
+    sudo -n -l /opt/haprion/current/bin/haproxy-cert-delete-helper
 refuse "$POLLER_USER" "has no certificate delete grant" \
-    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper
+    sudo -n -l /opt/haprion/current/bin/haproxy-cert-delete-helper
 if [[ -d "${PLATFORM_ROOT}/secrets/dns-profile-keys" ]]; then
     while IFS= read -r key; do
         refuse "$WEB_USER" "cannot read a DNS profile private key" test -r "$key"

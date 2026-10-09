@@ -84,7 +84,7 @@ class BackupArchiveTests(unittest.TestCase):
         self.assertGreaterEqual(facts.files, len(REQUIRED_PATHS) - 1)
 
     def test_missing_dr_state_is_refused(self) -> None:
-        missing = "rootfs/etc/haproxy-manager/node-installation.json"
+        missing = "rootfs/etc/haprion/node-installation.json"
         with tempfile.TemporaryDirectory() as raw:
             archive = self.make_archive(Path(raw), omit=missing)
             with self.assertRaisesRegex(ArchiveError, missing):

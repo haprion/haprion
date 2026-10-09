@@ -14,7 +14,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path("/usr/share/haproxy-manager/crs")
+ROOT = Path("/usr/share/haprion/crs")
 #
 # What the package holds, and what a release may carry (`release_layout`).
 # Bounded so a damaged or substituted tree is refused rather than published.

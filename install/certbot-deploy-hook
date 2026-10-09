@@ -22,4 +22,4 @@
 #
 set -Eeuo pipefail
 
-exec /opt/haproxy-mgmt/current/bin/haproxy-cert-publish --deploy
+exec /opt/haprion/current/bin/haproxy-cert-publish --deploy

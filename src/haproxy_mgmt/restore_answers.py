@@ -23,7 +23,7 @@ from pathlib import Path
 
 from haproxy_mgmt.restore_source import RestoreSource, content
 
-NODE_CONF = "/etc/haproxy-manager/node.conf"
+NODE_CONF = "/etc/haprion/node.conf"
 #
 # 04-node-prepare's own name for the traffic log's read group; node.conf lists
 # it first in BACKUP_GROUPS.

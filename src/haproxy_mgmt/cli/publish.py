@@ -40,7 +40,7 @@ from haproxy_mgmt.repo_snapshot import SNAPSHOT_PREFIXES, PublishError, resolve_
 
 OPERATION = "publish_version"
 
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-publish-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-publish-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (

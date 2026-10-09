@@ -16,10 +16,10 @@
 
 [Unit]
 Description=Socket the Haprion job worker asks for a receiver on
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Socket]
-ListenStream=/run/haproxy-mgmt/cert-receiver.sock
+ListenStream=/run/haprion/cert-receiver.sock
 SocketUser=root
 SocketGroup=WORKER_USER
 SocketMode=0660

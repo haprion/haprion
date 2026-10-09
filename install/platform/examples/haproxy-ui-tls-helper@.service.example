@@ -9,11 +9,11 @@
 # Read the registry and the one certificate marked `interface: true`, check
 # that it names the interface's SERVER_NAME, and run
 # /usr/local/sbin/haproxy-ui-tls install with it: write the pair under
-# /etc/haproxy-manager/tls, keep a rollback copy beside it, run `nginx -t`,
+# /etc/haprion/tls, keep a rollback copy beside it, run `nginx -t`,
 # reload nginx, and write the public copy under /srv/certdist. The key is
 # handed to that command in a private temporary directory and never returned.
 #
-# Why this sandbox is looser than the worker's: writing /etc/haproxy-manager
+# Why this sandbox is looser than the worker's: writing /etc/haprion
 # is the job. ProtectSystem=yes keeps /usr, /boot and /efi read-only and
 # leaves /etc to the helper, as the receiver helper's unit does.
 #
@@ -24,11 +24,11 @@
 
 [Unit]
 Description=Install the Haprion interface certificate
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Service]
 Type=exec
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-ui-tls-helper
+ExecStart=/opt/haprion/current/bin/haproxy-ui-tls-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

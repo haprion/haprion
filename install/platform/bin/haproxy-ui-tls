@@ -2,10 +2,10 @@
 #
 # haproxy-ui-tls - inspect and replace the certificate nginx serves the UI with.
 #
-#     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] show
-#     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] install --cert <file> --key <file>
-#     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] self-signed [--days <n>]
-#     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] publish
+#     haproxy-ui-tls [--config /etc/haprion/ui-tls.conf] show
+#     haproxy-ui-tls [--config /etc/haprion/ui-tls.conf] install --cert <file> --key <file>
+#     haproxy-ui-tls [--config /etc/haprion/ui-tls.conf] self-signed [--days <n>]
+#     haproxy-ui-tls [--config /etc/haprion/ui-tls.conf] publish
 #
 # This certificate is what an operator's browser meets when logging in. It is
 # not the certificate on the HAProxy pair, and it is not used between nginx and
@@ -23,7 +23,7 @@
 #
 set -Eeuo pipefail
 
-DEFAULT_CONF=/etc/haproxy-manager/ui-tls.conf
+DEFAULT_CONF=/etc/haprion/ui-tls.conf
 CONF="$DEFAULT_CONF"
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
@@ -45,8 +45,8 @@ if [[ "${1:-}" == "--config" ]]; then
     CONF="${2:-}"
     shift 2 || usage
 fi
-[[ "$CONF" == /etc/haproxy-manager/*.conf && "$CONF" != *".."* ]] \
-    || die "--config must name a configuration file under /etc/haproxy-manager"
+[[ "$CONF" == /etc/haprion/*.conf && "$CONF" != *".."* ]] \
+    || die "--config must name a configuration file under /etc/haprion"
 
 #
 # Exit 78 rather than guessing, the same contract the node scripts follow: a
@@ -115,7 +115,7 @@ activate() {
     install -d -o root -g root -m 700 "$(dirname "$TLS_KEY")" "$(dirname "$TLS_CERT")"
 
     if [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]]; then
-        backup="$(mktemp -d /etc/haproxy-manager/.tls-rollback-XXXXXX)"
+        backup="$(mktemp -d /etc/haprion/.tls-rollback-XXXXXX)"
         cp -a "$TLS_CERT" "${backup}/cert"
         cp -a "$TLS_KEY" "${backup}/key"
     fi

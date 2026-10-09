@@ -49,7 +49,7 @@ class ReadingAnArchive(unittest.TestCase):
         for path in (
             "/etc/netplan",
             "/etc/netplan/50-cloud-init.yaml",
-            "/etc/haproxy-manager/keys/config-pull",
+            "/etc/haprion/keys/config-pull",
             "/root/.ssh",
             "/home/operator/.ssh/authorized_keys",
             "/var/lib/svc-backup/.ssh/authorized_keys",
@@ -102,7 +102,7 @@ class ReadingAnArchive(unittest.TestCase):
 
     def test_a_node_conf_without_service_accounts_is_refused(self) -> None:
         files = dict(FILES)
-        files["/etc/haproxy-manager/node.conf"] = ('CLUSTER="alpha"\n', 0o600)
+        files["/etc/haprion/node.conf"] = ('CLUSTER="alpha"\n', 0o600)
         with self.assertRaisesRegex(ArchiveError, "BACKUP_SERVICE_ACCOUNTS"):
             self.read(files=files)
 

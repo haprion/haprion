@@ -209,7 +209,7 @@ the cluster reports dnsdist installed; a node without it refuses a release that 
 a DNS listener. The pool's servers are addresses or host names with a port, and the list
 shows the names. dnsdist takes addresses only, so a name is looked up on the manager when
 the object is **saved**, by asking `haproxy-resolve-helper` over
-`/run/haproxy-mgmt/resolve.sock` (production only; the web service itself reaches nothing
+`/run/haprion/resolve.sock` (production only; the web service itself reaches nothing
 past localhost), and the address is stored in the object beside it:
 
 ```yaml
@@ -377,7 +377,7 @@ it. An account that signs in through an OIDC provider has no password here, and
 its role comes from the provider.
 
 `-e` names the environment, and each one is a root-owned file written by
-`02-platform-database`: `/etc/haproxy-manager/ui-admin-<environment>.conf`,
+`02-platform-database`: `/etc/haprion/ui-admin-<environment>.conf`,
 holding the database name and the role to connect as. Prod and dev therefore
 cannot be confused by an environment variable or a working directory.
 
@@ -474,7 +474,7 @@ provider, and it does not go through the web service.
 
 The web service reaches localhost and nothing else (`IPAddressDeny=any`), and
 keeps doing so. Every request to the provider goes through
-`/run/haproxy-mgmt/oidc.sock` to `haproxy-oidc-helper`, installed by platform
+`/run/haprion/oidc.sock` to `haproxy-oidc-helper`, installed by platform
 step 17. It runs as an account of its own (`OIDC_USER`, the identity policy's
 `roles.oidc`), not root, and is the one part that may reach the network. It
 takes no URL from the web: the issuer comes from the settings, every other
@@ -871,7 +871,7 @@ for all three: which certificates exist, where each comes from, and where each g
 | Source | Read from |
 |---|---|
 | `acme` | `/etc/letsencrypt/live/<lineage>/` - `fullchain.pem` and `privkey.pem` |
-| `import` | `/etc/haproxy-manager/certificates/<id>/` - the same two files, written by the import helper |
+| `import` | `/etc/haprion/certificates/<id>/` - the same two files, written by the import helper |
 
 | Target | Written as | Owner and mode |
 |---|---|---|
@@ -1007,11 +1007,11 @@ not become seventy jobs.
 | Layer | What goes | Why this order |
 |---|---|---|
 | the material | `<certificate_root>/<id>.pem` and the two files in every receiver directory the entry named | |
-| the source | `certbot delete --cert-name <lineage>` for `acme`; `/etc/haproxy-manager/certificates/<id>/` for `import` | a dead certificate would otherwise renew forever |
+| the source | `certbot delete --cert-name <lineage>` for `acme`; `/etc/haprion/certificates/<id>/` for `import` | a dead certificate would otherwise renew forever |
 | the registry entry | the certificate stops being published | only once the two above are gone: an entry that outlives its material is a certificate the next run can finish, an entry gone before its material is one nothing can find again |
 | the node copies | each node of every cluster the entry named is asked `cert-remove <id>` over the trigger identity | last, and the one layer that may lawfully be left behind; a node is asked by name, so it needs no entry |
 
-The whole job holds the publisher's lock (`/run/haproxy-mgmt/locks/cert-publish.lock`), like
+The whole job holds the publisher's lock (`/run/haprion/locks/cert-publish.lock`), like
 issue, publish and target changes do. The renewal timer publishes outside the job queue, and a
 renewal that ran between the layers would put a still-registered certificate's material back
 and leave a deleted one's node copies behind; under the lock the layers are one step to it.
@@ -1049,7 +1049,7 @@ holds what. The node's own script refuses an ID that any installed crt-list, `ha
 served rather than what is committed — and it does not reload, because nothing changed for HAProxy.
 
 **The worker's sandbox opens the import store for it.** `07-platform-services` creates
-`/etc/haproxy-manager/certificates` (root, `700`) before it writes the worker unit, because the unit
+`/etc/haprion/certificates` (root, `700`) before it writes the worker unit, because the unit
 names the directory in `ReadWritePaths` without the optional dash: a missing path stops the worker
 from starting rather than being skipped in silence. An installation upgraded to this operation
 reruns step 7 before releasing the interface that queues it.
@@ -1118,7 +1118,7 @@ certificate that has already expired is refused (`expired`). An ID certbot has a
 (`already_exists`), an ID registered as `acme` (`not_import`), and an unknown cluster or
 receiver are refused too. None of these leave anything behind.
 
-**What is written.** `/etc/haproxy-manager/certificates/<id>/` with `privkey.pem`, `cert.pem`,
+**What is written.** `/etc/haprion/certificates/<id>/` with `privkey.pem`, `cert.pem`,
 `chain.pem` and `fullchain.pem`, root-only, in one rename - the same four files certbot's `live/`
 holds, so the publisher and the listing read both sources the same way. Then the registry entry,
 `source.kind: import`, with the targets named. Then the publish for that one certificate and the
@@ -1164,7 +1164,7 @@ sudo haproxy-cert-request --id intranet.example --domain intranet.example --doma
   --cluster alpha [--key-type ec-p256|rsa-2048|rsa-4096]
 ```
 
-writes `/etc/haproxy-manager/certificates/<id>/privkey.pem` (root-only, never printed) beside
+writes `/etc/haprion/certificates/<id>/privkey.pem` (root-only, never printed) beside
 `request.csr`, `request.json` and `targets.json`, and prints the CSR. The base name is the CN and
 the certificate's ID, a wildcard a SAN beside it. EC P-256 is the default; RSA for the CA that
 requires it. The request is *not* in the registry - an entry without material would refuse every
@@ -1272,7 +1272,7 @@ external row and no other):
   whose certificate part is 40-bit RC2. Type the certificate's name to confirm.
 
 The key is read by `haproxy-cert-export-helper`, root, over
-`/run/haproxy-mgmt/cert-export.sock`, which only the web account may connect to. It
+`/run/haprion/cert-export.sock`, which only the web account may connect to. It
 refuses every entry without the mark, writes nothing, and says in the journal what it
 exported for whom (`journalctl -u 'haproxy-cert-export-helper@*'`); the web writes a
 `certificate_export` audit event with the certificate's fingerprint. Nothing keeps a
@@ -1418,7 +1418,7 @@ reruns `install/platform/07-platform-services`, which rewrites and restarts the 
 account, what it holds - and registers or removes one. The form takes the receiver's name, the
 transport, and the public key pasted as text (or, for https, the allowed addresses); the job is
 one `cert_receiver` run by `haproxy-cert-receiver-helper` - not through `sudo` but on a socket,
-`/run/haproxy-mgmt/cert-receiver.sock`, from a unit of its own that step 07 installs (see *The
+`/run/haprion/cert-receiver.sock`, from a unit of its own that step 07 installs (see *The
 worker's way to the receiver helper* in the installation guide; migration `0032` lets the queue accept the job). The
 helper takes the key as text and never as a path, so the interface cannot point it at a file. What the page adds over the command is the other half of the contract: under each
 receiver it writes out the exact commands that host runs to fetch - the account, the manager's
@@ -1472,7 +1472,7 @@ itself is not touched and keeps serving until it is shut down. A cluster has two
 A change cut short - a reboot, a killed process, power - cannot leave the files half changed for
 long. Before the first file is touched, the whole change (every file's content before and after, and
 for a cluster the directories it creates or moves) is written to
-`/var/lib/haproxy-mgmt/change-journal.json`, root-only, and synced; it is removed only once the
+`/var/lib/haprion/change-journal.json`, root-only, and synced; it is removed only once the
 change is on disk. While a change runs, the helper holds back SIGTERM, SIGINT and SIGHUP until it
 has finished or put everything back. A record left behind is put back by the next node or cluster
 change, before that change runs, and the helper's journal says so (`NOTICE: a node add of cluster
@@ -1563,9 +1563,9 @@ serves is not installed again, so a renewal of some other certificate costs no r
 
 Who runs it depends on where the publish runs. `haproxy-cert-publish` and the renewal timer are
 root outside any sandbox and install directly. The certificate helpers the worker starts through
-`sudo` run inside the worker's `ProtectSystem=strict` namespace, where `/etc/haproxy-manager` is
+`sudo` run inside the worker's `ProtectSystem=strict` namespace, where `/etc/haprion` is
 read-only; they name the entry by ID to `haproxy-ui-tls-helper` on
-`/run/haproxy-mgmt/ui-tls.sock`, a root unit step 07 installs, which reads the registry and the
+`/run/haprion/ui-tls.sock`, a root unit step 07 installs, which reads the registry and the
 material itself and refuses any entry not marked `interface: true`. The key never passes through
 the web process: the interface names a certificate, never bytes, never a path.
 
@@ -1664,8 +1664,8 @@ log page, although the records are still in staging ([Mirroring node traffic log
 collector account (`COLLECTOR_USER`):
 
 ```bash
-sudo -u <collector> /opt/haproxy-mgmt/current/bin/haproxy-ui-traffic-collector \
-  --replay-database /etc/haproxy-manager/traffic-collector.json
+sudo -u <collector> /opt/haprion/current/bin/haproxy-ui-traffic-collector \
+  --replay-database /etc/haprion/traffic-collector.json
 ```
 
 It waits for a run in progress, drops the import positions and nothing else — the day files and
@@ -1818,7 +1818,7 @@ written.
 If the node never answers on its own address, the timer returns the VM to its temporary address
 and the run reports `failed` with the network rolled back. A session that breaks or times out
 once writing has begun is a `failed` run in that session, never a refusal. The run's result is
-kept in `/var/lib/haproxy-mgmt/restore/<run>/result.json`, root-only `0600` in a `0700`
+kept in `/var/lib/haprion/restore/<run>/result.json`, root-only `0600` in a `0700`
 directory, with `started.json` written just before the first write to the target. A restore takes about a minute; the longest part is the package installation.
 
 **Test mode proves a restore before it is needed.** Add `--test --test-hostname <name>
@@ -1850,7 +1850,7 @@ and the three steps are the same; over the node itself, what differs:
 - the node's software is its own: no repository file is written, and only a product package the
   node lacks is installed (`apt-get install --no-upgrade`, from the node's own sources). The HAProxy
   releases and `current` are not touched;
-- what `/etc/haproxy-manager` and `/etc/systemd/system/haproxy.service.d` hold beyond the archive
+- what `/etc/haprion` and `/etc/systemd/system/haproxy.service.d` hold beyond the archive
   and the node bundle goes to quarantine on the node - not deleted by the run, and removed with the
   run's directory after 30 days ([What a node keeps and for how long](#what-a-node-keeps-and-for-how-long)); the directories the product
   shares with the OS image keep the image's files, as for a new VM;
@@ -1878,7 +1878,7 @@ for this. A node that is never reinstalled or restored keeps its copies until it
 
 | What | Where | Made by | Removed |
 |---|---|---|---|
-| rollback copy of a file an installer replaced | `<file>.replaced-<yyyymmdd-hhmmss>` beside the file, e.g. `/etc/haproxy-manager/node.conf.replaced-20260924-200115`, `/usr/local/sbin/haproxy-pull-deploy.replaced-…` | `04-node-prepare` (and so every node bundle installation and every restore) | when the same file is next installed, if the time in its name is more than 30 days old. **The newest copy of each file always stays, however old.** |
+| rollback copy of a file an installer replaced | `<file>.replaced-<yyyymmdd-hhmmss>` beside the file, e.g. `/etc/haprion/node.conf.replaced-20260924-200115`, `/usr/local/sbin/haproxy-pull-deploy.replaced-…` | `04-node-prepare` (and so every node bundle installation and every restore) | when the same file is next installed, if the time in its name is more than 30 days old. **The newest copy of each file always stays, however old.** |
 | a configuration release: everything a deploy installed - `haproxy.cfg`, `conf.d/`, the certificate lists, `waf/`, `dns/`, `keepalived/` | `/etc/haproxy/releases/<yyyymmdd-hhmmss>/` | `haproxy-pull-deploy`, once per deploy that changed something | after a deploy that completed, all but the newest 10. **The release `current` names, the one running before that deploy and one an interrupted deploy left behind always stay.** `KEEP_RELEASES` in the script; each removal is logged `pruned <path>`. |
 | a restore run's directory: the `before/` copy an overwrite took, its `quarantine/`, and the node bundle it installed | `/var/lib/haproxy-restore/<run>/` | `haproxy-node-restore` (the terminal or the web page) | when a later restore run begins writing to the same node, if the run is more than 30 days old (by the date in its ID, `r<yymmdd>-…`). The current run is never removed. |
 
@@ -2548,7 +2548,7 @@ the worker joins the read-only configuration group. Account names are deployment
 supplied in a policy file rather than compiled in:
 
 ```bash
-haproxy-render-sysusers --policy /etc/haproxy-manager/identity-policy.yaml
+haproxy-render-sysusers --policy /etc/haprion/identity-policy.yaml
 ```
 
 The command validates the policy and renders a `sysusers.d` fragment. It does not modify the
@@ -2569,7 +2569,7 @@ group is a separate action against an already existing account.
 
 /srv/haproxy-manager/validation/certs/            validation-only certificate material
 /srv/haproxy-manager/clusters.yaml                cluster definitions
-/etc/haproxy-manager/runtime-policy.yaml          the outer path boundary
+/etc/haprion/runtime-policy.yaml          the outer path boundary
 ```
 
 **Read your handwritten layers before adding `default-path config`.** It changes how every relative
@@ -2672,8 +2672,8 @@ port both bind it under `SO_REUSEPORT` and the kernel splits new connections bet
 so the publish reports success and the node answers correctly for about half the traffic, and a
 hostname claimed twice is answered by whichever frontend HAProxy reached first.
 
-Only two of these paths are fixed by the software: `/etc/haproxy-manager/runtime-policy.yaml`, which
-is where the code looks unless told otherwise, and `/opt/haproxy-mgmt`, where releases are installed.
+Only two of these paths are fixed by the software: `/etc/haprion/runtime-policy.yaml`, which
+is where the code looks unless told otherwise, and `/opt/haprion`, where releases are installed.
 Everything else above is a deployment choice — put the trees wherever your environment keeps them,
 and name them in the runtime policy.
 
@@ -2759,7 +2759,7 @@ for the node's backup account; the private half remains root-only on the manager
 Step 2 installs `haproxy-state-backup@.service`. Each instance takes both nodes in exactly one
 configured cluster and keeps a bounded number of root-only archives per node — 14 unless the
 Backups page set another count, which the root socket helper records in
-`/etc/haproxy-manager/backup-retention/<cluster>.json` (root-only, 1–365). Every run
+`/etc/haprion/backup-retention/<cluster>.json` (root-only, 1–365). Every run
 reads that file, including the terminal `haproxy-state-backup`, so a manual run prunes to the
 same count the schedule promised; a file that is present but unreadable stops the run rather
 than falling back to 14. The ordinary list and the backup UI show every retained archive per node
@@ -3155,7 +3155,7 @@ named before that convention - renaming a lineage moves certbot's archive, and i
 
 Every command that changes the file - issue, import, delete, a target change, a receiver's
 registration or removal, the scheduled renewal - reads it, changes it and writes it back under one
-lock, the publisher's (`/run/haproxy-mgmt/locks/cert-publish.lock`). The interface queues one
+lock, the publisher's (`/run/haprion/locks/cert-publish.lock`). The interface queues one
 certificate job at a time, but the renewal timer and an operator's command run outside that queue,
 and two writers in the same second would otherwise be a lost update the loader cannot see: the
 file that wins is valid, it just lacks what the other one wrote. A command that finds the lock held
@@ -3199,7 +3199,7 @@ acme:
   webroot: /var/www/acme
   certbot: /opt/haproxy-certbot/current/venv/bin/certbot
   dns_profiles:
-    directory: /etc/haproxy-manager/dns-profiles
+    directory: /etc/haprion/dns-profiles
     private_keys:
       - /srv/platform/secrets/dns-profile-keys/0123456789abcdef.key
 ```
@@ -3281,7 +3281,7 @@ left disabled.
 The step also checks that the worker's unit opens certbot's directories (`/etc/letsencrypt`,
 `/var/lib/letsencrypt`, `/var/log/letsencrypt`), the publisher's target (`/srv/certdist`), the
 registry's directory (`/configs/haproxy-mgmt`) and the DNS profile directory
-(`/etc/haproxy-manager/dns-profiles`). The issue helper runs certbot inside the worker's sandbox,
+(`/etc/haprion/dns-profiles`). The issue helper runs certbot inside the worker's sandbox,
 and without those paths every issuance from the web interface fails on a write such as certbot's
 log lock. Step 07 installs the unit; rerun it with a source tree that has them before running step
 14.
@@ -3320,7 +3320,7 @@ directory the helper materialises credential files into:
 ```yaml
 acme:
   dns_profiles:
-    directory: /etc/haproxy-manager/dns-profiles
+    directory: /etc/haprion/dns-profiles
     private_keys:
       - /srv/platform/secrets/dns-profile-keys/0123456789abcdef.key
 ```
@@ -3378,7 +3378,7 @@ domain membership or AD account and does not visit `mscep_admin` during normal o
 a non-empty list of absolute private-key file paths using the existing profile sealing keys. The endpoint must use HTTPS and
 match the encrypted provider profile exactly. TLS trust and certificate issuing trust are
 configured separately. Suggested roots are `/opt/haproxy-scep/current`,
-`/etc/haproxy-manager/ndes-requests` and `/etc/haproxy-manager/ndes-profiles`.
+`/etc/haprion/ndes-requests` and `/etc/haprion/ndes-profiles`.
 The latter directories are root-owned, mode `0700`; records and keys are mode `0600`.
 
 Build the native bundle with `tools/build-scep-client.py`: supply `--package`, its independently
@@ -3757,7 +3757,7 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-server-state-trigger` | unprivileged wrapper: validates `server-state <guid> <ready\|drain\|maint>`, then escalates |
 | `haproxy-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts; replaces certificates HAProxy already holds without a reload (`update-certs`) |
 
-Step 4 also writes `/etc/haproxy-manager/node-installation.json`. It records the
+Step 4 also writes `/etc/haprion/node-installation.json`. It records the
 node compatibility API and a SHA-256 digest for each of these thirteen scripts.
 `haproxy-node-status` recomputes the digests on every reading, so copied metadata
 cannot hide a script changed after installation. The report contains code
@@ -3799,7 +3799,7 @@ is updated. The configuration is unaffected — only the answer the card gives.
 
 **`haproxy-server-state` keeps a drain through reloads and restarts.** A state set over HAProxy's
 runtime socket lasts only as long as the worker, and every deploy and certificate rollout starts a
-new one. So the node keeps the wanted state per server in `/var/lib/haproxy-manager/server-state.json`
+new one. So the node keeps the wanted state per server in `/var/lib/haprion/server-state.json`
 (`root`, `0600`), named by the server's GUID - derived from its address and port, so reordering a
 pool moves nothing and a server given a new address starts ready - and every reload on the node
 goes through `haproxy-server-state reload`: it reads the worker's pid, reloads, waits for a
@@ -3965,7 +3965,7 @@ rollback never deletes evidence.
 
 The management CLI is installed independently of the application data filesystem. Source and
 development environments may live anywhere, but an installed release lives under
-`/opt/haproxy-mgmt` so recovery and diagnostics remain available if application storage is not.
+`/opt/haprion` so recovery and diagnostics remain available if application storage is not.
 
 Application code is installed from a wheel. It is never imported from a checkout, an editable
 environment, a developer-owned virtual environment, or any development path.
@@ -4006,7 +4006,7 @@ unsafe wheel members and entry points, verifies the runtime baseline (including 
 PyYAML, PyNaCl and psycopg packages) and imports, then installs:
 
 ```text
-/opt/haproxy-mgmt/
+/opt/haprion/
 ├── current -> releases/<version>-<wheel-hash-prefix>
 └── releases/
     └── <version>-<wheel-hash-prefix>/
@@ -4022,21 +4022,21 @@ Short stable wrappers and exact sudoers rules may point into `current/bin`; they
 into a source checkout.
 
 **`current/bin` is not on `sudo`'s path.** `sudo` resets `PATH` to its `secure_path`, which does
-not include `/opt/haproxy-mgmt/current/bin`, so `sudo haproxy-cert-receiver ...` answers
+not include `/opt/haprion/current/bin`, so `sudo haproxy-cert-receiver ...` answers
 `command not found` on a fresh installation even though the command is installed. The examples
 in the user manual assume one short wrapper per operator command in `/usr/local/bin`, each of the
 shape
 
 ```bash
 #!/usr/bin/env bash
-exec /opt/haproxy-mgmt/current/bin/haproxy-cert-receiver "$@"
+exec /opt/haprion/current/bin/haproxy-cert-receiver "$@"
 ```
 
 so that a release switch moves every command at once and nothing points at a release
 directory by name. The installer does not write them - which commands an operator types is
 the installation's choice, and a helper the worker runs through an exact sudoers rule must
 **not** get one. Until a wrapper exists, the full path works the same:
-`sudo /opt/haproxy-mgmt/current/bin/haproxy-cert-receiver ...`.
+`sudo /opt/haprion/current/bin/haproxy-cert-receiver ...`.
 
 `INSTALLATION.json` also records the engine compatibility API carried by the
 wheel. A wheel from before that metadata existed remains installable for
@@ -4266,8 +4266,8 @@ Four answers-file keys control it:
 | Key | Meaning |
 |---|---|
 | `SERVER_NAME` | the name the UI is reached on directly. Required |
-| `TLS_CERT` | defaults to `/etc/haproxy-manager/tls/ui.crt` |
-| `TLS_KEY` | defaults to `/etc/haproxy-manager/tls/ui.key` |
+| `TLS_CERT` | defaults to `/etc/haprion/tls/ui.crt` |
+| `TLS_KEY` | defaults to `/etc/haprion/tls/ui.key` |
 | `TRUSTED_PROXIES` | addresses or networks of a reverse proxy in front, space-separated; empty by default. See [Behind another reverse proxy](#behind-another-reverse-proxy) |
 
 If no pair exists at those paths, step 5 generates a self-signed one so the UI
@@ -4402,12 +4402,12 @@ production only, and last: nothing else on the platform depends on it.
 ```text
 ${PLATFORM_ROOT}/logs/mirror     collector writes freshness metadata, the interface reads
 ${PLATFORM_ROOT}/logs/staging    the collector's alone
-/etc/haproxy-manager/traffic-collector/{id_ed25519,known_hosts}
-/etc/haproxy-manager/traffic-collector.json
+/etc/haprion/traffic-collector/{id_ed25519,known_hosts}
+/etc/haprion/traffic-collector.json
 ```
 
 The collector program itself is installed with the CLI engine under
-`/opt/haproxy-mgmt/current`, not inside the web release. This is a privilege boundary rather than
+`/opt/haprion/current`, not inside the web release. This is a privilege boundary rather than
 packaging trivia: web releases are traversable only by the platform group, while the collector
 deliberately does not join that group and therefore cannot read `ui.toml`. The engine release is
 root-owned, immutable and executable without granting access to the platform configuration.
@@ -4554,10 +4554,10 @@ design, so the poller runs the same privileged helper the command line runs,
 through exact sudoers rules:
 
 ```
-<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-readings-helper ""
-<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-list-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-status-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-inventory-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-readings-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cluster-list-helper ""
 ```
 
 Status and inventory reach the nodes. `haproxy-readings-helper` answers the six
@@ -4641,7 +4641,7 @@ under `/root`, so the unit needs a hole in `ProtectHome` — and:
 ```bash
 printf '{"schema_version":1,"operation":"status","cluster":"<id>",'\
 '"request_id":"'"$(uuidgen)"'","parameters":{}}' \
-  | sudo -u <poller> sudo -n /opt/haproxy-mgmt/current/bin/haproxy-status-helper
+  | sudo -u <poller> sudo -n /opt/haprion/current/bin/haproxy-status-helper
 ```
 
 If that answers `done`, the sandbox is the problem and not the environment.
@@ -4657,19 +4657,19 @@ exactly the case a lock file gets wrong.
 Thirteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-changes-publish-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-import-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-request-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-deploy-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-deploy-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-revert-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-changes-publish-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-issue-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-publish-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-target-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-dns-profile-apply-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-delete-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-ndes-profile-apply-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-scep-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-import-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cert-request-helper ""
 ```
 
 The last nine are the certificate jobs ([Issuing a certificate](#issuing-a-certificate), [The DNS profile key pair](#the-dns-profile-key-pair), [Deleting a certificate](#deleting-a-certificate), [Importing a certificate](#importing-a-certificate)): they belong to no cluster, and
@@ -4713,7 +4713,7 @@ worth keeping for a button.
 So the privilege stays still and the request travels instead:
 
 ```
-/run/haproxy-mgmt/probe.sock   root:<web> 0660, created by haproxy-probe-helper.socket
+/run/haprion/probe.sock   root:<web> 0660, created by haproxy-probe-helper.socket
 haproxy-probe-helper@.service  runs the helper as root, one instance per connection
 ```
 
@@ -4746,7 +4746,7 @@ in order to serve one; a rule that stays fails at the first write.
 So this helper, too, sits still and the request travels:
 
 ```
-/run/haproxy-mgmt/cert-receiver.sock    root:<worker> 0660, created by haproxy-cert-receiver-helper.socket
+/run/haprion/cert-receiver.sock    root:<worker> 0660, created by haproxy-cert-receiver-helper.socket
 haproxy-cert-receiver-helper@.service   runs the helper as root, one instance per connection
 ```
 
@@ -4773,11 +4773,11 @@ Step 07 installs the socket wherever it installs a worker. It reaches no node.
 
 The same boundary once more, with a different caller. The helpers that issue, enroll and import
 certificates run through `sudo` inside the worker's namespace, and publishing the entry marked
-`interface: true` ([HTTPS and the certificate](#https-and-the-certificate)) ends in `haproxy-ui-tls install`, which writes `/etc/haproxy-manager/tls`
+`interface: true` ([HTTPS and the certificate](#https-and-the-certificate)) ends in `haproxy-ui-tls install`, which writes `/etc/haprion/tls`
 and a rollback directory beside it. So those helpers name the entry by ID on a socket:
 
 ```
-/run/haproxy-mgmt/ui-tls.sock      root:<worker> 0660, created by haproxy-ui-tls-helper.socket
+/run/haprion/ui-tls.sock      root:<worker> 0660, created by haproxy-ui-tls-helper.socket
 haproxy-ui-tls-helper@.service     runs the helper as root, one instance per connection
 ```
 
@@ -4793,13 +4793,13 @@ wherever it installs a worker.
 Node backups from the interface and node restores go the same way as receivers,
 for the same reason from the other direction: both read root-only state archives
 under `backup_root`, a restore keeps its run and one-time key under
-`/var/lib/haproxy-mgmt/restore`, and both reach nodes over SSH as root. A sudoed
+`/var/lib/haprion/restore`, and both reach nodes over SSH as root. A sudoed
 child of the worker would inherit its read-only mount namespace.
 
 ```
-/run/haproxy-mgmt/backup-job.sock       root:<worker> 0660, created by haproxy-backup-job-helper.socket
+/run/haprion/backup-job.sock       root:<worker> 0660, created by haproxy-backup-job-helper.socket
 haproxy-backup-job-helper@.service      backup_run and backup_schedule, as root, one instance per connection
-/run/haproxy-mgmt/node-restore.sock     root:<worker> 0660, created by haproxy-node-restore-helper.socket
+/run/haprion/node-restore.sock     root:<worker> 0660, created by haproxy-node-restore-helper.socket
 haproxy-node-restore-helper@.service    node_restore_prepare, _preview, node_restore and _discard, as root
 ```
 
@@ -4830,7 +4830,7 @@ Adding or removing a node writes root's `known_hosts`, the pull accounts' `autho
 cluster file and the collector's files - none of which a helper the worker starts through sudo may
 write. Creating or removing a cluster writes those and the editing policy under `/etc/sudoers.d`,
 a new repository under the configuration root, and moves directories into `.removed/`. So
-`haproxy-node-helper` answers both on `/run/haproxy-mgmt/cluster-node.sock` (root, group the
+`haproxy-node-helper` answers both on `/run/haprion/cluster-node.sock` (root, group the
 worker's account, `0660`) from `haproxy-node-helper@.service`, installed by step 07; the worker's
 `haproxy-node-ask` carries the request there, and `haproxy-node` and `haproxy-cluster` from a
 terminal run the helper directly as root.

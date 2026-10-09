@@ -1,10 +1,10 @@
 """Install the interface certificate at the worker's request (B188, D3).
 
 The helpers the worker starts through sudo - issue, enroll, import - run in
-the worker's sandbox, and `ProtectSystem=strict` keeps `/etc/haproxy-manager`
+the worker's sandbox, and `ProtectSystem=strict` keeps `/etc/haprion`
 read-only for them: `haproxy-ui-tls` could neither write the pair nor make its
 rollback directory. So the last step of publishing the interface certificate
-is asked of this helper, on `/run/haproxy-mgmt/ui-tls.sock`, from a unit of
+is asked of this helper, on `/run/haprion/ui-tls.sock`, from a unit of
 its own outside the sandbox (B163's pattern).
 
 It takes one thing: a certificate ID. It reads the registry and the material

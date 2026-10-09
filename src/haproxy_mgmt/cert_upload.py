@@ -40,7 +40,7 @@ from haproxy_mgmt.dns_profile_keys import (
 )
 
 OPERATION = "cert_import"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-import-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cert-import-helper"
 SUDO = "/usr/bin/sudo"
 SCHEMA_VERSION = 1
 MAX_PASSWORD_BYTES = 256

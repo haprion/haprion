@@ -19,7 +19,7 @@
 #
 set -Eeuo pipefail
 
-CONFIG_DIRECTORY=/etc/haproxy-manager
+CONFIG_DIRECTORY=/etc/haprion
 KEEP_DAYS=7
 #
 # The plan's alarm threshold. Warned about rather than enforced: a backup that

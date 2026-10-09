@@ -62,7 +62,7 @@ from datetime import datetime
 from pathlib import Path
 
 ADMIN_SOCKET = "/run/haproxy/manager.sock"
-STATE_FILE = Path("/var/lib/haproxy-manager/server-state.json")
+STATE_FILE = Path("/var/lib/haprion/server-state.json")
 LOCK_FILE = "/run/lock/haproxy-server-state.lock"
 CONFIG = Path("/etc/haproxy/haproxy.cfg")
 CONFIG_DIR = Path("/etc/haproxy/conf.d")
@@ -75,7 +75,7 @@ CONFIG_PENDING = Path("/run/haproxy-pull-deploy.pending")
 # said `done` and nothing showed the server taking traffic again. In /run, as a
 # reboot is a start, and the start puts every kept state back or writes this.
 #
-UNAPPLIED = Path("/run/haproxy-manager-server-state.unapplied")
+UNAPPLIED = Path("/run/haprion-server-state.unapplied")
 SYSTEMCTL = "/usr/bin/systemctl"
 
 STATES = ("ready", "drain", "maint")

@@ -333,7 +333,7 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
         self.assertLess(action, stop)
 
     def test_the_day_file_is_named_from_the_current_utc_date(self) -> None:
-        self.assertIn("/var/log/haproxy-manager/traffic-%$now-utc%.jsonl", self.rule)
+        self.assertIn("/var/log/haprion/traffic-%$now-utc%.jsonl", self.rule)
 
     def test_only_the_payload_is_written_and_not_a_syslog_header(self) -> None:
         """Measured, not assumed: `%msg%` keeps RFC3164's separating space.
@@ -478,7 +478,7 @@ class TrafficLogRetentionUnitTests(unittest.TestCase):
 
     def test_the_pass_can_write_nowhere_but_the_log_directory(self) -> None:
         self.assertIn("ProtectSystem=strict", self.service)
-        self.assertIn("ReadWritePaths=/var/log/haproxy-manager", self.service)
+        self.assertIn("ReadWritePaths=/var/log/haprion", self.service)
         self.assertIn("PrivateNetwork=yes", self.service)
         self.assertIn("NoNewPrivileges=yes", self.service)
 

@@ -1,11 +1,11 @@
 # Runs one bounded backup operation as root, outside the worker's read-only mount namespace.
 [Unit]
 Description=Run one Haprion backup job
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Service]
 Type=exec
-ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-backup-job-helper
+ExecStart=/opt/haprion/current/bin/haproxy-backup-job-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

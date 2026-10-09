@@ -96,7 +96,7 @@ from haproxy_mgmt.proxy_model import ModelError
 from haproxy_mgmt.repo_snapshot import PublishError, read_tree_files, resolve_head
 
 OPERATION = "cert_delete"
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cert-delete-helper"
 SUDO = "/usr/bin/sudo"
 
 #

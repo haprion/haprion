@@ -49,7 +49,7 @@ CONFIRMATION = "please reset me"
 BASELINE_MESSAGE = "Baseline after the build phase"
 OPERATION = "reset_history"
 
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-history-reset-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-history-reset-helper"
 PUBLISH = "/usr/local/bin/haproxy-publish"
 SUDO = "/usr/bin/sudo"
 

@@ -25,8 +25,8 @@ require_vars PLATFORM_ROOT WEB_USER SERVER_NAME
 # Defaulted rather than required, so an existing answers file keeps working.
 # Point these at an internally issued pair and the self-signed step never runs.
 #
-TLS_CERT="${TLS_CERT:-/etc/haproxy-manager/tls/ui.crt}"
-TLS_KEY="${TLS_KEY:-/etc/haproxy-manager/tls/ui.key}"
+TLS_CERT="${TLS_CERT:-/etc/haprion/tls/ui.crt}"
+TLS_KEY="${TLS_KEY:-/etc/haprion/tls/ui.key}"
 
 valid_abs_path "$TLS_CERT" || die "TLS_CERT must be an absolute path"
 valid_abs_path "$TLS_KEY"  || die "TLS_KEY must be an absolute path"
@@ -41,10 +41,10 @@ systemctl is-active --quiet "${WEB_USER}.service" \
     || die "${WEB_USER}.service is not running; run 04-platform-service first"
 
 step "Where the pair lives"
-ensure_dir /etc/haproxy-manager root:root 755
+ensure_dir /etc/haprion root:root 755
 ensure_dir "$(dirname "$TLS_CERT")" root:root 700
 ensure_dir "$(dirname "$TLS_KEY")" root:root 700
-install_file /etc/haproxy-manager/ui-tls.conf root:root 644 "$(cat <<EOF
+install_file /etc/haprion/ui-tls.conf root:root 644 "$(cat <<EOF
 # Read by haproxy-ui-tls. Written by 05-platform-nginx.
 TLS_CERT=${TLS_CERT}
 TLS_KEY=${TLS_KEY}

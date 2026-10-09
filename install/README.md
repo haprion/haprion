@@ -147,7 +147,7 @@ first. The scripts check before they change, and say `ok`, `fixed`, `created` or
 ## Installing the CLI itself
 
 Steps 1–3 assume the management CLI is installed. It is a separate, versioned,
-hash-verified installation under `/opt/haproxy-mgmt`, described in
+hash-verified installation under `/opt/haprion`, described in
 [`../docs/user-manual.md`](../docs/user-manual.md#part-3--the-versioned-cli-release).
 
 One ordering rule from that section is worth repeating, because getting it

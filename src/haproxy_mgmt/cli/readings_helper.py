@@ -50,7 +50,7 @@ from haproxy_mgmt.helper_protocol import (
 
 OPERATION = "readings"
 PARAMETERS = frozenset({"reads"})
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-readings-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-readings-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_NOT_ROOT = 77
 #

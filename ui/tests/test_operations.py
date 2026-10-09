@@ -299,9 +299,7 @@ class DeletingCertificates(unittest.TestCase):
             request_id=REQUEST,
             payload={"certificates": ["old.example.com", "older.example.net"]},
         )
-        self.assertEqual(
-            prepared.argv[-1], "/opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper"
-        )
+        self.assertEqual(prepared.argv[-1], "/opt/haprion/current/bin/haproxy-cert-delete-helper")
         request = json.loads(prepared.request)
         self.assertIsNone(request["cluster"])
         self.assertEqual(
@@ -414,9 +412,7 @@ class RetargetingCertificates(unittest.TestCase):
                 "clusters": ["beta"],
             },
         )
-        self.assertEqual(
-            prepared.argv[-1], "/opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper"
-        )
+        self.assertEqual(prepared.argv[-1], "/opt/haprion/current/bin/haproxy-cert-target-helper")
         request = json.loads(prepared.request)
         self.assertIsNone(request["cluster"])
         self.assertEqual(

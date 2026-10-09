@@ -312,8 +312,8 @@ step "Naming this environment for the account tool"
 # the direction that actually matters, the reverse - by an environment variable
 # or a working directory.
 #
-ensure_dir /etc/haproxy-manager root:root 755
-install_file "/etc/haproxy-manager/ui-admin-${ENVIRONMENT}.conf" root:root 644 "$(cat <<EOF
+ensure_dir /etc/haprion root:root 755
+install_file "/etc/haprion/ui-admin-${ENVIRONMENT}.conf" root:root 644 "$(cat <<EOF
 # Read by haproxy-ui-user -e ${ENVIRONMENT}. Written by 02-platform-database.
 DB_NAME=${DB_NAME}
 DB_ROLE=${DB_MIGRATION_ROLE}

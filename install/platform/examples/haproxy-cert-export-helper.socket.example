@@ -19,10 +19,10 @@
 
 [Unit]
 Description=Socket the Haprion interface exports a certificate's key through
-Documentation=file:///opt/haproxy-mgmt/current
+Documentation=file:///opt/haprion/current
 
 [Socket]
-ListenStream=/run/haproxy-mgmt/cert-export.sock
+ListenStream=/run/haprion/cert-export.sock
 SocketUser=root
 SocketGroup=WEB_USER
 SocketMode=0660

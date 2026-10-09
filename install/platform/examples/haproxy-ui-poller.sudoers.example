@@ -30,7 +30,7 @@
 #
 # Installed 0440 root:root, and accepted by visudo before it is put in place.
 
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-readings-helper ""
-POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-list-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-status-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-inventory-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-readings-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haprion/current/bin/haproxy-cluster-list-helper ""

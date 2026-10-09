@@ -6,13 +6,13 @@
 #
 # Sign-in through an OpenID Connect provider (Fas 13 part 4, B195-B199) needs
 # the provider, and the web service must not reach the network. So the requests
-# go through /run/haproxy-mgmt/oidc.sock to haproxy-oidc-helper, which runs as an
+# go through /run/haprion/oidc.sock to haproxy-oidc-helper, which runs as an
 # account of its own - the identity policy's `oidc` role, OIDC_USER here - and
 # is the one holder of the key that opens the client secret the web sealed.
 #
 # This step makes:
 #
-#   /etc/haproxy-manager/oidc/<key id>.key    OIDC_USER, 0600 (directory 0500)
+#   /etc/haprion/oidc/<key id>.key    OIDC_USER, 0600 (directory 0500)
 #   PLATFORM_ROOT/config/oidc-keys/<id>.pub   root:PLATFORM_GROUP, 0640
 #   haproxy-oidc-helper.socket and @.service  the socket group is WEB_USER
 #
@@ -49,9 +49,9 @@ id -u "$OIDC_USER" >/dev/null 2>&1 \
   haproxy-render-sysusers --policy <file> > /etc/sysusers.d/haproxy-manager.conf
   systemd-sysusers"
 
-KEY_DIR="/etc/haproxy-manager/oidc"
+KEY_DIR="/etc/haprion/oidc"
 PUBLIC_DIR="${PLATFORM_ROOT}/config/oidc-keys"
-BINARY="/opt/haproxy-mgmt/current/bin/haproxy-oidc-helper"
+BINARY="/opt/haprion/current/bin/haproxy-oidc-helper"
 
 step "The helper"
 [[ -x "$BINARY" ]] \
@@ -117,7 +117,7 @@ systemctl enable --quiet haproxy-oidc-helper.socket
 systemctl restart haproxy-oidc-helper.socket
 systemctl is-active --quiet haproxy-oidc-helper.socket \
     || die "haproxy-oidc-helper.socket did not start"
-log "  listening on /run/haproxy-mgmt/oidc.sock  (group ${WEB_USER})"
+log "  listening on /run/haprion/oidc.sock  (group ${WEB_USER})"
 
 step "The web's half"
 for file in "$PUBLIC_DIR"/*.pub; do

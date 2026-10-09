@@ -18,7 +18,7 @@ import zipfile
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 
-DEFAULT_TARGET = Path("/opt/haproxy-mgmt")
+DEFAULT_TARGET = Path("/opt/haprion")
 DEFAULT_PYTHON = Path("/usr/bin/python3")
 #
 # How many releases stay on disk after a successful activation (B156). Ten is
@@ -433,9 +433,7 @@ def prune_releases(releases: Path, *, keep: int, always: set[str | None]) -> lis
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Install a hash-verified wheel under /opt/haproxy-mgmt"
-    )
+    parser = argparse.ArgumentParser(description="Install a hash-verified wheel under /opt/haprion")
     parser.add_argument("--wheel", required=True, type=Path)
     parser.add_argument("--sha256", required=True)
     parser.add_argument(

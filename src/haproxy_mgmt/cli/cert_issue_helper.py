@@ -54,7 +54,7 @@ PARAMETERS = frozenset(
     }
 )
 MAX_DOMAIN_BYTES = 255
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper"
+HELPER = "/opt/haprion/current/bin/haproxy-cert-issue-helper"
 SUDO = "/usr/bin/sudo"
 
 

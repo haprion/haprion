@@ -113,7 +113,7 @@ step "Host keys this identity may trust"
 # the installation; reading the answers file would drop it from the collector
 # without a word.
 #
-CLUSTER_CONFIG="${CLUSTER_CONFIG:-/usr/local/bin/haprion-cluster-config}"
+CLUSTER_CONFIG="${CLUSTER_CONFIG:-/opt/haprion/current/bin/haprion-cluster-config}"
 cluster_nodes() {
     local listed
     listed="$("$CLUSTER_CONFIG" -c "$1" --field nodes)" \

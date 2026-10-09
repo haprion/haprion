@@ -66,6 +66,15 @@ ensure_pull_account "$CERT_PULL_USER" "nodes fetch certificates"
 # of the only tree they are supposed to read, and deploy stops working while
 # every permission still looks deliberate.
 #
+step "Runtime directory"
+#
+# /run/haprion, at every boot: the worker's sandbox names it before any helper
+# has created it (install/tmpfiles/haprion.conf says why).
+#
+install_file /etc/tmpfiles.d/haprion.conf root:root 644 "$(cat tmpfiles/haprion.conf)"
+systemd-tmpfiles --create /etc/tmpfiles.d/haprion.conf
+log "  ok       /run/haprion"
+
 step "Directory trees"
 ensure_dir "$(dirname "$CLUSTER_FILE")" "root:${CONFIG_GROUP}" 750
 ensure_dir "$CONFIG_ROOT"     "root:${CONFIG_GROUP}" 750

@@ -50,7 +50,7 @@ BASELINE_MESSAGE = "Baseline after the build phase"
 OPERATION = "reset_history"
 
 HELPER = "/opt/haprion/current/bin/haprion-history-reset-helper"
-PUBLISH = "/usr/local/bin/haprion-publish"
+PUBLISH = "/opt/haprion/current/bin/haprion-publish"
 SUDO = "/usr/bin/sudo"
 
 USAGE = "Usage:\n  haprion-history-reset -c <cluster>"

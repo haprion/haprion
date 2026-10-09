@@ -26,6 +26,7 @@ dev = [
 
 [project.scripts]
 haprion-cluster-config = "haproxy_mgmt.cli.cluster_config:main"
+haprion-published-release-helper = "haproxy_mgmt.cli.published_release_helper:main"
 haprion-cluster-list-helper = "haproxy_mgmt.cli.cluster_list_helper:main"
 haprion-validate-candidate-helper = "haproxy_mgmt.cli.validate_candidate_helper:main"
 haprion-history-reset = "haproxy_mgmt.cli.history_reset:main"

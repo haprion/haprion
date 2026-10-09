@@ -16,12 +16,13 @@ Both are fixed here, in one place, for all four.
 
 from __future__ import annotations
 
-import subprocess
+import io
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import NoReturn
 
-CLUSTER_CONFIG = "/usr/local/lib/haproxy-mgmt/cluster-config"
+from haproxy_mgmt.cli import cluster_config
 
 #
 # What a shell command exits with when it was called wrongly, as opposed to when
@@ -39,24 +40,22 @@ class CallerError(Exception):
 
 
 def field(cluster_id: str, name: str) -> str:
-    """One field of a cluster's definition, as cluster-config reports it.
+    """One field of a cluster's definition, as `haprion-cluster-config` reports it.
 
-    Nothing is printed when it fails, deliberately. cluster-config has already
-    said what was wrong - including which clusters do exist - straight to the
-    terminal, because its stderr is inherited rather than captured. Adding a
-    second sentence here would either repeat it or, as the captured copies did,
-    replace it with less.
+    Asked in this process, of the same code the command runs: the hand-installed
+    wrapper that used to stand between them (`cluster-config`, exec'ing the
+    release's command) is gone with the packages (B266). Only stdout is caught;
+    the command's own diagnosis - including which clusters do exist - goes
+    straight to stderr, and nothing is added here. A second sentence would
+    either repeat it or, as captured copies once did, replace it with less.
     """
 
-    completed = subprocess.run(  # noqa: S603 - fixed path, caller-selected field name
-        [CLUSTER_CONFIG, "-c", cluster_id, "--field", name],
-        stdout=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise SystemExit(completed.returncode)
-    return completed.stdout.strip()
+    answer = io.StringIO()
+    with redirect_stdout(answer):
+        code = cluster_config.main(["-c", cluster_id, "--field", name])
+    if code != 0:
+        raise SystemExit(code)
+    return answer.getvalue().strip()
 
 
 def config_path(cluster_id: str) -> Path:

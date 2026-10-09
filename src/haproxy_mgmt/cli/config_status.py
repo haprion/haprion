@@ -19,21 +19,20 @@ when permissions are broken.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
-from haproxy_mgmt.cli.caller import CLUSTER_CONFIG, usage
 from haproxy_mgmt.cli.caller import config_path as _config_path
+from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.release_layout import parse_release_file
 from haproxy_mgmt.repo_health import PendingChange, describe_problem, is_repo_root, pending_changes
 from haproxy_mgmt.version_history import current_version
 
-RELEASE_HELPER = "/usr/local/sbin/haproxy-published-release"
+RELEASE_HELPER = "/opt/haprion/current/bin/haprion-published-release-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = "Usage:\n  haprion-config-status -c <cluster>\n"
@@ -51,24 +50,6 @@ UNPUBLISHED = "nothing published yet"
 
 type ConfigPath = Callable[[str], Path]
 type ReadPublished = Callable[[str], str | None]
-
-
-class MissingClusterConfigHelper(Exception):
-    """The installed resolver required by the real command is unavailable."""
-
-
-def _resolve_config_path(cluster_id: str) -> Path:
-    """Resolve the production path, naming a missing installed helper precisely.
-
-    Keeping this check with the production resolver matters for more than test
-    convenience: a caller that supplies another resolver owns that resolver's
-    prerequisites.  Checking an unrelated installed path before calling it
-    makes the injected dependency a lie.
-    """
-
-    if not os.access(CLUSTER_CONFIG, os.X_OK):
-        raise MissingClusterConfigHelper
-    return _config_path(cluster_id)
 
 
 def _read_published(cluster_id: str) -> str | None:
@@ -126,7 +107,7 @@ def main(
     *,
     stream_out: TextIO | None = None,
     stream_err: TextIO | None = None,
-    config_path: ConfigPath = _resolve_config_path,
+    config_path: ConfigPath = _config_path,
     read_published: ReadPublished = _read_published,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
@@ -134,16 +115,7 @@ def main(
     errors: TextIO = stream_err or sys.stderr
     cluster_id = _parse(argv)
 
-    #
-    # Unlike the other commands, this one names a missing resolver and exits 68.
-    # The check lives inside the default resolver so an injected resolver is a
-    # complete dependency rather than still relying on this machine's install.
-    #
-    try:
-        repo = config_path(cluster_id)
-    except MissingClusterConfigHelper:
-        errors.write("ERROR: cluster-config helper is missing.\n")
-        return 68
+    repo = config_path(cluster_id)
 
     if not is_repo_root(repo):
         errors.write(f"{describe_problem(cluster_id, repo)}\n")

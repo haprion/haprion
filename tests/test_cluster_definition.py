@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import change_journal, cluster_definition, node_enrollment
+from haproxy_mgmt import candidate_validation, change_journal, cluster_definition, node_enrollment
 from haproxy_mgmt.cli import cluster as cluster_command
 from haproxy_mgmt.cli import node_helper
 from haproxy_mgmt.cluster_definition import Places, Tools
@@ -337,6 +337,22 @@ class CreatingACluster(unittest.TestCase):
         for directory in cluster_definition.SEED_DIRECTORIES:
             with self.subTest(directory=directory):
                 self.assertIn(f'"${{seed}}/{directory}"', script)
+
+    def test_a_new_cluster_keeps_its_counters_where_the_check_can_open_them(self) -> None:
+        """The core names the file; the validation sandbox makes its directory (N3)."""
+
+        ours = cluster_definition.seed_files("192.0.2.1")["core/haproxy.cfg"].decode()
+        wanted = f"    shm-stats-file {cluster_definition.SHM_STATS_FILE}"
+
+        self.assertIn(wanted, ours.splitlines())
+        self.assertEqual(
+            str(Path(cluster_definition.SHM_STATS_FILE).parent),
+            candidate_validation.SHM_STATS_DIRECTORY,
+        )
+        self.assertIn(
+            f"TemporaryFileSystem={candidate_validation.SHM_STATS_DIRECTORY}",
+            candidate_validation.sandbox_command(Path("/tmp/candidate"), "request-1"),
+        )
 
 
 @unittest.skipUnless(Path(GIT).exists(), "git is not installed where the tests run")

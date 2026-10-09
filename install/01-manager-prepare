@@ -178,6 +178,12 @@ global
     # at one path before installing it at another.
     default-path config
 
+    # Counters that carry over a reload: HAProxy keeps them in this file and
+    # finds each object again by its GUID. Opened as root before the chroot,
+    # so the path is the host's (docs/user-manual.md, 'Counters across a
+    # reload').
+    shm-stats-file /run/haproxy/stats.shm
+
 defaults
     log     global
     mode    http

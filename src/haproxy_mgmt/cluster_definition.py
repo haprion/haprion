@@ -88,6 +88,14 @@ SEED_DIRECTORIES = (
     "manual/conf.d",
 )
 GITIGNORE = "*.swp\n*~\n.#*\n"
+#
+# Where a cluster's HAProxy keeps the counters that carry over a reload (N3,
+# 2026-10-09), named in the core template below. The HAProxy package's runtime
+# directory: there on every node from boot, emptied by a restart of the node,
+# which resets the counters the way a restart of HAProxy does. The validation
+# sandbox gives a check the same directory (`candidate_validation`).
+#
+SHM_STATS_FILE = "/run/haproxy/stats.shm"
 CORE_TEMPLATE = """#
 # The handwritten `global` and `defaults` for this cluster. Generated
 # configuration is assembled behind this file and never edits it.
@@ -99,6 +107,12 @@ global
     # relative to the file it is written in, and a node validates a release
     # at one path before installing it at another.
     default-path config
+
+    # Counters that carry over a reload: HAProxy keeps them in this file and
+    # finds each object again by its GUID. Opened as root before the chroot,
+    # so the path is the host's (docs/user-manual.md, 'Counters across a
+    # reload').
+    shm-stats-file /run/haproxy/stats.shm
 
     # The TLS defaults the publish path checks this file against, written
     # from the same source (docs/user-manual.md, 'Runtime policy').

@@ -28,6 +28,12 @@ from haproxy_mgmt.release_layout import (
 #
 HAPROXY = "/usr/sbin/haproxy"
 #
+# The directory of the `shm-stats-file` a cluster's core names
+# (`cluster_definition.SHM_STATS_FILE`): the HAProxy package's own runtime
+# directory on a node, which its tmpfiles entry makes at boot.
+#
+SHM_STATS_DIRECTORY = "/run/haproxy"
+#
 # The WAF engine, from its own package (B229, B230). The manager has it for
 # this one purpose: a rule the engine cannot compile is refused here, at
 # publication, rather than on a node.
@@ -319,6 +325,14 @@ def sandbox_command(
         "BindReadOnlyPaths=-/sbin",
         "TemporaryFileSystem=/tmp",
         "TemporaryFileSystem=/run",
+        #
+        # Where `shm-stats-file` keeps the counters (N3, 2026-10-09). A check
+        # opens that file too - creates it, maps it and writes - and refuses
+        # the configuration when it cannot, measured on 3.4.6. Its own empty
+        # directory here, so the check finds the path the nodes use and the
+        # file it makes dies with the sandbox.
+        #
+        f"TemporaryFileSystem={SHM_STATS_DIRECTORY}",
         #
         # /etc is replaced rather than hidden. It used to be listed above as
         # inaccessible, and that measured wrong against a real cluster

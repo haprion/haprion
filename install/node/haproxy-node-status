@@ -790,13 +790,64 @@ def runtime_info():
                 if info.get("Uptime_sec", "").isdigit()
                 else None
             ),
+            "shared_counters": shared_counters(
+                int(info["Pid"]) if info.get("Pid", "").isdigit() else None,
+                running_release_file(),
+            ),
         }
 
     except Exception:
         return False, {
             "version": None,
             "uptime_sec": None,
+            "shared_counters": None,
         }
+
+
+#
+# Whether the worker answering keeps its counters in the file `shm-stats-file`
+# names, so that they carry over a reload (N3, 2026-10-09). A reload starts
+# `Uptime_sec` from nought either way, and only this tells the metrics whether
+# the counters started again with it.
+#
+# Read from what is, not from what was asked for: the path the running
+# release's `global` names, and whether that worker has exactly that file
+# mapped shared. HAProxy opens it as root before the chroot, so the path is
+# the host's; a relative one is the master's working directory, which systemd
+# makes `/`. None when either cannot be read - unknown, not no.
+#
+SHM_STATS_FILE = re.compile(r"^\s*shm-stats-file\s+(\S+)\s*(?:#.*)?$")
+
+
+def shm_stats_path(config_text):
+    section = None
+    for line in config_text.splitlines():
+        if line[:1] and not line[:1].isspace() and not line.startswith("#"):
+            section = line.split()[0]
+            continue
+        if section == "global":
+            found = SHM_STATS_FILE.match(line)
+            if found:
+                return str(Path("/") / found.group(1))
+    return None
+
+
+def shared_counters(pid, release, proc=Path("/proc")):
+    if pid is None or release is None:
+        return None
+    try:
+        config_text = (release.parent / "haproxy.cfg").read_text(encoding="utf-8")
+        path = shm_stats_path(config_text)
+        if path is None:
+            return False
+        maps = (proc / str(pid) / "maps").read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    for line in maps.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) == 6 and fields[1] == "rw-s" and fields[5] == path:
+            return True
+    return False
 
 
 #

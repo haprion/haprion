@@ -214,7 +214,11 @@
           "required": ["version", "uptime_sec"],
           "properties": {
             "version": { "type": ["string", "null"], "maxLength": 255 },
-            "uptime_sec": { "type": ["integer", "null"], "minimum": 0 }
+            "uptime_sec": { "type": ["integer", "null"], "minimum": 0 },
+            "shared_counters": {
+              "description": "Whether the HAProxy worker answering keeps its counters in the file shm-stats-file names, so that frontend and server counters carry over a reload while uptime_sec starts again. Read from the running release's global section and the worker's own mappings; null when either could not be read, absent from a node installed before it was reported.",
+              "type": ["boolean", "null"]
+            }
           },
           "additionalProperties": true
         },

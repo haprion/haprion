@@ -41,7 +41,6 @@ from haproxy_mgmt.cluster_settings import NOTHING as NO_SETTINGS
 from haproxy_mgmt.cluster_settings import ClusterSettings, LogTarget, Metrics
 from haproxy_mgmt.config import AbuseProtection, ConfigError, UnknownHost, Vip
 from haproxy_mgmt.guid import (
-    backend_guid,
     frontend_guid,
     listener_guid_prefix,
     redirect_suffixes,
@@ -544,7 +543,6 @@ def _waf_backend_file() -> str:
         [
             "",
             f"backend {WAF_BACKEND}",
-            f"    guid {backend_guid(WAF_IDENTITY, 'engine')}",
             "    mode spop",
             "    retries 0",
             f"    server engine 127.0.0.1:{WAF_ENGINE_PORT}"
@@ -2329,7 +2327,6 @@ def _redirect_backends(proxy: Proxy) -> list[str]:
         lines += [
             "",
             f"backend {backend_name(proxy, name)}",
-            f"    guid {backend_guid(proxy.name, name)}",
             "    mode http",
             #
             # Written in single quotes: a redirect location is a log-format
@@ -2383,10 +2380,8 @@ def _added_sections(proxy: Proxy, source: str | None) -> list[str]:
     lines: list[str] = []
     for section in proxy.advanced.placement.sections:
         generated: list[str] = []
-        if section.kind == "backend":
-            generated.append(f"    guid {backend_guid(proxy.name, f'advanced/{section.name}')}")
-            if source is not None:
-                generated.append(f"    source {source}")
+        if section.kind == "backend" and source is not None:
+            generated.append(f"    source {source}")
         lines.extend(advanced_config.section_block(proxy.name, section, generated))
     return lines
 
@@ -2607,7 +2602,6 @@ def _backend(
     lines = [
         "",
         f"backend {name}",
-        f"    guid {backend_guid(proxy.name, backend.name)}",
         f"    mode {'tcp' if raw else 'http'}",
     ]
     if not by_hand:

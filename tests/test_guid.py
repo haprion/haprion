@@ -114,8 +114,6 @@ class NoTwoObjectsShareAGuid(unittest.TestCase):
         self.assertEqual(
             sorted(guids),
             [
-                "backend:api",
-                "backend:web",
                 "frontend",
                 "listen",
                 "server:api:198.51.100.20:9000",

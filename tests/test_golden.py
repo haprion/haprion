@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt import advanced
+from haproxy_mgmt import generate as generate_module
 from haproxy_mgmt.config import TLS_POLICY_NAMES, AbuseProtection, Vip
 from haproxy_mgmt.generate import (
     HTTP_TRAFFIC_LOG_FORMAT,
@@ -69,6 +70,46 @@ defaults
     timeout client 50s
     timeout server 50s
 """
+
+
+def _backend_guids(text: str) -> list[str]:
+    """The `guid` lines inside `backend` sections of one configuration file."""
+
+    found: list[str] = []
+    section = ""
+    for line in text.splitlines():
+        if line and not line[0].isspace():
+            section = line.split()[0]
+        elif section == "backend" and line.split()[:1] == ["guid"]:
+            found.append(line.strip())
+    return found
+
+
+class NoBackendCarriesAGuid(unittest.TestCase):
+    """HAProxy 3.4.6 cannot carry a backend's counters across a reload (guid.py).
+
+    With a GUID the `BACKEND` row alternates between two slots and shows the
+    figures of the process before last; without one it starts from zero, which
+    the metrics read as a restart. Frontends and servers keep theirs.
+    """
+
+    def test_no_golden_case_writes_one(self) -> None:
+        for case in cases():
+            for name, text in produced(case).items():
+                with self.subTest(case=case.name, file=name):
+                    self.assertEqual(_backend_guids(text), [])
+
+    def test_the_waf_engine_backend_has_none(self) -> None:
+        text = generate_module._waf_backend_file()
+
+        self.assertIn("backend ", text)
+        self.assertEqual(_backend_guids(text), [])
+
+    def test_servers_and_frontends_still_have_theirs(self) -> None:
+        text = "\n".join(produced(GOLDEN / "minimal").values())
+
+        self.assertIn(" guid srv:", text)
+        self.assertIn("    guid fe:", text)
 
 
 class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):

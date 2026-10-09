@@ -7,10 +7,20 @@ deploy is a reload, that would make an ordinary configuration change look like
 a traffic outage in the interface, and make before-and-after impossible to
 compare at exactly the moment somebody wants to.
 
-So every frontend, listener, backend and server the generator writes gets a
-GUID, derived from what the object *is* rather than from where it happened to
-land in a file. The same object keeps the same GUID across publications, and
+So every frontend, listener and server the generator writes gets a GUID,
+derived from what the object *is* rather than from where it happened to land in
+a file. The same object keeps the same GUID across publications, and
 reordering a list of servers moves no counters.
+
+Backends get none, for now (2026-10-09). On 3.4.6 a backend's own counters -
+the `BACKEND` row - do not carry over: each reload attaches the backend to the
+other of two slots in the file, so the row shows the figures of the process
+before last (10, 0, 12, 1, 13, 2 over five reloads, measured on this machine
+and on a node). A backend without a GUID starts from zero on every reload
+instead, which is what the metrics already read as a restart. Frontends,
+listeners and servers carry over exactly. `backend_guid` keeps its frozen value
+so that putting the line back, once HAProxy carries backends, changes nothing
+else.
 
 What HAProxy accepts, read from the 3.4.4 documentation on this machine rather
 than from memory: at most 127 characters, alphanumerics plus `.`, `:`, `-` and
@@ -185,6 +195,8 @@ def redirect_suffixes(proxy: Proxy) -> dict[tuple[str, str], str]:
 
 
 def backend_guid(proxy: str, backend: str) -> str:
+    """A backend's GUID - not written while HAProxy cannot carry it (see above)."""
+
     return _guid(BACKEND, proxy, backend)
 
 
@@ -216,7 +228,7 @@ def guids_for(proxy: Proxy) -> dict[str, str]:
     """Every GUID one proxy object contributes, keyed by what it names.
 
     The key is the object's place in the model - `frontend`, `listen`,
-    `backend:web`, `server:web:198.51.100.10:8080` - and exists so that the
+    `server:web:198.51.100.10:8080` - and exists so that the
     generator and its tests can talk about "the GUID of this thing" without
     rebuilding the identity by hand in two places. The mapping is also what
     makes uniqueness testable: a duplicate GUID inside one object would collapse
@@ -228,7 +240,6 @@ def guids_for(proxy: Proxy) -> dict[str, str]:
         "listen": listener_guid_prefix(proxy.name),
     }
     for name, backend in proxy.backends.items():
-        guids[f"backend:{name}"] = backend_guid(proxy.name, name)
         for server in backend.servers:
             guids[f"server:{name}:{server.host}:{server.port}"] = server_guid(
                 proxy.name, name, server

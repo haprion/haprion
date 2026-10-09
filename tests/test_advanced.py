@@ -353,7 +353,7 @@ class TheGeneratorWritesTheTextWhereThePlacementSays(unittest.TestCase):
 
         added = files["1001-shop.cfg"].split("backend shop-t\n", 1)[1]
         self.assertIn("    source 192.0.2.35\n", added)
-        self.assertIn("    guid be:shop.", added)
+        self.assertNotIn("guid", added)
 
     def test_a_pool_written_by_hand_says_each_thing_once(self) -> None:
         files = _generate(

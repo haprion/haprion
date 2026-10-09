@@ -35,7 +35,7 @@ HAPROXY_DIR="/etc/haproxy"
 # maintenance. A plain `systemctl reload haproxy` would quietly send traffic
 # to a server somebody took out.
 #
-SERVER_STATE="/usr/local/sbin/haprion-server-state"
+SERVER_STATE="/usr/sbin/haprion-server-state"
 RELEASE_DIR="${HAPROXY_DIR}/releases"
 CURRENT="${HAPROXY_DIR}/current"
 #
@@ -468,7 +468,7 @@ validate_dns_candidate() {
     [[ -e "${candidate}/dns" ]] || return 0
     if [[ ! -x "$DNSDIST" || ! -f "$DNS_DROPIN" ]]; then
         log "ERROR: the release carries a dns listener, but this node is not prepared for one."
-        log "ERROR: run 04-node-prepare from the current node bundle, then deploy again."
+        log "ERROR: run 04-node-prepare (tools/install-node-package does), then deploy again."
         return 1
     fi
     log "Validating candidate dns listener..."

@@ -2,7 +2,7 @@
 
 This command changes nothing. It reads the requirements shipped by the running
 UI release, then checks the standalone engine, database, service processes,
-sudo rules and node bundles against those requirements. Release identifiers are
+sudo rules and node packages against those requirements. Release identifiers are
 reported for diagnosis; compatibility is capability-based so an unrelated UI
 change does not force a CLI or node rollout.
 """

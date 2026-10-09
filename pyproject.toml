@@ -125,10 +125,9 @@ warn_unreachable = true
 files = ["src", "tools", "tests"]
 #
 # The tests import each other as `tests.<module>`, and the package lives under
-# src/. Without both bases a test file is found twice under two names. The
-# package builders in tools/ import debian_package beside them, as a script does.
+# src/. Without both bases a test file is found twice under two names.
 #
-mypy_path = ["src", ".", "tools"]
+mypy_path = ["src", "."]
 explicit_package_bases = true
 
 [tool.coverage.run]

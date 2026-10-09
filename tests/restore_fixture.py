@@ -21,7 +21,7 @@ SERVICE_ACCOUNTS = ("_haprion-trigger", "_haprion-status", "_haprion-backup", "_
 # Rendered by install/lib.sh's render_node_conf; a test holds the two together.
 NODE_CONF = """# Node configuration for Haprion. Rendered by install/04-node-prepare.
 #
-# Read by the node-side scripts in /usr/local/sbin. Root-owned and not writable
+# Read by the node-side scripts in /usr/sbin. Root-owned and not writable
 # by anyone else: it names the account and key used to fetch configuration, so
 # whoever can edit it can redirect this node to another source.
 
@@ -178,7 +178,7 @@ def build(
     try:
         chosen = dict(FILES if files is None else files)
         for name in REQUIRED_PATHS:
-            if name.startswith("rootfs/usr/local/sbin/"):
+            if name.startswith("rootfs/usr/sbin/"):
                 chosen.setdefault(name.removeprefix("rootfs"), ("#!/bin/sh\n", 0o755))
         for path, (text, mode) in chosen.items():
             _write(stage / f"rootfs{path}", text, mode)

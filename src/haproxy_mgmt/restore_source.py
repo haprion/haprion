@@ -63,8 +63,8 @@ EXPORT_ROOTS = (
     "/etc/cloud/cloud-init.disabled",
 )
 
-# The exporter's DR_SCRIPTS, each copied on its own from /usr/local/sbin.
-EXPORT_SCRIPT_DIR = "/usr/local/sbin"
+# The exporter's DR_SCRIPTS, each copied on its own from /usr/sbin.
+EXPORT_SCRIPT_DIR = "/usr/sbin"
 
 # `for f in /etc/ssh/ssh_host_*` - each host key file is its own root.
 HOST_KEY_PREFIX = "/etc/ssh/ssh_host_"
@@ -317,7 +317,10 @@ def _roots(
         path
         for path in sorted(present)
         if (path.startswith(HOST_KEY_PREFIX) and "/" not in path.removeprefix("/etc/ssh/"))
-        or (path.startswith(f"{EXPORT_SCRIPT_DIR}/") and path.count("/") == 4)
+        or (
+            path.startswith(f"{EXPORT_SCRIPT_DIR}/")
+            and "/" not in path.removeprefix(f"{EXPORT_SCRIPT_DIR}/")
+        )
     ]
     return tuple(dict.fromkeys(path for path in candidates if path in present))
 

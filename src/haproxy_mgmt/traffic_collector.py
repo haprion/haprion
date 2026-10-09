@@ -1121,11 +1121,11 @@ def ssh_fetch_waf(config: CollectorConfig, target: NodeTarget, cursor: str) -> b
         # back to - or a request this collector got wrong. A failure either
         # way, and not one to tolerate: the node's matches would be missing
         # from the WAF page while every run looked fine, and an empty page is
-        # what is read before an object leaves `log`. Nodes get the bundle
+        # what is read before an object leaves `log`. Nodes get the package
         # before the manager gets this collector, so no rollout passes here.
         #
         raise SSHError(
-            "the node refused the WAF request (exit 64): its node bundle is older than "
+            "the node refused the WAF request (exit 64): its node package is older than "
             "this collector"
         )
     if code != 0:

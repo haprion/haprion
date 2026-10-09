@@ -12,7 +12,7 @@
 #
 set -Eeuo pipefail
 
-HELPER="/usr/local/sbin/haprion-server-state"
+HELPER="/usr/sbin/haprion-server-state"
 # The generator's server GUID (`guid.server_guid`); the helper holds the same pattern.
 GUID_PATTERN='^srv:[a-z][a-z0-9_-]{0,39}\.[0-9a-f]{16}$'
 

@@ -61,11 +61,9 @@ class ScriptFixture(unittest.TestCase):
         self.trigger = self.root / "bin" / "haprion-cert-trigger"
         self.trigger.write_text(
             TRIGGER.read_text()
+            .replace('PULL_HELPER="/usr/sbin/haprion-cert-pull"', f'PULL_HELPER="{self.pull}"')
             .replace(
-                'PULL_HELPER="/usr/local/sbin/haprion-cert-pull"', f'PULL_HELPER="{self.pull}"'
-            )
-            .replace(
-                'REMOVE_HELPER="/usr/local/sbin/haprion-cert-remove"',
+                'REMOVE_HELPER="/usr/sbin/haprion-cert-remove"',
                 f'REMOVE_HELPER="{self.remove}"',
             )
         )

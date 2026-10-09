@@ -33,7 +33,7 @@ CERT_PENDING = Path("/run/haprion-cert-pull.pending")
 NODE_INSTALLATION = Path("/etc/haprion/node-installation.json")
 NODE_CONF = Path("/etc/haprion/node.conf")
 CLUSTER_LINE = re.compile(r'^CLUSTER="([a-z0-9][a-z0-9_-]{0,31})"$')
-SBIN = Path("/usr/local/sbin")
+SBIN = Path("/usr/sbin")
 MAX_INSTALLATION_BYTES = 64 * 1024
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 NODE_SCRIPTS = (
@@ -69,7 +69,7 @@ MAX_CERTIFICATE_BYTES = 1024 * 1024
 
 
 def read_installation():
-    """The installed node bundle's declared API and whether its bytes still match.
+    """The installed node package's declared API and whether its bytes still match.
 
     The metadata is written by 04-node-prepare from the same source files it
     installs. The status command recomputes every digest: a copied marker beside

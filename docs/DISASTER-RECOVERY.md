@@ -118,13 +118,13 @@ After restoring the management host, before restoring any node:
 - Check the configuration repositories. A restore that put the history and the draft on different
   paths leaves a link pointing at the old one; `haprion-config-status -c <cluster>` reports it, and
   `git worktree repair` fixes it.
-- Check the CLI release. A node restore prepares the node with the node bundle of the management
+- Check the CLI release. A node restore prepares the node with the node package of the management
   host's own release, and a host restored from an older backup would give the restored node older
   scripts than its neighbour. `/opt/haprion/current/INSTALLATION.json` names the release's
-  bundle (`node_bundle.commit`); it must be the one the nodes were last prepared with, so note that
-  at every node roll-out: `<...>`. Node status cannot tell you: it compares a node's scripts with
-  that node's own record. After a restore, `sha256sum /usr/local/sbin/haprion-*` on both nodes
-  should match.
+  package (`node_package.version`); it must be the one the nodes were last prepared with, so note
+  that at every node roll-out: `<...>`. Node status cannot tell you: it compares a node's scripts
+  with that node's own record. After a restore, `dpkg-query -W haprion-node` on both nodes should
+  name the same version.
 
 ### 3. Failing over
 

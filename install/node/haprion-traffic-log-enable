@@ -24,7 +24,7 @@ RSYSLOG_RULE="/etc/rsyslog.d/48-haprion-traffic.conf"
 APPARMOR_SNIPPET="/etc/apparmor.d/rsyslog.d/haprion-traffic"
 PRUNE_SERVICE="/etc/systemd/system/haprion-traffic-log-prune.service"
 PRUNE_TIMER="/etc/systemd/system/haprion-traffic-log-prune.timer"
-PRUNE_COMMAND="/usr/local/sbin/haprion-traffic-log-prune"
+PRUNE_COMMAND="/usr/sbin/haprion-traffic-log-prune"
 # Left behind by the withdrawn push build. A node that still carries it keeps
 # trying to open a TLS connection to the management host that must not exist.
 WITHDRAWN=(

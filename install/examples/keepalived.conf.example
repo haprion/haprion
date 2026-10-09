@@ -90,7 +90,7 @@ vrrp_instance alpha {
     # state file is never written, node status reports no owner, and a deploy
     # has no way to order the nodes.
     #
-    notify_master "/usr/local/sbin/haprion-keepalived-state MASTER"
-    notify_backup "/usr/local/sbin/haprion-keepalived-state BACKUP"
-    notify_fault  "/usr/local/sbin/haprion-keepalived-state FAULT"
+    notify_master "/usr/sbin/haprion-keepalived-state MASTER"
+    notify_backup "/usr/sbin/haprion-keepalived-state BACKUP"
+    notify_fault  "/usr/sbin/haprion-keepalived-state FAULT"
 }

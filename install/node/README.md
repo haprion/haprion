@@ -1,6 +1,6 @@
 # Node-side scripts
 
-`04-node-prepare` installs these to `/usr/local/sbin` on a node.
+`04-node-prepare` installs these to `/usr/sbin` on a node.
 
 | Script | What it does |
 |---|---|

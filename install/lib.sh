@@ -298,7 +298,7 @@ render_node_conf() {
     local cluster="$1" node_path="$2" logread_group="$3" node_conf
     node_conf="# Node configuration for Haprion. Rendered by install/04-node-prepare.
 #
-# Read by the node-side scripts in /usr/local/sbin. Root-owned and not writable
+# Read by the node-side scripts in /usr/sbin. Root-owned and not writable
 # by anyone else: it names the account and key used to fetch configuration, so
 # whoever can edit it can redirect this node to another source.
 

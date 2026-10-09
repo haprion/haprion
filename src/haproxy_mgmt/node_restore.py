@@ -53,7 +53,7 @@ from haproxy_mgmt import (
     backup_retention,
     cluster_lock,
     haproxy_repository,
-    node_bundle,
+    node_package,
     restore_agent,
     restore_answers,
     restore_plan,
@@ -579,10 +579,10 @@ class Checked:
     digest: str
     problems: tuple[str, ...]
     #
-    # The running release's node bundle and the answers derived for it (B180).
+    # The running release's node package and the answers derived for it (B180).
     # None and "" when either cannot be had; `problems` then says why.
     #
-    bundle: node_bundle.ReleaseBundle | None = None
+    package: node_package.ReleasePackage | None = None
     answers: str = ""
 
 
@@ -706,7 +706,7 @@ def check(
     publish_root: Path,
     answering: Callable[[str], bool] = answers,
     progress: TextIO | None = None,
-    bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
+    package_of: Callable[[], node_package.ReleasePackage | None] = node_package.release_package,
 ) -> Checked:
     node = node_of(cluster, request.node)
     archive = archive_path(backup_root, node, request.archive)
@@ -735,15 +735,15 @@ def check(
     # this manager's own release, prepared with answers read out of the
     # archive's node.conf. Either missing stops the restore at the preview.
     #
-    bundle: node_bundle.ReleaseBundle | None = None
+    package: node_package.ReleasePackage | None = None
     try:
-        bundle = bundle_of()
-    except node_bundle.BundleError as exc:
-        problems.append(f"this manager's node bundle cannot be used: {exc}")
+        package = package_of()
+    except node_package.PackageError as exc:
+        problems.append(f"this manager's node package cannot be used: {exc}")
     else:
-        if bundle is None:
+        if package is None:
             problems.append(
-                "this manager's CLI release carries no node bundle; install it with --node-bundle"
+                "this manager's CLI release carries no node package; install it with --node-package"
             )
     derived = ""
     try:
@@ -759,11 +759,11 @@ def check(
             "host_keys": inspected["host_keys"],
         },
         "plan": plan.summary(),
-        "node_bundle": None if bundle is None else bundle.sha256,
+        "node_package": None if package is None else package.sha256,
         "answers": derived,
     }
     digest = hashlib.sha256(json.dumps(bound, sort_keys=True).encode()).hexdigest()
-    return Checked(source, plan, inspected, digest, tuple(problems), bundle, derived)
+    return Checked(source, plan, inspected, digest, tuple(problems), package, derived)
 
 
 def preview(
@@ -779,7 +779,7 @@ def preview(
     answering: Callable[[str], bool] = answers,
     progress: TextIO | None = None,
     session_for: Callable[[Path, Path], Session] = Session,
-    bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
+    package_of: Callable[[], node_package.ReleasePackage | None] = node_package.release_package,
     now: Callable[[], float] = time.time,
     checks: OverwriteChecks | None = None,
 ) -> dict[str, Any]:
@@ -795,7 +795,7 @@ def preview(
             answering=answering,
             progress=progress,
             session_for=session_for,
-            bundle_of=bundle_of,
+            package_of=package_of,
             checks=checks,
         )
 
@@ -812,7 +812,7 @@ def _preview(
     answering: Callable[[str], bool],
     progress: TextIO | None,
     session_for: Callable[[Path, Path], Session],
-    bundle_of: Callable[[], node_bundle.ReleaseBundle | None],
+    package_of: Callable[[], node_package.ReleasePackage | None],
     checks: OverwriteChecks | None,
 ) -> dict[str, Any]:
     request = Request.from_dict(read_json(directory / "request.json"))
@@ -868,7 +868,7 @@ def _preview(
         publish_root=publish_root,
         answering=answering,
         progress=progress,
-        bundle_of=bundle_of,
+        package_of=package_of,
     )
     summary = {
         "run": request.run,
@@ -893,8 +893,11 @@ def _preview(
     summary["renumbered"] = renumbered(checked.source, checked.inspected)
     if request.mode == "overwrite" and checks is not None:
         summary["overwrite"] = _overwrite_standing(request, checks, progress)
-    if checked.bundle is not None:
-        summary["node_bundle"] = {"root": checked.bundle.root, "commit": checked.bundle.commit}
+    if checked.package is not None:
+        summary["node_package"] = {
+            "version": checked.package.version,
+            "commit": checked.package.commit,
+        }
     _write_json(directory / "preview.json", summary)
     return summary
 
@@ -1048,7 +1051,7 @@ def run(
     clock: Clock = Clock(),  # noqa: B008 - immutable
     session_for: Callable[[Path, Path], Session] = Session,
     publish_root: Path,
-    bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
+    package_of: Callable[[], node_package.ReleasePackage | None] = node_package.release_package,
     now: Callable[[], float] = time.time,
     checks: OverwriteChecks | None = None,
     backup_failed_ok: bool = False,
@@ -1084,7 +1087,7 @@ def run(
                     clock=clock,
                     session_for=session_for,
                     publish_root=publish_root,
-                    bundle_of=bundle_of,
+                    package_of=package_of,
                     checks=checks,
                     backup_failed_ok=backup_failed_ok,
                     break_traffic=break_traffic,
@@ -1107,7 +1110,7 @@ def _run(
     clock: Clock,
     session_for: Callable[[Path, Path], Session],
     publish_root: Path,
-    bundle_of: Callable[[], node_bundle.ReleaseBundle | None],
+    package_of: Callable[[], node_package.ReleasePackage | None],
     checks: OverwriteChecks | None,
     backup_failed_ok: bool,
     break_traffic: bool,
@@ -1126,7 +1129,7 @@ def _run(
         publish_root=publish_root,
         answering=answering,
         progress=stream,
-        bundle_of=bundle_of,
+        package_of=package_of,
     )
     if checked.digest != previewed.get("digest"):
         raise RestoreError(
@@ -1135,9 +1138,9 @@ def _run(
     if checked.problems:
         raise RestoreError("; ".join(checked.problems))
     plan = checked.plan
-    bundle = checked.bundle
-    if bundle is None:
-        raise RestoreError("this manager's CLI release carries no node bundle")
+    package = checked.package
+    if package is None:
+        raise RestoreError("this manager's CLI release carries no node package")
     if confirm != plan.hostname:
         raise RestoreError(f"confirm with the restored node's name, {plan.hostname}")
     overwrite = plan.mode == "overwrite"
@@ -1176,9 +1179,9 @@ def _run(
         "packages": list(plan.packages),
         "equal_directories": list(plan.equal_directories),
         "overwrite": overwrite,
-        "keep": list(plan.from_bundle),
+        "keep": list(plan.from_package),
         "cluster": request.cluster,
-        "node_bundle": {"root": bundle.root, "sha256": bundle.sha256},
+        "node_package": {"version": package.version, "sha256": package.sha256},
         "answers": checked.answers,
         "traffic_log": plan.traffic_log,
         "groups": [{"name": g.name, "gid": g.gid} for g in plan.groups],
@@ -1207,12 +1210,12 @@ def _run(
     try:
         stream.write(f"apply on {request.target}\n")
         carried = PlannedFile(
-            path=f"{restore_agent.STATE}/{run_id}/{restore_agent.BUNDLE_FILE}",
+            path=f"{restore_agent.STATE}/{run_id}/{restore_agent.PACKAGE_FILE}",
             kind="file",
             mode=0o600,
             uid=0,
             gid=0,
-            data=bundle.path.read_bytes(),
+            data=package.path.read_bytes(),
         )
         applied = session.call(
             request.target,

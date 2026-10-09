@@ -308,7 +308,7 @@ node's own log route with 'sudo haprion-traffic-log-enable'.
   /home/${LOGREAD_USER}/.ssh/authorized_keys   (owner ${LOGREAD_USER}, mode 600)
 
 INTRO
-echo "restrict,command=\"/usr/local/sbin/haprion-traffic-log-read\" $(cut -d' ' -f1,2 < "${COLLECTOR_KEY}.pub")"
+echo "restrict,command=\"/usr/sbin/haprion-traffic-log-read\" $(cut -d' ' -f1,2 < "${COLLECTOR_KEY}.pub")"
 cat <<'OUTRO'
 
 One line, the same on every node: the manager decides which node a fetch is

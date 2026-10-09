@@ -13,7 +13,7 @@ JSON result document; stderr carries progress lines for the operator's log.
              an account has none (B173), APT sources and the product's
              packages, the files, the
              HAProxy release layout, the service states, the hostname - then
-             the release's node bundle: its 04-node-prepare with answers
+             the release's node package and its 04-node-prepare with answers
              derived from the archive, and the traffic log if it was on.
 ``network``  Netplan, under a timer that puts the previous Netplan back unless
              the next session cancels it from the node's new address.
@@ -24,13 +24,14 @@ JSON result document; stderr carries progress lines for the operator's log.
 ``rollback`` an overwrite only: puts back the copy ``apply`` took.
 
 Overwriting a running node (B172, B183) adds a copy: before its first write,
-``apply`` stores every path it or the node bundle may change, and a failure in
+``apply`` stores every path it or 04-node-prepare may change, and a failure in
 ``apply`` or ``finish`` puts that copy back in the same session - the node is
 then as it was, its keepalived started again. A failure in ``network`` is put
 back by the timer first and then by ``rollback``, from the manager, once the
 node answers again. The node's own software is left as it is: no repository
-file is written, only a missing product package is installed, and the HAProxy
-release layout is not touched.
+file is written, only a missing product package is installed, the node package
+is not replaced - its own 04-node-prepare runs - and the HAProxy release layout
+is not touched.
 
 Every check an operation makes happens before its first write.  A directory the
 plan names in ``equal_directories`` is made equal to the archive; what was there
@@ -42,6 +43,7 @@ target's own.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -53,7 +55,7 @@ import sys
 import tarfile
 import tempfile
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
@@ -92,19 +94,22 @@ APT_WAIT = ("-o", f"DPkg::Lock::Timeout={APT_LOCK_SECONDS}")
 APT_LOCKED = "Could not get lock"
 NODE_CONF = "/etc/haprion/node.conf"
 #
-# The release's node bundle (B180), sent in the apply payload at this name in
-# the run's own directory, and extracted beside it. Its 04-node-prepare writes
-# what the product owns on a node, in the running release's version.
+# The release's node package (B180, B266), sent in the apply payload at this
+# name in the run's own directory. Installed on a new node; its
+# 04-node-prepare, where the package puts it, writes what the product owns on
+# a node. The version is the shape the package builder gives it; a test holds
+# the two together.
 #
-BUNDLE_FILE = "node-bundle.tar.gz"
-BUNDLE_ROOT = re.compile(r"^haprion-node-[0-9a-f]{12}$")
+PACKAGE_FILE = "haprion-node.deb"
+PACKAGE_VERSION = re.compile(r"(\d+\.\d+\.\d+)\+git(\d{14})\.([0-9a-f]{12})")
+NODE_PREPARE = "/usr/share/haprion-node/install/04-node-prepare"
 CLUSTER_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
 #
 # Turns the traffic log on in the release's version: the rsyslog rule, the
 # AppArmor snippet and the retention timer, enabled. Run when the archive
 # shows the log was on; the archive's own copies are not written.
 #
-TRAFFIC_LOG_ENABLE = "/usr/local/sbin/haprion-traffic-log-enable"
+TRAFFIC_LOG_ENABLE = "/usr/sbin/haprion-traffic-log-enable"
 HAPROXY = "/etc/haproxy"
 EMPTY_RELEASE = "00000000-000000"
 BOOTSTRAP_SOCKET = "/run/haprion-restore-bootstrap.sock"
@@ -131,7 +136,7 @@ frontend restore-bootstrap
 """
 #
 # What an overwrite copies before its first write, besides the paths it writes
-# itself: the account files, and what the node bundle's 04-node-prepare and
+# itself: the account files, and what 04-node-prepare and
 # haprion-traffic-log-enable write - their files and the directories they fill.
 #
 SNAPSHOT_FILES = (
@@ -147,7 +152,7 @@ SNAPSHOT_FILES = (
     "/etc/systemd/system/haprion-traffic-log-prune.service",
     "/etc/systemd/system/haprion-traffic-log-prune.timer",
 )
-SNAPSHOT_TREES = ("/usr/local/sbin", "/etc/haprion")
+SNAPSHOT_TREES = ("/etc/haprion",)
 #
 # 04-node-prepare's rollback copies, `<file>.replaced-<date>-<time>`: the node's
 # own history. Quarantine leaves them where they are (B178); the plan's pattern.
@@ -167,7 +172,7 @@ FETCH_FAILED = re.compile(r"^(?:Err:\d+|E: Failed to fetch)\s+(\S+)", re.MULTILI
 RUN_ID = re.compile(r"^[a-z0-9][a-z0-9-]{7,39}$")
 #
 # How long a run's directory stays on the node: its `before/` copy, its
-# quarantine and the node bundle it installed. The copy is for the days after a
+# quarantine and the node package it installed. The copy is for the days after a
 # run, until it has proved itself; after that the nightly state backup is the
 # node's history. Removed when a later run begins writing - the only time the
 # directory grows - so nothing else has to run on the node for it.
@@ -754,36 +759,36 @@ def _conflicts(header: dict[str, Any]) -> list[str]:
     return problems
 
 
-def _bundle_path(run: str) -> str:
-    return f"{STATE}/{run}/{BUNDLE_FILE}"
+def _package_path(run: str) -> str:
+    return f"{STATE}/{run}/{PACKAGE_FILE}"
 
 
 def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
-    """Everything apply checks before its first write; answers the node bundle."""
+    """Everything apply checks before its first write; answers the node package."""
 
     for record in (*header["groups"], *header["accounts"]):
         if not NAME.fullmatch(str(record.get("name", ""))):
             raise Refused("the header names an unusable account or group")
-    wanted = _bundle_path(header["run"])
-    bundle: Item | None = None
+    wanted = _package_path(header["run"])
+    carried: Item | None = None
     for item in items:
         if item.path == ROOT_KEYS or item.path == NETPLAN or item.path.startswith(f"{NETPLAN}/"):
             raise Refused(f"{item.path} is written by a later session, not by apply")
         if item.path == wanted and item.kind == "file":
-            bundle = item
+            carried = item
         elif item.path == STATE or item.path.startswith(f"{STATE}/"):
             raise Refused(f"{item.path} is this restore's own directory, not a file to place")
-    described = header.get("node_bundle")
-    if bundle is None or not isinstance(described, dict):
-        raise Refused("the payload carries no node bundle")
-    if not BUNDLE_ROOT.fullmatch(str(described.get("root", ""))):
-        raise Refused("the node bundle's root is not usable")
-    if hashlib.sha256(bundle.data).hexdigest() != described.get("sha256"):
-        raise Refused("the node bundle does not match the digest the manager sent")
+    described = header.get("node_package")
+    if carried is None or not isinstance(described, dict):
+        raise Refused("the payload carries no node package")
+    if not PACKAGE_VERSION.fullmatch(str(described.get("version", ""))):
+        raise Refused("the node package's version is not usable")
+    if hashlib.sha256(carried.data).hexdigest() != described.get("sha256"):
+        raise Refused("the node package does not match the digest the manager sent")
     if not CLUSTER_ID.fullmatch(str(header.get("cluster", ""))):
         raise Refused("the cluster ID is not usable")
     if not isinstance(header.get("answers"), str) or "\0" in header["answers"]:
-        raise Refused("the answers for the node bundle are not usable")
+        raise Refused("the answers for 04-node-prepare are not usable")
     if header["keepalived"] not in {"start", "mask"}:
         raise Refused("keepalived must be started or masked")
     if not HOSTNAME.fullmatch(header["hostname"]):
@@ -794,26 +799,35 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
             raise Refused("an overwrite leaves keepalived running")
         if any(item.path.startswith(APT_DIRECTORIES) for item in items):
             raise Refused("an overwrite writes no repository file")
-    return bundle
+    return carried
 
 
-def _node_bundle(
-    host: Host, header: dict[str, Any], bundle: Item, items: list[Item], report: Report
+def _node_package(
+    host: Host, header: dict[str, Any], carried: Item, items: list[Item], report: Report
 ) -> None:
-    """Run the release's 04-node-prepare on the node, with answers from its archive."""
+    """Install the release's node package on a new node, then run its 04-node-prepare.
 
-    work = host.path(f"{STATE}/{header['run']}/node-bundle")
+    An overwrite installs nothing (B183): the running node's package is its
+    own, and its own 04-node-prepare writes the files with the answers from the
+    archive. `apply` refused before its first write if it has none.
+    """
+
+    work = host.path(f"{STATE}/{header['run']}/node-package")
     work.mkdir(parents=True, exist_ok=True, mode=0o700)
     work.chmod(0o700)
-    with tarfile.open(fileobj=io.BytesIO(bundle.data), mode="r:gz") as archive:
-        archive.extractall(work, filter="data")
-    install = work / header["node_bundle"]["root"] / "install"
-    if not (install / "04-node-prepare").is_file():
-        raise Failed("the node bundle has no install/04-node-prepare")
+    if not header.get("overwrite"):
+        deb = work / PACKAGE_FILE
+        deb.write_bytes(carried.data)
+        deb.chmod(0o644)
+        with _services_held(host):
+            host.run(["apt-get", "install", "-y", "--no-install-recommends", *APT_WAIT, str(deb)])
+    prepare = host.path(NODE_PREPARE)
+    if not prepare.is_file():
+        raise Failed(f"{NODE_PREPARE} is missing after the node package")
     answers = work / "answers.env"
     answers.write_text(header["answers"], encoding="utf-8")
     answers.chmod(0o600)
-    prepared = host.run(["bash", str(install / "04-node-prepare"), str(answers), header["cluster"]])
+    prepared = host.run(["bash", str(prepare), str(answers), header["cluster"]])
     #
     # 04-node-prepare writes one warning over several `warn` calls, each line
     # after the first indented: "WARNING:   does not always ...". Those are
@@ -830,7 +844,12 @@ def _node_bundle(
             warnings.append(text.strip())
     warnings = [line for line in warnings if not line.startswith(KEEPALIVED_STATE_MISSING)]
     report.warnings += [f"node preparation: {line}" for line in warnings]
-    report.step("node-bundle", root=header["node_bundle"]["root"], warnings=len(warnings))
+    report.step(
+        "node-package",
+        version=header["node_package"]["version"],
+        installed=not header.get("overwrite"),
+        warnings=len(warnings),
+    )
 
     #
     # 04-node-prepare renders node.conf from the answers derived from the
@@ -854,6 +873,23 @@ def _node_bundle(
         report.step("traffic-log", enabled=True)
 
 
+@contextlib.contextmanager
+def _services_held(host: Host) -> Iterator[None]:
+    """Packages start their services on install unless told otherwise.
+
+    Nothing may run before its configuration is in place: keepalived with the
+    image's defaults is not a harmless keepalived.
+    """
+
+    policy = host.path(POLICY_RC)
+    policy.write_text("#!/bin/sh\nexit 101\n", encoding="utf-8")
+    policy.chmod(0o755)
+    try:
+        yield
+    finally:
+        policy.unlink(missing_ok=True)
+
+
 def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Report) -> None:
     if header.get("overwrite"):
         _missing_packages(host, header["packages"], report)
@@ -866,13 +902,7 @@ def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Rep
         place(host, item)
     report.step("apt-sources", files=len([i for i in apt if i.kind == "file"]))
 
-    # Packages start their services on install unless told otherwise. Nothing
-    # may run before its configuration is in place: keepalived with the image's
-    # defaults is not a harmless keepalived.
-    policy = host.path(POLICY_RC)
-    policy.write_text("#!/bin/sh\nexit 101\n", encoding="utf-8")
-    policy.chmod(0o755)
-    try:
+    with _services_held(host):
         _update(host, _required_uris(apt), report)
         host.run(
             [
@@ -887,8 +917,6 @@ def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Rep
                 *header["packages"],
             ]
         )
-    finally:
-        policy.unlink(missing_ok=True)
     versions = host.run(
         ["dpkg-query", "-W", "-f", "${Package}\t${Version}\n", *header["packages"]], check=False
     ).stdout
@@ -1194,15 +1222,17 @@ def prune_runs(host: Host, current: str, now: float, report: Report) -> None:
 
 def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, Any]:
     items = read_payload(payload)
-    bundle = _validate_apply(header, items)
-    items = [item for item in items if item is not bundle]
+    carried = _validate_apply(header, items)
+    items = [item for item in items if item is not carried]
     problems = _conflicts(header)
+    if header.get("overwrite") and not host.path(NODE_PREPARE).is_file():
+        problems.append(f"the node has no {NODE_PREPARE}; install its node package first (B183)")
     if problems:
         raise Refused("; ".join(problems))
     report = Report()
     prune_runs(host, header["run"], time.time(), report)
     if not header.get("overwrite"):
-        return _apply(host, header, items, bundle, report)
+        return _apply(host, header, items, carried, report)
 
     snapshot(
         host,
@@ -1215,13 +1245,13 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
     host.run(["systemctl", "stop", "keepalived"])
     report.step("keepalived", stopped=True)
     try:
-        return _apply(host, header, items, bundle, report)
+        return _apply(host, header, items, carried, report)
     except OVERWRITE_FAILURES as exc:
         raise _rolled_back(host, header["run"], report, exc) from exc
 
 
 def _apply(
-    host: Host, header: dict[str, Any], items: list[Item], bundle: Item, report: Report
+    host: Host, header: dict[str, Any], items: list[Item], carried: Item, report: Report
 ) -> dict[str, Any]:
     # Accounts before packages. A package that creates a system account or
     # group takes the next free ID, and on a fresh target that can be the one
@@ -1249,7 +1279,7 @@ def _apply(
         # A running node's releases and `current` are its own (B183).
         _layout(host, header["run"], report)
     _services(host, header, report)
-    _node_bundle(host, header, bundle, items, report)
+    _node_package(host, header, carried, items, report)
     return {"steps": report.steps, "warnings": report.warnings}
 
 
@@ -1375,9 +1405,9 @@ def _start(
     # so HAProxy runs on the bootstrap release first (see BOOTSTRAP_CONFIG).
     host.run(["systemctl", "start", "haproxy"])
     if certificates:
-        host.run(["/usr/local/sbin/haprion-cert-pull", *certificates])
+        host.run(["/usr/sbin/haprion-cert-pull", *certificates])
     report.step("certificates", pulled=list(certificates))
-    host.run(["/usr/local/sbin/haprion-pull-deploy"])
+    host.run(["/usr/sbin/haprion-pull-deploy"])
     report.step("config", pulled=True)
 
     if header["keepalived"] == "start":

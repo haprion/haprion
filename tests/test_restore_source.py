@@ -22,7 +22,7 @@ class TheRootsAreTheExportersOwn(unittest.TestCase):
     def test_the_dynamic_roots_are_the_ones_the_exporter_loops_over(self) -> None:
         text = EXPORTER.read_text(encoding="utf-8")
         self.assertIn("for f in /etc/ssh/ssh_host_*; do", text)
-        self.assertIn('copy_path "/usr/local/sbin/${script}"', text)
+        self.assertIn('copy_path "/usr/sbin/${script}"', text)
         self.assertIn('copy_path "$home/.ssh"', text)
         self.assertIn(
             "printf '%s\\n' \"${extras[@]}\" | sed '/^$/d' > \"$META/extra-paths.txt\"", text
@@ -54,7 +54,7 @@ class ReadingAnArchive(unittest.TestCase):
             "/home/operator/.ssh/authorized_keys",
             "/var/lib/_haprion-backup/.ssh/authorized_keys",
             "/etc/ssh/ssh_host_ed25519_key",
-            "/usr/local/sbin/haprion-pull-deploy",
+            "/usr/sbin/haprion-pull-deploy",
             "/etc/default/grub.d/99-local.cfg",
         ):
             self.assertIn(path, owned)

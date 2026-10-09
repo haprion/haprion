@@ -1,8 +1,8 @@
-"""The answers file a node restore gives the node bundle, derived from the archive.
+"""The answers file a node restore gives 04-node-prepare, derived from the archive.
 
-A restored node is prepared by the release's own node bundle (B178, B180): its
-``04-node-prepare`` creates what the product owns on a node and writes the
-node scripts of the running release. That script reads an answers file. The
+A restored node is prepared by the release's own node package (B178, B180): its
+``04-node-prepare`` creates what the product owns on a node; dpkg has put the
+node scripts of the running release in place. That step reads an answers file. The
 operator's own is on another machine and may have moved on; the node's truth is
 the ``node.conf`` the archive carries, which ``04-node-prepare`` rendered from
 the answers it was given. This module reads those answers back out.

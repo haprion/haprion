@@ -110,7 +110,7 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
             .replace('PENDING="/run/haprion-pull-deploy.pending"', f'PENDING="{self.pending}"')
             .replace("/run/lock/haprion-deploy.lock", str(self.root / "deploy.lock"))
             .replace(
-                'SERVER_STATE="/usr/local/sbin/haprion-server-state"',
+                'SERVER_STATE="/usr/sbin/haprion-server-state"',
                 f'SERVER_STATE="{self.bin}/haprion-server-state"',
             )
             .replace('KEEPALIVED_CONF="/etc/keepalived/', f'KEEPALIVED_CONF="{self.root}/')

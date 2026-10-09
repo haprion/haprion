@@ -154,7 +154,7 @@ DR_SCRIPTS=(
     haprion-server-state-trigger
 )
 for script in "${DR_SCRIPTS[@]}"; do
-    copy_path "/usr/local/sbin/${script}"
+    copy_path "/usr/sbin/${script}"
 done
 
 # Optional traffic logging is still node state when it is enabled. The day
@@ -327,7 +327,7 @@ if ! find /etc/netplan -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \)
     exit 78
 fi
 for script in "${DR_SCRIPTS[@]}"; do
-    require_path "/usr/local/sbin/${script}"
+    require_path "/usr/sbin/${script}"
 done
 # Forced-command service accounts must carry an authorized key. Operator
 # accounts are still captured, but a password-only operator is legitimate and

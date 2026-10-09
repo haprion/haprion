@@ -77,7 +77,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.assertEqual(result["node_api"], 1)
         self.assertIs(result["scripts_current"], True)
 
-    def test_installer_and_status_attest_the_same_node_bundle(self) -> None:
+    def test_installer_and_status_attest_the_same_node_package(self) -> None:
         match = re.search(r"^SCRIPTS=\(\n(.*?)^\)", INSTALLER.read_text(), re.MULTILINE | re.DOTALL)
         assert match is not None
         installed = tuple(re.findall(r"^\s+(haprion-[a-z0-9-]+)$", match.group(1), re.MULTILINE))
@@ -91,7 +91,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
         its own metadata and reported no API and nothing current.
         """
 
-        from haproxy_mgmt.node_bundle import NODE_SCRIPTS as BUNDLED
+        from haproxy_mgmt.node_package import NODE_SCRIPTS as PACKAGED
 
         match = re.search(
             r"^NODE_SCRIPTS = \(\n(.*?)^\)", SCRIPT.read_text(), re.MULTILINE | re.DOTALL
@@ -99,7 +99,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
         assert match is not None
         listed = tuple(re.findall(r'^\s+"(haprion-[a-z0-9-]+)",$', match.group(1), re.MULTILINE))
         self.assertEqual(listed, NODE_SCRIPTS)
-        self.assertEqual(BUNDLED, NODE_SCRIPTS)
+        self.assertEqual(PACKAGED, NODE_SCRIPTS)
 
     def test_installer_does_not_repermission_the_system_lock_directory(self) -> None:
         installer = INSTALLER.read_text()

@@ -139,7 +139,7 @@ class CertPull(unittest.TestCase):
             .replace('PENDING="/run/haprion-cert-pull.pending"', f'PENDING="{self.pending}"')
             .replace("/run/lock/haprion-cert-pull.lock", str(self.root / "cert.lock"))
             .replace(
-                'SERVER_STATE="/usr/local/sbin/haprion-server-state"',
+                'SERVER_STATE="/usr/sbin/haprion-server-state"',
                 f'SERVER_STATE="{self.bin}/haprion-server-state"',
             ),
             encoding="utf-8",

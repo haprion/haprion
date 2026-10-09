@@ -55,7 +55,7 @@ healthy and fails at the first request.
 
 The final compatibility check is read-only. It reports the running UI and CLI
 releases, database revision, actual service processes, exact worker/poller sudo
-rules and every node bundle. Its verdict uses compatibility levels shipped by
+rules and every node package. Its verdict uses compatibility levels shipped by
 the running UI rather than requiring unrelated release hashes to be equal.
 
 After the first installation, use the coordinated update command instead of
@@ -75,7 +75,7 @@ confined to the UI needs only the applicable platform updates; rerun optional
 installers such as retention only when their installed files actually changed.
 
 It prepares the candidate without moving `current`, checks the independently
-installed CLI, helpers and node bundles, proves that the running UI can tolerate
+installed CLI, helpers and node packages, proves that the running UI can tolerate
 the candidate's target schema, migrates from the candidate's own bundle, verifies
 database privileges, activates, and checks the real processes. A failure after
 the symlink moves invokes the installed rollback command and proves the restored
@@ -233,7 +233,7 @@ It changes nothing and contacts nodes only through the existing status path.
 `COMPATIBLE` requires the database revision accepted by the running UI, an
 installed CLI engine API new enough for that UI, every helper named by the UI,
 the exact worker and poller sudo rules, all three services executing from the
-current UI release, and node bundles at a sufficient API level whose recorded
+current UI release, and node packages at a sufficient API level whose recorded
 script digests still match. The release IDs are printed for diagnosis but are
 not compared for equality; a UI-only correction must not force an unrelated CLI
 or node rollout.

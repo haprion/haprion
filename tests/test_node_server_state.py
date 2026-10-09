@@ -1,6 +1,6 @@
 """The node's server state helper against a real HAProxy (Fas 20, B263).
 
-`install/node/haprion-server-state` is loaded from the file the node bundle
+`install/node/haprion-server-state` is loaded from the file the node package
 installs and pointed at a scratch directory: its own admin socket, state file,
 lock and configuration, and a `systemctl` that reloads the way the packaged
 unit does - SIGUSR2 to the master. HAProxy is the one on this machine, the
@@ -39,7 +39,7 @@ API = "srv:api.3333333333333333"
 
 def load_helper() -> Any:
     #
-    # No bytecode: the file sits in install/node, which the node bundle ships,
+    # No bytecode: the file sits in install/node, which the node package ships,
     # and a __pycache__ beside it is not a node script.
     #
     sys.dont_write_bytecode = True
@@ -457,7 +457,7 @@ class TheTriggerValidatesBeforeSudo(unittest.TestCase):
 
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(
-            done.stdout.strip(), f"-n /usr/local/sbin/haprion-server-state set {WEB_A} drain"
+            done.stdout.strip(), f"-n /usr/sbin/haprion-server-state set {WEB_A} drain"
         )
 
     def test_anything_else_is_refused_and_never_reaches_sudo(self) -> None:
@@ -501,14 +501,14 @@ class TheNodeWritesTheServerStateKeyFromTheAnswers(unittest.TestCase):
     def run_block(self, pubkey: str) -> subprocess.CompletedProcess[str]:
         script = (
             'set -Eeuo pipefail\nlog() { echo "$*"; }\ndie() { echo "DIE $*"; exit 1; }\n'
-            f'SBIN=/usr/local/sbin\nSERVER_STATE_PUBKEY="{pubkey}"\n{self.block}'
+            f'SBIN=/usr/sbin\nSERVER_STATE_PUBKEY="{pubkey}"\n{self.block}'
         )
         return subprocess.run(  # noqa: S603 - the block under test
             ["/bin/bash", "-c", script], capture_output=True, text=True, check=False
         )
 
     def test_the_line_is_written_and_a_rotated_key_replaces_the_old_one(self) -> None:
-        other = 'restrict,command="sudo -n /usr/local/sbin/haprion-pull-deploy" ' + KEY_B
+        other = 'restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" ' + KEY_B
         self.keys.write_text(other + "\n")
 
         first = self.run_block(KEY_A)
@@ -521,7 +521,7 @@ class TheNodeWritesTheServerStateKeyFromTheAnswers(unittest.TestCase):
         lines = self.keys.read_text().splitlines()
         self.assertEqual(
             lines,
-            [other, f'restrict,command="/usr/local/sbin/haprion-server-state-trigger" {KEY_B}'],
+            [other, f'restrict,command="/usr/sbin/haprion-server-state-trigger" {KEY_B}'],
         )
 
     def test_anything_but_one_ed25519_key_is_refused(self) -> None:

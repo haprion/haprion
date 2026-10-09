@@ -639,12 +639,15 @@ class FollowingARun(RestoreRouteTestCase):
         self.assertIn(f'action="/backups/restore/{RUN}/preview"', page)
         self.assertNotIn("http-equiv", page)
 
-    def test_the_plan_names_the_node_bundle_and_what_the_archive_does_not_give(self) -> None:
+    def test_the_plan_names_the_node_package_and_what_the_archive_does_not_give(self) -> None:
         """B178/B180: the release's bundle writes the scripts; the VM keeps its own files."""
 
         self.runs = [PREPARED, PREVIEWED]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
-        self.assertIn("<code>haprion-node-000000000000</code> from this manager", page)
+        self.assertIn(
+            "<code>haprion-node 0.1.0+git20261009120000.000000000000</code> from this manager",
+            page,
+        )
         self.assertIn("in place of the archive's 2", page)
         self.assertIn("turns the traffic log on, as it was", page)
         self.assertIn("account svc-logread gets a free UID", page)

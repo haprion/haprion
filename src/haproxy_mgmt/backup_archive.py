@@ -29,7 +29,7 @@ MAX_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024
 # These are the minimum state a clean node needs before the rebuild path can
 # restore identity and let central management put current configuration and
 # certificates back.  Optional traffic-log configuration is checked separately
-# by the exporter when enabled; its scripts are always part of the node bundle.
+# by the exporter when enabled; its scripts are always part of the node package.
 REQUIRED_PATHS = frozenset(
     {
         "rootfs/etc/hostname",
@@ -44,19 +44,19 @@ REQUIRED_PATHS = frozenset(
         "rootfs/etc/ssh/sshd_config",
         "rootfs/etc/ssh/ssh_host_ed25519_key",
         "rootfs/etc/ssh/ssh_host_ed25519_key.pub",
-        "rootfs/usr/local/sbin/haprion-pull-deploy",
-        "rootfs/usr/local/sbin/haprion-cert-pull",
-        "rootfs/usr/local/sbin/haprion-cert-remove",
-        "rootfs/usr/local/sbin/haprion-cert-trigger",
-        "rootfs/usr/local/sbin/haprion-node-status",
-        "rootfs/usr/local/sbin/haprion-health-probe",
-        "rootfs/usr/local/sbin/haprion-keepalived-state",
-        "rootfs/usr/local/sbin/haprion-state-export",
-        "rootfs/usr/local/sbin/haprion-traffic-log-read",
-        "rootfs/usr/local/sbin/haprion-traffic-log-enable",
-        "rootfs/usr/local/sbin/haprion-traffic-log-prune",
-        "rootfs/usr/local/sbin/haprion-server-state",
-        "rootfs/usr/local/sbin/haprion-server-state-trigger",
+        "rootfs/usr/sbin/haprion-pull-deploy",
+        "rootfs/usr/sbin/haprion-cert-pull",
+        "rootfs/usr/sbin/haprion-cert-remove",
+        "rootfs/usr/sbin/haprion-cert-trigger",
+        "rootfs/usr/sbin/haprion-node-status",
+        "rootfs/usr/sbin/haprion-health-probe",
+        "rootfs/usr/sbin/haprion-keepalived-state",
+        "rootfs/usr/sbin/haprion-state-export",
+        "rootfs/usr/sbin/haprion-traffic-log-read",
+        "rootfs/usr/sbin/haprion-traffic-log-enable",
+        "rootfs/usr/sbin/haprion-traffic-log-prune",
+        "rootfs/usr/sbin/haprion-server-state",
+        "rootfs/usr/sbin/haprion-server-state-trigger",
         "meta/backup-created.txt",
         "meta/hostname.txt",
         "meta/fqdn.txt",

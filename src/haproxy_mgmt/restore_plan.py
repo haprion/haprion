@@ -91,15 +91,15 @@ SHARED_DIRECTORIES = {
 # The product sets nothing in the SSH server's own file; the target's stays.
 TARGET_FILES = frozenset({"/etc/ssh/sshd_config"})
 #
-# What the release's node bundle writes on a restored node (B178, B180): the
-# node scripts and the record of which bundle they came from, by
+# What the release's node package writes on a restored node (B178, B180,
+# B266): the node scripts, which dpkg installs, the record of their digests, by
 # 04-node-prepare, and the traffic log's rsyslog, AppArmor and retention files,
 # by haprion-traffic-log-enable when the archive shows the log was on. The
 # archive's copies are of the release the node ran when it was archived.
 #
-SCRIPT_DIR = "/usr/local/sbin"
+SCRIPT_DIR = "/usr/sbin"
 TRAFFIC_LOG_RULE = "/etc/rsyslog.d/48-haprion-traffic.conf"
-FROM_BUNDLE = frozenset(
+FROM_PACKAGE = frozenset(
     {
         "/etc/haprion/node-installation.json",
         TRAFFIC_LOG_RULE,
@@ -110,7 +110,7 @@ FROM_BUNDLE = frozenset(
 )
 #
 # The directories only the product writes in (B183). Overwriting a node makes
-# them hold what the archive and the node bundle put there; anything else in
+# them hold what the archive and the node package put there; anything else in
 # them goes to quarantine on the node, never deleted. The directories the
 # product shares with the image are not among them (B178).
 #
@@ -184,8 +184,8 @@ class RestorePlan:
     # before the restore rather than missed after it.
     #
     left_out: tuple[str, ...]
-    # Archived files the node bundle writes in its own version instead.
-    from_bundle: tuple[str, ...]
+    # Archived files the node package writes in its own version instead.
+    from_package: tuple[str, ...]
     # The archive shows the traffic log was on; haprion-traffic-log-enable runs.
     traffic_log: bool
     parents: tuple[str, ...]
@@ -218,7 +218,7 @@ class RestorePlan:
             "network": [file.path for file in self.network],
             "equal_directories": list(self.equal_directories),
             "left_out": list(self.left_out),
-            "from_bundle": list(self.from_bundle),
+            "from_package": list(self.from_package),
             "traffic_log": self.traffic_log,
             "groups": [{"name": group.name, "gid": group.gid} for group in self.groups],
             "accounts": [
@@ -449,7 +449,7 @@ def build(
 
     files: list[PlannedFile] = []
     left_out: list[str] = []
-    from_bundle: list[str] = []
+    from_package: list[str] = []
     root_keys: PlannedFile | None = None
     for entry in source.owned():
         if entry.path == NETPLAN_DIR or entry.path.startswith(f"{NETPLAN_DIR}/"):
@@ -459,9 +459,9 @@ def build(
                 left_out.append(entry.path)
             continue
         if not _under(entry.path, source.extra_paths) and (
-            entry.path in FROM_BUNDLE or _under(entry.path, (SCRIPT_DIR,))
+            entry.path in FROM_PACKAGE or _under(entry.path, (SCRIPT_DIR,))
         ):
-            from_bundle.append(entry.path)
+            from_package.append(entry.path)
             continue
         if entry.path == ROOT_KEYS:
             root_keys = _planned(entry)
@@ -536,7 +536,7 @@ def build(
                 files=tuple(files),
                 equal_directories=PRODUCT_DIRECTORIES,
                 left_out=tuple(left_out),
-                from_bundle=tuple(from_bundle),
+                from_package=tuple(from_package),
                 traffic_log=source.entry(TRAFFIC_LOG_RULE) is not None,
                 parents=source.parents(),
                 network=network,
@@ -573,7 +573,7 @@ def build(
         #
         equal_directories=(),
         left_out=tuple(left_out),
-        from_bundle=tuple(from_bundle),
+        from_package=tuple(from_package),
         traffic_log=source.entry(TRAFFIC_LOG_RULE) is not None,
         parents=source.parents(),
         network=network,
@@ -627,7 +627,7 @@ def _overwrite(source: RestoreSource, target: Target, plan: RestorePlan) -> Rest
         changed.extend(sorted(set(planned_netplan) | set(live_netplan)))
 
     # What moves is the topmost path not kept; what is under it moves with it.
-    keep = {file.path for file in plan.files} | set(plan.from_bundle)
+    keep = {file.path for file in plan.files} | set(plan.from_package)
     # 04-node-prepare's `.replaced-` copies are the node's history and stay (B178).
     moving = sorted(
         path

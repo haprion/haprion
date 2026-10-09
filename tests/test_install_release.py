@@ -11,10 +11,12 @@ import zipfile
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
-from haproxy_mgmt import node_bundle
+from haproxy_mgmt import debian_package, node_package
 
 INSTALLER_PATH = Path(__file__).resolve().parents[1] / "tools" / "install-release.py"
-NODE_BUNDLE_SOURCE = Path(node_bundle.__file__).read_text(encoding="utf-8")
+NODE_PACKAGE_SOURCE = Path(node_package.__file__).read_text(encoding="utf-8")
+DEBIAN_PACKAGE_SOURCE = Path(debian_package.__file__).read_text(encoding="utf-8")
+EPOCH = 1_790_000_000
 COMMIT = "0123456789ab" + "0" * 28
 SPEC = spec_from_file_location("install_release", INSTALLER_PATH)
 if SPEC is None or SPEC.loader is None:
@@ -32,8 +34,9 @@ class InstallReleaseTests(unittest.TestCase):
                 "haproxy_mgmt/compatibility.json",
                 '{"schema_version":1,"engine_api":1}\n',
             )
-            # The release verifies its node bundle with its own verifier.
-            archive.writestr("haproxy_mgmt/node_bundle.py", NODE_BUNDLE_SOURCE)
+            # The release verifies its node package with its own verifier.
+            archive.writestr("haproxy_mgmt/node_package.py", NODE_PACKAGE_SOURCE)
+            archive.writestr("haproxy_mgmt/debian_package.py", DEBIAN_PACKAGE_SOURCE)
             archive.writestr("haproxy_mgmt/cli/__init__.py", "")
             archive.writestr(
                 "haproxy_mgmt/cli/example.py",
@@ -50,47 +53,45 @@ class InstallReleaseTests(unittest.TestCase):
         digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
         return wheel, digest
 
-    def make_bundle(self, root: Path) -> tuple[Path, str]:
-        payload = {
-            name: (f"# {name}\n".encode(), node_bundle.payload_mode(name))
-            for name in node_bundle.PAYLOAD
-        }
-        bundle = root / "node-bundle-build.tar.gz"
-        _root, digest = node_bundle.write_bundle(bundle, COMMIT, payload)
-        return bundle, digest
+    def make_package(self, root: Path) -> tuple[Path, str]:
+        files = {path: f"# {path}\n".encode() for path in node_package.CONTENTS}
+        deb = node_package.write_package(
+            root / "package-build", files, upstream="0.1.0", epoch=EPOCH, commit=COMMIT
+        )
+        return deb, hashlib.sha256(deb.read_bytes()).hexdigest()
 
-    def test_the_node_bundle_travels_in_the_release_and_is_found_there(self) -> None:
-        """B180: a node restore installs exactly the bundle of the running release."""
+    def test_the_node_package_travels_in_the_release_and_is_found_there(self) -> None:
+        """B180: a node restore installs exactly the package of the running release."""
 
         with tempfile.TemporaryDirectory() as raw:
             work = Path(raw).resolve()
             wheel, digest = self.make_wheel(work)
-            bundle, bundle_digest = self.make_bundle(work)
+            deb, deb_digest = self.make_package(work)
             release_id = install_release_module.install_release(
                 wheel=wheel,
                 expected_sha256=digest,
                 target=work / "target",
                 python=Path(sys.executable),
                 require_root=False,
-                node_bundle=bundle,
-                node_bundle_sha256=bundle_digest,
+                node_package=deb,
+                node_package_sha256=deb_digest,
             )
             release = work / "target" / "releases" / release_id
             metadata = json.loads((release / "INSTALLATION.json").read_text())
             self.assertEqual(
-                metadata["node_bundle"],
+                metadata["node_package"],
                 {
-                    "file": "node-bundle.tar.gz",
-                    "root": f"haprion-node-{COMMIT[:12]}",
+                    "file": "haprion-node.deb",
+                    "version": f"0.1.0+git20260921141320.{COMMIT[:12]}",
                     "commit": COMMIT,
-                    "sha256": bundle_digest,
+                    "sha256": deb_digest,
                 },
             )
-            found = node_bundle.release_bundle(release)
+            found = node_package.release_package(release)
             assert found is not None
-            self.assertEqual((found.commit, found.sha256), (COMMIT, bundle_digest))
+            self.assertEqual((found.commit, found.sha256), (COMMIT, deb_digest))
 
-            # The same release again with another bundle is not changed in place.
+            # The same release again with another package is not changed in place.
             with self.assertRaisesRegex(
                 install_release_module.InstallError, "not changed in place"
             ):
@@ -105,22 +106,22 @@ class InstallReleaseTests(unittest.TestCase):
                 path.chmod(0o700 if path.is_dir() else 0o600)
             release.chmod(0o700)
 
-    def test_a_node_bundle_that_does_not_verify_is_refused(self) -> None:
+    def test_a_node_package_that_does_not_verify_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             work = Path(raw).resolve()
             wheel, digest = self.make_wheel(work)
-            broken = work / "broken.tar.gz"
-            broken.write_bytes(b"not a bundle")
+            broken = work / "broken.deb"
+            broken.write_bytes(b"not a package")
             broken_digest = hashlib.sha256(broken.read_bytes()).hexdigest()
-            with self.assertRaisesRegex(install_release_module.InstallError, "node bundle"):
+            with self.assertRaisesRegex(install_release_module.InstallError, "node package"):
                 install_release_module.install_release(
                     wheel=wheel,
                     expected_sha256=digest,
                     target=work / "target",
                     python=Path(sys.executable),
                     require_root=False,
-                    node_bundle=broken,
-                    node_bundle_sha256=broken_digest,
+                    node_package=broken,
+                    node_package_sha256=broken_digest,
                 )
             with self.assertRaisesRegex(install_release_module.InstallError, "both"):
                 install_release_module.install_release(
@@ -129,15 +130,15 @@ class InstallReleaseTests(unittest.TestCase):
                     target=work / "target",
                     python=Path(sys.executable),
                     require_root=False,
-                    node_bundle=broken,
+                    node_package=broken,
                 )
 
-    def test_a_release_without_a_bundle_says_so(self) -> None:
+    def test_a_release_without_a_package_says_so(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             release = Path(raw)
             (release / "INSTALLATION.json").write_text('{"release_id": "x"}\n')
-            self.assertIsNone(node_bundle.release_bundle(release))
-            self.assertIsNone(node_bundle.release_bundle(release / "missing"))
+            self.assertIsNone(node_package.release_package(release))
+            self.assertIsNone(node_package.release_package(release / "missing"))
 
     def test_installs_frozen_versioned_release_and_switches_current(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

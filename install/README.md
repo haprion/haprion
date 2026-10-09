@@ -90,15 +90,27 @@ security model, not an oversight.
 
 ## Step 4 — each node
 
-Copy this `install` directory to the node and run, on the node:
+The node's software is one package, `haprion-node`, built from a commit on the
+management host:
 
 ```bash
-sudo ./04-node-prepare answers.env alpha
+tools/node-package.py build --source . --output-dir /path/to/protected/staging
 ```
 
-The second argument is the cluster this node belongs to. It creates the service
-accounts, the `/etc/haproxy` release layout, the sudo rules, and installs the
-node scripts.
+It prints the package's path, version and SHA-256. Install it on a node, and
+configure the node with this step, from the management host as yourself:
+
+```bash
+tools/install-node-package --node-package /path/to/haprion-node_<version>_all.deb \
+  --sha256 <digest> --answers /path/to/answers.env --node node-a --cluster alpha
+```
+
+The tool verifies the package, takes a state backup, copies the package and the
+answers over one SSH session, installs the package with apt and runs
+`/usr/share/haprion-node/install/04-node-prepare answers.env alpha` on the node -
+the step the package put there. That step creates the service accounts, the
+`/etc/haproxy` release layout and the sudo rules; the node scripts are the
+package's, in `/usr/sbin`.
 
 Then paste the `authorized_keys` lines for this node from step 3, and add the
 keepalived notify lines if the script asked for them. The server state key's line
@@ -106,12 +118,8 @@ is the exception: with `SERVER_STATE_PUBKEY` in the answers file, this step writ
 it. Drain, maintenance and ready also need the admin socket line in each cluster's
 `core/haproxy.cfg` (`docs/user-manual.md`, 'Node scripts').
 
-Repeat for every node.
-
-This direct directory-copy flow is for a first installation. Later node updates use the minimal,
-commit-bound bundle built by `tools/node-bundle.py` and installed one node at a time with
-`tools/install-node-bundle`; see `docs/user-manual.md`, 'Installing and changing node scripts'. Do not copy the complete
-`install/` tree for an update — it includes manager/platform material the node never uses.
+Repeat for every node. A later update is the same command with a newer package;
+see `docs/user-manual.md`, 'Installing and changing node scripts'.
 
 ## Step 5 — check
 

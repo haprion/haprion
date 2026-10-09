@@ -29,7 +29,7 @@ The repository has complementary gates. No single scanner replaces the others.
    `run-checks` — but it belongs to the same family, and the reason it checks both directions is in
    [`user-manual.md`](user-manual.md#verifying-it).
 8. `install/platform/check-compatibility` reads the separately installed CLI, UI, schema, service
-   processes, sudo rules and node bundle metadata as one result. It changes nothing and fails on an
+   processes, sudo rules and node package metadata as one result. It changes nothing and fails on an
    unknown compatibility level rather than assuming an older component is usable.
 9. `install/platform/update-platform-release` applies those checks to a prepared candidate before
    it migrates or activates anything, and proves the running release accepts the target schema so

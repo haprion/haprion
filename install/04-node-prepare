@@ -2,16 +2,14 @@
 #
 # Step 4 of 5 - run this ON EACH NODE, not on the management host.
 #
-# Creates the node service accounts, the HAProxy release layout, the sudo rules
-# the forced commands need, and installs the node-side scripts from install/node.
+# Creates the node service accounts, the HAProxy release layout and the sudo
+# rules the forced commands need. The node-side scripts come with the
+# haprion-node package, which puts this step beside them; tools/install-node-package
+# installs the package and runs it (B266).
 #
-# Copy this repository's install directory to the node, or run it from a checkout
-# there. It contacts nothing and downloads nothing.
+#     sudo /usr/share/haprion-node/install/04-node-prepare answers.env <cluster-id>
 #
-#     sudo ./04-node-prepare answers.env <cluster-id>
-#
-# The cluster ID is needed because node status reports it and because the sudo
-# rule for status names it exactly.
+# The cluster ID is recorded in node.conf, where the node's status reads it.
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -68,7 +66,7 @@ RSYSLOG_WRITER="$(rsyslog_writer)"
 getent passwd "$RSYSLOG_WRITER" >/dev/null \
     || die "rsyslog writes as '${RSYSLOG_WRITER}', which does not exist; reinstall rsyslog"
 
-SBIN="/usr/local/sbin"
+SBIN="/usr/sbin"
 NODE_CONF="/etc/haprion/node.conf"
 TRAFFIC_LOG_ROOT="/var/log/haprion"
 # The engine package's LogNamespace=, read by haprion-traffic-log-read.
@@ -354,47 +352,40 @@ DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q ipvsadm >/
 log "  ok       $(/usr/sbin/ipvsadm --version 2>/dev/null | head -n 1)"
 
 step "Node scripts"
-
-missing=0
+#
+# The node package owns them (B266, D4): dpkg put them in ${SBIN}, and this
+# step beside its library under /usr/share/haprion-node. A script edited by hand
+# after that is what `dpkg --verify` reports, and the configuration stops there
+# rather than recording the edited bytes as the installation.
+#
+dpkg-query -W -f='${Status}' haprion-node 2>/dev/null | grep -q "install ok installed" \
+    || die "the haprion-node package is not installed; install it with tools/install-node-package"
+if ! changed="$(dpkg --verify haprion-node 2>&1)" || [[ -n "$changed" ]]; then
+    warn "dpkg --verify haprion-node:"
+    while IFS= read -r line; do warn "  ${line}"; done <<<"$changed"
+    die "the node package's files are not as installed; reinstall haprion-node"
+fi
 for script in "${SCRIPTS[@]}"; do
-    if [[ ! -f "node/${script}" ]]; then
-        warn "node/${script} is not in this checkout"
-        missing=1
-    fi
+    [[ -x "${SBIN}/${script}" ]] || die "${SBIN}/${script} is missing from the node package"
 done
-[[ $missing -eq 0 ]] || die "node scripts are missing - see docs/user-manual.md, 'What is still missing'"
-
-for script in "${SCRIPTS[@]}"; do
-    target="${SBIN}/${script}"
-    if [[ -f "$target" ]] && cmp -s "node/${script}" "$target"; then
-        chown root:root "$target"
-        chmod 755 "$target"
-        log "  ok       ${target}"
-        prune_replaced "$target"
-        continue
-    fi
-    [[ -f "$target" ]] && cp -a "$target" "${target}.replaced-$(date +%Y%m%d-%H%M%S)"
-    install -o root -g root -m 755 "node/${script}" "$target"
-    log "  installed ${target}"
-    prune_replaced "$target"
-done
+log "  ok       haprion-node $(dpkg-query -W -f='${Version}' haprion-node)"
 
 #
 # A compatibility level says whether two independently released components may
 # speak to each other. The hashes say whether this particular installation still
-# contains the bundle that declared that level. Keeping both avoids the two bad
+# contains the package that declared that level. Keeping both avoids the two bad
 # shortcuts: requiring every harmless edit to be deployed everywhere, or trusting
 # a version marker beside scripts somebody later changed by hand.
 #
-node_installation="$(/usr/bin/python3 - "$NODE_API" "${SCRIPTS[@]}" <<'PY'
+node_installation="$(/usr/bin/python3 - "$NODE_API" "$SBIN" "${SCRIPTS[@]}" <<'PY'
 import hashlib
 import json
 import sys
 from pathlib import Path
 
 scripts = {}
-for name in sys.argv[2:]:
-    scripts[name] = hashlib.sha256((Path("node") / name).read_bytes()).hexdigest()
+for name in sys.argv[3:]:
+    scripts[name] = hashlib.sha256((Path(sys.argv[2]) / name).read_bytes()).hexdigest()
 print(
     json.dumps(
         {"schema_version": 1, "node_api": int(sys.argv[1]), "scripts": scripts},

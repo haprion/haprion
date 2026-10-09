@@ -50,8 +50,8 @@
       "packages": [],
       "keepalived": "start",
       "rewrites": [],
-      "from_bundle": [
-        "/usr/local/sbin/haprion-pull-deploy",
+      "from_package": [
+        "/usr/sbin/haprion-pull-deploy",
         "/etc/haprion/node-installation.json"
       ],
       "traffic_log": true,
@@ -88,8 +88,8 @@
       },
       "extra_paths": []
     },
-    "node_bundle": {
-      "root": "haprion-node-000000000000",
+    "node_package": {
+      "version": "0.1.0+git20261009120000.000000000000",
       "commit": "0000000000000000000000000000000000000000"
     },
     "renumbered": [],

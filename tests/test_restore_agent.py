@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gzip
 import hashlib
 import io
 import json
@@ -16,31 +15,11 @@ from typing import Any, ClassVar
 from unittest import mock
 
 from haproxy_mgmt import restore_agent
-from haproxy_mgmt.restore_agent import Failed, Host
+from haproxy_mgmt.restore_agent import PACKAGE_FILE, Failed, Host
 
 RUN = "run-0123456789"
-BUNDLE_ROOT = "haprion-node-0123456789ab"
-
-
-def bundle_bytes() -> bytes:
-    """A node bundle's shape: one root, install/04-node-prepare inside it."""
-
-    raw = io.BytesIO()
-    with (
-        gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as packed,
-        tarfile.open(fileobj=packed, mode="w") as archive,
-    ):
-        for name, text in (
-            (f"{BUNDLE_ROOT}/install/04-node-prepare", "#!/bin/bash\n"),
-            (f"{BUNDLE_ROOT}/install/lib.sh", "# library\n"),
-        ):
-            info = tarfile.TarInfo(name)
-            info.size, info.mode = len(text), 0o755
-            archive.addfile(info, io.BytesIO(text.encode()))
-    return raw.getvalue()
-
-
-BUNDLE = bundle_bytes()
+PACKAGE = b"the release's node package"
+PACKAGE_VERSION = "0.1.0+git20261009120000.0123456789ab"
 
 
 class FakeHost(Host):
@@ -53,7 +32,7 @@ class FakeHost(Host):
         self.active: dict[str, str] = {}
         self.fail: set[str] = set()
         self.preinstalled: set[str] = set()
-        # What the bundle's 04-node-prepare prints, and node.conf as it renders it.
+        # What 04-node-prepare prints, and node.conf as it renders it.
         self.prepare_stderr = ""
         # Whether starting keepalived writes its state file, as the notify script does.
         self.notifies = True
@@ -154,6 +133,11 @@ class FakeHost(Host):
             state = self.path("/run/haproxy/keepalived.state")
             state.parent.mkdir(parents=True, exist_ok=True)
             state.write_text("BACKUP\n")
+        elif argv[:2] == ["apt-get", "install"] and argv[-1].endswith(".deb") and code == 0:
+            # dpkg puts the step where the package says.
+            prepare = self.path(restore_agent.NODE_PREPARE)
+            prepare.parent.mkdir(parents=True, exist_ok=True)
+            prepare.write_text("#!/bin/bash\n")
         errors = ""
         if argv[0] == "bash" and argv[1].endswith("/install/04-node-prepare"):
             errors = self.prepare_stderr
@@ -204,7 +188,7 @@ APPLY_FILES: list[Member] = [
     ("/var/lib/svc-backup/.ssh/authorized_keys", "file", 0o644, 0, 0, "restrict\n"),
     ("/etc/systemd/system/ipvsadm.service", "symlink", 0o777, 0, 0, "/dev/null"),
     ("/etc/default/grub.d/99-local.cfg", "file", 0o644, 0, 0, "local\n"),
-    (f"/var/lib/haprion-restore/{RUN}/node-bundle.tar.gz", "file", 0o600, 0, 0, BUNDLE),
+    (f"/var/lib/haprion-restore/{RUN}/haprion-node.deb", "file", 0o600, 0, 0, PACKAGE),
 ]
 
 APPLY_HEADER: dict[str, Any] = {
@@ -215,7 +199,7 @@ APPLY_HEADER: dict[str, Any] = {
     "packages": ["haproxy", "keepalived"],
     "equal_directories": ["/etc/apt/sources.list.d", "/etc/sudoers.d", "/root/.ssh"],
     "cluster": "alpha",
-    "node_bundle": {"root": BUNDLE_ROOT, "sha256": hashlib.sha256(BUNDLE).hexdigest()},
+    "node_package": {"version": PACKAGE_VERSION, "sha256": hashlib.sha256(PACKAGE).hexdigest()},
     "answers": 'TRIGGER_USER="svc-trigger"\n',
     "traffic_log": False,
     "groups": [
@@ -356,7 +340,8 @@ class Apply(AgentTest):
 
         self.host.run = run  # type: ignore[method-assign]
         self.apply()
-        self.assertEqual(seen, [True])
+        # The product's packages, then the node package with what it depends on.
+        self.assertEqual(seen, [True, True])
         self.assertFalse(self.host.path("/usr/sbin/policy-rc.d").exists())
 
     def test_apt_sources_are_in_place_before_apt_runs(self) -> None:
@@ -474,18 +459,28 @@ class Apply(AgentTest):
     def prepared(self) -> list[str]:
         return next(argv for argv in self.host.commands if argv[0] == "bash")
 
-    def test_the_release_s_node_bundle_prepares_the_node_last(self) -> None:
+    def test_the_release_s_node_package_prepares_the_node_last(self) -> None:
         """B180: 04-node-prepare with answers from the archive, after files and services."""
 
         result = self.apply()
         self.assertTrue(result["ok"], result)
         argv = self.prepared()
-        work = self.host.path(f"/var/lib/haprion-restore/{RUN}/node-bundle")
+        work = self.host.path(f"/var/lib/haprion-restore/{RUN}/node-package")
+        install = [
+            "apt-get",
+            "install",
+            "-y",
+            "--no-install-recommends",
+            *restore_agent.APT_WAIT,
+            str(work / PACKAGE_FILE),
+        ]
+        self.assertEqual((work / PACKAGE_FILE).read_bytes(), PACKAGE)
+        self.assertLess(self.host.commands.index(install), self.host.commands.index(argv))
         self.assertEqual(
             argv,
             [
                 "bash",
-                str(work / BUNDLE_ROOT / "install/04-node-prepare"),
+                str(self.host.path(restore_agent.NODE_PREPARE)),
                 str(work / "answers.env"),
                 "alpha",
             ],
@@ -496,15 +491,15 @@ class Apply(AgentTest):
             self.host.commands.index(["systemctl", "enable", "haproxy"]),
             self.host.commands.index(argv),
         )
-        # The bundle is extracted beside the run, never placed as a node file.
-        self.assertFalse(self.host.path("/etc/node-bundle.tar.gz").exists())
-        self.assertNotIn(["/usr/local/sbin/haprion-traffic-log-enable"], self.host.commands)
+        # The package is installed from beside the run, never placed as a node file.
+        self.assertFalse(self.host.path("/etc/haprion-node.deb").exists())
+        self.assertNotIn(["/usr/sbin/haprion-traffic-log-enable"], self.host.commands)
 
-    def test_the_traffic_log_is_turned_on_by_the_bundle_when_it_was_on(self) -> None:
+    def test_the_traffic_log_is_turned_on_by_the_package_when_it_was_on(self) -> None:
         header = dict(APPLY_HEADER, traffic_log=True)
         result = self.apply(header)
         self.assertTrue(result["ok"], result)
-        enable = self.host.commands.index(["/usr/local/sbin/haprion-traffic-log-enable"])
+        enable = self.host.commands.index(["/usr/sbin/haprion-traffic-log-enable"])
         self.assertLess(self.host.commands.index(self.prepared()), enable)
 
     def test_the_node_preparation_s_warnings_are_reported_but_the_state_file_s(self) -> None:
@@ -535,21 +530,21 @@ class Apply(AgentTest):
         self.host.rendered_node_conf = "CLUSTER=beta\n"
         self.assertTrue(any("rendered differently" in w for w in self.apply()["warnings"]))
 
-    def test_a_bundle_that_does_not_match_its_digest_stops_before_anything_is_written(
+    def test_a_package_that_does_not_match_its_digest_stops_before_anything_is_written(
         self,
     ) -> None:
-        header = dict(APPLY_HEADER, node_bundle={"root": BUNDLE_ROOT, "sha256": "0" * 64})
+        header = dict(APPLY_HEADER, node_package={"version": PACKAGE_VERSION, "sha256": "0" * 64})
         result = self.apply(header)
         self.assertFalse(result["ok"])
         self.assertTrue(result["refused"])
         self.assertIn("does not match", result["error"])
         self.assertEqual(self.host.commands, [])
 
-    def test_apply_without_a_bundle_is_refused(self) -> None:
-        files = [item for item in APPLY_FILES if not item[0].endswith("node-bundle.tar.gz")]
+    def test_apply_without_a_package_is_refused(self) -> None:
+        files = [item for item in APPLY_FILES if not item[0].endswith("haprion-node.deb")]
         result = self.serve(APPLY_HEADER, payload(files))
         self.assertFalse(result["ok"])
-        self.assertIn("no node bundle", result["error"])
+        self.assertIn("no node package", result["error"])
         self.assertEqual(self.host.commands, [])
 
     def test_nothing_else_may_be_placed_in_the_restore_s_own_directory(self) -> None:
@@ -637,8 +632,8 @@ class Finish(AgentTest):
             [
                 ["systemctl", "stop", f"haprion-restore-rollback-{RUN}.timer"],
                 ["systemctl", "start", "haproxy"],
-                ["/usr/local/sbin/haprion-cert-pull", "cert-a", "cert-b"],
-                ["/usr/local/sbin/haprion-pull-deploy"],
+                ["/usr/sbin/haprion-cert-pull", "cert-a", "cert-b"],
+                ["/usr/sbin/haprion-pull-deploy"],
             ],
         )
         self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "operator key\n")
@@ -695,7 +690,8 @@ class Overwrite(AgentTest):
             "/etc/haprion/node-installation.json": '{"node_api": 1}\n',
             "/etc/haprion/stray": "left by hand\n",
             "/etc/haprion/node.conf.replaced-20260101-000000": "old\n",
-            "/usr/local/sbin/haprion-pull-deploy": "#!/bin/sh\nold\n",
+            "/usr/sbin/haprion-pull-deploy": "#!/bin/sh\nold\n",
+            restore_agent.NODE_PREPARE: "#!/bin/bash\n",
         }.items():
             path = self.host.path(name)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -782,6 +778,23 @@ class Overwrite(AgentTest):
         self.apply({**OVERWRITE_HEADER, "packages": []})
         self.assertEqual(self.commands("apt-get"), [])
 
+    def test_the_node_s_own_package_prepares_it_and_none_is_installed(self) -> None:
+        """B183: the running node's software is its own, the node package too."""
+
+        result = self.apply()
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(any(argv[-1].endswith(".deb") for argv in self.commands("apt-get")))
+        prepared = next(argv for argv in self.host.commands if argv[0] == "bash")
+        self.assertEqual(prepared[1], str(self.host.path(restore_agent.NODE_PREPARE)))
+
+    def test_a_node_without_the_package_is_refused_before_anything_is_written(self) -> None:
+        self.host.path(restore_agent.NODE_PREPARE).unlink()
+        result = self.apply()
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["refused"])
+        self.assertIn("install its node package first", result["error"])
+        self.assertEqual(self.host.commands, [])
+
     def test_the_products_directory_is_made_the_archives(self) -> None:
         self.apply()
         self.assertFalse(self.host.path("/etc/haprion/stray").exists())
@@ -795,7 +808,7 @@ class Overwrite(AgentTest):
         self.assertTrue(self.host.path("/etc/sudoers.d/90-cloud-init-users").exists())
 
     def test_a_failure_puts_the_node_back_as_it_was(self) -> None:
-        self.host.fail = {"bash"}  # the node bundle's 04-node-prepare
+        self.host.fail = {"bash"}  # the node's 04-node-prepare
         result = self.apply()
         self.assertFalse(result["ok"])
         self.assertTrue(result["rolled_back"], result)

@@ -14,7 +14,7 @@ On the management host, install:
 - `git`, `rsync`, `openssh-client` and `sudo` supporting no-argument rules
 - for the web interface: PostgreSQL 16 or newer, nginx and `uv`
 
-Have the source tree, a wheel built from the selected commit and the matching node bundle
+Have the source tree, a wheel built from the selected commit and the matching node package
 available. The scripts use an answers file; its example includes `UV_BIN` and `ALEMBIC_BIN`,
 which must name the installed build and migration tools.
 
@@ -40,25 +40,25 @@ source-tree root, build the wheel into a protected directory outside the reposit
 
 ```bash
 python -m build --wheel --outdir /path/to/protected/staging
-sha256sum /path/to/protected/staging/haproxy_manager-*.whl
+sha256sum /path/to/protected/staging/haprion-*.whl
 ```
 
-Build the matching node bundle from the same commit and record the digest it prints:
+Build the matching node package from the same commit and record the digest it prints:
 
 ```bash
-tools/node-bundle.py build \
+tools/node-package.py build \
   --source "$(pwd)" \
-  --output /path/to/protected/staging/haprion-node-0123456789ab.tar.gz
+  --output-dir /path/to/protected/staging
 ```
 
-Install the wheel and bundle, using their actual absolute paths and SHA-256 digests:
+Install the wheel and package, using their actual absolute paths and SHA-256 digests:
 
 ```bash
 sudo /usr/bin/python3 tools/install-release.py \
-  --wheel /path/to/protected/staging/haproxy_manager-0.1.0-py3-none-any.whl \
+  --wheel /path/to/protected/staging/haprion-0.1.0-py3-none-any.whl \
   --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --node-bundle /path/to/protected/staging/haprion-node-0123456789ab.tar.gz \
-  --node-bundle-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  --node-package /path/to/protected/staging/haprion-node_0.1.0+git20261009120000.0123456789ab_all.deb \
+  --node-package-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
 ```
 
 ## 3. Install the manager configuration and keys
@@ -173,11 +173,11 @@ The engine runs as a dynamic user, which belongs to no group, and `/etc/haproxy/
 is closed to every account but root. `04-node-prepare` therefore creates the group
 `haprion-waf`, with no members, lets it pass through that directory without listing it
 (`/etc/tmpfiles.d/haprion-waf-engine.conf`), and gives the engine the group in a
-drop-in, `/etc/systemd/system/coraza-spoa.service.d/haprion.conf`. A node bundle
+drop-in, `/etc/systemd/system/coraza-spoa.service.d/haprion.conf`. A node installation
 from before this cannot start the engine: the first deploy with rules fails on that node
 and returns it to the previous release.
 
-When updating to a release that reads the engine's journal, install its node bundle on
+When updating to a release that reads the engine's journal, install its node package on
 every node **before** the release on the management host. The nodes' reader still answers
 an older collector; the new collector counts a node whose reader cannot answer it as a
 failed run, rather than showing that node's WAF findings as none.

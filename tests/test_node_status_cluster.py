@@ -59,7 +59,7 @@ class StatusRuleTests(unittest.TestCase):
         )
         assert forced and allowed
 
-        self.assertEqual(forced.group(1), "/usr/local/sbin/" + allowed.group(1))
+        self.assertEqual(forced.group(1), "/usr/sbin/" + allowed.group(1))
         self.assertNotIn("CLUSTER", allowed.group(1))
         self.assertNotIn("cluster", forced.group(1))
 

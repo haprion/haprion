@@ -965,7 +965,7 @@ class WafJournalCollectorTests(unittest.TestCase):
     def test_a_node_bundle_from_before_the_journal_fails_the_run(self) -> None:
         """Not tolerated as a passing state: the node's matches would be
         missing from the WAF page while every run looked fine. The rollout
-        puts the node bundle before the collector instead."""
+        puts the node package before the collector instead."""
 
         with patch("haproxy_mgmt.traffic_collector._bounded_ssh", return_value=(64, b"", b"")):
             code, errors, _ = self.collect_with(
@@ -973,7 +973,7 @@ class WafJournalCollectorTests(unittest.TestCase):
             )
         self.assertEqual(code, 1)
         self.assertIn(
-            "alpha/node-a: waf: the node refused the WAF request (exit 64): its node bundle is "
+            "alpha/node-a: waf: the node refused the WAF request (exit 64): its node package is "
             "older than this collector",
             errors,
         )

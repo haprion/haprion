@@ -1,12 +1,14 @@
 #!/bin/bash
-# Install one verified node bundle through an operator's interactive SSH path.
+# Install the verified node package through an operator's interactive SSH path,
+# then configure the node with 04-node-prepare from where the package put it.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VERIFY="${SCRIPT_DIR}/node-bundle.py"
+VERIFY="${SCRIPT_DIR}/node-package.py"
+NODE_PREPARE=/usr/share/haprion-node/install/04-node-prepare
 STATE_BACKUP=/opt/haprion/current/bin/haprion-state-backup
 
-bundle=""
+node_package=""
 expected_sha=""
 answers=""
 node=""
@@ -15,7 +17,13 @@ package=""
 package_sha=""
 dry_run="no"
 #
-# The state backup archives both nodes of the bundle's cluster, so a bundle
+# apt refuses to put an older package in place of a newer one under -y. Going
+# back is a decision, so it is asked for by name: the rollback to a retained
+# package, never a side effect of installing the wrong file.
+#
+downgrade="no"
+#
+# The state backup archives both nodes of the package's cluster, so a package
 # rolled across a pair one invocation at a time would take four of them for
 # one change. The rule is one before the first write and one after the last:
 # the first node keeps its "before", the last node its "after", the ones
@@ -28,12 +36,12 @@ backup_after="yes"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 usage() {
-    echo "usage: $(basename "$0") --bundle <tar.gz> --sha256 <digest> --answers <file> --node <host> --cluster <id> [--package <deb> --package-sha256 <digest>] [--dry-run] [--skip-backup-before] [--skip-backup-after]"
+    echo "usage: $(basename "$0") --node-package <deb> --sha256 <digest> --answers <file> --node <host> --cluster <id> [--package <deb> --package-sha256 <digest>] [--downgrade] [--dry-run] [--skip-backup-before] [--skip-backup-after]"
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --bundle) bundle="${2:-}"; shift 2 ;;
+        --node-package) node_package="${2:-}"; shift 2 ;;
         --sha256) expected_sha="${2:-}"; shift 2 ;;
         --answers) answers="${2:-}"; shift 2 ;;
         --node) node="${2:-}"; shift 2 ;;
@@ -41,6 +49,7 @@ while [[ $# -gt 0 ]]; do
         --package) package="${2:-}"; shift 2 ;;
         --package-sha256) package_sha="${2:-}"; shift 2 ;;
         --dry-run) dry_run="yes"; shift ;;
+        --downgrade) downgrade="yes"; shift ;;
         --skip-backup-before) backup_before="no"; shift ;;
         --skip-backup-after) backup_after="no"; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -49,8 +58,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ $EUID -ne 0 ]] || fail "run as yourself, not with sudo"
-[[ "$bundle" == /* && -f "$bundle" && ! -L "$bundle" ]] \
-    || fail "bundle must be an absolute regular non-symlink file"
+[[ "$node_package" == /* && -f "$node_package" && ! -L "$node_package" ]] \
+    || fail "node package must be an absolute regular non-symlink file"
 [[ "$answers" == /* && -f "$answers" && ! -L "$answers" ]] \
     || fail "answers must be an absolute regular non-symlink file"
 [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || fail "SHA-256 must be 64 lowercase hexadecimal characters"
@@ -59,8 +68,9 @@ done
 bash -n "$answers" || fail "answers file is not valid shell"
 
 #
-# A package that travels with the bundle - the WAF engine (B229) - goes through
-# the same session, backups and checks rather than a loop of its own. Only the
+# A package that travels with the node package - the WAF engine (B229) - goes
+# through the same session, backups and checks rather than a loop of its own,
+# and the same apt call, which takes both or neither. Only the
 # project's own packages, verified here and again on the node, and only one
 # built for the node's architecture: the preflight compares the two before
 # anything is written, so a dry run answers the question too.
@@ -81,11 +91,11 @@ if [[ -n "$package" || -n "$package_sha" ]]; then
     echo "package: ${package_name} $(dpkg-deb --field "$package" Version) ${package_arch}"
 fi
 
-verification="$(/usr/bin/python3 "$VERIFY" verify --bundle "$bundle" --sha256 "$expected_sha")" \
-    || fail "node bundle verification failed"
-release_root="$(sed -n 's/^release: //p' <<<"$verification")"
-[[ "$release_root" =~ ^haprion-node-[0-9a-f]{12}$ ]] \
-    || fail "bundle verifier returned an invalid release root"
+verification="$(/usr/bin/python3 "$VERIFY" verify --package "$node_package" --sha256 "$expected_sha")" \
+    || fail "node package verification failed"
+node_version="$(sed -n 's/^version: //p' <<<"$verification")"
+[[ "$node_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+git[0-9]{14}\.[0-9a-f]{12}$ ]] \
+    || fail "package verifier returned an invalid version"
 printf '%s\n' "$verification"
 
 work_dir="$(mktemp -d)"
@@ -101,7 +111,7 @@ ssh_opts=(
 )
 
 cleanup() {
-    if [[ -n "$remote_dir" && "$remote_dir" =~ ^/tmp/haproxy-node-bundle\.[A-Za-z0-9]+$ ]]; then
+    if [[ -n "$remote_dir" && "$remote_dir" =~ ^/tmp/haprion-node-package\.[A-Za-z0-9]+$ ]]; then
         # The path came from the node's constrained mktemp shape above.
         # shellcheck disable=SC2029
         ssh "${ssh_opts[@]}" "$node" "find '$remote_dir' -depth -delete" >/dev/null 2>&1 \
@@ -146,38 +156,38 @@ else
     echo "state backup before: skipped on request (take one before the cluster's first node)"
 fi
 
-remote_dir="$(ssh "${ssh_opts[@]}" "$node" 'mktemp -d /tmp/haproxy-node-bundle.XXXXXXXX')"
+remote_dir="$(ssh "${ssh_opts[@]}" "$node" 'mktemp -d /tmp/haprion-node-package.XXXXXXXX')"
 remote_dir="${remote_dir//$'\r'/}"
-[[ "$remote_dir" =~ ^/tmp/haproxy-node-bundle\.[A-Za-z0-9]+$ ]] \
+[[ "$remote_dir" =~ ^/tmp/haprion-node-package\.[A-Za-z0-9]+$ ]] \
     || fail "node returned an unsafe staging path"
 # The path is returned by the node and shape-checked immediately above.
 # shellcheck disable=SC2029
 ssh "${ssh_opts[@]}" "$node" "chmod 700 '$remote_dir'"
-scp "${ssh_opts[@]}" "$bundle" "${node}:${remote_dir}/bundle.tar.gz" >/dev/null
+scp "${ssh_opts[@]}" "$node_package" "${node}:${remote_dir}/node.deb" >/dev/null
 scp "${ssh_opts[@]}" "$answers" "${node}:${remote_dir}/answers.env" >/dev/null
-package_install=""
+packages="./node.deb"
+package_check=""
+apt_options="-y --no-install-recommends"
+[[ "$downgrade" == "yes" ]] && apt_options+=" --allow-downgrades"
 if [[ -n "$package" ]]; then
     scp "${ssh_opts[@]}" "$package" "${node}:${remote_dir}/package.deb" >/dev/null
-    package_install="
-    printf '%s  %s\\n' '$package_sha' package.deb | sha256sum -c -
-    chmod 644 package.deb
-    sudo apt-get install -y --no-install-recommends './package.deb'
-    dpkg-query -W -f='\${Package} \${Version} \${Status}\\n' '$package_name'
-    "
+    packages+=" ./package.deb"
+    package_check="printf '%s  %s\\n' '$package_sha' package.deb | sha256sum -c -"
 fi
 
 remote_install="
     ${preflight}
     cd '$remote_dir'
-    printf '%s  %s\n' '$expected_sha' bundle.tar.gz | sha256sum -c -
-    ${package_install}
+    printf '%s  %s\n' '$expected_sha' node.deb | sha256sum -c -
+    ${package_check}
+    chmod 644 ${packages}
     chmod 600 answers.env
-    tar -xzf bundle.tar.gz
-    cd '${release_root}/install'
-    sudo ./04-node-prepare '$remote_dir/answers.env' '$cluster'
+    sudo apt-get install ${apt_options} ${packages}
+    dpkg-query -W -f='\${Package} \${Version} \${Status}\\n' haprion-node ${package_name}
+    sudo '${NODE_PREPARE}' '$remote_dir/answers.env' '$cluster'
 "
 
-# The archive root, staging path, node and cluster were all shape-checked above.
+# The staging path, node and cluster were all shape-checked above.
 # shellcheck disable=SC2029
 ssh -tt "${ssh_opts[@]}" "$node" "$remote_install"
 
@@ -191,4 +201,4 @@ if [[ -x /opt/haprion/current/bin/haprion-status ]]; then
 else
     echo "WARNING: haprion-status is unavailable; run the installation check manually" >&2
 fi
-echo "node bundle installation: PASS (${node}, ${release_root})"
+echo "node package installation: PASS (${node}, haprion-node ${node_version})"

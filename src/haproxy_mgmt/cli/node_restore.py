@@ -191,10 +191,10 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
         )
     for note in summary.get("renumbered", []):
         out.write(f"  numbering {note}\n")
-    if summary.get("node_bundle"):
-        bundle = summary["node_bundle"]
+    if summary.get("node_package"):
+        package = summary["node_package"]
         out.write(
-            f"  node bundle {bundle['root']} writes the node scripts"
+            f"  node package {package['version']} writes the node scripts"
             + (" and turns the traffic log on" if plan.get("traffic_log") else "")
             + "\n"
         )

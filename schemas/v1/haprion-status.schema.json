@@ -420,7 +420,7 @@
           "additionalProperties": false
         },
         "installation": {
-          "description": "The node bundle's compatibility level and a digest check of every script installed with it. Absent from nodes installed before this measurement existed.",
+          "description": "The node package's compatibility level and a digest check of every script installed with it. Absent from nodes installed before this measurement existed.",
           "type": "object",
           "required": ["node_api", "scripts_current", "scripts"],
           "properties": {

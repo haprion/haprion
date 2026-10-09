@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_mgmt import node_bundle, node_restore
+from haproxy_mgmt import node_package, node_restore
 from haproxy_mgmt.cli import node_restore_ask, node_restore_helper
 from haproxy_mgmt.cli.node_restore_helper import (
     DISCARD,
@@ -63,11 +63,11 @@ class HelperTest(unittest.TestCase):
         FakeSession.calls = []
         FakeSession.answers = {"inspect": dict(INSPECTED)}
         self.silent = {"192.0.2.29", "192.0.2.21"}
-        carried = work / "node-bundle.tar.gz"
-        carried.write_bytes(b"the release's node bundle")
-        self.bundle = node_bundle.ReleaseBundle(
+        carried = work / "haprion-node.deb"
+        carried.write_bytes(b"the release's node package")
+        self.package = node_package.ReleasePackage(
             path=carried,
-            root="haprion-node-0123456789ab",
+            version="0.1.0+git20261009120000.0123456789ab",
             commit="0123456789ab" + "0" * 28,
             sha256=hashlib.sha256(carried.read_bytes()).hexdigest(),
         )
@@ -96,14 +96,14 @@ class HelperTest(unittest.TestCase):
                 fingerprint_of=lambda key: FINGERPRINT if key == TARGET_KEY else "SHA256:x",
                 answering=self.answering,
                 session_for=FakeSession,  # type: ignore[arg-type]
-                bundle_of=lambda: self.bundle,
+                package_of=lambda: self.package,
             ),
             run=partial(
                 node_restore.run,
                 answering=self.answering,
                 clock=Clock(now=lambda: float(next(ticks)), sleep=lambda _: None),
                 session_for=FakeSession,  # type: ignore[arg-type]
-                bundle_of=lambda: self.bundle,
+                package_of=lambda: self.package,
                 lock_root=self.lock_root,
             ),
         )

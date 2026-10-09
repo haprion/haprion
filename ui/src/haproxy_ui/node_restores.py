@@ -238,8 +238,8 @@ class RestoreRun:
     jobs: tuple[RestoreJob, ...]
     # One per warning: the command that answers it, or "" when there is none.
     warning_commands: tuple[str, ...] = ()
-    # The manager's node bundle the preview found (B180): root and commit.
-    node_bundle: Mapping[str, Any] | None = None
+    # The manager's node package the preview found (B180): version and commit.
+    node_package: Mapping[str, Any] | None = None
     # Accounts and groups whose number on the VM differs from the archive's (B181).
     renumbered: tuple[str, ...] = ()
     # When the prepare job was queued, and when the hour to start the run ends (B182).
@@ -441,8 +441,8 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         warnings=_warnings(result) if result else (),
         warning_commands=tuple(warning_command(w) for w in _warnings(result)) if result else (),
         jobs=tuple(RestoreJob(job.id, job.operation, job.state) for job in jobs),
-        node_bundle=preview.get("node_bundle")
-        if isinstance(preview.get("node_bundle"), dict)
+        node_package=preview.get("node_package")
+        if isinstance(preview.get("node_package"), dict)
         else None,
         renumbered=_strings(preview.get("renumbered")),
         prepared_at=prepared.created_at,

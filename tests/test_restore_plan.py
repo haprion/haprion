@@ -113,15 +113,15 @@ class ANewVm(Planning):
         self.assertIn("/etc/sudoers.d/svc-app", {file.path for file in plan.files})
         self.assertNotIn("/etc/sudoers.d/svc-app", plan.left_out)
 
-    def test_what_the_node_bundle_writes_is_not_taken_from_the_archive(self) -> None:
+    def test_what_the_node_package_writes_is_not_taken_from_the_archive(self) -> None:
         """B178/B180: the running release's scripts, not the ones the node ran then."""
 
         plan = restore_plan.build(self.source(), "new_vm", TARGET)
         paths = {file.path for file in plan.files}
-        self.assertFalse(any(path.startswith("/usr/local/sbin/") for path in paths))
+        self.assertFalse(any(path.startswith("/usr/sbin/") for path in paths))
         self.assertNotIn("/etc/haprion/node-installation.json", paths)
-        self.assertIn("/usr/local/sbin/haprion-pull-deploy", plan.from_bundle)
-        self.assertIn("/etc/haprion/node-installation.json", plan.from_bundle)
+        self.assertIn("/usr/sbin/haprion-pull-deploy", plan.from_package)
+        self.assertIn("/etc/haprion/node-installation.json", plan.from_package)
         # node.conf and the pull key are the node's own and do come back.
         self.assertIn("/etc/haprion/node.conf", paths)
         self.assertIn("/etc/haprion/keys/config-pull", paths)
@@ -135,7 +135,7 @@ class ANewVm(Planning):
         self.assertTrue(plan.traffic_log)
         paths = {file.path for file in plan.files}
         self.assertNotIn(restore_plan.TRAFFIC_LOG_RULE, paths)
-        self.assertIn("/etc/systemd/system/haprion-traffic-log-prune.timer", plan.from_bundle)
+        self.assertIn("/etc/systemd/system/haprion-traffic-log-prune.timer", plan.from_package)
 
     def test_rollback_copies_of_the_old_node_stay_behind(self) -> None:
         files = dict(FILES)
@@ -143,15 +143,15 @@ class ANewVm(Planning):
         plan = restore_plan.build(self.source(files), "new_vm", TARGET)
         self.assertIn("/etc/haprion/node.conf.replaced-20260101-120000", plan.left_out)
 
-    def test_an_operators_own_script_is_not_taken_for_the_bundles(self) -> None:
+    def test_an_operators_own_script_is_not_taken_for_the_packages(self) -> None:
         files = dict(FILES)
-        files["/usr/local/sbin/site-report"] = ("#!/bin/sh\n", 0o755)
+        files["/usr/sbin/site-report"] = ("#!/bin/sh\n", 0o755)
         work = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, work)
-        archive = build(work, files=files, extra_paths=("/usr/local/sbin/site-report",))
+        archive = build(work, files=files, extra_paths=("/usr/sbin/site-report",))
         plan = restore_plan.build(restore_source.read(archive), "new_vm", TARGET)
-        self.assertIn("/usr/local/sbin/site-report", {file.path for file in plan.files})
-        self.assertNotIn("/usr/local/sbin/site-report", plan.from_bundle)
+        self.assertIn("/usr/sbin/site-report", {file.path for file in plan.files})
+        self.assertNotIn("/usr/sbin/site-report", plan.from_package)
 
     def test_parents_are_never_planned_as_files(self) -> None:
         plan = restore_plan.build(self.source(), "new_vm", TARGET)
@@ -447,7 +447,7 @@ class TheBundlesFilesAreTheEnableScriptsOwn(unittest.TestCase):
         text = (BASE / "install/node/haprion-traffic-log-enable").read_text(encoding="utf-8")
         written = set(re.findall(r'^[A-Z_]+="(/etc/[^"]+)"$', text, re.MULTILINE))
         in_plan = {
-            path for path in restore_plan.FROM_BUNDLE if not path.startswith("/etc/haprion/")
+            path for path in restore_plan.FROM_PACKAGE if not path.startswith("/etc/haprion/")
         }
         self.assertEqual(written, in_plan)
 

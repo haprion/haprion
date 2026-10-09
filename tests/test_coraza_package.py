@@ -18,8 +18,6 @@ TOOLS = Path(__file__).resolve().parents[1] / "tools"
 
 
 def tool() -> Any:
-    if str(TOOLS) not in sys.path:
-        sys.path.insert(0, str(TOOLS))  # the builder imports debian_package beside it
     spec = importlib.util.spec_from_file_location(
         "build_coraza_package", TOOLS / "build-coraza-package.py"
     )

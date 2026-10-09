@@ -1441,8 +1441,9 @@ key in the collector's own `known_hosts`. `haprion-node` and the Nodes card unde
 all six as one, through the same root helper:
 
 ```bash
-# On the node: step 4 prints an enrollment block - one line starting with haproxy-node-v1:
-sudo ./04-node-prepare answers.env alpha
+# On the node: step 4 prints an enrollment block - one line starting with haproxy-node-v1
+# (tools/install-node-package runs it, or with the package installed:)
+sudo /usr/share/haprion-node/install/04-node-prepare answers.env alpha
 
 # On the management host, the block on stdin:
 sudo haprion-node add -c alpha --host node-c.example.com < block
@@ -1491,7 +1492,7 @@ node:
 
 ```bash
 # On each of the two nodes: step 4 prints its enrollment block for the new cluster.
-sudo ./04-node-prepare answers.env beta
+sudo /usr/share/haprion-node/install/04-node-prepare answers.env beta
 
 # On the management host, both blocks on stdin in the order of the --host options:
 sudo haprion-cluster add -c beta --display-name Beta --vip 203.0.113.10 \
@@ -1768,9 +1769,9 @@ even when nothing on the management host ever runs again.
 host key fingerprint; the name and address the VM will have; every file written, and every archived
 file that is not - the VM's own in a directory it shares with the image, the archive's APT sources,
 and old `.replaced-` copies (kept on the node, 30 days - see
-[What a node keeps and for how long](#what-a-node-keeps-and-for-how-long)); the node bundle that will prepare the node; every account with its IDs
+[What a node keeps and for how long](#what-a-node-keeps-and-for-how-long)); the node package that will prepare the node; every account with its IDs
 and groups; and, in test mode, every rewritten field with its old and new value. It stops on: this
-manager's CLI release carrying no node bundle, or one that does not verify (see
+manager's CLI release carrying no node package, or one that does not verify (see
 [Part 3](#part-3--the-versioned-cli-release)); a `node.conf` in the archive that cannot be read back
 into answers; a fingerprint that is not the one
 given (nothing is sent at all); an archive that is not of the chosen node; a target that is not
@@ -1799,9 +1800,10 @@ written.
    `04-node-prepare` writes comes back, and `sshd_config` and its drop-ins stay the VM's own. An
    operator's own file there comes back when the node names it in `EXTRA_BACKUP_PATHS`. Then the
    HAProxy release layout, the services, the hostname, and sshd is reloaded. Last, the node
-   bundle of the manager's own CLI release runs its `04-node-prepare` on the VM, with an answers
-   file read back out of the archive's `node.conf` (and the manager's publish root): it writes the
-   node scripts and `node-installation.json` of the running release, not the archive's, the sudo
+   package of the manager's own CLI release is installed on the VM and its `04-node-prepare` runs,
+   with an answers file read back out of the archive's `node.conf` (and the manager's publish
+   root): the package puts the node scripts of the running release in place, not the archive's,
+   and the step writes `node-installation.json`, the sudo
    rules, the traffic-log directory, and re-renders `node.conf` - to the same bytes, which the
    preview's answers are tested against. If the archive shows the traffic log was on, the bundle's
    `haprion-traffic-log-enable` turns it on again, prune timer included.
@@ -1842,15 +1844,16 @@ and the three steps are the same; over the node itself, what differs:
   quarantine, and whether the network differs;
 - `run` refuses when that backup failed, unless `--backup-failed-ok`, and when the node may hold
   the VIP while its neighbour is not healthy, unless `--break-traffic` - which is what it says;
-- before its first write the run copies every path it or the node bundle may change to
+- before its first write the run copies every path it or `04-node-prepare` may change to
   `/var/lib/haprion-restore/<run>/before/` on the node, then stops keepalived, so the VIP moves to
   the neighbour before anything changes. The copy stays 30 days (see
   [What a node keeps and for how long](#what-a-node-keeps-and-for-how-long));
 - the node's software is its own: no repository file is written, and only a product package the
-  node lacks is installed (`apt-get install --no-upgrade`, from the node's own sources). The HAProxy
-  releases and `current` are not touched;
+  node lacks is installed (`apt-get install --no-upgrade`, from the node's own sources). The node
+  package is not replaced - the node's own `04-node-prepare` runs, and a node without the package
+  is refused before anything is written. The HAProxy releases and `current` are not touched;
 - what `/etc/haprion` and `/etc/systemd/system/haproxy.service.d` hold beyond the archive
-  and the node bundle goes to quarantine on the node - not deleted by the run, and removed with the
+  and what `04-node-prepare` writes goes to quarantine on the node - not deleted by the run, and removed with the
   run's directory after 30 days ([What a node keeps and for how long](#what-a-node-keeps-and-for-how-long)); the directories the product
   shares with the OS image keep the image's files, as for a new VM;
 - Netplan is written only when the node's differs from the archive's; otherwise the network
@@ -1877,13 +1880,13 @@ for this. A node that is never reinstalled or restored keeps its copies until it
 
 | What | Where | Made by | Removed |
 |---|---|---|---|
-| rollback copy of a file an installer replaced | `<file>.replaced-<yyyymmdd-hhmmss>` beside the file, e.g. `/etc/haprion/node.conf.replaced-20260924-200115`, `/usr/local/sbin/haprion-pull-deploy.replaced-…` | `04-node-prepare` (and so every node bundle installation and every restore) | when the same file is next installed, if the time in its name is more than 30 days old. **The newest copy of each file always stays, however old.** |
+| rollback copy of a file an installer replaced | `<file>.replaced-<yyyymmdd-hhmmss>` beside the file, e.g. `/etc/haprion/node.conf.replaced-20260924-200115` | `04-node-prepare` (and so every node package installation and every restore) | when the same file is next installed, if the time in its name is more than 30 days old. **The newest copy of each file always stays, however old.** |
 | a configuration release: everything a deploy installed - `haproxy.cfg`, `conf.d/`, the certificate lists, `waf/`, `dns/`, `keepalived/` | `/etc/haproxy/releases/<yyyymmdd-hhmmss>/` | `haprion-pull-deploy`, once per deploy that changed something | after a deploy that completed, all but the newest 10. **The release `current` names, the one running before that deploy and one an interrupted deploy left behind always stay.** `KEEP_RELEASES` in the script; each removal is logged `pruned <path>`. |
-| a restore run's directory: the `before/` copy an overwrite took, its `quarantine/`, and the node bundle it installed | `/var/lib/haprion-restore/<run>/` | `haprion-node-restore` (the terminal or the web page) | when a later restore run begins writing to the same node, if the run is more than 30 days old (by the date in its ID, `r<yymmdd>-…`). The current run is never removed. |
+| a restore run's directory: the `before/` copy an overwrite took, its `quarantine/`, and the node package it installed | `/var/lib/haprion-restore/<run>/` | `haprion-node-restore` (the terminal or the web page) | when a later restore run begins writing to the same node, if the run is more than 30 days old (by the date in its ID, `r<yymmdd>-…`). The current run is never removed. |
 
 Why 30 days: a copy is for the days after a change, until the change has proved itself. After
-that, the nightly state backup on the management host is the node's history and a node bundle
-rollback is done with the previous bundle (see [node bundle rollback](#rollback)), not with these copies. The
+that, the nightly state backup on the management host is the node's history and a node package
+rollback is done with the previous package (see [node package rollback](#rollback)), not with these copies. The
 age of a `.replaced-` copy is the time in its name, not its modification time: `cp -a` keeps the
 original's.
 
@@ -2285,7 +2288,7 @@ git show --stat <commit>
 |---|---|
 | `src/haproxy_mgmt/`, `tools/`, `install/` | the CLI wheel — [Part 3](#part-3--the-versioned-cli-release) |
 | `ui/` | the platform, `update-platform-release`, development then production |
-| `install/node/`, node scripts | the node bundle, per [Part 2](#part-2--the-nodes) |
+| `install/node/`, node scripts | the node package, per [Part 2](#part-2--the-nodes) |
 | more than one of those | **the CLI wheel first**, then the platform, then the nodes |
 
 **The CLI wheel goes first when both move**, and the order is not a preference.
@@ -3548,12 +3551,13 @@ for the full contract and the negative tests that prove it.
 
 ### Part 2 — the nodes
 
-The scripts are in [`install/node/`](../install/node/) and are installed by
-[`04-node-prepare`](../install/04-node-prepare), which also creates the accounts, the release
-layout and the sudo rules.
+The scripts are in [`install/node/`](../install/node/) and reach a node in the
+[`haprion-node` package](#installing-and-changing-node-scripts), which puts them in `/usr/sbin` and
+[`04-node-prepare`](../install/04-node-prepare) beside its library; that step creates the
+accounts, the release layout and the sudo rules.
 
-Later updates use the [versioned node bundle](#installing-and-changing-node-scripts). The bundle runs the same idempotent
-step, but do not mistake that for a script-only copy: the step also reconciles service accounts,
+Every installation and update runs the same idempotent step, but do not mistake an update for a
+script-only copy: the step also reconciles service accounts,
 directory ownership and modes, `node.conf`, sudoers, the HAProxy baseline and the complete script
 attestation. Read every reported `created`, `fixed`, `written` and `installed` line on the pilot
 before another node is touched.
@@ -3645,9 +3649,9 @@ vrrp_instance alpha {
         192.0.2.10                # the VIP
     }
 
-    notify_master "/usr/local/sbin/haprion-keepalived-state MASTER"
-    notify_backup "/usr/local/sbin/haprion-keepalived-state BACKUP"
-    notify_fault  "/usr/local/sbin/haprion-keepalived-state FAULT"
+    notify_master "/usr/sbin/haprion-keepalived-state MASTER"
+    notify_backup "/usr/sbin/haprion-keepalived-state BACKUP"
+    notify_fault  "/usr/sbin/haprion-keepalived-state FAULT"
 }
 ```
 
@@ -3723,7 +3727,7 @@ are made root's on the next run of step 4. Edit `authorized_keys` with `sudo`.
 
 #### Node scripts
 
-All root-owned under `/usr/local/sbin`, not group-writable:
+All root-owned under `/usr/sbin`, installed by the `haprion-node` package, not group-writable:
 
 | Script | What it does |
 |---|---|
@@ -3835,44 +3839,42 @@ There is no unattended management-identity path for this, by design. Every manag
 a forced command; none of them can copy a file. Installing or changing a node script crosses an
 administrator's own interactive SSH login and escalates with `sudo` on the node.
 
-The repository does automate everything around that interactive boundary. A node release is a
-minimal tar archive containing only `04-node-prepare`, `lib.sh`, the ten attested node scripts and
-an internal manifest. Platform installers, examples, caches and the source tree do not belong in
-it. Environment answers remain a separate root-owned input; putting them in the code artifact
-would make two installations of the same commit produce different releases.
+The repository does automate everything around that interactive boundary. A node release is one
+Debian package, `haprion-node` (`Architecture: all`): the node scripts in `/usr/sbin`, owned by
+dpkg, and `04-node-prepare` with the library it sources under `/usr/share/haprion-node/install/`.
+Platform installers, examples, caches and the source tree do not belong in it. Environment answers
+remain a separate root-owned input; putting them in the code artifact would make two installations
+of the same commit produce different packages.
 
-##### Build and verify the bundle
+##### Build and verify the package
 
 Use a clean, committed source tree that has passed the complete repository gate. Build into a
 protected staging directory outside the repository:
 
 ```bash
-commit="$(git rev-parse --short=12 HEAD)"
-bundle="/path/to/protected/staging/haprion-node-${commit}.tar.gz"
-
-tools/node-bundle.py build \
+tools/node-package.py build \
   --source "$(pwd)" \
-  --output "$bundle"
+  --output-dir /path/to/protected/staging
 ```
 
-The builder refuses a dirty tree, an existing output file, a missing payload file, a symlink and an
-unexpected Git file mode. It reads payload bytes and modes from the commit rather than the working
-tree, then prints the full source commit, release name and SHA-256. Record the digest beside the
-artifact; do not derive trust from a digest received with an untrusted copy.
+The builder refuses a dirty tree, an existing output file, a missing payload file and an unexpected
+Git file mode. It reads payload bytes and modes from the commit rather than the working tree, then
+prints the package's path, its version - `<version>+git<commit time>.<commit>`, so a later commit
+sorts later - the full commit and the SHA-256. Record the digest beside the artifact; do not derive
+trust from a digest received with an untrusted copy.
 
-The archive is deterministic: building the same commit twice produces identical bytes. Its
-`MANIFEST.json` binds every path, mode and content digest to the full commit. Verify a retained or
-transferred copy without extracting it:
+The package is deterministic: building the same commit twice produces identical bytes. Verify a
+retained or transferred copy:
 
 ```bash
-tools/node-bundle.py verify \
-  --bundle "$bundle" \
+tools/node-package.py verify \
+  --package /path/to/protected/staging/haprion-node_0.1.0+git20261009120000.0123456789ab_all.deb \
   --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-Verification rejects an external digest mismatch, an unsafe or duplicate path, a symlink, a
-special file, an unmanifested member, changed bytes or modes, and files or archives over their hard
-size limits.
+Verification rejects an external digest mismatch, another package or architecture, a version this
+project does not build, a file that is not one of the node package's or has another mode or owner,
+and a package over its size limit.
 
 ##### Preflight and install one node
 
@@ -3884,30 +3886,33 @@ haprion-status -c alpha
 ```
 
 Run the transport as your administrator account, never as root. All paths must be absolute. The dry
-run verifies the bundle locally, opens the operator's normal host-key-checked SSH path, checks the
+run verifies the package locally, opens the operator's normal host-key-checked SSH path, checks the
 node's cluster and prerequisites, and writes neither a backup nor a staging file:
 
 ```bash
-tools/install-node-bundle --dry-run \
-  --bundle /path/to/protected/staging/haprion-node-0123456789ab.tar.gz \
+tools/install-node-package --dry-run \
+  --node-package /path/to/protected/staging/haprion-node_0.1.0+git20261009120000.0123456789ab_all.deb \
   --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --answers /path/to/answers.env \
   --node node-b \
   --cluster alpha
 ```
 
-Remove `--dry-run` to install. Rolling one bundle across a cluster's pair, give the first node
+Remove `--dry-run` to install. Rolling one package across a cluster's pair, give the first node
 `--skip-backup-after` and the second `--skip-backup-before`: the state backup
 (`haprion-state-backup -c <cluster>` from the installed release) archives both nodes of that
 cluster, and one before the first write and one after the last is the rule, not one pair per
 node. Another cluster's roll-out is its own pair of backups. The tool:
 
-1. verifies the external digest and complete internal manifest before contacting the node;
+1. verifies the external digest and the package's contents before contacting the node;
 2. takes a state backup of the cluster before the first remote write;
 3. uses one multiplexed, strictly host-key-checked SSH session for staging and installation;
-4. copies only the bundle and the separate answers file to a random mode-700 directory under
-   `/tmp`, then verifies the bundle digest again on the node;
-5. runs the bundle's own `04-node-prepare` through the operator's interactive `sudo` path;
+4. copies only the package and the separate answers file to a random mode-700 directory under
+   `/tmp`, then verifies the package digest again on the node;
+5. installs the package with apt - without recommended packages, so keepalived stays the operator's
+   choice - and runs its `/usr/share/haprion-node/install/04-node-prepare` through the operator's
+   interactive `sudo` path. That step checks the package's files with `dpkg --verify` and stops on
+   a script edited by hand;
 6. takes another state backup and runs `haprion-status` for the cluster; and
 7. removes its remote and local staging automatically. A cleanup failure is a visible warning that
    names the exact directory; remove only that named directory after inspecting it.
@@ -3930,9 +3935,11 @@ restart cannot recover a line emitted while rsyslog was down.
 
 ##### Rollback
 
-Keep the previous node bundle and its recorded SHA-256. A code rollback is the same verified
-installation command with that retained bundle; there is no special path that bypasses manifest or
-hash checks. Re-run the functional command and `haprion-status` afterwards.
+Keep the previous node package and its recorded SHA-256. A code rollback is the same verified
+installation command with that retained package and `--downgrade`, which lets apt put the older
+version in place; without it apt refuses, so the wrong file never rolls a node back by accident.
+There is no special path that bypasses the digest or contents checks. Re-run the functional
+command and `haprion-status` afterwards.
 
 State backups are taken on both sides of every update so account, policy and configuration changes
 also have a recovery point. They are not restored automatically: an automatic whole-node restore
@@ -3961,29 +3968,29 @@ directory outside the repository and record its SHA-256 digest:
 
 ```bash
 python -m build --wheel --outdir /path/to/protected/staging
-sha256sum /path/to/protected/staging/haproxy_manager-*.whl
+sha256sum /path/to/protected/staging/haprion-*.whl
 ```
 
-Build the node bundle from the same commit, as in [Installing and changing node scripts](#installing-and-changing-node-scripts),
-and record its digest too. The release carries it: a node restore installs exactly the bundle of
-the release that runs it, and a rollback of the CLI takes the bundle back with it.
+Build the node package from the same commit, as in [Installing and changing node scripts](#installing-and-changing-node-scripts),
+and record its digest too. The release carries it: a node restore installs exactly the package of
+the release that runs it, and a rollback of the CLI takes the package back with it.
 
-Install the absolute wheel and bundle paths with the digests printed by the previous commands:
+Install the absolute wheel and package paths with the digests printed by the previous commands:
 
 ```bash
 sudo /usr/bin/python3 tools/install-release.py \
-  --wheel /path/to/protected/staging/haproxy_manager-0.1.0-py3-none-any.whl \
+  --wheel /path/to/protected/staging/haprion-0.1.0-py3-none-any.whl \
   --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --node-bundle /path/to/protected/staging/haprion-node-0123456789ab.tar.gz \
-  --node-bundle-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+  --node-package /path/to/protected/staging/haprion-node_0.1.0+git20261009120000.0123456789ab_all.deb \
+  --node-package-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
 ```
 
-The bundle is verified by the new release's own verifier before anything is activated, copied
-into the release as `node-bundle.tar.gz` and recorded in `INSTALLATION.json` with its commit and
-digest. The two bundle arguments are optional so a wheel from before them stays installable for
-rollback; a release without a bundle refuses to restore a node and says why. A release is not
-changed in place: installing an already installed wheel with another bundle, or without the one it
-has, is refused.
+The package is verified by the new release's own verifier before anything is activated, copied
+into the release as `haprion-node.deb` and recorded in `INSTALLATION.json` with its version, commit
+and digest. The two package arguments are optional so a wheel installed without them stays
+installable for rollback; a release without a package refuses to restore a node and says why. A
+release is not changed in place: installing an already installed wheel with another package, or
+without the one it has, is refused.
 
 The installer fails closed unless it runs as root and the supplied digest matches. It also rejects
 unsafe wheel members and entry points, verifies the runtime baseline (including the distribution's
@@ -3995,7 +4002,7 @@ PyYAML, PyNaCl and psycopg packages) and imports, then installs:
 └── releases/
     └── <version>-<wheel-hash-prefix>/
         ├── INSTALLATION.json
-        ├── node-bundle.tar.gz
+        ├── haprion-node.deb
         ├── bin/
         └── lib/
 ```
@@ -4170,7 +4177,7 @@ sudo ./check-compatibility /path/to/answers.env
 The running UI release supplies the accepted database revisions and minimum CLI
 and node APIs. The command reports both release IDs, queries `alembic_version`,
 checks that worker, poller and web really execute from `current`, compares the
-active sudo rules with the helpers the UI requires, and reads each node bundle
+active sudo rules with the helpers the UI requires, and reads each node's installation
 through the existing status helper. It ends in one `COMPATIBLE` or `INCOMPATIBLE`
 verdict and changes no file, row, service or HAProxy release.
 

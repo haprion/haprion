@@ -21,8 +21,8 @@
 
 set -Eeuo pipefail
 
-PULL_HELPER="/usr/local/sbin/haprion-cert-pull"
-REMOVE_HELPER="/usr/local/sbin/haprion-cert-remove"
+PULL_HELPER="/usr/sbin/haprion-cert-pull"
+REMOVE_HELPER="/usr/sbin/haprion-cert-remove"
 MAX_CERTIFICATES=32
 
 # The same pattern the manager validates cluster configuration with. No path

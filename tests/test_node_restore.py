@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import cluster_lock, node_bundle, node_restore, restore_plan, restore_source
+from haproxy_mgmt import cluster_lock, node_package, node_restore, restore_plan, restore_source
 from haproxy_mgmt.cli import node_restore as cli
 from haproxy_mgmt.config import Node
 from haproxy_mgmt.node_restore import Clock, Request, RestoreError
@@ -89,11 +89,11 @@ class RestoreTest(unittest.TestCase):
         FakeSession.trusted = {}
         FakeSession.answers = {"inspect": dict(INSPECTED)}
         self.silent = {"192.0.2.29", "192.0.2.21"}
-        carried = work / "node-bundle.tar.gz"
-        carried.write_bytes(b"the release's node bundle")
-        self.bundle: node_bundle.ReleaseBundle | None = node_bundle.ReleaseBundle(
+        carried = work / "haprion-node.deb"
+        carried.write_bytes(b"the release's node package")
+        self.package: node_package.ReleasePackage | None = node_package.ReleasePackage(
             path=carried,
-            root="haprion-node-0123456789ab",
+            version="0.1.0+git20261009120000.0123456789ab",
             commit="0123456789ab" + "0" * 28,
             sha256=hashlib.sha256(carried.read_bytes()).hexdigest(),
         )
@@ -127,7 +127,7 @@ class RestoreTest(unittest.TestCase):
             answering=self.answering,
             progress=io.StringIO(),
             session_for=FakeSession,  # type: ignore[arg-type]
-            bundle_of=lambda: self.bundle,
+            package_of=lambda: self.package,
             **kwargs,
         )
 
@@ -145,7 +145,7 @@ class RestoreTest(unittest.TestCase):
             clock=clock,
             session_for=FakeSession,  # type: ignore[arg-type]
             publish_root=PUBLISH_ROOT,
-            bundle_of=lambda: self.bundle,
+            package_of=lambda: self.package,
             lock_root=self.root / "locks",
             **kwargs,
         )
@@ -231,29 +231,30 @@ class Preview(RestoreTest):
         self.assertEqual(known, f"192.0.2.120 {TARGET_KEY}\n")
         self.assertEqual([c[1]["op"] for c in FakeSession.calls], ["inspect"])
 
-    def test_the_preview_names_the_bundle_that_will_prepare_the_node(self) -> None:
+    def test_the_preview_names_the_package_that_will_prepare_the_node(self) -> None:
         run = self.prepare()
         summary = self.preview(run)
-        assert self.bundle is not None
+        assert self.package is not None
         self.assertEqual(
-            summary["node_bundle"], {"root": self.bundle.root, "commit": self.bundle.commit}
+            summary["node_package"],
+            {"version": self.package.version, "commit": self.package.commit},
         )
-        self.assertIn("/usr/local/sbin/haprion-pull-deploy", summary["plan"]["from_bundle"])
+        self.assertIn("/usr/sbin/haprion-pull-deploy", summary["plan"]["from_package"])
 
-    def test_a_release_without_a_node_bundle_stops_the_restore(self) -> None:
-        """B180: a CLI release installed without --node-bundle cannot prepare a node."""
+    def test_a_release_without_a_node_package_stops_the_restore(self) -> None:
+        """B180: a CLI release installed without --node-package cannot prepare a node."""
 
         run = self.prepare()
-        self.bundle = None
+        self.package = None
         summary = self.preview(run)
-        self.assertIn("carries no node bundle", " ".join(summary["problems"]))
-        self.assertNotIn("node_bundle", summary)
+        self.assertIn("carries no node package", " ".join(summary["problems"]))
+        self.assertNotIn("node_package", summary)
 
-    def test_a_bundle_that_fails_verification_stops_the_restore(self) -> None:
+    def test_a_package_that_fails_verification_stops_the_restore(self) -> None:
         run = self.prepare()
 
-        def broken() -> node_bundle.ReleaseBundle:
-            raise node_bundle.BundleError("bundle SHA-256 does not match the expected value")
+        def broken() -> node_package.ReleasePackage:
+            raise node_package.PackageError("package SHA-256 does not match the expected value")
 
         summary = node_restore.preview(
             self.root,
@@ -267,9 +268,9 @@ class Preview(RestoreTest):
             answering=self.answering,
             progress=io.StringIO(),
             session_for=FakeSession,  # type: ignore[arg-type]
-            bundle_of=broken,
+            package_of=broken,
         )
-        self.assertIn("node bundle cannot be used", " ".join(summary["problems"]))
+        self.assertIn("node package cannot be used", " ".join(summary["problems"]))
 
     def test_an_unsupported_target_is_stopped_and_debian_13_is_not(self) -> None:
         """B178: the target's own release decides, not the archive's."""
@@ -457,23 +458,23 @@ class Run(RestoreTest):
         self.assertNotIn("$y$", header["answers"])
         self.assertNotIn("$y$", (self.root / run / "result.json").read_text())
 
-    def test_apply_carries_the_release_s_bundle_and_answers_derived_from_the_archive(
+    def test_apply_carries_the_release_s_package_and_answers_derived_from_the_archive(
         self,
     ) -> None:
         run = self.previewed()
         self.carry_out(run)
         header, carried = FakeSession.calls[1][1], FakeSession.calls[1][2]
-        assert self.bundle is not None
+        assert self.package is not None
         self.assertEqual(
-            header["node_bundle"], {"root": self.bundle.root, "sha256": self.bundle.sha256}
+            header["node_package"], {"version": self.package.version, "sha256": self.package.sha256}
         )
         self.assertEqual(header["cluster"], "alpha")
         self.assertIn('NODE_PATH_alpha="node-a"', header["answers"])
         self.assertIn(f'PUBLISH_ROOT="{PUBLISH_ROOT}"', header["answers"])
         self.assertFalse(header["traffic_log"])
-        self.assertIn(f"/var/lib/haprion-restore/{run}/node-bundle.tar.gz", members(carried))
-        # The bundle writes these in the running release's version, not the archive's.
-        self.assertFalse(any(path.startswith("/usr/local/sbin/") for path in members(carried)))
+        self.assertIn(f"/var/lib/haprion-restore/{run}/haprion-node.deb", members(carried))
+        # The package writes these in the running release's version, not the archive's.
+        self.assertFalse(any(path.startswith("/usr/sbin/") for path in members(carried)))
         self.assertNotIn("/etc/haprion/node-installation.json", members(carried))
 
     def test_a_change_after_the_preview_refuses_before_writing(self) -> None:
@@ -594,7 +595,7 @@ class Overwrite(RestoreTest):
             answering=self.answering,
             progress=io.StringIO(),
             session_for=FakeSession,  # type: ignore[arg-type]
-            bundle_of=lambda: self.bundle,
+            package_of=lambda: self.package,
             checks=self.checks,
         )
 
@@ -738,7 +739,7 @@ class Overwrite(RestoreTest):
             clock=Clock(now=lambda: float(next(ticks)), sleep=sleep),
             session_for=FakeSession,  # type: ignore[arg-type]
             publish_root=PUBLISH_ROOT,
-            bundle_of=lambda: self.bundle,
+            package_of=lambda: self.package,
             lock_root=self.root / "locks",
             checks=self.checks,
         )

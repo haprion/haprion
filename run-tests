@@ -63,7 +63,7 @@ ruff format --check $python_scripts
 # that sources it rather than in whatever directory the gate was started from.
 shellcheck -x -P SCRIPTDIR "$base/run-checks" "$base/run-tests" "$base/tools/install-actionlint" \
     "$base/tools/install-gitleaks" "$base/tools/install-shellcheck" \
-    "$base/tools/install-node-bundle" \
+    "$base/tools/install-node-package" \
     "$base/tools/run-codeql" "$base/tools/run-gitleaks" \
     "$base/install/lib.sh" "$base/install"/[0-9][0-9]-* \
     "$base/install/platform"/[0-9][0-9]-* "$base/install/platform/migrate" \

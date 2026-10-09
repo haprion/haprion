@@ -4,7 +4,7 @@
 #
 #     sudo ./update-platform-release <answers-file> <source-tree>
 #
-# The CLI and node bundle remain independent installations. This flow checks
+# The CLI and node package remain independent installations. This flow checks
 # them before it changes the database; it never installs either one. The first
 # platform installation still uses the numbered steps in README.md.
 #

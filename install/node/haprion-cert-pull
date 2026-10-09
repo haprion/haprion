@@ -43,7 +43,7 @@ NODE_CONF="/etc/haprion/node.conf"
 # maintenance. A plain `systemctl reload haproxy` would quietly send traffic
 # to a server somebody took out.
 #
-SERVER_STATE="/usr/local/sbin/haprion-server-state"
+SERVER_STATE="/usr/sbin/haprion-server-state"
 
 [[ -r "$NODE_CONF" ]] || {
     echo "ERROR: ${NODE_CONF} is missing. Run install/04-node-prepare." >&2

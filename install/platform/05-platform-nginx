@@ -53,8 +53,8 @@ EOF
 )"
 
 step "The command that owns the certificate"
-install -o root -g root -m 755 bin/haprion-tls /usr/local/sbin/haprion-tls
-log "  installed /usr/local/sbin/haprion-tls"
+[[ -x /usr/sbin/haprion-tls ]] || die "/usr/sbin/haprion-tls is missing; install the haprion-ui package"
+log "  ok       /usr/sbin/haprion-tls"
 
 #
 # The receivers' snippet, included by the site below. Created empty only when
@@ -113,13 +113,13 @@ fi
 step "Certificate"
 if [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]]; then
     log "  ok       a pair is already installed"
-    /usr/local/sbin/haprion-tls show
+    /usr/sbin/haprion-tls show
     # The public copy the site serves at /certdist/manager-ui.pem, for an
     # installation whose pair predates it; a new pair writes its own.
-    /usr/local/sbin/haprion-tls publish
+    /usr/sbin/haprion-tls publish
 else
     log "  none installed - generating a self-signed starting point"
-    /usr/local/sbin/haprion-tls self-signed
+    /usr/sbin/haprion-tls self-signed
 fi
 
 step "Starting"

@@ -33,8 +33,8 @@ step "Where the dumps live"
 ensure_dir "$DUMP_DIR" root:root 700
 
 step "The command"
-install -o root -g root -m 755 bin/haprion-backup /usr/local/sbin/haprion-backup
-log "  installed /usr/local/sbin/haprion-backup"
+[[ -x /usr/sbin/haprion-backup ]] || die "/usr/sbin/haprion-backup is missing; install the haprion-ui package"
+log "  ok       /usr/sbin/haprion-backup"
 
 step "Timers"
 for unit in haprion-backup haprion-restore-check; do
@@ -56,10 +56,10 @@ systemctl list-timers --no-pager --no-legend haprion-backup.timer \
     haprion-restore-check.timer | sed 's/^/  /'
 
 step "Proving it, now rather than at 02:30"
-/usr/local/sbin/haprion-backup dump
+/usr/sbin/haprion-backup dump
 
 step "Proving the dump restores"
-/usr/local/sbin/haprion-backup verify-restore
+/usr/sbin/haprion-backup verify-restore
 
 step "What must not be able to read a dump"
 newest="$(find "$DUMP_DIR" -maxdepth 1 -name '*.dump' -printf '%p\n' | sort -r | head -1)"

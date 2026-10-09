@@ -10,7 +10,7 @@ Type=oneshot
 # Root, because no application role holds delete on any table and none will.
 # The migration role owns the table, and the ident map lets only root be it.
 User=root
-ExecStart=/usr/local/sbin/haprion-retention prune
+ExecStart=/usr/sbin/haprion-retention prune
 # A rollup that quietly stops leaves readers on growing raw history, so a
 # failure is a failed unit rather than a line in a log nobody reads.
 SuccessExitStatus=0

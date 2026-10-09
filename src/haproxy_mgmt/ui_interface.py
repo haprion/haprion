@@ -47,7 +47,7 @@ from haproxy_mgmt.certificates import CertificateError, leaf_block, leaf_fingerp
 from haproxy_mgmt.envelope import new_request_id
 
 UI_TLS_CONFIG = Path("/etc/haprion/ui-tls.conf")
-UI_TLS_COMMAND = Path("/usr/local/sbin/haprion-tls")
+UI_TLS_COMMAND = Path("/usr/sbin/haprion-tls")
 INSTALL_TIMEOUT = 120
 
 #

@@ -2,7 +2,11 @@
 #
 # Prepare, migrate, activate and prove one UI platform release as one update.
 #
-#     sudo ./update-platform-release <answers-file> <source-tree>
+#     sudo ./update-platform-release <release-id>
+#
+# What the haprion-ui package's postinst runs on an upgrade (B266, D2), with
+# the release the package has just unpacked; an operator can run it the same
+# way. It reads no answers file: everything it needs is fixed or in ui.toml.
 #
 # The CLI and node package remain independent installations. This flow checks
 # them before it changes the database; it never installs either one. The first
@@ -14,11 +18,8 @@ cd "$(dirname "$0")"
 source ../lib.sh
 
 need_root
-answers="${1:-}"
-source_tree="${2:-}"
-load_answers "$answers"
-[[ -n "$source_tree" && -d "${source_tree}/ui" ]] \
-    || die "usage: $(basename "$0") <answers-file> <source-tree>"
+release_id="${1:-}"
+[[ -n "$release_id" ]] || die "usage: $(basename "$0") <release-id>"
 
 current="${UI_ROOT}/current"
 [[ -L "$current" ]] || die "${current} is missing; use the numbered first-install steps"
@@ -26,16 +27,8 @@ previous_path="$(readlink -f "$current")"
 [[ -d "$previous_path" && "$previous_path" == "${UI_ROOT}/releases/"* ]] \
     || die "${current} does not point into ${UI_ROOT}/releases"
 previous_id="$(basename "$previous_path")"
-rollback="/usr/local/sbin/haprion-rollback"
-[[ -x "$rollback" ]] || die "${rollback} is missing; reinstall the current UI release first"
-
-if [[ -n "$(git -C "$source_tree" status --porcelain)" ]]; then
-    die "the source tree has uncommitted changes. A release is a commit."
-fi
-commit="$(git -C "$source_tree" rev-parse --short=12 HEAD)"
-version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "${source_tree}/ui/pyproject.toml" | head -1)"
-[[ -n "$version" ]] || die "cannot read the version from ui/pyproject.toml"
-release_id="${version}-${commit}"
+rollback="/usr/sbin/haprion-rollback"
+[[ -x "$rollback" ]] || die "${rollback} is missing; reinstall the haprion-ui package"
 
 #
 # Activation restarts the worker. `install-ui-release` pauses the worker's
@@ -44,22 +37,21 @@ release_id="${version}-${commit}"
 # between and be cut off by it.
 #
 step "Preparing ${release_id}"
-./install-ui-release --prepare "$answers" "$source_tree"
+./install-ui-release --prepare "$release_id"
 
 step "Checking prerequisites and rollback-safe schema transition"
-./check-compatibility "$answers" --release "$release_id" --before-migration
+./check-compatibility --release "$release_id" --before-migration
 
 step "Migrating from the prepared release"
-./migrate "$answers" --release "$release_id"
+./migrate --release "$release_id"
 
 step "Proving database privileges after migration"
 # The privilege contract belongs to the release being installed, like its
-# migrations: a bridge that migrates nothing must be judged by its own list,
-# not by whichever newer checkout holds this wrapper.
-"${source_tree}/install/platform/03-verify" "$answers"
+# migrations, and this copy came in the same package as the release.
+./03-verify
 
 step "Checking the complete candidate before activation"
-./check-compatibility "$answers" --release "$release_id"
+./check-compatibility --release "$release_id"
 
 restore_previous() {
     local active
@@ -70,18 +62,18 @@ restore_previous() {
     fi
     warn "restoring UI release ${previous_id}"
     "$rollback" --to "$previous_id"
-    ./check-compatibility "$answers" \
+    ./check-compatibility \
         || die "release ${previous_id} was restored but the installation is not compatible"
 }
 
 step "Activating ${release_id}"
-if ! ./install-ui-release "$answers" "$source_tree"; then
+if ! ./install-ui-release "$release_id"; then
     restore_previous
     die "activation failed; UI release ${previous_id} was restored"
 fi
 
 step "Proving the running installation"
-if ! ./check-compatibility "$answers"; then
+if ! ./check-compatibility; then
     restore_previous
     die "the final compatibility check failed; UI release ${previous_id} was restored"
 fi
@@ -89,7 +81,7 @@ fi
 #
 # Release retention (B156), only now that the update is proved: a new release
 # has been added, and a failed activation is exactly when nothing may go.
-# Ten stay (RELEASES_KEPT in the answers file overrides) - a release
+# Ten stay (RELEASES_KEPT in the environment overrides) - a release
 # is reproducible from its commit, so an old directory loses nothing Git
 # holds. The release just activated and the one it replaced always stay,
 # whatever their age: the rollback path is never the one pruned. Ordered by

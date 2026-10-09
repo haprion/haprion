@@ -13,7 +13,7 @@ RequiresMountsFor=/var/lib/haprion-ui
 [Service]
 Type=oneshot
 User=root
-ExecStart=/usr/local/sbin/haprion-backup verify-restore
+ExecStart=/usr/sbin/haprion-backup verify-restore
 
 [Install]
 WantedBy=multi-user.target

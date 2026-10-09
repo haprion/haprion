@@ -7,10 +7,11 @@
 # account maps to it except root, so a service that restarts cannot alter the
 # schema even by accident.
 #
-#     sudo ./migrate <answers-file> [--release <release-id>] [alembic arguments]
+#     sudo ./migrate [--release <release-id>] [alembic arguments]
 #
 # With no alembic arguments it runs `upgrade head`. Anything else is passed
-# through, so `sudo ./migrate answers.env current` and `... history` work.
+# through, so `sudo ./migrate current` and `... history` work. Without
+# --release it reads the migrations of the release `current` points at.
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -18,36 +19,28 @@ cd "$(dirname "$0")"
 source ../lib.sh
 
 need_root
-answers="${1:-}"
-load_answers "$answers"
-shift
 
-release_id=""
+release="${UI_ROOT}/current"
 if [[ "${1:-}" == "--release" ]]; then
     [[ -n "${2:-}" ]] || die "--release needs a release id"
     release_id="$2"
     shift 2
     [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
         || die "invalid release id: ${release_id}"
-    migration_root="${UI_ROOT}/releases/${release_id}/migration"
-    [[ -f "${migration_root}/alembic.ini" && -f "${migration_root}/migrations/env.py" ]] \
-        || die "release ${release_id} has no migration bundle; prepare it first"
+    release="${UI_ROOT}/releases/${release_id}"
 fi
+migration_root="${release}/migration"
+[[ -f "${migration_root}/alembic.ini" && -f "${migration_root}/migrations/env.py" ]] \
+    || die "${release} has no migration bundle; reinstall the haprion-ui package"
 
-alembic="${ALEMBIC_BIN:-}"
 #
-# The development environment's alembic, not a release's. alembic is in the
-# `dev` dependency group and a release is built with --no-dev, so no release has
-# ever had one - which is correct: a running service must not be able to alter
-# the schema it reads. This script reads the migrations out of the source tree
-# on purpose, and alembic is the tool that applies them rather than application
-# code that serves requests.
+# The release's own alembic, from migration/lib beside the migrations it
+# applies, run by the release's interpreter. It is not in the services'
+# environment: a running service has no schema tool on its path, and the
+# database role it connects as is what forbids DDL in any case.
 #
-[[ -n "$alembic" ]] || die "set ALEMBIC_BIN to the alembic executable of the
-  development environment, for example /path/to/venv-ui/bin/alembic. It is not
-  in a release: alembic is a development dependency and releases are built with
-  --no-dev."
-[[ -x "$alembic" ]] || die "not executable: ${alembic}"
+[[ -d "${migration_root}/lib/alembic" ]] \
+    || die "${release} carries no migration tool (migration/lib); reinstall the haprion-ui package"
 
 #
 # The role is named in the URL because libpq would otherwise ask for one named
@@ -71,22 +64,13 @@ for role in app_web app_worker app_poller app_collector; do
     fi
 done
 [[ -z "$missing" ]] || die "the contract role(s)${missing} do not exist.
-  Run ./02-platform-database ${answers} first; the migrations grant to them."
+  Run ./02-platform-database first; the migrations grant to them."
 
 if [[ $# -eq 0 ]]; then
     set -- upgrade head
 fi
 
 step "Migrating ${DB_NAME} as ${DB_MIGRATION_ROLE}"
-if [[ -n "$release_id" ]]; then
-    log "  release  ${release_id}"
-    cd "$migration_root"
-    exec "$alembic" -c alembic.ini "$@"
-fi
-
-# Compatibility path for an installation made before releases carried their
-# migrations. The coordinated update path always supplies --release; retain
-# this only so an existing installation can reach its first bundled release.
-warn "reading migrations from the source tree; use --release after preparing a bundled release"
-cd ../../ui
-exec "$alembic" "$@"
+log "  release  $(basename "$(readlink -f "$release")")"
+cd "$migration_root"
+PYTHONPATH="${migration_root}/lib" exec "${release}/venv/bin/python" -m alembic -c alembic.ini "$@"

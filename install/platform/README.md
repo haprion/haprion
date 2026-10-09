@@ -5,28 +5,32 @@ separate from the five CLI steps one directory up, and deliberately so: the CLI 
 and installs and runs without any of this. A management host that only ever uses
 the command line never needs the platform at all.
 
-Run them after the CLI installation, with the same answers file:
+They come with the `haprion-ui` package, under
+`/usr/share/haprion-ui/install/platform/`, and the package unpacks its release
+under `/opt/haprion-ui/releases/<release-id>` (the id is printed when it is
+installed). Run them after the CLI installation, with the same answers file:
 
 ```bash
-sudo ./01-platform-prepare ../answers.env
-sudo ./02-platform-database ../answers.env
-sudo ./install-ui-release --prepare ../answers.env /path/to/source-tree
-sudo ./migrate ../answers.env --release <release-id>
-sudo ./03-verify ../answers.env
-sudo ./check-compatibility ../answers.env --release <release-id>
-sudo ./install-ui-release ../answers.env /path/to/source-tree
-sudo ./04-platform-service ../answers.env
-sudo ./05-platform-nginx ../answers.env
-sudo ./check-compatibility ../answers.env
+sudo apt install ./haprion-ui_<version>_amd64.deb
+cd /usr/share/haprion-ui/install/platform
+sudo ./01-platform-prepare /path/to/answers.env
+sudo ./02-platform-database /path/to/answers.env
+sudo ./migrate --release <release-id>
+sudo ./03-verify
+sudo ./check-compatibility --release <release-id>
+sudo ./install-ui-release <release-id>
+sudo ./04-platform-service /path/to/answers.env
+sudo ./05-platform-nginx /path/to/answers.env
+sudo ./check-compatibility
 ```
 
 Steps 11, 13, 14 and 15 are optional and come after them:
 
 ```bash
-sudo ./11-platform-retention ../answers.env
-sudo ./13-platform-traffic-collector ../answers.env
-sudo UV_BIN=/path/to/uv ./14-platform-certbot ../answers.env /path/to/source-tree
-sudo ./15-platform-dns-keys ../answers.env /path/to/source-tree
+sudo ./11-platform-retention /path/to/answers.env
+sudo ./13-platform-traffic-collector /path/to/answers.env
+sudo UV_BIN=/path/to/uv ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui
+sudo ./15-platform-dns-keys /path/to/answers.env /usr/share/haprion-ui
 ```
 
 Step 11 keeps the job table bounded. Separate from the backup step because it is
@@ -58,12 +62,17 @@ releases, database revision, actual service processes, exact worker/poller sudo
 rules and every node package. Its verdict uses compatibility levels shipped by
 the running UI rather than requiring unrelated release hashes to be equal.
 
-After the first installation, use the coordinated update command instead of
-running the release and migration helpers separately:
+After the first installation, installing a newer package is the whole update:
+its `postinst` runs the coordinated update command with the release it carries,
+and an operator can run the same command again by hand:
 
 ```bash
-sudo ./update-platform-release ../answers.env /path/to/source-tree
+sudo apt install ./haprion-ui_<version>_amd64.deb
+sudo ./update-platform-release <release-id>
 ```
+
+It reads no answers file. When it fails, the package is left unconfigured and
+the previous release is the one running.
 
 **Which pieces a change releases at all, and in what order, is decided in
 [`docs/user-manual.md` — Releasing a change](../../docs/user-manual.md#releasing-a-change).**
@@ -140,24 +149,16 @@ something a service does when it starts. The migration role owns every object,
 and no operating-system account maps to it except root, so a service that
 restarts cannot alter the schema even by accident.
 
-Run it after installing a release, and only then. The connection is built from
-the answers file, because a role name is deployment data and does not belong in
-the repository.
+Run it after the package has unpacked a release, and only then.
+`./migrate --release <release-id>` reads that release's migrations; without
+`--release` it reads those of the release `current` points at, so the schema
+always comes from a named delivery.
 
-**`ALEMBIC_BIN` and `UV_BIN` are answered in the answers file**, beside every
-other fact about where things are on this machine. They used to be typed on the
-command line each time, which meant getting them wrong each time.
-
-`ALEMBIC_BIN` names the **development** environment's alembic, never a release's:
-alembic is a development dependency and a release is built with `--no-dev`, so no
-release venv contains it - correctly, because a running service must not be able
-to alter the schema it reads. The migration files themselves are copied into the
-prepared release and verified against its commit. `./migrate --release` reads that
-bundle, so the schema cannot accidentally come from a newer checkout. Alembic is
-the tool that applies them rather than application code that serves requests.
-
-An environment variable of either name still overrides the answers file, for the
-one-off case of testing a different version.
+**Alembic travels with the release, outside the services' environment.** It is
+installed under `migration/lib` beside the migrations it applies, from the same
+lock, and run by the release's own interpreter. The services' venv has no
+schema tool on its path; the role a service connects as is what forbids DDL in
+any case.
 
 **Grants live in the migration that creates the table**, named against three
 contract roles — `app_web`, `app_worker`, `app_poller` — and never against a
@@ -187,22 +188,21 @@ be lost with nothing looking wrong.
 
 ## Installing a release
 
-`./install-ui-release --prepare` builds a release without activating it. After
-its migration and candidate compatibility checks, rerun the command without
-`--prepare` to activate that already verified release.
+`./install-ui-release --prepare <release-id>` checks an unpacked release without
+activating it. After its migration and candidate compatibility checks, rerun
+the command without `--prepare` to activate that already verified release.
 
-**A release is a commit.** The installer refuses a source tree with uncommitted
-changes, because a release built from an edited tree is one nobody can
-reproduce — and the moment it is running, "what is in it" has no answer. The
-release is named after the commit, so reading the `current` symlink answers that
-question, and answers it the same way in a year.
+**A release is a commit.** The package is built from one commit
+(`tools/build-ui-package.py`), and the release is named after it, so reading the
+`current` symlink answers "what is running", and answers it the same way in a
+year. Nothing is built on the management host.
 
 The release directory holds a virtual environment with both distributions
 installed non-editably and the matching Alembic environment under `migration/`.
-The runtime cannot invoke Alembic, but an operator can prepare exactly the schema
+The services cannot invoke Alembic, but an operator can prepare exactly the schema
 that the named release expects before moving `current`.
 
-**It is built at its final path, never staged and renamed.** A virtual
+**It is built at its final path**, in a container of the target distribution. A virtual
 environment is not relocatable: every console script carries an absolute shebang
 naming the interpreter at the path it was built in, and `pyvenv.cfg` and the
 activate scripts do the same. Moving it leaves all of them pointing at a
@@ -236,7 +236,7 @@ platform is isolated from the command line, so it never touches HAProxy.
 ## Checking the whole installation
 
 ```bash
-sudo ./check-compatibility ../answers.env
+sudo ./check-compatibility
 ```
 
 The local install steps each prove their own result. This command answers the
@@ -256,7 +256,7 @@ candidate's requirements and omits only the process check, because the processes
 correctly still run the previous release:
 
 ```bash
-sudo ./check-compatibility ../answers.env --release <release-id>
+sudo ./check-compatibility --release <release-id>
 ```
 
 Add `--before-migration` for the earlier prerequisite pass. It checks the current
@@ -460,7 +460,7 @@ The password is typed at a terminal, twice; there is no flag for passing it as
 an argument, because that would put it in the shell history and the process
 list.
 
-`install-ui-release` installs the tool as a shim in `/usr/local/sbin` that
+The package installs the tool as a shim in `/usr/sbin` that
 resolves `current` at every invocation, so an application rollback takes the
 account tool back with it. It reads
 `/etc/haprion/ui-admin.conf`, written by step 2, which names the
@@ -515,7 +515,7 @@ file the interface can read.
 
 ## Step 17 — the OIDC helper
 
-`./17-platform-oidc <answers-file> <source-tree>` prepares sign-in through an
+`./17-platform-oidc <answers-file> /usr/share/haprion-ui` prepares sign-in through an
 OpenID Connect provider (schema `0041`). The web service reaches localhost and
 nothing else, and keeps doing so: every request to the provider goes through
 `/run/haprion/oidc.sock` to `haprion-oidc-helper`, which runs as

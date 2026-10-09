@@ -116,6 +116,15 @@ except Exception as exc:
   back past the release that introduced it."
 fi
 log "  ok       the target accepts the configuration"
+#
+# The port the proof below asks, read the way the target will read it.
+#
+port="$("${releases}/${target}/venv/bin/python" -I -c '
+import sys
+from pathlib import Path
+from haproxy_ui.config import load
+print(load(Path(sys.argv[1])).listen.port)
+' "$CONFIG")"
 
 step "Does the target contain what the installed units start?"
 missing=""
@@ -142,10 +151,9 @@ done
 step "Holding the worker's claims"
 #
 # As a release does (CR-12): the restart below ends the job the worker holds.
-# Installed by install-ui-release since 2026-10-06; older installations go on
-# without it, as they did.
+# Installed beside this command by the haprion-ui package.
 #
-drain=/usr/local/sbin/haprion-drain
+drain=/usr/sbin/haprion-drain
 if [[ -x "$drain" ]]; then
     "$drain" pause --wait "${DRAIN_SECONDS:-900}"
     trap '"$drain" resume || true' EXIT
@@ -163,7 +171,7 @@ systemctl restart "${SERVICES[@]}" || true
 step "Proving the interface answers"
 answered=""
 for _ in $(seq 15); do
-    if answered="$(curl -fsS --max-time 3 http://127.0.0.1:8080/healthz 2>/dev/null)"; then
+    if answered="$(curl -fsS --max-time 3 "http://127.0.0.1:${port}/healthz" 2>/dev/null)"; then
         break
     fi
     answered=""

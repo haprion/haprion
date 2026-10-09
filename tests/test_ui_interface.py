@@ -115,7 +115,7 @@ class Installing(unittest.TestCase):
         return ui_interface.install(
             material,
             config_path=self.config,
-            command=Path("/usr/local/sbin/haprion-tls"),
+            command=Path("/usr/sbin/haprion-tls"),
             run=self.runner,
         )
 
@@ -128,7 +128,7 @@ class Installing(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         argv = self.calls[0]
         self.assertEqual(
-            argv[:4], ["/usr/local/sbin/haprion-tls", "--config", str(self.config), "install"]
+            argv[:4], ["/usr/sbin/haprion-tls", "--config", str(self.config), "install"]
         )
         mode, handed_from = self.handed[0]
         self.assertEqual(mode, 0o600)

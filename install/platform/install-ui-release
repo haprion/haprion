@@ -1,16 +1,18 @@
 #!/bin/bash
 #
-# Build and activate a release of the web interface, or only prepare it.
+# Activate a release of the web interface, or only prepare it.
 #
-#     sudo UV_BIN=/path/to/uv ./install-ui-release [--prepare] <answers-file> <source-tree>
+#     sudo ./install-ui-release [--prepare] <release-id>
 #
-# A release is a commit. The source tree must be a clean checkout, and the
-# release is named after the commit it was built from - so "which code is
-# running" is answerable by reading a symlink, and answerable the same way in a
-# year.
+# The release is the one the haprion-ui package unpacked under
+# /opt/haprion-ui/releases: built from one commit, in a container of this
+# distribution, against this distribution's /usr/bin/python3, and named after
+# that commit - so "which code is running" is answerable by reading a symlink,
+# and answerable the same way in a year. Nothing is built here.
 #
 # The release directory holds the runtime environment and the migrations that
-# prepare its schema. Both are immutable parts of the same named delivery.
+# prepare its schema, with the tool that applies them. All are immutable parts
+# of the same named delivery.
 #
 # `current` is switched only after the new release has imported successfully.
 # It is then restarted and proved through the running service. A release that
@@ -27,182 +29,21 @@ if [[ "${1:-}" == "--prepare" ]]; then
     prepare_only=1
     shift
 fi
-load_answers "${1:-}"
-source_tree="${2:-}"
-[[ -n "$source_tree" ]] \
-    || die "usage: $(basename "$0") [--prepare] <answers-file> <source-tree>"
-[[ -d "${source_tree}/ui" ]] || die "not a source tree: ${source_tree}"
-
-uv="${UV_BIN:-}"
-[[ -n "$uv" && -x "$uv" ]] || die "set UV_BIN to the uv executable"
-
-PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
-[[ -x "$PYTHON_BIN" ]] || die "not executable: ${PYTHON_BIN}"
-
-step "Source tree"
-#
-# Refused rather than warned about. A release built from an edited tree is a
-# release nobody can reproduce, and the moment it is running in production the
-# question "what is in it" has no answer.
-#
-if [[ -n "$(git -C "$source_tree" status --porcelain)" ]]; then
-    die "the source tree has uncommitted changes. A release is a commit."
-fi
-commit="$(git -C "$source_tree" rev-parse --short=12 HEAD)"
-version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "${source_tree}/ui/pyproject.toml" | head -1)"
-[[ -n "$version" ]] || die "cannot read the version from ui/pyproject.toml"
-release_id="${version}-${commit}"
-log "  ok       ${release_id}"
-
+release_id="${1:-}"
+[[ -n "$release_id" ]] || die "usage: $(basename "$0") [--prepare] <release-id>"
+[[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid release id: ${release_id}"
 release="${UI_ROOT}/releases/${release_id}"
 
-step "Building"
-if [[ -d "$release" ]]; then
-    log "  ok       ${release} already exists"
-else
-    #
-    # Built at its final path, not staged and renamed.
-    #
-    # A virtual environment is not relocatable: every console script carries an
-    # absolute shebang naming the interpreter at the path it was built in, and
-    # pyvenv.cfg and the activate scripts do the same. Building somewhere else
-    # and moving it leaves each of those pointing at a directory that no longer
-    # exists - which surfaces as the service failing to exec a program that is
-    # plainly there.
-    #
-    # Nothing is lost by dropping the staging step. The switch that has to be
-    # atomic is the `current` symlink, and that happens further down, after the
-    # release has been proved. A half-built directory here is removed on the way
-    # out and was never current.
-    #
-    trap 'rm -rf -- "$release"' EXIT
-    #
-    # --locked so the lockfile decides, and a stale lockfile fails instead of
-    # being refreshed underneath a release. --no-dev leaves the test and lint
-    # tooling out of something that only has to run. --no-editable so the
-    # installed code is a copy rather than a pointer into a working tree that
-    # can change after installation.
-    #
-    #
-    # --python-preference only-system, and the system interpreter named. Left to
-    # itself uv builds the environment against its OWN downloaded Python, which
-    # lives under the home directory of whoever ran the build - and a release
-    # that depends on an interpreter in a developer's home is not a release. It
-    # also fails in a way that takes a while to read: ProtectHome hides /home
-    # from the service, so exec reports the interpreter as not found.
-    #
-    #
-    # --refresh-package for the two local distributions, and only those. uv
-    # caches a built wheel per version, and both of these stay at 0.1.0 while
-    # their contents change with every commit - so without this the build
-    # happily reuses an older wheel and produces a release directory named after
-    # a commit it does not contain. Measured on 2026-08-28, when a one-line
-    # change to the account tool was missing from the release built for it.
-    #
-    # Third-party wheels keep their cache: their version is their content.
-    #
-    # The staging trees are cleared, because --refresh-package is not enough
-    # on its own. setuptools copies the package into build/lib and never removes
-    # a file that has since disappeared from the source, so a commit that DELETES
-    # a module produces a wheel still carrying it - rebuilt faithfully from stale
-    # staging. Measured on 2026-08-29, on the first commit here to delete one.
-    #
-    # They are cleared afterwards as well. This script runs as root, so the
-    # trees setuptools recreates are root-owned - inside the maintainer's own
-    # checkout, where the next unprivileged build cannot delete them and fails
-    # on a permission error that says nothing about where it came from. The
-    # trees are build inputs, not outputs, so removing them costs nothing.
-    #
-    clear_staging() { rm -rf -- "${source_tree}/ui/build" "${source_tree}/build"; }
-    clear_staging
-    ( cd "${source_tree}/ui" \
-      && UV_PROJECT_ENVIRONMENT="${release}/venv" "$uv" sync --locked --no-dev \
-             --no-editable --python "$PYTHON_BIN" --python-preference only-system \
-             --refresh-package haprion-ui --refresh-package haprion )
-    clear_staging
-
-    #
-    # Migrations belong to the release they prepare, not to whichever checkout
-    # happens to be on disk when an operator runs them. Alembic itself remains
-    # outside the runtime environment: services still have neither the tool nor
-    # the database identity required to alter the schema.
-    #
-    migration="${release}/migration"
-    install -d -m 750 "$migration"
-    install -m 640 "${source_tree}/ui/alembic.ini" "${migration}/alembic.ini"
-    while IFS= read -r -d '' file; do
-        relative="${file#"${source_tree}"/ui/}"
-        install -D -m 640 "$file" "${migration}/${relative}"
-    done < <(find "${source_tree}/ui/migrations" -type f \
-        -not -path '*/__pycache__/*' -print0)
-
-    trap - EXIT
-    log "  built    ${release}"
-fi
-
+step "The release"
 #
-# Asked rather than assumed, because the failure this catches is silent: a
-# release whose name promises a commit it does not contain looks completely
-# normal from the outside, and the question "what is running" then has a
-# confident wrong answer. Cheap to check, expensive to debug later.
+# Each part checked by name, because a release unpacked from a damaged or
+# older archive fails later, somewhere less legible: a migration bundle without
+# its tool says nothing until the update is half-way through.
 #
-step "Proving the release is the commit"
-tree_digest() {
-    ( cd "$1" && find . -type f \
-        \( -name '*.py' -o -name '*.html' -o -name '*.css' -o -name '*.js' -o -name '*.json' \) \
-        -not -path '*/__pycache__/*' -printf '%P\n' \
-      | LC_ALL=C sort \
-      | while read -r file; do printf '%s ' "$file"; sha256sum "$file" | cut -d' ' -f1; done \
-      | sha256sum | cut -d' ' -f1 )
-}
-#
-# Both distributions, not just the interface. They are built from the same
-# source tree by the same command and share every way of going stale, and a
-# check that covers one of them says nothing about the other.
-#
-for package in haproxy_ui haproxy_mgmt; do
-    case "$package" in
-        haproxy_ui) source_package="${source_tree}/ui/src/${package}" ;;
-        *)          source_package="${source_tree}/src/${package}" ;;
-    esac
-    installed="$(echo "${release}/venv/lib/"*"/site-packages/${package}")"
-    [[ -d "$installed" ]] || die "the release contains no ${package} package"
-    if [[ "$(tree_digest "$source_package")" != "$(tree_digest "$installed")" ]]; then
-        rm -rf -- "$release"
-        die "the built release does not match ${source_package} at ${commit}.
-  The half-built release has been removed. The build reused something cached:
-  check that ${source_tree}/build and ${source_tree}/ui/build were cleared, since
-  setuptools staging keeps a file the source has deleted."
-    fi
-    log "  ok       ${package} matches the source tree at ${commit}"
+for part in venv/bin/python migration/alembic.ini migration/migrations/env.py migration/lib/alembic; do
+    [[ -e "${release}/${part}" ]] || die "${release} has no ${part}; reinstall the haprion-ui package"
 done
-
-
-# The migration bundle is release material too. Include every file rather than
-# only Python: script.py.mako is needed by Alembic even though normal upgrades
-# do not create a revision, and the ini file decides where the versions live.
-bundle_digest() {
-    ( cd "$1" && find . -type f -not -path '*/__pycache__/*' -printf '%P\n' \
-      | LC_ALL=C sort \
-      | while read -r file; do printf '%s ' "$file"; sha256sum "$file" | cut -d' ' -f1; done \
-      | sha256sum | cut -d' ' -f1 )
-}
-migration_source="$(mktemp -d)"
-trap 'rm -rf -- "$migration_source"' EXIT
-install -d "${migration_source}/migrations"
-install -m 640 "${source_tree}/ui/alembic.ini" "${migration_source}/alembic.ini"
-while IFS= read -r -d '' file; do
-    relative="${file#"${source_tree}"/ui/}"
-    install -D -m 640 "$file" "${migration_source}/${relative}"
-done < <(find "${source_tree}/ui/migrations" -type f \
-    -not -path '*/__pycache__/*' -print0)
-if [[ ! -d "${release}/migration" ]] \
-    || [[ "$(bundle_digest "$migration_source")" != "$(bundle_digest "${release}/migration")" ]]; then
-    die "the release's migration bundle does not match the source tree at ${commit}"
-fi
-rm -rf -- "$migration_source"
-trap - EXIT
-log "  ok       migrations match the source tree at ${commit}"
+log "  ok       ${release}"
 
 step "Ownership"
 #
@@ -256,7 +97,7 @@ log "  ok       ${WEB_USER} can import the release"
 if [[ "$prepare_only" -eq 1 ]]; then
     echo
     log "release ${release_id} is prepared but not active"
-    log "migrate it with: ./migrate <answers-file> --release ${release_id}"
+    log "migrate it with: ./migrate --release ${release_id}"
     log "activate it by rerunning this command without --prepare"
     exit 0
 fi
@@ -270,7 +111,7 @@ fi
 #
 if systemctl cat "$WORKER_UNIT" >/dev/null 2>&1; then
     step "Holding the worker's claims"
-    drain=(bin/haprion-drain)
+    drain=(/usr/sbin/haprion-drain)
     "${drain[@]}" pause --wait "${DRAIN_SECONDS:-900}"
     # shellcheck disable=SC2064 # the command is fixed now, not when the trap runs
     trap "$(printf '%q ' "${drain[@]}") resume || true" EXIT
@@ -336,7 +177,7 @@ if systemctl cat "$unit" >/dev/null 2>&1; then
     log "  restarted ${unit}"
 
     step "Proving it answers"
-    WEB_PORT="${WEB_PORT:-8080}"
+    WEB_PORT="$(ui_port)" || die "cannot read the listening port from ${UI_CONFIG}"
     for _ in $(seq 10); do
         if answer="$(curl -fsS --max-time 3 "http://127.0.0.1:${WEB_PORT}/healthz" 2>/dev/null)"; then
             log "  ok       ${answer}"
@@ -352,26 +193,6 @@ else
     log "  pending  ${unit} is installed and started by platform step 4"
 fi
 
-step "The account tool"
-#
-# A shim rather than a symlink into the release. The tool must follow `current`,
-# so that a rollback takes the account tool back with it: a shim resolves the
-# link at every invocation, while a symlink written now would have to be
-# rewritten by every future release to stay honest.
-#
-install_file /usr/local/sbin/haprion-user root:root 755 "$(cat <<EOF
-#!/bin/bash
-#
-# Accounts for the web interface. Installed by install-ui-release.
-#
-# Runs whatever \`current\` points at, so an application rollback takes this with
-# it. Root only; it connects as the migration role, which is the only identity
-# allowed to write the account table.
-#
-exec ${UI_ROOT}/current/venv/bin/haprion-user "\$@"
-EOF
-)"
-
 step "The first account"
 #
 # `admin`, a break-glass admin whose password the installer types here, on an
@@ -382,23 +203,8 @@ step "The first account"
 # A warning rather than a stop: the release is already active, and an
 # installation that has not migrated yet makes the account after it has.
 #
-/usr/local/sbin/haprion-user init-admin \
+/usr/sbin/haprion-user init-admin \
     || warn "no first account was made; after ./migrate, run: haprion-user init-admin"
-
-step "The drain command"
-#
-# What the rollback command holds the worker's claims with. A rendered copy for
-# the reason the rollback command is one.
-#
-install_file /usr/local/sbin/haprion-drain root:root 755 "$(cat bin/haprion-drain)"
-
-step "The rollback command"
-#
-# Installed as a rendered copy rather than a shim into `current`. A rollback
-# command that lives inside the release it is rolling away from is a command
-# that can be replaced by the very switch it is performing.
-#
-install_file /usr/local/sbin/haprion-rollback root:root 755 "$(cat bin/haprion-rollback)"
 
 echo
 log "release ${release_id} is current"

@@ -27,15 +27,24 @@ class PreparedReleaseTests(unittest.TestCase):
         self.assertLess(prepared, activation)
         self.assertIn("prepared but not active", self.installer[prepared:activation])
 
-    def test_release_contains_the_complete_migration_environment(self) -> None:
-        self.assertIn('"${source_tree}/ui/alembic.ini"', self.installer)
-        self.assertIn('find "${source_tree}/ui/migrations" -type f', self.installer)
-        self.assertIn("migrations match the source tree", self.installer)
-        self.assertIn("script.py.mako", self.installer)
+    def test_a_release_without_its_migrations_or_their_tool_is_refused(self) -> None:
+        for part in (
+            "migration/alembic.ini",
+            "migration/migrations/env.py",
+            "migration/lib/alembic",
+        ):
+            self.assertIn(part, self.installer)
+        self.assertNotIn("UV_BIN", self.installer)
+        self.assertNotIn("source_tree", self.installer)
 
-    def test_migrate_can_name_one_prepared_release(self) -> None:
-        self.assertIn('migration_root="${UI_ROOT}/releases/${release_id}/migration"', self.migrate)
-        self.assertIn('exec "$alembic" -c alembic.ini "$@"', self.migrate)
+    def test_migrate_runs_the_named_releases_own_tool(self) -> None:
+        self.assertIn('release="${UI_ROOT}/releases/${release_id}"', self.migrate)
+        self.assertIn('migration_root="${release}/migration"', self.migrate)
+        self.assertIn(
+            'PYTHONPATH="${migration_root}/lib" exec "${release}/venv/bin/python" -m alembic',
+            self.migrate,
+        )
+        self.assertNotIn("ALEMBIC_BIN", self.migrate)
 
     def test_release_id_cannot_escape_the_release_root(self) -> None:
         self.assertIn("invalid release id", self.migrate)
@@ -79,12 +88,10 @@ class CoordinatedUpdateTests(unittest.TestCase):
     def test_nothing_moves_before_prerequisites_and_schema_are_proved(self) -> None:
         prepare = self.update.index("install-ui-release --prepare")
         prerequisites = self.update.index("--before-migration")
-        migrate = self.update.index('migrate "$answers" --release')
-        database = self.update.index('install/platform/03-verify" "$answers"')
-        candidate = self.update.index(
-            'check-compatibility "$answers" --release "$release_id"', database
-        )
-        activate = self.update.index('install-ui-release "$answers" "$source_tree"')
+        migrate = self.update.index('./migrate --release "$release_id"')
+        database = self.update.index("./03-verify")
+        candidate = self.update.index('check-compatibility --release "$release_id"', database)
+        activate = self.update.index('./install-ui-release "$release_id"')
         self.assertLess(prepare, prerequisites)
         self.assertLess(prerequisites, migrate)
         self.assertLess(migrate, database)
@@ -117,7 +124,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         and never the release just
         activated or the one it replaced."""
 
-        final_check = self.update.index('if ! ./check-compatibility "$answers"; then')
+        final_check = self.update.index("if ! ./check-compatibility; then")
         prune = self.update.index('step "Pruning old releases"')
         self.assertLess(final_check, prune)
         self.assertIn('keep="${RELEASES_KEPT:-10}"', self.update)
@@ -131,6 +138,20 @@ class CoordinatedUpdateTests(unittest.TestCase):
     def test_it_never_installs_the_independent_cli_or_node_bundle(self) -> None:
         self.assertNotIn("install-release.py", self.update)
         self.assertNotIn("04-node-prepare", self.update)
+
+    def test_it_reads_no_answers_file_so_the_package_can_run_it(self) -> None:
+        """B266 D2: postinst knows the release id and nothing else."""
+
+        for script in (
+            "update-platform-release",
+            "install-ui-release",
+            "migrate",
+            "check-compatibility",
+            "03-verify",
+        ):
+            with self.subTest(script=script):
+                text = (ROOT / "install/platform" / script).read_text()
+                self.assertNotIn("load_answers", text)
 
 
 if __name__ == "__main__":
@@ -191,8 +212,6 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
             python.write_text(STUB_PYTHON)
             python.chmod(0o755)
         (self.root / "current").symlink_to(self.root / "releases/current-release")
-        self.answers = work / "answers.env"
-        self.answers.write_text("")
         self.record = work / "arguments"
         self.wrapper = work / "platform/check-compatibility"
 
@@ -204,7 +223,7 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
             "RECORD": str(self.record),
         }
         completed = subprocess.run(  # noqa: S603 - the copied wrapper, fixed arguments
-            ["/bin/bash", str(self.wrapper), str(self.answers), *arguments],
+            ["/bin/bash", str(self.wrapper), *arguments],
             env=environment,
             capture_output=True,
             text=True,

@@ -45,8 +45,15 @@ haprion-poller = "haproxy_ui.poller:_entry"
 haprion-worker = "haproxy_ui.worker:_entry"
 
 [dependency-groups]
+#
+# The migration tool, apart from what the services run. A release carries it
+# beside its migrations (migration/lib), outside the services' environment, so
+# a running service has no schema tool on its path; the database role it
+# connects as is what forbids DDL.
+#
+migrate = ["alembic==1.19.1"]
 dev = [
-    "alembic==1.19.1",
+    { include-group = "migrate" },
     # Test-only. FastAPI's TestClient drives the application in-process through
     # httpx, so the login flow is exercised as HTTP - cookies, redirects and
     # form posts included - rather than by calling the handlers directly.

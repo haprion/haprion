@@ -17,16 +17,15 @@ need_root
 load_answers "${1:-}"
 
 unit_name="${WEB_UNIT%.service}"
-WEB_PORT="${WEB_PORT:-8080}"
-
 unit="/etc/systemd/system/${unit_name}.service"
 [[ -L "${UI_ROOT}/current" ]] \
     || die "${UI_ROOT}/current does not exist. Install a release first."
+WEB_PORT="$(ui_port)" || die "cannot read the listening port from ${UI_CONFIG}"
 
 step "Unit"
 #
-# Rendered from the example rather than copied, so the port comes from the
-# answers file. The example is what a reader reviews; this is what runs.
+# Rendered from the example rather than copied, so the port is the one ui.toml
+# names. The example is what a reader reviews; this is what runs.
 #
 rendered="$(sed -e "s|--port 8080|--port ${WEB_PORT}|" examples/haprion-web.service.example)"
 install_file "$unit" root:root 644 "$rendered"

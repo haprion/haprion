@@ -62,6 +62,12 @@ class TheBuild(unittest.TestCase):
     def test_the_migration_bundle_travels_with_the_release(self) -> None:
         self.assertIn('cp /src/ui/alembic.ini "$R/migration/alembic.ini"', TOOL.BUILD)
 
+    def test_the_migration_tool_is_locked_and_kept_out_of_the_services_venv(self) -> None:
+        build = TOOL.BUILD
+        self.assertIn("--locked --only-group migrate", build)
+        self.assertIn('--target "$R/migration/lib" --require-hashes', build)
+        self.assertIn('PYTHONPATH="$R/migration/lib"', build)
+
 
 class TheTree(unittest.TestCase):
     def test_the_package_carries_the_archive_its_digest_and_the_image(self) -> None:
@@ -70,9 +76,24 @@ class TheTree(unittest.TestCase):
             archive = work / "release.tar"
             archive.write_bytes(b"release")
             root = work / "root"
+            tree = work / "src"
+            for relative, *_ in [(e, None) for e in (*TOOL.SHARED, *TOOL.TOOLS)]:
+                path = tree / relative
+                if relative.endswith("/"):
+                    path.mkdir(parents=True)
+                    (path / "file").write_text(relative)
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(relative)
+            for command in TOOL.COMMANDS:
+                (tree / f"install/platform/bin/haprion-{command}").parent.mkdir(
+                    parents=True, exist_ok=True
+                )
+                (tree / f"install/platform/bin/haprion-{command}").write_text(command)
 
             TOOL.assemble(
                 root,
+                tree=tree,
                 archive=archive,
                 release_id="0.1.0-0123456789ab",
                 licence=b"licence\n",
@@ -91,9 +112,27 @@ class TheTree(unittest.TestCase):
                 (root / "usr/share/doc/haprion-ui/BUILD").read_text(),
             )
             postinst = (root / "DEBIAN/postinst").read_text()
-            self.assertIn('tar -xf "/usr/lib/haprion/ui/$RELEASE_ARCHIVE" -C /', postinst)
-            # An installed release is never unpacked over.
+            # An installed release is never unpacked over; a new one is
+            # checked against its digest, unpacked beside and moved in whole.
             self.assertIn('if [ ! -d "$release" ]; then', postinst)
+            self.assertIn("sha256sum --check", postinst)
+            self.assertIn(
+                'mv -T "$unpack/opt/haprion-ui/releases/$RELEASE_ID" "$release"', postinst
+            )
+            self.assertLess(postinst.index("sha256sum"), postinst.index("tar -xf"))
+            # Over a running installation the update is the whole of it (D2).
+            self.assertIn(
+                '/usr/share/haprion-ui/install/platform/update-platform-release "$RELEASE_ID"',
+                postinst,
+            )
+            share = root / "usr/share/haprion-ui"
+            self.assertTrue((share / "install/lib.sh").is_file())
+            self.assertTrue((share / "install/platform/file").is_file())
+            self.assertTrue((share / "tools/dns-profile-keys.py").is_file())
+            for command in TOOL.COMMANDS:
+                self.assertEqual(
+                    (root / f"usr/sbin/haprion-{command}").stat().st_mode & 0o777, 0o755
+                )
 
 
 if __name__ == "__main__":

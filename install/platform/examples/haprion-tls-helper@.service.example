@@ -8,7 +8,7 @@
 # ------------------------
 # Read the registry and the one certificate marked `interface: true`, check
 # that it names the interface's SERVER_NAME, and run
-# /usr/local/sbin/haprion-tls install with it: write the pair under
+# /usr/sbin/haprion-tls install with it: write the pair under
 # /etc/haprion/tls, keep a rollback copy beside it, run `nginx -t`,
 # reload nginx, and write the public copy under /srv/certdist. The key is
 # handed to that command in a private temporary directory and never returned.

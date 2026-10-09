@@ -35,7 +35,7 @@ def _url() -> str:
     here would be a guess at deployment data that this repository must not hold
     anyway: the role name is configuration.
 
-    `install/platform/migrate` builds it from the answers file. Connecting is
+    `install/platform/migrate` builds it from the installation's fixed names. Connecting is
     over the local socket with peer authentication and the ident map, so there
     is no password in the URL, the environment, or a process listing.
     """
@@ -44,7 +44,7 @@ def _url() -> str:
     if not url:
         raise SystemExit(
             f"{VARIABLE} is not set. Run migrations through "
-            "install/platform/migrate, which builds it from the answers file."
+            "install/platform/migrate, which builds it from the installation's fixed names."
         )
     return url
 

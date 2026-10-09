@@ -15,8 +15,8 @@ On the management host, install:
 - for the web interface: PostgreSQL 16 or newer, nginx and `uv`
 
 Have the source tree, a wheel built from the selected commit and the matching node package
-available. The scripts use an answers file; its example includes `UV_BIN` and `ALEMBIC_BIN`,
-which must name the installed build and migration tools.
+available, and the `haprion-ui` package built for your distribution. The scripts use an
+answers file; its example includes `UV_BIN`, which names the uv the certbot step uses.
 
 HAProxy nodes must already be prepared before the application can manage them. The
 [node preparation instructions](user-manual.md#part-2--the-nodes) are in the manual.
@@ -85,24 +85,26 @@ For a command-line-only installation, the application is now installed.
 
 ## 4. Install the web interface
 
-Use the same answers file. From `install/platform/`, prepare the application, migrate its
+Install the package; it unpacks the release and prints its ID. Then, with the same answers
+file, from `/usr/share/haprion-ui/install/platform/`, prepare the platform, migrate its
 database and verify the candidate before activating it:
 
 ```bash
-sudo ./01-platform-prepare ../answers.env
-sudo ./02-platform-database ../answers.env
-sudo ./install-ui-release --prepare ../answers.env /path/to/source-tree
-sudo ./migrate ../answers.env --release <release-id>
-sudo ./03-verify ../answers.env
-sudo ./check-compatibility ../answers.env --release <release-id>
-sudo ./install-ui-release ../answers.env /path/to/source-tree
-sudo ./04-platform-service ../answers.env
-sudo ./05-platform-nginx ../answers.env
-sudo ./07-platform-services ../answers.env
-sudo ./check-compatibility ../answers.env
+sudo apt install ./haprion-ui_<version>_amd64.deb
+cd /usr/share/haprion-ui/install/platform
+sudo ./01-platform-prepare /path/to/answers.env
+sudo ./02-platform-database /path/to/answers.env
+sudo ./migrate --release <release-id>
+sudo ./03-verify
+sudo ./check-compatibility --release <release-id>
+sudo ./install-ui-release <release-id>
+sudo ./04-platform-service /path/to/answers.env
+sudo ./05-platform-nginx /path/to/answers.env
+sudo ./07-platform-services /path/to/answers.env
+sudo ./check-compatibility
 ```
 
-Use the release ID printed when the candidate was prepared. Before step 7, ensure the
+Later versions of the package update the running platform themselves. Before step 7, ensure the
 `clusters` list in the generated `ui.toml` names the configured clusters.
 
 The first activation creates the `admin` account if no account exists and asks for its

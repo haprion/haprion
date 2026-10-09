@@ -2,8 +2,8 @@
 """Create or inspect the key pair that seals DNS provider credentials.
 
     sudo /usr/bin/python3 tools/dns-profile-keys.py create \\
-        --private /srv/platform/secrets/dns-profile-keys \\
-        --public /srv/platform/config/dns-profile-keys --group platform-group
+        --private /etc/haprion/ui-secrets/dns-profile-keys \\
+        --public /etc/haprion/dns-profile-keys --group _haprion-ui
     /usr/bin/python3 tools/dns-profile-keys.py show --public <file>.pub
 
 `create` generates a fresh pair, writes the private key root-only into the
@@ -13,9 +13,11 @@ message through the files it wrote, and prints the key identifier. An existing
 key is never touched: a second `create` adds a second pair, which is how a key
 is replaced - the runtime policy lists both while profiles are re-entered.
 
-Run by platform step 15 with the system interpreter, which is why this file
-imports the engine from the source tree beside it and needs `python3-nacl`
-from the distribution, the same package the installed CLI release uses.
+Run by platform steps 15 and 17 with the system interpreter, which is why this
+file imports the engine itself - from the source tree beside it, or, where it
+was installed by the haprion-ui package and has none, from the installed CLI
+release - and needs `python3-nacl` from the distribution, the same package the
+installed CLI release uses.
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ import sys
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent.parent / "src"
+if not (SOURCE / "haproxy_mgmt").is_dir():
+    SOURCE = Path("/opt/haprion/current/lib")
 sys.path.insert(0, str(SOURCE))
 
 from haproxy_mgmt.dns_profile_keys import (  # noqa: E402 - the path above is the import

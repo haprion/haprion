@@ -2,7 +2,7 @@
 #
 # Read all independently installed parts as one compatibility report.
 #
-#     sudo ./check-compatibility <answers-file> [--release <release-id>] [--before-migration]
+#     sudo ./check-compatibility [--release <release-id>] [--before-migration]
 #
 # This changes nothing. Requirements come from either the running UI release or
 # an explicitly named prepared release, never from the checkout containing this
@@ -14,8 +14,6 @@ cd "$(dirname "$0")"
 source ../lib.sh
 
 need_root
-load_answers "${1:-}"
-shift
 
 release_id=""
 before_migration=0
@@ -30,7 +28,7 @@ while [[ $# -gt 0 ]]; do
             before_migration=1
             shift
             ;;
-        *) die "usage: $(basename "$0") <answers-file> [--release <release-id>] [--before-migration]" ;;
+        *) die "usage: $(basename "$0") [--release <release-id>] [--before-migration]" ;;
     esac
 done
 [[ "$before_migration" -eq 0 || -n "$release_id" ]] \

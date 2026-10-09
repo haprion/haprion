@@ -472,6 +472,9 @@ dev = [
     { name = "ruff" },
     { name = "types-pyyaml" },
 ]
+migrate = [
+    { name = "alembic" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -493,6 +496,7 @@ dev = [
     { name = "ruff", specifier = "==0.16.4" },
     { name = "types-pyyaml", specifier = "==6.0.12.20260815" },
 ]
+migrate = [{ name = "alembic", specifier = "==1.19.1" }]
 
 [[package]]
 name = "httpcore"

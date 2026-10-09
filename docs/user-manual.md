@@ -2319,19 +2319,16 @@ their own result; the whole-installation check answers the different question of
 whether the independently installed pieces still work together:
 
 ```bash
-sudo install/platform/check-compatibility /path/to/answers.env
+sudo /usr/share/haprion-ui/install/platform/check-compatibility
 ```
 
-Run it against the production answers file after any of the three. Development
-installs no CLI, no worker, no poller and no nodes — that is its isolation
-boundary, not a skipped check — so its own check cannot say anything about an
-engine release.
+Run it after any of the three.
 
-**Every release is a commit.** Both installers refuse a source tree with
-uncommitted changes, because a release built from an edited tree is one nobody
-can reproduce, and the moment it runs, "what is in it" has no answer. Run the
-full repository gate before building; a release is not the place to find out
-that a test fails.
+**Every release is a commit.** Each package is built from one committed source
+tree and named after it, because a release built from an edited tree is one
+nobody can reproduce, and the moment it runs, "what is in it" has no answer. Run
+the full repository gate before building; a release is not the place to find
+out that a test fails.
 
 ### CLI rollback
 
@@ -4102,17 +4099,13 @@ Debian puts its kind. A release is replaced wholesale and rolled back by
 pointing `current` elsewhere, so anything that has to survive that cannot live
 within it. The places are fixed rather than answers, like the account names.
 
-A release is a commit, and the installer refuses to build one from a source tree
-with uncommitted changes. It is built at its final path against the system
-interpreter — a virtual environment is not relocatable, and an interpreter under
-someone's home directory is invisible to a service running with `ProtectHome`.
-Both are checked before `current` is switched.
-
-The release is also compared with its source tree before activation. The check
-covers Python, templates, CSS, JavaScript and the complete Alembic environment;
-a build that reused an older local wheel or omitted a frontend asset is removed rather than activated. This keeps
-the visible interface under the same “a release is a commit” rule as its server
-code.
+A release is a commit: the `haprion-ui` package is built from one, in a
+container of the target distribution, at the release's final path against that
+distribution's interpreter — a virtual environment is not relocatable, and an
+interpreter under someone's home directory is invisible to a service running
+with `ProtectHome`. Both are checked again before `current` is switched. The
+package carries the release as an archive whose digest `postinst` checks before
+unpacking it, and two builds of one commit give the same bytes.
 
 #### Identities
 
@@ -4227,7 +4220,7 @@ database proof. Run it after the independently released pieces have been
 installed:
 
 ```bash
-sudo ./check-compatibility /path/to/answers.env
+sudo ./check-compatibility
 ```
 
 The running UI release supplies the accepted database revisions and minimum CLI
@@ -4237,8 +4230,9 @@ active sudo rules with the helpers the UI requires, and reads each node's instal
 through the existing status helper. It ends in one `COMPATIBLE` or `INCOMPATIBLE`
 verdict and changes no file, row, service or HAProxy release.
 
-For an update, first run `install-ui-release --prepare`. The candidate is built
-and verified but `current` stays on the old release. Run `check-compatibility
+For an update, first run `install-ui-release --prepare <release-id>` on the
+release the package unpacked. The candidate is verified but `current` stays on
+the old release. Run `check-compatibility
 --release <release-id> --before-migration` to prove its CLI, helper and node
 requirements, then `migrate --release <release-id>`, `03-verify`, and the candidate
 check again without `--before-migration`. Only after those pass is the same
@@ -4251,10 +4245,12 @@ revision already running, so the operation makes no schema change. A candidate
 that would migrate from such a release is refused because rollback safety cannot
 be inferred without metadata.
 
-`update-platform-release` owns that complete order for normal updates:
+`update-platform-release` owns that complete order for normal updates, and the
+package's `postinst` runs it when a newer `haprion-ui` is installed over a
+running platform:
 
 ```bash
-sudo ./update-platform-release /path/to/answers.env /path/to/source-tree
+sudo ./update-platform-release <release-id>
 ```
 
 The CLI and node scripts remain independent installations; the command checks

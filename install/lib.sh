@@ -79,6 +79,17 @@ require_vars() {
 #
 # Indirect lookup of a per-cluster answer, e.g. cluster_value NODES alpha.
 #
+#
+# The port the web service listens on, read from ui.toml by the running
+# release's own parser - the file the service itself reads, so a health check
+# cannot ask a port the service was never told.
+#
+ui_port() {
+    "${UI_ROOT}/current/venv/bin/python" -I -c \
+        'import sys; from pathlib import Path; from haproxy_ui.config import load
+print(load(Path(sys.argv[1])).listen.port)' "$UI_CONFIG"
+}
+
 cluster_value() {
     local prefix="$1" cluster="$2" var
     var="${prefix}_${cluster}"

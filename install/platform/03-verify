@@ -22,7 +22,9 @@
 # own diff. Copying the diff back in would make the second description a
 # reflection of the first, which is the one thing it must not be.
 #
-#     sudo ./03-verify <answers-file>
+#     sudo ./03-verify
+#
+# It reads no answers file: the names it checks are fixed (accounts.sh).
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -30,14 +32,12 @@ cd "$(dirname "$0")"
 source ../lib.sh
 
 need_root
-load_answers "${1:-}"
 #
 # The collector's login role is deliberately absent here: step 13 proves its
 # boundary with the account itself, and this file never reads the variable. What
 # this file owns is the contract role: `app_collector` appears
 # in the column matrix below like every other grantee.
 #
-require_vars DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER
 
 run() { psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" -qtAX -F $'\t' "$@"; }
 

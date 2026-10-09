@@ -1,0 +1,10 @@
+#!/bin/bash
+#
+# Accounts for the web interface. Installed by the haprion-ui package.
+#
+# A shim rather than a link into a release: it runs whatever `current` points
+# at, resolved at every invocation, so an application rollback takes the
+# account tool back with it. Root only; it connects as the migration role,
+# which is the only identity allowed to write the account table.
+#
+exec /opt/haprion-ui/current/venv/bin/haprion-user "$@"

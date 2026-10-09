@@ -17,12 +17,6 @@ SUDOERS = BASE / "install/sudoers/haprion"
 RULE = re.compile(
     r'^%sudo ALL=\(root\) (NOPASSWD: )?/opt/haprion/current/bin/(haprion-[a-z-]+-helper) ""$'
 )
-#
-# Calling halves that ask their helper with `sudo -n` and have no operator rule
-# yet: whether an operator may run them without a password is the maintainer's
-# decision (26-10-09). Run as root they work; as an operator they fail at once.
-#
-AWAITING_DECISION = frozenset({"list", "inventory", "network", "cluster_settings"})
 
 
 def tool() -> Any:
@@ -96,6 +90,7 @@ class TheTree(unittest.TestCase):
             node_deb=node,
             installer=b"#!/usr/bin/python3\n",
             sudoers=SUDOERS.read_bytes(),
+            licence=b"licence text\n",
             commit="0" * 40,
         )
 
@@ -109,6 +104,9 @@ class TheTree(unittest.TestCase):
         )
         self.assertFalse((tree / "usr/bin/haprion-status-helper").exists())
         self.assertEqual((tree / "etc/sudoers.d/haprion").stat().st_mode & 0o777, 0o440)
+        self.assertTrue(
+            (tree / "usr/share/doc/haprion-cli/copyright").read_bytes().endswith(b"licence text\n")
+        )
         self.assertEqual((tree / "DEBIAN/conffiles").read_text(), "/etc/sudoers.d/haprion\n")
         self.assertIn("install-release.py", (tree / "DEBIAN/postinst").read_text())
         self.assertIn("rm -rf /opt/haprion", (tree / "DEBIAN/postrm").read_text())
@@ -125,6 +123,7 @@ class TheTree(unittest.TestCase):
                 node_deb=node,
                 installer=b"",
                 sudoers=b"%sudo ALL=(root) NOPASSWD /broken\n",
+                licence=b"",
                 commit="0" * 40,
             )
 
@@ -163,13 +162,13 @@ class TheOperatorsRules(unittest.TestCase):
             with self.subTest(command=stem):
                 if helper.group(1) in granted:
                     self.assertEqual(granted[helper.group(1)], asked[helper.group(1)])
-                elif asked[helper.group(1)]:
-                    self.assertIn(stem, AWAITING_DECISION)
+                else:
+                    self.assertFalse(asked[helper.group(1)], "sudo -n with no rule fails at once")
 
     def test_every_rule_is_the_humans_and_names_one_helper(self) -> None:
         # rules() refuses any line that is not `%sudo ... <helper> ""`, so no
         # rule can reach %haprion, which holds the worker, or an account.
-        self.assertEqual(len(rules()), 10)
+        self.assertEqual(len(rules()), 15)
 
 
 if __name__ == "__main__":

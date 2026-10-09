@@ -128,6 +128,7 @@ def assemble(
     node_deb: Path,
     installer: bytes,
     sudoers: bytes,
+    licence: bytes,
     commit: str,
 ) -> None:
     """The package tree, from artifacts already built."""
@@ -144,6 +145,12 @@ def assemble(
         write(root, f"usr/bin/{name}", command_line(name), 0o755)
     write(root, SUDOERS, sudoers, 0o440)
     visudo_accepts(root / SUDOERS)
+    write(
+        root,
+        "usr/share/doc/haprion-cli/copyright",
+        node_package.COPYRIGHT_HEADER + licence,
+        0o644,
+    )
     write(
         root,
         "usr/share/doc/haprion-cli/BUILD",
@@ -202,6 +209,7 @@ def build(source: Path, output_dir: Path, uv: Path) -> Path:
             node_deb=node_deb,
             installer=_git(source, "show", f"{commit}:tools/install-release.py"),
             sudoers=_git(source, "show", f"{commit}:install/sudoers/haprion"),
+            licence=_git(source, "show", f"{commit}:LICENSE"),
             commit=commit,
         )
         return package(

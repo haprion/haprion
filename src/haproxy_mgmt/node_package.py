@@ -38,6 +38,15 @@ ARCHITECTURE = "all"
 SBIN = "/usr/sbin"
 INSTALL_DIR = "/usr/share/haprion-node/install"
 BUILD_FILE = "usr/share/doc/haprion-node/BUILD"
+COPYRIGHT_FILE = "usr/share/doc/haprion-node/copyright"
+#
+# Debian's copyright file: who, under what, and the licence in full - AGPL-3.0
+# is not among /usr/share/common-licenses to refer to.
+#
+COPYRIGHT_HEADER = (
+    b"Haprion - Copyright the Haprion contributors.\n"
+    b"License: AGPL-3.0-or-later. The full text follows.\n\n"
+)
 MAX_PACKAGE_BYTES = 4 * 1024 * 1024
 SHA256 = re.compile(r"[0-9a-f]{64}")
 COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -80,6 +89,7 @@ CONTENTS: dict[str, tuple[str, int]] = {
         "install/apt-keys/powerdns-dnsdist.asc",
         0o644,
     ),
+    COPYRIGHT_FILE: ("LICENSE", 0o644),
 }
 FILES: dict[str, int] = {
     **{path: mode for path, (_, mode) in CONTENTS.items()},
@@ -174,6 +184,7 @@ def build_package(source: Path, output_dir: Path) -> tuple[Path, PackageFacts]:
         path: _committed(source, commit, relative, mode)
         for path, (relative, mode) in CONTENTS.items()
     }
+    files[COPYRIGHT_FILE] = COPYRIGHT_HEADER + files[COPYRIGHT_FILE]
     target = write_package(output_dir, files, upstream=upstream, epoch=epoch, commit=commit)
     return target, verify_package(target)
 

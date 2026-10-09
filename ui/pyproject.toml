@@ -7,6 +7,7 @@ name = "haprion-ui"
 version = "0.1.0"
 description = "Web interface for the HAProxy management engine"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
 
 #
 # A separate distribution from haprion, in the same repository. The CLI

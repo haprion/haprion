@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "UI-independent HAProxy management engine"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = ["PyNaCl>=1.5,<2", "PyYAML>=6,<7", "psycopg>=3.3,<4", "PyJWT[crypto]>=2.10,<3"]
 
 [dependency-groups]

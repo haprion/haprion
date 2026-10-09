@@ -29,6 +29,10 @@
 %sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-list-helper ""
 %sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-list-backups-helper ""
 %sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-objects-helper ""
+%sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-list-helper ""
+%sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-inventory-helper ""
+%sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-network-helper ""
+%sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cluster-settings-helper ""
 
 # Writes.
 %sudo ALL=(root) /opt/haprion/current/bin/haprion-publish-helper ""
@@ -36,3 +40,4 @@
 %sudo ALL=(root) /opt/haprion/current/bin/haprion-deploy-helper ""
 %sudo ALL=(root) /opt/haprion/current/bin/haprion-cert-deploy-helper ""
 %sudo ALL=(root) /opt/haprion/current/bin/haprion-history-reset-helper ""
+%sudo ALL=(root) /opt/haprion/current/bin/haprion-changes-publish-helper ""

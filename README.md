@@ -129,3 +129,9 @@ in [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md#disposable-database-integ
 
 Versioned installation and rollback under `/opt/haprion` are described in
 [`docs/install.md`](docs/install.md) and [`docs/user-manual.md`](docs/user-manual.md).
+
+## License
+
+Haprion is free software under the GNU Affero General Public License, version 3 or (at your option)
+any later version - [`LICENSE`](LICENSE). Running a modified version for others over a network obliges
+you to offer them its source.

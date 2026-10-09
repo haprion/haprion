@@ -13,8 +13,8 @@ expected_sha=""
 answers=""
 node=""
 cluster=""
-package=""
-package_sha=""
+packages_in=()
+package_shas=()
 dry_run="no"
 #
 # apt refuses to put an older package in place of a newer one under -y. Going
@@ -36,7 +36,7 @@ backup_after="yes"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 usage() {
-    echo "usage: $(basename "$0") --node-package <deb> --sha256 <digest> --answers <file> --node <host> --cluster <id> [--package <deb> --package-sha256 <digest>] [--downgrade] [--dry-run] [--skip-backup-before] [--skip-backup-after]"
+    echo "usage: $(basename "$0") --node-package <deb> --sha256 <digest> --answers <file> --node <host> --cluster <id> [--package <deb> --package-sha256 <digest>]... [--downgrade] [--dry-run] [--skip-backup-before] [--skip-backup-after]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -46,8 +46,8 @@ while [[ $# -gt 0 ]]; do
         --answers) answers="${2:-}"; shift 2 ;;
         --node) node="${2:-}"; shift 2 ;;
         --cluster) cluster="${2:-}"; shift 2 ;;
-        --package) package="${2:-}"; shift 2 ;;
-        --package-sha256) package_sha="${2:-}"; shift 2 ;;
+        --package) packages_in+=("${2:-}"); shift 2 ;;
+        --package-sha256) package_shas+=("${2:-}"); shift 2 ;;
         --dry-run) dry_run="yes"; shift ;;
         --downgrade) downgrade="yes"; shift ;;
         --skip-backup-before) backup_before="no"; shift ;;
@@ -68,28 +68,37 @@ done
 bash -n "$answers" || fail "answers file is not valid shell"
 
 #
-# A package that travels with the node package - the WAF engine (B229) - goes
-# through the same session, backups and checks rather than a loop of its own,
-# and the same apt call, which takes both or neither. Only the
-# project's own packages, verified here and again on the node, and only one
-# built for the node's architecture: the preflight compares the two before
-# anything is written, so a dry run answers the question too.
+# Packages that travel with the node package - the WAF engine and its rule set
+# (B229) - go through the same session, backups and checks rather than a loop
+# of their own, and the same apt call, which takes all or none. Each --package
+# has its own --package-sha256, in order. Only the project's own packages,
+# verified here and again on the node, and only ones built for the node's
+# architecture: the preflight compares them before anything is written, so a
+# dry run answers the question too.
 #
-package_name=""
+package_names=()
 package_arch=""
-if [[ -n "$package" || -n "$package_sha" ]]; then
+((${#packages_in[@]} == ${#package_shas[@]})) || fail "each --package needs its own --package-sha256"
+for index in "${!packages_in[@]}"; do
+    package="${packages_in[$index]}"
+    package_sha="${package_shas[$index]}"
     [[ "$package" == /* && -f "$package" && ! -L "$package" ]] \
         || fail "package must be an absolute regular non-symlink file"
     [[ "$package_sha" =~ ^[0-9a-f]{64}$ ]] || fail "package SHA-256 must be 64 lowercase hexadecimal characters"
     printf '%s  %s\n' "$package_sha" "$package" | sha256sum -c --quiet - \
         || fail "package does not match its SHA-256"
-    package_name="$(dpkg-deb --field "$package" Package)"
-    package_arch="$(dpkg-deb --field "$package" Architecture)"
-    [[ "$package_name" =~ ^haprion-[a-z0-9-]+$ ]] \
+    name="$(dpkg-deb --field "$package" Package)"
+    arch="$(dpkg-deb --field "$package" Architecture)"
+    [[ "$name" =~ ^haprion-[a-z0-9-]+$ ]] \
         || fail "only the project's own packages are installed this way"
-    [[ "$package_arch" =~ ^[a-z0-9]+$ ]] || fail "package declares an invalid architecture"
-    echo "package: ${package_name} $(dpkg-deb --field "$package" Version) ${package_arch}"
-fi
+    [[ "$arch" =~ ^[a-z0-9]+$ ]] || fail "package declares an invalid architecture"
+    if [[ "$arch" != all ]]; then
+        [[ -z "$package_arch" || "$package_arch" == "$arch" ]] || fail "the packages are built for different architectures"
+        package_arch="$arch"
+    fi
+    package_names+=("$name")
+    echo "package: ${name} $(dpkg-deb --field "$package" Version) ${arch}"
+done
 
 verification="$(/usr/bin/python3 "$VERIFY" verify --package "$node_package" --sha256 "$expected_sha")" \
     || fail "node package verification failed"
@@ -169,11 +178,12 @@ packages="./node.deb"
 package_check=""
 apt_options="-y --no-install-recommends"
 [[ "$downgrade" == "yes" ]] && apt_options+=" --allow-downgrades"
-if [[ -n "$package" ]]; then
-    scp "${ssh_opts[@]}" "$package" "${node}:${remote_dir}/package.deb" >/dev/null
-    packages+=" ./package.deb"
-    package_check="printf '%s  %s\\n' '$package_sha' package.deb | sha256sum -c -"
-fi
+for index in "${!packages_in[@]}"; do
+    scp "${ssh_opts[@]}" "${packages_in[$index]}" "${node}:${remote_dir}/package-${index}.deb" >/dev/null
+    packages+=" ./package-${index}.deb"
+    package_check+="printf '%s  %s\\n' '${package_shas[$index]}' package-${index}.deb | sha256sum -c -
+"
+done
 
 remote_install="
     ${preflight}
@@ -183,7 +193,7 @@ remote_install="
     chmod 644 ${packages}
     chmod 600 answers.env
     sudo apt-get install ${apt_options} ${packages}
-    dpkg-query -W -f='\${Package} \${Version} \${Status}\\n' haprion-node ${package_name}
+    dpkg-query -W -f='\${Package} \${Version} \${Status}\\n' haprion-node ${package_names[*]}
     sudo '${NODE_PREPARE}' '$remote_dir/answers.env' '$cluster'
 "
 

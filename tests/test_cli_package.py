@@ -1,0 +1,176 @@
+"""The CLI package: its tree, its commands and the operators' sudo rules (B266)."""
+
+from __future__ import annotations
+
+import importlib.util
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+from typing import Any
+
+BASE = Path(__file__).resolve().parents[1]
+SUDOERS = BASE / "install/sudoers/haprion"
+RULE = re.compile(
+    r'^%sudo ALL=\(root\) (NOPASSWD: )?/opt/haprion/current/bin/(haprion-[a-z-]+-helper) ""$'
+)
+#
+# Calling halves that ask their helper with `sudo -n` and have no operator rule
+# yet: whether an operator may run them without a password is the maintainer's
+# decision (26-10-09). Run as root they work; as an operator they fail at once.
+#
+AWAITING_DECISION = frozenset({"list", "inventory", "network", "cluster_settings"})
+
+
+def tool() -> Any:
+    spec = importlib.util.spec_from_file_location(
+        "build_cli_package", BASE / "tools/build-cli-package.py"
+    )
+    assert spec is not None and spec.loader is not None  # noqa: S101 - local tool must exist
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+TOOL = tool()
+
+
+def wheel_with(directory: Path, scripts: list[str]) -> Path:
+    wheel = directory / "haprion-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            "haprion-0.1.0.dist-info/entry_points.txt",
+            "[console_scripts]\n"
+            + "".join(f"{name} = haproxy_mgmt.cli.x:main\n" for name in scripts),
+        )
+    return wheel
+
+
+def rules() -> dict[str, bool]:
+    """Helper -> whether its rule is NOPASSWD."""
+
+    found = {}
+    for line in SUDOERS.read_text().splitlines():
+        if not line or line.startswith("#"):
+            continue
+        matched = RULE.fullmatch(line)
+        assert matched, f"not an exact operator rule: {line}"
+        found[matched.group(2)] = matched.group(1) is not None
+    return found
+
+
+class TheTree(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def test_operators_get_commands_and_helpers_asks_and_services_do_not(self) -> None:
+        wheel = wheel_with(
+            self.root,
+            [
+                "haprion-status",
+                "haprion-status-helper",
+                "haprion-node-ask",
+                "haprion-cert-renew",
+                "haprion-traffic-collector",
+                "haprion-deploy",
+            ],
+        )
+
+        self.assertEqual(TOOL.operator_commands(wheel), ["haprion-deploy", "haprion-status"])
+
+    def test_the_package_tree_carries_the_payload_the_commands_and_the_rules(self) -> None:
+        wheel = wheel_with(self.root, ["haprion-status", "haprion-status-helper"])
+        node = self.root / "haprion-node_0.1.0+git20261009120000.0123456789ab_all.deb"
+        node.write_bytes(b"node package")
+        tree = self.root / "tree"
+
+        TOOL.assemble(
+            tree,
+            wheel=wheel,
+            node_deb=node,
+            installer=b"#!/usr/bin/python3\n",
+            sudoers=SUDOERS.read_bytes(),
+            commit="0" * 40,
+        )
+
+        lib = tree / "usr/lib/haprion/cli"
+        payload = (lib / "PAYLOAD").read_text()
+        self.assertIn(f"WHEEL={wheel.name}\n", payload)
+        self.assertIn(f"NODE_PACKAGE={node.name}\n", payload)
+        self.assertEqual(
+            (tree / "usr/bin/haprion-status").read_text(),
+            '#!/bin/sh\nexec /opt/haprion/current/bin/haprion-status "$@"\n',
+        )
+        self.assertFalse((tree / "usr/bin/haprion-status-helper").exists())
+        self.assertEqual((tree / "etc/sudoers.d/haprion").stat().st_mode & 0o777, 0o440)
+        self.assertEqual((tree / "DEBIAN/conffiles").read_text(), "/etc/sudoers.d/haprion\n")
+        self.assertIn("install-release.py", (tree / "DEBIAN/postinst").read_text())
+        self.assertIn("rm -rf /opt/haprion", (tree / "DEBIAN/postrm").read_text())
+
+    def test_a_rule_visudo_refuses_stops_the_build(self) -> None:
+        wheel = wheel_with(self.root, ["haprion-status"])
+        node = self.root / "node.deb"
+        node.write_bytes(b"x")
+
+        with self.assertRaisesRegex(TOOL.BuildError, "visudo refuses"):
+            TOOL.assemble(
+                self.root / "tree",
+                wheel=wheel,
+                node_deb=node,
+                installer=b"",
+                sudoers=b"%sudo ALL=(root) NOPASSWD /broken\n",
+                commit="0" * 40,
+            )
+
+
+class TheOperatorsRules(unittest.TestCase):
+    def test_visudo_accepts_the_file(self) -> None:
+        checked = subprocess.run(  # noqa: S603 - fixed checker, repository file
+            ["/usr/sbin/visudo", "-cf", str(SUDOERS)], capture_output=True, text=True, check=False
+        )
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+
+    def test_every_rule_names_a_helper_the_release_has(self) -> None:
+        helpers = set(
+            re.findall(r"^(haprion-[a-z-]+-helper) =", (BASE / "pyproject.toml").read_text(), re.M)
+        )
+
+        self.assertLessEqual(set(rules()), helpers)
+
+    def test_a_read_without_a_prompt_and_a_write_with_one_as_the_command_asks(self) -> None:
+        """`sudo -n` needs NOPASSWD; plain sudo asks for the password the rule keeps."""
+
+        granted = rules()
+        asked: dict[str, bool] = {}
+        for path in (BASE / "src/haproxy_mgmt/cli").glob("*.py"):
+            if path.stem.endswith(("_helper", "_ask")):
+                continue
+            helper = re.search(
+                r'^HELPER = "/opt/haprion/current/bin/(haprion-[a-z-]+-helper)"$',
+                path.read_text(),
+                re.M,
+            )
+            if helper is None:
+                continue
+            asked[helper.group(1)] = '"-n"' in path.read_text()
+            stem = path.stem
+            with self.subTest(command=stem):
+                if helper.group(1) in granted:
+                    self.assertEqual(granted[helper.group(1)], asked[helper.group(1)])
+                elif asked[helper.group(1)]:
+                    self.assertIn(stem, AWAITING_DECISION)
+
+    def test_every_rule_is_the_humans_and_names_one_helper(self) -> None:
+        # rules() refuses any line that is not `%sudo ... <helper> ""`, so no
+        # rule can reach %haprion, which holds the worker, or an account.
+        self.assertEqual(len(rules()), 10)
+
+
+if __name__ == "__main__":
+    unittest.main()

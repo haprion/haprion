@@ -1,0 +1,38 @@
+# The operators' rules for Haprion's root helpers. Installed by the haprion-cli
+# package as /etc/sudoers.d/haprion, 0440 root:root; the build refuses a file
+# visudo does not accept.
+#
+# Every rule names one helper with the no-argument form (""): the helper takes
+# no argv and reads one bounded JSON request on stdin, so there is nothing for
+# a wildcard to match - which PRIVILEGE.md forbids - and no cluster name in a
+# rule to keep in step with configuration. The path goes through `current`, so
+# a release is put into use by switching the link, not by editing sudoers;
+# /opt/haprion and its releases are root's and writable by nobody else.
+#
+# Granted to %sudo - the humans - and never to %haprion. That group also holds
+# _haprion-worker, and a service account must not reach a privilege because an
+# operator needed one; the interface's identities have their own files with
+# their own decisions (haprion-worker, haprion-poller).
+#
+# Reads are NOPASSWD: a check that costs a password prompt is one that does not
+# get run during an incident, and these write nothing and take no lock. Their
+# calling halves use `sudo -n`, so a missing rule fails at once instead of
+# prompting.
+#
+# Writes keep the password: they change what the nodes serve, move key
+# material, or rewrite a cluster's history, and the password is the second
+# deliberate act. Their calling halves use plain `sudo`.
+
+# Reads.
+%sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-status-helper ""
+%sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-published-release-helper ""
+%sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-cert-list-helper ""
+%sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-list-backups-helper ""
+%sudo ALL=(root) NOPASSWD: /opt/haprion/current/bin/haprion-objects-helper ""
+
+# Writes.
+%sudo ALL=(root) /opt/haprion/current/bin/haprion-publish-helper ""
+%sudo ALL=(root) /opt/haprion/current/bin/haprion-revert-helper ""
+%sudo ALL=(root) /opt/haprion/current/bin/haprion-deploy-helper ""
+%sudo ALL=(root) /opt/haprion/current/bin/haprion-cert-deploy-helper ""
+%sudo ALL=(root) /opt/haprion/current/bin/haprion-history-reset-helper ""

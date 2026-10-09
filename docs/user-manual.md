@@ -4013,21 +4013,40 @@ Short stable wrappers and exact sudoers rules may point into `current/bin`; they
 into a source checkout.
 
 **`current/bin` is not on `sudo`'s path.** `sudo` resets `PATH` to its `secure_path`, which does
-not include `/opt/haprion/current/bin`, so `sudo haprion-cert-receiver ...` answers
-`command not found` on a fresh installation even though the command is installed. The examples
-in the user manual assume one short wrapper per operator command in `/usr/local/bin`, each of the
-shape
+not include `/opt/haprion/current/bin`. The `haprion-cli` package (below) therefore installs one
+line per operator command in `/usr/bin`, of the shape
 
 ```bash
-#!/usr/bin/env bash
+#!/bin/sh
 exec /opt/haprion/current/bin/haprion-cert-receiver "$@"
 ```
 
-so that a release switch moves every command at once and nothing points at a release
-directory by name. The installer does not write them - which commands an operator types is
-the installation's choice, and a helper the worker runs through an exact sudoers rule must
-**not** get one. Until a wrapper exists, the full path works the same:
+so that a release switch moves every command at once and nothing points at a release directory
+by name. Root helpers get none: a helper is run through its exact sudo rule by its calling half,
+never typed. Without the package the full path works the same:
 `sudo /opt/haprion/current/bin/haprion-cert-receiver ...`.
+
+#### The `haprion-cli` package
+
+The package carries the wheel, the node package of the same commit, the installer and the
+operators' sudo rules, and its `postinst` runs the installer above - so the releases, `current`,
+`INSTALLATION.json` and rollback stay exactly as described. Build it from a clean commit, with the
+`uv` the repository is locked with:
+
+```bash
+tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv
+sudo apt-get install /path/to/protected/staging/haprion-cli_0.1.0+git20261009120000.0123456789ab_all.deb
+```
+
+The same commit gives the same bytes. It installs:
+
+| Path | What |
+|---|---|
+| `/usr/lib/haprion/cli/` | the wheel, the node package, `install-release.py` and `PAYLOAD` with their digests |
+| `/usr/bin/haprion-*` | one line per operator command, into `/opt/haprion/current/bin` |
+| `/etc/sudoers.d/haprion` | the operators' rules: `%sudo` may run each read helper without a password and each write helper with one; never `%haprion`, which holds the worker. Checked with `visudo` when the package is built |
+
+`apt-get purge haprion-cli` also removes `/opt/haprion`; `remove` leaves the releases.
 
 `INSTALLATION.json` also records the engine compatibility API carried by the
 wheel. A wheel from before that metadata existed remains installable for

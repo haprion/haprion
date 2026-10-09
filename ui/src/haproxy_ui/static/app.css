@@ -186,18 +186,23 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   gap: 10px;
   padding-right: 24px;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 400;
   letter-spacing: -0.01em;
   text-decoration: none;
   white-space: nowrap;
 }
 
-.brand strong, .login-brand strong { color: var(--brand); font-weight: 700; }
+.brand strong, .login-brand strong { color: var(--text-strong); font-weight: 700; }
 
-/* One star in two halves: the active node and its standby, together one address. */
-.brand-mark { width: 30px; height: 30px; color: var(--brand); fill: currentcolor; stroke: none; }
-.brand-mark-standby { opacity: 0.6; }
+/*
+ * One star in two halves, coloured as Orion's two brightest: Betelgeuse and
+ * Rigel, the pair of nodes that together are one address. The mark keeps its
+ * own colours in both themes, so the name beside it takes the text colour.
+ */
+.brand-mark { width: 36px; height: 36px; stroke: none; }
+.brand-mark-west { fill: #ff7a3d; }
+.brand-mark-east { fill: #5aa9ff; }
 
 .primary-nav { background: var(--panel-soft); }
 /* One row where it fits; a second row rather than a page pushed sideways where it does not. */
@@ -1069,7 +1074,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .login-layout { display: grid; min-height: 100vh; place-items: center; padding: 28px 18px; }
 .login-card { width: min(100%, 390px); padding: 32px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 22px 70px rgb(15 23 42 / 0.1); }
 .login-brand { display: inline-flex; align-items: center; gap: 9px; color: var(--text-strong); font-size: 14px; }
-.login-brand .brand-mark { width: 28px; height: 28px; }
+.login-brand .brand-mark { width: 32px; height: 32px; }
 .login-copy { margin: 30px 0 23px; }
 .login-copy h1 { margin: 0; color: var(--text-strong); font-size: 25px; font-weight: 690; letter-spacing: -0.035em; }
 .login-form label { display: block; margin: 0 0 6px; color: var(--muted-strong); font-size: 12px; font-weight: 650; }

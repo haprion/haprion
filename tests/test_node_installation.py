@@ -25,6 +25,8 @@ NODE_SCRIPTS = (
     "haproxy-traffic-log-read",
     "haproxy-traffic-log-enable",
     "haproxy-traffic-log-prune",
+    "haproxy-server-state",
+    "haproxy-server-state-trigger",
 )
 
 

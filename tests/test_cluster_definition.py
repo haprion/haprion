@@ -350,6 +350,10 @@ class CreatingACluster(unittest.TestCase):
             candidate_validation.SHM_STATS_DIRECTORY,
         )
         self.assertIn(
+            f"    stats socket {cluster_definition.MANAGER_SOCKET} mode 600 level admin",
+            ours.splitlines(),
+        )
+        self.assertIn(
             f"TemporaryFileSystem={candidate_validation.SHM_STATS_DIRECTORY}",
             candidate_validation.sandbox_command(Path("/tmp/candidate"), "request-1"),
         )

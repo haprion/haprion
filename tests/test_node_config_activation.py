@@ -66,6 +66,14 @@ def release_text(version: int, commit: str) -> str:
     return f"schema=1\ncluster=alpha\nversion={version}\nhash={commit}\ntimestamp=2026-10-04T09:00:00+00:00\n"
 
 
+SERVER_STATE_STUB = """#!/bin/sh
+# The node's server state helper as far as these scripts use it: every reload
+# goes through it (Fas 20, B263), and it reloads with systemctl.
+[ "$1" = reload ] && exec systemctl reload haproxy
+exit 64
+"""
+
+
 class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
@@ -83,6 +91,7 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
             ("rsync", RSYNC_STUB),
             ("haproxy", HAPROXY_STUB),
             ("systemctl", SYSTEMCTL_STUB),
+            ("haproxy-server-state", SERVER_STATE_STUB),
             ("chown", CHOWN_STUB),
         ):
             path = self.bin / name
@@ -100,6 +109,10 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
             .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.haproxy}"')
             .replace('PENDING="/run/haproxy-pull-deploy.pending"', f'PENDING="{self.pending}"')
             .replace("/run/lock/haproxy-deploy.lock", str(self.root / "deploy.lock"))
+            .replace(
+                'SERVER_STATE="/usr/local/sbin/haproxy-server-state"',
+                f'SERVER_STATE="{self.bin}/haproxy-server-state"',
+            )
             .replace('KEEPALIVED_CONF="/etc/keepalived/', f'KEEPALIVED_CONF="{self.root}/')
             .replace(
                 'KEEPALIVED_ADDRESSES="/etc/keepalived/', f'KEEPALIVED_ADDRESSES="{self.root}/'

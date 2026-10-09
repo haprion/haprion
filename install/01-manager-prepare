@@ -184,6 +184,10 @@ global
     # reload').
     shm-stats-file /run/haproxy/stats.shm
 
+    # The manager's own runtime socket, root only: drain, maintenance and
+    # ready per server (docs/user-manual.md, 'Node scripts').
+    stats socket /run/haproxy/manager.sock mode 600 level admin
+
 defaults
     log     global
     mode    http

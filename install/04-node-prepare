@@ -87,6 +87,8 @@ SCRIPTS=(
     haproxy-traffic-log-read
     haproxy-traffic-log-enable
     haproxy-traffic-log-prune
+    haproxy-server-state
+    haproxy-server-state-trigger
 )
 # Unchanged. This level says whether the manager and a node may speak to each
 # other; the traffic chain is opt-in and adds no operation the manager calls on
@@ -152,6 +154,31 @@ ensure_account() {
 }
 
 ensure_account "$TRIGGER_USER"
+#
+# The server state key's line (Fas 20, B263), written from the answers file
+# rather than pasted by hand: a public key is no secret, and this still runs
+# only under the operator's own sudo on the node - the manager gains no way to
+# write here. Its own forced command and `restrict`, like every other key; a
+# line already there for the same command is replaced, so rotating the key
+# does not leave the old one able to ask.
+#
+if [[ -n "${SERVER_STATE_PUBKEY:-}" ]]; then
+    [[ "$SERVER_STATE_PUBKEY" =~ ^ssh-ed25519\ [A-Za-z0-9+/]+=*$ ]] \
+        || die "SERVER_STATE_PUBKEY must be one ssh-ed25519 public key (type and key, no comment)"
+    keys="/home/${TRIGGER_USER}/.ssh/authorized_keys"
+    forced="command=\"${SBIN}/haproxy-server-state-trigger\""
+    line="restrict,${forced} ${SERVER_STATE_PUBKEY}"
+    if grep -qxF "$line" "$keys"; then
+        log "  ok       server state key in ${keys}"
+    else
+        tmp="$(mktemp)"
+        grep -vF "$forced" "$keys" > "$tmp" || true
+        printf '%s\n' "$line" >> "$tmp"
+        install -o root -g root -m 644 "$tmp" "$keys"
+        rm -f "$tmp"
+        log "  written  server state key in ${keys}"
+    fi
+fi
 ensure_account "$STATUS_USER"
 ensure_account "$BACKUP_USER"
 ensure_group "$LOGREAD_GROUP"
@@ -259,6 +286,22 @@ ExecStart=
 ExecStart=/usr/bin/dnsdist --supervised --disable-syslog -C /etc/haproxy/dns/dnsdist.conf"
 systemctl daemon-reload
 log "  applied  ${DNS_DROPIN}"
+#
+# A server kept in drain or maintenance stays there when HAProxy starts (Fas 20,
+# B263): the drop-in puts the node's kept states back once HAProxy is ready.
+# `-` in front, so a state that cannot be set never stops HAProxy from running -
+# the helper logs it, and the status shows the server as it really is. Reloads
+# are covered by the deploy and certificate scripts calling the helper.
+#
+SERVER_STATE_DIR="/var/lib/haproxy-manager"
+ensure_dir "$SERVER_STATE_DIR" root:root 700
+HAPROXY_DROPIN="/etc/systemd/system/haproxy.service.d/haproxy-manager-server-state.conf"
+ensure_dir "${HAPROXY_DROPIN%/*}" root:root 755
+install_file "$HAPROXY_DROPIN" root:root 644 "# Installed by install/04-node-prepare.
+[Service]
+ExecStartPost=-${SBIN}/haproxy-server-state reapply"
+systemctl daemon-reload
+log "  applied  ${HAPROXY_DROPIN}"
 # /run/lock is a distribution-owned shared directory, normally mode 1777.
 # The deploy helpers own their root-created lock files, not this directory.
 [[ -d /run/lock ]] || die "/run/lock is missing"
@@ -400,7 +443,7 @@ install_file "$NODE_CONF" root:root 600 "$node_conf"
 step "Sudo rules"
 
 #
-# Four rules, each naming one absolute command. The forced commands run
+# One rule per command, each naming one absolute path. The forced commands run
 # with `sudo -n`, so a mismatch fails immediately instead of trying to prompt for
 # a password down a connection that has no terminal.
 #
@@ -408,6 +451,9 @@ step "Sudo rules"
 # a list of certificate IDs, and sudoers cannot express "a list of validated
 # IDs" more strongly than a wildcard would. The real gate is validation in two
 # places - unprivileged in haproxy-cert-trigger, then again in the root helper.
+# The server state rule is the same shape (Fas 20, B263): the verb `set` is
+# fixed, the GUID and the state behind it are validated by
+# haproxy-server-state-trigger and again by the helper.
 #
 sudoers="# Installed by install/04-node-prepare. Do not edit by hand.
 #
@@ -417,6 +463,7 @@ sudoers="# Installed by install/04-node-prepare. Do not edit by hand.
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-pull-deploy
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-cert-pull
 ${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-cert-remove
+${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-server-state set *
 ${STATUS_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-node-status -c ${CLUSTER} --json
 ${BACKUP_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-state-export"
 

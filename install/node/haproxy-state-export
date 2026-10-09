@@ -150,6 +150,8 @@ DR_SCRIPTS=(
     haproxy-traffic-log-read
     haproxy-traffic-log-enable
     haproxy-traffic-log-prune
+    haproxy-server-state
+    haproxy-server-state-trigger
 )
 for script in "${DR_SCRIPTS[@]}"; do
     copy_path "/usr/local/sbin/${script}"

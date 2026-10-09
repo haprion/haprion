@@ -96,6 +96,12 @@ GITIGNORE = "*.swp\n*~\n.#*\n"
 # sandbox gives a check the same directory (`candidate_validation`).
 #
 SHM_STATS_FILE = "/run/haproxy/stats.shm"
+#
+# The socket the node's server state helper sets drain, maintenance and ready
+# on (Fas 20, B263): level admin, which `operator` is not (measured), and mode
+# 600, so only root opens it. Named in the core template below.
+#
+MANAGER_SOCKET = "/run/haproxy/manager.sock"
 CORE_TEMPLATE = """#
 # The handwritten `global` and `defaults` for this cluster. Generated
 # configuration is assembled behind this file and never edits it.
@@ -113,6 +119,10 @@ global
     # so the path is the host's (docs/user-manual.md, 'Counters across a
     # reload').
     shm-stats-file /run/haproxy/stats.shm
+
+    # The manager's own runtime socket, root only: drain, maintenance and
+    # ready per server (docs/user-manual.md, 'Node scripts').
+    stats socket /run/haproxy/manager.sock mode 600 level admin
 
     # The TLS defaults the publish path checks this file against, written
     # from the same source (docs/user-manual.md, 'Runtime policy').

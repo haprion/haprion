@@ -39,6 +39,8 @@ NODE_SCRIPTS = (
     "haproxy-traffic-log-read",
     "haproxy-traffic-log-enable",
     "haproxy-traffic-log-prune",
+    "haproxy-server-state",
+    "haproxy-server-state-trigger",
 )
 #
 # Data rather than programs, so 0644: the shell library the scripts source,

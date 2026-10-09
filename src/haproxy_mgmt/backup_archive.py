@@ -55,6 +55,8 @@ REQUIRED_PATHS = frozenset(
         "rootfs/usr/local/sbin/haproxy-traffic-log-read",
         "rootfs/usr/local/sbin/haproxy-traffic-log-enable",
         "rootfs/usr/local/sbin/haproxy-traffic-log-prune",
+        "rootfs/usr/local/sbin/haproxy-server-state",
+        "rootfs/usr/local/sbin/haproxy-server-state-trigger",
         "meta/backup-created.txt",
         "meta/hostname.txt",
         "meta/fqdn.txt",

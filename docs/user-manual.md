@@ -3684,9 +3684,11 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB; `waf <cursor>` returns the WAF engine's journal lines after a journal cursor, same cap |
 | `haproxy-traffic-log-enable` | installs or removes this node's rsyslog route and retention timer |
 | `haproxy-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
+| `haproxy-server-state-trigger` | unprivileged wrapper: validates `server-state <guid> <ready\|drain\|maint>`, then escalates |
+| `haproxy-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts |
 
 Step 4 also writes `/etc/haproxy-manager/node-installation.json`. It records the
-node compatibility API and a SHA-256 digest for each of these eleven scripts.
+node compatibility API and a SHA-256 digest for each of these thirteen scripts.
 `haproxy-node-status` recomputes the digests on every reading, so copied metadata
 cannot hide a script changed after installation. The report contains code
 digests only, never node configuration or key material.
@@ -3724,6 +3726,28 @@ A target that names none means `TLSv1.2`, which is what a manager older than the
 degradation runs the other way too and is worth knowing: a **node** older than the field ignores it
 and probes at TLS [Directory layout](#directory-layout) regardless, so a `legacy` pool reads as unreachable until that node's script
 is updated. The configuration is unaffected — only the answer the card gives.
+
+**`haproxy-server-state` keeps a drain through reloads and restarts.** A state set over HAProxy's
+runtime socket lasts only as long as the worker, and every deploy and certificate rollout starts a
+new one. So the node keeps the wanted state per server in `/var/lib/haproxy-manager/server-state.json`
+(`root`, `0600`), named by the server's GUID - derived from its address and port, so reordering a
+pool moves nothing and a server given a new address starts ready - and every reload on the node
+goes through `haproxy-server-state reload`: it reads the worker's pid, reloads, waits for a
+worker with another pid, and sets the kept states on a connection whose `show info` proves which
+worker took them. A drop-in on `haproxy.service` runs `haproxy-server-state reapply` once HAProxy
+is ready, prefixed `-` so a state that cannot be set never keeps HAProxy from starting. HAProxy's
+own `server-state-file` is not used: it carries a server's old port over a changed configuration
+(haproxy/haproxy#3296). It needs a socket at level `admin` that only root can open - one line in
+the cluster's `core/haproxy.cfg`:
+
+```
+    stats socket /run/haproxy/manager.sock mode 600 level admin
+```
+
+The trigger account's key line for it is written by step 4 from `SERVER_STATE_PUBKEY` in the
+answers file; a line already there for the same forced command is replaced. A node without the
+key, or a core without the socket, offers no server state and refuses a request with the line
+that is missing.
 
 **`haproxy-pull-deploy` is generic except for its publication path.** Everything else — validation,
 release creation, the atomic symlink swap, the rollback on failure — is identical on every node.

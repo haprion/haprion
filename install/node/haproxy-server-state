@@ -1,0 +1,344 @@
+#!/usr/bin/python3
+"""Put a server into drain, maintenance or back to ready, and keep it there (Fas 20, B263).
+
+    haproxy-server-state set <guid> <ready|drain|maint>
+    haproxy-server-state reload
+    haproxy-server-state reapply
+
+Runs as root. `set` is what the manager asks for, through the trigger account's
+forced command (`haproxy-server-state-trigger`), which validated the words
+before sudo; they are validated again here. `reload` replaces every
+`systemctl reload haproxy` on the node, and `reapply` runs when HAProxy starts
+(a drop-in on haproxy.service).
+
+**A server is named by its GUID**, `srv:<object>.<digest>`, which the generator
+derives from the server's address and port. HAProxy's own name for it - `s1`,
+`s2` - is its position in the pool and moves when the pool is reordered; the
+GUID does not, and a server given another address is another server and starts
+ready. The name HAProxy knows it by is looked up in the configuration HAProxy
+runs, at the moment it is needed.
+
+**Why the node keeps the state.** A drain set over the runtime socket lasts only
+as long as the process: every reload starts a new one. HAProxy's own
+`server-state-file` would carry it, but it also carries a server's old port
+over a changed configuration (haproxy/haproxy#3296, reproduced on 3.4.6), which
+would send traffic to the wrong port after an object is edited. So the wanted
+state is kept here, per GUID, and put back after every reload and every start.
+
+**Why `reload` waits.** `systemctl reload` only signals the master; the new
+worker answers about 30 ms later (measured). A state set before that lands on
+the old worker and dies with it. So the worker's pid is read first, and after
+the reload the commands are sent only on a connection whose `show info` names
+another pid - in the same connection, so the answer proves which process took
+them.
+
+One lock covers `set` and `reload`/`reapply`, so a drain asked for during a
+deploy is either in the file the reload reads or set on the new worker, never
+lost between the two.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime
+from pathlib import Path
+
+ADMIN_SOCKET = "/run/haproxy/manager.sock"
+STATE_FILE = Path("/var/lib/haproxy-manager/server-state.json")
+LOCK_FILE = "/run/lock/haproxy-server-state.lock"
+CONFIG = Path("/etc/haproxy/haproxy.cfg")
+CONFIG_DIR = Path("/etc/haproxy/conf.d")
+RELEASES = Path("/etc/haproxy/releases")
+CONFIG_PENDING = Path("/run/haproxy-pull-deploy.pending")
+SYSTEMCTL = "/usr/bin/systemctl"
+
+STATES = ("ready", "drain", "maint")
+#
+# The generator's server GUID (`guid.server_guid`): kind, object name, digest.
+# Object names are lowercase letters, digits, `_` and `-`, at most 40.
+#
+GUID = re.compile(r"^srv:[a-z][a-z0-9_-]{0,39}\.[0-9a-f]{16}$")
+#
+# HAProxy's administrative flags in `show servers state` (srv_admin_state):
+# forced maintenance and forced drain, the two this sets.
+#
+FORCED_MAINT = 0x01
+FORCED_DRAIN = 0x08
+WAIT_FOR_WORKER_SECONDS = 15
+LOCK_SECONDS = 60
+
+EXIT_USAGE = 64
+EXIT_UNKNOWN_SERVER = 65
+EXIT_UNAVAILABLE = 69
+EXIT_REFUSED = 70
+
+
+def log(message: str) -> None:
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] server state: {message}", flush=True)
+
+
+class Unavailable(Exception):
+    """The admin socket could not be asked."""
+
+
+def ask(commands: list[str]) -> str:
+    """Send commands on one connection, so one process answers all of them."""
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(5.0)
+            sock.connect(ADMIN_SOCKET)
+            sock.sendall((";".join(commands) + "\n").encode())
+            chunks = []
+            while True:
+                data = sock.recv(65536)
+                if not data:
+                    break
+                chunks.append(data)
+    except OSError as error:
+        raise Unavailable(
+            f"cannot ask HAProxy on {ADMIN_SOCKET} ({error.strerror or error}); the cluster's "
+            "core configuration needs 'stats socket /run/haproxy/manager.sock mode 600 level admin'"
+        ) from error
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def worker_pid(answer: str) -> str | None:
+    found = re.search(r"^Pid: (\d+)$", answer, re.MULTILINE)
+    return found.group(1) if found else None
+
+
+def config_files(root: Path | None) -> list[Path]:
+    """The files HAProxy reads, in the order it reads them: the main file, then conf.d by name."""
+
+    main, directory = (CONFIG, CONFIG_DIR) if root is None else (root / "haproxy.cfg", root / "conf.d")
+    return [main, *sorted(p for p in directory.glob("*.cfg") if p.is_file())]
+
+
+def running_root() -> Path | None:
+    """The release HAProxy runs now: `current`, unless a deploy switched it and has not reloaded.
+
+    The same reading `haproxy-node-status` makes (review 2026-10-03, F2). None
+    means `/etc/haproxy`'s own links, which is `current`.
+    """
+
+    if not CONFIG_PENDING.exists():
+        return None
+    named = Path(CONFIG_PENDING.read_text(encoding="utf-8").splitlines()[0].strip())
+    if named.parent != RELEASES or not named.name or named.name.startswith("."):
+        raise Unavailable("the deploy marker names no release; deploy again")
+    return named
+
+
+def servers_by_guid(root: Path | None) -> dict[str, tuple[str, str]]:
+    """Every generated server's GUID, with the backend and name HAProxy knows it by."""
+
+    found: dict[str, tuple[str, str]] = {}
+    for path in config_files(root):
+        section: tuple[str, str] | None = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            words = line.split()
+            if not words or words[0].startswith("#"):
+                continue
+            if not line[0].isspace():
+                section = (words[0], words[1]) if len(words) > 1 else (words[0], "")
+                continue
+            if section and section[0] in ("backend", "listen") and words[0] == "server":
+                if "guid" in words[:-1]:
+                    found[words[words.index("guid") + 1]] = (section[1], words[1])
+    return found
+
+
+def admin_states(answer: str) -> dict[tuple[str, str], int]:
+    """srv_admin_state by backend and server, from `show servers state` output."""
+
+    states: dict[tuple[str, str], int] = {}
+    for line in answer.splitlines():
+        fields = line.split()
+        if len(fields) > 6 and fields[0].isdigit():
+            states[(fields[1], fields[3])] = int(fields[6])
+    return states
+
+
+def holds(admin: int, state: str) -> bool:
+    if state == "maint":
+        return bool(admin & FORCED_MAINT)
+    if state == "drain":
+        return bool(admin & FORCED_DRAIN) and not admin & FORCED_MAINT
+    return not admin & (FORCED_MAINT | FORCED_DRAIN)
+
+
+def read_wanted() -> dict[str, str]:
+    try:
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as error:
+        log(f"ERROR: {STATE_FILE} is unreadable ({error}); treating every server as ready")
+        return {}
+    servers = data.get("servers") if isinstance(data, dict) else None
+    if not isinstance(servers, dict):
+        return {}
+    return {
+        guid: state
+        for guid, state in servers.items()
+        if isinstance(guid, str) and GUID.match(guid) and state in ("drain", "maint")
+    }
+
+
+def write_wanted(wanted: dict[str, str]) -> None:
+    STATE_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(dir=STATE_FILE.parent, prefix=".server-state.")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump({"schema_version": 1, "servers": dict(sorted(wanted.items()))}, stream, indent=1)
+            stream.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, STATE_FILE)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def lock() -> int:
+    descriptor = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    deadline = time.monotonic() + LOCK_SECONDS
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return descriptor
+        except BlockingIOError:
+            if time.monotonic() > deadline:
+                raise Unavailable("another server state change or reload is still running") from None
+            time.sleep(0.1)
+
+
+def answer(document: dict[str, object], code: int) -> int:
+    print(json.dumps({"node": socket.gethostname(), **document}, sort_keys=True))
+    return code
+
+
+def command_set(guid: str, state: str) -> int:
+    if not GUID.match(guid) or state not in STATES:
+        return answer({"outcome": "refused", "message": "expected a server GUID and ready, drain or maint"}, EXIT_USAGE)
+    held = lock()
+    try:
+        servers = servers_by_guid(running_root())
+        if guid not in servers:
+            return answer(
+                {"guid": guid, "outcome": "refused", "message": "no server with that GUID in the configuration HAProxy runs"},
+                EXIT_UNKNOWN_SERVER,
+            )
+        backend, server = servers[guid]
+        reply = ask([f"set server {backend}/{server} state {state}", f"show servers state {backend}"])
+        admin = admin_states(reply).get((backend, server))
+        if admin is None or not holds(admin, state):
+            return answer(
+                {"guid": guid, "backend": backend, "server": server, "state": state,
+                 "outcome": "failed", "message": f"HAProxy did not take it: {reply.strip()[:300]}"},
+                EXIT_REFUSED,
+            )
+        wanted = read_wanted()
+        if state == "ready":
+            wanted.pop(guid, None)
+        else:
+            wanted[guid] = state
+        write_wanted(wanted)
+        return answer({"guid": guid, "backend": backend, "server": server, "state": state, "outcome": "done"}, 0)
+    except Unavailable as error:
+        return answer({"guid": guid, "outcome": "failed", "message": str(error)}, EXIT_UNAVAILABLE)
+    finally:
+        os.close(held)
+
+
+def put_back(replacing: str | None) -> bool:
+    """Set every kept state on the worker that is not `replacing`. True when all of them took."""
+
+    wanted = read_wanted()
+    if not wanted:
+        return True
+    servers = servers_by_guid(None)
+    gone = sorted(guid for guid in wanted if guid not in servers)
+    for guid in gone:
+        log(f"{guid} is no longer in the configuration; forgetting its {wanted.pop(guid)}")
+    if gone:
+        write_wanted(wanted)
+    commands = [f"set server {servers[g][0]}/{servers[g][1]} state {s}" for g, s in sorted(wanted.items())]
+    if not commands:
+        return True
+    deadline = time.monotonic() + WAIT_FOR_WORKER_SECONDS
+    while True:
+        try:
+            reply = ask(["show info", *commands, "show servers state"])
+        except Unavailable:
+            reply = ""
+        pid = worker_pid(reply)
+        if pid is not None and pid != replacing:
+            break
+        if time.monotonic() > deadline:
+            log("ERROR: the new HAProxy worker did not answer; kept states are NOT in force")
+            return False
+        time.sleep(0.05)
+    states = admin_states(reply)
+    ok = True
+    for guid, state in sorted(wanted.items()):
+        backend, server = servers[guid]
+        if holds(states.get((backend, server), -1), state):
+            log(f"{state} on {backend}/{server} ({guid})")
+        else:
+            log(f"ERROR: {backend}/{server} ({guid}) should be {state} and is not")
+            ok = False
+    return ok
+
+
+def command_reload() -> int:
+    held = lock()
+    try:
+        try:
+            before = worker_pid(ask(["show info"]))
+        except Unavailable:
+            before = None
+        reload = subprocess.run([SYSTEMCTL, "reload", "haproxy"], check=False)
+        if reload.returncode != 0:
+            return reload.returncode
+        try:
+            put_back(before)
+        except (OSError, Unavailable) as error:
+            log(f"ERROR: kept states could not be put back: {error}")
+        return 0
+    finally:
+        os.close(held)
+
+
+def command_reapply() -> int:
+    held = lock()
+    try:
+        return 0 if put_back(None) else 1
+    except (OSError, Unavailable) as error:
+        log(f"ERROR: kept states could not be put back: {error}")
+        return 1
+    finally:
+        os.close(held)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[0] == "set":
+        return command_set(argv[1], argv[2])
+    if argv == ["reload"]:
+        return command_reload()
+    if argv == ["reapply"]:
+        return command_reapply()
+    print(__doc__.split("\n\n")[1], file=sys.stderr)
+    return EXIT_USAGE
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

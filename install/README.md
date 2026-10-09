@@ -101,7 +101,10 @@ accounts, the `/etc/haproxy` release layout, the sudo rules, and installs the
 node scripts.
 
 Then paste the `authorized_keys` lines for this node from step 3, and add the
-keepalived notify lines if the script asked for them.
+keepalived notify lines if the script asked for them. The server state key's line
+is the exception: with `SERVER_STATE_PUBKEY` in the answers file, this step writes
+it. Drain, maintenance and ready also need the admin socket line in each cluster's
+`core/haproxy.cfg` (`docs/user-manual.md`, 'Node scripts').
 
 Repeat for every node.
 

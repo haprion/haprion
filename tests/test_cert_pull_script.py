@@ -91,6 +91,14 @@ def certificate(directory: Path, name: str) -> bytes:
     return cert.read_bytes() + key.read_bytes()
 
 
+SERVER_STATE_STUB = """#!/bin/sh
+# The node's server state helper as far as these scripts use it: every reload
+# goes through it (Fas 20, B263), and it reloads with systemctl.
+[ "$1" = reload ] && exec systemctl reload haproxy
+exit 64
+"""
+
+
 class CertPull(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
@@ -112,6 +120,7 @@ class CertPull(unittest.TestCase):
             ("rsync", RSYNC_STUB),
             ("haproxy", HAPROXY_STUB),
             ("systemctl", SYSTEMCTL_STUB),
+            ("haproxy-server-state", SERVER_STATE_STUB),
             ("install", INSTALL_STUB),
         ):
             path = self.bin / name
@@ -123,7 +132,11 @@ class CertPull(unittest.TestCase):
             .replace('NODE_CONF="/etc/haproxy-manager/node.conf"', f'NODE_CONF="{conf}"')
             .replace('CERTS_DIR="/etc/haproxy/certs"', f'CERTS_DIR="{self.certs}"')
             .replace('PENDING="/run/haproxy-cert-pull.pending"', f'PENDING="{self.pending}"')
-            .replace("/run/lock/haproxy-cert-pull.lock", str(self.root / "cert.lock")),
+            .replace("/run/lock/haproxy-cert-pull.lock", str(self.root / "cert.lock"))
+            .replace(
+                'SERVER_STATE="/usr/local/sbin/haproxy-server-state"',
+                f'SERVER_STATE="{self.bin}/haproxy-server-state"',
+            ),
             encoding="utf-8",
         )
         self.old = certificate(self.root, "old")

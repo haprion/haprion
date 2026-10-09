@@ -36,6 +36,13 @@ set -Eeuo pipefail
 # this script collapse into one.
 #
 NODE_CONF="/etc/haproxy-manager/node.conf"
+#
+# Every reload goes through the server state helper (Fas 20, B263): it reloads,
+# waits for the new worker and puts back any server kept in drain or
+# maintenance. A plain `systemctl reload haproxy` would quietly send traffic
+# to a server somebody took out.
+#
+SERVER_STATE="/usr/local/sbin/haproxy-server-state"
 
 [[ -r "$NODE_CONF" ]] || {
     echo "ERROR: ${NODE_CONF} is missing. Run install/04-node-prepare." >&2
@@ -170,7 +177,7 @@ done
 reload_checked() {
     haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d \
         || fail "HAProxy validation failed; the certificates on disk were left as they are"
-    systemctl reload haproxy || fail "HAProxy reload failed"
+    "$SERVER_STATE" reload || fail "HAProxy reload failed"
 }
 
 if (( ${#CHANGED[@]} == 0 )); then
@@ -243,10 +250,10 @@ fi
 
 log "Reloading HAProxy..."
 
-if ! systemctl reload haproxy; then
+if ! "$SERVER_STATE" reload; then
     log "ERROR: HAProxy reload failed. Rolling back."
     restore
-    systemctl reload haproxy || true
+    "$SERVER_STATE" reload || true
     exit 1
 fi
 

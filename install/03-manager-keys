@@ -53,6 +53,9 @@ generate_key "$NODE_STATUS_KEY"   "haproxy-manager node status"
 # probe reports itself as unavailable instead of failing anything else.
 #
 [[ -n "${NODE_PROBE_KEY:-}" ]] && generate_key "$NODE_PROBE_KEY" "haproxy-manager health probe"
+# Optional too (Fas 20, B263): without it the interface offers no drain,
+# maintenance or ready, and nothing else changes.
+[[ -n "${SERVER_STATE_KEY:-}" ]] && generate_key "$SERVER_STATE_KEY" "haproxy-manager server state"
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
     require_vars NODE_BACKUP_KEY BACKUP_USER
     generate_key "$NODE_BACKUP_KEY" "haproxy-manager node state backup"
@@ -85,14 +88,18 @@ for cluster in $(each_cluster); do
         host="$(node_host "$pair")"
         echo "--- ${name}  (${host}, cluster ${cluster}) ------------------------------"
         echo
-        echo "  /home/${TRIGGER_USER}/.ssh/authorized_keys    (owner ${TRIGGER_USER}, mode 600)"
+        echo "  /home/${TRIGGER_USER}/.ssh/authorized_keys    (owner root, mode 644)"
         echo
         echo "restrict,command=\"sudo -n /usr/local/sbin/haproxy-pull-deploy\" $(pub "$CONFIG_DEPLOY_KEY")"
         if [[ -n "${CERT_DEPLOY_KEY:-}" ]]; then
             echo "restrict,command=\"/usr/local/sbin/haproxy-cert-trigger\" $(pub "$CERT_DEPLOY_KEY")"
         fi
+        if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
+            echo "restrict,command=\"/usr/local/sbin/haproxy-server-state-trigger\" $(pub "$SERVER_STATE_KEY")"
+            echo "    (written by 04-node-prepare when the node's answers file has SERVER_STATE_PUBKEY)"
+        fi
         echo
-        echo "  /home/${STATUS_USER}/.ssh/authorized_keys     (owner ${STATUS_USER}, mode 600)"
+        echo "  /home/${STATUS_USER}/.ssh/authorized_keys     (owner root, mode 644)"
         echo
         echo "restrict,command=\"sudo -n /usr/local/sbin/haproxy-node-status -c ${cluster} --json\" $(pub "$NODE_STATUS_KEY")"
         #
@@ -113,6 +120,18 @@ for cluster in $(each_cluster); do
         echo
     done
 done
+
+if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
+    cat <<SERVER_STATE
+
+The server state line need not be pasted: put this in the answers file the
+nodes are prepared with, and 04-node-prepare (and tools/install-node-bundle)
+writes it:
+
+SERVER_STATE_PUBKEY=$(pub "$SERVER_STATE_KEY")
+
+SERVER_STATE
+fi
 
 cat <<'OUTRO'
 Two things to check after pasting, on every node:

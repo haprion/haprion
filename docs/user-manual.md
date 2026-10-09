@@ -1482,7 +1482,8 @@ person to read and remove once the files are right.
 
 Once written by step 2, `clusters.yaml` is the record: a second run of step 2 keeps it unless
 `REWRITE_CLUSTER_FILE=yes` asks for the answers file's version, and step 13 reads the collector's
-nodes from it rather than from the answers file.
+nodes from it rather than from the answers file. The runtime policy is kept the same way
+(`REWRITE_POLICY=yes`): it holds blocks no answer renders, such as `acme` and `ndes`.
 
 ### Creating and removing a cluster
 

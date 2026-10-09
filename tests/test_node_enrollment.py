@@ -622,3 +622,11 @@ class TheInstallersKeepTheRecord(unittest.TestCase):
         self.assertIn(
             'if [[ -f "$CLUSTER_FILE" && "${REWRITE_CLUSTER_FILE:-}" != yes ]]; then', step
         )
+
+    def test_step_two_keeps_an_existing_runtime_policy(self) -> None:
+        """The policy holds blocks no answer renders - the certificate registry,
+        acme, ndes - so rendering it again from the answers would drop them."""
+
+        step = (BASE / "install" / "02-manager-config").read_text()
+
+        self.assertIn('if [[ -f "$POLICY_FILE" && "${REWRITE_POLICY:-}" != yes ]]; then', step)

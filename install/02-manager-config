@@ -182,7 +182,17 @@ backup_identity:
 fi
 
 ensure_dir "$(dirname "$POLICY_FILE")" "root:root" 755
-install_file "$POLICY_FILE" "root:root" 644 "$policy"
+#
+# Written once, like the cluster file. A running installation's policy holds
+# blocks no answer renders - the certificate registry, acme, ndes - and
+# rendering it again would drop them, which stops every certificate flow
+# without an error until one is asked for.
+#
+if [[ -f "$POLICY_FILE" && "${REWRITE_POLICY:-}" != yes ]]; then
+    log "  kept     ${POLICY_FILE}  (REWRITE_POLICY=yes renders it from the answers, and drops what they do not hold)"
+else
+    install_file "$POLICY_FILE" "root:root" 644 "$policy"
+fi
 
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
     backup_service="[Unit]

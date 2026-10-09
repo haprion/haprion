@@ -118,13 +118,11 @@ def read_installation():
 
 
 def run(*argv):
-    return subprocess.run(
-        argv,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
+    #
+    # Every caller passes an absolute binary and this script's own names and
+    # paths - never anything read from the manager or from a request.
+    #
+    return subprocess.run(argv, capture_output=True, text=True, check=False)  # noqa: S603
 
 
 def service_active(name):
@@ -786,9 +784,7 @@ def runtime_info():
         return True, {
             "version": info.get("Version"),
             "uptime_sec": (
-                int(info["Uptime_sec"])
-                if info.get("Uptime_sec", "").isdigit()
-                else None
+                int(info["Uptime_sec"]) if info.get("Uptime_sec", "").isdigit() else None
             ),
             "shared_counters": shared_counters(
                 int(info["Pid"]) if info.get("Pid", "").isdigit() else None,
@@ -1108,8 +1104,12 @@ def read_release():
             if key in result:
                 result[key] = value
 
-    except Exception:
-        pass
+    #
+    # A release file that cannot be read says nothing about the release; the
+    # fields stay None, which is how the manager reads "unknown".
+    #
+    except (OSError, ValueError):
+        return result
 
     return result
 
@@ -1149,7 +1149,10 @@ def leaf_fingerprint(text):
 def certificate_valid(path):
     """Is it in its validity window right now? Measured, not assumed."""
 
-    return run("/usr/bin/openssl", "x509", "-in", str(path), "-noout", "-checkend", "0").returncode == 0
+    return (
+        run("/usr/bin/openssl", "x509", "-in", str(path), "-noout", "-checkend", "0").returncode
+        == 0
+    )
 
 
 def read_certificates():
@@ -1194,7 +1197,11 @@ def read_certificates():
             if path.stat().st_size > MAX_CERTIFICATE_BYTES:
                 continue
             fingerprint = leaf_fingerprint(path.read_text(encoding="ascii", errors="strict"))
-        except Exception:
+        #
+        # A file that cannot be read, or is not ASCII, is not a certificate
+        # this node can report on; the others still are.
+        #
+        except (OSError, ValueError):
             continue
 
         if fingerprint is None or path.name[: -len(".pem")] in pending:
@@ -1247,19 +1254,12 @@ haproxy_active = service_active("haproxy")
 keepalived_active = service_active("keepalived")
 
 try:
-    keepalived_state = KEEPALIVED_STATE.read_text(
-        encoding="utf-8"
-    ).strip()
+    keepalived_state = KEEPALIVED_STATE.read_text(encoding="utf-8").strip()
 except Exception:
     keepalived_state = None
 
 try:
-    ip_nonlocal_bind = (
-        Path("/proc/sys/net/ipv4/ip_nonlocal_bind")
-        .read_text()
-        .strip()
-        == "1"
-    )
+    ip_nonlocal_bind = Path("/proc/sys/net/ipv4/ip_nonlocal_bind").read_text().strip() == "1"
 except Exception:
     ip_nonlocal_bind = None
 
@@ -1325,7 +1325,7 @@ else:
     print(f"Runtime stats:     {'OK' if stats_ok else 'FAILED'}")
     resources = result["resources"]
     print(f"Memory:            {memory_summary(resources['memory'])}")
-    load = "unknown" if resources["load"] is None else "%.2f" % resources["load"]
+    load = "unknown" if resources["load"] is None else f"{resources['load']:.2f}"
     cpus = resources["cpus"]
     count = "1 CPU" if cpus == 1 else f"{cpus or '?'} CPUs"
     print(f"Load:              {load} on {count}, last minute")

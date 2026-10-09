@@ -42,6 +42,22 @@ python3 "$base/tools/secret_scan.py" \
 #
 ruff check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools" "$base/ui"
 ruff format --check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools" "$base/ui"
+#
+# And the Python scripts installed without a .py ending - the nodes' status,
+# probe and server state helpers - which a directory walk never offers ruff.
+# Found by their first line, so a new one is linted the day it is added; until
+# 2026-10-09 eleven findings sat in them unseen.
+#
+python_scripts=$(find "$base/install" "$base/examples" -type f ! -name '*.py' ! -path '*/__pycache__/*' \
+    -exec sh -c 'head -n 1 "$1" | grep -q "^#!.*python"' _ {} \; -print | sort)
+if [ -z "$python_scripts" ]; then
+    echo "run-tests: found no Python scripts under install/ - the search is broken" >&2
+    exit 2
+fi
+# shellcheck disable=SC2086 # one path per word; none of them has a space
+ruff check $python_scripts
+# shellcheck disable=SC2086
+ruff format --check $python_scripts
 # -x so the installation scripts' `source ./lib.sh` is followed rather than
 # reported as unreadable, and -P SCRIPTDIR so it is looked up beside the script
 # that sources it rather than in whatever directory the gate was started from.

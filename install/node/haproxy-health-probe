@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import os
@@ -391,7 +392,7 @@ def http_status(stream, target, timeout, deadline):
         # a server sending a byte at a time would hold the probe for minutes.
         #
         if time.monotonic() > deadline:
-            raise socket.timeout
+            raise TimeoutError
         chunk = stream.recv(64)
         if not chunk:
             break
@@ -465,7 +466,7 @@ def udp_refused(target, timeout, source):
         sock.send(b"")
         try:
             sock.recv(1)
-        except socket.timeout:
+        except TimeoutError:
             return None
         except ConnectionRefusedError:
             return "refused: nothing listens on the port"
@@ -523,16 +524,14 @@ def probe(target, timeout_ms, source):
             result["ok"] = True
     except ssl.SSLError as error:
         result["error"] = f"TLS failed: {error.reason or error}"
-    except socket.timeout:
+    except TimeoutError:
         result["error"] = f"no answer within {timeout_ms} ms"
     except OSError as error:
         result["error"] = error.strerror or str(error)
     finally:
         if stream is not None:
-            try:
+            with contextlib.suppress(OSError):
                 stream.close()
-            except OSError:
-                pass
     result["ms"] = int((time.monotonic() - started) * 1000)
     return result
 

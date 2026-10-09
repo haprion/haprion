@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import re
 import subprocess
 import sys
@@ -34,15 +33,25 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from debian_package import package, write
+
 #
 # Each package counts its own revision: it moves when our part of the package
 # changes (the unit, the build), not when the other package does.
 #
-CORAZA_REVISION = "4"
-CRS_REVISION = "1"
+CORAZA_REVISION = "5"
+CRS_REVISION = "2"
+#
+# The names the packages had before the product was renamed (B266). Each
+# conflicts with and replaces its old name, so installing it removes the old
+# package that owns the same files instead of failing on them.
+#
+RENAMED = {
+    "haprion-coraza-spoa": "haproxy-manager-coraza-spoa",
+    "haprion-crs": "haproxy-manager-crs",
+}
 GO_VERSION = "go1.26.8"
 GOVULNCHECK_VERSION = "v1.8.0"
-MAINTAINER = "haprion maintainers <maintainers@example.org>"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 DIGEST = re.compile(r"[0-9a-f]{64}")
 UNIT = "coraza-spoa.service"
@@ -357,66 +366,6 @@ def go_build(tree: Path, go_root: Path, work: Path, version: str) -> Path:
     return output
 
 
-def write(root: Path, relative: str, data: bytes, mode: int) -> None:
-    path = root / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-    path.chmod(mode)
-
-
-def control(fields: dict[str, str], root: Path) -> bytes:
-    size = sum(p.stat().st_size for p in root.rglob("*") if p.is_file() and "DEBIAN" not in p.parts)
-    fields = {**fields, "Maintainer": MAINTAINER, "Installed-Size": str(-(-size // 1024))}
-    order = [
-        "Package",
-        "Version",
-        "Architecture",
-        "Maintainer",
-        "Installed-Size",
-        "Section",
-        "Priority",
-        "Homepage",
-        "Description",
-    ]
-    return "".join(f"{name}: {fields[name]}\n" for name in order if name in fields).encode()
-
-
-def package(root: Path, fields: dict[str, str], output_dir: Path, epoch: int) -> Path:
-    """Normalise the tree and let dpkg-deb build it; same tree, same bytes."""
-    sums = []
-    for path in sorted(p for p in root.rglob("*") if p.is_file() and "DEBIAN" not in p.parts):
-        relative = path.relative_to(root).as_posix()
-        sums.append(f"{hashlib.md5(path.read_bytes()).hexdigest()}  {relative}\n")  # noqa: S324 - dpkg's md5sums format
-    write(root, "DEBIAN/md5sums", "".join(sums).encode(), 0o644)
-    write(root, "DEBIAN/control", control(fields, root), 0o644)
-    for path in [root, *root.rglob("*")]:
-        if path.is_symlink():
-            raise ValueError("a package tree must not hold symlinks")
-        if path.is_dir():
-            path.chmod(0o755)
-        os.utime(path, (epoch, epoch))
-    name = f"{fields['Package']}_{fields['Version']}_{fields['Architecture']}.deb"
-    target = output_dir / name
-    if target.exists():
-        raise ValueError(f"{target} exists; move it aside first")
-    subprocess.run(  # noqa: S603 - fixed builder, generated tree
-        [
-            "/usr/bin/dpkg-deb",
-            "--root-owner-group",
-            "-Zxz",
-            "-z9",
-            "--build",
-            str(root),
-            str(target),
-        ],
-        check=True,
-        capture_output=True,
-        env={"PATH": "/usr/bin:/bin", "SOURCE_DATE_EPOCH": str(epoch), "LC_ALL": "C"},
-        timeout=300,
-    )
-    return target
-
-
 def build_coraza(
     source_dir: Path,
     go_root: Path,
@@ -466,6 +415,8 @@ def build_coraza(
                 "Package": "haprion-coraza-spoa",
                 "Version": f"{source.version}-{CORAZA_REVISION}",
                 "Architecture": "amd64",
+                "Conflicts": RENAMED["haprion-coraza-spoa"],
+                "Replaces": RENAMED["haprion-coraza-spoa"],
                 "Section": "net",
                 "Priority": "optional",
                 "Homepage": "https://github.com/corazawaf/coraza-spoa",
@@ -513,6 +464,8 @@ def build_crs(source_dir: Path, output_dir: Path, *, source: Source = CRS) -> Pa
                 "Package": "haprion-crs",
                 "Version": f"{source.version}-{CRS_REVISION}",
                 "Architecture": "all",
+                "Conflicts": RENAMED["haprion-crs"],
+                "Replaces": RENAMED["haprion-crs"],
                 "Section": "net",
                 "Priority": "optional",
                 "Homepage": "https://coreruleset.org",

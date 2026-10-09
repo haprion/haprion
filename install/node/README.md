@@ -24,10 +24,10 @@ which account and key it fetches with — comes from one root-owned file,
 ```sh
 CLUSTER="alpha"
 MANAGER="mgr"
-CONFIG_PULL_USER="svc-pull"
+CONFIG_PULL_USER="_haprion-pull"
 CONFIG_PULL_KEY="/root/.ssh/id_ed25519_config_pull"
 CONFIG_REMOTE_PATH="alpha/current/a/"
-CERT_PULL_USER="svc-cert-pull"
+CERT_PULL_USER="_haprion-cert-pull"
 CERT_PULL_KEY="/root/.ssh/id_ed25519_cert_pull"
 ```
 

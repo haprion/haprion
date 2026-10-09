@@ -397,14 +397,14 @@ has nothing to do and says so instead of starting.
 
 On production the step also installs the web's way to a name lookup (B253):
 `haprion-resolve-helper.socket` (`/run/haprion/resolve.sock`, group
-`WEB_USER`) and the per-request `haprion-resolve-helper@.service`, a dynamic
+`_haprion-web`) and the per-request `haprion-resolve-helper@.service`, a dynamic
 user with the network and nothing else. The editor and the preview look a dns
 server's name up through it; the web itself reaches only localhost. The CLI
 release must carry `haprion-resolve-helper`.
 
 And the web's way to an exportable certificate's key (B255):
 `haprion-cert-export-helper.socket` (`/run/haprion/cert-export.sock`, group
-`WEB_USER`) and the per-request `haprion-cert-export-helper@.service`, root with a
+`_haprion-web`) and the per-request `haprion-cert-export-helper@.service`, root with a
 read-only sandbox and no network. It gives out the key of a registry entry marked
 `exportable` and of no other, and writes nothing. The CLI release must carry
 `haprion-cert-export-helper`.
@@ -511,7 +511,7 @@ The step makes the key pair the web seals the client secret against: the
 private key in `/etc/haprion/oidc/` (the helper's account, 0600, in a
 0500 directory), the public key in `config/oidc-keys/`. A second run keeps the
 pair; `ROTATE=1` adds one, and the client secret is then saved again. It
-installs the socket (group `WEB_USER`) and the per-request service.
+installs the socket (group `_haprion-web`) and the per-request service.
 
 The account must exist first: add `oidc: <name>` under `roles` in the identity
 policy, render the sysusers fragment and apply it. The CLI release must carry

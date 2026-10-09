@@ -41,16 +41,15 @@ is a forced command with no argument, and each has its own key; none of them is 
 
 ### Identity provisioning
 
-Account names are deployment data supplied in a protected identity-policy file. The
-`haprion-render-sysusers --policy <file>` command validates that file and renders a declarative
-`sysusers.d` fragment. It creates three distinct, locked, no-login service accounts and the
-read-only production config group; only the worker receives supplementary membership in that
-group. Rendering does not modify the system.
+Account names are fixed (B266): service accounts are `_haprion-*`, the operators' configuration
+group is `haprion`. Two declarative `sysusers.d` fragments create them, `install/sysusers/haprion.conf`
+on the management host and `haprion-node.conf` on each node; the first installation step on each
+applies its fragment. The web, worker and poller accounts are distinct, locked and no-login; only
+the worker is a member of `haprion`.
 
-Human operator membership is deliberately absent from the generated fragment. It is a separate
+Human operator membership is deliberately absent from the fragments. It is a separate
 administrator action against an already existing human account, avoiding `sysusers.d` semantics
-that could implicitly create a missing local account. Applying the reviewed fragment and changing
-operator membership belong to deployment, not application runtime.
+that could implicitly create a missing local account.
 
 ## Database boundary
 

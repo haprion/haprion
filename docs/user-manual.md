@@ -2536,19 +2536,19 @@ appears there once the service has restarted.
 
 #### Service accounts and the config group
 
-The web, worker, and poller processes run as three distinct, locked, no-login accounts, and only
-the worker joins the read-only configuration group. Account names are deployment data, so they are
-supplied in a policy file rather than compiled in:
-
-```bash
-haprion-render-sysusers --policy /etc/haprion/identity-policy.yaml
-```
-
-The command validates the policy and renders a `sysusers.d` fragment. It does not modify the
-system — review the fragment, install it, and let `systemd-sysusers` apply it.
+The web, worker, and poller processes run as three distinct, locked, no-login accounts -
+`_haprion-web`, `_haprion-worker`, `_haprion-poller` - and only the worker joins the configuration
+group, `haprion`. The names are fixed rather than chosen per installation; the underscore is
+Debian's mark of a system account and keeps an account from being named like the command it runs.
+`install/sysusers/haprion.conf` declares them, and step 1 installs it under `/etc/sysusers.d/`
+and applies it with `systemd-sysusers`.
 
 Human operators are deliberately absent from the fragment. Adding an administrator to the config
-group is a separate action against an already existing account.
+group is a separate action against an already existing account:
+
+```bash
+sudo usermod -a -G haprion <your-account>
+```
 
 #### Directory layout
 
@@ -2695,36 +2695,30 @@ publish_root: /srv/haproxy-manager/published
 validation_certs_root: /srv/haproxy-manager/validation
 
 deploy_identity:
-  user: "svc-trigger"
   key: "/root/.ssh/id_ed25519_config_deploy"
 
 certificate_root: /srv/certificates/haproxy
 cert_deploy_identity:
-  user: "svc-trigger"
   key: "/root/.ssh/id_ed25519_cert_deploy"
 
 status_identity:
-  user: "svc-status"
   key: "/root/.ssh/id_ed25519_status"
 
 probe_identity:
-  user: "svc-status"
   key: "/root/.ssh/id_ed25519_probe"
 
 server_state_identity:
-  user: "svc-trigger"
   key: "/root/.ssh/id_ed25519_server_state"
 
 backup_root: /srv/state-backups
 backup_identity:
-  user: "svc-backup"
   key: "/root/.ssh/id_ed25519_node_backup"
 backup_timer: haprion-state-backup.timer
-
-interface_account: "svc-app"
-pull_account: "svc-pull"
-cert_pull_account: "svc-cert-pull"
 ```
+
+An identity names only its key. The account it reaches on a node is fixed (B266): the deploy,
+certificate and server state keys reach `_haprion-trigger`, the status and probe keys
+`_haprion-status`, the backup key `_haprion-backup`.
 
 `certificate_root` is also what a publish reads to check that each site's certificate answers for
 its hostnames. HAProxy loads a certificate; it does not check it against the objects using it, so a
@@ -3498,11 +3492,11 @@ Four key pairs, each with exactly one job:
 
 | Key on the management host | Connects as | Purpose |
 |---|---|---|
-| `id_ed25519_config_deploy` | `svc-trigger` on the node | trigger a configuration pull |
-| `id_ed25519_cert_deploy` | `svc-trigger` on the node | trigger a certificate pull |
-| `id_ed25519_node_status` | `svc-status` on the node | read node status |
-| the node's own config pull key | `svc-pull` on the management host | read the published tree |
-| the node's own cert pull key | `svc-cert-pull` on the management host | read the certificate tree |
+| `id_ed25519_config_deploy` | `_haprion-trigger` on the node | trigger a configuration pull |
+| `id_ed25519_cert_deploy` | `_haprion-trigger` on the node | trigger a certificate pull |
+| `id_ed25519_node_status` | `_haprion-status` on the node | read node status |
+| the node's own config pull key | `_haprion-pull` on the management host | read the published tree |
+| the node's own cert pull key | `_haprion-cert-pull` on the management host | read the certificate tree |
 
 A key that can push configuration must not be able to push certificates, and neither may read
 status. Private keys are root-owned; no application identity can read any of them.
@@ -3702,10 +3696,10 @@ directory for `authorized_keys`, and — deliberately — a real login shell:
 
 | Account | Reached by | May run |
 |---|---|---|
-| `svc-trigger` | the management host's deploy and cert-deploy keys | the pull scripts, through forced commands |
-| `svc-backup` | the management host's backup path | the state export |
-| `svc-status` | the management host's status key | the node status reporter, read-only |
-| `svc-logread` | the production collector's traffic-log key | the bounded traffic-log reader, read-only and without sudo |
+| `_haprion-trigger` | the management host's deploy and cert-deploy keys | the pull scripts, through forced commands |
+| `_haprion-backup` | the management host's backup path | the state export |
+| `_haprion-status` | the management host's status key | the node status reporter, read-only |
+| `_haprion-logread` | the production collector's traffic-log key | the bounded traffic-log reader, read-only and without sudo |
 
 **The shell looks like a mistake and is not.** sshd runs a forced command through the account's
 login shell, so `nologin` here does not harden anything — it stops every forced command from
@@ -3713,7 +3707,7 @@ working, and the only symptom is a nologin message where output was expected.
 
 What constrains these accounts is that each key carries `restrict` and its own forced command, so a
 session cannot run anything else. Where sudo is needed, its rules name exact absolute commands;
-`svc-logread` needs and receives no sudo rule. None of this depends on the shell.
+`_haprion-logread` needs and receives no sudo rule. None of this depends on the shell.
 
 Each key in the account's `authorized_keys` carries its **own** forced command and the `restrict`
 option. One key, one command: a shared forced command would make the keys interchangeable and
@@ -3948,7 +3942,7 @@ operation completed before restoring state.
 
 Optional features have their own symmetric rollback. For traffic logging, disable the node route
 with `sudo haprion-traffic-log-enable --disable`, remove only that collector key's forced-command
-line from `svc-logread` and disable the manager collector. Traffic files are deliberately retained;
+line from `_haprion-logread` and disable the manager collector. Traffic files are deliberately retained;
 rollback never deletes evidence.
 
 ### Part 3 — the versioned CLI release
@@ -4425,7 +4419,7 @@ set-group-id, because the collector is deliberately outside the web account's
 group and could not otherwise create a file the interface can read.
 
 The step fetches nothing on its own. It prints one `authorized_keys` line to add
-to `svc-logread` on each node, and each node also needs its own log route
+to `_haprion-logread` on each node, and each node also needs its own log route
 switched on with `sudo haprion-traffic-log-enable`.
 
 Enabling or disabling that node route restarts rsyslog; a reload does not apply

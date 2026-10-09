@@ -205,7 +205,13 @@ class ReadingTheMaterial(ImportFixture):
         text += "Key Attributes: <No Attributes>\n" + self.pki.leaf_key.read_text()
         certificates, keys = split_blocks(text)
         self.assertEqual((len(certificates), len(keys)), (1, 1))
-        self.assertNotIn("Bag", certificates[0] + keys[0])
+        #
+        # The attribute lines, not the word: base64 can spell "Bag" by chance, and
+        # did in a gate run on 2026-10-09.
+        #
+        self.assertNotIn("Bag Attributes", certificates[0] + keys[0])
+        self.assertNotIn("friendlyName", certificates[0] + keys[0])
+        self.assertNotIn("Key Attributes", certificates[0] + keys[0])
 
     def test_an_encrypted_key_is_refused(self) -> None:
         encrypted = openssl("pkey", "-in", str(self.pki.leaf_key), "-aes256", "-passout", "pass:x")

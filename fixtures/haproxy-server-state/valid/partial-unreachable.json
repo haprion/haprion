@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "partial",
+  "operation": "server_state",
+  "cluster": "alpha",
+  "request_id": "5a1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e70",
+  "result": {
+    "object": "shop",
+    "state": "maint",
+    "nodes": [
+      {
+        "node": "node-a",
+        "servers": [
+          {"server": "web/198.51.100.10:8080", "guid": "srv:shop.df076618bf1c6c86", "outcome": "done", "message": null}
+        ]
+      },
+      {
+        "node": "node-b",
+        "servers": [
+          {"server": "web/198.51.100.10:8080", "guid": "srv:shop.df076618bf1c6c86", "outcome": "failed", "message": "the node did not answer in time"}
+        ]
+      }
+    ]
+  },
+  "warnings": [
+    {"code": "node_server_state_failed", "message": "web/198.51.100.10:8080: the node did not answer in time", "node": "node-b", "details": null}
+  ],
+  "error": null
+}

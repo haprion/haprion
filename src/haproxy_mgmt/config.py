@@ -101,6 +101,13 @@ class PathPolicy:
     #
     probe_identity: DeployIdentity | None = None
     #
+    # The identity that puts a server in drain or maintenance on a node (Fas
+    # 20, B263). Its own key: it changes what HAProxy sends where without a
+    # deploy, which neither the status nor the probe identity can, and the
+    # deploy identity's forced command takes no words at all.
+    #
+    server_state_identity: DeployIdentity | None = None
+    #
     # The identity that asks a node for its root-produced state archive. Its
     # own key: the stream contains password hashes and private SSH keys, so a
     # status or deploy key must not become interchangeable with it.
@@ -1044,6 +1051,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "cert_deploy_identity",
             "status_identity",
             "probe_identity",
+            "server_state_identity",
             "backup_identity",
             "backup_root",
             "backup_timer",
@@ -1079,6 +1087,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         cert_deploy_identity=_deploy_identity(data, "cert_deploy_identity"),
         status_identity=_deploy_identity(data, "status_identity"),
         probe_identity=_deploy_identity(data, "probe_identity"),
+        server_state_identity=_deploy_identity(data, "server_state_identity"),
         backup_identity=_deploy_identity(data, "backup_identity"),
         backup_root=_optional_root(data, "backup_root"),
         backup_timer=_optional_timer(data, "backup_timer"),

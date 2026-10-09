@@ -167,6 +167,12 @@ _OPERATION_OUTCOMES = {
     # every file with it. A timer that would not stop is a warning on `done`.
     #
     "cluster_define": frozenset({"done", "failed", "blocked"}),
+    #
+    # `server_state` sets servers on every node: `partial` is a node that did
+    # not take one while another did. No `blocked` - there is no lock to meet,
+    # and a refused request fails before any node is asked.
+    #
+    "server_state": frozenset({"done", "partial", "failed"}),
 }
 
 

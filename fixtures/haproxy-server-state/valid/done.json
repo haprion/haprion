@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "server_state",
+  "cluster": "alpha",
+  "request_id": "5a1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f",
+  "result": {
+    "object": "shop",
+    "state": "drain",
+    "nodes": [
+      {
+        "node": "node-a",
+        "servers": [
+          {"server": "web/198.51.100.10:8080", "guid": "srv:shop.df076618bf1c6c86", "outcome": "done", "message": null},
+          {"server": "web/198.51.100.11:8080", "guid": "srv:shop.1420b3525ec34429", "outcome": "done", "message": null}
+        ]
+      },
+      {
+        "node": "node-b",
+        "servers": [
+          {"server": "web/198.51.100.10:8080", "guid": "srv:shop.df076618bf1c6c86", "outcome": "done", "message": null},
+          {"server": "web/198.51.100.11:8080", "guid": "srv:shop.1420b3525ec34429", "outcome": "done", "message": null}
+        ]
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

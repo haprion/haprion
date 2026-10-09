@@ -97,7 +97,9 @@ SCRIPTS=(
 # holds for `cert-remove`: a node without the verb answers "unknown request"
 # and the manager reports the copy as kept, so an older node is behind, not
 # incompatible. And for the WAF engine (B231): a node whose status reports no
-# `waf_engine` is one the manager does not offer the engine on.
+# `waf_engine` is one the manager does not offer the engine on. And for server
+# state (B263): a node without the key line or the helper is one node that did
+# not take a drain, reported by name in a `partial` job.
 NODE_API=1
 
 step "Service accounts"

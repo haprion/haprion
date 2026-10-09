@@ -105,8 +105,16 @@ class TheHelperKeepsAServerWhereItWasPut(unittest.TestCase):
         self.wait_for_socket()
 
     def stop(self) -> None:
+        #
+        # A master still draining an old worker can outlast ten seconds on a
+        # loaded gate (2026-10-09); what this cleans up is a scratch process.
+        #
         self.process.send_signal(signal.SIGTERM)
-        self.process.wait(timeout=10)
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait(timeout=10)
 
     def write(self, servers: list[tuple[str, str, int]], *, socket: bool = True) -> None:
         self.config.write_text(configuration(self.root, servers, socket=socket))

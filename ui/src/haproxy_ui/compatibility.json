@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0065",
+    "database_head": "0066",
     "rollback_safe_from": "0064",
     "database_revisions": [
       "0028",
@@ -41,9 +41,10 @@
       "0062",
       "0063",
       "0064",
-      "0065"
+      "0065",
+      "0066"
     ],
-    "engine_api": 21,
+    "engine_api": 22,
     "node_api": 1,
     "poller_helpers": [
       "haproxy-status-helper",
@@ -64,7 +65,8 @@
       "haproxy-ndes-profile-apply-helper",
       "haproxy-cert-scep-helper",
       "haproxy-cert-import-helper",
-      "haproxy-cert-request-helper"
+      "haproxy-cert-request-helper",
+      "haproxy-server-state-helper"
     ],
     "socket_helpers": {
       "haproxy-cert-receiver-helper": "/run/haproxy-mgmt/cert-receiver.sock",

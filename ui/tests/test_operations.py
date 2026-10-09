@@ -16,11 +16,10 @@ from uuid import UUID, uuid4
 
 from haproxy_mgmt import cert_issue
 from haproxy_mgmt.cli import (
-    cert_deploy,
     cert_receiver_helper,
     changes_publish,
     deploy,
-    revert,
+    server_state_helper,
 )
 
 from haproxy_ui import operations, worker
@@ -609,6 +608,49 @@ class PublishingSavedChanges(unittest.TestCase):
         self.assertIn('"allow_certificate_mismatch":false', self.prepare().request)
 
 
+class AServerStateJob(unittest.TestCase):
+    """B263: the worker sends the command line's request, and refuses a shape it never could."""
+
+    PAYLOAD = {"object": "shop", "servers": ["web/198.51.100.10:8080"], "state": "drain"}
+
+    def test_it_is_the_engines_own_request_through_sudo(self) -> None:
+        prepared = operations.prepare(
+            operation="server_state", cluster="alpha", request_id=REQUEST, payload=self.PAYLOAD
+        )
+
+        self.assertEqual(prepared.argv[-1], server_state_helper.HELPER)
+        self.assertEqual(
+            json.loads(prepared.request),
+            json.loads(
+                server_state_helper.build_request(
+                    "alpha",
+                    str(REQUEST),
+                    object_name="shop",
+                    servers=["web/198.51.100.10:8080"],
+                    state="drain",
+                )
+            ),
+        )
+
+    def test_a_payload_that_could_never_be_right_is_refused_before_sudo(self) -> None:
+        changes: tuple[dict[str, object], ...] = (
+            {"state": "down"},
+            {"servers": []},
+            {"servers": "web/198.51.100.10:8080"},
+            {"servers": ["198.51.100.10:8080"] * 65},
+            {"object": "Shop;id"},
+            {"force": True},
+        )
+        for change in changes:
+            with self.subTest(change=change), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="server_state",
+                    cluster="alpha",
+                    request_id=REQUEST,
+                    payload={**self.PAYLOAD, **change},
+                )
+
+
 class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
     """Every helper the worker is prepared to run needs a rule naming it.
 
@@ -637,12 +679,15 @@ class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
         return [line for line in self.example().splitlines() if "ALL=(root)" in line]
 
     def test_every_helper_the_worker_may_run_has_a_rule(self) -> None:
-        helpers = {
-            deploy.HELPER,
-            cert_deploy.HELPER,
-            revert.HELPER,
-            changes_publish.HELPER,
-        }
+        #
+        # Read off the module rather than listed here: until 2026-10-09 this
+        # named four helpers by hand while the worker ran thirteen, so a new
+        # one could miss its rule and still pass.
+        #
+        source = Path(operations.__file__).read_text(encoding="utf-8")
+        modules = re.findall(r"argv=\(\w+\.SUDO, \*SUDO_FLAGS, (\w+)\.HELPER\)", source)
+        helpers = {getattr(operations, module).HELPER for module in modules}
+        self.assertIn(server_state_helper.HELPER, helpers)
         granted = self.example()
 
         for helper in sorted(helpers):
@@ -817,6 +862,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("cert_receiver", "haproxy-cert-receiver.schema.json"),
             ("cluster_node", "haproxy-cluster-node.schema.json"),
             ("cluster_define", "haproxy-cluster-define.schema.json"),
+            ("server_state", "haproxy-server-state.schema.json"),
             ("cert_import", "haproxy-cert-import.schema.json"),
             ("cert_request", "haproxy-cert-request.schema.json"),
             ("node_restore_prepare", "haproxy-node-restore-prepare.schema.json"),

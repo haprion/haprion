@@ -974,6 +974,37 @@ def check_node_restore_status_semantics(document: dict[str, object], path: Path)
     check_node_restore_semantics({"outcome": result["outcome"], "result": result["result"]}, path)
 
 
+def check_server_state_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] != "failed":
+            raise AssertionError(f"{path}: only a failed server_state may carry no result")
+        return
+    assert isinstance(result, dict)
+    entries = [entry for node in result["nodes"] for entry in node["servers"]]
+    taken = [entry for entry in entries if entry["outcome"] == "done"]
+    missed = len(entries) - len(taken)
+    #
+    # The outcome is the count, and nothing else: every server on every node
+    # is `done`, some is `partial`, none is `failed`. Each one missed is one
+    # warning, so a reader of the job sees which node and which server.
+    #
+    expected = "done" if not missed else "partial" if taken else "failed"
+    if document["outcome"] != expected:
+        raise AssertionError(
+            f"{path}: {len(taken)} of {len(entries)} taken is {expected}, not {document['outcome']}"
+        )
+    warnings = document["warnings"]
+    assert isinstance(warnings, list)
+    if len(warnings) != missed:
+        raise AssertionError(f"{path}: one warning per server a node did not take")
+    for entry in entries:
+        if (entry["outcome"] == "done") != (entry["message"] is None):
+            raise AssertionError(
+                f"{path}: a message says why a server was not taken, and only then"
+            )
+
+
 SEMANTIC_CHECKS = {
     "status": check_status_semantics,
     "list": check_list_semantics,
@@ -1003,6 +1034,7 @@ SEMANTIC_CHECKS = {
     "cert_receiver": check_cert_receiver_semantics,
     "cluster_node": check_cluster_node_semantics,
     "cluster_define": check_cluster_define_semantics,
+    "server_state": check_server_state_semantics,
     "cluster_list": check_cluster_list_semantics,
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
@@ -1107,6 +1139,9 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
             result["ok"] = not result["ok"]
         else:
             invalid["outcome"] = "failed"
+    elif operation == "server_state":
+        first = result["nodes"][0]["servers"][0]
+        first["outcome"] = "failed" if first["outcome"] == "done" else "done"
     elif operation == "node_restore_prepare":
         result["mode"] = "new_vm"
     elif operation == "node_restore_preview":

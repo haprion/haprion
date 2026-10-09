@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "server_state",
+  "cluster": "alpha",
+  "request_id": "5a1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e71",
+  "result": null,
+  "warnings": [],
+  "error": {"code": "server_not_found", "message": "shop has no server 198.51.100.99:8080 in its newest version", "node": null, "details": null}
+}

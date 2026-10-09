@@ -158,6 +158,7 @@ def _operation(value: str) -> str:
         "changes_publish": "Publish saved changes",
         "cluster_node": "Change cluster nodes",
         "cluster_define": "Create or remove cluster",
+        "server_state": "Set server state",
         "backup_run": "Back up cluster nodes",
         "backup_schedule": "Change backup schedule",
         "node_restore_prepare": "Prepare node restore",
@@ -788,6 +789,7 @@ RUNNING_LABELS = {
     "cert_receiver": "Changing receivers",
     "cluster_node": "Changing nodes",
     "cluster_define": "Changing clusters",
+    "server_state": "Setting server state",
 }
 
 
@@ -818,6 +820,7 @@ FAILURE_LABELS = {
     "cluster_settings_publish": "Publish failed",
     "cluster_node": "Node change failed",
     "cluster_define": "Cluster change failed",
+    "server_state": "Server state change failed",
     "objects_publish": "Publish failed",
     "changes_publish": "Publish failed",
     "cert_issue": "Certificate issue failed",

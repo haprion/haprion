@@ -51,9 +51,11 @@ from haproxy_mgmt.cli import (
     node_restore_ask,
     node_restore_helper,
     revert,
+    server_state_helper,
 )
 from haproxy_mgmt.config import CERTIFICATE_ID, RECEIVER_FORMATS, RECEIVER_ID, RECEIVER_TRANSPORTS
 from haproxy_mgmt.proxy_model import NAME
+from haproxy_mgmt.server_state import MAX_SERVERS, STATES
 from haproxy_mgmt.version_history import UnfitName, trailer_name
 
 # The installation key's identifier as `dns_profile_keys.key_id_of` makes it.
@@ -1199,6 +1201,35 @@ def prepare(
                 settings=settings,
                 allow_certificate_mismatch=override,
                 requested_by=_requested_by(payload),
+            ),
+        )
+
+    if operation == "server_state":
+        #
+        # Drain, maintenance or ready (B263). The helper finds every server in
+        # the object again before any node is asked; this is the shape only,
+        # so a payload that could never be right is refused before sudo.
+        #
+        _only(payload, "object", "servers", "state")
+        object_name, servers, state = (
+            payload.get("object"),
+            payload.get("servers"),
+            payload.get("state"),
+        )
+        if not isinstance(object_name, str) or not NAME.fullmatch(object_name):
+            raise BadPayload("object must be an object name")
+        if (
+            not isinstance(servers, list)
+            or not 0 < len(servers) <= MAX_SERVERS
+            or not all(isinstance(entry, str) and entry for entry in servers)
+        ):
+            raise BadPayload(f"servers must list 1-{MAX_SERVERS} servers")
+        if state not in STATES:
+            raise BadPayload(f"state must be one of {', '.join(STATES)}")
+        return Prepared(
+            argv=(server_state_helper.SUDO, *SUDO_FLAGS, server_state_helper.HELPER),
+            request=server_state_helper.build_request(
+                cluster, str(request_id), object_name=object_name, servers=servers, state=state
             ),
         )
 

@@ -140,6 +140,39 @@ cert_deploy_identity:
   key: \"${KEY_DIR}/${CERT_DEPLOY_KEY}\""
 fi
 
+#
+# The keys step 3 makes, named here so that the commands find them. Until
+# 2026-10-09 this step wrote neither status_identity nor probe_identity, and
+# `haproxy-status` - which refuses to run without the first - did not work on a
+# manager built from these scripts until the lines were added by hand.
+#
+if [[ -n "${STATUS_USER:-}" && -n "${NODE_STATUS_KEY:-}" ]]; then
+    policy+="
+
+# Reads node status and nothing else; haproxy-deploy reads with it too.
+status_identity:
+  user: \"${STATUS_USER}\"
+  key: \"${KEY_DIR}/${NODE_STATUS_KEY}\""
+fi
+
+if [[ -n "${STATUS_USER:-}" && -n "${NODE_PROBE_KEY:-}" ]]; then
+    policy+="
+
+# Asks a node to try a health check; the same account as status, its own key.
+probe_identity:
+  user: \"${STATUS_USER}\"
+  key: \"${KEY_DIR}/${NODE_PROBE_KEY}\""
+fi
+
+if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
+    policy+="
+
+# Drain, maintenance and ready per server (B263); the trigger account, its own key.
+server_state_identity:
+  user: \"${TRIGGER_USER}\"
+  key: \"${KEY_DIR}/${SERVER_STATE_KEY}\""
+fi
+
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
     require_vars BACKUP_USER NODE_BACKUP_KEY
     valid_abs_path "$BACKUP_ROOT" || die "not an absolute path without '..': ${BACKUP_ROOT}"

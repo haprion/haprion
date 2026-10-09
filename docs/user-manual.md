@@ -12,6 +12,8 @@ only works with the names used below, that is a bug in the software, not in this
 ## Contents
 
 - [Configuration and deployment](#configuration-and-deployment)
+  - [A pool's servers](#a-pools-servers)
+  - [Drain and maintenance](#drain-and-maintenance)
   - [Addresses, and what to call them](#addresses-and-what-to-call-them)
   - [DNS objects](#dns-objects)
   - [Syslog objects](#syslog-objects)
@@ -133,6 +135,32 @@ it where wanted, in either order:
   is. A pool cannot be all standbys.
 
 The stored object spells both out (`weight: 50`, `backup: true`) under the server.
+
+### Drain and maintenance
+
+Taking a server out for a while - patching it, replacing it - is not a change to the object.
+It is set on the nodes, on every node of the cluster at once:
+
+```
+sudo haproxy-server-state -c alpha -o shop drain 198.51.100.10:8080
+sudo haproxy-server-state -c alpha -o shop ready 198.51.100.10:8080
+```
+
+- **`drain`** takes the server out of load balancing. A visitor whose session cookie names it
+  still reaches it, and it is still health-checked.
+- **`maint`** sends it nothing new at all, and stops its health checks.
+- **`ready`** puts it back.
+
+Requests already in flight finish in both; nothing is cut off. A server is written as on its line
+in the editor, `address:port`; where one object has the same server in two pools, name the pool
+first - `api/198.51.100.10:8080`. Every server is looked up in the object's newest version before
+any node is asked, so a request with one wrong server in it changes nothing.
+
+Each node keeps the state through deploys, certificate rollouts and restarts until it is set to
+`ready` again - a deploy does not quietly put a drained server back. A server that has been given a
+new address or port is a new server and starts ready. One node that did not answer is named, and
+the result is `PARTIAL`: the other node holds the state, and running the same command again
+finishes it. A node that does not run the server yet - published but not deployed - says so.
 
 ### Addresses, and what to call them
 
@@ -2660,6 +2688,10 @@ probe_identity:
   user: "svc-status"
   key: "/root/.ssh/id_ed25519_probe"
 
+server_state_identity:
+  user: "svc-trigger"
+  key: "/root/.ssh/id_ed25519_server_state"
+
 backup_root: /srv/state-backups
 backup_identity:
   user: "svc-backup"
@@ -2744,6 +2776,14 @@ the node open a connection to an address the caller chose. The forced command be
 sudo, returns a status and never a response body, and refuses anything that is not a bounded list
 of targets. Leave it out and the button in the editor says the probe is unavailable; nothing else
 changes.
+
+`server_state_identity` puts a server in drain or maintenance on the nodes
+([Drain and maintenance](#drain-and-maintenance)). It logs in as the trigger account with a key of
+its own, whose forced command takes one server GUID and one of three states and nothing else; it
+changes where HAProxy sends traffic without a deploy, which is why it is neither the deploy nor the
+status key. Leave it out and `haproxy-server-state` says which field is missing; nothing else
+changes. Step 2 writes it, and `status_identity` and `probe_identity`, when the answers file names
+their keys.
 
 The file must be root-owned, a regular file (not a symlink), not group- or world-writable, and at
 most 1 MiB. The reader rejects unknown fields, so **install a release that understands a new field
@@ -4663,7 +4703,7 @@ the probe is unavailable rather than showing an empty result.
 
 ##### The worker's way to the receiver helper
 
-The worker *can* `sudo` - thirteen of its helpers go that way. The receiver helper
+The worker *can* `sudo` - fourteen of its helpers go that way. The receiver helper
 does not, for a reason on the other side of the boundary: a helper the worker
 starts inherits the worker unit's mount namespace, and that unit has
 `ProtectSystem=strict` with a short `ReadWritePaths` list. Registering a

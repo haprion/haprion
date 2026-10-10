@@ -293,4 +293,14 @@ EOF
 
 log "platform step 2 done"
 echo
-echo "The database exists and has no tables. The schema arrives as migrations."
+#
+# Counted, not assumed: the step is rerun on installed hosts, where saying the
+# database is empty would be wrong (26-10-10).
+#
+tables="$(psql_super -d "$DB_NAME" -c \
+    "select count(*) from pg_tables where schemaname not in ('pg_catalog', 'information_schema')")"
+if [[ "$tables" == 0 ]]; then
+    echo "The database exists and has no tables. The schema arrives as migrations."
+else
+    echo "The database holds ${tables} tables; this step changed roles, grants and authentication, not the schema."
+fi

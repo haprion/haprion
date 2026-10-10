@@ -328,6 +328,48 @@ def _empty_cluster(cluster: str, *, configured: bool) -> ClusterView:
     )
 
 
+def _with_shared_counters(
+    nodes: tuple[NodeView, ...], node_values: list[Any]
+) -> tuple[NodeView, ...]:
+    """A node whose counters are not shared with the others, named (B270).
+
+    Only where the cluster shares at all - some node reports a peer - and only
+    on a node that is otherwise healthy. A node that reports no peer while
+    another does is in no `peer` line: its host name is not its node name, or
+    it runs a release from before sharing was turned on. A node that reports a
+    peer it is not connected to cannot reach it - the port is closed between
+    them, or the address has changed since the last publish.
+    """
+
+    reported = {
+        _text(value.get("name")): _mapping(value.get("status")).get("peers")
+        for value in node_values
+        if isinstance(value, Mapping) and value.get("status_ok") is True
+    }
+    if not any(isinstance(peers, list) and peers for peers in reported.values()):
+        return nodes
+    detail: dict[str, str] = {}
+    for name, peers in reported.items():
+        if not isinstance(peers, list):
+            continue
+        if not peers:
+            detail[name] = "Shares no counters with the other nodes"
+            continue
+        missing = [
+            _text(peer.get("name"))
+            for peer in peers
+            if isinstance(peer, Mapping) and peer.get("connected") is not True
+        ]
+        if missing:
+            detail[name] = f"Counters not reaching {', '.join(missing)}"
+    return tuple(
+        replace(node, label="Counters not shared", tone="warning", detail=detail[node.name])
+        if node.name in detail and node.tone == "healthy"
+        else node
+        for node in nodes
+    )
+
+
 def _cluster_view(
     reading: ClusterStatus,
     *,
@@ -397,6 +439,7 @@ def _cluster_view(
                 else node
                 for node in nodes
             )
+        nodes = _with_shared_counters(nodes, node_values)
     stale = now - reading.observed_at > stale_after
 
     configured_nodes = summary.get("configured_nodes")

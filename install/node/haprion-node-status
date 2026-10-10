@@ -1110,6 +1110,43 @@ def ask_runtime(command):
         return None
 
 
+#
+# One `show peers` line per peer, as 3.4.6 writes it (measured 26-10-10):
+#   0x...: id=node-b(remote,active) addr=192.0.2.2:10000 app_state=RUNNING ... last_status=ESTA ...
+# The local peer's own line is skipped; it is what a reload hands the tables
+# over through, not a connection to anybody.
+#
+PEER_LINE = re.compile(
+    r"^\s*0x[0-9a-f]+: id=([^\s(]+)\(remote,(active|inactive)\) addr=(\S+) .*last_status=(\S+)"
+)
+
+
+def parse_peers(text):
+    """The other nodes this one shares tables with, and whether each is connected."""
+
+    peers = []
+    for line in text.splitlines():
+        match = PEER_LINE.match(line)
+        if match is None:
+            continue
+        name, state, address, status = match.groups()
+        peers.append(
+            {
+                "name": name[:253],
+                "address": address[:64],
+                "connected": state == "active" and status == "ESTA",
+            }
+        )
+    return peers[:8]
+
+
+def read_peers():
+    """[] when this node shares nothing, None when HAProxy could not be asked."""
+
+    text = ask_runtime("show peers")
+    return None if text is None else parse_peers(text)
+
+
 def runtime_stat():
     text = ask_runtime("show stat")
     if text is None:
@@ -1391,6 +1428,7 @@ result = {
     "ipvs": read_ipvs(),
     "resources": read_resources(),
     "server_state_unapplied": read_server_state_unapplied(),
+    "peers": read_peers(),
     "packages": read_packages(),
 }
 

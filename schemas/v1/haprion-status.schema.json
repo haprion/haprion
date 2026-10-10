@@ -326,6 +326,21 @@
           },
           "additionalProperties": false
         },
+        "peers": {
+          "description": "The other nodes this one shares its stick tables with, from HAProxy's show peers: each one's name, the address and port it is reached at, and whether the connection is established. Empty when the configuration shares nothing or this node is in no peers line, null when HAProxy could not be asked, absent from a node reporting before it.",
+          "type": ["array", "null"],
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["name", "address", "connected"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 253 },
+              "address": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "connected": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
         "server_state_unapplied": {
           "description": "Drain or maintenance kept for a server on this node that HAProxy does not hold after a reload or a start (review 26-10-09, F1), by the server's GUID; empty when every kept state is in force, null when the node's record cannot be read, absent from a node reporting before it.",
           "type": ["object", "null"],

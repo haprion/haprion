@@ -202,6 +202,54 @@ class HealthDerivation(unittest.TestCase):
             )
         ).clusters[0]
 
+    def sharing(self, *peers: Any) -> Any:
+        """The single-owner reading with each node's `peers` replaced (B270)."""
+
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        for node, reported in zip(nodes, peers, strict=True):
+            node["status"] = {**node["status"], "peers": reported}
+        result["nodes"] = nodes
+        return self.dashboard(
+            ClusterStatus(
+                cluster=status.cluster,
+                observed_at=status.observed_at,
+                outcome="done",
+                result=result,
+                warnings=[],
+                error=None,
+                poll_error=None,
+            )
+        ).clusters[0]
+
+    def peer(self, name: str, connected: bool) -> dict[str, Any]:
+        return {"name": name, "address": "192.0.2.9:10000", "connected": connected}
+
+    def test_counters_shared_both_ways_say_nothing(self) -> None:
+        cluster = self.sharing([self.peer("b", True)], [self.peer("a", True)])
+        self.assertEqual([node.label for node in cluster.nodes], ["Online", "Online"])
+
+    def test_a_peer_not_connected_is_named_on_the_node_that_misses_it(self) -> None:
+        cluster = self.sharing([self.peer("b", False)], [self.peer("a", True)])
+        self.assertEqual(
+            (cluster.nodes[0].label, cluster.nodes[0].tone), ("Counters not shared", "warning")
+        )
+        self.assertIn("not reaching b", cluster.nodes[0].detail)
+        self.assertEqual(cluster.nodes[1].label, "Online")
+
+    def test_a_node_in_no_peer_line_is_named_where_the_others_share(self) -> None:
+        cluster = self.sharing([], [self.peer("a", False)])
+        self.assertEqual(cluster.nodes[0].label, "Counters not shared")
+        self.assertEqual(cluster.nodes[0].detail, "Shares no counters with the other nodes")
+
+    def test_a_cluster_that_shares_nothing_or_an_older_node_says_nothing(self) -> None:
+        cases: tuple[tuple[list[Any] | None, ...], ...] = (([], []), (None, None))
+        for peers in cases:
+            with self.subTest(peers=peers):
+                cluster = self.sharing(*peers)
+                self.assertEqual([node.label for node in cluster.nodes], ["Online", "Online"])
+
     def test_a_stopped_waf_engine_is_named_where_the_release_has_rules(self) -> None:
         # Review 2026-10-04 F3: the node reported it, and nothing showed it.
         cluster = self.engine(published=True, active=False)

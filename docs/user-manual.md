@@ -743,8 +743,10 @@ mark shows whether anything else reaches the object. The hard limit for a
 chunked body is the backend server's own, such as nginx's
 `client_max_body_size`.
 
-Stick tables in the text have no `peers`: their counts start again when HAProxy
-reloads and when the address moves to the other node. A `haproxy -c` error in a
+Stick tables in the text start their counts again when HAProxy reloads and when
+the address moves to the other node; a cluster's shared counters are the
+generated tables'
+([Sending the traffic log elsewhere, and metrics](#sending-the-traffic-log-elsewhere-and-metrics)). A `haproxy -c` error in a
 generated file is reported as the object and the line of its text, and a
 publish is refused when HAProxy warns about a pasted line: a warning there means
 the line would be ignored, which `-c` alone lets pass. Beyond what
@@ -1977,8 +1979,9 @@ the nodes can do that themselves: see [Sending the traffic log elsewhere and met
 
 ### Sending the traffic log elsewhere, and metrics
 
-Each cluster can send its traffic log to up to four external receivers and
-expose HAProxy's own Prometheus exporter. Both are settings of the cluster's
+Each cluster can send its traffic log to up to four external receivers,
+expose HAProxy's own Prometheus exporter and share its counters between its
+nodes. All three are settings of the cluster's
 HAProxy configuration, kept in `managed/cluster.yaml` in its repository and
 published as a version like any other change - a lock, a validated candidate,
 *Published by*, and a revert that takes them back. Nothing is installed on the
@@ -1997,6 +2000,8 @@ metrics:
   port: 8405
   sources:
     - 192.0.2.0/24           # who may scrape; everyone else gets 403
+peers:
+  port: 10000                # optional; counters shared between the nodes
 ```
 
 An admin edits it under **Settings → Logs & metrics**, one row per cluster and a
@@ -2048,6 +2053,26 @@ every address, so a publish refuses one that an object already listens on or
 that `manual/reservations.yaml` reserves. Letting the scraper through the
 nodes' firewall, and letting the nodes reach the log receivers, is part of the
 installation, not of this setting.
+
+**Shared counters** keep the abuse brake's and the rate limits' counts the same
+on every node of the cluster, so a failover or a deploy no longer starts them
+from zero. With `peers` set, a publish writes a `peers` section with one line
+per node and has every generated stick table name it; each node keeps the
+others up to date over the port, and a reloading HAProxy hands its tables to
+the new process. What is shared is counters, not connections: a connection open
+on the node that fails still ends, and the client's next one is counted with
+what it had already used. Persistence is unaffected - it is a cookie or a hash
+and needs nothing shared.
+
+The address of each node is looked up from its management host name when the
+cluster is published, so a node that changes address needs its DNS record
+changed and a publish; a name that does not resolve, or gives more than one
+address, refuses the publish and names the node. A node finds its own line by
+its host name, which has to be the node's name. The port has to be open between
+the nodes, both ways, and nowhere else - that firewall is the installation's;
+the traffic is not encrypted and carries client addresses and their counts. On
+the dashboard, a node whose counters do not reach another node, or that shares
+none while the others do, reads *Counters not shared* with the reason.
 
 **DNS objects are scraped from dnsdist.** A cluster with the exporter and a DNS
 object also has dnsdist answer `GET /metrics` on port 9521 of every IPv4 address,

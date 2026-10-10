@@ -730,8 +730,7 @@ def removed_backends(jobs: Iterable[Job]) -> dict[str, tuple[str, ...]]:
 
     The interface's own bookkeeping on the job, beside the names: a pool is
     named by itself, so once the document is gone nothing else can say which
-    backends the nodes still serve for it. A removal older than the field says
-    nothing, and the older `mgd-<object>-<pool>` names answer for it instead.
+    backends the nodes still serve for it.
     """
 
     found: dict[str, tuple[str, ...]] = {}

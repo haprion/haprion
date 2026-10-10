@@ -21,8 +21,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt.generate import PREFIX, WAF_BACKEND
-from haproxy_mgmt.guid import REDIRECT_PREFIX, redirect_name
+from haproxy_mgmt.generate import WAF_BACKEND
+from haproxy_mgmt.guid import REDIRECT_PREFIX
 from haproxy_mgmt.proxy_model import load_proxy
 
 from haproxy_ui import metrics
@@ -535,22 +535,8 @@ backends:
     def targets(self) -> dict[str, metrics.BackendTarget]:
         return metrics.backend_targets({"shop": load_proxy("shop", self.DOCUMENT)})
 
-    #
-    # The name the generator gives the route since 2026-10-06 (B250), the one
-    # it gave from 2026-10-05, and the one before that, which older history
-    # carries.
-    #
     CURRENT = f"shop-{REDIRECT_PREFIX}-old"
-    PATHED = f"{PREFIX}-shop-{REDIRECT_PREFIX}-old"
-    LEGACY = (
-        f"{PREFIX}-shop-{REDIRECT_PREFIX}-"
-        f"{redirect_name('/old', 'prefix', 'https://shop.example.com/new')}"
-    )
-    #
-    # And the pool: its own name now, `mgd-shop-web` before.
-    #
     POOL = "web"
-    OLD_POOL = f"{PREFIX}-shop-web"
 
     def test_the_generator_and_the_page_agree_on_the_name(self) -> None:
         """Built rather than parsed, so no name is split on somebody's hyphen."""
@@ -561,17 +547,12 @@ backends:
         self.assertEqual(f"shop-{redirect_suffixes(proxy)[('/old', 'prefix')]}", self.CURRENT)
         self.assertEqual(self.targets()[self.CURRENT].current, self.CURRENT)
 
-    def test_the_older_names_are_the_same_redirect(self) -> None:
-        self.assertEqual(self.targets()[self.LEGACY], self.targets()[self.CURRENT])
-        self.assertEqual(self.targets()[self.PATHED], self.targets()[self.CURRENT])
-        self.assertTrue(self.targets()[self.CURRENT].redirect)
-
-    def test_a_pool_is_labelled_by_its_own_name_under_either(self) -> None:
+    def test_a_pool_is_labelled_by_its_own_name(self) -> None:
         targets = self.targets()
 
-        self.assertEqual(targets[self.OLD_POOL], targets[self.POOL])
-        self.assertEqual(metrics.backend_label(self.OLD_POOL, targets), "web")
+        self.assertEqual(metrics.backend_label(self.POOL, targets), "web")
         self.assertFalse(targets[self.POOL].redirect)
+        self.assertTrue(targets[self.CURRENT].redirect)
 
     def test_a_name_no_object_accounts_for_loses_only_its_prefix(self) -> None:
         self.assertEqual(metrics.backend_label("mgd-other-web", self.targets()), "other-web")
@@ -585,20 +566,12 @@ backends:
     def test_every_name_of_both_backends_is_known(self) -> None:
         self.assertEqual(
             set(self.targets()),
-            {self.CURRENT, self.PATHED, self.LEGACY, self.POOL, self.OLD_POOL},
+            {self.CURRENT, self.POOL},
         )
 
-    def test_the_older_name_is_drawn_until_the_current_one_has_history(self) -> None:
-        targets = self.targets()
-
+    def test_pools_and_redirects_are_split_by_what_they_are(self) -> None:
         self.assertEqual(
-            metrics.split_backends([self.OLD_POOL, self.LEGACY], targets),
-            ([self.OLD_POOL], [self.LEGACY]),
-        )
-        self.assertEqual(
-            metrics.split_backends(
-                [self.OLD_POOL, self.POOL, self.LEGACY, self.PATHED, self.CURRENT], targets
-            ),
+            metrics.split_backends([self.POOL, self.CURRENT], self.targets()),
             ([self.POOL], [self.CURRENT]),
         )
 

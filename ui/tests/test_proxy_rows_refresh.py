@@ -48,6 +48,7 @@ def objects_reading(*names: str) -> ClusterObjects:
                     "readable": True,
                     "protocol": "http",
                     "hostnames": [f"{name}.example.com"],
+                    "runtime_backends": [f"{name}-web"],
                 }
                 for name in names
             ],
@@ -189,7 +190,10 @@ class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
             request_id=uuid4(),
             operation="objects_publish",
             cluster="alpha",
-            payload={"objects": {name: document}},
+            payload={
+                "objects": {name: document},
+                **({"removed_backends": {name: [f"{name}-web"]}} if document is None else {}),
+            },
             state=state,
             created_at=OBSERVED,
             started_at=None,
@@ -215,7 +219,7 @@ class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
                         "node": "node-a",
                         "status": {
                             "servers": [
-                                {"backend": f"mgd-{name}-web", "server": "s1", "status": "UP"}
+                                {"backend": f"{name}-web", "server": "s1", "status": "UP"}
                                 for name in backends
                             ]
                         },
@@ -294,7 +298,7 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
     the direction - and the direction is the whole of what a reader needs.
     """
 
-    def listing(self, *, served: str = "mgd-gone-web") -> str:
+    def listing(self, *, served: str = "gone-web") -> str:
         """One row of each kind in one page, with `served` naming what the node has."""
 
         client = self.client(replace(configuration(), clusters=("alpha",)))
@@ -304,7 +308,7 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
             request_id=uuid4(),
             operation="objects_publish",
             cluster="alpha",
-            payload={"objects": {"gone": None}},
+            payload={"objects": {"gone": None}, "removed_backends": {"gone": ["gone-web"]}},
             state="done",
             created_at=OBSERVED,
             started_at=None,
@@ -373,7 +377,7 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
     def test_an_object_the_nodes_serve_does_say_which_protocol(self) -> None:
         """The column is not merely blanked; it fills in when there is an answer."""
 
-        body = self.listing(served="mgd-shop-web")
+        body = self.listing(served="shop-web")
 
         self.assertNotIn("Inactive · deploy to add", body)
         self.assertIn("protocol-badge", body)

@@ -1,9 +1,7 @@
-"""The interface after a pool began to be named by itself (B250, 2026-10-06).
+"""A pool is named by itself, so the interface asks whose a backend is.
 
-A backend's name no longer says whose it is, so the interface asks the objects
-- and a removal's own bookkeeping, for an object whose document is gone - and
-understands the older `mgd-<object>-<pool>` names that history and nodes on an
-older release still carry.
+The objects say, and a removal's own bookkeeping says for an object whose
+document is gone.
 """
 
 from __future__ import annotations
@@ -83,12 +81,12 @@ class WhoseABackendIs(unittest.TestCase):
 
         self.assertEqual(served, frozenset())
 
-    def test_a_node_on_an_older_release_still_answers_for_its_object(self) -> None:
+    def test_a_backend_no_object_names_serves_no_object(self) -> None:
         served = health.served_objects(
             nodes(("mgd-shop-web", "s1", "UP")), cluster="alpha", names=["shop"], owners={}
         )
 
-        self.assertEqual(served, frozenset({"shop"}))
+        self.assertEqual(served, frozenset())
 
     def test_a_removed_object_is_found_through_its_removal(self) -> None:
         removal = publish_job(
@@ -102,15 +100,13 @@ class WhoseABackendIs(unittest.TestCase):
 
         self.assertEqual(served, frozenset({"gone"}))
 
-    def test_an_object_page_reads_its_pool_under_either_name(self) -> None:
-        for reported in ("web", "mgd-shop-web"):
-            with self.subTest(reported=reported):
-                found = health.backend_health(
-                    nodes((reported, "s1", "UP")), cluster="alpha", obj="shop", backend="web"
-                )
+    def test_an_object_page_reads_its_pool_under_its_own_name(self) -> None:
+        found = health.backend_health(
+            nodes(("web", "s1", "UP")), cluster="alpha", obj="shop", backend="web"
+        )
 
-                self.assertEqual(found.backend, "web")
-                self.assertEqual([member.server for member in found.nodes[0].members], ["s1"])
+        self.assertEqual(found.backend, "web")
+        self.assertEqual([member.server for member in found.nodes[0].members], ["s1"])
 
 
 class TheObjectsHelperIsRead(unittest.TestCase):
@@ -196,8 +192,8 @@ class ARemovalWritesItDown(unittest.TestCase):
         self.assertEqual(objects.removed_backends(jobs), {"gone": ("gone-web",)})
 
 
-class TheTrafficLogNamesAServerUnderEitherName(unittest.TestCase):
-    def test_a_row_from_before_and_after_finds_its_address(self) -> None:
+class TheTrafficLogNamesAServerByItsPool(unittest.TestCase):
+    def test_a_row_finds_its_address(self) -> None:
         proxy = load_proxy(
             "shop",
             b"schema: 1\nname: shop\nhostnames: [shop.example.com]\nlisten:\n  protocol: http\n"
@@ -206,8 +202,7 @@ class TheTrafficLogNamesAServerUnderEitherName(unittest.TestCase):
         )
         found = traffic_logs.configured_server_addresses("alpha", [proxy])
 
-        self.assertEqual(found[("alpha", "web", "s1")], "198.51.100.10:8080")
-        self.assertEqual(found[("alpha", "mgd-shop-web", "s1")], "198.51.100.10:8080")
+        self.assertEqual(found, {("alpha", "web", "s1"): "198.51.100.10:8080"})
 
 
 class TheFormSaysWhatTheNameIsFor(unittest.TestCase):
@@ -255,14 +250,14 @@ def site(name: str, pools: str = "web", redirect: str = "") -> Any:
 class WhatAPublishRenames(unittest.TestCase):
     """The history follows a rename only where the publish says which became which."""
 
-    def test_one_pool_for_another_is_a_rename_under_both_older_forms(self) -> None:
+    def test_one_pool_for_another_is_a_rename(self) -> None:
         renamed, introduced = metrics.renamed_backends(
             site("monitor", "admin-web_80"), site("monitor", "monitor-web")
         )
 
         self.assertEqual(
             renamed,
-            {"admin-web_80": "monitor-web", "mgd-monitor-admin-web_80": "monitor-web"},
+            {"admin-web_80": "monitor-web"},
         )
         self.assertEqual(introduced, ["monitor-web"])
 

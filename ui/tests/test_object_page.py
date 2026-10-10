@@ -750,9 +750,7 @@ class WhichPoolsTheTrafficCardAsksAbout(unittest.TestCase):
 
 
 class OneCardPerBackendAcrossTheRename(DraftReading):
-    """B250: a pool's history is under `mgd-<object>-<pool>` until the cluster is
-    deployed with the newer engine, and under the pool's own name after. The
-    page draws one card under the pool's name that reads both."""
+    """One card per pool, under the pool's own name."""
 
     def cards_with_readings_under(self, name: str) -> tuple[int, list[str]]:
         asked: list[str] = []
@@ -781,14 +779,7 @@ class OneCardPerBackendAcrossTheRename(DraftReading):
         self.assertEqual(page.status_code, 200)
         return page.text.count('<div class="traffic-card">'), asked
 
-    def test_before_the_deploy_the_older_name_is_the_card(self) -> None:
-        cards, asked = self.cards_with_readings_under("mgd-public-web-web")
-
-        self.assertEqual(cards, 1)
-        self.assertIn("web", asked)
-        self.assertIn("mgd-public-web-web", asked)
-
-    def test_after_the_deploy_the_pools_own_name_is(self) -> None:
+    def test_the_pools_own_name_is_the_card(self) -> None:
         cards, _asked = self.cards_with_readings_under("web")
 
         self.assertEqual(cards, 1)

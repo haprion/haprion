@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Any
 
 from haproxy_mgmt.cluster_status import ServerHealth
-from haproxy_mgmt.generate import backend_name, legacy_backend_name
+from haproxy_mgmt.generate import backend_name
 from haproxy_mgmt.guid import server_guid
 from haproxy_mgmt.proxy_model import Proxy
 
@@ -171,7 +171,7 @@ def build(
 
     listed: list[ServerRow] = []
     for pool in pools:
-        names = (backend_name(proxy, pool), legacy_backend_name(proxy.name, pool))
+        names = (backend_name(proxy, pool),)
         for index, server in enumerate(proxy.backends[pool].servers):
             position = f"s{index + 1}"
             found = [

@@ -1199,8 +1199,7 @@ def backend_name(proxy: Proxy, name: str) -> str:
 
     A pool is called what the operator named it, and nothing else: the name is
     the `proxy` label HAProxy's exporter gives every metric, so it is what a
-    dashboard shows, and `mgd-<object>-<pool>` read badly there (2026-10-06).
-    The model refuses a pool name in the generator's own `mgd-` space, and
+    dashboard shows. The model refuses a pool name in the generator's own `mgd-` space, and
     `_refuse_shared_backend_names` makes it unique in the cluster.
 
     A redirect has no pool to be named after, so it keeps its object's name in
@@ -1211,16 +1210,6 @@ def backend_name(proxy: Proxy, name: str) -> str:
     if name in proxy.backends:
         return name
     return f"{proxy.name}-{name}"
-
-
-def legacy_backend_name(proxy: str, name: str) -> str:
-    """What the generator called a pool or redirect before 2026-10-06.
-
-    For readers of history only: metrics rows, traffic logs and nodes still
-    running an older release carry these names until they age out.
-    """
-
-    return f"{PREFIX}-{proxy}-{name}"
 
 
 def runtime_backends(proxy: Proxy) -> list[str]:

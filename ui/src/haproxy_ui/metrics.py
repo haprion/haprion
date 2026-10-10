@@ -30,10 +30,9 @@ from haproxy_mgmt.generate import (
     PREFIX,
     WAF_BACKEND,
     backend_name,
-    legacy_backend_name,
     runtime_backends,
 )
-from haproxy_mgmt.guid import REDIRECT_PREFIX, redirect_name, redirect_suffixes
+from haproxy_mgmt.guid import redirect_suffixes
 from haproxy_mgmt.proxy_model import Proxy
 
 #
@@ -1809,10 +1808,7 @@ def is_redirect(backend: str) -> bool:
 class BackendTarget:
     """One generated backend, as a reader should see it.
 
-    `current` is the name the generator gives it now. For a name it gave before
-    - `mgd-<object>-<pool>` until 2026-10-06 (B250), and a redirect's digest
-    until 2026-10-05 - that is the successor, whose counters began when the
-    change was deployed.
+    `current` is the name the generator gives it.
     """
 
     label: str
@@ -1821,16 +1817,15 @@ class BackendTarget:
 
 
 def backend_targets(objects: Mapping[str, Proxy]) -> dict[str, BackendTarget]:
-    """Every backend the objects produce, under each name it has had.
+    """Every backend the objects produce, under the name the generator gives it.
 
     Resolved by building rather than by parsing: every pool and every route
-    that redirects is asked what the generator calls it now and what it called
-    it before, and the answer is compared with the name the metrics row
-    carries. So no name is split on a hyphen that might belong to somebody's
+    that redirects is asked what the generator calls it, and the answer is
+    compared with the name the metrics row carries. So no name is split on a hyphen that might belong to somebody's
     object, and a name nothing accounts for is simply left alone.
 
-    A pool is labelled by its own name, which since B250 is also what HAProxy
-    and a dashboard call it; a redirect by what it does.
+    A pool is labelled by its own name, which is also what HAProxy and a
+    dashboard call it; a redirect by what it does.
     """
 
     found: dict[str, BackendTarget] = {}
@@ -1839,7 +1834,6 @@ def backend_targets(objects: Mapping[str, Proxy]) -> dict[str, BackendTarget]:
             current = backend_name(proxy, pool)
             target = BackendTarget(label=current, current=current)
             found[current] = target
-            found.setdefault(legacy_backend_name(name, pool), target)
         suffixes = redirect_suffixes(proxy)
         for route in proxy.routes:
             redirect = route.redirect
@@ -1853,11 +1847,6 @@ def backend_targets(objects: Mapping[str, Proxy]) -> dict[str, BackendTarget]:
                 redirect=True,
             )
             found[current] = target
-            found.setdefault(legacy_backend_name(name, suffix), target)
-            digest = (
-                f"{REDIRECT_PREFIX}-{redirect_name(route.path, route.match, redirect.location)}"
-            )
-            found.setdefault(legacy_backend_name(name, digest), target)
     return found
 
 
@@ -1872,10 +1861,6 @@ def renamed_backends(before: Proxy | None, after: Proxy) -> tuple[dict[str, str]
 
     The names in use afterwards that were not before are returned as well, so a
     name given out again stops counting for the backend that once had it.
-
-    Each old name is written in the generator's older form too
-    (`mgd-<object>-<name>`, before B250): renamed in the publish that brings the
-    newer engine, the history is still under that one.
     """
 
     introduced = sorted(
@@ -1893,9 +1878,9 @@ def renamed_backends(before: Proxy | None, after: Proxy) -> tuple[dict[str, str]
     pairs += [(then[route], suffix) for route, suffix in now.items() if route in then]
     for old, new in pairs:
         current = backend_name(after, new)
-        for name in (backend_name(before, old), legacy_backend_name(before.name, old)):
-            if name != current:
-                renamed[name] = current
+        name = backend_name(before, old)
+        if name != current:
+            renamed[name] = current
     return renamed, introduced
 
 

@@ -52,6 +52,7 @@ def objects(document: str) -> ClusterObjects:
                     # longer reads the document to find out.
                     #
                     "health_checked": document == CHECKED,
+                    "runtime_backends": ["web", "shop-web"],
                 }
             ],
         },
@@ -72,7 +73,7 @@ def status(*members: tuple[str, str]) -> ClusterStatus:
                     "node": "node1",
                     "status": {
                         "servers": [
-                            {"backend": "mgd-shop-web", "server": server, "status": state}
+                            {"backend": "web", "server": server, "status": state}
                             for server, state in members
                         ]
                     },
@@ -187,7 +188,7 @@ class WhatCountsAsServed(LoginTestCase):
                     "node": "node-a",
                     "status": {
                         "servers": [
-                            {"backend": f"mgd-{name}-web", "server": "s1", "status": "no check"}
+                            {"backend": f"{name}-web", "server": "s1", "status": "no check"}
                             for name in reported
                         ]
                     },

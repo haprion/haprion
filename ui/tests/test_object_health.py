@@ -13,6 +13,9 @@ class Reading:
     result: dict[str, Any]
 
 
+OWNERS = {"web": "shop", "backend": "shop-web"}
+
+
 def node(
     name: str, *members: tuple[str, str, str], holds_vip: bool | None = None
 ) -> dict[str, Any]:
@@ -39,9 +42,7 @@ class TheCardNamesWhatTheAuthorWrote(unittest.TestCase):
     """
 
     def backend(self, *addresses: str) -> health.BackendHealth:
-        return health.BackendHealth(
-            backend="mgd-shop-web", nodes=(), observed_at=None, addresses=addresses
-        )
+        return health.BackendHealth(backend="web", nodes=(), observed_at=None, addresses=addresses)
 
     def test_a_runtime_name_resolves_to_the_address_in_that_position(self) -> None:
         backend = self.backend("198.51.100.10:8080", "198.51.100.11:8080")
@@ -70,20 +71,22 @@ class TheLampInTheListing(unittest.TestCase):
     """
 
     def test_every_member_up_is_green(self) -> None:
-        rows = reading(node("n1", ("mgd-shop-web", "a", "UP"), ("mgd-shop-web", "b", "UP")))
-        lamp = health.object_health(rows, cluster="alpha", obj="shop")
+        rows = reading(node("n1", ("web", "a", "UP"), ("web", "b", "UP")))
+        lamp = health.object_health(rows, cluster="alpha", obj="shop", owners=OWNERS)
         self.assertEqual(lamp.tone, "healthy")
         self.assertEqual(lamp.label, "2/2 up")
 
     def test_one_member_down_is_a_warning_and_not_a_failure(self) -> None:
-        rows = reading(node("n1", ("mgd-shop-web", "a", "UP"), ("mgd-shop-web", "b", "DOWN")))
-        lamp = health.object_health(rows, cluster="alpha", obj="shop")
+        rows = reading(node("n1", ("web", "a", "UP"), ("web", "b", "DOWN")))
+        lamp = health.object_health(rows, cluster="alpha", obj="shop", owners=OWNERS)
         self.assertEqual(lamp.tone, "warning")
         self.assertIn("1 of 2", lamp.detail)
 
     def test_no_member_up_is_red(self) -> None:
-        rows = reading(node("n1", ("mgd-shop-web", "a", "DOWN")))
-        self.assertEqual(health.object_health(rows, cluster="alpha", obj="shop").tone, "critical")
+        rows = reading(node("n1", ("web", "a", "DOWN")))
+        self.assertEqual(
+            health.object_health(rows, cluster="alpha", obj="shop", owners=OWNERS).tone, "critical"
+        )
 
     def test_the_backends_own_summary_row_is_not_a_server(self) -> None:
         #
@@ -93,10 +96,10 @@ class TheLampInTheListing(unittest.TestCase):
         # of servers.
         #
         rows = reading(
-            node("n1", ("mgd-shop-web", "s1", "UP"), ("mgd-shop-web", "BACKEND", "UP")),
-            node("n2", ("mgd-shop-web", "s1", "UP"), ("mgd-shop-web", "BACKEND", "UP")),
+            node("n1", ("web", "s1", "UP"), ("web", "BACKEND", "UP")),
+            node("n2", ("web", "s1", "UP"), ("web", "BACKEND", "UP")),
         )
-        lamp = health.object_health(rows, cluster="alpha", obj="shop")
+        lamp = health.object_health(rows, cluster="alpha", obj="shop", owners=OWNERS)
         self.assertEqual(lamp.label, "1/1 up")
         self.assertEqual(lamp.tone, "healthy")
 
@@ -106,10 +109,10 @@ class TheLampInTheListing(unittest.TestCase):
         # the two nodes into "up" would hide exactly that.
         #
         rows = reading(
-            node("n1", ("mgd-shop-web", "a", "UP")),
-            node("n2", ("mgd-shop-web", "a", "DOWN")),
+            node("n1", ("web", "a", "UP")),
+            node("n2", ("web", "a", "DOWN")),
         )
-        lamp = health.object_health(rows, cluster="alpha", obj="shop")
+        lamp = health.object_health(rows, cluster="alpha", obj="shop", owners=OWNERS)
         self.assertEqual(lamp.tone, "warning")
         #
         # One server, so the count stays 1 - and amber rather than red, because
@@ -120,7 +123,7 @@ class TheLampInTheListing(unittest.TestCase):
         self.assertIn("reported down by n2", lamp.detail)
 
     def test_nothing_reported_is_grey_and_never_green(self) -> None:
-        lamp = health.object_health(reading(node("n1")), cluster="alpha", obj="shop")
+        lamp = health.object_health(reading(node("n1")), cluster="alpha", obj="shop", owners=OWNERS)
         self.assertEqual(lamp.tone, "unknown")
         self.assertEqual(lamp.label, "")
 
@@ -129,28 +132,31 @@ class TheLampInTheListing(unittest.TestCase):
         # HAProxy reports an unchecked server as up, so the reading below would
         # otherwise be green - a reachability nothing measured.
         #
-        rows = reading(node("n1", ("mgd-shop-web", "a", "UP")))
-        lamp = health.object_health(rows, cluster="alpha", obj="shop", checked=False)
+        rows = reading(node("n1", ("web", "a", "UP")))
+        lamp = health.object_health(rows, cluster="alpha", obj="shop", checked=False, owners=OWNERS)
         self.assertEqual(lamp.tone, "unknown")
         self.assertEqual(lamp.label, "")
 
     def test_a_longer_object_name_keeps_its_own_servers(self) -> None:
         #
-        # `mgd-shop-web` is object `shop` backend `web`, and equally what object
-        # `shop-web` would be called. A prefix test alone lends one object's
-        # members to the other.
+        # A backend belongs to the object the objects helper names, never to
+        # one whose name it happens to start with.
         #
-        rows = reading(node("n1", ("mgd-shop-web-backend", "a", "DOWN")))
-        mine = health.object_health(rows, cluster="alpha", obj="shop", others=("shop", "shop-web"))
+        rows = reading(node("n1", ("backend", "a", "DOWN")))
+        mine = health.object_health(
+            rows, cluster="alpha", obj="shop", others=("shop", "shop-web"), owners=OWNERS
+        )
         theirs = health.object_health(
-            rows, cluster="alpha", obj="shop-web", others=("shop", "shop-web")
+            rows, cluster="alpha", obj="shop-web", others=("shop", "shop-web"), owners=OWNERS
         )
         self.assertEqual(mine.tone, "unknown")
         self.assertEqual(theirs.tone, "critical")
 
     def test_another_cluster_is_not_this_one(self) -> None:
-        rows = reading(node("n1", ("mgd-shop-web", "a", "UP")), cluster="beta")
-        self.assertEqual(health.object_health(rows, cluster="alpha", obj="shop").tone, "unknown")
+        rows = reading(node("n1", ("web", "a", "UP")), cluster="beta")
+        self.assertEqual(
+            health.object_health(rows, cluster="alpha", obj="shop", owners=OWNERS).tone, "unknown"
+        )
 
 
 if __name__ == "__main__":
@@ -169,12 +175,14 @@ class OnlyTheNodeThatCarriesTheAddressAnswers(unittest.TestCase):
 
     def cluster(self) -> list[Reading]:
         return reading(
-            node("node-a", ("mgd-shop-web", "s1", "UP"), holds_vip=True),
-            node("node-b", ("mgd-shop-web", "s1", "DOWN"), holds_vip=False),
+            node("node-a", ("web", "s1", "UP"), holds_vip=True),
+            node("node-b", ("web", "s1", "DOWN"), holds_vip=False),
         )
 
     def test_the_node_without_the_address_does_not_vote(self) -> None:
-        lamp = health.object_health(self.cluster(), cluster="alpha", obj="shop", sourced=True)
+        lamp = health.object_health(
+            self.cluster(), cluster="alpha", obj="shop", sourced=True, owners=OWNERS
+        )
 
         self.assertEqual(lamp.label, "1/1 up")
         self.assertEqual(lamp.tone, "healthy")
@@ -186,19 +194,24 @@ class OnlyTheNodeThatCarriesTheAddressAnswers(unittest.TestCase):
         # can genuinely answer, so a member down on one of them is a real
         # fault - and hiding it would be the opposite mistake.
         #
-        lamp = health.object_health(self.cluster(), cluster="alpha", obj="shop", sourced=False)
+        lamp = health.object_health(
+            self.cluster(), cluster="alpha", obj="shop", sourced=False, owners=OWNERS
+        )
 
         self.assertEqual(lamp.tone, "warning")
         self.assertIn("reported down by node-b", lamp.detail)
 
     def test_a_node_that_says_nothing_about_the_address_is_kept(self) -> None:
         rows = reading(
-            node("node-a", ("mgd-shop-web", "s1", "UP"), holds_vip=True),
-            node("node-b", ("mgd-shop-web", "s1", "DOWN")),
+            node("node-a", ("web", "s1", "UP"), holds_vip=True),
+            node("node-b", ("web", "s1", "DOWN")),
         )
 
         self.assertEqual(
-            health.object_health(rows, cluster="alpha", obj="shop", sourced=True).tone, "warning"
+            health.object_health(
+                rows, cluster="alpha", obj="shop", sourced=True, owners=OWNERS
+            ).tone,
+            "warning",
         )
 
 
@@ -211,9 +224,9 @@ class AnUncheckedServerIsNotADownOne(unittest.TestCase):
     """
 
     def test_it_is_skipped_rather_than_counted_either_way(self) -> None:
-        rows = reading(node("node-a", ("mgd-shop-web", "s1", "no check")))
+        rows = reading(node("node-a", ("web", "s1", "no check")))
 
-        lamp = health.object_health(rows, cluster="alpha", obj="shop")
+        lamp = health.object_health(rows, cluster="alpha", obj="shop", owners=OWNERS)
 
         self.assertEqual(lamp.tone, "unknown")
         self.assertEqual(lamp.total, 0)
@@ -222,12 +235,12 @@ class AnUncheckedServerIsNotADownOne(unittest.TestCase):
         rows = reading(
             node(
                 "node-a",
-                ("mgd-shop-web", "s1", "UP"),
-                ("mgd-shop-web", "s2", "no check"),
+                ("web", "s1", "UP"),
+                ("web", "s2", "no check"),
             )
         )
 
-        lamp = health.object_health(rows, cluster="alpha", obj="shop")
+        lamp = health.object_health(rows, cluster="alpha", obj="shop", owners=OWNERS)
 
         self.assertEqual(lamp.label, "1/1 up")
         self.assertEqual(lamp.tone, "healthy")

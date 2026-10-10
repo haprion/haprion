@@ -18,7 +18,6 @@ from haproxy_mgmt.generate import (
     GeneratorError,
     backend_name,
     generate,
-    legacy_backend_name,
     runtime_backends,
 )
 from haproxy_mgmt.objects import objects_result
@@ -72,12 +71,6 @@ class APoolIsNamedByItself(unittest.TestCase):
         self.assertEqual(runtime_backends(proxy), ["ftp-server", "ftp-server_admin-web-redirect-old"])
         self.assertIn(
             "\nbackend ftp-server_admin-web-redirect-old\n", layer(proxy)["1001-ftp-server_admin-web.cfg"]
-        )
-
-    def test_the_name_before_2026_10_06_is_kept_for_reading_history(self) -> None:
-        self.assertEqual(
-            legacy_backend_name("monitor-server_admin-web", "admin-web_80"),
-            "mgd-monitor-server_admin-web-admin-web_80",
         )
 
     def test_the_generators_own_prefix_is_held_in_one_place(self) -> None:

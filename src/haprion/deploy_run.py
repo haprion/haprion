@@ -29,6 +29,7 @@ privileged unit and streams its progress out, and the caller stays thin.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TextIO
@@ -235,6 +236,7 @@ def run(
     operation: str = OPERATION,
     lifeline: Lifeline | None = None,
     preflight: CertificatePreflight | None = None,
+    pause: Callable[[float], None] = time.sleep,
 ) -> DeployRun:
     """Reconcile the cluster and report, in text as it goes and in a result.
 
@@ -411,6 +413,55 @@ def run(
         else:
             entry.outcome = "updated"
             entry.verified = bool(landed)
+            status = _await_peers(status, node_name, read_status, writer, report, pause)
+
+
+#
+# How long a node that has just reloaded is given to reach the nodes it shares
+# its tables with before the next one is touched (B270). It takes its counts
+# back from them on connecting, and HAProxy retries a peer every five seconds
+# (measured on 3.4.6: back after 5.3 s). Reloading the next node before then
+# would leave neither with the counts.
+#
+PEERS_WAIT_SECONDS = 15
+
+
+def _await_peers(
+    status: ClusterStatus,
+    node_name: str,
+    read_status: ReadStatus,
+    writer: TextIO,
+    report: DeployReport,
+    pause: Callable[[float], None],
+) -> ClusterStatus:
+    """The status once the deployed node is connected to its peers, or after the wait.
+
+    Only a node that shares anything is waited for. One that has not connected
+    when the wait ends is named and the deploy goes on: the counts are a
+    convenience, and holding a rollout for them would trade the release for
+    them.
+    """
+
+    for _ in range(PEERS_WAIT_SECONDS):
+        peers = status.node(node_name).peers
+        waiting = [name for name, connected in peers or () if not connected]
+        if not waiting:
+            return status
+        pause(1.0)
+        try:
+            status = read_status()
+        except StatusError:
+            break
+    peers = status.node(node_name).peers
+    waiting = [name for name, connected in peers or () if not connected]
+    if waiting:
+        warning = (
+            f"{node_name} has not reached {', '.join(waiting)} to share counters; "
+            f"they were not shared within {PEERS_WAIT_SECONDS} s"
+        )
+        writer.write(f"WARNING: {warning}\n")
+        report.warnings.append(Message(code="counters_not_shared", message=warning, node=node_name))
+    return status
 
 
 def _certificate_preflight(

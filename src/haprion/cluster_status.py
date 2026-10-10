@@ -159,6 +159,12 @@ class NodeStatus:
     #
     ipvs_current: bool | None = True
     ipvs_included: bool | None = None
+    #
+    # The other nodes this one shares its stick tables with, by name, and
+    # whether each is connected (B270). None when the node did not say - an
+    # older status script, or a runtime socket it could not read.
+    #
+    peers: tuple[tuple[str, bool], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +428,17 @@ def _count(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _peers(status: Mapping[str, Any]) -> tuple[tuple[str, bool], ...] | None:
+    reported = status.get("peers")
+    if not isinstance(reported, list):
+        return None
+    return tuple(
+        (str(peer.get("name", "")), peer.get("connected") is True)
+        for peer in reported
+        if isinstance(peer, Mapping)
+    )
+
+
 def _node(entry: Mapping[str, Any]) -> NodeStatus:
     status = _mapping(entry.get("status"))
     #
@@ -445,6 +462,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         certificates=_certificates(status),
         servers=_servers(status),
         frontends=_frontends(status),
+        peers=_peers(status),
         error_code=_text(_mapping(entry.get("error")).get("code"))
         or (None if usable else "node_status_invalid"),
     )

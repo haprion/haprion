@@ -87,6 +87,11 @@ class FakeNode:
     # the list was reported, which is unknown and not the same as wrong.
     #
     addresses: str = "in_use"
+    #
+    # The `peers` the node reports (B270): None leaves the field out, as a
+    # node does whose status script predates it.
+    #
+    peers: list[dict[str, Any]] | None = None
 
     def status(self) -> Any:
         if self.answers == "null":
@@ -119,6 +124,7 @@ class FakeNode:
             "stats_ok": True,
             "runtime": {"version": "3.2.1", "uptime_sec": 3600},
             "certificates": self._certificates(),
+            **({} if self.peers is None else {"peers": self.peers}),
         }
 
     def _addresses(self) -> Any:

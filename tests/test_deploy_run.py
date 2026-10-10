@@ -33,6 +33,7 @@ def deploy(
     expected_hash: str | None = None,
     allow_vip_unknown: bool = False,
     preflight: CertificatePreflight | None = None,
+    pause: Any = None,
 ) -> tuple[int, str]:
     """Run one deploy. The report is kept aside for the cases that inspect it."""
 
@@ -51,6 +52,7 @@ def deploy(
         target=ReleaseTarget(version=8, hash=expected_hash) if expected_hash else None,
         allow_vip_unknown=allow_vip_unknown,
         preflight=preflight,
+        pause=pause or (lambda _seconds: None),
     )
     LAST_REPORT[:] = [outcome.report]
     return outcome.exit_code, out.getvalue()
@@ -193,6 +195,62 @@ class OrderingTests(unittest.TestCase):
         #
         self.assertEqual(cluster.triggered, ["node-b", "node-a", "node-c"])
         self.assertEqual(code, 0)
+
+
+class SharedCountersTests(unittest.TestCase):
+    """A reloaded node is given time to reach its peers before the next (B270)."""
+
+    def sharing(self) -> FakeCluster:
+        cluster = pair()
+        for node in cluster.nodes:
+            other = "node-b" if node.name == "node-a" else "node-a"
+            node.peers = [{"name": other, "address": "192.0.2.9:10000", "connected": True}]
+        return cluster
+
+    def test_the_next_node_waits_until_the_deployed_one_is_connected(self) -> None:
+        cluster = self.sharing()
+        paused: list[float] = []
+
+        def disconnect(_: FakeCluster, node: FakeNode) -> None:
+            assert node.peers is not None  # noqa: S101 - set above
+            node.peers[0]["connected"] = False
+
+        def pause(seconds: float) -> None:
+            paused.append(seconds)
+            for node in cluster.nodes:
+                assert node.peers is not None  # noqa: S101 - set above
+                node.peers[0]["connected"] = True
+
+        cluster.on_deploy = disconnect
+        code, shown = deploy(cluster, pause=pause)
+
+        self.assertEqual(code, 0, shown)
+        self.assertEqual(paused, [1.0, 1.0])
+        self.assertNotIn("share counters", shown)
+
+    def test_a_node_that_never_connects_is_named_and_the_deploy_goes_on(self) -> None:
+        cluster = self.sharing()
+
+        def disconnect(_: FakeCluster, node: FakeNode) -> None:
+            assert node.peers is not None  # noqa: S101 - set above
+            node.peers[0]["connected"] = False
+
+        cluster.on_deploy = disconnect
+        code, shown = deploy(cluster)
+
+        self.assertEqual(code, 0, shown)
+        self.assertEqual(cluster.triggered, ["node-b", "node-a"])
+        self.assertIn("node-b has not reached node-a to share counters", shown)
+        codes = [warning.code for warning in LAST_REPORT[0].warnings]
+        self.assertIn("counters_not_shared", codes)
+
+    def test_a_cluster_that_shares_nothing_is_not_waited_for(self) -> None:
+        cluster = pair()
+        paused: list[float] = []
+
+        deploy(cluster, pause=paused.append)
+
+        self.assertEqual(paused, [])
 
 
 class BlockedStateTests(unittest.TestCase):

@@ -127,6 +127,10 @@ These rules are shared by config deploy and certificate deploy:
   `certificate_root` skips the check with a `certificates_unchecked` warning. A referenced
   certificate the manager itself does not hold is refused as `certificate_missing`, the code
   `cert_deploy` uses for the same fault.
+- In a cluster that shares its counters, a deploy waits up to 15 seconds after each node for it to
+  report its peers connected before it touches the next, so the reloaded node can take the counts
+  back. A node that has not connected by then is named in a `counters_not_shared` warning and the
+  deploy goes on.
 
 ## Publish and revert invariants
 

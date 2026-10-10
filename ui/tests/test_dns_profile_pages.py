@@ -18,10 +18,10 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haproxy_mgmt.dns_profile_keys import generate, render_public_key
-from haproxy_mgmt.dns_profiles import open_profile
+from haprion.dns_profile_keys import generate, render_public_key
+from haprion.dns_profiles import open_profile
 
-from haproxy_ui import auth, db, dns_profile_form
+from haprion_ui import auth, db, dns_profile_form
 from tests.test_login import LoginTestCase, configuration
 from tests.test_queue_route import queued
 
@@ -206,14 +206,14 @@ class ProfileRouteTestCase(LoginTestCase):
             return profile_row(id=fields["profile_id"], revision=fields["revision"])
 
         for patch in (
-            mock.patch("haproxy_ui.db.queue_job", side_effect=queue),
-            mock.patch("haproxy_ui.db.create_dns_profile", side_effect=create),
-            mock.patch("haproxy_ui.db.replace_dns_profile", side_effect=replace_profile),
-            mock.patch("haproxy_ui.db.dns_profiles", side_effect=lambda _c: list(self.rows)),
-            mock.patch("haproxy_ui.db.job_state", side_effect=job_state),
-            mock.patch("haproxy_ui.views.DNS_PROFILE_APPLY_WAIT", 1.0),
+            mock.patch("haprion_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.create_dns_profile", side_effect=create),
+            mock.patch("haprion_ui.db.replace_dns_profile", side_effect=replace_profile),
+            mock.patch("haprion_ui.db.dns_profiles", side_effect=lambda _c: list(self.rows)),
+            mock.patch("haprion_ui.db.job_state", side_effect=job_state),
+            mock.patch("haprion_ui.views.DNS_PROFILE_APPLY_WAIT", 1.0),
             mock.patch(
-                "haproxy_ui.db.dns_profile",
+                "haprion_ui.db.dns_profile",
                 side_effect=lambda _c, pid: next((r for r in self.rows if r.id == pid), None),
             ),
         ):
@@ -259,7 +259,7 @@ class ThePages(ProfileRouteTestCase):
             profile_row(id="old", name="Old key", key_id="ffffffffffffffff", revision=3),
         ]
         with mock.patch(
-            "haproxy_ui.db.recent_jobs",
+            "haprion_ui.db.recent_jobs",
             return_value=[
                 queued(
                     operation="dns_profile_apply",
@@ -303,7 +303,7 @@ class ThePages(ProfileRouteTestCase):
             payload={"profile": "cf-main", "revision": 1},
             result=None,
         )
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused, applied]):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[refused, applied]):
             client = self.writing_client()
             page = client.get("/dns-profiles?removed=cf-main").text
             later = client.get("/dns-profiles").text
@@ -404,7 +404,7 @@ class SavingAProfile(ProfileRouteTestCase):
 
         self.rows = [profile_row()]
         with mock.patch(
-            "haproxy_ui.db.recent_jobs",
+            "haprion_ui.db.recent_jobs",
             return_value=[
                 queued(
                     operation="dns_profile_apply",
@@ -469,7 +469,7 @@ class SavingAProfile(ProfileRouteTestCase):
         self.assertEqual(self.created, [])
 
     def test_a_busy_certificate_slot_is_said_on_the_form(self) -> None:
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.CertificateBusy()):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):
             response = self.post(self.writing_client())
         self.assertEqual(response.status_code, 200)
         self.assertIn("already running", response.text)

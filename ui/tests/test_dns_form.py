@@ -16,12 +16,12 @@ from typing import Any
 from unittest import mock
 
 import yaml
-from haproxy_mgmt import status_collect
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion import status_collect
+from haprion.proxy_model import load_proxy
 
-from haproxy_ui import auth, form_groups, health, objects, views
-from haproxy_ui.db import ClusterStatus
-from haproxy_ui.preview import DEFAULTS, build_document, form_from_document
+from haprion_ui import auth, form_groups, health, objects, views
+from haprion_ui.db import ClusterStatus
+from haprion_ui.preview import DEFAULTS, build_document, form_from_document
 from tests.test_editor_page import EditorTestCase
 
 GOLDEN = Path(__file__).resolve().parents[2] / "tests" / "golden" / "dns"
@@ -89,9 +89,9 @@ class WritingADnsObject(unittest.TestCase):
 
         import socket
 
-        from haproxy_mgmt import helper_socket
+        from haprion import helper_socket
 
-        from haproxy_ui.preview import PREVIEW_CLUSTER, preview
+        from haprion_ui.preview import PREVIEW_CLUSTER, preview
 
         answer = json.dumps(
             {
@@ -117,11 +117,9 @@ class WritingADnsObject(unittest.TestCase):
     def test_saving_writes_the_address_beside_the_name(self) -> None:
         """B261: looked up when saved, by the service; the name stays for the list."""
 
-        from haproxy_ui.preview import saved_document
+        from haprion_ui.preview import saved_document
 
-        with mock.patch(
-            "haproxy_mgmt.resolve_socket.lookup", return_value="198.51.100.53"
-        ) as asked:
+        with mock.patch("haprion.resolve_socket.lookup", return_value="198.51.100.53") as asked:
             document = saved_document(dns_form(servers="ns1.example.com:53\n192.0.2.54:53"))
 
         servers = load_proxy("resolver", document.encode()).backends["dns"].servers
@@ -132,12 +130,12 @@ class WritingADnsObject(unittest.TestCase):
         asked.assert_called_once_with("ns1.example.com")
 
     def test_a_name_that_does_not_resolve_is_said_on_save(self) -> None:
-        from haproxy_mgmt.dnsdist_config import Unresolved
+        from haprion.dnsdist_config import Unresolved
 
-        from haproxy_ui.preview import PREVIEW_CLUSTER, preview
+        from haprion_ui.preview import PREVIEW_CLUSTER, preview
 
         with mock.patch(
-            "haproxy_mgmt.resolve_socket.lookup",
+            "haprion.resolve_socket.lookup",
             side_effect=Unresolved("ns1.example.com does not resolve on the manager"),
         ):
             result = preview(dns_form(servers="ns1.example.com:53"), PREVIEW_CLUSTER)
@@ -146,8 +144,8 @@ class WritingADnsObject(unittest.TestCase):
         self.assertTrue(result.about_the_object)
 
     def test_a_stored_object_with_its_saved_address_opens_in_the_form(self) -> None:
-        with mock.patch("haproxy_mgmt.resolve_socket.lookup", return_value="198.51.100.53"):
-            from haproxy_ui.preview import saved_document
+        with mock.patch("haprion.resolve_socket.lookup", return_value="198.51.100.53"):
+            from haprion_ui.preview import saved_document
 
             document = saved_document(dns_form(servers="ns1.example.com:53"))
 
@@ -368,7 +366,7 @@ def moved(row: ClusterStatus, warning: dict[str, Any]) -> ClusterStatus:
 
 class TheEditorOffersDns(EditorTestCase):
     def page(self, rows: list[ClusterStatus]) -> str:
-        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=rows):
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=rows):
             return str(self.editor().get("/proxies/alpha/shop/edit").text)
 
     def test_only_where_every_node_runs_dnsdist(self) -> None:
@@ -380,7 +378,7 @@ class TheEditorOffersDns(EditorTestCase):
 
     def test_a_dns_object_hides_what_dnsdist_cannot_carry(self) -> None:
         client = self.editor()
-        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=[status(node("node-a"))]):
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=[status(node("node-a"))]):
             text = str(
                 self.submit(
                     client,
@@ -448,8 +446,8 @@ backends:
         )
         client = self.editor()
         with (
-            mock.patch("haproxy_ui.db.cluster_objects", return_value=[reading]),
-            mock.patch("haproxy_mgmt.resolve_socket.lookup", return_value="198.51.100.60"),
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[reading]),
+            mock.patch("haprion.resolve_socket.lookup", return_value="198.51.100.60"),
         ):
             answer = client.post(
                 "/proxies/alpha/resolver/lookup",

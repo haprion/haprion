@@ -14,7 +14,7 @@ import re
 import unittest
 from pathlib import Path
 
-TEMPLATES = Path(__file__).resolve().parents[1] / "src" / "haproxy_ui" / "templates"
+TEMPLATES = Path(__file__).resolve().parents[1] / "src" / "haprion_ui" / "templates"
 
 #
 # The `details` elements that are not a section folding open: a menu, a

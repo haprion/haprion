@@ -18,9 +18,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import proxy_model
+from haprion import proxy_model
 
-from haproxy_ui import db
+from haprion_ui import db
 
 DRAFT = db.ProxyDraft(
     cluster="alpha",

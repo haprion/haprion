@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_ui.views import _publish_key
+from haprion_ui.views import _publish_key
 
 
 class TheKeyIsTheRequest(unittest.TestCase):

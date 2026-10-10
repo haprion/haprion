@@ -10,7 +10,7 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt.cli import config_status, published_release_helper
+from haprion.cli import config_status, published_release_helper
 
 BASE = Path(__file__).resolve().parents[1]
 STAMP = "release=20261009-120000\ncommit=0123456789ab\n"

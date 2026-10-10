@@ -15,13 +15,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from haproxy_ui.certificates import (
+from haprion_ui.certificates import (
     CertificateOverview,
     RegistryView,
     build_certificate_overview,
     short_issuer,
 )
-from haproxy_ui.db import ClusterCertificates, ClusterStatus
+from haprion_ui.db import ClusterCertificates, ClusterStatus
 
 NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 STALE_AFTER = timedelta(minutes=2)

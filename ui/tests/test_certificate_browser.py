@@ -25,7 +25,7 @@ from unittest import mock
 import uvicorn
 from playwright.sync_api import Browser, Playwright, sync_playwright
 
-from haproxy_ui.app import create_app
+from haprion_ui.app import create_app
 from tests.test_certificate_page import TheCertificatePageHasTwoViews
 from tests.test_certificates import node, status
 from tests.test_login import PASSWORD, configuration
@@ -128,7 +128,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             payload={"domain": "new.example.com"},
         )
         with (
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[active]),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[active]),
             self.signed_in("?view=registry") as page,
         ):
             page.click(".certificate-views a[href='?view=clusters']")
@@ -156,7 +156,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
     def test_the_older_copy_action_is_below_aligned_state_text_and_owns_its_form(self) -> None:
         with (
             mock.patch(
-                "haproxy_ui.db.cluster_statuses",
+                "haprion_ui.db.cluster_statuses",
                 return_value=[status(node(("example.com", "b" * 64)))],
             ),
             self.signed_in("?view=registry&open=example.com") as page,
@@ -194,8 +194,8 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
 
         rows = [with_registry(reading(), registered(fingerprint="a" * 64), external())]
         with (
-            mock.patch("haproxy_ui.features.is_on", return_value=True),
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=rows),
+            mock.patch("haprion_ui.features.is_on", return_value=True),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=rows),
             self.signed_in("?view=registry") as page,
         ):
             export = page.get_by_role("button", name="Export…")
@@ -310,7 +310,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
         self,
     ) -> None:
         with (
-            mock.patch("haproxy_ui.features.is_on", return_value=True),
+            mock.patch("haprion_ui.features.is_on", return_value=True),
             self.signed_in(path="/certificates/new") as page,
         ):
             self.assertEqual(page.locator(".cluster-header .certificate-kind").count(), 1)

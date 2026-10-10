@@ -15,7 +15,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haproxy_ui import auth, db, operations
+from haprion_ui import auth, db, operations
 from tests.test_login import LoginTestCase, configuration
 
 KEY = str(uuid4())
@@ -51,7 +51,7 @@ class QueueRouteTestCase(LoginTestCase):
             self.queued.append(fields)
             return queued()
 
-        self.queue_job = mock.patch("haproxy_ui.db.queue_job", side_effect=queue)
+        self.queue_job = mock.patch("haprion_ui.db.queue_job", side_effect=queue)
         self.queue_job.start()
         self.addCleanup(self.queue_job.stop)
 
@@ -313,7 +313,7 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
 
     def test_a_payload_refusal_does_not_echo_request_detail(self) -> None:
         with mock.patch(
-            "haproxy_ui.operations.prepare",
+            "haprion_ui.operations.prepare",
             side_effect=operations.BadPayload("request-derived detail"),
         ):
             response = self.post(self.writing_client())
@@ -326,7 +326,7 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
 class ConflictsAreToldApart(QueueRouteTestCase):
     def test_a_busy_cluster_answers_409(self) -> None:
         self.queue_job.stop()
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.ClusterBusy("alpha")):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy("alpha")):
             response = self.post(self.writing_client())
         self.queue_job.start()
 
@@ -334,7 +334,7 @@ class ConflictsAreToldApart(QueueRouteTestCase):
 
     def test_a_key_that_asked_for_something_else_answers_409(self) -> None:
         self.queue_job.stop()
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.RequestConflict(KEY)):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.RequestConflict(KEY)):
             response = self.post(self.writing_client())
         self.queue_job.start()
 

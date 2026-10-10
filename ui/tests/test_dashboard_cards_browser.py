@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from typing import Any, ClassVar
 
-from haproxy_ui.views import STATIC_DIRECTORY
+from haprion_ui.views import STATIC_DIRECTORY
 
 if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
     raise RuntimeError(

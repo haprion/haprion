@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt import restore_source
-from haproxy_mgmt.backup_archive import ArchiveError
+from haprion import restore_source
+from haprion.backup_archive import ArchiveError
 from tests.restore_fixture import FILES, SERVICE_ACCOUNTS, build
 
 BASE = Path(__file__).resolve().parents[1]

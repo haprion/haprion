@@ -18,7 +18,7 @@ from typing import Any, ClassVar, cast
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import db, execution, operations, worker
+from haprion_ui import db, execution, operations, worker
 
 TOKEN = uuid4()
 WORKER = "mgr/4242"
@@ -96,7 +96,7 @@ class WorkerTestCase(unittest.TestCase):
             self.finished.append(fields)
             return True
 
-        patch = mock.patch("haproxy_ui.db.finish_job", side_effect=finish)
+        patch = mock.patch("haprion_ui.db.finish_job", side_effect=finish)
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -105,7 +105,7 @@ class WorkerTestCase(unittest.TestCase):
         def audit(_c: object, **fields: Any) -> None:
             self.audited.append(fields)
 
-        trail = mock.patch("haproxy_ui.db.record_audit_event", side_effect=audit)
+        trail = mock.patch("haprion_ui.db.record_audit_event", side_effect=audit)
         trail.start()
         self.addCleanup(trail.stop)
 

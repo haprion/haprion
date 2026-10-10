@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.object_manifest import (
+from haprion.object_manifest import (
     ABSENT,
     CHANGED,
     CURRENT,

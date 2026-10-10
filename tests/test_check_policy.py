@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.check_policy import EffectiveCheck, effective_check, effective_checks
-from haproxy_mgmt.proxy_model import Proxy, load_proxy
+from haprion.check_policy import EffectiveCheck, effective_check, effective_checks
+from haprion.proxy_model import Proxy, load_proxy
 
 DOCUMENT = """schema: 1
 name: shop

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from haproxy_mgmt.cli import objects, objects_helper
+from haprion.cli import objects, objects_helper
 from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
@@ -171,7 +171,7 @@ class ObjectsHelperTests(unittest.TestCase):
     def test_a_repository_that_is_not_on_a_branch_says_so(self) -> None:
         """Detached HEAD is refused upstream; the helper reports it rather than crashing."""
 
-        from haproxy_mgmt.repo_snapshot import PublishError
+        from haprion.repo_snapshot import PublishError
 
         def detached(_repo: Path) -> tuple[str, str]:
             raise PublishError("the repository is not on a branch.")

@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.repo_health import describe_problem, is_repo_root
+from haprion.repo_health import describe_problem, is_repo_root
 
 
 def git(repo: Path, *args: str) -> str:

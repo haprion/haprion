@@ -11,8 +11,8 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from haproxy_ui.backups import BackupOverview, ScheduleView, build_backup_overview
-from haproxy_ui.db import ClusterBackups
+from haprion_ui.backups import BackupOverview, ScheduleView, build_backup_overview
+from haprion_ui.db import ClusterBackups
 
 NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 STALE_AFTER = timedelta(minutes=2)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 import uuid
 
-from haproxy_mgmt.envelope import Message, envelope
+from haprion.envelope import Message, envelope
 
 
 class EnvelopeTests(unittest.TestCase):

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.cluster_settings import (
+from haprion.cluster_settings import (
     DEFAULT_BUFFER_KIB,
     LOCATION,
     NOTHING,
@@ -22,8 +22,8 @@ from haproxy_mgmt.cluster_settings import (
     dump_document,
     load_document,
 )
-from haproxy_mgmt.config import ConfigError
-from haproxy_mgmt.generate import (
+from haprion.config import ConfigError
+from haprion.generate import (
     CLUSTER_FILE,
     EXTERNAL_LOG_FORMAT,
     EXTERNAL_LOG_PROFILE,
@@ -33,9 +33,9 @@ from haproxy_mgmt.generate import (
     GeneratorError,
     generate,
 )
-from haproxy_mgmt.golden import GOLDEN, arguments, objects
-from haproxy_mgmt.managed_publish import managed_files
-from haproxy_mgmt.reservations import load_reservations
+from haprion.golden import GOLDEN, arguments, objects
+from haprion.managed_publish import managed_files
+from haprion.reservations import load_reservations
 from tests.test_managed_publish import NETWORK, PROXY, cluster
 
 GRAYLOG = b"""

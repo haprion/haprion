@@ -11,11 +11,11 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from haproxy_ui import dashboard
-from haproxy_ui.db import ClusterObjects
-from haproxy_ui.history import VersionView
-from haproxy_ui.objects import ObjectDetail, build_object_detail, publication, stored_only
-from haproxy_ui.proxies import ProxyView
+from haprion_ui import dashboard
+from haprion_ui.db import ClusterObjects
+from haprion_ui.history import VersionView
+from haprion_ui.objects import ObjectDetail, build_object_detail, publication, stored_only
+from haprion_ui.proxies import ProxyView
 
 NOW = datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
 STALE_AFTER = timedelta(seconds=120)
@@ -419,7 +419,7 @@ class ThePortAnObjectWillBeServedOn(unittest.TestCase):
     """
 
     def test_it_is_the_engine_s_own_table(self) -> None:
-        from haproxy_mgmt.generate import PORTS
+        from haprion.generate import PORTS
 
         view = detail().stored
 

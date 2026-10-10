@@ -19,7 +19,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from haproxy_mgmt.cli.history_reset import CONFIRMATION, OPERATION, main
+from haprion.cli.history_reset import CONFIRMATION, OPERATION, main
 
 HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"
 

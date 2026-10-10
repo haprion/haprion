@@ -8,8 +8,8 @@ from dataclasses import replace
 from typing import Any, ClassVar
 from unittest import mock
 
-from haproxy_ui import version_changes
-from haproxy_ui.views import STATIC_DIRECTORY
+from haprion_ui import version_changes
+from haprion_ui.views import STATIC_DIRECTORY
 from tests.test_history import reading
 from tests.test_login import LoginTestCase, configuration
 
@@ -92,10 +92,10 @@ class ThePage(LoginTestCase):
     def page(self, path: str, *, kept: Any = DIFF) -> Any:
         with (
             mock.patch(
-                "haproxy_ui.db.cluster_histories",
+                "haprion_ui.db.cluster_histories",
                 return_value=[reading(versions=VERSIONS, published=2)],
             ),
-            mock.patch("haproxy_ui.db.read_version_diff", return_value=kept) as read,
+            mock.patch("haprion_ui.db.read_version_diff", return_value=kept) as read,
         ):
             client = self.client(
                 replace(configuration(), clusters=("alpha",), management_writes=True)
@@ -156,10 +156,10 @@ class TheDialog(LoginTestCase):
     def test_changes_opens_in_a_dialog_and_escape_closes_it(self) -> None:
         with (
             mock.patch(
-                "haproxy_ui.db.cluster_histories",
+                "haprion_ui.db.cluster_histories",
                 return_value=[reading(versions=VERSIONS, published=2)],
             ),
-            mock.patch("haproxy_ui.db.read_version_diff", return_value=DIFF),
+            mock.patch("haprion_ui.db.read_version_diff", return_value=DIFF),
         ):
             client = self.client(replace(configuration(), clusters=("alpha",)))
             self.sign_in(client)

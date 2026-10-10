@@ -15,7 +15,7 @@ import time
 import unittest
 import unittest.mock
 
-from haproxy_ui import execution, worker
+from haprion_ui import execution, worker
 
 PYTHON = sys.executable
 

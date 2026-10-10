@@ -17,8 +17,8 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haproxy_ui import demo, metrics
-from haproxy_ui.db import Job, ProxyDraft
+from haprion_ui import demo, metrics
+from haprion_ui.db import Job, ProxyDraft
 from tests.test_cluster_traffic import measurement
 from tests.test_login import LoginTestCase, configuration
 
@@ -37,7 +37,7 @@ class DraftReading(LoginTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        patch = mock.patch("haproxy_ui.db.read_draft", side_effect=self._read_draft)
+        patch = mock.patch("haprion_ui.db.read_draft", side_effect=self._read_draft)
         patch.start()
         self.addCleanup(patch.stop)
         #
@@ -49,7 +49,7 @@ class DraftReading(LoginTestCase):
             ("read_backend_totals", lambda *_a, **_k: measurement()),
             ("read_backend_aliases", lambda *_a, **_k: {}),
         ):
-            patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=answer)
+            patch = mock.patch(f"haprion_ui.db.{name}", side_effect=answer)
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -353,7 +353,7 @@ class ADraftInTheListing(DraftReading):
     def listing(self, drafts: list[object]) -> str:
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
-        with mock.patch("haproxy_ui.db.cluster_drafts", return_value=drafts):
+        with mock.patch("haprion_ui.db.cluster_drafts", return_value=drafts):
             return str(client.get("/proxies").text)
 
     def drafted(
@@ -459,8 +459,8 @@ class ADraftOnItsWay(DraftReading):
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
         with (
-            mock.patch("haproxy_ui.db.cluster_drafts", return_value=drafts),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
+            mock.patch("haprion_ui.db.cluster_drafts", return_value=drafts),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=jobs),
         ):
             return str(client.get("/proxies").text)
 
@@ -605,7 +605,7 @@ class ADraftThatWasPublished(DraftReading):
         name: str = "half-done",
         base: str = f"{24:040d}",
     ) -> Job:
-        from haproxy_ui.views import _publish_key
+        from haprion_ui.views import _publish_key
 
         #
         # Made against the commit the fixture's cache still shows, unless a
@@ -650,11 +650,11 @@ class ADraftThatWasPublished(DraftReading):
             return jobs if cluster == draft.cluster else []
 
         with (
-            mock.patch("haproxy_ui.db.cluster_drafts", side_effect=drafts),
-            mock.patch("haproxy_ui.db.recent_jobs", side_effect=only),
-            mock.patch("haproxy_ui.db.draft_publishes", side_effect=publishes(jobs)),
+            mock.patch("haprion_ui.db.cluster_drafts", side_effect=drafts),
+            mock.patch("haprion_ui.db.recent_jobs", side_effect=only),
+            mock.patch("haprion_ui.db.draft_publishes", side_effect=publishes(jobs)),
             mock.patch(
-                "haproxy_ui.db.discard_draft", side_effect=lambda *a, **k: discarded.append(k)
+                "haprion_ui.db.discard_draft", side_effect=lambda *a, **k: discarded.append(k)
             ),
         ):
             return str(client.get("/proxies").text), discarded
@@ -752,7 +752,7 @@ class WhichPoolsTheTrafficCardAsksAbout(unittest.TestCase):
 
     def test_the_view_reads_both_and_neither_hides_the_other(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1] / "src" / "haproxy_ui" / "views.py"
+            Path(__file__).resolve().parents[1] / "src" / "haprion_ui" / "views.py"
         ).read_text()
         block = source.split("# Which backends this page can ask about", 1)[1].split(
             "if served:", 1
@@ -783,7 +783,7 @@ class OneCardPerBackendAcrossTheRename(DraftReading):
                 )
             ]
 
-        patch = mock.patch("haproxy_ui.db.read_backend_series", side_effect=series)
+        patch = mock.patch("haprion_ui.db.read_backend_series", side_effect=series)
         patch.start()
         self.addCleanup(patch.stop)
         client = self.client(replace(configuration(), demo_fixture=True))
@@ -803,7 +803,7 @@ class AMovedServerName(DraftReading):
 
     def page(self, **config: Any) -> str:
         patch = mock.patch(
-            "haproxy_ui.views.moved_dns_servers",
+            "haprion_ui.views.moved_dns_servers",
             return_value=[
                 "ns1.example.com now resolves to 192.0.2.54; look it up again on its object"
             ],
@@ -845,7 +845,7 @@ backends:
 """
 
     def test_the_figures_are_messages_and_bytes(self) -> None:
-        from haproxy_mgmt.proxy_model import load_proxy
+        from haprion.proxy_model import load_proxy
 
         totals: list[Any] = []
 
@@ -855,10 +855,10 @@ backends:
 
         for name, answer in (
             (
-                "haproxy_ui.views.load_proxy",
+                "haprion_ui.views.load_proxy",
                 lambda name, _document: load_proxy(name, self.DOCUMENT),
             ),
-            ("haproxy_ui.db.read_backend_totals", read_totals),
+            ("haprion_ui.db.read_backend_totals", read_totals),
         ):
             patch = mock.patch(name, side_effect=answer)
             patch.start()
@@ -893,7 +893,7 @@ backends:
 """
 
     def page(self) -> str:
-        from haproxy_mgmt.proxy_model import load_proxy
+        from haprion.proxy_model import load_proxy
 
         totals: list[Any] = []
 
@@ -903,10 +903,10 @@ backends:
 
         for name, answer in (
             (
-                "haproxy_ui.views.load_proxy",
+                "haprion_ui.views.load_proxy",
                 lambda name, _document: load_proxy(name, self.DOCUMENT),
             ),
-            ("haproxy_ui.db.read_backend_totals", read_totals),
+            ("haprion_ui.db.read_backend_totals", read_totals),
         ):
             patch = mock.patch(name, side_effect=answer)
             patch.start()

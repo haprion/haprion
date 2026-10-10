@@ -8,9 +8,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from haproxy_ui import dashboard
-from haproxy_ui.dashboard import DashboardView, build_dashboard, relative_age
-from haproxy_ui.db import ClusterNetwork, ClusterStatus
+from haprion_ui import dashboard
+from haprion_ui.dashboard import DashboardView, build_dashboard, relative_age
+from haprion_ui.db import ClusterNetwork, ClusterStatus
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "haprion-status" / "valid"
 NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)

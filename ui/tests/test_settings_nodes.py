@@ -17,10 +17,10 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import node_enrollment
-from haproxy_mgmt.node_enrollment import Enrollment
+from haprion import node_enrollment
+from haprion.node_enrollment import Enrollment
 
-from haproxy_ui import auth, cluster_nodes, demo
+from haprion_ui import auth, cluster_nodes, demo
 from tests.test_login import configuration
 from tests.test_queue_route import KEY, QueueRouteTestCase
 
@@ -62,7 +62,7 @@ class NodesPage(QueueRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
         patch = mock.patch(
-            "haproxy_ui.db.cluster_statuses",
+            "haprion_ui.db.cluster_statuses",
             side_effect=lambda _connection: self.rows or list(demo.status_rows(NOW)),
         )
         patch.start()
@@ -197,7 +197,7 @@ class TheListFollowsTheClusterFile(NodesPage):
     """Once the poller has read the cluster file, the pages draw its clusters (B206)."""
 
     def test_the_poller_s_list_replaces_the_configured_one(self) -> None:
-        patch = mock.patch("haproxy_ui.db.cluster_list", return_value=("service-demo",))
+        patch = mock.patch("haprion_ui.db.cluster_list", return_value=("service-demo",))
         patch.start()
         self.addCleanup(patch.stop)
         client = self.client_for()
@@ -212,7 +212,7 @@ class ClusterPage(NodesPage):
     def setUp(self) -> None:
         super().setUp()
         patch = mock.patch(
-            "haproxy_ui.db.cluster_certificates",
+            "haprion_ui.db.cluster_certificates",
             side_effect=lambda _connection: list(demo.certificate_rows(NOW)),
         )
         patch.start()
@@ -331,7 +331,7 @@ class RemovingACluster(ClusterPage):
         )
 
     def test_the_last_cluster_is_not_offered_and_is_refused(self) -> None:
-        patch = mock.patch("haproxy_ui.db.cluster_list", return_value=("service-demo",))
+        patch = mock.patch("haprion_ui.db.cluster_list", return_value=("service-demo",))
         patch.start()
         self.addCleanup(patch.stop)
         client = self.client_for()
@@ -346,7 +346,7 @@ class ARemovedClusterLeavesThePages(NodesPage):
     """Review 2026-09-30 F1: with the list from the cluster file, a removed cluster's cache is not drawn."""
 
     def test_the_cluster_file_s_list_decides_what_the_dashboard_draws(self) -> None:
-        patch = mock.patch("haproxy_ui.db.cluster_list", return_value=("service-demo",))
+        patch = mock.patch("haprion_ui.db.cluster_list", return_value=("service-demo",))
         patch.start()
         self.addCleanup(patch.stop)
 

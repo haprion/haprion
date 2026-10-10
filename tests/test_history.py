@@ -13,9 +13,9 @@ import unittest
 from datetime import UTC, datetime
 from typing import Any
 
-from haproxy_mgmt.deploy_plan import ReleaseTarget
-from haproxy_mgmt.history import history_result, summary_line
-from haproxy_mgmt.version_history import LIST_LIMIT, VersionSummary
+from haprion.deploy_plan import ReleaseTarget
+from haprion.history import history_result, summary_line
+from haprion.version_history import LIST_LIMIT, VersionSummary
 
 WHEN = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
 

@@ -16,10 +16,10 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from haproxy_mgmt.config import Vip
-from haproxy_mgmt.generate import generate
-from haproxy_mgmt.golden import CERTIFICATES, DEFAULT_VIPS
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion.config import Vip
+from haprion.generate import generate
+from haprion.golden import CERTIFICATES, DEFAULT_VIPS
+from haprion.proxy_model import load_proxy
 
 SHOP = b"""
 schema: 1

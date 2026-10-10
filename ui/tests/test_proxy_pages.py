@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Any
 from unittest import mock
 
-from haproxy_ui import proxies
+from haprion_ui import proxies
 from tests.test_login import LoginTestCase, configuration
 from tests.test_search import entry, objects_reading
 
@@ -32,7 +32,7 @@ class TheListing(LoginTestCase):
         client = self.client(replace(configuration(), clusters=("alpha",)))
         self.sign_in(client)
         reading = objects_reading(*[entry(f"site{n:03d}") for n in range(count)])
-        with mock.patch("haproxy_ui.db.cluster_objects", return_value=[reading]):
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=[reading]):
             return client.get(path)
 
     def test_a_hundred_rows_have_no_pages(self) -> None:

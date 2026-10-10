@@ -25,10 +25,10 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_receiver, cert_registry
-from haproxy_mgmt.cert_receiver import Locations, ReceiverError, Result, Tools
-from haproxy_mgmt.cli import cert_receiver as command
-from haproxy_mgmt.config import PathPolicy, RuntimeConfig, load_policy, load_runtime_config
+from haprion import cert_receiver, cert_registry
+from haprion.cert_receiver import Locations, ReceiverError, Result, Tools
+from haprion.cli import cert_receiver as command
+from haprion.config import PathPolicy, RuntimeConfig, load_policy, load_runtime_config
 from tests.test_cert_publish import ME, Fixture, issue
 
 KEEPER = {"keeper.example": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}

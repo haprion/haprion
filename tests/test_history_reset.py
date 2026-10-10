@@ -16,9 +16,9 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import patch
 
-from haproxy_mgmt import git_command, history_reset
-from haproxy_mgmt.git_command import GitError
-from haproxy_mgmt.history_reset import (
+from haprion import git_command, history_reset
+from haprion.git_command import GitError
+from haprion.history_reset import (
     ResetError,
     ResetResult,
     history_path,

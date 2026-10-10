@@ -9,10 +9,10 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import objects
-from haproxy_ui.db import ClusterInventory, ClusterObjects, ClusterStatus, Job
-from haproxy_ui.objects import ListedObject
-from haproxy_ui.views import TEMPLATES
+from haprion_ui import objects
+from haprion_ui.db import ClusterInventory, ClusterObjects, ClusterStatus, Job
+from haprion_ui.objects import ListedObject
+from haprion_ui.views import TEMPLATES
 from tests.test_login import LoginTestCase, configuration
 
 OBSERVED = datetime(2026, 9, 3, 9, 0, tzinfo=UTC)
@@ -102,10 +102,10 @@ class TheRowsCatchUpWithoutTheWholePageBeingDrawn(LoginTestCase):
         self.sign_in(client)
         with (
             mock.patch(
-                "haproxy_ui.db.cluster_objects",
+                "haprion_ui.db.cluster_objects",
                 return_value=[objects_reading("zeta", "alpha-site", "middle")],
             ),
-            mock.patch("haproxy_ui.db.cluster_inventories", return_value=[inventory(*served)]),
+            mock.patch("haprion_ui.db.cluster_inventories", return_value=[inventory(*served)]),
         ):
             if sort:
                 self.assertEqual(client.get(f"/proxies?sort={sort}").status_code, 200)
@@ -235,10 +235,10 @@ class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
         client = self.client(replace(configuration(), clusters=("alpha",)))
         self.sign_in(client)
         with (
-            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects_reading("shop")]),
-            mock.patch("haproxy_ui.db.cluster_inventories", return_value=[inventory("shop")]),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[self.status(*backends)]),
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[objects_reading("shop")]),
+            mock.patch("haprion_ui.db.cluster_inventories", return_value=[inventory("shop")]),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=jobs),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[self.status(*backends)]),
         ):
             return str(client.get("/proxies").text)
 
@@ -343,13 +343,13 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
             poll_error=None,
         )
         with (
-            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects_reading("shop")]),
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[objects_reading("shop")]),
             #
             # Nothing served, so `shop` is written and not on the nodes.
             #
-            mock.patch("haproxy_ui.db.cluster_inventories", return_value=[inventory()]),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[removal]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[behind]),
+            mock.patch("haprion_ui.db.cluster_inventories", return_value=[inventory()]),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[removal]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[behind]),
         ):
             return str(client.get("/proxies").text)
 
@@ -573,7 +573,7 @@ class TheRowStateBadgesFitTheColumnTheySitIn(unittest.TestCase):
 
     def badges(self) -> list[str]:
         markup = (
-            Path(__file__).resolve().parents[1] / "src/haproxy_ui/templates/_proxy-rows.html"
+            Path(__file__).resolve().parents[1] / "src/haprion_ui/templates/_proxy-rows.html"
         ).read_text()
         #
         # The spinner is a span inside a span, and a non-greedy match would end
@@ -611,7 +611,7 @@ class TheRowStateBadgesFitTheColumnTheySitIn(unittest.TestCase):
     def test_the_longest_badge_is_the_one_the_column_was_sized_for(self) -> None:
         """So that widening a badge cannot quietly outgrow the column."""
 
-        css = (Path(__file__).resolve().parents[1] / "src/haproxy_ui/static/app.css").read_text()
+        css = (Path(__file__).resolve().parents[1] / "src/haprion_ui/static/app.css").read_text()
 
         self.assertIn(
             f".proxy-table th:nth-child(2), .proxy-table td:nth-child(2) "

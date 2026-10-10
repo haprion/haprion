@@ -29,13 +29,13 @@ DEFAULT_PYTHON = Path("/usr/bin/python3")
 # whatever the number - the rollback path must never be the one pruned.
 #
 DEFAULT_KEEP = 10
-# Beside INSTALLATION.json in the release; `haproxy_mgmt.node_package` finds it there.
+# Beside INSTALLATION.json in the release; `haprion.node_package` finds it there.
 NODE_PACKAGE_NAME = "haprion-node.deb"
 EXPECTED_PROJECT = "haprion"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 ENTRY_POINT_PATTERN = re.compile(
-    r"(?P<module>haproxy_mgmt(?:\.[a-z_][a-z0-9_]*)*):(?P<callable>[a-z_][a-z0-9_]*)"
+    r"(?P<module>haprion(?:\.[a-z_][a-z0-9_]*)*):(?P<callable>[a-z_][a-z0-9_]*)"
 )
 SCRIPT_NAME_PATTERN = re.compile(r"haprion-[a-z0-9-]+")
 
@@ -177,7 +177,7 @@ def inspect_engine_api(wheel: Path) -> int:
     report it as older than every UI, so it is no release to install.
     """
 
-    member = "haproxy_mgmt/compatibility.json"
+    member = "haprion/compatibility.json"
     try:
         with zipfile.ZipFile(wheel) as archive:
             if member not in archive.namelist():
@@ -257,7 +257,7 @@ def _verify_node_package(
         "import json,sys;"
         f"sys.path.insert(0,{str(lib_dir)!r});"
         "from pathlib import Path;"
-        "from haproxy_mgmt.node_package import verify_package;"
+        "from haprion.node_package import verify_package;"
         "facts=verify_package(Path(sys.argv[1]),sys.argv[2]);"
         "print(json.dumps({'version':facts.version,'commit':facts.commit}))"
     )

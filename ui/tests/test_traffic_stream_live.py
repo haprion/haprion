@@ -30,11 +30,11 @@ from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from haproxy_mgmt.config import Vip
-from haproxy_mgmt.generate import generate
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion.config import Vip
+from haprion.generate import generate
+from haprion.proxy_model import load_proxy
 
-from haproxy_ui.traffic_logs import parse
+from haprion_ui.traffic_logs import parse
 
 ROOT = Path(__file__).resolve().parents[2]
 ENABLE = ROOT / "install" / "node" / "haprion-traffic-log-enable"

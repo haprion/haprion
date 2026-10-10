@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.config import ConfigError
-from haproxy_mgmt.managed_network import MAX_NETWORK_BYTES, dump_document, load_document
+from haprion.config import ConfigError
+from haprion.managed_network import MAX_NETWORK_BYTES, dump_document, load_document
 
 
 class NetworkDocumentTests(unittest.TestCase):

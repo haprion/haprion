@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt.cli import state_backup
-from haproxy_mgmt.config import Cluster, DeployIdentity
-from haproxy_mgmt.state_backup import BackupResult, NodeResult
+from haprion.cli import state_backup
+from haprion.config import Cluster, DeployIdentity
+from haprion.state_backup import BackupResult, NodeResult
 
 
 class StateBackupCommandTests(unittest.TestCase):

@@ -27,10 +27,10 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import dnsdist_config
-from haproxy_mgmt.cli import probe, probe_helper
-from haproxy_mgmt.config import DeployIdentity, Node
-from haproxy_mgmt.probe_socket import ask, build_request
+from haprion import dnsdist_config
+from haprion.cli import probe, probe_helper
+from haprion.config import DeployIdentity, Node
+from haprion.probe_socket import ask, build_request
 
 BASE = Path(__file__).resolve().parents[1]
 

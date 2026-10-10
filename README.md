@@ -95,7 +95,7 @@ VM, backing up the management host and the rest of a recovery plan are the opera
 ## Repository layout
 
 ```text
-src/haproxy_mgmt/   Python management package
+src/haprion/   Python management package
 schemas/v1/         versioned JSON command schemas
 fixtures/           valid and invalid contract examples
 contract-tests/     schema and semantic contract verification

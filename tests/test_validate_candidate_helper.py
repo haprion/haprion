@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import yaml
 
-from haproxy_mgmt.candidate_validation import ValidationResult
-from haproxy_mgmt.cli.validate_candidate_helper import main
+from haprion.candidate_validation import ValidationResult
+from haprion.cli.validate_candidate_helper import main
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "11111111-1111-4111-8111-111111111111"

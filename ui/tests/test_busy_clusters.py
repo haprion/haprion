@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haproxy_ui.db import ClusterStatus, Job
+from haprion_ui.db import ClusterStatus, Job
 from tests.test_certificates import reading as certificate_reading
 from tests.test_history import reading as history_reading
 from tests.test_job_page import job
@@ -21,8 +21,8 @@ class BusyPagesTestCase(LoginTestCase):
     # that must disappear while the cluster is busy.
     #
     PAGES = (
-        ("/", "haproxy_ui.db.cluster_statuses", "Deploy configuration"),
-        ("/history", "haproxy_ui.db.cluster_histories", "Deploy configuration"),
+        ("/", "haprion_ui.db.cluster_statuses", "Deploy configuration"),
+        ("/history", "haprion_ui.db.cluster_histories", "Deploy configuration"),
     )
 
     def reading_for(self, source: str) -> list[object]:
@@ -37,7 +37,7 @@ class BusyPagesTestCase(LoginTestCase):
         self.sign_in(client)
         with (
             mock.patch(source, return_value=self.reading_for(source)),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=jobs),
         ):
             return client.get(path)
 
@@ -80,12 +80,12 @@ class EveryPageThatDeploysSaysTheClusterIsBusy(BusyPagesTestCase):
         # above already names what is running, so the cells say nothing more
         # than that they are not offering anything.
         #
-        idle = self.page("/history", "haproxy_ui.db.cluster_histories", [])
+        idle = self.page("/history", "haprion_ui.db.cluster_histories", [])
         self.assertIn("Publish this version", idle.text)
 
         busy = self.page(
             "/history",
-            "haproxy_ui.db.cluster_histories",
+            "haprion_ui.db.cluster_histories",
             [job(state="running", operation="revert", cluster="alpha")],
         )
         self.assertNotIn("Publish this version", busy.text)
@@ -115,7 +115,7 @@ class TheBusyStateIsAlsoAvailableAsData(BusyPagesTestCase):
     def busy(self, jobs: list[Job]) -> Any:
         client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
         self.sign_in(client)
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=jobs):
             return client.get("/clusters/busy")
 
     def test_a_running_job_names_its_cluster_and_what_it_is(self) -> None:
@@ -159,8 +159,8 @@ class WhenTheReadingCatchesUp(BusyPagesTestCase):
         client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
         self.sign_in(client)
         with (
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=statuses),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=statuses),
         ):
             return client.get("/clusters/busy").json()
 

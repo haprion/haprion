@@ -18,10 +18,10 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from haproxy_mgmt.candidate_validation import ValidationResult
-from haproxy_mgmt.cli import revert, revert_helper
-from haproxy_mgmt.cluster_lock import hold
-from haproxy_mgmt.version_history import (
+from haprion.candidate_validation import ValidationResult
+from haprion.cli import revert, revert_helper
+from haprion.cluster_lock import hold
+from haprion.version_history import (
     count_versions,
     request_id_of,
     version_commit,

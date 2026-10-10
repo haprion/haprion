@@ -16,8 +16,8 @@ import time
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.config import DeployIdentity, Node
-from haproxy_mgmt.health_probe import (
+from haprion.config import DeployIdentity, Node
+from haprion.health_probe import (
     MAX_TARGETS,
     NodeAnswer,
     Target,

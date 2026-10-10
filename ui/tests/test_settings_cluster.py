@@ -15,9 +15,9 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt.cluster_settings import load_document
+from haprion.cluster_settings import load_document
 
-from haproxy_ui import auth, cluster_settings_page, demo
+from haprion_ui import auth, cluster_settings_page, demo
 from tests.test_login import configuration
 from tests.test_queue_route import KEY, QueueRouteTestCase
 
@@ -54,7 +54,7 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         return queued(operation=operation, cluster=cluster, state=state)
 
     def test_a_settings_publish_since_the_last_deploy_is_waiting_for_one(self) -> None:
-        from haproxy_ui import network  # noqa: PLC0415
+        from haprion_ui import network  # noqa: PLC0415
 
         newest_first = [
             self.job("cluster_settings_publish", "edge-demo"),
@@ -80,12 +80,12 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
 
     def test_the_card_says_waiting_and_not_active(self) -> None:
         patch = mock.patch(
-            "haproxy_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
+            "haprion_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
         )
         patch.start()
         self.addCleanup(patch.stop)
         recent = mock.patch(
-            "haproxy_ui.db.recent_jobs",
+            "haprion_ui.db.recent_jobs",
             return_value=[self.job("cluster_settings_publish", "edge-demo")],
         )
         recent.start()
@@ -103,12 +103,12 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         """Publishing lands here before its job is done; the row said nothing (2026-10-05)."""
 
         patch = mock.patch(
-            "haproxy_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
+            "haprion_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
         )
         patch.start()
         self.addCleanup(patch.stop)
         recent = mock.patch(
-            "haproxy_ui.db.recent_jobs",
+            "haprion_ui.db.recent_jobs",
             return_value=[self.job("cluster_settings_publish", "edge-demo", state="pending")],
         )
         recent.start()
@@ -134,7 +134,7 @@ class SettingsClusterTestCase(QueueRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
         patch = mock.patch(
-            "haproxy_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
+            "haprion_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
         )
         patch.start()
         self.addCleanup(patch.stop)

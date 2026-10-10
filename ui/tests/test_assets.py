@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_ui.views import STATIC_DIRECTORY, asset_token
+from haprion_ui.views import STATIC_DIRECTORY, asset_token
 
 
 class AssetTokenTests(unittest.TestCase):

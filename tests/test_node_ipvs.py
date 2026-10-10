@@ -20,10 +20,10 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from haproxy_mgmt import ipvs_config
-from haproxy_mgmt.config import Vip
-from haproxy_mgmt.generate import generate
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion import ipvs_config
+from haprion.config import Vip
+from haprion.generate import generate
+from haprion.proxy_model import load_proxy
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "install" / "node" / "haprion-node-status"

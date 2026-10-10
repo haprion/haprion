@@ -15,8 +15,8 @@ from datetime import timedelta
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import backup_schedule
-from haproxy_mgmt.backup_schedule import (
+from haprion import backup_schedule
+from haprion.backup_schedule import (
     SYSTEMCTL,
     ScheduleError,
     _run,

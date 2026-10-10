@@ -11,8 +11,8 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt.cli.cluster_config import main as cluster_config_main
-from haproxy_mgmt.config import (
+from haprion.cli.cluster_config import main as cluster_config_main
+from haprion.config import (
     AbuseProtection,
     Cluster,
     ConfigError,

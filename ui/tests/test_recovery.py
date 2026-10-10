@@ -13,7 +13,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haproxy_ui import db, recovery
+from haprion_ui import db, recovery
 
 REQUEST = uuid4()
 EXPIRED = datetime.now(UTC) - timedelta(minutes=5)
@@ -204,7 +204,7 @@ class Adjudicating(unittest.TestCase):
         def audit(_c: object, **fields: Any) -> None:
             self.audited.append(fields)
 
-        patch = mock.patch("haproxy_ui.db.record_audit_event", side_effect=audit)
+        patch = mock.patch("haprion_ui.db.record_audit_event", side_effect=audit)
         patch.start()
         self.addCleanup(patch.stop)
 

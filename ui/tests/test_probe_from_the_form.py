@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 import unittest
 
-from haproxy_mgmt.check_policy import EffectiveCheck, effective_checks
-from haproxy_mgmt.probe_socket import ProbeUnavailable
-from haproxy_mgmt.proxy_model import ModelError, load_proxy
+from haprion.check_policy import EffectiveCheck, effective_checks
+from haprion.probe_socket import ProbeUnavailable
+from haprion.proxy_model import ModelError, load_proxy
 
-from haproxy_ui.preview import build_document
-from haproxy_ui.probe import (
+from haprion_ui.preview import build_document
+from haprion_ui.probe import (
     MAX_TARGETS,
     ProbeReport,
     caveats_for,

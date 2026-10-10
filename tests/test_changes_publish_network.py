@@ -15,10 +15,10 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import tls_policy
-from haproxy_mgmt.candidate_validation import ValidationResult
-from haproxy_mgmt.cli import changes_publish
-from haproxy_mgmt.version_history import count_versions, request_id_of
+from haprion import tls_policy
+from haprion.candidate_validation import ValidationResult
+from haprion.cli import changes_publish
+from haprion.version_history import count_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_publish_helper import PublishFixture, Recorder, git
 

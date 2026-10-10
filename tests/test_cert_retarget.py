@@ -15,11 +15,11 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_retarget
-from haproxy_mgmt.cert_delete import Guards
-from haproxy_mgmt.cert_inventory import FULLCHAIN, PRIVKEY
-from haproxy_mgmt.cert_retarget import Change, retarget
-from haproxy_mgmt.config import load_policy
+from haprion import cert_retarget
+from haprion.cert_delete import Guards
+from haprion.cert_inventory import FULLCHAIN, PRIVKEY
+from haprion.cert_retarget import Change, retarget
+from haprion.config import load_policy
 from tests.test_cert_delete import DeleteFixture
 from tests.test_cert_publish import issue
 

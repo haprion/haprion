@@ -25,11 +25,11 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_issue, dns_provider_catalog
-from haproxy_mgmt.cert_issue import CertbotResult, IssueError, certbot_arguments, parse_domain
-from haproxy_mgmt.cli import cert_issue as command
-from haproxy_mgmt.cli import cert_issue_helper, cert_renew
-from haproxy_mgmt.config import load_policy, load_runtime_config
+from haprion import cert_issue, dns_provider_catalog
+from haprion.cert_issue import CertbotResult, IssueError, certbot_arguments, parse_domain
+from haprion.cli import cert_issue as command
+from haprion.cli import cert_issue_helper, cert_renew
+from haprion.config import load_policy, load_runtime_config
 from tests.contract_schema import assert_contract
 from tests.test_cert_publish import Fixture, issue
 
@@ -233,7 +233,7 @@ class WhatReachesCertbot(IssueFixture):
         policy_path.write_text(yaml.safe_dump(document))
         policy = load_policy(policy_path, require_secure=False)
         assert policy.acme is not None and policy.acme.dns_profiles is not None
-        from haproxy_mgmt.dns_profiles import OpenedProfile, materialize
+        from haprion.dns_profiles import OpenedProfile, materialize
 
         materialize(
             policy.acme.dns_profiles,
@@ -293,7 +293,7 @@ class WhatReachesCertbot(IssueFixture):
         policy_path.write_text(yaml.safe_dump(document))
         policy = load_policy(policy_path, require_secure=False)
         assert policy.acme is not None and policy.acme.dns_profiles is not None
-        from haproxy_mgmt.dns_profiles import OpenedProfile, materialize
+        from haprion.dns_profiles import OpenedProfile, materialize
 
         fields = {"user": "user@loopiaapi", "password": "example"}
         materialize(
@@ -365,7 +365,7 @@ class WhatReachesCertbot(IssueFixture):
         policy_path.write_text(yaml.safe_dump(document))
         policy = load_policy(policy_path, require_secure=False)
         assert policy.acme is not None and policy.acme.dns_profiles is not None
-        from haproxy_mgmt.dns_profiles import OpenedProfile, materialize
+        from haprion.dns_profiles import OpenedProfile, materialize
 
         materialize(
             policy.acme.dns_profiles,
@@ -806,14 +806,14 @@ class RenewingALineage(IssueFixture):
             )
 
         with (
-            mock.patch("haproxy_mgmt.cli.cert_renew.os.geteuid", return_value=0),
-            mock.patch("haproxy_mgmt.cli.cert_renew.cert_issue.renew", in_the_fixture),
+            mock.patch("haprion.cli.cert_renew.os.geteuid", return_value=0),
+            mock.patch("haprion.cli.cert_renew.cert_issue.renew", in_the_fixture),
             mock.patch(
-                "haproxy_mgmt.cli.cert_renew.load_policy",
+                "haprion.cli.cert_renew.load_policy",
                 lambda p: load_policy(p, require_secure=False),
             ),
             mock.patch(
-                "haproxy_mgmt.cli.cert_renew.load_runtime_config",
+                "haprion.cli.cert_renew.load_runtime_config",
                 lambda p: load_runtime_config(p, require_secure=False),
             ),
             mock.patch("sys.stderr", err),

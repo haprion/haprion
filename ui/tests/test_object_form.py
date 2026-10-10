@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from haproxy_ui.preview import (
+from haprion_ui.preview import (
     DEFAULTS,
     Unexpressible,
     build_document,
@@ -204,7 +204,7 @@ class WhatTheFormMayOffer(unittest.TestCase):
     """
 
     def test_a_vip_is_offered_with_its_address(self) -> None:
-        from haproxy_ui.preview import PREVIEW_CLUSTER, choices
+        from haprion_ui.preview import PREVIEW_CLUSTER, choices
 
         offered = choices(PREVIEW_CLUSTER)
         vips = offered["vips"]
@@ -215,7 +215,7 @@ class WhatTheFormMayOffer(unittest.TestCase):
         self.assertEqual(offered["default_vip_address"], "192.0.2.20")
 
     def test_a_source_is_offered_with_its_address(self) -> None:
-        from haproxy_ui.preview import PREVIEW_CLUSTER, choices
+        from haprion_ui.preview import PREVIEW_CLUSTER, choices
 
         self.assertEqual(
             choices(PREVIEW_CLUSTER)["sources"],
@@ -225,7 +225,7 @@ class WhatTheFormMayOffer(unittest.TestCase):
     def test_an_address_that_has_not_been_read_is_left_empty(self) -> None:
         """Never guessed. The option still names the VIP; the choice is real."""
 
-        from haproxy_ui.preview import named_addresses
+        from haprion_ui.preview import named_addresses
 
         self.assertEqual(named_addresses({"main": ""}), [{"name": "main", "address": ""}])
 

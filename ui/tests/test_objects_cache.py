@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_ui import db
+from haprion_ui import db
 
 
 class FakeCursor:

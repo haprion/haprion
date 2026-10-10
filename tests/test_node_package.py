@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from haproxy_mgmt import debian_package, node_package, restore_agent
+from haprion import debian_package, node_package, restore_agent
 
 BASE = Path(__file__).resolve().parents[1]
 COMMIT = "0123456789ab" + "0" * 28

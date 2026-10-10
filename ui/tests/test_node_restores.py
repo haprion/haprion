@@ -18,7 +18,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import auth, db, node_restores
+from haprion_ui import auth, db, node_restores
 from tests.test_backups import reading
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_queue_route import queued
@@ -490,9 +490,9 @@ class RestoreRouteTestCase(DeleteRouteTestCase):
             )
 
         for patch in (
-            mock.patch("haproxy_ui.db.queue_job", side_effect=queue),
-            mock.patch("haproxy_ui.db.cluster_backups", return_value=[reading()]),
-            mock.patch("haproxy_ui.db.restore_jobs", side_effect=lambda _c, _run: list(self.runs)),
+            mock.patch("haprion_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.cluster_backups", return_value=[reading()]),
+            mock.patch("haprion_ui.db.restore_jobs", side_effect=lambda _c, _run: list(self.runs)),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -531,7 +531,7 @@ class TheBackupPageOffersIt(RestoreRouteTestCase):
 
     def test_recent_runs_are_listed_under_their_cluster_for_everyone(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.operation_jobs",
+            "haprion_ui.db.operation_jobs",
             side_effect=lambda _c, operation, **_k: [
                 row for row in (PREPARED, PREVIEWED) if row.operation == operation
             ],
@@ -596,7 +596,7 @@ class StartingARun(RestoreRouteTestCase):
         self.assertEqual(self.queued, [])
 
     def test_a_busy_cluster_is_said_on_the_form(self) -> None:
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.ClusterBusy()):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy()):
             response = self.start(self.writing_client())
         self.assertEqual(response.status_code, 200)
         self.assertIn("A job is already running for alpha", response.text)
@@ -728,7 +728,7 @@ class FollowingARun(RestoreRouteTestCase):
 
     def test_the_jobs_page_leads_back_to_the_run(self) -> None:
         stray = job("node_restore_preview", "done", run="../../etc", number=9)
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[PREVIEWED, PREPARED, stray]):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[PREVIEWED, PREPARED, stray]):
             page = self.writing_client().get("/jobs").text
         self.assertEqual(page.count(f'<a href="/backups/restore/{RUN}">'), 2)
         self.assertNotIn("/backups/restore/../", page)
@@ -990,7 +990,7 @@ class DiscardingARun(RestoreRouteTestCase):
         def listed(_c: object, operation: str, **_k: Any) -> list[db.Job]:
             return [row for row in rows if row.operation == operation]
 
-        with mock.patch("haproxy_ui.db.operation_jobs", side_effect=listed):
+        with mock.patch("haprion_ui.db.operation_jobs", side_effect=listed):
             page = self.writing_client().get("/backups").text
             self.assertIn(
                 f'<form method="post" action="/backups/restore/{RUN}/discard" class="restore-run-discard">',

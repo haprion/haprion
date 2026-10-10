@@ -21,8 +21,8 @@ from unittest import mock
 import uvicorn
 from playwright.sync_api import Browser, Playwright
 
-from haproxy_ui import demo
-from haproxy_ui.app import create_app
+from haprion_ui import demo
+from haprion_ui.app import create_app
 from tests.test_login import PASSWORD, configuration
 from tests.test_queue_route import QueueRouteTestCase
 from tests.test_settings_cluster import NOW
@@ -77,7 +77,7 @@ class TheLogsAndMetricsForm(QueueRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
         patch = mock.patch(
-            "haproxy_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
+            "haprion_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
         )
         patch.start()
         self.addCleanup(patch.stop)

@@ -7,7 +7,7 @@ import json
 import unittest
 from typing import Any, BinaryIO, TextIO
 
-from haproxy_mgmt.cli import readings_helper
+from haprion.cli import readings_helper
 
 
 def request(**reads: Any) -> io.BytesIO:

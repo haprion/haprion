@@ -21,9 +21,9 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt.cli import network, network_helper
-from haproxy_mgmt.config import ConfigError, Network, Vip
-from haproxy_mgmt.network_inventory import network_result
+from haprion.cli import network, network_helper
+from haprion.config import ConfigError, Network, Vip
+from haprion.network_inventory import network_result
 from tests.contract_schema import assert_contract
 
 REQUEST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
@@ -42,7 +42,7 @@ class FakeCluster:
         self.networks: dict[str, tuple[str, ...]] = {}
 
     def network(self) -> Network:
-        from haproxy_mgmt.config import load_network
+        from haprion.config import load_network
 
         found = load_network(self.config_path, vip=self.vip)
         if found is not None:

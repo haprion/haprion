@@ -13,11 +13,11 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import dns_profiles, ndes_profiles
-from haproxy_mgmt.cli import ndes_profile_apply_helper
-from haproxy_mgmt.config import DnsProfilesPolicy, NdesPolicy
-from haproxy_mgmt.dns_profile_keys import generate, render_private_key
-from haproxy_mgmt.dns_profiles import ProfileError
+from haprion import dns_profiles, ndes_profiles
+from haprion.cli import ndes_profile_apply_helper
+from haprion.config import DnsProfilesPolicy, NdesPolicy
+from haprion.dns_profile_keys import generate, render_private_key
+from haprion.dns_profiles import ProfileError
 
 ENDPOINT = "https://ca.example.com/certsrv/mscep/mscep.dll"
 

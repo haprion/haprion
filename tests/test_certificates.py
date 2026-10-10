@@ -14,21 +14,21 @@ import unittest
 from base64 import b64encode
 from pathlib import Path
 
-from haproxy_mgmt.certificates import (
+from haprion.certificates import (
     CertificateError,
     certificate_path,
     leaf_fingerprint,
     read_reference,
     target_for,
 )
-from haproxy_mgmt.config import Cluster, Node, Vip
+from haprion.config import Cluster, Node, Vip
 
 LEAF = b"leaf-certificate-der-bytes"
 INTERMEDIATE = b"intermediate-certificate-der-bytes"
 
 
 #
-# Assembled, not written out - see the note in haproxy_mgmt.certificates. A
+# Assembled, not written out - see the note in haprion.certificates. A
 # literal PEM header in a tracked file is what the secret scanner is for.
 #
 DELIMITER = "-" * 5

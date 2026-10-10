@@ -19,17 +19,17 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import advanced
-from haproxy_mgmt import generate as generate_module
-from haproxy_mgmt.config import TLS_POLICY_NAMES, AbuseProtection, Vip
-from haproxy_mgmt.generate import (
+from haprion import advanced
+from haprion import generate as generate_module
+from haprion.config import TLS_POLICY_NAMES, AbuseProtection, Vip
+from haprion.generate import (
     HTTP_TRAFFIC_LOG_FORMAT,
     NODE_CERTIFICATE_DIR,
     TRAFFIC_LOG_PROFILE,
     GeneratorError,
     generate,
 )
-from haproxy_mgmt.golden import (
+from haprion.golden import (
     CERTIFICATES,
     DEFAULT_VIPS,
     GOLDEN,
@@ -44,9 +44,9 @@ from haproxy_mgmt.golden import (
     produced_ipvs,
     produced_lists,
 )
-from haproxy_mgmt.proxy_model import ModelError, Proxy, load_proxy
-from haproxy_mgmt.reservations import Reservations
-from haproxy_mgmt.tls_policy import TLS_POLICIES
+from haprion.proxy_model import ModelError, Proxy, load_proxy
+from haprion.reservations import Reservations
+from haprion.tls_policy import TLS_POLICIES
 
 #
 # Enough of a configuration for `haproxy -c` to have something to attach the

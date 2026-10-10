@@ -50,7 +50,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from haproxy_mgmt.traffic_collector import (
+from haprion.traffic_collector import (
     RETENTION_DAYS,
     CollectorConfig,
     CollectorError,
@@ -62,7 +62,7 @@ from haproxy_mgmt.traffic_collector import (
 
 BASE = Path(__file__).resolve().parents[1]
 NODE_READER = BASE / "install" / "node" / "haprion-traffic-log-read"
-UI_READER = BASE / "ui" / "src" / "haproxy_ui" / "traffic_logs.py"
+UI_READER = BASE / "ui" / "src" / "haprion_ui" / "traffic_logs.py"
 
 #
 # sshd's side of the forced command, and nothing more: put the request where the
@@ -344,7 +344,7 @@ class ChainTestCase(unittest.TestCase):
         the run's own moment; what it leaves alone keeps its earlier stamp.
         """
 
-        from haproxy_mgmt.traffic_collector import collect
+        from haprion.traffic_collector import collect
 
         moment = now or self.NOW
         before = {path: path.stat().st_mtime_ns for path in self.chain.mirror.iterdir()}

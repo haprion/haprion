@@ -35,7 +35,7 @@ from unittest import mock
 
 import uvicorn
 
-from haproxy_ui.app import create_app
+from haprion_ui.app import create_app
 from tests.test_cluster_traffic import ReadingACluster, measurement
 from tests.test_login import PASSWORD, configuration
 
@@ -289,7 +289,7 @@ class WhatAHoverAnswers(TheChartInABrowser):
                 for total in half.totals
             ),
         )
-        patch = mock.patch("haproxy_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: half)
+        patch = mock.patch("haprion_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: half)
         patch.start()
         self.addCleanup(patch.stop)
         with self.signed_in() as page:

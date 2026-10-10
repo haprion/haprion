@@ -22,14 +22,14 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_delete, cert_import, cert_request, cert_request_state
-from haproxy_mgmt.cert_inventory import FULLCHAIN, PRIVKEY, registry_result
-from haproxy_mgmt.cert_request import RequestError, make_request
-from haproxy_mgmt.cert_request_state import CSR, RECORD, TARGETS, pending_csr, pending_csrs
-from haproxy_mgmt.cli import cert_import as import_command
-from haproxy_mgmt.cli import cert_request as command
-from haproxy_mgmt.cli import cert_request_helper
-from haproxy_mgmt.config import load_policy, load_runtime_config
+from haprion import cert_delete, cert_import, cert_request, cert_request_state
+from haprion.cert_inventory import FULLCHAIN, PRIVKEY, registry_result
+from haprion.cert_request import RequestError, make_request
+from haprion.cert_request_state import CSR, RECORD, TARGETS, pending_csr, pending_csrs
+from haprion.cli import cert_import as import_command
+from haprion.cli import cert_request as command
+from haprion.cli import cert_request_helper
+from haprion.config import load_policy, load_runtime_config
 from tests.contract_schema import assert_contract
 from tests.test_cert_import import KEEPERS, OPENSSL, Pki
 from tests.test_cert_publish import Fixture

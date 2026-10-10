@@ -14,7 +14,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt.cli import caller
+from haprion.cli import caller
 
 
 def cluster_config(argv: list[str]) -> int:
@@ -29,7 +29,7 @@ def cluster_config(argv: list[str]) -> int:
 
 class ConfigPathTests(unittest.TestCase):
     def setUp(self) -> None:
-        patched = mock.patch("haproxy_mgmt.cli.cluster_config.main", cluster_config)
+        patched = mock.patch("haprion.cli.cluster_config.main", cluster_config)
         patched.start()
         self.addCleanup(patched.stop)
 

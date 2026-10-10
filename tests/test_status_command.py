@@ -20,10 +20,10 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cluster_status, dnsdist_config, status_collect
-from haproxy_mgmt.cli import status, status_helper
-from haproxy_mgmt.config import Node
-from haproxy_mgmt.status_collect import NodeResponse, ReadNode
+from haprion import cluster_status, dnsdist_config, status_collect
+from haprion.cli import status, status_helper
+from haprion.config import Node
+from haprion.status_collect import NodeResponse, ReadNode
 from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
@@ -498,7 +498,7 @@ class HelperReadingTests(HelperFixture):
             'useClientSubnet=true, healthCheckMode="up"})\n'
         )
         with mock.patch(
-            "haproxy_mgmt.dnsdist_config.lookup",
+            "haprion.dnsdist_config.lookup",
             side_effect=now if isinstance(now, Exception) else (lambda host: now),
         ) as looked:
             code, out, _ = self.run_helper(

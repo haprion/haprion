@@ -16,10 +16,10 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import deploy_run
-from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
-from haproxy_mgmt.deploy_plan import CertificateRef, CertificateTarget, ReleaseTarget
-from haproxy_mgmt.deploy_run import CertificatePreflight, DeployReport
+from haprion import deploy_run
+from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
+from haprion.deploy_plan import CertificateRef, CertificateTarget, ReleaseTarget
+from haprion.deploy_run import CertificatePreflight, DeployReport
 from tests.node_harness import OLD_HASH, TARGET_HASH, FakeCluster, FakeNode, pair
 
 TARGET = ReleaseTarget(version=8, hash=TARGET_HASH)

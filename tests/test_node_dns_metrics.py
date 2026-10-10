@@ -18,7 +18,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from haproxy_mgmt import dnsdist_config
+from haprion import dnsdist_config
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 PARSING = re.compile(r"^DNS_METRICS = .*?(?=^def dns_counters\()", re.DOTALL | re.MULTILINE)

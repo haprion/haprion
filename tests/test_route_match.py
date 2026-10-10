@@ -12,8 +12,8 @@ from __future__ import annotations
 import unittest
 from collections.abc import Sequence
 
-from haproxy_mgmt.proxy_model import Route, load_proxy
-from haproxy_mgmt.route_match import (
+from haprion.proxy_model import Route, load_proxy
+from haprion.route_match import (
     header_name_is_usable,
     header_value_is_usable,
     matches,

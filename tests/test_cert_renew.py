@@ -7,10 +7,10 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_issue, dns_profiles, dns_provider_catalog
-from haproxy_mgmt.cli import cert_renew
-from haproxy_mgmt.config import load_policy, load_runtime_config
-from haproxy_mgmt.dns_profile_keys import generate, render_private_key
+from haprion import cert_issue, dns_profiles, dns_provider_catalog
+from haprion.cli import cert_renew
+from haprion.config import load_policy, load_runtime_config
+from haprion.dns_profile_keys import generate, render_private_key
 from tests.test_cert_publish import Fixture
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.release_layout import (
+from haprion.release_layout import (
     LayoutError,
     ReleaseMetadata,
     build_node_artifact,

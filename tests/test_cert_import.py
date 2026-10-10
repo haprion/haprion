@@ -17,8 +17,8 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import cert_import
-from haproxy_mgmt.cert_import import (
+from haprion import cert_import
+from haprion.cert_import import (
     ImportError_,
     Material,
     assemble,
@@ -26,10 +26,10 @@ from haproxy_mgmt.cert_import import (
     read_material,
     split_blocks,
 )
-from haproxy_mgmt.cert_inventory import FULLCHAIN, PRIVKEY
-from haproxy_mgmt.cli import cert_import as command
-from haproxy_mgmt.cli.cert_publish import EXIT_NOT_ROOT
-from haproxy_mgmt.config import load_policy, load_runtime_config
+from haprion.cert_inventory import FULLCHAIN, PRIVKEY
+from haprion.cli import cert_import as command
+from haprion.cli.cert_publish import EXIT_NOT_ROOT
+from haprion.config import load_policy, load_runtime_config
 from tests.test_cert_publish import Fixture
 
 OPENSSL = shutil.which("openssl") or "/usr/bin/openssl"

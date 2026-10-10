@@ -11,12 +11,12 @@ import socket
 import unittest
 from unittest import mock
 
-from haproxy_mgmt import dnsdist_config
-from haproxy_mgmt.cluster_settings import NOTHING, ClusterSettings, Metrics
-from haproxy_mgmt.config import Vip
-from haproxy_mgmt.generate import GeneratorError, generate
-from haproxy_mgmt.proxy_model import Proxy, load_proxy
-from haproxy_mgmt.reservations import Reservations
+from haprion import dnsdist_config
+from haprion.cluster_settings import NOTHING, ClusterSettings, Metrics
+from haprion.config import Vip
+from haprion.generate import GeneratorError, generate
+from haprion.proxy_model import Proxy, load_proxy
+from haprion.reservations import Reservations
 
 VIPS = {"main": Vip("main", "192.0.2.10", source="192.0.2.20")}
 

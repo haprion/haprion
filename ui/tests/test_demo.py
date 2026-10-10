@@ -3,12 +3,12 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from haproxy_ui import demo
-from haproxy_ui.backups import build_backup_overview
-from haproxy_ui.certificates import build_certificate_overview
-from haproxy_ui.dashboard import build_dashboard
-from haproxy_ui.history import build_history_overview
-from haproxy_ui.proxies import build_proxy_overview
+from haprion_ui import demo
+from haprion_ui.backups import build_backup_overview
+from haprion_ui.certificates import build_certificate_overview
+from haprion_ui.dashboard import build_dashboard
+from haprion_ui.history import build_history_overview
+from haprion_ui.proxies import build_proxy_overview
 
 NOW = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
 

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.dns_profile_keys import (
+from haprion.dns_profile_keys import (
     PRIVATE_TAG,
     PUBLIC_TAG,
     KeyFileError,

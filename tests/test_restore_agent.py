@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import io
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -14,8 +16,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 from unittest import mock
 
-from haproxy_mgmt import restore_agent
-from haproxy_mgmt.restore_agent import PACKAGE_FILE, Failed, Host
+from haprion import restore_agent
+from haprion.restore_agent import PACKAGE_FILE, Failed, Host
 
 RUN = "run-0123456789"
 PACKAGE = b"the release's node package"
@@ -931,9 +933,18 @@ class Protocol(AgentTest):
         self.assertFalse(restore_agent.serve(self.host, io.BytesIO(b"{}"))["ok"])
 
     def test_the_agent_imports_only_the_standard_library(self) -> None:
-        source = Path(restore_agent.__file__).read_text()
-        self.assertNotIn("haproxy_mgmt", source.split('"""', 2)[2])
-        self.assertNotIn("import yaml", source)
+        tree = ast.parse(Path(restore_agent.__file__).read_text())
+        imported = {
+            name.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for name in (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+            )
+        }
+        self.assertLessEqual(imported, set(sys.stdlib_module_names))
 
 
 if __name__ == "__main__":

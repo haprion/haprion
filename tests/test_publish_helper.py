@@ -20,11 +20,11 @@ from pathlib import Path
 
 import yaml
 
-from haproxy_mgmt import tls_policy
-from haproxy_mgmt.candidate_validation import ValidationResult
-from haproxy_mgmt.cli.publish_helper import main
-from haproxy_mgmt.cluster_lock import hold
-from haproxy_mgmt.version_history import count_versions, request_id_of
+from haprion import tls_policy
+from haprion.candidate_validation import ValidationResult
+from haprion.cli.publish_helper import main
+from haprion.cluster_lock import hold
+from haprion.version_history import count_versions, request_id_of
 from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]

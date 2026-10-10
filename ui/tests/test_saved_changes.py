@@ -10,7 +10,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID
 
-from haproxy_ui import db, demo, views
+from haprion_ui import db, demo, views
 from tests.test_editor_page import EditorTestCase, published
 from tests.test_login import configuration
 from tests.test_queue_route import QueueRouteTestCase
@@ -86,7 +86,7 @@ class TheNetworkFormSaves(QueueRouteTestCase):
         self.assertEqual(self.queued, [])
 
     def test_discard_throws_away_the_revision_on_the_page(self) -> None:
-        with mock.patch("haproxy_ui.db.discard_cluster_change") as discard:
+        with mock.patch("haprion_ui.db.discard_cluster_change") as discard:
             answer = self.post(
                 self.writing_client(), **self.form(network_action="discard", saved_revision="4")
             )
@@ -116,9 +116,9 @@ SAVED_ID_IN_FIXTURE = UUID("88888888-8888-4888-8888-888888888888")
 class TheSavedNetworkIsWhatIsShown(QueueRouteTestCase):
     def page(self, changes: dict[str, Any]) -> str:
         with (
-            mock.patch("haproxy_ui.db.cluster_networks", return_value=demo.network_rows(NOW)),
+            mock.patch("haprion_ui.db.cluster_networks", return_value=demo.network_rows(NOW)),
             mock.patch(
-                "haproxy_ui.db.cluster_changes",
+                "haprion_ui.db.cluster_changes",
                 side_effect=lambda _c, cluster: changes if cluster == "edge-demo" else {},
             ),
         ):
@@ -158,7 +158,7 @@ class AnObjectIsCheckedAgainstTheSavedNetwork(EditorTestCase):
         client = self.editor()
         before = client.get("/proxies/alpha/shop/edit").text
         with mock.patch(
-            "haproxy_ui.db.cluster_changes",
+            "haprion_ui.db.cluster_changes",
             return_value={"network": saved("network", document, cluster="alpha")},
         ):
             after = client.get("/proxies/alpha/shop/edit").text
@@ -195,12 +195,12 @@ class ASavedChangeIsClearedByItsPublish(unittest.TestCase):
         )
         with (
             mock.patch(
-                "haproxy_ui.db.cluster_changes",
+                "haprion_ui.db.cluster_changes",
                 return_value={kind: saved(kind, WIDER)},
             ),
-            mock.patch("haproxy_ui.db.change_publishes", return_value=jobs),
-            mock.patch("haproxy_ui.db.cluster_history", return_value=listing),
-            mock.patch("haproxy_ui.db.discard_cluster_change") as discard,
+            mock.patch("haprion_ui.db.change_publishes", return_value=jobs),
+            mock.patch("haprion_ui.db.cluster_history", return_value=listing),
+            mock.patch("haprion_ui.db.discard_cluster_change") as discard,
         ):
             kept = views._settled_changes(mock.Mock(), "edge-demo", {kind: head})
         return kept, discard
@@ -276,7 +276,7 @@ class TheSettingsFormSaves(SettingsClusterTestCase):
     def test_the_page_shows_saved_settings(self) -> None:
         document = "metrics:\n  port: 9100\n  sources:\n  - 192.0.2.0/24\n"
         with mock.patch(
-            "haproxy_ui.db.cluster_changes",
+            "haprion_ui.db.cluster_changes",
             return_value={"settings": saved("settings", document, cluster="edge-demo")},
         ):
             page = self.client_for().get("/settings/clusters/edge-demo").text

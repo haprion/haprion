@@ -12,7 +12,7 @@ from dataclasses import replace
 from typing import Any, ClassVar
 from unittest import mock
 
-from haproxy_ui.views import STATIC_DIRECTORY
+from haprion_ui.views import STATIC_DIRECTORY
 from tests.test_history import reading
 from tests.test_login import LoginTestCase, configuration
 
@@ -53,7 +53,7 @@ class VersionPagesInABrowser(LoginTestCase):
         """Visible version numbers, the range line, and whether Newer/Older are off."""
 
         with mock.patch(
-            "haproxy_ui.db.cluster_histories",
+            "haprion_ui.db.cluster_histories",
             return_value=[reading(versions=VERSIONS, published=25)],
         ):
             client = self.client(replace(configuration(), clusters=("alpha",)))
@@ -98,7 +98,7 @@ class VersionPagesInABrowser(LoginTestCase):
         # so Newer and Older stay under the pointer (2026-09-29).
         #
         with mock.patch(
-            "haproxy_ui.db.cluster_histories",
+            "haprion_ui.db.cluster_histories",
             return_value=[reading(versions=VERSIONS, published=25)],
         ):
             client = self.client(replace(configuration(), clusters=("alpha",)))

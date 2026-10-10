@@ -15,7 +15,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import auth, certificate_activity, certificate_retarget, db
+from haprion_ui import auth, certificate_activity, certificate_retarget, db
 from tests.test_certificate_delete import SHOP_DRAFT, DeleteRouteTestCase
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
@@ -31,7 +31,7 @@ class RetargetRouteTestCase(DeleteRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
         patch = mock.patch(
-            "haproxy_ui.db.cluster_certificates",
+            "haprion_ui.db.cluster_certificates",
             return_value=[
                 with_registry(
                     certificate_reading(),
@@ -239,7 +239,7 @@ class Confirming(RetargetRouteTestCase):
         self.assertEqual(self.queued[0]["payload"]["clusters"], ["beta"])
 
     def test_a_busy_certificate_slot_is_said_on_the_page(self) -> None:
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.CertificateBusy()):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):
             response = self.confirm(
                 self.writing_client(), "remove", "old.example.com", clusters=("beta",)
             )

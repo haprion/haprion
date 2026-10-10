@@ -9,7 +9,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import db, jobs
+from haprion_ui import db, jobs
 from tests.test_login import LoginTestCase, configuration
 
 FIXTURES = Path(__file__).parents[2] / "fixtures"
@@ -85,7 +85,7 @@ class JobPageTests(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.recent_jobs = mock.patch(
-            "haproxy_ui.db.recent_jobs", return_value=[job(state="blocked", outcome="blocked")]
+            "haprion_ui.db.recent_jobs", return_value=[job(state="blocked", outcome="blocked")]
         )
         self.recent_jobs.start()
         self.addCleanup(self.recent_jobs.stop)
@@ -119,8 +119,8 @@ class JobPageTests(LoginTestCase):
         client = self.client(replace(configuration(), **config_overrides))  # type: ignore[arg-type]
         self.sign_in(client)
         with (
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=rows),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=behind),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=rows),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=behind),
         ):
             return client.get("/jobs")
 
@@ -161,7 +161,7 @@ class JobPageTests(LoginTestCase):
         self.assertNotIn('http-equiv="refresh"', page.text)
 
     def test_a_page_with_work_on_it_reloads_until_the_work_is_over(self) -> None:
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[job(state="running")]):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[job(state="running")]):
             client = self.client()
             self.sign_in(client)
             page = client.get("/jobs")
@@ -228,7 +228,7 @@ class JobPageTests(LoginTestCase):
         client = self.client()
         self.sign_in(client)
 
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=rows):
             page = client.get("/jobs")
 
         self.assertEqual(page.status_code, 200)
@@ -244,7 +244,7 @@ class JobPageTests(LoginTestCase):
         ]
         client = self.client()
         self.sign_in(client)
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=rows):
             page = client.get("/jobs").text
 
         self.assertNotIn("<th>Job</th>", page)
@@ -272,8 +272,8 @@ class JobPageTests(LoginTestCase):
         self.sign_in(client)
 
         with (
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=rows),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=behind),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=rows),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=behind),
         ):
             page = client.get("/jobs")
 
@@ -537,7 +537,7 @@ class TheErrorCodeReachesThePage(LoginTestCase):
     def page(self, rows: list[db.Job]) -> str:
         client = self.client()
         self.sign_in(client)
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=rows):
             return str(client.get("/jobs").text)
 
     def test_a_blocked_job_names_the_code_the_helper_blamed(self) -> None:
@@ -762,7 +762,7 @@ class TheBlockReachesThePages(LoginTestCase):
             replace(configuration(), management_writes=writes, clusters=("alpha",))
         )
         self.sign_in(client)
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=rows):
             return str(client.get(path).text)
 
     def test_the_jobs_page_names_the_block_on_the_refused_job_without_a_button(self) -> None:
@@ -821,7 +821,7 @@ class AFailedCertificateIssue(LoginTestCase):
         )
 
     def test_an_admin_reads_certbot_s_reason_not_only_the_exit(self) -> None:
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[self.failed_issue()]):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[self.failed_issue()]):
             client = self.client()
             self.sign_in(client)
             page = client.get("/jobs").text
@@ -855,7 +855,7 @@ class AFailedCertificateIssue(LoginTestCase):
                 },
             },
         )
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused]):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[refused]):
             client = self.client()
             self.sign_in(client)
             page = client.get("/jobs").text
@@ -864,7 +864,7 @@ class AFailedCertificateIssue(LoginTestCase):
 
     def test_a_reader_gets_the_code_and_not_the_output(self) -> None:
         self.account = replace(self.account, role="reader")
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[self.failed_issue()]):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[self.failed_issue()]):
             client = self.client()
             self.sign_in(client)
             page = client.get("/jobs").text

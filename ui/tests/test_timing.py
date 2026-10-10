@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 
-from haproxy_ui import timing
+from haprion_ui import timing
 
 
 def application() -> FastAPI:
@@ -37,7 +37,7 @@ def application() -> FastAPI:
 
 class EveryResponseSaysWhereItsTimeWent(unittest.TestCase):
     def test_header_and_log_line(self) -> None:
-        with self.assertLogs("haproxy_ui.timing", "INFO") as logged:
+        with self.assertLogs("haprion_ui.timing", "INFO") as logged:
             response = TestClient(application()).get("/page?q=secret")
         header = response.headers["server-timing"]
         self.assertIn('db;dur=30.0;desc="2 queries"', header)
@@ -49,7 +49,7 @@ class EveryResponseSaysWhereItsTimeWent(unittest.TestCase):
         self.assertNotIn("secret", line)
 
     def test_assets_are_left_alone(self) -> None:
-        with self.assertNoLogs("haproxy_ui.timing", "INFO"):
+        with self.assertNoLogs("haprion_ui.timing", "INFO"):
             response = TestClient(application()).get("/static/app.css")
         self.assertNotIn("server-timing", response.headers)
 

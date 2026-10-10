@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt.cli import cluster_list_helper
+from haprion.cli import cluster_list_helper
 from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]

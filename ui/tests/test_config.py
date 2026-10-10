@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_ui.config import Config, ConfigError, load
+from haprion_ui.config import Config, ConfigError, load
 
 EXAMPLE = (
     Path(__file__).resolve().parents[2] / "install" / "platform" / "examples" / "ui.toml.example"
@@ -28,7 +28,7 @@ VALID = """
 management_writes = false
 
 [database]
-name = "haproxy_ui"
+name = "haprion_ui"
 socket_directory = "/var/run/postgresql"
 
 [listen]
@@ -54,7 +54,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_a_complete_file_is_read(self) -> None:
         config = self.load(VALID)
-        self.assertEqual(config.database.name, "haproxy_ui")
+        self.assertEqual(config.database.name, "haprion_ui")
         self.assertEqual(config.listen.port, 8080)
         self.assertFalse(config.management_writes)
         self.assertFalse(config.demo_fixture)
@@ -63,7 +63,7 @@ class ConfigTests(unittest.TestCase):
         config = self.load(VALID)
         self.assertEqual(
             config.database.connection_string,
-            "dbname=haproxy_ui host=/var/run/postgresql",
+            "dbname=haprion_ui host=/var/run/postgresql",
         )
         self.assertNotIn("password", config.database.connection_string)
         self.assertNotIn("user", config.database.connection_string)

@@ -7,7 +7,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import auth
+from haprion_ui import auth
 from tests.test_login import LoginTestCase, configuration
 
 
@@ -63,7 +63,7 @@ class WhereAnOperationSendsYou(LoginTestCase):
             auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
         }
         data.update(fields)
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=self._queued):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=self._queued):
             return client.post("/operations", data=data, follow_redirects=False)
 
     def _queued(self, _c: object, **values: object) -> SimpleNamespace:

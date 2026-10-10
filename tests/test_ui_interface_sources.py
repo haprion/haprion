@@ -16,16 +16,16 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import cert_delete, cert_registry
-from haproxy_mgmt.cert_delete import Guards
-from haproxy_mgmt.cert_import import ImportError_, import_certificate, read_material
-from haproxy_mgmt.cert_issue import IssueError, build_request
-from haproxy_mgmt.cert_publish import Material as PublishMaterial
-from haproxy_mgmt.cert_request import RequestError, make_request
-from haproxy_mgmt.cert_request_state import request_is_interface
-from haproxy_mgmt.config import load_policy, load_runtime_config
-from haproxy_mgmt.ndes_state import request_is_interface as ndes_request_is_interface
-from haproxy_mgmt.ndes_state import write_targets
+from haprion import cert_delete, cert_registry
+from haprion.cert_delete import Guards
+from haprion.cert_import import ImportError_, import_certificate, read_material
+from haprion.cert_issue import IssueError, build_request
+from haprion.cert_publish import Material as PublishMaterial
+from haprion.cert_request import RequestError, make_request
+from haprion.cert_request_state import request_is_interface
+from haprion.config import load_policy, load_runtime_config
+from haprion.ndes_state import request_is_interface as ndes_request_is_interface
+from haprion.ndes_state import write_targets
 from tests.test_cert_import import KEEPERS, ImportFixture, Pki
 
 
@@ -112,7 +112,7 @@ class Importing(ImportFixture):
     def test_the_listing_names_the_interface_s_entry_and_no_other(self) -> None:
         from datetime import UTC, datetime
 
-        from haproxy_mgmt.cert_inventory import registry_result
+        from haprion.cert_inventory import registry_result
 
         self.import_as_interface("shop.example", interface=True)
         runtime = load_runtime_config(
@@ -160,7 +160,7 @@ class Importing(ImportFixture):
         other = Pki(self.pki_dir / "other", names=("shop.example",))
 
         def refusing(material: PublishMaterial) -> bool:
-            from haproxy_mgmt.cert_publish import PublishError
+            from haprion.cert_publish import PublishError
 
             raise PublishError("install_failed", "nginx said no")
 
@@ -236,7 +236,7 @@ class NdesRequests(unittest.TestCase):
             root = Path(directory)
             (root / "ui.example").mkdir(mode=0o700)
             with mock.patch(
-                "haproxy_mgmt.ndes_state.request_directory", return_value=root / "ui.example"
+                "haprion.ndes_state.request_directory", return_value=root / "ui.example"
             ):
                 write_targets(root, "ui.example", clusters=(), receivers=(), interface=True)
                 self.assertTrue(ndes_request_is_interface(root, "ui.example"))
@@ -327,7 +327,7 @@ class TheCommandsAndHelpers(ImportFixture):
     """`--interface` at the terminal, `interface` in a job; nothing else changes."""
 
     def test_every_issuing_helper_takes_the_field_and_the_publish_helper_does_not(self) -> None:
-        from haproxy_mgmt.cli import (
+        from haprion.cli import (
             cert_import_helper,
             cert_issue_helper,
             cert_publish_helper,
@@ -345,8 +345,8 @@ class TheCommandsAndHelpers(ImportFixture):
         self.assertNotIn("interface", cert_publish_helper.PARAMETERS)
 
     def test_the_field_is_a_boolean_and_absent_means_no(self) -> None:
-        from haproxy_mgmt.cli import cert_job
-        from haproxy_mgmt.helper_protocol import HelperProtocolError
+        from haprion.cli import cert_job
+        from haprion.helper_protocol import HelperProtocolError
 
         self.assertFalse(cert_job.interface({}))
         self.assertTrue(cert_job.interface({"interface": True}))
@@ -354,7 +354,7 @@ class TheCommandsAndHelpers(ImportFixture):
             cert_job.interface({"interface": "yes"})
 
     def test_the_requests_the_worker_sends_carry_it_only_when_set(self) -> None:
-        from haproxy_mgmt.cli import cert_issue_helper, cert_request_helper, cert_scep_helper
+        from haprion.cli import cert_issue_helper, cert_request_helper, cert_scep_helper
 
         plain = json.loads(
             cert_issue_helper.build_request("r", domain="ui.example", method="dns-01")
@@ -383,7 +383,7 @@ class TheCommandsAndHelpers(ImportFixture):
     def test_import_at_the_terminal_marks_and_installs(self) -> None:
         import io
 
-        from haproxy_mgmt.cli import cert_import as command
+        from haprion.cli import cert_import as command
 
         installed: list[str] = []
 

@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion.proxy_model import load_proxy
 
-from haproxy_ui import health, metrics, objects, operations, traffic_logs
-from haproxy_ui.db import Job
+from haprion_ui import health, metrics, objects, operations, traffic_logs
+from haprion_ui.db import Job
 
 
 @dataclass
@@ -218,7 +218,7 @@ class TheFormSaysWhatTheNameIsFor(unittest.TestCase):
         template = (
             Path(__file__).resolve().parents[1]
             / "src"
-            / "haproxy_ui"
+            / "haprion_ui"
             / "templates"
             / "_object-form.html"
         ).read_text()

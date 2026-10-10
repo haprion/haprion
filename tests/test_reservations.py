@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.reservations import (
+from haprion.reservations import (
     ReservationError,
     Reservations,
     fragment_digest,

@@ -6,10 +6,10 @@ import unittest
 from datetime import UTC, datetime
 from typing import Any
 
-from haproxy_mgmt.config import Network, Vip
-from haproxy_mgmt.generate import source_of, vip_of
-from haproxy_mgmt.objects import ObjectsError, objects_result
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion.config import Network, Vip
+from haprion.generate import source_of, vip_of
+from haprion.objects import ObjectsError, objects_result
+from haprion.proxy_model import load_proxy
 
 TIME = datetime(2026, 9, 2, 12, 30, tzinfo=UTC)
 COMMIT = "a" * 40

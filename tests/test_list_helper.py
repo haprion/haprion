@@ -21,7 +21,7 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-from haproxy_mgmt.cli import list_helper
+from haprion.cli import list_helper
 from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]

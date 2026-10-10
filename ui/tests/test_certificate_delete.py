@@ -16,7 +16,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import auth, certificate_delete, db, jobs
+from haprion_ui import auth, certificate_delete, db, jobs
 from tests.test_certificates import node, registered, status, with_registry
 from tests.test_certificates import reading as certificate_reading
 from tests.test_login import LoginTestCase, configuration
@@ -68,11 +68,11 @@ class DeleteRouteTestCase(LoginTestCase):
             return queued(operation="cert_delete", cluster=None)
 
         for patch in (
-            mock.patch("haproxy_ui.db.queue_job", side_effect=queue),
-            mock.patch("haproxy_ui.db.live_drafts", side_effect=lambda _c: list(self.drafts)),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
+            mock.patch("haprion_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.live_drafts", side_effect=lambda _c: list(self.drafts)),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
             mock.patch(
-                "haproxy_ui.db.cluster_certificates",
+                "haprion_ui.db.cluster_certificates",
                 return_value=[
                     with_registry(
                         certificate_reading(),
@@ -154,8 +154,8 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
 
     def test_only_the_stale_cluster_gets_the_contextual_deploy_action(self) -> None:
         with (
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=self.stale_statuses()),
         ):
             client = self.writing_client(clusters=("alpha", "beta"))
             page = client.get("/certificates?view=registry&open=example.com").text
@@ -190,8 +190,8 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
 
     def test_the_action_returns_to_the_row_it_was_pressed_on(self) -> None:
         with (
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=self.stale_statuses()),
         ):
             client = self.writing_client(clusters=("alpha", "beta"))
             page = client.get("/certificates?view=registry&open=example.com").text
@@ -226,9 +226,9 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
         #
         running = queued(operation="cert_deploy", cluster="beta", state="running")
         with (
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[running]),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[running]),
         ):
             client = self.writing_client(clusters=("alpha", "beta"))
             page = client.get("/certificates?view=registry&open=example.com").text
@@ -252,9 +252,9 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
             finished_at=datetime.now(UTC) - timedelta(seconds=5),
         )
         with (
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[done]),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[done]),
         ):
             client = self.writing_client(clusters=("alpha", "beta"))
             page = client.get("/certificates?view=registry&open=example.com").text
@@ -265,9 +265,9 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
         # Once the nodes report the current bytes, the measured row is back.
         current = [status(node(("example.com", "a" * 64)), cluster="beta")]
         with (
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=current),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[done]),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=current),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[done]),
         ):
             page = client.get("/certificates?view=registry&open=example.com").text
         self.assertNotIn(">Deploying<", page)
@@ -282,9 +282,9 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
             finished_at=datetime.now(UTC) - timedelta(seconds=5),
         )
         with (
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[failed]),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[failed]),
         ):
             page = client.get("/certificates?view=registry&open=example.com").text
         self.assertIn('status-badge-critical">Deploy failed<', page)
@@ -295,8 +295,8 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
             status(node(("example.com", "b" * 64)), cluster="beta"),
         ]
         with (
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=stale),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=stale),
         ):
             page = (
                 self.writing_client(clusters=("alpha", "beta"))
@@ -378,7 +378,7 @@ class Confirming(DeleteRouteTestCase):
         self.assertEqual(self.queued, [])
 
     def test_a_busy_certificate_slot_is_said_on_the_page(self) -> None:
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.CertificateBusy()):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):
             response = self.confirm(self.writing_client(), "old.example.com")
         self.assertEqual(response.status_code, 200)
         self.assertIn("already running", response.text)

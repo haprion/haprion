@@ -15,13 +15,13 @@ from pathlib import Path
 
 import yaml
 
-from haproxy_mgmt import change_journal
-from haproxy_mgmt import node_enrollment as enrollment
-from haproxy_mgmt.cli import node as node_command
-from haproxy_mgmt.cli import node_helper
-from haproxy_mgmt.config import Node, RuntimeConfig, load_policy, load_runtime_config
-from haproxy_mgmt.node_enrollment import AskNode, Enrollment, EnrollmentError, Locations, Outcome
-from haproxy_mgmt.status_collect import NodeResponse
+from haprion import change_journal
+from haprion import node_enrollment as enrollment
+from haprion.cli import node as node_command
+from haprion.cli import node_helper
+from haprion.config import Node, RuntimeConfig, load_policy, load_runtime_config
+from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, Locations, Outcome
+from haprion.status_collect import NodeResponse
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "77777777-7777-4777-8777-777777777777"

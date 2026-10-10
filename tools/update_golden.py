@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sys
 
-from haproxy_mgmt.golden import (
+from haprion.golden import (
     DNS_FILES,
     GOLDEN,
     IPVS_FILES,

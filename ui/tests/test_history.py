@@ -5,9 +5,9 @@ import unittest
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from haproxy_ui import metrics
-from haproxy_ui.db import ClusterHistory
-from haproxy_ui.history import HistoryOverview, build_history_overview
+from haprion_ui import metrics
+from haprion_ui.db import ClusterHistory
+from haprion_ui.history import HistoryOverview, build_history_overview
 
 NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 
@@ -245,7 +245,7 @@ class RenderingTests(unittest.TestCase):
 
 class CommentTests(unittest.TestCase):
     def test_the_engine_s_publish_prefix_is_left_out_and_nothing_else(self) -> None:
-        from haproxy_ui.history import shown_comment
+        from haprion_ui.history import shown_comment
 
         self.assertEqual(
             shown_comment("Update proxy objects: Publish monitor-server_admin-web"),

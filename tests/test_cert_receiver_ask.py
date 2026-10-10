@@ -22,8 +22,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.cli import cert_receiver_ask
-from haproxy_mgmt.cli.cert_receiver_helper import build_request
+from haprion.cli import cert_receiver_ask
+from haprion.cli.cert_receiver_helper import build_request
 from tests.test_probe_socket import Listener
 
 

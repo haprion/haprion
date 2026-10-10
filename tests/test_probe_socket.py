@@ -25,7 +25,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.probe_socket import ProbeUnavailable, ask, build_request
+from haprion.probe_socket import ProbeUnavailable, ask, build_request
 
 TARGETS = [
     {
@@ -162,7 +162,7 @@ class TheRequestBothCallersBuild(unittest.TestCase):
     def test_the_command_line_caller_builds_the_same_document(self) -> None:
         """The interface and `haprion-probe` must not drift apart."""
 
-        from haproxy_mgmt.cli import probe
+        from haprion.cli import probe
 
         self.assertIs(vars(probe)["build_request"], build_request)
 

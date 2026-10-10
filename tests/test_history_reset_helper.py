@@ -21,8 +21,8 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt.cli import history_reset_helper
-from haproxy_mgmt.cli.history_reset_helper import ACKNOWLEDGEMENT, OPERATION, main
+from haprion.cli import history_reset_helper
+from haprion.cli.history_reset_helper import ACKNOWLEDGEMENT, OPERATION, main
 
 BASE = Path(__file__).resolve().parents[1]
 HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"

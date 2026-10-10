@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haproxy_ui.db import ClusterInventory, ClusterObjects, ClusterStatus
+from haprion_ui.db import ClusterInventory, ClusterObjects, ClusterStatus
 from tests.test_login import LoginTestCase, configuration
 
 OBSERVED = datetime(2026, 9, 3, 9, 0, tzinfo=UTC)
@@ -98,9 +98,9 @@ class TheHealthColumn(LoginTestCase):
         client = self.client(replace(configuration(), clusters=("alpha",)))
         self.sign_in(client)
         with (
-            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects(document)]),
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[objects(document)]),
             mock.patch(
-                "haproxy_ui.db.cluster_statuses", return_value=[] if reading is None else [reading]
+                "haprion_ui.db.cluster_statuses", return_value=[] if reading is None else [reading]
             ),
         ):
             return client.get("/proxies")
@@ -204,9 +204,9 @@ class WhatCountsAsServed(LoginTestCase):
             poll_error=None,
         )
         with (
-            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects(CHECKED)]),
-            mock.patch("haproxy_ui.db.cluster_inventories", return_value=[published]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[reading]),
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[objects(CHECKED)]),
+            mock.patch("haprion_ui.db.cluster_inventories", return_value=[published]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[reading]),
         ):
             return client.get("/proxies")
 

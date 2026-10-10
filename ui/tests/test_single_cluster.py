@@ -14,7 +14,7 @@ from dataclasses import replace
 from typing import Any
 from unittest import mock
 
-from haproxy_ui import demo
+from haprion_ui import demo
 from tests.test_login import LoginTestCase, configuration
 
 ONLY = demo.CLUSTERS[0]
@@ -63,7 +63,7 @@ class OneConfiguredCluster(LoginTestCase):
             "cluster_backups": demo.backup_rows(),
         }
         for name, rows in readers.items():
-            patch = mock.patch(f"haproxy_ui.db.{name}", return_value=only_first(rows))
+            patch = mock.patch(f"haprion_ui.db.{name}", return_value=only_first(rows))
             patch.start()
             self.addCleanup(patch.stop)
 

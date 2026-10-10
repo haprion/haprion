@@ -9,10 +9,10 @@ from typing import Any
 from unittest import mock
 
 import yaml
-from haproxy_mgmt.crs import Rule
+from haprion.crs import Rule
 
-from haproxy_ui import waf
-from haproxy_ui.db import WafFinding
+from haprion_ui import waf
+from haprion_ui.db import WafFinding
 from tests.test_editor_page import OBJECTS, SHOP, EditorTestCase
 
 SEEN = datetime(2026, 10, 2, 14, 30, tzinfo=UTC)
@@ -173,11 +173,11 @@ class ThePage(EditorTestCase):
     def setUp(self) -> None:
         super().setUp()
         for target, value in (
-            ("haproxy_ui.db.waf_findings", [finding()]),
-            ("haproxy_ui.db.waf_verdicts", {("alpha", "shop"): (14, 3)}),
-            ("haproxy_ui.db.waf_request_count", 1297),
-            ("haproxy_ui.db.cluster_objects", objects(LOGGING)),
-            ("haproxy_mgmt.crs.installed_catalog", CATALOG),
+            ("haprion_ui.db.waf_findings", [finding()]),
+            ("haprion_ui.db.waf_verdicts", {("alpha", "shop"): (14, 3)}),
+            ("haprion_ui.db.waf_request_count", 1297),
+            ("haprion_ui.db.cluster_objects", objects(LOGGING)),
+            ("haprion.crs.installed_catalog", CATALOG),
         ):
             patch = mock.patch(target, return_value=value)
             patch.start()
@@ -260,7 +260,7 @@ class ThePage(EditorTestCase):
 
     def test_remove_takes_the_exception_out_of_the_draft(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.cluster_objects",
+            "haprion_ui.db.cluster_objects",
             return_value=objects(LOGGING + "  exceptions: [{rule: 920350, paths: [/health]}]\n"),
         ):
             client = self.editor()

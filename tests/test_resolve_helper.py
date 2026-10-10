@@ -16,8 +16,8 @@ import uuid
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import dnsdist_config, helper_socket, resolve_socket
-from haproxy_mgmt.cli import resolve_helper
+from haprion import dnsdist_config, helper_socket, resolve_socket
+from haprion.cli import resolve_helper
 from tests.contract_schema import assert_contract
 
 ADDRESSES = {"ns1.example.com": "192.0.2.53"}

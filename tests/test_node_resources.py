@@ -16,8 +16,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import node_resources
-from haproxy_mgmt.cli import status
+from haprion import node_resources
+from haprion.cli import status
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 READER = re.compile(r"^def read_resources\(\):.*?(?=^#\n# A directive)", re.DOTALL | re.MULTILINE)

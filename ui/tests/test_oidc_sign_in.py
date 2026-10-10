@@ -20,9 +20,9 @@ from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
 
-from haproxy_ui import auth, db, oidc_web
-from haproxy_ui.db import Account
-from haproxy_ui.views import SIGN_IN_FAILED
+from haprion_ui import auth, db, oidc_web
+from haprion_ui.db import Account
+from haprion_ui.views import SIGN_IN_FAILED
 from tests.test_login import PASSWORD, LoginTestCase, configuration
 from tests.test_settings_oidc import ISSUER, provider
 
@@ -110,23 +110,23 @@ class SigningInThroughTheProvider(LoginTestCase):
             self.audit_details.append((action, dict(detail or {})))
 
         for patch in (
-            mock.patch("haproxy_ui.db.start_oidc_login", side_effect=start),
-            mock.patch("haproxy_ui.db.use_oidc_login", side_effect=use),
-            mock.patch("haproxy_ui.oidc_web.ask", side_effect=ask),
+            mock.patch("haprion_ui.db.start_oidc_login", side_effect=start),
+            mock.patch("haprion_ui.db.use_oidc_login", side_effect=use),
+            mock.patch("haprion_ui.oidc_web.ask", side_effect=ask),
             mock.patch(
-                "haproxy_ui.db.account_by_oidc",
+                "haprion_ui.db.account_by_oidc",
                 side_effect=lambda _c, *, issuer, subject: self.by_identity.get((issuer, subject)),
             ),
-            mock.patch("haproxy_ui.db.create_oidc_account", side_effect=create),
+            mock.patch("haprion_ui.db.create_oidc_account", side_effect=create),
             mock.patch(
-                "haproxy_ui.db.bind_oidc_account",
+                "haprion_ui.db.bind_oidc_account",
                 side_effect=bind,
             ),
             mock.patch(
-                "haproxy_ui.db.set_role",
+                "haprion_ui.db.set_role",
                 side_effect=lambda _c, *, user_id, role: self.roles.append((user_id, role)),
             ),
-            mock.patch("haproxy_ui.db.record_audit_event", side_effect=audit),
+            mock.patch("haprion_ui.db.record_audit_event", side_effect=audit),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -303,7 +303,7 @@ class SigningInThroughTheProvider(LoginTestCase):
             oidc_issuer="https://old.example.com/",
         )
         with mock.patch(
-            "haproxy_ui.db.account_by_username",
+            "haprion_ui.db.account_by_username",
             side_effect=lambda _c, name: bound_elsewhere if name == "alice" else None,
         ):
             client = self.client()
@@ -328,8 +328,8 @@ class SigningInThroughTheProvider(LoginTestCase):
             return True
 
         with (
-            mock.patch("haproxy_ui.db.account_by_username", side_effect=named),
-            mock.patch("haproxy_ui.db.bind_oidc_account", side_effect=bind),
+            mock.patch("haprion_ui.db.account_by_username", side_effect=named),
+            mock.patch("haprion_ui.db.bind_oidc_account", side_effect=bind),
         ):
             client = self.client()
             response = self.back(client, self.go(client))
@@ -403,7 +403,7 @@ class SigningInThroughTheProvider(LoginTestCase):
     def test_an_unreachable_provider_is_a_sentence_on_the_login_page(self) -> None:
         client = self.client()
         with mock.patch(
-            "haproxy_ui.oidc_web.ask",
+            "haprion_ui.oidc_web.ask",
             side_effect=oidc_web.OidcUnavailable("The OIDC helper is not installed here."),
         ):
             response = client.get("/login/oidc", follow_redirects=False)
@@ -421,7 +421,7 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.sign_in(client, password=PASSWORD)
         token = client.cookies[auth.SESSION_COOKIE]
         with mock.patch(
-            "haproxy_ui.oidc_web.ask",
+            "haprion_ui.oidc_web.ask",
             side_effect=oidc_web.OidcRefused("bad_input", "No issuer is set."),
         ):
             response = client.post(

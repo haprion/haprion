@@ -18,8 +18,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import helper_socket
-from haproxy_mgmt.cli import backup_job_ask, node_ask, node_restore_ask
+from haprion import helper_socket
+from haprion.cli import backup_job_ask, node_ask, node_restore_ask
 
 REQUEST_ID = "11111111-1111-1111-1111-111111111111"
 CLIENTS: tuple[tuple[Any, dict[str, Any]], ...] = (

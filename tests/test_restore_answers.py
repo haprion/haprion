@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt import accounts, restore_answers, restore_source
-from haproxy_mgmt.restore_answers import AnswersError
+from haprion import accounts, restore_answers, restore_source
+from haprion.restore_answers import AnswersError
 from tests.restore_fixture import FILES, NODE_CONF, build
 
 BASE = Path(__file__).resolve().parents[1]

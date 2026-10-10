@@ -8,7 +8,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from haproxy_ui import auth
+from haprion_ui import auth
 from tests.test_login import PASSWORD, LoginTestCase
 
 NEW = "another sufficiently long password"
@@ -18,7 +18,7 @@ class ChangingOnesOwnPassword(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.changed: list[dict[str, Any]] = []
-        patch = mock.patch("haproxy_ui.db.change_password", side_effect=self._change)
+        patch = mock.patch("haprion_ui.db.change_password", side_effect=self._change)
         patch.start()
         self.addCleanup(patch.stop)
 

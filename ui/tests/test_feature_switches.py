@@ -17,8 +17,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haproxy_ui import auth, db, features
-from haproxy_ui.db import FeatureSwitch
+from haprion_ui import auth, db, features
+from haprion_ui.db import FeatureSwitch
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
 from tests.test_login import LoginTestCase, configuration
@@ -64,9 +64,9 @@ class Switched(LoginTestCase):
             self.details.append((action, dict(detail or {})))
 
         for patch in (
-            mock.patch("haproxy_ui.db.set_feature_switch", side_effect=flip),
-            mock.patch("haproxy_ui.db.queue_job", side_effect=queue),
-            mock.patch("haproxy_ui.db.record_audit_event", side_effect=audit),
+            mock.patch("haprion_ui.db.set_feature_switch", side_effect=flip),
+            mock.patch("haprion_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.record_audit_event", side_effect=audit),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -117,7 +117,7 @@ class Switched(LoginTestCase):
             registered(fingerprint="a" * 64),
             receivers=("lb-01",),
         )
-        with mock.patch("haproxy_ui.db.cluster_certificates", return_value=[reading]):
+        with mock.patch("haprion_ui.db.cluster_certificates", return_value=[reading]):
             client = self.admin()
             on = client.get("/certificates").text
             self.assertIn("certificate-views", on)
@@ -138,7 +138,7 @@ class Switched(LoginTestCase):
     def test_off_stops_every_running_schedule_and_remembers_it(self) -> None:
         client = self.admin()
         with mock.patch(
-            "haproxy_ui.features.schedules_to_stop",
+            "haprion_ui.features.schedules_to_stop",
             return_value={"alpha": SCHEDULE, "beta": {**SCHEDULE, "time": "05:00"}},
         ):
             answer = self.post(client, "/settings/features/node_backups", enabled="off")
@@ -182,8 +182,8 @@ class Switched(LoginTestCase):
         client = self.admin()
         rollbacks = self.pool.rollbacks
         with (
-            mock.patch("haproxy_ui.features.schedules_to_stop", return_value={"alpha": SCHEDULE}),
-            mock.patch("haproxy_ui.db.queue_job", side_effect=db.ClusterBusy()),
+            mock.patch("haprion_ui.features.schedules_to_stop", return_value={"alpha": SCHEDULE}),
+            mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy()),
         ):
             answer = self.post(client, "/settings/features/node_backups", enabled="off")
 
@@ -197,7 +197,7 @@ class Switched(LoginTestCase):
     ) -> None:
         client = self.admin()
         with mock.patch(
-            "haproxy_ui.features.schedules_to_stop",
+            "haprion_ui.features.schedules_to_stop",
             side_effect=features.SwitchRefused("alpha's retention could not be read."),
         ):
             answer = self.post(client, "/settings/features/node_backups", enabled="off")
@@ -345,7 +345,7 @@ class TheWafEngineSwitch(Switched):
             waf={"engine": "0.9.0-2", "crs": "4.25.1"},
         )
         return mock.patch(
-            "haproxy_ui.db.cluster_objects", return_value=[replace(OBJECTS, result=result)]
+            "haprion_ui.db.cluster_objects", return_value=[replace(OBJECTS, result=result)]
         )
 
     def test_off_is_refused_while_an_object_is_inspected(self) -> None:
@@ -380,7 +380,7 @@ class TheWafEngineSwitch(Switched):
             error=None,
             poll_error=None,
         )
-        with self.objects(""), mock.patch("haproxy_ui.db.cluster_statuses", return_value=[status]):
+        with self.objects(""), mock.patch("haprion_ui.db.cluster_statuses", return_value=[status]):
             page = client.get("/settings")
         self.assertIn("Not installed on node-b", page.text)
 

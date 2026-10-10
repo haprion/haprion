@@ -149,7 +149,7 @@ INSTALLED_ENGINE = Path("/opt/haprion/current/lib")
 
 
 def engine_root(project: Path) -> Path:
-    """A directory holding `haproxy_mgmt`: the source tree, else the installed engine."""
+    """A directory holding `haprion`: the source tree, else the installed engine."""
 
     for candidate in (project.parent / "src", INSTALLED_ENGINE):
         if candidate.is_dir() and not candidate.is_symlink():

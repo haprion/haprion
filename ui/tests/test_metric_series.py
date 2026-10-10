@@ -12,7 +12,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from haproxy_ui import metrics
+from haprion_ui import metrics
 
 START = datetime(2026, 9, 5, 20, 0, tzinfo=UTC)
 

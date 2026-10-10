@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt import geo, objects
+from haprion import geo, objects
 
 
 def fake_library(networks: dict[str, list[str]]) -> types.ModuleType:

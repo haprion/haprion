@@ -18,9 +18,9 @@ from collections.abc import Mapping
 from typing import Any
 
 import psycopg
-from haproxy_mgmt.version_history import MAX_LIST_LIMIT
+from haprion.version_history import MAX_LIST_LIMIT
 
-from haproxy_ui import config, db, poller
+from haprion_ui import config, db, poller
 
 
 def completed(stdout: str, *, returncode: int = 0, stderr: str = "") -> Any:
@@ -167,8 +167,8 @@ class Passes(unittest.TestCase):
                 return completed(inventory_envelope("failed", operation="list"))
             return completed(inventory_envelope(operation="list"))
 
-        from haproxy_ui.config import Config, Database, Listen, Poller, Throttle
-        from haproxy_ui.config import Session as SessionPolicy
+        from haprion_ui.config import Config, Database, Listen, Poller, Throttle
+        from haprion_ui.config import Session as SessionPolicy
 
         config = Config(
             database=Database(name="x", socket_directory="/tmp"),  # noqa: S108
@@ -299,7 +299,7 @@ class TheSingletonLockSession(unittest.TestCase):
             recorded.update(kwargs)
             return object()
 
-        database = config.Database(name="haproxy_ui", socket_directory="/var/run/postgresql")
+        database = config.Database(name="haprion_ui", socket_directory="/var/run/postgresql")
         with unittest.mock.patch.object(psycopg, "connect", fake_connect):
             db.lock_session(database)
 
@@ -370,8 +370,8 @@ class TheClusterList(unittest.TestCase):
             asked.append(cluster)
             return completed(envelope())
 
-        from haproxy_ui.config import Config, Database, Listen, Poller, Throttle
-        from haproxy_ui.config import Session as SessionPolicy
+        from haprion_ui.config import Config, Database, Listen, Poller, Throttle
+        from haprion_ui.config import Session as SessionPolicy
 
         configured = Config(
             database=Database(name="x", socket_directory="/tmp"),  # noqa: S108
@@ -421,7 +421,7 @@ class TheClusterList(unittest.TestCase):
             calls.clear()
             source = poller.Source("status", helper, lambda _c, **_k: None, asks=asks)
             with (
-                self.assertLogs("haproxy_ui.poller", level="WARNING")
+                self.assertLogs("haprion_ui.poller", level="WARNING")
                 if asks is broken
                 else contextlib.nullcontext()
             ):
@@ -481,7 +481,7 @@ class TheSearchIndexIsKeptBesideTheReadings(unittest.TestCase):
         written: list[dict[str, Any]] = []
         source = poller.Source(operation, lambda *_: None, lambda *_a, **_k: None)
         with unittest.mock.patch(
-            "haproxy_ui.db.replace_search_entries",
+            "haprion_ui.db.replace_search_entries",
             side_effect=lambda _c, **kwargs: written.append(kwargs),
         ):
             poller._index(self.Pool(), source, cluster="alpha", reading=reading)
@@ -506,9 +506,9 @@ class TheSearchIndexIsKeptBesideTheReadings(unittest.TestCase):
         source = poller.Source("objects", lambda *_: None, lambda *_a, **_k: None)
         with (
             unittest.mock.patch(
-                "haproxy_ui.db.replace_search_entries", side_effect=RuntimeError("down")
+                "haprion_ui.db.replace_search_entries", side_effect=RuntimeError("down")
             ),
-            self.assertLogs("haproxy_ui.poller", level="WARNING"),
+            self.assertLogs("haprion_ui.poller", level="WARNING"),
         ):
             poller._index(
                 self.Pool(),
@@ -528,13 +528,13 @@ class TheObjectsReadingSendsWhatItHolds(unittest.TestCase):
         asks = self.source().asks
         if asks is None:
             raise AssertionError("the objects source asks nothing")
-        with unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value="f" * 64):
+        with unittest.mock.patch("haprion_ui.db.objects_fingerprint", return_value="f" * 64):
             self.assertEqual(asks(object(), "alpha"), {"unchanged_since": "f" * 64})
-        with unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value=None):
+        with unittest.mock.patch("haprion_ui.db.objects_fingerprint", return_value=None):
             self.assertEqual(asks(object(), "alpha"), {})
 
     def test_an_unchanged_answer_leaves_the_search_alone(self) -> None:
-        with unittest.mock.patch("haproxy_ui.db.replace_search_entries") as replace:
+        with unittest.mock.patch("haprion_ui.db.replace_search_entries") as replace:
             poller._index(
                 TheSearchIndexIsKeptBesideTheReadings.Pool(),
                 self.source(),
@@ -572,8 +572,8 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
             )
 
         with (
-            unittest.mock.patch("haproxy_ui.db.versions_without_diff", return_value=["a" * 40]),
-            unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value=None),
+            unittest.mock.patch("haprion_ui.db.versions_without_diff", return_value=["a" * 40]),
+            unittest.mock.patch("haprion_ui.db.objects_fingerprint", return_value=None),
         ):
             runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
 
@@ -589,8 +589,8 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
             return subprocess.CompletedProcess([], 1, "", "sudo: a password is required")
 
         with (
-            unittest.mock.patch("haproxy_ui.db.versions_without_diff", return_value=[]),
-            unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value=None),
+            unittest.mock.patch("haprion_ui.db.versions_without_diff", return_value=[]),
+            unittest.mock.patch("haprion_ui.db.objects_fingerprint", return_value=None),
         ):
             runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
 
@@ -610,8 +610,8 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
             )
 
         with (
-            unittest.mock.patch("haproxy_ui.db.versions_without_diff", return_value=[]),
-            unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value=None),
+            unittest.mock.patch("haprion_ui.db.versions_without_diff", return_value=[]),
+            unittest.mock.patch("haprion_ui.db.objects_fingerprint", return_value=None),
         ):
             runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
 

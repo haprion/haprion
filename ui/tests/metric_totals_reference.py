@@ -15,7 +15,7 @@ from typing import Any
 
 from psycopg import Connection, sql
 
-from haproxy_ui import db, metrics
+from haprion_ui import db, metrics
 
 
 def backend_totals() -> sql.Composed:

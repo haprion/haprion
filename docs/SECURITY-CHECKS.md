@@ -133,7 +133,7 @@ result directory, and fails if either SARIF file contains an alert. Source snipp
 by the final gate summary.
 
 Two languages are analysed in one run: the engine and the interface in Python, and the interface's
-own scripts under `ui/src/haproxy_ui/static` in JavaScript, each against its `security-extended`
+own scripts under `ui/src/haprion_ui/static` in JavaScript, each against its `security-extended`
 suite. Those scripts have no build step and no dependencies, but they are the only code here that
 runs inside a reader's browser, and that is where a value's reach is not something the tests answer.
 Both result files are judged in one call, because an acceptance that matches nothing is a failure -

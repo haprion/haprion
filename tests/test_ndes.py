@@ -10,9 +10,9 @@ from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt import cert_import, ndes
-from haproxy_mgmt.config import DnsProfilesPolicy, NdesPolicy
-from haproxy_mgmt.ndes_profiles import OpenedProfile
+from haprion import cert_import, ndes
+from haprion.config import DnsProfilesPolicy, NdesPolicy
+from haprion.ndes_profiles import OpenedProfile
 from tests.test_cert_import import Pki, openssl
 
 ENDPOINT = "https://ca.example.com/certsrv/mscep/mscep.dll"

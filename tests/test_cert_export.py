@@ -18,13 +18,13 @@ from typing import Any
 
 from cryptography.hazmat.primitives.serialization import pkcs12
 
-from haproxy_mgmt import cert_registry
-from haproxy_mgmt.cert_export import ExportError, export
-from haproxy_mgmt.cert_import import ImportError_, import_certificate
-from haproxy_mgmt.cert_inventory import OPENSSL, registry_result
-from haproxy_mgmt.certificates import CERTIFICATE_OPENING
-from haproxy_mgmt.cli import cert_export_helper
-from haproxy_mgmt.config import ConfigError, load_policy, load_registry, load_runtime_config
+from haprion import cert_registry
+from haprion.cert_export import ExportError, export
+from haprion.cert_import import ImportError_, import_certificate
+from haprion.cert_inventory import OPENSSL, registry_result
+from haprion.certificates import CERTIFICATE_OPENING
+from haprion.cli import cert_export_helper
+from haprion.config import ConfigError, load_policy, load_registry, load_runtime_config
 from tests.contract_schema import assert_contract
 from tests.test_cert_import import KEEPERS, ImportFixture, Pki
 
@@ -62,7 +62,7 @@ class ExportableFixture(ImportFixture):
         )
 
     def device_material(self) -> Any:
-        from haproxy_mgmt.cert_import import read_material
+        from haprion.cert_import import read_material
 
         return read_material(
             certificate=self.device.leaf,
@@ -158,7 +158,7 @@ class MakingOne(ExportableFixture):
 
     def test_a_wildcard_is_never_exportable(self) -> None:
         wild = Pki(self.root / "wild", names=("wild.example", "*.wild.example"))
-        from haproxy_mgmt.cert_import import read_material
+        from haprion.cert_import import read_material
 
         material = read_material(
             certificate=wild.leaf,

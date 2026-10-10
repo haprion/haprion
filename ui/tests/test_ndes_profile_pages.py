@@ -9,9 +9,9 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_mgmt.ndes_profiles import open_profile
+from haprion.ndes_profiles import open_profile
 
-from haproxy_ui import auth, db, operations
+from haprion_ui import auth, db, operations
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
 from tests.test_dns_profile_pages import GUARD, KEY, ProfileRouteTestCase, profile_row
@@ -35,11 +35,11 @@ class NdesPages(ProfileRouteTestCase):
             )
 
         for patch in (
-            mock.patch("haproxy_ui.db.create_ndes_profile", side_effect=create),
-            mock.patch("haproxy_ui.db.replace_ndes_profile", side_effect=replacing),
-            mock.patch("haproxy_ui.db.ndes_profiles", side_effect=lambda _c: list(self.rows)),
+            mock.patch("haprion_ui.db.create_ndes_profile", side_effect=create),
+            mock.patch("haprion_ui.db.replace_ndes_profile", side_effect=replacing),
+            mock.patch("haprion_ui.db.ndes_profiles", side_effect=lambda _c: list(self.rows)),
             mock.patch(
-                "haproxy_ui.db.ndes_profile",
+                "haprion_ui.db.ndes_profile",
                 side_effect=lambda _c, pid: next((r for r in self.rows if r.id == pid), None),
             ),
         ):
@@ -92,7 +92,7 @@ class NdesPages(ProfileRouteTestCase):
         self.assertEqual(self.replaced[0]["revision"], 4)
 
     def test_queue_failure_rolls_back_without_echoing_secret(self) -> None:
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.CertificateBusy):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy):
             response = self.post_ndes(self.writing_client())
         self.assertEqual(response.status_code, 200)
         self.assertIn("already running", response.text)
@@ -182,7 +182,7 @@ class RemovingAnNdesProfile(NdesPages):
         applied = replace(
             refused, id=40, state="done", payload={"profile": "certserver1", "revision": 1}, result=None
         )
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused, applied]):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[refused, applied]):
             client = self.writing_client()
             page = client.get("/ndes-profiles?removed=certserver1").text
             later = client.get("/ndes-profiles").text
@@ -196,7 +196,7 @@ class RemovingAnNdesProfile(NdesPages):
         # And the link is for an hour: a refusal from this morning is not
         # the profile's state (seen 2026-09-15: "I have not tried to remove it").
         stale = replace(refused, finished_at=datetime.now(UTC) - timedelta(hours=2))
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[stale, applied]):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[stale, applied]):
             old = self.writing_client().get("/ndes-profiles?removed=certserver1").text
         self.assertIn("In effect", old)
         self.assertNotIn("Removal refused", old)
@@ -206,8 +206,8 @@ class RemovingAnNdesProfile(NdesPages):
         # and so is the note - without waiting for another attempt.
         emptied = with_registry(certificate_reading(), registered("unrelated", kind="import"))
         with (
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused, applied]),
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[emptied]),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[refused, applied]),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[emptied]),
         ):
             page = self.writing_client().get("/ndes-profiles").text
         self.assertIn("In effect", page)

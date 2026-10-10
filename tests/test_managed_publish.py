@@ -6,12 +6,12 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import crs, geo, ipvs_config
-from haproxy_mgmt.config import Cluster, ConfigError, Node, UnknownHost
-from haproxy_mgmt.managed_publish import managed_files
-from haproxy_mgmt.object_manifest import REPOSITORY_PATH as MANIFEST_PATH
-from haproxy_mgmt.object_manifest import parse as parse_manifest
-from haproxy_mgmt.release_layout import LayoutError, build_node_artifact, build_release_index
+from haprion import crs, geo, ipvs_config
+from haprion.config import Cluster, ConfigError, Node, UnknownHost
+from haprion.managed_publish import managed_files
+from haprion.object_manifest import REPOSITORY_PATH as MANIFEST_PATH
+from haprion.object_manifest import parse as parse_manifest
+from haprion.release_layout import LayoutError, build_node_artifact, build_release_index
 
 
 def cluster() -> Cluster:

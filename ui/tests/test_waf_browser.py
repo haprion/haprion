@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, ClassVar
 from unittest import mock
 
-from haproxy_ui.views import STATIC_DIRECTORY
+from haprion_ui.views import STATIC_DIRECTORY
 from tests.test_editor_page import EditorTestCase
 from tests.test_waf_page import CATALOG, LOGGING, finding, objects
 
@@ -40,11 +40,11 @@ class TheAllowDialog(EditorTestCase):
     def setUp(self) -> None:
         super().setUp()
         for target, value in (
-            ("haproxy_ui.db.waf_findings", [finding()]),
-            ("haproxy_ui.db.waf_verdicts", {("alpha", "shop"): (14, 3)}),
-            ("haproxy_ui.db.waf_request_count", 0),
-            ("haproxy_ui.db.cluster_objects", objects(LOGGING)),
-            ("haproxy_mgmt.crs.installed_catalog", CATALOG),
+            ("haprion_ui.db.waf_findings", [finding()]),
+            ("haprion_ui.db.waf_verdicts", {("alpha", "shop"): (14, 3)}),
+            ("haprion_ui.db.waf_request_count", 0),
+            ("haprion_ui.db.cluster_objects", objects(LOGGING)),
+            ("haprion.crs.installed_catalog", CATALOG),
         ):
             patch = mock.patch(target, return_value=value)
             patch.start()

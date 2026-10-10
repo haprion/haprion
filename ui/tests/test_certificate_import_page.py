@@ -17,11 +17,11 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_mgmt import cert_upload
-from haproxy_mgmt.certificates import DELIMITER
-from haproxy_mgmt.dns_profile_keys import generate, render_public_key
+from haprion import cert_upload
+from haprion.certificates import DELIMITER
+from haprion.dns_profile_keys import generate, render_public_key
 
-from haproxy_ui import auth, certificate_import_form, db
+from haprion_ui import auth, certificate_import_form, db
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
 from tests.test_login import LoginTestCase, configuration
@@ -64,12 +64,12 @@ class ImportPageTestCase(LoginTestCase):
             self.audited.append(fields)
 
         for patch in (
-            mock.patch("haproxy_ui.db.queue_job", side_effect=queue),
-            mock.patch("haproxy_ui.db.record_audit_event", side_effect=audit),
-            mock.patch("haproxy_ui.db.dns_profiles", return_value=[]),
-            mock.patch("haproxy_ui.db.ndes_profiles", return_value=[]),
+            mock.patch("haprion_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.record_audit_event", side_effect=audit),
+            mock.patch("haprion_ui.db.dns_profiles", return_value=[]),
+            mock.patch("haprion_ui.db.ndes_profiles", return_value=[]),
             mock.patch(
-                "haproxy_ui.db.cluster_certificates",
+                "haprion_ui.db.cluster_certificates",
                 return_value=[
                     with_registry(
                         certificate_reading(),
@@ -250,7 +250,7 @@ class Submitting(ImportPageTestCase):
         self.assertEqual(self.queued, [])
 
     def test_a_busy_queue_is_said_on_the_page(self) -> None:
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.CertificateBusy()):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):
             response = self.post(self.writing_client())
         self.assertEqual(response.status_code, 200)
         self.assertIn("already running", response.text)

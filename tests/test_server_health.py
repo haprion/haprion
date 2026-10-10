@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.cluster_status import FrontendTraffic, ServerHealth, parse_status
+from haprion.cluster_status import FrontendTraffic, ServerHealth, parse_status
 
 
 def envelope(status: object) -> dict[str, object]:

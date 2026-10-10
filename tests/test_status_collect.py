@@ -18,13 +18,13 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import status_collect
-from haproxy_mgmt.config import DeployIdentity, Node
-from haproxy_mgmt.deploy_plan import ReleaseTarget, VipState
-from haproxy_mgmt.object_manifest import MANIFEST_FILE
-from haproxy_mgmt.object_manifest import build as build_manifest
-from haproxy_mgmt.object_manifest import render as render_manifest
-from haproxy_mgmt.status_collect import (
+from haprion import status_collect
+from haprion.config import DeployIdentity, Node
+from haprion.deploy_plan import ReleaseTarget, VipState
+from haprion.object_manifest import MANIFEST_FILE
+from haprion.object_manifest import build as build_manifest
+from haprion.object_manifest import render as render_manifest
+from haprion.status_collect import (
     EXIT_OK,
     EXIT_PARTIAL,
     EXIT_UNAVAILABLE,

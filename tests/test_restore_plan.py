@@ -9,8 +9,8 @@ from pathlib import Path
 
 import yaml
 
-from haproxy_mgmt import restore_plan, restore_source
-from haproxy_mgmt.restore_plan import PlanError, Target, TestProfile
+from haprion import restore_plan, restore_source
+from haprion.restore_plan import PlanError, Target, TestProfile
 from tests.restore_fixture import FILES, NETPLAN, build
 
 BASE = Path(__file__).resolve().parents[1]
@@ -454,6 +454,6 @@ class TheBundlesFilesAreTheEnableScriptsOwn(unittest.TestCase):
 
 class TheAgentSparesWhatThePlanSpares(unittest.TestCase):
     def test_the_replaced_copy_pattern_is_the_same_on_both_sides(self) -> None:
-        from haproxy_mgmt import restore_agent
+        from haprion import restore_agent
 
         self.assertEqual(restore_agent.REPLACED.pattern, restore_plan.REPLACED.pattern)

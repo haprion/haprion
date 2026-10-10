@@ -17,12 +17,12 @@ from typing import Any
 from unittest import mock
 
 import yaml
-from haproxy_mgmt.proxy_model import ModelError, load_proxy
+from haprion.proxy_model import ModelError, load_proxy
 
-from haproxy_ui import health, objects, probe
-from haproxy_ui.db import ClusterStatus
-from haproxy_ui.health_rows import health_rows
-from haproxy_ui.preview import (
+from haprion_ui import health, objects, probe
+from haprion_ui.db import ClusterStatus
+from haprion_ui.health_rows import health_rows
+from haprion_ui.preview import (
     BALANCE_CHOICES,
     CHECK_PROTOCOLS,
     DEFAULTS,
@@ -354,7 +354,7 @@ class AMissingIncludeIsSaidInTheListing(unittest.TestCase):
     """Review 26-10-08 F1: not *deploy to add*, which a deploy cannot fix, but what is missing where."""
 
     def row(self, unforwarded: tuple[str, ...]) -> str:
-        from haproxy_ui.views import TEMPLATES
+        from haprion_ui.views import TEMPLATES
 
         listed = objects.ListedObject(
             name="logs",
@@ -513,12 +513,12 @@ class ItsCheckIsTestedFromTheNodes(unittest.TestCase):
 
 class TheEditorOffersSyslog(EditorTestCase):
     def page(self, rows: list[ClusterStatus]) -> str:
-        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=rows):
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=rows):
             return str(self.editor().get("/proxies/alpha/shop/edit").text)
 
     def syslog_page(self) -> str:
         client = self.editor()
-        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=[status(node("node-a"))]):
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=[status(node("node-a"))]):
             return str(
                 self.submit(
                     client,
@@ -615,9 +615,9 @@ class TheEditorOffersSyslog(EditorTestCase):
         rows = [status(node("node-a"), node("node-b", owner=False))]
         client = self.editor()
         with (
-            mock.patch("haproxy_ui.probe.run", return_value=report),
-            mock.patch("haproxy_ui.db.wake_poller"),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=rows),
+            mock.patch("haprion_ui.probe.run", return_value=report),
+            mock.patch("haprion_ui.db.wake_poller"),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=rows),
         ):
             text = str(
                 self.submit(

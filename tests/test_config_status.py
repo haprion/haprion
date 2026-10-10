@@ -19,7 +19,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt.cli import config_status
+from haprion.cli import config_status
 
 COMMIT_TIME = "2026-01-02T03:04:05+00:00"
 

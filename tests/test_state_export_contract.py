@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.backup_archive import REQUIRED_PATHS
+from haprion.backup_archive import REQUIRED_PATHS
 
 BASE = Path(__file__).resolve().parents[1]
 

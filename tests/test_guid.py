@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.guid import (
+from haprion.guid import (
     MAX_GUID,
     backend_guid,
     frontend_guid,
@@ -27,7 +27,7 @@ from haproxy_mgmt.guid import (
     redirect_suffixes,
     server_guid,
 )
-from haproxy_mgmt.proxy_model import Server, load_proxy
+from haprion.proxy_model import Server, load_proxy
 
 MEMBER = Server(host="198.51.100.10", port=8080)
 
@@ -248,7 +248,7 @@ class ARedirectIsNamedFromItsPath(unittest.TestCase):
         )
 
     def test_two_objects_that_produce_one_backend_name_are_refused(self) -> None:
-        from haproxy_mgmt.generate import (  # noqa: PLC0415
+        from haprion.generate import (  # noqa: PLC0415
             GeneratorError,
             _refuse_shared_backend_names,
         )

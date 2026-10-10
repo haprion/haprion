@@ -13,8 +13,8 @@ import gzip
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt import advanced
-from haproxy_mgmt.advanced import IGNORED, PLACED, REFUSED_FATE, SKIPPED, place
+from haprion import advanced
+from haprion.advanced import IGNORED, PLACED, REFUSED_FATE, SKIPPED, place
 
 MANUAL = Path("/usr/share/doc/haproxy/configuration.txt.gz")
 
@@ -324,9 +324,9 @@ def _object(name: str, advanced_text: str, *, source: bool = False, by_hand: boo
 
 
 def _generate(*documents: tuple[str, str]) -> dict[str, str]:
-    from haproxy_mgmt import golden
-    from haproxy_mgmt.generate import generate
-    from haproxy_mgmt.proxy_model import load_proxy
+    from haprion import golden
+    from haprion.generate import generate
+    from haprion.proxy_model import load_proxy
 
     proxies = [load_proxy(name, document.encode()) for name, document in documents]
     return generate(proxies, **golden.arguments(Path("/nonexistent"))).configuration
@@ -334,7 +334,7 @@ def _generate(*documents: tuple[str, str]) -> dict[str, str]:
 
 class TheGeneratorWritesTheTextWhereThePlacementSays(unittest.TestCase):
     def test_two_objects_may_not_add_a_section_of_the_same_name(self) -> None:
-        from haproxy_mgmt.generate import GeneratorError
+        from haprion.generate import GeneratorError
 
         with self.assertRaisesRegex(GeneratorError, "both add a section called a-b-x"):
             _generate(
@@ -343,7 +343,7 @@ class TheGeneratorWritesTheTextWhereThePlacementSays(unittest.TestCase):
             )
 
     def test_the_generator_s_prefix_is_not_the_text_s(self) -> None:
-        from haproxy_mgmt.generate import GeneratorError
+        from haprion.generate import GeneratorError
 
         with self.assertRaisesRegex(GeneratorError, "generator's"):
             _generate(("mgd", _object("mgd", "backend mgd-x\n    mode tcp")))

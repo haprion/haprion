@@ -14,7 +14,7 @@ from __future__ import annotations
 from html.parser import HTMLParser
 from unittest import mock
 
-from haproxy_ui.preview import HIDDEN_FOR
+from haprion_ui.preview import HIDDEN_FOR
 from tests.test_dns_form import node, status
 from tests.test_editor_page import EditorTestCase
 
@@ -83,7 +83,7 @@ class _Fields(HTMLParser):
 class TheFormHidesWhatTheDocumentLeavesOut(EditorTestCase):
     def fields(self, protocol: str) -> _Fields:
         client = self.editor()
-        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=[status(node("node-a"))]):
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=[status(node("node-a"))]):
             text = str(
                 self.submit(
                     client,

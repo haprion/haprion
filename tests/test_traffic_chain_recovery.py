@@ -19,7 +19,7 @@ from contextlib import redirect_stderr
 from datetime import timedelta
 from unittest.mock import patch
 
-from haproxy_mgmt.traffic_collector import RETENTION_DAYS, NodeTarget
+from haprion.traffic_collector import RETENTION_DAYS, NodeTarget
 from tests.traffic_chain_harness import (
     HOST_KEY_CHANGED,
     ChainTestCase,
@@ -168,7 +168,7 @@ class ACollectorThatIsInterrupted(ChainTestCase):
 
         self.chain.node.append(self.chain.today, 5)
         with patch(
-            "haproxy_mgmt.traffic_collector.os.replace",
+            "haprion.traffic_collector.os.replace",
             side_effect=OSError(errno.EIO, "interrupted"),
         ):
             message = quietly(lambda: self.assertEqual(self.collect(), 1))
@@ -185,7 +185,7 @@ class ACollectorThatIsInterrupted(ChainTestCase):
     def test_a_published_snapshot_with_unwritten_metadata_is_not_fetched_again(self) -> None:
         self.chain.node.append(self.chain.today, 6)
         with patch(
-            "haproxy_mgmt.traffic_collector._write_meta",
+            "haprion.traffic_collector._write_meta",
             side_effect=OSError(errno.EIO, "interrupted"),
         ):
             quietly(lambda: self.assertEqual(self.collect(), 1))
@@ -333,7 +333,7 @@ class ADiskThatFillsUp(ChainTestCase):
 
         self.chain.node.append(self.chain.today, 9)
         with patch(
-            "haproxy_mgmt.traffic_collector.os.write",
+            "haprion.traffic_collector.os.write",
             side_effect=OSError(errno.ENOSPC, "no space left on device"),
         ):
             quietly(lambda: self.assertEqual(self.collect(), 1))

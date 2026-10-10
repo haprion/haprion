@@ -38,8 +38,7 @@ def wheel_with(directory: Path, scripts: list[str]) -> Path:
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr(
             "haprion-0.1.0.dist-info/entry_points.txt",
-            "[console_scripts]\n"
-            + "".join(f"{name} = haproxy_mgmt.cli.x:main\n" for name in scripts),
+            "[console_scripts]\n" + "".join(f"{name} = haprion.cli.x:main\n" for name in scripts),
         )
     return wheel
 
@@ -147,7 +146,7 @@ class TheOperatorsRules(unittest.TestCase):
 
         granted = rules()
         asked: dict[str, bool] = {}
-        for path in (BASE / "src/haproxy_mgmt/cli").glob("*.py"):
+        for path in (BASE / "src/haprion/cli").glob("*.py"):
             if path.stem.endswith(("_helper", "_ask")):
                 continue
             helper = re.search(

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_ui.form_groups import ALWAYS_SHOWN, CARRIED, GROUPS, form_groups
-from haproxy_ui.preview import DEFAULTS
+from haprion_ui.form_groups import ALWAYS_SHOWN, CARRIED, GROUPS, form_groups
+from haprion_ui.preview import DEFAULTS
 
 
 def form(**overrides: object) -> dict[str, object]:

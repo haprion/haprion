@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_ui import diagnostics
+from haprion_ui import diagnostics
 
 
 class RedactionHappensBeforePersistence(unittest.TestCase):

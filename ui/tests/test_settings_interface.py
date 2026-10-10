@@ -19,7 +19,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import auth, certificate_form, certificate_renew, certificates, operations
+from haprion_ui import auth, certificate_form, certificate_renew, certificates, operations
 from tests.test_certificate_form import CertificateFormRouteTestCase
 from tests.test_certificate_import_page import FAKE_CERT, ImportPageTestCase
 from tests.test_certificates import NOW, registered, with_registry
@@ -202,7 +202,7 @@ class TheSettingsPage(CertificateFormRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
         patch = mock.patch(
-            "haproxy_ui.db.cluster_certificates", return_value=[registry_reading(interface_entry())]
+            "haprion_ui.db.cluster_certificates", return_value=[registry_reading(interface_entry())]
         )
         patch.start()
         self.addCleanup(patch.stop)
@@ -247,7 +247,7 @@ class ImportingForTheInterface(ImportPageTestCase):
     def setUp(self) -> None:
         super().setUp()
         patch = mock.patch(
-            "haproxy_ui.db.cluster_certificates", return_value=[registry_reading(interface_entry())]
+            "haprion_ui.db.cluster_certificates", return_value=[registry_reading(interface_entry())]
         )
         patch.start()
         self.addCleanup(patch.stop)

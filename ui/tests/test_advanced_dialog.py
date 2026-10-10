@@ -19,9 +19,9 @@ from uuid import uuid4
 
 import yaml
 
-from haproxy_ui import advanced_dialog
-from haproxy_ui import editor as editor_module
-from haproxy_ui.db import ProxyDraft
+from haprion_ui import advanced_dialog
+from haprion_ui import editor as editor_module
+from haprion_ui.db import ProxyDraft
 from tests.test_editor_page import COMMIT, OBSERVED, SHOP, EditorTestCase
 from tests.test_login import configuration
 from tests.test_object_page import DraftReading
@@ -293,9 +293,9 @@ class OneRuleForAPoolWrittenByHand(unittest.TestCase):
     """The dialog, the form and the model answer the same (review F2)."""
 
     def test_every_reader_agrees_on_the_golden_objects(self) -> None:
-        from haproxy_mgmt.proxy_model import load_proxy
+        from haprion.proxy_model import load_proxy
 
-        from haproxy_ui.preview import form_from_document
+        from haprion_ui.preview import form_from_document
 
         for name, expected in (("db", False), ("shop", True)):
             document = (GOLDEN / f"{name}.yaml").read_text(encoding="utf-8")
@@ -314,7 +314,7 @@ class TheDialogSavesAndNeverPublishes(AdvancedRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.queued: list[dict[str, Any]] = []
-        patch = mock.patch("haproxy_ui.db.queue_job", side_effect=self._queue)
+        patch = mock.patch("haprion_ui.db.queue_job", side_effect=self._queue)
         patch.start()
         self.addCleanup(patch.stop)
 

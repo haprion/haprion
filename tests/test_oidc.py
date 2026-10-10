@@ -37,9 +37,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 
-from haproxy_mgmt import oidc
-from haproxy_mgmt.cli import oidc_helper
-from haproxy_mgmt.dns_profile_keys import write_key_pair
+from haprion import oidc
+from haprion.cli import oidc_helper
+from haprion.dns_profile_keys import write_key_pair
 from tests.contract_schema import assert_contract
 
 CLIENT_ID = "haproxy-manager"
@@ -496,7 +496,7 @@ class TheSealedSecret(unittest.TestCase):
     def setUp(self) -> None:
         directory = Path(tempfile.mkdtemp(prefix="oidc-keys-"))
         self.public = write_key_pair(directory / "k.key", directory / "k.pub")
-        from haproxy_mgmt.dns_profile_keys import read_private_key
+        from haprion.dns_profile_keys import read_private_key
 
         self.private = read_private_key(directory / "k.key", require_secure=False)
 

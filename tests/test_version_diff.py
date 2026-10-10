@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt import version_diff
-from haproxy_mgmt.git_command import git_bounded
-from haproxy_mgmt.version_diff import render
+from haprion import version_diff
+from haprion.git_command import git_bounded
+from haprion.version_diff import render
 from tests.test_list_helper import git
 
 

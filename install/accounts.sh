@@ -2,7 +2,7 @@
 #
 # Haprion's fixed account, group and database names and places (B266), for the
 # installation steps. Sourced by lib.sh. The same names are in
-# src/haproxy_mgmt/accounts.py and install/sysusers/; a test keeps the three in
+# src/haprion/accounts.py and install/sysusers/; a test keeps the three in
 # step.
 #
 # shellcheck disable=SC2034 # read by the steps that source lib.sh

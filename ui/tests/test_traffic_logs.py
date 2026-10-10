@@ -11,12 +11,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion.proxy_model import load_proxy
 
-from haproxy_ui import metrics
-from haproxy_ui.config import TrafficLogs
-from haproxy_ui.db import ClusterObjects
-from haproxy_ui.traffic_logs import (
+from haprion_ui import metrics
+from haprion_ui.config import TrafficLogs
+from haprion_ui.db import ClusterObjects
+from haprion_ui.traffic_logs import (
     MAX_RECORD_BYTES,
     Freshness,
     Reading,
@@ -25,7 +25,7 @@ from haproxy_ui.traffic_logs import (
     read,
     resolve_server_addresses,
 )
-from haproxy_ui.views import ZONE_COOKIE
+from haprion_ui.views import ZONE_COOKIE
 from tests.test_login import LoginTestCase, configuration
 
 NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)
@@ -403,7 +403,7 @@ class TrafficLogReadingTests(unittest.TestCase):
     def test_the_unfiltered_view_reads_a_bounded_tail(self) -> None:
         self.mirror("alpha", "node-a", record(path="/old"), record(path="/new"))
 
-        with patch("haproxy_ui.traffic_logs.MAX_TAIL_BYTES", len(record()) + 1):
+        with patch("haprion_ui.traffic_logs.MAX_TAIL_BYTES", len(record()) + 1):
             reading = read(self.root, ("alpha",))
 
         self.assertEqual([entry.path for entry in reading.entries], ["/new"])
@@ -420,7 +420,7 @@ class TrafficLogReadingTests(unittest.TestCase):
             "alpha", "node-a", record(path="/ftp-old"), *(record(path="/new") for _ in range(20))
         )
 
-        with patch("haproxy_ui.traffic_logs.MAX_TAIL_BYTES", len(record()) * 3):
+        with patch("haprion_ui.traffic_logs.MAX_TAIL_BYTES", len(record()) * 3):
             unfiltered = read(self.root, ("alpha",))
             searched = read(self.root, ("alpha",), substring="ftp")
             by_status = read(self.root, ("alpha",), status="200")
@@ -434,7 +434,7 @@ class TrafficLogReadingTests(unittest.TestCase):
             "alpha", "node-a", record(path="/one"), record(path="/two"), record(path="/three")
         )
 
-        with patch("haproxy_ui.traffic_logs.MAX_SEARCH_BYTES", len(record()) * 2 + 5):
+        with patch("haprion_ui.traffic_logs.MAX_SEARCH_BYTES", len(record()) * 2 + 5):
             reading = read(self.root, ("alpha",), substring="/")
 
         self.assertEqual(sorted(entry.path for entry in reading.entries), ["/one", "/two"])
@@ -574,9 +574,9 @@ class TheTrafficLogPage(LoginTestCase):
                 return frozen if frozen is not None else datetime.now(tz)
 
         with (
-            patch("haproxy_ui.db.cluster_objects", return_value=list(objects)),
-            patch("haproxy_ui.traffic_logs.read_database", side_effect=file_read),
-            patch("haproxy_ui.views.datetime", Clock),
+            patch("haprion_ui.db.cluster_objects", return_value=list(objects)),
+            patch("haprion_ui.traffic_logs.read_database", side_effect=file_read),
+            patch("haprion_ui.views.datetime", Clock),
         ):
             response = client.get(f"{path}{query}")
 
@@ -608,11 +608,11 @@ class TheTrafficLogPage(LoginTestCase):
             mirror.write(record(request=3, path="/scan", rule="scanner:log"))
 
         with (
-            patch("haproxy_ui.db.cluster_objects", return_value=[]),
-            patch("haproxy_ui.db.waf_findings", return_value=[]),
-            patch("haproxy_ui.db.waf_verdicts", return_value={}),
-            patch("haproxy_ui.db.waf_request_count", return_value=2),
-            patch("haproxy_mgmt.crs.installed_catalog", return_value={}),
+            patch("haprion_ui.db.cluster_objects", return_value=[]),
+            patch("haprion_ui.db.waf_findings", return_value=[]),
+            patch("haprion_ui.db.waf_verdicts", return_value={}),
+            patch("haprion_ui.db.waf_request_count", return_value=2),
+            patch("haprion.crs.installed_catalog", return_value={}),
         ):
             waf = self.page(path="/waf", query="?view=requests")
 

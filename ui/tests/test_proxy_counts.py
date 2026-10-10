@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_ui import objects
-from haproxy_ui.proxies import ProxyView
+from haprion_ui import objects
+from haprion_ui.proxies import ProxyView
 
 
 def listed(*names: str) -> tuple[objects.ListedObject, ...]:

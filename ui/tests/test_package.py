@@ -10,7 +10,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haproxy_ui import auth, db
+from haprion_ui import auth, db
 from tests.test_editor_page import COMMIT, NETWORK, OBSERVED, SHOP, EditorTestCase
 from tests.test_saved_changes import WIDER, saved
 
@@ -46,7 +46,7 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
             ("cluster_changes", lambda _c, _cluster: dict(self.cluster_changes)),
             ("queue_job", self._queue),
         ):
-            patch = mock.patch(f"haproxy_ui.db.{target}", side_effect=effect)
+            patch = mock.patch(f"haprion_ui.db.{target}", side_effect=effect)
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -204,7 +204,7 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         }
         lagging = replace(NETWORK, result={**NETWORK.result, "head": older})
         client = self.editor()
-        with mock.patch("haproxy_ui.db.cluster_networks", return_value=[lagging]):
+        with mock.patch("haprion_ui.db.cluster_networks", return_value=[lagging]):
             text = self.page(client)
             answer = self.publish(client)
 
@@ -253,7 +253,7 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         def busy(_c: object, **_values: Any) -> Any:
             raise db.ClusterBusy("alpha")
 
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=busy):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=busy):
             answer = self.publish(self.editor())
 
         self.assertIn("already running a job", answer.text)
@@ -313,7 +313,7 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
 
     def dashboard(self) -> tuple[str, str]:
         client = self.editor()
-        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=list(demo_statuses())):
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=list(demo_statuses())):
             empty = client.get("/").text
             self.rows = [row(), row("console", id=uuid4(), stage="saved")]
             waiting = client.get("/").text
@@ -347,7 +347,7 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         # published; no dialog that can only be closed, no second button.
         self.rows = [row(base_hash=LATER), row("console", id=uuid4())]
         client = self.editor()
-        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=list(demo_statuses())):
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=list(demo_statuses())):
             text = client.get("/").text
 
         self.assertIn(
@@ -367,7 +367,7 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
 
 
 def demo_statuses() -> Any:
-    from haproxy_ui import demo
+    from haprion_ui import demo
 
     return [replace(status, cluster="alpha") for status in demo.status_rows()[:1]]
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from haproxy_ui.location_data import card
+from haprion_ui.location_data import card
 
 
 def row(cluster: str, geo: object) -> SimpleNamespace:

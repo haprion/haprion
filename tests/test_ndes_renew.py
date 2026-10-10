@@ -7,11 +7,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import ndes_renew, ndes_state
-from haproxy_mgmt.cert_import import import_certificate
-from haproxy_mgmt.cert_inventory import registry_result
-from haproxy_mgmt.cli import cert_renew, cert_scep
-from haproxy_mgmt.config import load_policy, load_runtime_config
+from haprion import ndes_renew, ndes_state
+from haprion.cert_import import import_certificate
+from haprion.cert_inventory import registry_result
+from haprion.cli import cert_renew, cert_scep
+from haprion.config import load_policy, load_runtime_config
 from tests.test_cert_scep import ScepFixture
 
 

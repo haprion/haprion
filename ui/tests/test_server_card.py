@@ -16,10 +16,10 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion.proxy_model import load_proxy
 
-from haproxy_ui import auth, db, demo, health, server_card
-from haproxy_ui.db import ClusterStatus
+from haprion_ui import auth, db, demo, health, server_card
+from haprion_ui.db import ClusterStatus
 from tests.test_login import configuration
 from tests.test_object_page import DraftReading
 from tests.test_queue_route import queued
@@ -179,7 +179,7 @@ class TheCard(unittest.TestCase):
     def test_a_kept_state_the_node_could_not_put_back_is_lost(self) -> None:
         """Review 26-10-09, F1: a reload said `done` and the server took traffic."""
 
-        from haproxy_mgmt.guid import server_guid
+        from haprion.guid import server_guid
 
         server = next(s for s in self.proxy.backends["web"].servers if s.host == "192.0.2.12")
         guid = server_guid("shop", "web", server)
@@ -280,9 +280,9 @@ class TheButtons(DraftReading):
             self.audited.append(fields)
 
         for patch in (
-            mock.patch("haproxy_ui.db.queue_job", side_effect=queue),
-            mock.patch("haproxy_ui.db.record_audit_event", side_effect=audit),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
+            mock.patch("haprion_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.record_audit_event", side_effect=audit),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -353,7 +353,7 @@ class TheButtons(DraftReading):
                         "state": "drain",
                     },
                 )
-                with mock.patch("haproxy_ui.db.recent_jobs", return_value=[job]):
+                with mock.patch("haprion_ui.db.recent_jobs", return_value=[job]):
                     page = self.writing_client().get("/proxies/edge-demo/public-web")
                 for sentence in (
                     "Not every node took the last change.",
@@ -366,7 +366,7 @@ class TheButtons(DraftReading):
 
     def test_a_job_in_flight_replaces_the_buttons(self) -> None:
         running = replace(queued(operation="deploy", cluster="edge-demo"), state="running")
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[running]):
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[running]):
             page = self.writing_client().get("/proxies/edge-demo/public-web")
 
         self.assertIn('data-busy="edge-demo"', page.text)
@@ -399,7 +399,7 @@ class TheButtons(DraftReading):
 
     def test_a_busy_cluster_is_said_on_the_page(self) -> None:
         client = self.writing_client()
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.ClusterBusy()):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.ClusterBusy()):
             answer = self.post(client)
 
         self.assertEqual(answer.headers["location"], "/proxies/edge-demo/public-web?servers=busy")

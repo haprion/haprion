@@ -7,8 +7,8 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt import backup_retention, backup_schedule_write
-from haproxy_mgmt.backup_schedule import Schedule
+from haprion import backup_retention, backup_schedule_write
+from haprion.backup_schedule import Schedule
 
 
 def recording(commands: list[tuple[str, ...]]) -> Callable[[tuple[str, ...]], int]:

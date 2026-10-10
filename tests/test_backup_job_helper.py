@@ -8,11 +8,11 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_mgmt import backup_retention, backup_schedule_write, state_backup
-from haproxy_mgmt.backup_schedule import Schedule
-from haproxy_mgmt.cli import backup_job_helper
-from haproxy_mgmt.config import DeployIdentity
-from haproxy_mgmt.state_backup import BackupResult, NodeResult
+from haprion import backup_retention, backup_schedule_write, state_backup
+from haprion.backup_schedule import Schedule
+from haprion.cli import backup_job_helper
+from haprion.config import DeployIdentity
+from haprion.state_backup import BackupResult, NodeResult
 
 
 class BackupJobHelperTests(unittest.TestCase):

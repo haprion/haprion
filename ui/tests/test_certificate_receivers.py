@@ -13,7 +13,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import auth, certificate_receivers
+from haprion_ui import auth, certificate_receivers
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered
@@ -370,7 +370,7 @@ class ReceiverRouteTestCase(DeleteRouteTestCase):
         self.activity: list[Any] = []
         for patch in (
             mock.patch(
-                "haproxy_ui.db.cluster_certificates",
+                "haprion_ui.db.cluster_certificates",
                 side_effect=lambda *_a, **_k: [
                     replace(
                         certificate_reading(),
@@ -379,7 +379,7 @@ class ReceiverRouteTestCase(DeleteRouteTestCase):
                 ],
             ),
             mock.patch(
-                "haproxy_ui.db.operation_jobs", side_effect=lambda *_a, **_k: list(self.activity)
+                "haprion_ui.db.operation_jobs", side_effect=lambda *_a, **_k: list(self.activity)
             ),
         ):
             patch.start()

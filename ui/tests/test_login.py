@@ -1,7 +1,7 @@
 """The login flow as HTTP: cookies, CSRF, the throttle, and what is not revealed.
 
 The database is replaced rather than mocked in detail. Every statement these
-handlers issue lives in `haproxy_ui.db`, so substituting those functions leaves
+handlers issue lives in `haprion_ui.db`, so substituting those functions leaves
 the whole of the flow under test - the order of the checks, what is written to
 the audit trail, which cookie is set with which flags - and removes only the
 part that needs PostgreSQL. The SQL itself is covered where it belongs, by the
@@ -23,11 +23,11 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 
-from haproxy_ui import auth, db, metrics
-from haproxy_ui.app import create_app
-from haproxy_ui.config import Config, Database, Listen, Poller, Throttle
-from haproxy_ui.config import Session as SessionPolicy
-from haproxy_ui.db import Account, AuthenticatedSession
+from haprion_ui import auth, db, metrics
+from haprion_ui.app import create_app
+from haprion_ui.config import Config, Database, Listen, Poller, Throttle
+from haprion_ui.config import Session as SessionPolicy
+from haprion_ui.db import Account, AuthenticatedSession
 
 PASSWORD = "a sufficiently long password"
 
@@ -55,7 +55,7 @@ NO_TRAFFIC = metrics.BackendMeasurement(
 
 def configuration(*, cookie_secure: bool = True, max_failures: int = 3) -> Config:
     return Config(
-        database=Database(name="haproxy_ui_test", socket_directory="/var/run/postgresql"),
+        database=Database(name="haprion_ui_test", socket_directory="/var/run/postgresql"),
         listen=Listen(host="127.0.0.1", port=8080),
         management_writes=False,
         demo_fixture=False,
@@ -131,68 +131,68 @@ class LoginTestCase(unittest.TestCase):
         self.id_tokens: dict[bytes, str | None] = {}
 
         self.patches = [
-            mock.patch("haproxy_ui.db.pool", return_value=self.pool),
-            mock.patch("haproxy_ui.db.account_by_username", side_effect=self._account),
-            mock.patch("haproxy_ui.db.record_login_attempt", side_effect=self._attempt),
-            mock.patch("haproxy_ui.db.failures_since_last_success", side_effect=self._failures),
-            mock.patch("haproxy_ui.db.create_session", side_effect=self._create_session),
-            mock.patch("haproxy_ui.db.session_by_hash", side_effect=self._session),
-            mock.patch("haproxy_ui.db.touch_session"),
-            mock.patch("haproxy_ui.db.revoke_session", side_effect=self._revoke),
-            mock.patch("haproxy_ui.db.record_audit_event", side_effect=self._audit_event),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[]),
-            mock.patch("haproxy_ui.db.cluster_inventories", return_value=[]),
-            mock.patch("haproxy_ui.db.cluster_histories", return_value=[]),
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[]),
-            mock.patch("haproxy_ui.db.cluster_backups", return_value=[]),
-            mock.patch("haproxy_ui.db.cluster_networks", return_value=[]),
-            mock.patch("haproxy_ui.db.cluster_settings", return_value=[]),
-            mock.patch("haproxy_ui.db.cluster_objects", return_value=[]),
+            mock.patch("haprion_ui.db.pool", return_value=self.pool),
+            mock.patch("haprion_ui.db.account_by_username", side_effect=self._account),
+            mock.patch("haprion_ui.db.record_login_attempt", side_effect=self._attempt),
+            mock.patch("haprion_ui.db.failures_since_last_success", side_effect=self._failures),
+            mock.patch("haprion_ui.db.create_session", side_effect=self._create_session),
+            mock.patch("haprion_ui.db.session_by_hash", side_effect=self._session),
+            mock.patch("haprion_ui.db.touch_session"),
+            mock.patch("haprion_ui.db.revoke_session", side_effect=self._revoke),
+            mock.patch("haprion_ui.db.record_audit_event", side_effect=self._audit_event),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_inventories", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_histories", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_backups", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_networks", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_settings", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[]),
             #
             # The listing reads drafts now, so every page that renders it
             # calls this. Defaulted to none rather than left unpatched: a
             # page whose draft lookup raises is a page that does not render
             # at all, which would hide whatever the case was about.
             #
-            mock.patch("haproxy_ui.db.cluster_drafts", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_drafts", return_value=[]),
             #
             # And a cluster's saved network and settings (B257), which the
             # network page, the editor and the settings page read: none.
             #
-            mock.patch("haproxy_ui.db.cluster_changes", return_value={}),
-            mock.patch("haproxy_ui.db.save_cluster_change", side_effect=self._save_change),
-            mock.patch("haproxy_ui.db.discard_cluster_change"),
-            mock.patch("haproxy_ui.db.change_publishes", return_value=[]),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
+            mock.patch("haprion_ui.db.cluster_changes", return_value={}),
+            mock.patch("haprion_ui.db.save_cluster_change", side_effect=self._save_change),
+            mock.patch("haprion_ui.db.discard_cluster_change"),
+            mock.patch("haprion_ui.db.change_publishes", return_value=[]),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
             #
             # The dashboard's traffic row (B220): no readings, as an
             # installation the poller has not measured yet. A test about the
             # row patches these itself.
             #
             mock.patch(
-                "haproxy_ui.db.read_traffic_summaries",
+                "haprion_ui.db.read_traffic_summaries",
                 side_effect=lambda _c, *, clusters, since, until: dict.fromkeys(
                     clusters, NO_TRAFFIC
                 ),
             ),
             mock.patch(
-                "haproxy_ui.db.read_response_times_by_cluster",
+                "haprion_ui.db.read_response_times_by_cluster",
                 side_effect=lambda _c, *, clusters, since, until: dict.fromkeys(
                     clusters, (0, None, None)
                 ),
             ),
             # Settings draws its Users card from this; none unless a test says.
-            mock.patch("haproxy_ui.db.account_rows", return_value=[]),
-            mock.patch("haproxy_ui.db.feature_switches", side_effect=lambda _c: self.switches),
+            mock.patch("haprion_ui.db.account_rows", return_value=[]),
+            mock.patch("haprion_ui.db.feature_switches", side_effect=lambda _c: self.switches),
             #
             # No list from the poller yet, so the pages fall back to the
             # configured clusters - the state before the poller's first pass.
             #
-            mock.patch("haproxy_ui.db.cluster_list", return_value=None),
+            mock.patch("haprion_ui.db.cluster_list", return_value=None),
             # No OIDC provider row unless a test gives one (0041).
-            mock.patch("haproxy_ui.db.oidc_provider", side_effect=lambda _c: self.provider),
+            mock.patch("haprion_ui.db.oidc_provider", side_effect=lambda _c: self.provider),
             mock.patch(
-                "haproxy_ui.db.session_id_token",
+                "haprion_ui.db.session_id_token",
                 side_effect=lambda _c, token_hash: self.id_tokens.get(token_hash),
             ),
             #
@@ -201,13 +201,13 @@ class LoginTestCase(unittest.TestCase):
             # queues an apply job the old way is still read the new way.
             #
             mock.patch(
-                "haproxy_ui.db.operation_jobs",
+                "haprion_ui.db.operation_jobs",
                 side_effect=lambda connection, operation, **_: [
                     job for job in db.recent_jobs(connection) if job.operation == operation
                 ],
             ),
             mock.patch(
-                "haproxy_ui.db.profile_jobs",
+                "haprion_ui.db.profile_jobs",
                 side_effect=lambda connection, operation: [
                     job for job in db.recent_jobs(connection) if job.operation == operation
                 ],
@@ -451,7 +451,7 @@ class SigningIn(LoginTestCase):
             error=None,
             poll_error=None,
         )
-        with mock.patch("haproxy_ui.db.cluster_backups", return_value=[row]):
+        with mock.patch("haprion_ui.db.cluster_backups", return_value=[row]):
             page = client.get("/backups")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Every Monday and Friday at 22:30", page.text)
@@ -614,7 +614,7 @@ class Throttling(LoginTestCase):
         # looked at.
         #
         self.failures = 3
-        with mock.patch("haproxy_ui.db.account_by_username") as lookup:
+        with mock.patch("haprion_ui.db.account_by_username") as lookup:
             response = self.sign_in(self.client(configuration(max_failures=3)))
             lookup.assert_not_called()
         self.assertEqual(response.status_code, 401)

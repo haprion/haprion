@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt import backup_retention
+from haprion import backup_retention
 
 
 class BackupRetentionTests(unittest.TestCase):

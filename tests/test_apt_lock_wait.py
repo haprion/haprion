@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import restore_agent
+from haprion import restore_agent
 
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / "install" / "lib.sh"

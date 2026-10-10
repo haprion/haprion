@@ -16,7 +16,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.cluster_lock import EXIT_BUSY, LockBusy, hold
+from haprion.cluster_lock import EXIT_BUSY, LockBusy, hold
 
 SOURCE = str(Path(__file__).resolve().parents[1] / "src")
 
@@ -25,7 +25,7 @@ CONTENDER = textwrap.dedent(
     import sys
     sys.path.insert(0, {source!r})
     from pathlib import Path
-    from haproxy_mgmt.cluster_lock import LockBusy, hold
+    from haprion.cluster_lock import LockBusy, hold
 
     try:
         with hold({cluster!r}, root=Path({root!r})):

@@ -8,8 +8,8 @@ import unittest
 from collections.abc import Mapping
 from typing import Any
 
-from haproxy_mgmt import helper_protocol
-from haproxy_mgmt.helper_protocol import (
+from haprion import helper_protocol
+from haprion.helper_protocol import (
     HelperProtocolError,
     HelperRequest,
     JsonValue,

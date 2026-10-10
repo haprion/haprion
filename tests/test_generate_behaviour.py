@@ -38,17 +38,17 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import geo
-from haproxy_mgmt.cluster_settings import ClusterSettings, Metrics
-from haproxy_mgmt.config import AbuseProtection, Vip
-from haproxy_mgmt.generate import (
+from haprion import geo
+from haprion.cluster_settings import ClusterSettings, Metrics
+from haprion.config import AbuseProtection, Vip
+from haprion.generate import (
     NODE_CERTIFICATE_DIR,
     GeneratedLayer,
     GeneratorError,
     generate,
 )
-from haproxy_mgmt.proxy_model import Proxy, load_proxy
-from haproxy_mgmt.route_match import order_routes, rewrite, select
+from haprion.proxy_model import Proxy, load_proxy
+from haprion.route_match import order_routes, rewrite, select
 from tests import spawned
 from tests.spawned import wait_for
 

@@ -18,10 +18,10 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from haproxy_ui import demo
-from haproxy_ui.db import Job
-from haproxy_ui.jobs import Failure
-from haproxy_ui.network import (
+from haprion_ui import demo
+from haprion_ui.db import Job
+from haprion_ui.jobs import Failure
+from haprion_ui.network import (
     FormProblem,
     NetworkClusterView,
     NetworkForm,
@@ -503,7 +503,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
     def editable_page(self) -> Any:
         """The page as an admin sees it on a cluster it may publish to."""
 
-        with mock.patch("haproxy_ui.db.cluster_networks", return_value=demo.network_rows(NOW)):
+        with mock.patch("haprion_ui.db.cluster_networks", return_value=demo.network_rows(NOW)):
             client = self.client(
                 replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
             )
@@ -533,8 +533,8 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
             for row in demo.status_rows(NOW)
         )
         with (
-            mock.patch("haproxy_ui.db.cluster_networks", return_value=demo.network_rows(NOW)),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=statuses),
+            mock.patch("haprion_ui.db.cluster_networks", return_value=demo.network_rows(NOW)),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=statuses),
         ):
             client = self.client(
                 replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)

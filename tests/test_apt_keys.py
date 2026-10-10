@@ -12,7 +12,7 @@ import re
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.haproxy_repository import fingerprint
+from haprion.haproxy_repository import fingerprint
 
 INSTALL = Path(__file__).resolve().parents[1] / "install"
 

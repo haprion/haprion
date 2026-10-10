@@ -14,8 +14,8 @@ import unittest
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from haproxy_ui import metrics
-from haproxy_ui.backups import ScheduleView, build_backup_overview
+from haprion_ui import metrics
+from haprion_ui.backups import ScheduleView, build_backup_overview
 from tests.test_backups import STALE_AFTER, reading, schedule, timer_of
 
 # A September moment: New York on EDT (-4), the host on CEST (+2).

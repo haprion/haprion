@@ -20,9 +20,9 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_registry
-from haproxy_mgmt.cert_registry import RegistryError
-from haproxy_mgmt.config import RuntimeConfig, load_policy, load_runtime_config
+from haprion import cert_registry
+from haprion.cert_registry import RegistryError
+from haprion.config import RuntimeConfig, load_policy, load_runtime_config
 from tests.test_cert_publish import Fixture, issue
 
 #

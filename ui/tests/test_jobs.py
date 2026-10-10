@@ -26,8 +26,8 @@ from uuid import UUID, uuid4
 
 import psycopg
 
-from haproxy_ui import db, jobs, operations
-from haproxy_ui.db import Job
+from haprion_ui import db, jobs, operations
+from haprion_ui.db import Job
 
 TOKEN = uuid4()
 

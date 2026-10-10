@@ -30,7 +30,7 @@ server {
     ssl_certificate_key TLS_KEY;
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
-    ssl_session_cache   shared:haproxy_ui:10m;
+    ssl_session_cache   shared:haprion_ui:10m;
     ssl_session_timeout 1d;
     ssl_session_tickets off;
 

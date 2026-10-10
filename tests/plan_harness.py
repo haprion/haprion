@@ -14,7 +14,7 @@ quietly, which is the thing that must not happen here.
 
 from __future__ import annotations
 
-from haproxy_mgmt.deploy_plan import (
+from haprion.deploy_plan import (
     Action,
     ClusterObservation,
     NodeObservation,

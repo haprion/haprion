@@ -14,7 +14,7 @@ import stat
 import tarfile
 from pathlib import Path
 
-from haproxy_mgmt.backup_archive import REQUIRED_PATHS
+from haprion.backup_archive import REQUIRED_PATHS
 
 SERVICE_ACCOUNTS = ("_haprion-trigger", "_haprion-status", "_haprion-backup", "_haprion-logread")
 

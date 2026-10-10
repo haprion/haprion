@@ -14,14 +14,14 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import candidate_validation, change_journal, cluster_definition, node_enrollment
-from haproxy_mgmt.cli import cluster as cluster_command
-from haproxy_mgmt.cli import node_helper
-from haproxy_mgmt.cluster_definition import Places, Tools
-from haproxy_mgmt.config import RuntimeConfig, load_policy, load_runtime_config
-from haproxy_mgmt.git_command import GIT
-from haproxy_mgmt.node_enrollment import AskNode, Enrollment, EnrollmentError, Locations
-from haproxy_mgmt.status_collect import NodeResponse
+from haprion import candidate_validation, change_journal, cluster_definition, node_enrollment
+from haprion.cli import cluster as cluster_command
+from haprion.cli import node_helper
+from haprion.cluster_definition import Places, Tools
+from haprion.config import RuntimeConfig, load_policy, load_runtime_config
+from haprion.git_command import GIT
+from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, Locations
+from haprion.status_collect import NodeResponse
 from tests.contract_schema import assert_contract
 from tests.test_node_enrollment import key
 

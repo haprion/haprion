@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from haproxy_ui.preview import (
+from haprion_ui.preview import (
     DEFAULTS,
     PREVIEW_CLUSTER,
     Unexpressible,
@@ -105,7 +105,7 @@ class ThePageIsGone(unittest.TestCase):
     """
 
     def test_the_route_no_longer_exists(self) -> None:
-        from haproxy_ui import views
+        from haprion_ui import views
 
         self.assertFalse(
             [name for name in dir(views) if "preview_page" in name or "preview_form" in name]

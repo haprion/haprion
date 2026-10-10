@@ -22,11 +22,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt.candidate_validation import ValidationResult
-from haproxy_mgmt.cli import changes_publish, cluster_settings_helper
-from haproxy_mgmt.cli import cluster_settings as command
-from haproxy_mgmt.cluster_settings import LOCATION
-from haproxy_mgmt.version_history import count_versions, request_id_of
+from haprion.candidate_validation import ValidationResult
+from haprion.cli import changes_publish, cluster_settings_helper
+from haprion.cli import cluster_settings as command
+from haprion.cluster_settings import LOCATION
+from haprion.version_history import count_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_changes_publish_network import NetworkPublishFixture
 from tests.test_publish_helper import Recorder, git

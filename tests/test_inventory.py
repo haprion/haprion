@@ -3,12 +3,12 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
-from haproxy_mgmt import inventory
-from haproxy_mgmt.config import Vip
-from haproxy_mgmt.deploy_plan import ReleaseTarget
-from haproxy_mgmt.generate import generate
-from haproxy_mgmt.inventory import InventoryError, inventory_result
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion import inventory
+from haprion.config import Vip
+from haprion.deploy_plan import ReleaseTarget
+from haprion.generate import generate
+from haprion.inventory import InventoryError, inventory_result
+from haprion.proxy_model import load_proxy
 
 TARGET = ReleaseTarget(version=12, hash="a" * 40)
 TIME = datetime(2026, 8, 29, 12, 30, tzinfo=UTC)

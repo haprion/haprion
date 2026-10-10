@@ -17,10 +17,10 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
-from haproxy_mgmt import deploy_run
-from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
-from haproxy_mgmt.deploy_plan import ReleaseTarget, Target
-from haproxy_mgmt.deploy_run import DeployRun
+from haprion import deploy_run
+from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
+from haprion.deploy_plan import ReleaseTarget, Target
+from haprion.deploy_run import DeployRun
 from tests.node_harness import TARGET_HASH, FakeCluster, pair
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"

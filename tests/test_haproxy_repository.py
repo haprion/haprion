@@ -6,7 +6,7 @@ import unittest
 from importlib.resources import files
 from unittest import mock
 
-from haproxy_mgmt import haproxy_repository as repository
+from haprion import haproxy_repository as repository
 
 UBUNTU = {"ID": "ubuntu", "VERSION_ID": "26.04", "VERSION_CODENAME": "resolute"}
 DEBIAN = {"ID": "debian", "VERSION_ID": "13", "VERSION_CODENAME": "trixie"}
@@ -23,7 +23,7 @@ class TheShippedKeys(unittest.TestCase):
                 )
 
     def test_a_key_that_is_not_the_pinned_one_is_refused(self) -> None:
-        other = files("haproxy_mgmt").joinpath("apt-keys", "haproxy-ubuntu-ppa.asc").read_bytes()
+        other = files("haprion").joinpath("apt-keys", "haproxy-ubuntu-ppa.asc").read_bytes()
         with (
             mock.patch.object(repository, "fingerprint", return_value="0" * 40),
             self.assertRaisesRegex(repository.RepositoryError, "changed without its fingerprint"),

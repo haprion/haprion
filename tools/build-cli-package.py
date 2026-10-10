@@ -41,8 +41,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from haproxy_mgmt import node_package  # noqa: E402 - the path above comes first
-from haproxy_mgmt.debian_package import package, write  # noqa: E402
+from haprion import node_package  # noqa: E402 - the path above comes first
+from haprion.debian_package import package, write  # noqa: E402
 
 PACKAGE = "haprion-cli"
 LIB = "usr/lib/haprion/cli"

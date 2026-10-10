@@ -21,9 +21,9 @@ from unittest import mock
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-from haproxy_mgmt import backup_retention, backups
-from haproxy_mgmt.cli import list_backups, list_backups_helper
-from haproxy_mgmt.config import ConfigError, Node
+from haprion import backup_retention, backups
+from haprion.cli import list_backups, list_backups_helper
+from haprion.config import ConfigError, Node
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
 SCHEMA_ID = "https://example.com/haprion/schemas/v1/haprion-list-backups.schema.json"

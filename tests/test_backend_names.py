@@ -12,16 +12,16 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import generate as generator
-from haproxy_mgmt import golden
-from haproxy_mgmt.generate import (
+from haprion import generate as generator
+from haprion import golden
+from haprion.generate import (
     GeneratorError,
     backend_name,
     generate,
     runtime_backends,
 )
-from haproxy_mgmt.objects import objects_result
-from haproxy_mgmt.proxy_model import GENERATED_PREFIX, ModelError, Proxy, load_proxy
+from haprion.objects import objects_result
+from haprion.proxy_model import GENERATED_PREFIX, ModelError, Proxy, load_proxy
 
 COMMIT = "a" * 40
 

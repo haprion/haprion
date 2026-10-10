@@ -73,7 +73,7 @@ class PreparedReleaseTests(unittest.TestCase):
         # may predate the flag. The release answers, the checkout never assumes.
         wrapper = (ROOT / "install/platform/check-compatibility").read_text()
 
-        self.assertIn("-m haproxy_ui.compatibility --help", wrapper)
+        self.assertIn("-m haprion_ui.compatibility --help", wrapper)
         self.assertIn("grep -q -- '--collector-config'", wrapper)
         self.assertIn("predates the traffic collector inventory check", wrapper)
 
@@ -170,7 +170,7 @@ if [[ "$1" == "-" ]]; then
     printf '%s\\n' "$TRAFFIC_LOGS" alpha
     exit 0
 fi
-if [[ "$*" == "-m haproxy_ui.compatibility --help" ]]; then
+if [[ "$*" == "-m haprion_ui.compatibility --help" ]]; then
     echo "usage: compatibility --platform-root ROOT"
     [[ "$MODULE" == new ]] && echo "  --collector-config PATH"
     exit 0

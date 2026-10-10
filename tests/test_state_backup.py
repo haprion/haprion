@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import BinaryIO
 from unittest import mock
 
-from haproxy_mgmt import restore_runs, state_backup
-from haproxy_mgmt.backup_archive import ArchiveFacts
-from haproxy_mgmt.config import DeployIdentity, Node
+from haprion import restore_runs, state_backup
+from haprion.backup_archive import ArchiveFacts
+from haprion.config import DeployIdentity, Node
 
 
 class StateBackupTests(unittest.TestCase):

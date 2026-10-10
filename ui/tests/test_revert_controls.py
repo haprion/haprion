@@ -5,7 +5,7 @@ from dataclasses import replace
 from typing import Any
 from unittest import mock
 
-from haproxy_ui import auth
+from haprion_ui import auth
 from tests.test_certificates import reading as certificate_reading
 from tests.test_history import reading
 from tests.test_login import LoginTestCase, configuration
@@ -15,7 +15,7 @@ class RevertControlsTests(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.history_rows = mock.patch(
-            "haproxy_ui.db.cluster_histories", return_value=[reading(cluster="alpha")]
+            "haprion_ui.db.cluster_histories", return_value=[reading(cluster="alpha")]
         )
         self.history_rows.start()
         self.addCleanup(self.history_rows.stop)
@@ -76,7 +76,7 @@ class RevertControlsTests(LoginTestCase):
             queued.append(dict(payload))
             return mock.Mock(id=1, cluster="alpha", operation="revert", request_id=None)
 
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=queue):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=queue):
             answer = client.post(
                 "/operations",
                 data={
@@ -122,7 +122,7 @@ class DeployingFromThePageThatPublishes(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.history_rows = mock.patch(
-            "haproxy_ui.db.cluster_histories", return_value=[reading(cluster="alpha")]
+            "haprion_ui.db.cluster_histories", return_value=[reading(cluster="alpha")]
         )
         self.history_rows.start()
         self.addCleanup(self.history_rows.stop)
@@ -156,7 +156,7 @@ class TheCertificatePageNoLongerDeploys(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         rows = mock.patch(
-            "haproxy_ui.db.cluster_certificates", return_value=[certificate_reading()]
+            "haprion_ui.db.cluster_certificates", return_value=[certificate_reading()]
         )
         rows.start()
         self.addCleanup(rows.stop)
@@ -188,7 +188,7 @@ class ThePublishedVersionHasNoButton(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         rows = mock.patch(
-            "haproxy_ui.db.cluster_histories", return_value=[reading(cluster="alpha")]
+            "haprion_ui.db.cluster_histories", return_value=[reading(cluster="alpha")]
         )
         rows.start()
         self.addCleanup(rows.stop)
@@ -228,7 +228,7 @@ class TheModeBadgeAppearsOnlyWhenWritesAreOff(LoginTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        jobs = mock.patch("haproxy_ui.db.recent_jobs", return_value=[])
+        jobs = mock.patch("haprion_ui.db.recent_jobs", return_value=[])
         jobs.start()
         self.addCleanup(jobs.stop)
 

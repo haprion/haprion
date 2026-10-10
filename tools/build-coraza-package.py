@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from haproxy_mgmt.debian_package import package, write  # noqa: E402 - the path above comes first
+from haprion.debian_package import package, write  # noqa: E402 - the path above comes first
 
 #
 # Each package counts its own revision: it moves when our part of the package

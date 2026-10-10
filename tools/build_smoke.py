@@ -60,10 +60,10 @@ def main() -> int:
         with zipfile.ZipFile(wheels[0]) as wheel:
             names = set(wheel.namelist())
         required = {
-            "haproxy_mgmt/__init__.py",
-            "haproxy_mgmt/config.py",
-            "haproxy_mgmt/envelope.py",
-            "haproxy_mgmt/cli/cluster_config.py",
+            "haprion/__init__.py",
+            "haprion/config.py",
+            "haprion/envelope.py",
+            "haprion/cli/cluster_config.py",
         }
         missing = required - names
         if missing:
@@ -98,7 +98,7 @@ def main() -> int:
         run(
             sys.executable,
             "-c",
-            "import haproxy_mgmt; import haproxy_mgmt.cli.cluster_config",
+            "import haprion; import haprion.cli.cluster_config",
             cwd=source,
             env=environment,
         )

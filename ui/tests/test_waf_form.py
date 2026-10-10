@@ -11,10 +11,10 @@ from unittest import mock
 
 import yaml
 
-from haproxy_ui import waf
-from haproxy_ui.db import ClusterObjects, FeatureSwitch
-from haproxy_ui.form_groups import form_groups
-from haproxy_ui.preview import DEFAULTS, build_document, form_from_document
+from haprion_ui import waf
+from haprion_ui.db import ClusterObjects, FeatureSwitch
+from haprion_ui.form_groups import form_groups
+from haprion_ui.preview import DEFAULTS, build_document, form_from_document
 from tests.test_editor_page import OBJECTS, OBSERVED, SHOP, EditorTestCase
 
 EXCEPTION = {
@@ -182,10 +182,10 @@ class TheGroupOnTheEditor(EditorTestCase):
     ) -> str:
         with (
             mock.patch(
-                "haproxy_ui.db.cluster_objects", return_value=[objects_with(document, versions)]
+                "haprion_ui.db.cluster_objects", return_value=[objects_with(document, versions)]
             ),
             mock.patch(
-                "haproxy_ui.db.cluster_statuses",
+                "haprion_ui.db.cluster_statuses",
                 return_value=[STATUS] if statuses is None else statuses,
             ),
         ):
@@ -255,9 +255,9 @@ class TheGroupOnTheEditor(EditorTestCase):
         client = self.editor()
         with (
             mock.patch(
-                "haproxy_ui.db.cluster_objects", return_value=[objects_with(published, VERSIONS)]
+                "haprion_ui.db.cluster_objects", return_value=[objects_with(published, VERSIONS)]
             ),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[STATUS]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[STATUS]),
         ):
             text = self.submit(
                 client,
@@ -277,7 +277,7 @@ class TheGroupOnTheEditor(EditorTestCase):
         # 26-10-03: change one's mind on the publishing page, not back in WAF logs.
         other = {"rule": 920273, "field": "ARGS:id", "by": "admin", "at": "2026-10-03T20:20:02Z"}
         client = self.editor()
-        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=[STATUS]):
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=[STATUS]):
             text = self.submit(
                 client,
                 "/proxies/alpha/shop/edit",
@@ -300,9 +300,9 @@ class TheGroupOnTheEditor(EditorTestCase):
         document = stored("waf:\n  mode: log\n")
         with (
             mock.patch(
-                "haproxy_ui.db.cluster_objects", return_value=[objects_with(document, VERSIONS)]
+                "haprion_ui.db.cluster_objects", return_value=[objects_with(document, VERSIONS)]
             ),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[STATUS]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[STATUS]),
         ):
             sent = self.editor().get("/proxies/alpha/shop/edit?open=waf").text
             plain = self.editor().get("/proxies/alpha/shop/edit").text
@@ -317,7 +317,7 @@ class TheGroupOnTheEditor(EditorTestCase):
     def test_a_save_keeps_the_exceptions_the_page_carried(self) -> None:
         client = self.editor()
         carried = json.dumps([EXCEPTION])
-        with mock.patch("haproxy_ui.db.cluster_statuses", return_value=[STATUS]):
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=[STATUS]):
             self.submit(
                 client,
                 "/proxies/alpha/shop/edit",

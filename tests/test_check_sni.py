@@ -34,9 +34,9 @@ from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from haproxy_mgmt.config import Vip
-from haproxy_mgmt.generate import generate
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion.config import Vip
+from haprion.generate import generate
+from haprion.proxy_model import load_proxy
 from tests.spawned import wait_for
 from tests.test_generate_behaviour import free_port, self_signed, start_haproxy, write_release
 

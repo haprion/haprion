@@ -17,9 +17,9 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_mgmt import node_package, node_restore
-from haproxy_mgmt.cli import node_restore_ask, node_restore_helper
-from haproxy_mgmt.cli.node_restore_helper import (
+from haprion import node_package, node_restore
+from haprion.cli import node_restore_ask, node_restore_helper
+from haprion.cli.node_restore_helper import (
     DISCARD,
     PREPARE,
     PREVIEW,
@@ -27,7 +27,7 @@ from haproxy_mgmt.cli.node_restore_helper import (
     STATUS,
     ParameterProblem,
 )
-from haproxy_mgmt.node_restore import Clock
+from haprion.node_restore import Clock
 from tests.contract_schema import assert_contract
 from tests.restore_fixture import build
 from tests.test_node_restore import (

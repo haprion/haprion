@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from haproxy_ui import certificates, proxies, sorting, traffic_log_table
+from haprion_ui import certificates, proxies, sorting, traffic_log_table
 
 TABLE = sorting.Table(
     columns=(
@@ -15,7 +15,7 @@ TABLE = sorting.Table(
         sorting.Column("count", lambda row, _: row["count"], descending_first=True),
         sorting.Column("when", lambda row, _: row["when"]),
     ),
-    cookie="haproxy_ui_test_sort",
+    cookie="haprion_ui_test_sort",
     path="/things",
 )
 ROWS = [
@@ -132,8 +132,8 @@ class TheCertificateTable(unittest.TestCase):
 
 class TheUserTable(unittest.TestCase):
     def test_the_state_column_puts_problems_first(self) -> None:
-        from haproxy_ui import users
-        from haproxy_ui.db import AccountRow
+        from haprion_ui import users
+        from haprion_ui.db import AccountRow
 
         moment = datetime(2026, 9, 27, tzinfo=UTC)
         rows = [

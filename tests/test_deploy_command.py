@@ -25,9 +25,9 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt.cli import deploy, deploy_helper
-from haproxy_mgmt.cluster_lock import hold
-from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
+from haprion.cli import deploy, deploy_helper
+from haprion.cluster_lock import hold
+from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
 from tests.contract_schema import assert_contract
 from tests.node_harness import TARGET_HASH, pair
 
@@ -360,7 +360,7 @@ class HelperBehaviourTests(HelperFixture):
         self.assertIn("Job for coraza-spoa.service failed.", err.getvalue())
 
     def test_a_second_deploy_is_refused_while_one_is_running(self) -> None:
-        from haproxy_mgmt.cluster_lock import hold
+        from haprion.cluster_lock import hold
 
         with hold("alpha", root=self.root / "locks"):
             code, _, err = self.run_helper(request())

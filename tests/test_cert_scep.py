@@ -10,11 +10,11 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import ndes, ndes_profiles
-from haproxy_mgmt.cli import cert_scep, cert_scep_helper
-from haproxy_mgmt.config import NdesPolicy, load_policy
-from haproxy_mgmt.dns_profile_keys import generate, render_private_key
-from haproxy_mgmt.ndes_state import (
+from haprion import ndes, ndes_profiles
+from haprion.cli import cert_scep, cert_scep_helper
+from haprion.config import NdesPolicy, load_policy
+from haprion.dns_profile_keys import generate, render_private_key
+from haprion.ndes_state import (
     request_directory,
     request_formats,
     request_targets,

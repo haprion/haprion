@@ -13,8 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.helper_protocol import HelperProtocolError
-from haproxy_mgmt.version_history import (
+from haprion.helper_protocol import HelperProtocolError
+from haprion.version_history import (
     MAX_NAME_LENGTH,
     UnfitName,
     caller_account,

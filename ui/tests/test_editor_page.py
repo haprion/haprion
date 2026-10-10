@@ -21,10 +21,10 @@ from uuid import uuid4
 
 import yaml
 
-from haproxy_ui import auth, db, health, views
-from haproxy_ui import editor as editor_module
-from haproxy_ui import probe as probe_module
-from haproxy_ui.db import (
+from haprion_ui import auth, db, health, views
+from haprion_ui import editor as editor_module
+from haprion_ui import probe as probe_module
+from haprion_ui.db import (
     ClusterNetwork,
     ClusterObjects,
     ClusterSettingsRow,
@@ -134,7 +134,7 @@ class EditorTestCase(LoginTestCase):
             ("record_backend_renames", self._record_renames),
             ("draft_publishes", lambda _c, **_kw: []),
         ):
-            patch = mock.patch(f"haproxy_ui.db.{target}", side_effect=side_effect)
+            patch = mock.patch(f"haprion_ui.db.{target}", side_effect=side_effect)
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -278,11 +278,11 @@ class ReachingTheEditor(EditorTestCase):
         request = mock.Mock()
         request.app.state.pool = self.pool
         with (
-            mock.patch("haproxy_ui.db.cluster_list", return_value=("alpha", "beta")) as listed,
-            mock.patch("haproxy_ui.db.cluster_objects", return_value=[OBJECTS]) as objects_read,
-            mock.patch("haproxy_ui.db.cluster_networks", return_value=[NETWORK]) as networks_read,
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[]) as certificates_read,
-            mock.patch("haproxy_ui.db.cluster_histories", return_value=[]) as histories_read,
+            mock.patch("haprion_ui.db.cluster_list", return_value=("alpha", "beta")) as listed,
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[OBJECTS]) as objects_read,
+            mock.patch("haprion_ui.db.cluster_networks", return_value=[NETWORK]) as networks_read,
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[]) as certificates_read,
+            mock.patch("haprion_ui.db.cluster_histories", return_value=[]) as histories_read,
         ):
             state = views._editor_state(request, writing_configuration(), "alpha")
         self.assertEqual(state.commit, COMMIT)
@@ -295,8 +295,8 @@ class ReachingTheEditor(EditorTestCase):
     def test_removed_cluster_is_refused_before_its_cached_objects_are_read(self) -> None:
         client = self.editor()
         with (
-            mock.patch("haproxy_ui.db.cluster_list", return_value=("beta",)),
-            mock.patch("haproxy_ui.db.cluster_objects") as objects_read,
+            mock.patch("haprion_ui.db.cluster_list", return_value=("beta",)),
+            mock.patch("haprion_ui.db.cluster_objects") as objects_read,
         ):
             self.assertEqual(client.get("/proxies/alpha/shop/edit").status_code, 404)
         objects_read.assert_not_called()
@@ -737,8 +737,8 @@ class TheHealthCardOnThePage(EditorTestCase):
             ran=True, source=source, nodes=tuple(nodes), caveats=caveats
         )
         with (
-            mock.patch("haproxy_ui.probe.run", return_value=report),
-            mock.patch("haproxy_ui.db.wake_poller"),
+            mock.patch("haprion_ui.probe.run", return_value=report),
+            mock.patch("haprion_ui.db.wake_poller"),
         ):
             client = self.editor()
             response = self.submit(client, "/proxies/alpha/shop/edit", action="recheck")
@@ -892,7 +892,7 @@ class WhereASaveLands(EditorTestCase):
     def test_a_check_that_passes_says_so(self) -> None:
         # 26-10-03: the stored object alone did not say whether the check passed.
         fresh = replace(NETWORK, observed_at=datetime.now(UTC))
-        with mock.patch("haproxy_ui.db.cluster_networks", return_value=[fresh]):
+        with mock.patch("haprion_ui.db.cluster_networks", return_value=[fresh]):
             answer = self.submit(self.editor(), "/proxies/alpha/shop/edit", action="check")
 
         self.assertIn(
@@ -934,7 +934,7 @@ class NoPublishHere(EditorTestCase):
         self.assertEqual(len(self.saved), 1)
 
     def test_a_publish_asked_of_the_editor_writes_nothing(self) -> None:
-        with mock.patch("haproxy_ui.db.queue_job") as queue:
+        with mock.patch("haprion_ui.db.queue_job") as queue:
             answer = self.submit(
                 self.editor(),
                 "/proxies/alpha/shop/edit",
@@ -994,7 +994,7 @@ class WhatThePageShowed(EditorTestCase):
         client = self.editor()
         shown = self.opened(client)
         later = objects_at(LATER, shop=SHOP_9090)
-        with mock.patch("haproxy_ui.db.cluster_objects", return_value=[later]):
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=[later]):
             answer = self.submit(
                 client,
                 "/proxies/alpha/shop/edit",
@@ -1017,7 +1017,7 @@ class WhatThePageShowed(EditorTestCase):
     def test_saving_again_after_the_refusal_is_a_decision_and_is_taken(self) -> None:
         client = self.editor()
         later = objects_at(LATER, shop=SHOP_9090)
-        with mock.patch("haproxy_ui.db.cluster_objects", return_value=[later]):
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=[later]):
             answer = self.submit(
                 client,
                 "/proxies/alpha/shop/edit",
@@ -1033,7 +1033,7 @@ class WhatThePageShowed(EditorTestCase):
         client = self.editor()
         shown = self.opened(client)
         with mock.patch(
-            "haproxy_ui.db.cluster_objects", return_value=[objects_at(LATER, shop=SHOP_9090)]
+            "haprion_ui.db.cluster_objects", return_value=[objects_at(LATER, shop=SHOP_9090)]
         ):
             self.submit(client, "/proxies/alpha/shop/edit", action="save", object_fingerprint=shown)
 
@@ -1046,7 +1046,7 @@ class WhatThePageShowed(EditorTestCase):
         shown = self.opened(client)
         other = SHOP.replace("name: shop", "name: other").replace("shop.example", "other.example")
         with mock.patch(
-            "haproxy_ui.db.cluster_objects",
+            "haprion_ui.db.cluster_objects",
             return_value=[objects_at(LATER, shop=SHOP, other=other)],
         ):
             answer = self.submit(
@@ -1063,7 +1063,7 @@ class WhatThePageShowed(EditorTestCase):
     def test_an_object_removed_meanwhile_is_not_written_back(self) -> None:
         client = self.editor()
         shown = self.opened(client)
-        with mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects_at(LATER)]):
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=[objects_at(LATER)]):
             self.submit(
                 client,
                 "/proxies/alpha/shop/edit",
@@ -1111,7 +1111,7 @@ class ThePublishedDraftWaitsForTheCache(EditorTestCase):
         )
         self.publishes: list[Job] = [self.done(changed=True)]
         patch = mock.patch(
-            "haproxy_ui.db.draft_publishes", side_effect=lambda _c, **_kw: self.publishes
+            "haprion_ui.db.draft_publishes", side_effect=lambda _c, **_kw: self.publishes
         )
         patch.start()
         self.addCleanup(patch.stop)
@@ -1140,7 +1140,7 @@ class ThePublishedDraftWaitsForTheCache(EditorTestCase):
         )
 
     def opened(self, objects: ClusterObjects) -> str:
-        with mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects]):
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=[objects]):
             return str(self.editor().get("/proxies/alpha/shop/edit").text)
 
     def test_a_cache_still_at_the_base_keeps_the_published_draft(self) -> None:
@@ -1189,7 +1189,7 @@ class ThePublishedDraftWaitsForTheCache(EditorTestCase):
     def test_the_evidence_is_asked_for_by_the_draft_not_out_of_recent_jobs(self) -> None:
         """Twenty later jobs pushed the publish out of the window (CR-04)."""
 
-        with mock.patch("haproxy_ui.db.recent_jobs", side_effect=AssertionError("window")):
+        with mock.patch("haprion_ui.db.recent_jobs", side_effect=AssertionError("window")):
             self.opened(objects_at(LATER, shop=SHOP_9090))
 
         self.assertEqual(self.discarded, [("alpha", "shop", 1)])
@@ -1328,7 +1328,7 @@ class AnObjectTheFormCannotOpen(EditorTestCase):
     """
 
     def test_a_route_that_is_not_a_mapping_is_a_refusal_and_not_a_crash(self) -> None:
-        from haproxy_ui import preview
+        from haprion_ui import preview
 
         document = (
             "schema_version: 1\n"
@@ -1452,7 +1452,7 @@ class RemovingAnObject(EditorTestCase):
                 attempts=0,
             )
 
-        patch = mock.patch("haproxy_ui.db.queue_job", side_effect=queue)
+        patch = mock.patch("haprion_ui.db.queue_job", side_effect=queue)
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -1630,7 +1630,7 @@ class SavedChangesAndDrafts(EditorTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.queued: list[dict[str, Any]] = []
-        patch = mock.patch("haproxy_ui.db.queue_job", side_effect=self._queue)
+        patch = mock.patch("haprion_ui.db.queue_job", side_effect=self._queue)
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -1737,7 +1737,7 @@ class SavedChangesAndDrafts(EditorTestCase):
         self.draft = self.row("saved", 2)
         client = self.editor()
 
-        with mock.patch("haproxy_ui.db.discard_draft") as discard:
+        with mock.patch("haprion_ui.db.discard_draft") as discard:
             self.submit(client, "/proxies/alpha/shop/edit", action="discard", saved_revision="2")
 
         self.assertEqual(discard.call_args.kwargs["stage"], "saved")

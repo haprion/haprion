@@ -101,7 +101,7 @@ admin_value() {
 #
 ui_port() {
     "${UI_ROOT}/current/venv/bin/python" -I -c \
-        'import sys; from pathlib import Path; from haproxy_ui.config import load
+        'import sys; from pathlib import Path; from haprion_ui.config import load
 print(load(Path(sys.argv[1])).listen.port)' "$UI_CONFIG"
 }
 

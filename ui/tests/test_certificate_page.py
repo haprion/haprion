@@ -31,7 +31,7 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         rows = mock.patch(
-            "haproxy_ui.db.cluster_certificates",
+            "haprion_ui.db.cluster_certificates",
             return_value=[
                 with_registry(
                     certificate_reading(),
@@ -54,7 +54,7 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         rows.start()
         self.addCleanup(rows.stop)
         statuses = mock.patch(
-            "haproxy_ui.db.cluster_statuses",
+            "haprion_ui.db.cluster_statuses",
             return_value=[status_reading(node(("example.com", "a" * 64)))],
         )
         statuses.start()
@@ -217,7 +217,7 @@ class WithoutARegistryThePageIsWhatItWas(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         rows = mock.patch(
-            "haproxy_ui.db.cluster_certificates", return_value=[certificate_reading()]
+            "haprion_ui.db.cluster_certificates", return_value=[certificate_reading()]
         )
         rows.start()
         self.addCleanup(rows.stop)

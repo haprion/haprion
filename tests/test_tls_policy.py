@@ -16,7 +16,7 @@ from datetime import date, timedelta
 from hashlib import sha256
 from pathlib import Path
 
-from haproxy_mgmt import tls_policy
+from haprion import tls_policy
 
 
 def digest(value: str) -> str:
@@ -211,7 +211,7 @@ class WhichPathsAskTheQuestion(unittest.TestCase):
 
     def source(self, module: str) -> str:
         here = Path(__file__).resolve().parents[1]
-        return (here / "src" / "haproxy_mgmt" / "cli" / f"{module}.py").read_text(encoding="utf-8")
+        return (here / "src" / "haprion" / "cli" / f"{module}.py").read_text(encoding="utf-8")
 
     def test_every_publish_path_checks(self) -> None:
         for module in self.CHECKED:
@@ -226,7 +226,7 @@ class WhichPathsAskTheQuestion(unittest.TestCase):
     def test_the_list_names_every_path_that_builds_an_artifact(self) -> None:
         """So a new one has to be classified rather than forgotten."""
 
-        here = Path(__file__).resolve().parents[1] / "src" / "haproxy_mgmt" / "cli"
+        here = Path(__file__).resolve().parents[1] / "src" / "haprion" / "cli"
         builders = sorted(
             path.stem
             for path in here.glob("*.py")

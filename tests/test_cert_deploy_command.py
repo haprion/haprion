@@ -24,10 +24,10 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt.cli import cert_deploy, cert_deploy_helper
-from haproxy_mgmt.cluster_lock import hold
-from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
-from haproxy_mgmt.config import DeployIdentity
+from haprion.cli import cert_deploy, cert_deploy_helper
+from haprion.cluster_lock import hold
+from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
+from haprion.config import DeployIdentity
 from tests.contract_schema import assert_contract
 from tests.node_harness import FakeCluster, FakeNode
 
@@ -269,7 +269,7 @@ class TriggerTests(unittest.TestCase):
         # SSH_ORIGINAL_COMMAND. If this drifts, the wrapper rejects the request
         # rather than doing something unintended - but the rollout stops.
         #
-        from haproxy_mgmt.deploy_plan import CertificateRef, CertificateTarget
+        from haprion.deploy_plan import CertificateRef, CertificateTarget
 
         target = CertificateTarget(
             certificates=(

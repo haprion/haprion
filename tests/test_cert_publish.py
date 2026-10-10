@@ -31,11 +31,11 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_pending, cert_publish
-from haproxy_mgmt.cert_inventory import registry_result
-from haproxy_mgmt.cert_publish import PublishError, publish
-from haproxy_mgmt.cli import cert_publish as command
-from haproxy_mgmt.config import Receiver, load_policy, load_runtime_config
+from haprion import cert_pending, cert_publish
+from haprion.cert_inventory import registry_result
+from haprion.cert_publish import PublishError, publish
+from haprion.cli import cert_publish as command
+from haprion.config import Receiver, load_policy, load_runtime_config
 
 BASE = Path(__file__).resolve().parents[1]
 ME = pwd.getpwuid(os.getuid()).pw_name

@@ -19,10 +19,10 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt.cert_delete import Guards
-from haproxy_mgmt.cli import cert_issue_helper, cert_job, cert_publish_helper, cert_target_helper
-from haproxy_mgmt.envelope import new_request_id
-from haproxy_mgmt.helper_protocol import HelperProtocolError
+from haprion.cert_delete import Guards
+from haprion.cli import cert_issue_helper, cert_job, cert_publish_helper, cert_target_helper
+from haprion.envelope import new_request_id
+from haprion.helper_protocol import HelperProtocolError
 from tests.test_cert_issue import FakeCertbot
 from tests.test_cert_publish import Fixture, issue
 from tests.test_cert_registry import KEEPERS

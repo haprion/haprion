@@ -15,11 +15,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import cluster_lock, node_package, node_restore, restore_plan, restore_source
-from haproxy_mgmt.cli import node_restore as cli
-from haproxy_mgmt.config import Node
-from haproxy_mgmt.node_restore import Clock, Request, RestoreError
-from haproxy_mgmt.restore_plan import Target, TestProfile
+from haprion import cluster_lock, node_package, node_restore, restore_plan, restore_source
+from haprion.cli import node_restore as cli
+from haprion.config import Node
+from haprion.node_restore import Clock, Request, RestoreError
+from haprion.restore_plan import Target, TestProfile
 from tests.restore_fixture import build
 
 VERSION = "2026-01-01_04-00-00"

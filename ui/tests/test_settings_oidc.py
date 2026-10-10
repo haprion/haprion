@@ -19,10 +19,10 @@ from typing import Any
 from unittest import mock
 
 from fastapi.testclient import TestClient
-from haproxy_mgmt import oidc
-from haproxy_mgmt.dns_profile_keys import read_private_key, write_key_pair
+from haprion import oidc
+from haprion.dns_profile_keys import read_private_key, write_key_pair
 
-from haproxy_ui import auth, db, oidc_web
+from haprion_ui import auth, db, oidc_web
 from tests.test_login import LoginTestCase, configuration
 
 ISSUER = "https://id.example.com/application/o/manager/"
@@ -104,11 +104,11 @@ class SettingsOidc(LoginTestCase):
             return self.answer
 
         for patch in (
-            mock.patch("haproxy_ui.db.save_oidc_provider", side_effect=save),
-            mock.patch("haproxy_ui.db.record_oidc_verified", return_value=True),
-            mock.patch("haproxy_ui.db.set_oidc_enabled"),
-            mock.patch("haproxy_ui.db.record_audit_event", side_effect=audit),
-            mock.patch("haproxy_ui.oidc_web.ask", side_effect=ask),
+            mock.patch("haprion_ui.db.save_oidc_provider", side_effect=save),
+            mock.patch("haprion_ui.db.record_oidc_verified", return_value=True),
+            mock.patch("haprion_ui.db.set_oidc_enabled"),
+            mock.patch("haprion_ui.db.record_audit_event", side_effect=audit),
+            mock.patch("haprion_ui.oidc_web.ask", side_effect=ask),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -322,7 +322,7 @@ class SettingsOidc(LoginTestCase):
         self.provider = provider(issuer=ISSUER)
         client = self.admin()
         with mock.patch(
-            "haproxy_ui.db.set_oidc_enabled",
+            "haprion_ui.db.set_oidc_enabled",
             side_effect=db.ProviderRefused("Verify the settings first."),
         ):
             response = self.post(client, action="on")

@@ -27,12 +27,12 @@ import yaml
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
-from haproxy_mgmt import server_state
-from haproxy_mgmt.cli import server_state as command
-from haproxy_mgmt.cli import server_state_helper
-from haproxy_mgmt.config import DeployIdentity, Node
-from haproxy_mgmt.guid import server_guid
-from haproxy_mgmt.proxy_model import Server, load_proxy
+from haprion import server_state
+from haprion.cli import server_state as command
+from haprion.cli import server_state_helper
+from haprion.config import DeployIdentity, Node
+from haprion.guid import server_guid
+from haprion.proxy_model import Server, load_proxy
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "5a1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f"
@@ -385,7 +385,7 @@ class TheNodeIsAskedWithItsOwnForcedCommand(unittest.TestCase):
     def test_the_call_names_the_identity_the_host_and_three_words(self) -> None:
         identity = DeployIdentity(user="svc-app", key=Path("/root/.ssh/example"))
         node = Node(name="node-a", mgmt_host="node-a.example.com")
-        with mock.patch("haproxy_mgmt.server_state.subprocess.run") as run:
+        with mock.patch("haprion.server_state.subprocess.run") as run:
             server_state.ask_node(node, identity, WEB_10, "drain")
 
         argv = run.call_args.args[0]
@@ -518,7 +518,7 @@ class StepTwoNamesEveryIdentityStepThreeMakes(unittest.TestCase):
     }
 
     def load(self, answers: dict[str, str]) -> object:
-        from haproxy_mgmt.config import load_policy
+        from haprion.config import load_policy
 
         path = Path(tempfile.mkdtemp(prefix="policy-")) / "runtime-policy.yaml"
         self.addCleanup(shutil.rmtree, path.parent, True)

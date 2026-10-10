@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.backup_archive import REQUIRED_PATHS, ArchiveError, validate
+from haprion.backup_archive import REQUIRED_PATHS, ArchiveError, validate
 
 
 class BackupArchiveTests(unittest.TestCase):

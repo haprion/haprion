@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.config import Vip
-from haproxy_mgmt.keepalived_fragment import FRAGMENT, render
+from haprion.config import Vip
+from haprion.keepalived_fragment import FRAGMENT, render
 
 
 def vips(**entries: tuple[str, str | None]) -> dict[str, Vip]:

@@ -17,8 +17,8 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from haproxy_ui import auth, db
-from haproxy_ui.db import AccountRow
+from haprion_ui import auth, db
+from haprion_ui.db import AccountRow
 from tests.test_login import LoginTestCase, configuration
 
 NEW = "another sufficiently long password"
@@ -65,22 +65,22 @@ class SettingsUsers(LoginTestCase):
 
         patches = [
             mock.patch(
-                "haproxy_ui.db.account_rows",
+                "haprion_ui.db.account_rows",
                 side_effect=lambda _c, **_: [self.rows[name] for name in sorted(self.rows)],
             ),
             mock.patch(
-                "haproxy_ui.db.account_row",
+                "haprion_ui.db.account_row",
                 side_effect=lambda _c, name, **_: self.rows.get(name.lower()),
             ),
-            mock.patch("haproxy_ui.db.create_account", side_effect=record("create", True)),
-            mock.patch("haproxy_ui.db.set_role", side_effect=record("role")),
-            mock.patch("haproxy_ui.db.set_disabled", side_effect=record("disabled", 2)),
-            mock.patch("haproxy_ui.db.reset_password", side_effect=record("password", 1)),
-            mock.patch("haproxy_ui.db.revoke_sessions_for_user", side_effect=record("revoke", 3)),
-            mock.patch("haproxy_ui.db.unlock_account", side_effect=record("unlock")),
-            mock.patch("haproxy_ui.db.set_break_glass", side_effect=record("break_glass")),
-            mock.patch("haproxy_ui.db.delete_account", side_effect=record("delete", True)),
-            mock.patch("haproxy_ui.db.record_audit_event", side_effect=audit),
+            mock.patch("haprion_ui.db.create_account", side_effect=record("create", True)),
+            mock.patch("haprion_ui.db.set_role", side_effect=record("role")),
+            mock.patch("haprion_ui.db.set_disabled", side_effect=record("disabled", 2)),
+            mock.patch("haprion_ui.db.reset_password", side_effect=record("password", 1)),
+            mock.patch("haprion_ui.db.revoke_sessions_for_user", side_effect=record("revoke", 3)),
+            mock.patch("haprion_ui.db.unlock_account", side_effect=record("unlock")),
+            mock.patch("haprion_ui.db.set_break_glass", side_effect=record("break_glass")),
+            mock.patch("haprion_ui.db.delete_account", side_effect=record("delete", True)),
+            mock.patch("haprion_ui.db.record_audit_event", side_effect=audit),
         ]
         for patch in patches:
             patch.start()
@@ -238,7 +238,7 @@ class SettingsUsers(LoginTestCase):
 
     def test_the_last_active_admin_is_refused_with_a_sentence(self) -> None:
         client = self.admin()
-        with mock.patch("haproxy_ui.db.set_role", side_effect=db.LastAdmin()):
+        with mock.patch("haprion_ui.db.set_role", side_effect=db.LastAdmin()):
             response = self.post(
                 client,
                 "/settings/users/alice",
@@ -343,7 +343,7 @@ class SettingsUsers(LoginTestCase):
 
     def test_a_taken_name_is_refused_and_the_form_keeps_what_was_typed(self) -> None:
         client = self.admin()
-        with mock.patch("haproxy_ui.db.create_account", return_value=False):
+        with mock.patch("haprion_ui.db.create_account", return_value=False):
             response = self.post(
                 client,
                 "/settings/new-user",
@@ -433,7 +433,7 @@ class SettingsUsers(LoginTestCase):
         ):
             with (
                 self.subTest(error=type(error).__name__),
-                mock.patch("haproxy_ui.db.delete_account", side_effect=error),
+                mock.patch("haprion_ui.db.delete_account", side_effect=error),
             ):
                 response = self.post(client, "/settings/users/alice", action="delete")
                 self.assertEqual(response.status_code, 409)

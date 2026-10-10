@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt.release_install import (
+from haprion.release_install import (
     DIRECTORY_MODE,
     FILE_MODE,
     PUBLISH_GROUP,
@@ -22,7 +22,7 @@ from haproxy_mgmt.release_install import (
     InstallResult,
     install_release,
 )
-from haproxy_mgmt.release_layout import NODE_DIRECTORIES, ReleaseMetadata
+from haprion.release_layout import NODE_DIRECTORIES, ReleaseMetadata
 
 ARTIFACT = {
     "haproxy.cfg": b"global\n  daemon\n",

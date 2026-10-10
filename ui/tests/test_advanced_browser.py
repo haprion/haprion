@@ -18,8 +18,8 @@ from uuid import uuid4
 import uvicorn
 from playwright.sync_api import Browser, Playwright
 
-from haproxy_ui.app import create_app
-from haproxy_ui.db import ProxyDraft
+from haprion_ui.app import create_app
+from haprion_ui.db import ProxyDraft
 from tests.test_editor_page import OBSERVED
 from tests.test_login import PASSWORD, configuration
 from tests.test_object_page import DraftReading
@@ -75,7 +75,7 @@ class TheDialogInABrowser(DraftReading):
         self.saved: list[dict[str, Any]] = []
         self.queued: list[dict[str, Any]] = []
         for name, effect in (("save_change", self._save), ("queue_job", self._queue)):
-            patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=effect)
+            patch = mock.patch(f"haprion_ui.db.{name}", side_effect=effect)
             patch.start()
             self.addCleanup(patch.stop)
         config = replace(

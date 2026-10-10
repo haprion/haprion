@@ -14,8 +14,8 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import safe_yaml
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion import safe_yaml
+from haprion.proxy_model import load_proxy
 
 ACCEPTED = (
     "a: 1\nb: [x, y]\n",

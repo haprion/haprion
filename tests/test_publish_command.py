@@ -18,9 +18,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt.candidate_validation import ValidationResult
-from haproxy_mgmt.cli import publish, publish_helper
-from haproxy_mgmt.reservations import fragment_digest
+from haprion.candidate_validation import ValidationResult
+from haprion.cli import publish, publish_helper
+from haprion.reservations import fragment_digest
 from tests.test_publish_helper import (
     CORE_CFG,
     GENERATED,

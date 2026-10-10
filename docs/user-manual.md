@@ -1871,7 +1871,7 @@ original's.
 To keep something for longer, move it out of those names before the next installation or restore:
 anything not named `<file>.replaced-<yyyymmdd-hhmmss>`, and any directory under
 `/var/lib/haprion-restore` that is not a run ID, is left alone. The periods are
-`REPLACED_KEEP_DAYS` in `install/lib.sh` and `RUN_KEPT_DAYS` in `haproxy_mgmt/restore_agent.py`.
+`REPLACED_KEEP_DAYS` in `install/lib.sh` and `RUN_KEPT_DAYS` in `haprion/restore_agent.py`.
 Each removal is printed: `pruned <path>` in the installer's output, and an `old-runs` step in the
 restore's `apply` session.
 
@@ -2261,7 +2261,7 @@ git show --stat <commit>
 
 | What the commit touched | What to release |
 |---|---|
-| `src/haproxy_mgmt/`, `tools/`, `install/` | the `haprion-cli` package — [Part 3](#part-3--the-versioned-cli-release) |
+| `src/haprion/`, `tools/`, `install/` | the `haprion-cli` package — [Part 3](#part-3--the-versioned-cli-release) |
 | `ui/` | the `haprion-ui` package; installing it runs `update-platform-release` |
 | `install/node/`, node scripts | the `haprion-node` package on every node, per [Part 2](#part-2--the-nodes) |
 | more than one of those | **the CLI package first**, then the platform, then the nodes |
@@ -2277,7 +2277,7 @@ levels and helper names, never release hashes, precisely so an engine
 correction does not drag an unrelated UI rollout along with it. What decides
 whether the running UI still fits the new engine is:
 
-- `src/haproxy_mgmt/compatibility.json` — the engine API the CLI release carries. A
+- `src/haprion/compatibility.json` — the engine API the CLI release carries. A
   UI release declares the minimum it needs.
 - the console scripts in `pyproject.toml` — the check requires every helper the
   UI names by name.
@@ -2620,7 +2620,7 @@ and each file looks entirely correct read on its own. That is how one such pair 
 apart without anything reporting it.
 
 The list is Mozilla's intermediate recommendation, guideline v5.7; the
-manager holds it in `haproxy_mgmt/tls_policy.py` with the date it was last checked. Nothing fetches
+manager holds it in `haprion/tls_policy.py` with the date it was last checked. Nothing fetches
 it at run time. If you deliberately change it, change it there first and in every cluster's `core/`
 after — the refusal will tell you which clusters are still behind.
 

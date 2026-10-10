@@ -3,10 +3,10 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from haproxy_ui import cluster_identity
-from haproxy_ui.cluster_identity import ACCENT_COUNT, accent_class, accent_index
+from haprion_ui import cluster_identity
+from haprion_ui.cluster_identity import ACCENT_COUNT, accent_class, accent_index
 
-STYLESHEET = Path(__file__).resolve().parents[1] / "src/haproxy_ui/static/app.css"
+STYLESHEET = Path(__file__).resolve().parents[1] / "src/haprion_ui/static/app.css"
 
 
 class ClusterIdentityTests(unittest.TestCase):

@@ -14,10 +14,10 @@ import zipfile
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt.cert_export import Export, ExportError
-from haproxy_mgmt.certificates import CERTIFICATE_OPENING, DELIMITER
+from haprion.cert_export import Export, ExportError
+from haprion.certificates import CERTIFICATE_OPENING, DELIMITER
 
-from haproxy_ui import auth, certificate_form, operations
+from haprion_ui import auth, certificate_form, operations
 from tests.test_certificate_form import CHOICES, KEY, CertificateFormRouteTestCase, form
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
@@ -113,7 +113,7 @@ class ExternalRowTestCase(CertificateFormRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
         patch = mock.patch(
-            "haproxy_ui.db.cluster_certificates",
+            "haprion_ui.db.cluster_certificates",
             return_value=[
                 with_registry(
                     certificate_reading(),
@@ -190,7 +190,7 @@ class TheExport(ExternalRowTestCase):
         return post(client, f"/certificates/{DEVICE}/export")
 
     def test_an_admin_gets_every_form_in_one_zip_and_the_audit_says_so(self) -> None:
-        with mock.patch("haproxy_mgmt.cert_export_socket.ask", side_effect=helper_file) as helper:
+        with mock.patch("haprion.cert_export_socket.ask", side_effect=helper_file) as helper:
             answer = self.export(self.writing_client())
 
         self.assertEqual(answer.status_code, 200)
@@ -218,19 +218,19 @@ class TheExport(ExternalRowTestCase):
     def test_each_export_draws_its_own_password(self) -> None:
         drawn = []
         for _ in range(2):
-            with mock.patch("haproxy_mgmt.cert_export_socket.ask", side_effect=helper_file):
+            with mock.patch("haprion.cert_export_socket.ask", side_effect=helper_file):
                 drawn.append(members(self.export(self.writing_client()))[f"{DEVICE}.password"][0])
         self.assertNotEqual(drawn[0], drawn[1])
 
     def test_a_reader_is_refused(self) -> None:
-        with mock.patch("haproxy_mgmt.cert_export_socket.ask") as helper:
+        with mock.patch("haprion.cert_export_socket.ask") as helper:
             answer = self.export(self.writing_client(role="reader"))
 
         self.assertEqual(answer.status_code, 403)
         helper.assert_not_called()
 
     def test_a_certificate_without_the_mark_is_never_asked_for(self) -> None:
-        with mock.patch("haproxy_mgmt.cert_export_socket.ask") as helper:
+        with mock.patch("haprion.cert_export_socket.ask") as helper:
             answer = post(self.writing_client(), "/certificates/example.com/export")
 
         self.assertIn("not an external certificate", answer.text)
@@ -238,7 +238,7 @@ class TheExport(ExternalRowTestCase):
 
     def test_the_helper_s_refusal_is_said_and_nothing_audited(self) -> None:
         with mock.patch(
-            "haproxy_mgmt.cert_export_socket.ask",
+            "haprion.cert_export_socket.ask",
             side_effect=ExportError("dependency_unavailable", "The service is not running here."),
         ):
             answer = self.export(self.writing_client())
@@ -250,7 +250,7 @@ class TheExport(ExternalRowTestCase):
         def renewed(certificate_id: str, form: str, password: str | None, **_: Any) -> Export:
             return Export(certificate_id, form, "ignored", "ignored", b"NEW", "d" * 64)
 
-        with mock.patch("haproxy_mgmt.cert_export_socket.ask", side_effect=renewed):
+        with mock.patch("haprion.cert_export_socket.ask", side_effect=renewed):
             answer = self.export(self.writing_client())
 
         self.assertIn("changed since the page was read", answer.text)
@@ -273,7 +273,7 @@ class TheDeletion(ExternalRowTestCase):
     def test_an_external_certificate_is_not_told_of_targets_or_nodes(self) -> None:
         client = self.writing_client()
         token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
-        with mock.patch("haproxy_ui.db.live_drafts", return_value=[]):
+        with mock.patch("haprion_ui.db.live_drafts", return_value=[]):
             page = client.post(
                 "/certificates/delete", data={"certificate": [DEVICE], auth.CSRF_FIELD: token}
             ).text

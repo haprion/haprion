@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.cluster_status import NodeStatus, parse_status
+from haprion.cluster_status import NodeStatus, parse_status
 
 PUBLISHED = "a1" * 32
 OTHER = "b2" * 32

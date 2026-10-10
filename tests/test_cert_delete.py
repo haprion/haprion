@@ -22,12 +22,12 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import cert_delete
-from haproxy_mgmt.cert_delete import Guards, delete, read_guards
-from haproxy_mgmt.cert_inventory import FULLCHAIN, PRIVKEY
-from haproxy_mgmt.cert_publish import publish_lock
-from haproxy_mgmt.cli import cert_delete_helper
-from haproxy_mgmt.config import load_policy, load_runtime_config
+from haprion import cert_delete
+from haprion.cert_delete import Guards, delete, read_guards
+from haprion.cert_inventory import FULLCHAIN, PRIVKEY
+from haprion.cert_publish import publish_lock
+from haprion.cli import cert_delete_helper
+from haprion.config import load_policy, load_runtime_config
 from tests.test_cert_publish import Fixture
 from tests.test_proxy_model import with_lines
 
@@ -310,7 +310,7 @@ class WhatGoes(DeleteFixture):
         finding 2). With an NDES block in the policy it is a layer of its
         own; a request the CA still holds is deletable by name alone."""
 
-        from haproxy_mgmt.ndes_state import request_directory
+        from haprion.ndes_state import request_directory
 
         policy_path = self.prepared(
             {
@@ -376,7 +376,7 @@ class WhatGoes(DeleteFixture):
         fcntl.flock(handle, fcntl.LOCK_EX)
         with (
             unittest.mock.patch.object(cert_delete, "publish_lock", wraps=publish_lock) as held,
-            unittest.mock.patch("haproxy_mgmt.cert_publish.LOCK_WAIT_SECONDS", 0),
+            unittest.mock.patch("haprion.cert_publish.LOCK_WAIT_SECONDS", 0),
             self.assertRaises(cert_delete.DeleteError) as refused,
         ):
             self.run_delete(policy_path, "example.com")

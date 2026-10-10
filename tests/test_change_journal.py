@@ -10,8 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt import change_journal
-from haproxy_mgmt.change_journal import FileChange, Record, RecoveryError
+from haprion import change_journal
+from haprion.change_journal import FileChange, Record, RecoveryError
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -24,8 +24,8 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 CHILD = """
 import os, signal, sys
 from pathlib import Path
-from haproxy_mgmt import change_journal
-from haproxy_mgmt.change_journal import FileChange, Record
+from haprion import change_journal
+from haprion.change_journal import FileChange, Record
 
 root, stop, mid = Path(sys.argv[1]), int(sys.argv[2]), sys.argv[3] == "mid"
 files = tuple(
@@ -136,7 +136,7 @@ class AChangeCutShort(unittest.TestCase):
             script = (
                 "import os, signal, sys\n"
                 "from pathlib import Path\n"
-                "from haproxy_mgmt import change_journal\n"
+                "from haprion import change_journal\n"
                 "path, journal = Path(sys.argv[1]), Path(sys.argv[2])\n"
                 "change = change_journal.FileChange(path, b'before\\n', b'after\\n', 'file')\n"
                 "with change_journal.transaction("

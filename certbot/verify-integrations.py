@@ -119,7 +119,7 @@ class _Config:
 def verify_loaded(source_root: Path, provider_id: str) -> None:
     """The rendered file passes the installed plugin's own credential setup."""
     sys.path.insert(0, str(source_root))
-    from haproxy_mgmt.dns_provider_catalog import provider_by_id, render_credentials
+    from haprion.dns_provider_catalog import provider_by_id, render_credentials
 
     provider = provider_by_id(provider_id)
     authenticator_class = entrypoint_for(provider).load()
@@ -187,7 +187,7 @@ def verify_azure(source_root: Path) -> None:
     sys.path.insert(0, str(source_root))
     from azure.mgmt.dns.models import RecordSet, TxtRecord
 
-    from haproxy_mgmt.dns_provider_catalog import provider_by_id, render_credentials
+    from haprion.dns_provider_catalog import provider_by_id, render_credentials
 
     provider = provider_by_id("azure")
     entrypoints = [
@@ -288,7 +288,7 @@ def main() -> int:
     report_path = Path(sys.argv[2])
     forbid_network()
     sys.path.insert(0, str(source_root))
-    from haproxy_mgmt.dns_provider_catalog import load_catalog
+    from haprion.dns_provider_catalog import load_catalog
 
     checks: dict[str, Callable[[], None]] = {
         "azure-renderer-plugin-sdk": lambda: verify_azure(source_root)

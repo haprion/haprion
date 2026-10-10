@@ -8,7 +8,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.dns_provider_catalog import (
+from haprion.dns_provider_catalog import (
     CredentialField,
     DNSProvider,
     ProviderCatalogError,

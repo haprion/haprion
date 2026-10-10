@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import psycopg
 
-from haproxy_mgmt.traffic_collector import (
+from haprion.traffic_collector import (
     CLOSED_DAY_GRACE,
     CollectorConfig,
     CollectorError,
@@ -415,7 +415,7 @@ class TrafficCollectorTests(unittest.TestCase):
             self.config.mirror,
             self.config.staging,
             self.config.nodes,
-            "haproxy_ui",
+            "haprion_ui",
             "/run/postgresql",
         )
 
@@ -423,7 +423,7 @@ class TrafficCollectorTests(unittest.TestCase):
             return self.response(wanted, offset, b"")
 
         with patch(
-            "haproxy_mgmt.traffic_collector._ingest_database",
+            "haprion.traffic_collector._ingest_database",
             side_effect=CollectorError("database import failed"),
         ):
             self.assertEqual(collect(configured, now=NOW, fetch=fetch, fetch_waf_page=no_waf), 1)
@@ -441,7 +441,7 @@ class TrafficCollectorTests(unittest.TestCase):
             self.config.mirror,
             self.config.staging,
             self.config.nodes,
-            "haproxy_ui",
+            "haprion_ui",
             "/run/postgresql",
         )
 
@@ -465,8 +465,8 @@ class TrafficCollectorTests(unittest.TestCase):
             return 0, 0
 
         with (
-            patch("haproxy_mgmt.traffic_collector._ingest_database", side_effect=ingest),
-            patch("haproxy_mgmt.traffic_collector._assemble") as assemble,
+            patch("haprion.traffic_collector._ingest_database", side_effect=ingest),
+            patch("haprion.traffic_collector._assemble") as assemble,
         ):
             self.assertEqual(
                 collect(self.database_configured(), now=NOW, fetch=fetch, fetch_waf_page=no_waf), 0
@@ -482,7 +482,7 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual((meta["outcome"], meta["last_success"]), ("ok", NOW.isoformat()))
 
     def test_without_the_database_the_mirror_is_still_joined(self) -> None:
-        with patch("haproxy_mgmt.traffic_collector._assemble") as assemble:
+        with patch("haprion.traffic_collector._assemble") as assemble:
             collect(self.config, now=NOW, fetch=lambda _t, d, o: self.response(d, o, b""))
         assemble.assert_called_once()
 
@@ -577,7 +577,7 @@ class TrafficCollectorTests(unittest.TestCase):
             payload = b'{"schema":1,"path":"/"}\n' if wanted == NOW.date() and offset == 0 else b""
             return self.response(wanted, offset, payload)
 
-        with patch("haproxy_mgmt.traffic_collector.os.replace", watched):
+        with patch("haprion.traffic_collector.os.replace", watched):
             self.assertEqual(collect(self.config, now=NOW, fetch=fetch), 0)
 
         self.assertTrue(renames, "nothing was published")
@@ -589,7 +589,7 @@ class TrafficCollectorTests(unittest.TestCase):
         destination.write_bytes(b"old\n")
 
         with (
-            patch("haproxy_mgmt.traffic_collector.os.replace", side_effect=OSError("full disk")),
+            patch("haprion.traffic_collector.os.replace", side_effect=OSError("full disk")),
             self.assertRaisesRegex(OSError, "full disk"),
         ):
             _replace(destination, b"new\n")
@@ -611,8 +611,8 @@ class TrafficCollectorTests(unittest.TestCase):
         output = StringIO()
         with (
             patch.object(sys, "argv", ["collector", "--check-config", "/etc/config.json"]),
-            patch("haproxy_mgmt.traffic_collector.load_config", return_value=self.config) as loader,
-            patch("haproxy_mgmt.traffic_collector.collect") as collect_mock,
+            patch("haprion.traffic_collector.load_config", return_value=self.config) as loader,
+            patch("haprion.traffic_collector.collect") as collect_mock,
             redirect_stdout(output),
             self.assertRaises(SystemExit) as stopped,
         ):
@@ -647,7 +647,7 @@ class TrafficCollectorTests(unittest.TestCase):
         errors = StringIO()
         with (
             patch.object(sys, "argv", ["collector", "--replay-database", "/etc/config.json"]),
-            patch("haproxy_mgmt.traffic_collector.load_config", return_value=self.config),
+            patch("haprion.traffic_collector.load_config", return_value=self.config),
             redirect_stderr(errors),
             self.assertRaises(SystemExit) as stopped,
         ):
@@ -713,7 +713,7 @@ class WafJournalCollectorTests(unittest.TestCase):
             self.mirror,
             self.staging,
             (self.target,),
-            "haproxy_ui",
+            "haprion_ui",
             "/run/postgresql",
         )
         self.cursor_file = self.staging / ".alpha--node-a.waf-cursor"
@@ -871,12 +871,12 @@ class WafJournalCollectorTests(unittest.TestCase):
         connection = connection or MagicMock()
         errors = StringIO()
         with (
-            patch("haproxy_mgmt.traffic_collector.psycopg.connect") as connect,
+            patch("haprion.traffic_collector.psycopg.connect") as connect,
             patch(
-                "haproxy_mgmt.traffic_collector._database_days",
+                "haprion.traffic_collector._database_days",
                 return_value=frozenset({f"{NOW:%Y%m%d}"}),
             ),
-            patch("haproxy_mgmt.traffic_collector._ingest_database", return_value=(0, 0)),
+            patch("haprion.traffic_collector._ingest_database", return_value=(0, 0)),
             patch("sys.stderr", errors),
         ):
             connect.return_value.__enter__.return_value = connection
@@ -948,9 +948,9 @@ class WafJournalCollectorTests(unittest.TestCase):
         quiet = b'{"cursor":"%s","eof":true,"reset":false,"sent":0}\n' % journal_cursor(5).encode()
         errors = StringIO()
         with (
-            patch("haproxy_mgmt.traffic_collector._ingest_database", return_value=(0, 0)),
-            patch("haproxy_mgmt.traffic_collector._mirror_window", return_value=14),
-            patch("haproxy_mgmt.traffic_collector.psycopg.connect") as connect,
+            patch("haprion.traffic_collector._ingest_database", return_value=(0, 0)),
+            patch("haprion.traffic_collector._mirror_window", return_value=14),
+            patch("haprion.traffic_collector.psycopg.connect") as connect,
             patch("sys.stderr", errors),
         ):
             code = collect(
@@ -967,7 +967,7 @@ class WafJournalCollectorTests(unittest.TestCase):
         missing from the WAF page while every run looked fine. The rollout
         puts the node package before the collector instead."""
 
-        with patch("haproxy_mgmt.traffic_collector._bounded_ssh", return_value=(64, b"", b"")):
+        with patch("haprion.traffic_collector._bounded_ssh", return_value=(64, b"", b"")):
             code, errors, _ = self.collect_with(
                 lambda target, cursor: ssh_fetch_waf(self.config, target, cursor)
             )
@@ -990,9 +990,7 @@ class WafJournalCollectorTests(unittest.TestCase):
 
     def test_the_request_names_the_cursor_and_any_exit_but_zero_fails(self) -> None:
         with (
-            patch(
-                "haproxy_mgmt.traffic_collector._bounded_ssh", return_value=(255, b"", b"")
-            ) as ssh,
+            patch("haprion.traffic_collector._bounded_ssh", return_value=(255, b"", b"")) as ssh,
             self.assertRaises(SSHError) as raised,
         ):
             ssh_fetch_waf(self.config, self.target, journal_cursor(1))
@@ -1075,7 +1073,7 @@ class WhatTheInstallationStepWrites(unittest.TestCase):
                 "/etc/haprion/traffic-collector/known_hosts",
                 "/var/lib/haprion-ui/logs/mirror",
                 "/var/lib/haprion-ui/logs/staging",
-                "haproxy_ui",
+                "haprion_ui",
                 "/var/run/postgresql",
                 *inventory,
             ],

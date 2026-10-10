@@ -16,9 +16,9 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_receiver
-from haproxy_mgmt.cli import cert_receiver_helper
-from haproxy_mgmt.envelope import new_request_id
+from haprion import cert_receiver
+from haprion.cli import cert_receiver_helper
+from haprion.envelope import new_request_id
 from tests.contract_schema import assert_contract
 from tests.test_cert_receiver import KEY, ReceiverFixture
 

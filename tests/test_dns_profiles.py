@@ -6,15 +6,15 @@ import json
 import unittest
 from typing import Any
 
-from haproxy_mgmt.dns_profile_keys import generate, seal
-from haproxy_mgmt.dns_profiles import (
+from haprion.dns_profile_keys import generate, seal
+from haprion.dns_profiles import (
     ProfileError,
     build_request,
     open_profile,
     seal_profile,
     secret_values,
 )
-from haproxy_mgmt.dns_provider_catalog import provider_by_id
+from haprion.dns_provider_catalog import provider_by_id
 
 FIELDS = {"api_token": "token-example"}
 

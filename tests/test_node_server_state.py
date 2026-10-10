@@ -541,7 +541,7 @@ class TheNodeWritesTheServerStateKeyFromTheAnswers(unittest.TestCase):
 
 class TheSocketIsTheOneTheCoreNames(unittest.TestCase):
     def test_the_helper_and_the_core_template_agree(self) -> None:
-        from haproxy_mgmt import cluster_definition  # noqa: PLC0415
+        from haprion import cluster_definition  # noqa: PLC0415
 
         self.assertIn(f'ADMIN_SOCKET = "{cluster_definition.MANAGER_SOCKET}"', HELPER.read_text())
 

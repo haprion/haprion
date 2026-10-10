@@ -21,8 +21,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from haproxy_ui import db, metrics
-from haproxy_ui.metrics import CARD_COUNTERS, METRIC_COUNTERS, SUMMARY_COUNTERS
+from haprion_ui import db, metrics
+from haprion_ui.metrics import CARD_COUNTERS, METRIC_COUNTERS, SUMMARY_COUNTERS
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0018_metric_samples.py"
@@ -852,7 +852,7 @@ class TheStoredDifferencesCoverEverySummedCounter(unittest.TestCase):
 
 class TheDashboardCountsVisitorsNotScrapes(unittest.TestCase):
     def test_every_frontend_but_the_exporter_s_is_summed(self) -> None:
-        from haproxy_mgmt.generate import METRICS_FRONTEND
+        from haprion.generate import METRICS_FRONTEND
         from psycopg import sql
 
         statement = db._frontend_totals(SUMMARY_COUNTERS, every_frontend=True)

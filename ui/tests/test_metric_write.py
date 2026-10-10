@@ -13,7 +13,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from haproxy_ui import db, metrics, poller
+from haprion_ui import db, metrics, poller
 
 
 def node(
@@ -282,7 +282,7 @@ class WhenTheSampleCannotBeWritten(unittest.TestCase):
             lambda *_, **__: None,
             sample=lambda *_, **__: 0,
         )
-        with self.assertLogs("haproxy_ui.poller", level="WARNING") as logged:
+        with self.assertLogs("haprion_ui.poller", level="WARNING") as logged:
             poller._sample(self.FailingPool(), source, cluster="alpha", result={"nodes": []})
         self.assertIn("samples not written", logged.output[0])
         self.assertIn("no partition", logged.output[0])

@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import unittest
 
-from haproxy_mgmt.haproxy_versions import compare, notes, package_notes, upstream
+from haprion.haproxy_versions import compare, notes, package_notes, upstream
 
 
 class TheUpstreamPart(unittest.TestCase):

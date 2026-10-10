@@ -8,8 +8,8 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from haproxy_ui import traffic_summary
-from haproxy_ui.metrics import SUMMARY_COUNTERS, BackendMeasurement, Total
+from haprion_ui import traffic_summary
+from haprion_ui.metrics import SUMMARY_COUNTERS, BackendMeasurement, Total
 from tests.test_login import LoginTestCase, configuration
 
 END = datetime(2026, 10, 1, 12, tzinfo=UTC)
@@ -115,8 +115,8 @@ class TheClusterHeader(LoginTestCase):
             )
 
         with (
-            mock.patch("haproxy_ui.db.read_traffic_summaries", side_effect=summary),
-            mock.patch("haproxy_ui.db.read_response_times_by_cluster") as responses,
+            mock.patch("haprion_ui.db.read_traffic_summaries", side_effect=summary),
+            mock.patch("haprion_ui.db.read_response_times_by_cluster") as responses,
         ):
             client = self.client(replace(configuration(), clusters=("alpha", "beta")))
             self.assertEqual(self.sign_in(client).status_code, 303)
@@ -135,10 +135,10 @@ class TheClusterHeader(LoginTestCase):
         # The CPU, memory and freshness move without a reload (B239).
         with (
             mock.patch(
-                "haproxy_ui.db.read_traffic_summaries",
+                "haprion_ui.db.read_traffic_summaries",
                 return_value={"alpha": measured(timedelta(minutes=5), (1, 1, 1))},
             ),
-            mock.patch("haproxy_ui.db.read_response_times_by_cluster"),
+            mock.patch("haprion_ui.db.read_response_times_by_cluster"),
         ):
             config = replace(configuration(), clusters=("alpha",))
             client = self.client(config)

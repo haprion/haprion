@@ -21,10 +21,10 @@ from unittest import mock
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-from haproxy_mgmt import cert_inventory, config
-from haproxy_mgmt.certificates import leaf_fingerprint
-from haproxy_mgmt.cli import cert_list, cert_list_helper
-from haproxy_mgmt.config import ConfigError
+from haprion import cert_inventory, config
+from haprion.certificates import leaf_fingerprint
+from haprion.cli import cert_list, cert_list_helper
+from haprion.config import ConfigError
 from tests.contract_schema import assert_contract
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
@@ -85,7 +85,7 @@ class LeafOnlyTests(unittest.TestCase):
         # leaf block alone, so "the key does not leave the helper" is a property
         # of what is passed rather than a rule someone has to follow.
         #
-        from haproxy_mgmt.certificates import leaf_block
+        from haprion.certificates import leaf_block
 
         block = leaf_block(_pem("example.test"))
 
@@ -96,7 +96,7 @@ class LeafOnlyTests(unittest.TestCase):
 
 class DescribeTests(unittest.TestCase):
     def test_subject_sans_issuer_and_validity_are_read_from_the_certificate(self) -> None:
-        from haproxy_mgmt.certificates import leaf_block
+        from haprion.certificates import leaf_block
 
         facts = cert_inventory.describe(
             leaf_block(_pem("example.test", sans=("example.test", "www.example.test")))
@@ -108,7 +108,7 @@ class DescribeTests(unittest.TestCase):
         self.assertLess(facts.not_before, facts.not_after)
 
     def test_something_that_is_not_a_certificate_is_refused(self) -> None:
-        from haproxy_mgmt.certificates import CertificateError
+        from haprion.certificates import CertificateError
 
         edge = "-" * 5
         with self.assertRaises(CertificateError):
@@ -244,7 +244,7 @@ class ResultTests(unittest.TestCase):
         self.assertIsNone(by_id["bravo"]["source"])
         self.assertIsNone(by_id["bravo"]["targets"])
 
-        from haproxy_mgmt.envelope import envelope
+        from haprion.envelope import envelope
 
         assert_contract(
             "haprion-cert-list",
@@ -469,7 +469,7 @@ class RegistryListingTests(unittest.TestCase):
         # has no certificate yet. Said as its own field, so the interface can
         # tell waiting from broken without parsing the sentence.
         #
-        from haproxy_mgmt.ndes_state import request_directory
+        from haprion.ndes_state import request_directory
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -518,8 +518,8 @@ class RegistryListingTests(unittest.TestCase):
         # targets kept beside it, and shows it in the row shape the interface
         # already knows. The frozen schema must take the row.
         #
-        from haproxy_mgmt.envelope import envelope
-        from haproxy_mgmt.ndes_state import request_directory, write_targets
+        from haprion.envelope import envelope
+        from haprion.ndes_state import request_directory, write_targets
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -700,7 +700,7 @@ class RegistryListingTests(unittest.TestCase):
 
 class EnvelopeTests(unittest.TestCase):
     def test_a_listing_matches_the_frozen_schema(self) -> None:
-        from haproxy_mgmt.envelope import envelope
+        from haprion.envelope import envelope
 
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / "alpha.pem").write_text(

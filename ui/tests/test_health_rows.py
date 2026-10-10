@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.cluster_status import ServerHealth
+from haprion.cluster_status import ServerHealth
 
-from haproxy_ui.health import BackendHealth, NodeMembers
-from haproxy_ui.health_rows import health_rows
-from haproxy_ui.probe import NodeReport, ProbeReport, Reached
+from haprion_ui.health import BackendHealth, NodeMembers
+from haprion_ui.health_rows import health_rows
+from haprion_ui.probe import NodeReport, ProbeReport, Reached
 
 
 def reported(*servers: tuple[str, str]) -> BackendHealth:

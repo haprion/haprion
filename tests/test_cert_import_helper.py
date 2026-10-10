@@ -21,11 +21,11 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_import, cert_upload
-from haproxy_mgmt.cert_import import MAX_UPLOAD_BYTES, ImportError_, read_bytes
-from haproxy_mgmt.cert_inventory import PRIVKEY
-from haproxy_mgmt.cli import cert_import_helper
-from haproxy_mgmt.dns_profile_keys import generate, render_private_key
+from haprion import cert_import, cert_upload
+from haprion.cert_import import MAX_UPLOAD_BYTES, ImportError_, read_bytes
+from haprion.cert_inventory import PRIVKEY
+from haprion.cli import cert_import_helper
+from haprion.dns_profile_keys import generate, render_private_key
 from tests.contract_schema import assert_contract
 from tests.test_cert_import import KEEPERS, OPENSSL, Pki
 from tests.test_cert_publish import Fixture

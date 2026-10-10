@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
-from haproxy_mgmt import candidate_validation
-from haproxy_mgmt.candidate_validation import (
+from haprion import candidate_validation
+from haprion.candidate_validation import (
     materialize_candidate,
     parse_candidate,
     sandbox_command,
 )
-from haproxy_mgmt.helper_protocol import HelperProtocolError, JsonValue
+from haprion.helper_protocol import HelperProtocolError, JsonValue
 
 
 class CandidateValidationTests(unittest.TestCase):

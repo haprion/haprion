@@ -21,11 +21,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt.generate import WAF_BACKEND
-from haproxy_mgmt.guid import REDIRECT_PREFIX
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion.generate import WAF_BACKEND
+from haprion.guid import REDIRECT_PREFIX
+from haprion.proxy_model import load_proxy
 
-from haproxy_ui import metrics
+from haprion_ui import metrics
 from tests.test_login import LoginTestCase, configuration
 
 
@@ -105,7 +105,7 @@ class ReadingACluster(LoginTestCase):
                 lambda *_a, **k: measurement(counters=k.get("counters", metrics.CARD_COUNTERS)),
             ),
         ):
-            patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=value)
+            patch = mock.patch(f"haprion_ui.db.{name}", side_effect=value)
             patch.start()
             self.addCleanup(patch.stop)
 
@@ -409,7 +409,7 @@ class MarkingARangeOnThePage(ReadingACluster):
 
     def test_the_figures_are_counted_over_the_marked_range(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: measurement()
+            "haprion_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: measurement()
         ) as totals:
             self.page(self.marks(50, 40))
 
@@ -421,7 +421,7 @@ class MarkingARangeOnThePage(ReadingACluster):
 
     def test_an_unmarked_page_counts_the_whole_window(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: measurement()
+            "haprion_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: measurement()
         ) as totals:
             self.page()
 
@@ -464,7 +464,7 @@ class TheWayBackAndForth(ReadingACluster):
         # The object page reads a draft, and a page whose draft lookup fails is
         # a page that does not render - which would hide what this is about.
         #
-        patch = mock.patch("haproxy_ui.db.read_draft", return_value=None)
+        patch = mock.patch("haprion_ui.db.read_draft", return_value=None)
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -487,7 +487,7 @@ class TheWayBackAndForth(ReadingACluster):
         """The card can only draw the backend somebody already guessed right."""
 
         source = (
-            Path(__file__).resolve().parents[1] / "src" / "haproxy_ui" / "templates" / "object.html"
+            Path(__file__).resolve().parents[1] / "src" / "haprion_ui" / "templates" / "object.html"
         ).read_text()
 
         self.assertIn("/clusters/{{ object.cluster }}/metrics", source)
@@ -541,7 +541,7 @@ backends:
     def test_the_generator_and_the_page_agree_on_the_name(self) -> None:
         """Built rather than parsed, so no name is split on somebody's hyphen."""
 
-        from haproxy_mgmt.guid import redirect_suffixes  # noqa: PLC0415
+        from haprion.guid import redirect_suffixes  # noqa: PLC0415
 
         proxy = load_proxy("shop", self.DOCUMENT)
         self.assertEqual(f"shop-{redirect_suffixes(proxy)[('/old', 'prefix')]}", self.CURRENT)

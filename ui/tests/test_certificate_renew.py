@@ -11,8 +11,8 @@ import unittest
 from typing import Any
 from unittest import mock
 
-from haproxy_ui import auth, certificate_renew
-from haproxy_ui.certificates import RegistryCertificateView
+from haprion_ui import auth, certificate_renew
+from haprion_ui.certificates import RegistryCertificateView
 from tests.test_certificate_activity import csr_pending_row
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import overview, registered, registry_of, with_registry
@@ -142,7 +142,7 @@ class TheRoutes(DeleteRouteTestCase):
 
     def test_an_ndes_row_is_enrolled_again(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.cluster_certificates",
+            "haprion_ui.db.cluster_certificates",
             return_value=[with_registry(certificate_reading(), ndes_row())],
         ):
             client = self.writing_client()

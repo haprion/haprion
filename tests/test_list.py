@@ -20,8 +20,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from haproxy_mgmt.cli import list as list_command
-from haproxy_mgmt.cli.caller import CallerError
+from haprion.cli import list as list_command
+from haprion.cli.caller import CallerError
 
 #
 # Fixed commit times plus a fixed zone, so the DATE column is a constant the

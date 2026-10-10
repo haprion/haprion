@@ -13,7 +13,7 @@ Group=_haprion-web
 # deployment; rolling back is switching it and restarting again.
 Environment=HAPROXY_UI_CONFIG=/etc/haprion/ui.toml
 ExecStart=/opt/haprion-ui/current/venv/bin/uvicorn \
-    --factory haproxy_ui.app:create_app \
+    --factory haprion_ui.app:create_app \
     --host 127.0.0.1 --port 8080 \
     --no-server-header --proxy-headers --forwarded-allow-ips=127.0.0.1
 

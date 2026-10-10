@@ -11,7 +11,7 @@ import zipfile
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
-from haproxy_mgmt import debian_package, node_package
+from haprion import debian_package, node_package
 
 INSTALLER_PATH = Path(__file__).resolve().parents[1] / "tools" / "install-release.py"
 NODE_PACKAGE_SOURCE = Path(node_package.__file__).read_text(encoding="utf-8")
@@ -29,17 +29,17 @@ class InstallReleaseTests(unittest.TestCase):
     def make_wheel(self, root: Path) -> tuple[Path, str]:
         wheel = root / "haprion-0.1.0-py3-none-any.whl"
         with zipfile.ZipFile(wheel, "w") as archive:
-            archive.writestr("haproxy_mgmt/__init__.py", "")
+            archive.writestr("haprion/__init__.py", "")
             archive.writestr(
-                "haproxy_mgmt/compatibility.json",
+                "haprion/compatibility.json",
                 '{"schema_version":1,"engine_api":1}\n',
             )
             # The release verifies its node package with its own verifier.
-            archive.writestr("haproxy_mgmt/node_package.py", NODE_PACKAGE_SOURCE)
-            archive.writestr("haproxy_mgmt/debian_package.py", DEBIAN_PACKAGE_SOURCE)
-            archive.writestr("haproxy_mgmt/cli/__init__.py", "")
+            archive.writestr("haprion/node_package.py", NODE_PACKAGE_SOURCE)
+            archive.writestr("haprion/debian_package.py", DEBIAN_PACKAGE_SOURCE)
+            archive.writestr("haprion/cli/__init__.py", "")
             archive.writestr(
-                "haproxy_mgmt/cli/example.py",
+                "haprion/cli/example.py",
                 "def main():\n    return 0\n",
             )
             archive.writestr(
@@ -48,7 +48,7 @@ class InstallReleaseTests(unittest.TestCase):
             )
             archive.writestr(
                 "haprion-0.1.0.dist-info/entry_points.txt",
-                "[console_scripts]\nhaprion-example = haproxy_mgmt.cli.example:main\n",
+                "[console_scripts]\nhaprion-example = haprion.cli.example:main\n",
             )
         digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
         return wheel, digest
@@ -164,7 +164,7 @@ class InstallReleaseTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(release.stat().st_mode), 0o555)
             self.assertEqual(stat.S_IMODE((release / "bin/haprion-example").stat().st_mode), 0o555)
             self.assertEqual(
-                stat.S_IMODE((release / "lib/haproxy_mgmt/__init__.py").stat().st_mode), 0o444
+                stat.S_IMODE((release / "lib/haprion/__init__.py").stat().st_mode), 0o444
             )
             launcher = (release / "bin/haprion-example").read_text()
             self.assertTrue(launcher.startswith(f"#!{sys.executable} -I\n"))
@@ -270,7 +270,7 @@ class InstallReleaseTests(unittest.TestCase):
                 members = {
                     item.filename: source.read(item)
                     for item in source.infolist()
-                    if item.filename != "haproxy_mgmt/compatibility.json"
+                    if item.filename != "haprion/compatibility.json"
                 }
             wheel.unlink()
             with zipfile.ZipFile(wheel, "w") as target:

@@ -1,6 +1,6 @@
 """The fixed account names (B266) are stated three times; this holds them together.
 
-`haproxy_mgmt.accounts` for the engine, `install/accounts.sh` for the
+`haprion.accounts` for the engine, `install/accounts.sh` for the
 installation steps, and the sysusers fragments that create the accounts. A name
 changed in one and not the others would install an account nobody uses, or a
 sudoers rule for an account that does not exist.
@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt import accounts
+from haprion import accounts
 
 INSTALL = Path(__file__).resolve().parents[1] / "install"
 MANAGER = INSTALL / "sysusers/haprion.conf"

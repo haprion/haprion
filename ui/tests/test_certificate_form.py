@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haproxy_ui import auth, certificate_form, db
+from haprion_ui import auth, certificate_form, db
 from tests.test_certificates import reading as certificate_reading
 from tests.test_certificates import registered, with_registry
 from tests.test_login import LoginTestCase, configuration
@@ -222,9 +222,9 @@ class CertificateFormRouteTestCase(LoginTestCase):
             return queued(operation="cert_issue", cluster=None)
 
         for patch in (
-            mock.patch("haproxy_ui.db.queue_job", side_effect=queue),
+            mock.patch("haprion_ui.db.queue_job", side_effect=queue),
             mock.patch(
-                "haproxy_ui.db.cluster_certificates",
+                "haprion_ui.db.cluster_certificates",
                 return_value=[
                     with_registry(
                         certificate_reading(),
@@ -289,7 +289,7 @@ class TheFormPage(CertificateFormRouteTestCase):
                 certificate_reading(), registered(fingerprint="a" * 64), receivers=receivers
             )
         ]
-        with mock.patch("haproxy_ui.db.cluster_certificates", return_value=reading):
+        with mock.patch("haprion_ui.db.cluster_certificates", return_value=reading):
             page = self.writing_client().get("/certificates/new").text
 
         self.assertEqual(page.count(" data-receiver-option>"), 28)
@@ -369,7 +369,7 @@ class TheFormPage(CertificateFormRouteTestCase):
 
     def test_a_running_certificate_job_is_said_and_the_button_held(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.recent_jobs",
+            "haprion_ui.db.recent_jobs",
             return_value=[queued(operation="cert_issue", cluster=None, state="running")],
         ):
             page = self.writing_client().get("/certificates/new").text
@@ -405,9 +405,9 @@ class TheFormPage(CertificateFormRouteTestCase):
             payload={"profile": "cf-main", "revision": 2},
         )
         with (
-            mock.patch("haproxy_ui.db.dns_profiles", return_value=[profile]),
-            mock.patch("haproxy_ui.db.ndes_profiles", return_value=[ndes]),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[applied]),
+            mock.patch("haprion_ui.db.dns_profiles", return_value=[profile]),
+            mock.patch("haprion_ui.db.ndes_profiles", return_value=[ndes]),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[applied]),
         ):
             client = self.client(config)
             self.sign_in(client)
@@ -426,9 +426,9 @@ class TheFormPage(CertificateFormRouteTestCase):
             payload={"profile": "certserver1", "revision": 1},
         )
         with (
-            mock.patch("haproxy_ui.db.dns_profiles", return_value=[profile]),
-            mock.patch("haproxy_ui.db.ndes_profiles", return_value=[ndes]),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[enrolled, applied]),
+            mock.patch("haprion_ui.db.dns_profiles", return_value=[profile]),
+            mock.patch("haprion_ui.db.ndes_profiles", return_value=[ndes]),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[enrolled, applied]),
         ):
             client = self.client(config)
             self.sign_in(client)
@@ -456,9 +456,9 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
             else []
         )
         for patch in (
-            mock.patch("haproxy_ui.db.dns_profiles", return_value=[]),
-            mock.patch("haproxy_ui.db.ndes_profiles", return_value=[profile]),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
+            mock.patch("haprion_ui.db.dns_profiles", return_value=[]),
+            mock.patch("haprion_ui.db.ndes_profiles", return_value=[profile]),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=jobs),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -602,7 +602,7 @@ class SendingTheForm(CertificateFormRouteTestCase):
         self.assertEqual(self.queued, [])
 
     def test_a_busy_certificate_slot_is_a_sentence_on_the_form(self) -> None:
-        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.CertificateBusy()):
+        with mock.patch("haprion_ui.db.queue_job", side_effect=db.CertificateBusy()):
             response = self.post(self.writing_client())
 
         self.assertEqual(response.status_code, 200)

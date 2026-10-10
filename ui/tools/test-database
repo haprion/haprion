@@ -24,7 +24,7 @@ done
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/haprion-test-db.XXXXXX")"
 data_dir="${test_root}/data"
 socket_dir="${test_root}/socket"
-database="haproxy_ui_test"
+database="haprion_ui_test"
 started=false
 
 cleanup() {

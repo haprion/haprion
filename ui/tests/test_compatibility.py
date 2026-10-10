@@ -7,8 +7,8 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from haproxy_mgmt import accounts
-from haproxy_mgmt.cli import (
+from haprion import accounts
+from haprion.cli import (
     backup_job_ask,
     backup_job_helper,
     cert_receiver_ask,
@@ -19,10 +19,10 @@ from haproxy_mgmt.cli import (
     node_restore_helper,
 )
 
-from haproxy_ui import compatibility
+from haprion_ui import compatibility
 
 ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = ROOT / "ui/src/haproxy_ui/compatibility.json"
+MANIFEST = ROOT / "ui/src/haprion_ui/compatibility.json"
 
 
 class CompatibilityMetadataTests(unittest.TestCase):
@@ -123,7 +123,7 @@ class CompatibilityMetadataTests(unittest.TestCase):
 
     def test_requirements_match_this_deliverys_engine_schema_and_node_installer(self) -> None:
         requirements = compatibility.load_requirements(MANIFEST)
-        engine = json.loads((ROOT / "src/haproxy_mgmt/compatibility.json").read_text())
+        engine = json.loads((ROOT / "src/haprion/compatibility.json").read_text())
         self.assertGreaterEqual(engine["engine_api"], requirements.engine_api)
 
         migrations = ROOT / "ui/migrations/versions"
@@ -328,7 +328,7 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
     """
 
     VERSIONS = Path(__file__).resolve().parents[1] / "migrations" / "versions"
-    DECLARED = Path(__file__).resolve().parents[1] / "src" / "haproxy_ui" / "compatibility.json"
+    DECLARED = Path(__file__).resolve().parents[1] / "src" / "haprion_ui" / "compatibility.json"
 
     def revisions(self) -> dict[str, str | None]:
         found: dict[str, str | None] = {}

@@ -11,7 +11,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from haproxy_mgmt.proxy_model import (
+from haprion.proxy_model import (
     COMMON_KEYS,
     DNS_REFUSED_KEYS,
     HTTP_ONLY_KEYS,

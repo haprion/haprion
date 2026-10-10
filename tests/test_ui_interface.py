@@ -25,10 +25,10 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import helper_socket, ui_interface
-from haproxy_mgmt.cert_publish import Material, PublishError, read_material
-from haproxy_mgmt.cli import ui_tls_helper
-from haproxy_mgmt.config import CertificateSource, RegisteredCertificate
+from haprion import helper_socket, ui_interface
+from haprion.cert_publish import Material, PublishError, read_material
+from haprion.cli import ui_tls_helper
+from haprion.config import CertificateSource, RegisteredCertificate
 from tests.contract_schema import assert_contract
 from tests.test_cert_publish import Fixture, issue
 

@@ -4,7 +4,7 @@ import unittest
 from dataclasses import dataclass
 from typing import Any
 
-from haproxy_ui import health
+from haprion_ui import health
 
 
 @dataclass

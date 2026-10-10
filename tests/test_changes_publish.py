@@ -15,10 +15,10 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt.candidate_validation import ValidationResult
-from haproxy_mgmt.cli import changes_publish
-from haproxy_mgmt.cluster_settings import LOCATION as SETTINGS_LOCATION
-from haproxy_mgmt.version_history import count_versions, recent_versions, request_id_of
+from haprion.candidate_validation import ValidationResult
+from haprion.cli import changes_publish
+from haprion.cluster_settings import LOCATION as SETTINGS_LOCATION
+from haprion.version_history import count_versions, recent_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_changes_publish_objects import NETWORK, ObjectsPublishFixture, proxy
 from tests.test_publish_helper import Recorder, git

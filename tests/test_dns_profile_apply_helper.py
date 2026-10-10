@@ -11,10 +11,10 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt import dns_profiles
-from haproxy_mgmt.cli import dns_profile_apply_helper
-from haproxy_mgmt.config import PathPolicy
-from haproxy_mgmt.dns_profile_keys import generate, render_private_key
+from haprion import dns_profiles
+from haprion.cli import dns_profile_apply_helper
+from haprion.config import PathPolicy
+from haprion.dns_profile_keys import generate, render_private_key
 from tests.test_cert_publish import Fixture
 
 
@@ -226,7 +226,7 @@ def renewal_conf(lineage: str, credentials: Path) -> str:
 
 
 def yaml_policy(path: Path) -> PathPolicy:
-    from haproxy_mgmt.config import load_policy
+    from haprion.config import load_policy
 
     return load_policy(path, require_secure=False)
 

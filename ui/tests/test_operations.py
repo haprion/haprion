@@ -14,15 +14,15 @@ import unittest
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from haproxy_mgmt import accounts, cert_issue
-from haproxy_mgmt.cli import (
+from haprion import accounts, cert_issue
+from haprion.cli import (
     cert_receiver_helper,
     changes_publish,
     deploy,
     server_state_helper,
 )
 
-from haproxy_ui import operations, worker
+from haprion_ui import operations, worker
 
 REQUEST = uuid4()
 
@@ -721,7 +721,7 @@ class TheReceiverHelperIsNotReachedThroughSudo(unittest.TestCase):
 
                 self.assertEqual(prepared.argv, operations.RECEIVER_CLIENT)
                 self.assertNotIn("/usr/bin/sudo", prepared.argv)
-                self.assertEqual(prepared.argv[1:], ("-m", "haproxy_mgmt.cli.cert_receiver_ask"))
+                self.assertEqual(prepared.argv[1:], ("-m", "haprion.cli.cert_receiver_ask"))
                 self.assertEqual(json.loads(prepared.request)["operation"], "cert_receiver")
 
     def test_the_sudoers_example_grants_it_nothing(self) -> None:

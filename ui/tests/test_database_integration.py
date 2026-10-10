@@ -21,7 +21,7 @@ from uuid import uuid4
 
 import psycopg
 import psycopg.sql
-from haproxy_mgmt.traffic_collector import (
+from haprion.traffic_collector import (
     RETENTION_DAYS,
     CollectorConfig,
     NodeTarget,
@@ -35,7 +35,7 @@ from haproxy_mgmt.traffic_collector import (
 )
 from psycopg.types.json import Jsonb
 
-from haproxy_ui import auth, db, metrics, search_index, timing, traffic_logs
+from haprion_ui import auth, db, metrics, search_index, timing, traffic_logs
 
 DSN = os.environ.get("HAPROXY_UI_TEST_DATABASE_DSN", "")
 
@@ -340,7 +340,7 @@ class ARealDatabase(unittest.TestCase):
     def test_retention_removes_sessions_a_month_after_they_ended(self) -> None:
         """Review 2026-09-28 F07; the clause is the retention command's own."""
 
-        from haproxy_ui import auth
+        from haprion_ui import auth
 
         clause = self.retention_clause("where_session_ended", "SESSION_KEEP_DAYS")
         with self.connect() as connection, connection.cursor() as cursor:
@@ -719,7 +719,7 @@ class ARealDatabase(unittest.TestCase):
         such column fails this test and not a person's save.
         """
 
-        source = (Path(__file__).resolve().parents[1] / "src/haproxy_ui/db.py").read_text()
+        source = (Path(__file__).resolve().parents[1] / "src/haprion_ui/db.py").read_text()
         statements = [
             node.value
             for node in ast.walk(ast.parse(source))
@@ -859,7 +859,7 @@ class ARealDatabase(unittest.TestCase):
             cursor.execute("select version_num from alembic_version")
             declared = json.loads(
                 (
-                    Path(__file__).resolve().parents[1] / "src/haproxy_ui/compatibility.json"
+                    Path(__file__).resolve().parents[1] / "src/haprion_ui/compatibility.json"
                 ).read_text()
             )["requires"]["database_head"]
             self.assertEqual(cursor.fetchone(), (declared,))
@@ -1973,7 +1973,7 @@ class ARealDatabase(unittest.TestCase):
             Path("/nonexistent/mirror"),
             Path("/nonexistent/staging"),
             (NodeTarget("alpha", "node-a", "node-a.example.com"),),
-            "haproxy_ui_absent",
+            "haprion_ui_absent",
             "/nonexistent/socket",
         )
         self.assertEqual(_mirror_window(config, now=datetime.now(UTC)), RETENTION_DAYS)
@@ -3668,7 +3668,7 @@ class TheAccountToolAgainstARealDatabase(unittest.TestCase):
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def setUp(self) -> None:
-        from haproxy_ui import admin
+        from haprion_ui import admin
 
         self.admin = admin
         with self.connect() as connection:
@@ -4434,7 +4434,7 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
     def test_a_frontend_s_figures_and_the_dashboard_s_are_the_same_as_the_pairing_gave(
         self,
     ) -> None:
-        from haproxy_ui import metrics
+        from haprion_ui import metrics
         from tests import metric_totals_reference as reference
 
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:

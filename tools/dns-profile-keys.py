@@ -28,11 +28,11 @@ import sys
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent.parent / "src"
-if not (SOURCE / "haproxy_mgmt").is_dir():
+if not (SOURCE / "haprion").is_dir():
     SOURCE = Path("/opt/haprion/current/lib")
 sys.path.insert(0, str(SOURCE))
 
-from haproxy_mgmt.dns_profile_keys import (  # noqa: E402 - the path above is the import
+from haprion.dns_profile_keys import (  # noqa: E402 - the path above is the import
     KeyFileError,
     open_sealed,
     read_private_key,

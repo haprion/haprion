@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt import crs
+from haprion import crs
 
 SQLI = b"""\
 # -=[ libinjection ]=-

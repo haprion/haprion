@@ -13,8 +13,8 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haproxy_ui import addresses, demo, search_index
-from haproxy_ui.db import ClusterObjects, ClusterStatus
+from haprion_ui import addresses, demo, search_index
+from haprion_ui.db import ClusterObjects, ClusterStatus
 from tests.test_cluster_traffic import measurement
 from tests.test_login import LoginTestCase, configuration
 
@@ -216,17 +216,17 @@ class ThePages(LoginTestCase):
 
         with (
             mock.patch(
-                "haproxy_ui.db.cluster_objects",
+                "haprion_ui.db.cluster_objects",
                 return_value=[objects_reading(SHOP_ENTRY, API_ENTRY)],
             ),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[]),
-            mock.patch("haproxy_ui.db.search", side_effect=search),
-            mock.patch("haproxy_ui.db.read_draft", return_value=None),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
-            mock.patch("haproxy_ui.db.read_backend_series", return_value=[]),
-            mock.patch("haproxy_ui.db.read_backend_aliases", return_value={}),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[]),
+            mock.patch("haprion_ui.db.search", side_effect=search),
+            mock.patch("haprion_ui.db.read_draft", return_value=None),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
+            mock.patch("haprion_ui.db.read_backend_series", return_value=[]),
+            mock.patch("haprion_ui.db.read_backend_aliases", return_value={}),
             mock.patch(
-                "haproxy_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: measurement()
+                "haprion_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: measurement()
             ),
         ):
             return client.get(path)
@@ -299,8 +299,8 @@ class TheLampUsesTheHelpersAnswer(LoginTestCase):
         )
         unchecked = {**SHOP_ENTRY, "health_checked": False}
         with (
-            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects_reading(unchecked)]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[status]),
+            mock.patch("haprion_ui.db.cluster_objects", return_value=[objects_reading(unchecked)]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[status]),
         ):
             page = client.get("/proxies")
 

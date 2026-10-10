@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.deploy_plan import (
+from haprion.deploy_plan import (
     CertificateRef,
     CertificateTarget,
     NodeObservation,

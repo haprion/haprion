@@ -91,7 +91,7 @@ class NodeInstallationReadingTests(unittest.TestCase):
         its own metadata and reported no API and nothing current.
         """
 
-        from haproxy_mgmt.node_package import NODE_SCRIPTS as PACKAGED
+        from haprion.node_package import NODE_SCRIPTS as PACKAGED
 
         match = re.search(
             r"^NODE_SCRIPTS = \(\n(.*?)^\)", SCRIPT.read_text(), re.MULTILINE | re.DOTALL

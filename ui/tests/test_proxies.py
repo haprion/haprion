@@ -4,9 +4,9 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from haproxy_ui import health, proxies
-from haproxy_ui.db import ClusterInventory
-from haproxy_ui.proxies import build_proxy_overview
+from haprion_ui import health, proxies
+from haprion_ui.db import ClusterInventory
+from haprion_ui.proxies import build_proxy_overview
 
 NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 

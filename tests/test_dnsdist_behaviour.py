@@ -27,11 +27,11 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from haproxy_mgmt import dnsdist_config
-from haproxy_mgmt.config import Vip
-from haproxy_mgmt.generate import generate
-from haproxy_mgmt.golden import cases, expected_dns
-from haproxy_mgmt.proxy_model import load_proxy
+from haprion import dnsdist_config
+from haprion.config import Vip
+from haprion.generate import generate
+from haprion.golden import cases, expected_dns
+from haprion.proxy_model import load_proxy
 from tests.test_node_dns_metrics import parse_dns_metrics
 
 DNSDIST = shutil.which("dnsdist")
@@ -290,11 +290,11 @@ class EveryGoldenDnsdistFileIsAConfiguration(unittest.TestCase):
     def test_the_file_with_prometheus_s_sources_is_one_as_well(self) -> None:
         """B253: a second listen address and a wider ACL, held to the same standard."""
 
-        from haproxy_mgmt import dnsdist_config
-        from haproxy_mgmt.cluster_settings import ClusterSettings, Metrics
-        from haproxy_mgmt.config import Vip
-        from haproxy_mgmt.generate import generate
-        from haproxy_mgmt.proxy_model import load_proxy
+        from haprion import dnsdist_config
+        from haprion.cluster_settings import ClusterSettings, Metrics
+        from haprion.config import Vip
+        from haprion.generate import generate
+        from haprion.proxy_model import load_proxy
 
         proxy = load_proxy(
             "resolver",

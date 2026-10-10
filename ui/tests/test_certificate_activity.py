@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 
-from haproxy_ui import auth, certificate_activity, certificates
+from haprion_ui import auth, certificate_activity, certificates
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import node, overview, registered, registry_of, status, with_registry
 from tests.test_certificates import reading as certificate_reading
@@ -261,7 +261,7 @@ class RequestStates(unittest.TestCase):
 class TheListingFollowsTheJob(DeleteRouteTestCase):
     def test_a_requested_certificate_is_a_row_before_the_registry_lists_it(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.recent_jobs", return_value=[issue_job("running", "*.brand.example")]
+            "haprion_ui.db.recent_jobs", return_value=[issue_job("running", "*.brand.example")]
         ):
             page = self.writing_client().get("/certificates?open=brand.example").text
         self.assertIn('data-certificates-region data-refresh="true"', page)
@@ -284,8 +284,8 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
     def test_a_listed_certificate_keeps_its_own_state_once_the_request_is_done(self) -> None:
         listed = with_registry(certificate_reading(), registered("new.example.com", kind="acme"))
         with (
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[issue_job("done")]),
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[listed]),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[issue_job("done")]),
+            mock.patch("haprion_ui.db.cluster_certificates", return_value=[listed]),
         ):
             page = self.writing_client().get("/certificates").text
         self.assertNotIn('">Issued<', page)
@@ -293,7 +293,7 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
 
     def test_a_deleting_row_shows_the_badge_and_the_page_refreshes(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.recent_jobs", return_value=[delete_job("running", "old.example.com")]
+            "haprion_ui.db.recent_jobs", return_value=[delete_job("running", "old.example.com")]
         ):
             page = self.writing_client().get("/certificates").text
         self.assertIn('data-certificates-region data-refresh="true"', page)
@@ -335,7 +335,7 @@ class ResumingAnEnrollment(DeleteRouteTestCase):
         pending["validation_error"] = "no material at its source yet"
         pending["source"]["ndes_profile"] = "certserver1"
         with mock.patch(
-            "haproxy_ui.db.cluster_certificates",
+            "haprion_ui.db.cluster_certificates",
             return_value=[with_registry(certificate_reading(), pending)],
         ):
             client = self.writing_client()
@@ -389,7 +389,7 @@ class PublishingAnUnpublishedCertificate(DeleteRouteTestCase):
         self,
     ) -> None:
         with mock.patch(
-            "haproxy_ui.db.cluster_certificates", return_value=[self.unpublished_reading()]
+            "haprion_ui.db.cluster_certificates", return_value=[self.unpublished_reading()]
         ):
             client = self.writing_client()
             page = client.get("/certificates?view=registry&open=waiting.example.com").text
@@ -423,7 +423,7 @@ class PublishingAnUnpublishedCertificate(DeleteRouteTestCase):
             receivers=({"id": "lb-01", "published_at": None, "current": False},),
         )
         with mock.patch(
-            "haproxy_ui.db.cluster_certificates",
+            "haprion_ui.db.cluster_certificates",
             return_value=[with_registry(certificate_reading(), entry, receivers=("lb-01",))],
         ):
             client = self.writing_client()
@@ -670,7 +670,7 @@ class SigningRequestStates(unittest.TestCase):
 class ADownloadableSigningRequest(DeleteRouteTestCase):
     def test_the_row_offers_the_download_and_the_upload_and_the_route_serves_it(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.cluster_certificates",
+            "haprion_ui.db.cluster_certificates",
             return_value=[with_registry(certificate_reading(), csr_pending_row())],
         ):
             client = self.writing_client()

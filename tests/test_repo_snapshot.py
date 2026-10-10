@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.repo_snapshot import (
+from haprion.repo_snapshot import (
     ConcurrentUpdate,
     PublishError,
     build_candidate_tree,

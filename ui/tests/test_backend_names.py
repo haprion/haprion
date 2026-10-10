@@ -119,8 +119,16 @@ class TheObjectsHelperIsRead(unittest.TestCase):
             view.runtime_backends if view is not None else None, ("web", "shop-redirect")
         )
 
-    def test_an_older_helper_said_nothing(self) -> None:
-        view = objects.object_view({"name": "shop", "document": "x"})
+    def test_an_unreadable_document_names_no_backends(self) -> None:
+        view = objects.object_view(
+            {
+                "name": "shop",
+                "document": "x",
+                "readable": False,
+                "problem": "not a mapping",
+                "runtime_backends": None,
+            }
+        )
 
         self.assertIsNotNone(view)
         self.assertIsNone(view.runtime_backends if view is not None else None)

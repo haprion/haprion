@@ -110,30 +110,16 @@ class CompatibilityMetadataTests(unittest.TestCase):
             with self.assertRaisesRegex(compatibility.CompatibilityError, "database_head"):
                 compatibility.load_requirements(path)
 
-    def test_a_legacy_single_revision_can_be_read_only_for_the_bridge_check(self) -> None:
+    def test_metadata_without_a_database_head_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "compatibility.json"
             document = json.loads(MANIFEST.read_text())
             document["requires"].pop("database_head")
-            document["requires"].pop("rollback_safe_from")
             document["requires"]["database_revisions"] = ["0020"]
             path.write_text(json.dumps(document))
 
             with self.assertRaisesRegex(compatibility.CompatibilityError, "database_head"):
                 compatibility.load_requirements(path)
-            requirements = compatibility.load_requirements(path, allow_legacy_database_head=True)
-            self.assertEqual(requirements.database_head, "0020")
-
-    def test_legacy_metadata_with_multiple_revisions_is_ambiguous(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            path = Path(raw) / "compatibility.json"
-            document = json.loads(MANIFEST.read_text())
-            document["requires"].pop("database_head")
-            document["requires"]["database_revisions"] = ["0020", "0021"]
-            path.write_text(json.dumps(document))
-
-            with self.assertRaisesRegex(compatibility.CompatibilityError, "database_head"):
-                compatibility.load_requirements(path, allow_legacy_database_head=True)
 
     def test_requirements_match_this_deliverys_engine_schema_and_node_installer(self) -> None:
         requirements = compatibility.load_requirements(MANIFEST)
@@ -232,16 +218,6 @@ class UpgradeFailureTests(unittest.TestCase):
         bridge = self.requirements(head="0020", accepts=("0020", "0021"))
         candidate = self.requirements(head="0021", accepts=("0021",))
         self.assertEqual(compatibility.schema_upgrade_failures(bridge, candidate, "0020"), ())
-
-    def test_metadata_free_release_can_bridge_only_without_a_schema_change(self) -> None:
-        unchanged = self.requirements(head="0020", accepts=("0020", "0021"))
-        migrating = self.requirements(head="0021", accepts=("0021",))
-
-        self.assertEqual(compatibility.schema_upgrade_failures(None, unchanged, "0020"), ())
-        self.assertEqual(
-            compatibility.schema_upgrade_failures(None, migrating, "0020"),
-            ("running UI has no compatibility metadata for a schema change",),
-        )
 
     def test_an_old_or_unreadable_cli_is_not_silently_current(self) -> None:
         self.assertEqual(compatibility.engine_api({"engine_api": 1}), 1)

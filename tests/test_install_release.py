@@ -262,7 +262,7 @@ class InstallReleaseTests(unittest.TestCase):
 
             self.assertNotEqual(digest, unsafe_digest)
 
-    def test_a_pre_metadata_wheel_remains_installable_as_engine_api_zero(self) -> None:
+    def test_a_wheel_without_engine_metadata_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             work = Path(raw).resolve()
             wheel, _ = self.make_wheel(work)
@@ -278,18 +278,17 @@ class InstallReleaseTests(unittest.TestCase):
                     target.writestr(name, content)
             digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
 
-            release_id = install_release_module.install_release(
-                wheel=wheel,
-                expected_sha256=digest,
-                target=work / "target",
-                python=Path(sys.executable),
-                require_root=False,
-            )
-
-            metadata = json.loads(
-                ((work / "target/releases" / release_id) / "INSTALLATION.json").read_text()
-            )
-            self.assertEqual(metadata["engine_api"], 0)
+            with self.assertRaisesRegex(
+                install_release_module.InstallError, "no engine compatibility metadata"
+            ):
+                install_release_module.install_release(
+                    wheel=wheel,
+                    expected_sha256=digest,
+                    target=work / "target",
+                    python=Path(sys.executable),
+                    require_root=False,
+                )
+            self.assertFalse((work / "target").exists())
 
     def test_a_runtime_without_pynacl_is_refused_by_name(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

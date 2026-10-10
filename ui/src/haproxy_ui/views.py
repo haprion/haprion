@@ -9196,7 +9196,7 @@ class DraftPublish:
     """A finished publish of one draft revision: the commit it was made against, and
     whether it changed anything."""
 
-    base: str | None
+    base: str
     changed: bool | None
 
 
@@ -9220,14 +9220,17 @@ def _published_drafts(
     for job in db.draft_publishes(connection, cluster=cluster, draft_ids=ids):
         payload = job.payload if isinstance(job.payload, Mapping) else {}
         base = payload.get("expected_head")
+        #
+        # Every publish is queued with the commit it was made against; a job
+        # without one is no evidence, and its row stays for the operator.
+        #
+        if not isinstance(base, str) or not base:
+            continue
         changed = _publish_changed(job.result)
         for identity, revision in _carried(payload, "draft", "drafts"):
             settled.setdefault(
                 (identity, revision),
-                DraftPublish(
-                    base if isinstance(base, str) and base else None,
-                    changed if isinstance(changed, bool) else None,
-                ),
+                DraftPublish(base, changed if isinstance(changed, bool) else None),
             )
     return settled
 
@@ -9281,16 +9284,14 @@ def _reflects(draft: db.ProxyDraft, publish: DraftPublish, reading: ObjectsReadi
     cache that has read any other commit has read this publish or a later one.
     A cache still at that commit has not - unless the publish changed nothing,
     and then presence is all there is to wait for: a new object, or a removal.
-    A job without a base (before 2026-10-06) is judged by presence as before.
     """
 
-    if publish.base is not None:
-        if reading.commit is None:
-            return False
-        if reading.commit != publish.base:
-            return True
-        if publish.changed is not False:
-            return False
+    if reading.commit is None:
+        return False
+    if reading.commit != publish.base:
+        return True
+    if publish.changed is not False:
+        return False
     return (
         (draft.object_id not in reading.names)
         if draft.deleted

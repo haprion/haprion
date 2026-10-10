@@ -80,7 +80,7 @@ def _positive_int(value: object, name: str) -> int:
     return value
 
 
-def load_requirements(path: Path, *, allow_legacy_database_head: bool = False) -> Requirements:
+def load_requirements(path: Path) -> Requirements:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -112,11 +112,6 @@ def load_requirements(path: Path, *, allow_legacy_database_head: bool = False) -
 
     revisions = strings("database_revisions")
     database_head = required.get("database_head")
-    if database_head is None and allow_legacy_database_head and len(revisions) == 1:
-        # Compatibility metadata predating coordinated schema upgrades named
-        # only the one revision it could run.  That singleton is unambiguous
-        # when checking the installed release during the first bridge update.
-        database_head = revisions[0]
     if not isinstance(database_head, str) or not database_head:
         raise CompatibilityError("database_head must be a non-empty string")
     if database_head not in revisions:
@@ -176,12 +171,12 @@ def named_release(root: Path, name: str, what: str) -> Path:
     return release
 
 
-def ui_requirements(release: Path, *, allow_legacy_database_head: bool = False) -> Requirements:
+def ui_requirements(release: Path) -> Requirements:
     metadata = _one(
         list(release.glob("venv/lib/python*/site-packages/haproxy_ui/compatibility.json")),
         "installed UI compatibility file",
     )
-    return load_requirements(metadata, allow_legacy_database_head=allow_legacy_database_head)
+    return load_requirements(metadata)
 
 
 def cli_metadata(release: Path) -> dict[str, Any]:
@@ -207,14 +202,10 @@ def installed_entry_points(document: Mapping[str, Any]) -> set[str]:
 
 
 def schema_upgrade_failures(
-    active: Requirements | None, candidate: Requirements, current_revision: str
+    active: Requirements, candidate: Requirements, current_revision: str
 ) -> tuple[str, ...]:
     """Why migrating under the active UI would make service or rollback unsafe."""
 
-    if active is None:
-        if candidate.database_head == current_revision:
-            return ()
-        return ("running UI has no compatibility metadata for a schema change",)
     failures = []
     if current_revision not in active.database_revisions:
         failures.append(f"running UI does not accept current revision {current_revision}")
@@ -547,22 +538,11 @@ def main(argv: list[str] | None = None) -> int:
             report.fail("schema revision", str(exc))
         else:
             if args.upgrade_from_current:
-                active_release: Path | None = None
                 try:
                     active_release = current_release(args.platform_root, "UI")
-                    active_requirements = ui_requirements(
-                        active_release, allow_legacy_database_head=True
-                    )
+                    active_requirements = ui_requirements(active_release)
                 except CompatibilityError as exc:
-                    transition_failures = schema_upgrade_failures(None, requirements, revision)
-                    if active_release is None or transition_failures:
-                        report.fail("schema transition", str(exc))
-                    else:
-                        report.pass_(
-                            "running schema",
-                            f"{revision}, unchanged from metadata-free {active_release.name}",
-                        )
-                        report.pass_("rollback schema", f"{revision}, no schema transition")
+                    report.fail("schema transition", str(exc))
                 else:
                     transition_failures = schema_upgrade_failures(
                         active_requirements, requirements, revision

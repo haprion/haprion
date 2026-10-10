@@ -41,17 +41,8 @@ from haproxy_mgmt.debian_package import package, write  # noqa: E402 - the path 
 # Each package counts its own revision: it moves when our part of the package
 # changes (the unit, the build), not when the other package does.
 #
-CORAZA_REVISION = "6"
-CRS_REVISION = "2"
-#
-# The names the packages had before the product was renamed (B266). Each
-# conflicts with and replaces its old name, so installing it removes the old
-# package that owns the same files instead of failing on them.
-#
-RENAMED = {
-    "haprion-coraza-spoa": "haproxy-manager-coraza-spoa",
-    "haprion-crs": "haproxy-manager-crs",
-}
+CORAZA_REVISION = "7"
+CRS_REVISION = "3"
 GO_VERSION = "go1.26.9"
 GOVULNCHECK_VERSION = "v1.8.0"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
@@ -417,8 +408,6 @@ def build_coraza(
                 "Package": "haprion-coraza-spoa",
                 "Version": f"{source.version}-{CORAZA_REVISION}",
                 "Architecture": "amd64",
-                "Conflicts": RENAMED["haprion-coraza-spoa"],
-                "Replaces": RENAMED["haprion-coraza-spoa"],
                 "Section": "net",
                 "Priority": "optional",
                 "Homepage": "https://github.com/corazawaf/coraza-spoa",
@@ -466,8 +455,6 @@ def build_crs(source_dir: Path, output_dir: Path, *, source: Source = CRS) -> Pa
                 "Package": "haprion-crs",
                 "Version": f"{source.version}-{CRS_REVISION}",
                 "Architecture": "all",
-                "Conflicts": RENAMED["haprion-crs"],
-                "Replaces": RENAMED["haprion-crs"],
                 "Section": "net",
                 "Priority": "optional",
                 "Homepage": "https://coreruleset.org",

@@ -75,8 +75,8 @@ class ObjectView:
     sourced: bool = False
     #
     # The names HAProxy knows this object's backends by (B250), from the
-    # envelope. `None` is a helper older than the field: a pool's name alone no
-    # longer says whose it is, and nothing here guesses.
+    # envelope. `None` is a document the engine could not read: a pool's name
+    # alone no longer says whose it is, and nothing here guesses.
     #
     runtime_backends: tuple[str, ...] | None = None
     #

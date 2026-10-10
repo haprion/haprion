@@ -173,16 +173,15 @@ def inspect_wheel(
 def inspect_engine_api(wheel: Path) -> int:
     """Read the engine's compatibility level without importing untrusted wheel code.
 
-    Wheels from before compatibility metadata remain installable for rollback. They
-    report level zero, which lets the read-only compatibility check describe them as
-    older without turning the release installer into a one-way door.
+    A wheel without the file is refused: the compatibility check could only
+    report it as older than every UI, so it is no release to install.
     """
 
     member = "haproxy_mgmt/compatibility.json"
     try:
         with zipfile.ZipFile(wheel) as archive:
             if member not in archive.namelist():
-                return 0
+                raise InstallError("wheel carries no engine compatibility metadata")
             document = json.loads(archive.read(member))
     except (OSError, zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise InstallError(f"invalid engine compatibility metadata: {exc}") from exc

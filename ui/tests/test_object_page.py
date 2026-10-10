@@ -597,13 +597,24 @@ class ADraftThatWasPublished(DraftReading):
         )
 
     def job(
-        self, state: str, yaml: str = "schema: 1\n", *, revision: int = 1, name: str = "half-done"
+        self,
+        state: str,
+        yaml: str = "schema: 1\n",
+        *,
+        revision: int = 1,
+        name: str = "half-done",
+        base: str = f"{24:040d}",
     ) -> Job:
         from haproxy_ui.views import _publish_key
 
+        #
+        # Made against the commit the fixture's cache still shows, unless a
+        # test says the cache has moved on since.
+        #
         payload = {
             "objects": {name: "schema: 1"},
             "draft": {"id": str(self.DRAFT_ID), "revision": revision},
+            "expected_head": base,
         }
         return Job(
             id=1,
@@ -662,11 +673,13 @@ class ADraftThatWasPublished(DraftReading):
 
     def test_the_draft_is_cleared_once_the_object_can_be_read(self) -> None:
         #
-        # `public-web` is in the cluster's objects reading, so the publish this
-        # draft asked for is visible and the draft has nothing left to carry.
+        # The publish was made against an earlier commit and the cache has read
+        # a later one, so it shows this publish and the draft has nothing left
+        # to carry.
         #
         body, discarded = self.listing(
-            self.drafted(name="public-web"), [self.job("done", name="public-web")]
+            self.drafted(name="public-web"),
+            [self.job("done", name="public-web", base=f"{23:040d}")],
         )
 
         self.assertEqual(len(discarded), 1)

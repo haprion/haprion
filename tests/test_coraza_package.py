@@ -103,7 +103,7 @@ class Packages(unittest.TestCase):
 
     def test_the_engine_package_holds_the_binary_the_unit_and_the_licence(self) -> None:
         deb = self.build_coraza(self.coraza_source(), "out")
-        self.assertEqual(deb.name, "haprion-coraza-spoa_9.9.9-6_amd64.deb")
+        self.assertEqual(deb.name, "haprion-coraza-spoa_9.9.9-7_amd64.deb")
         rows = listing(deb)
         self.assertEqual(rows["/usr/sbin/coraza-spoa"], "-rwxr-xr-x root/root")
         self.assertEqual(
@@ -117,7 +117,7 @@ class Packages(unittest.TestCase):
             rows["/usr/lib/systemd/journald@haprion-waf.conf.d/haprion.conf"],
             "-rw-r--r-- root/root",
         )
-        self.assertEqual(field(deb, "Version"), "9.9.9-6")
+        self.assertEqual(field(deb, "Version"), "9.9.9-7")
         self.assertEqual(field(deb, "Architecture"), "amd64")
 
     def test_the_unit_waits_for_a_release_and_runs_without_privilege(self) -> None:
@@ -202,7 +202,7 @@ class Packages(unittest.TestCase):
         out = self.root / "out"
         out.mkdir()
         deb = self.tool.build_crs(self.sources, out, source=self.crs_source())
-        self.assertEqual(deb.name, "haprion-crs_9.9.9-2_all.deb")
+        self.assertEqual(deb.name, "haprion-crs_9.9.9-3_all.deb")
         rows = listing(deb)
         share = "/usr/share/haprion/crs"
         for path in (
@@ -214,15 +214,15 @@ class Packages(unittest.TestCase):
             self.assertIn(path, rows)
         self.assertFalse(any("/docs/" in p or "/plugins/" in p for p in rows))
 
-    def test_each_package_takes_over_from_its_name_before_the_rename(self) -> None:
+    def test_no_package_claims_another_packages_files(self) -> None:
         out = self.root / "out"
         out.mkdir()
-        engine = self.build_coraza(self.coraza_source(), "renamed")
+        engine = self.build_coraza(self.coraza_source(), "alone")
         rules = self.tool.build_crs(self.sources, out, source=self.crs_source())
-        for deb, old in ((engine, "haproxy-manager-coraza-spoa"), (rules, "haproxy-manager-crs")):
+        for deb in (engine, rules):
             with self.subTest(package=deb.name):
-                self.assertEqual(field(deb, "Conflicts"), old)
-                self.assertEqual(field(deb, "Replaces"), old)
+                self.assertEqual(field(deb, "Conflicts"), "")
+                self.assertEqual(field(deb, "Replaces"), "")
 
     def test_the_same_inputs_give_the_same_bytes(self) -> None:
         source = self.coraza_source()

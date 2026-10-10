@@ -27,6 +27,7 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+.venv-ui/
 venv/
 .tools/
 dist/

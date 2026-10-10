@@ -187,18 +187,37 @@ def staged_files(repo: Path) -> list[tuple[str, bytes]]:
 
 
 def worktree_files(repo: Path) -> list[tuple[str, bytes]]:
+    """What could be committed from here: tracked files and untracked ones Git does not ignore.
+
+    An ignored file reaches a commit only through `git add -f`, and then the
+    staged scan reads it. Walking everything instead read a checkout's own
+    environments - `.venv`, `.venv-ui`, `.tools` - and refused third-party
+    packages, so the gate could not pass on a fresh clone set up as the README
+    says (26-10-10). A directory that is not a Git work tree is read whole.
+    """
+
+    try:
+        listed = git(repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    except ScanFailure:
+        listed = None
+    if listed is None:
+        relatives = []
+        for root, directories, filenames in os.walk(repo, followlinks=False):
+            directories[:] = sorted(d for d in directories if d != ".git")
+            relatives += [(Path(root) / name).relative_to(repo).as_posix() for name in filenames]
+    else:
+        assert isinstance(listed, str)  # noqa: S101 - text mode
+        relatives = [name for name in listed.split("\0") if name]
     result: list[tuple[str, bytes]] = []
-    for root, directories, filenames in os.walk(repo, followlinks=False):
-        directories[:] = sorted(directory for directory in directories if directory != ".git")
-        for filename in sorted(filenames):
-            path = Path(root) / filename
-            relative = path.relative_to(repo).as_posix()
-            if path.is_symlink():
-                continue
-            try:
-                result.append((relative, path.read_bytes()))
-            except OSError as exc:
-                raise ScanFailure(f"cannot read {relative}: {exc}") from exc
+    for relative in sorted(set(relatives)):
+        path = repo / relative
+        # A tracked file deleted in the work tree has nothing left to read.
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            result.append((relative, path.read_bytes()))
+        except OSError as exc:
+            raise ScanFailure(f"cannot read {relative}: {exc}") from exc
     return result
 
 

@@ -10,7 +10,17 @@ fi
 
 cd "$base"
 uv sync --locked --group dev
+#
+# The interface is a distribution of its own with its own lockfile, so it gets
+# an environment of its own; the gate refuses to run without it, and without
+# the browser its suite drives (installed from that environment, so the build
+# matches the pinned Playwright).
+#
+(cd ui && UV_PROJECT_ENVIRONMENT="$base/.venv-ui" uv sync --locked --group dev)
 mkdir -p .tools
+if [ ! -d .tools/playwright ]; then
+    PLAYWRIGHT_BROWSERS_PATH="$base/.tools/playwright" .venv-ui/bin/playwright install chromium
+fi
 
 install_tool() {
     installer=$1
@@ -34,4 +44,6 @@ printf '%s\n' "Development environment ready. Run the gate with:"
 printf '%s\n' \
     "PATH=$base/.venv/bin:$base/.tools/shellcheck/0.11.0:$base/.tools/actionlint/1.7.12:\$PATH \\" \
     "GITLEAKS_BIN=$base/.tools/gitleaks/8.30.1/gitleaks \\" \
-    "HAPRION_SECRET_RULES=/path/to/private.rules ./run-checks"
+    "HAPRION_UI_PYTHON=$base/.venv-ui/bin/python \\" \
+    "PLAYWRIGHT_BROWSERS_PATH=$base/.tools/playwright \\" \
+    "HAPRION_SECRET_RULES=$base/tools/denylist.example.rules ./run-checks"

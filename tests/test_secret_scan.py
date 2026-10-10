@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,29 @@ class SecretScanTests(unittest.TestCase):
             rules.write_text("private-value\\tBLOCKED".replace("\\t", "\t"), encoding="utf-8")
             result = self.execute(tree, rules)
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_git_tree_is_read_as_git_would_commit_it(self) -> None:
+        # A fresh checkout keeps its environments inside it (26-10-10): what
+        # Git ignores is not read, an untracked file it would offer is.
+        finding = "pass" + "word=examplevalue\n"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tree = root / "tree"
+            (tree / ".venv-ui" / "lib").mkdir(parents=True)
+            git = shutil.which("git")
+            assert git is not None
+            subprocess.run([git, "init", "-q", str(tree)], check=True)  # noqa: S603
+            (tree / ".gitignore").write_text(".venv-ui/\n", encoding="utf-8")
+            (tree / ".venv-ui" / "lib" / "package.py").write_text(finding, encoding="utf-8")
+            rules = root / "rules"
+            rules.write_text("private-value\tBLOCKED", encoding="utf-8")
+            self.assertEqual(self.execute(tree, rules).returncode, 0)
+
+            (tree / "new.txt").write_text(finding, encoding="utf-8")
+            result = self.execute(tree, rules)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("new.txt", result.stderr)
+            self.assertNotIn(".venv-ui", result.stderr)
 
     def test_generic_and_private_findings_block_without_echoing_values(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

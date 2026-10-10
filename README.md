@@ -11,61 +11,62 @@ the [user manual](docs/user-manual.md) is the reference for everything else.
 
 ## Project status
 
-The project has not reached 1.0 and is **not yet declared ready for production deployment**:
-everything below is built and tested, and the remaining work before 1.0 is polish, a full
-re-verification of a rebuild from this repository, and documentation. What is built:
+The project has not reached 1.0 and is **not yet declared ready for production deployment**.
+Everything listed below is built and tested. What remains before 1.0 is making every setting the
+interface offers available from the command line as well, a full re-verification of an
+installation built from this repository, and documentation.
 
-- frozen v1 JSON schemas and command semantics
-- a strict runtime-policy and cluster-configuration model
-- an initial privilege-boundary contract
-- generic configuration examples and contract fixtures
-- reusable result-envelope and cluster-lookup code
-- a strict, size-bounded JSON request protocol for exact privileged helpers
-- a validated external identity policy that renders locked system-service accounts without
-  granting the web or poller config-group membership
-- a path-free candidate-validation helper foundation with deterministic hashing and a hardened
-  transient-service sandbox
-- a hash-verified, versioned and immutable installation layout under `/opt/haprion`
-- reproducible development, security, test, and package-build gates
-- every management command running through the packaged CLI, including status, which reports
-  whether the nodes are running the published configuration without starting a deployment to
-  find out
-- a scripted installation covering the management host, the nodes, and the web platform
-- Debian packages, reproducible from one commit: `haprion-cli` for the engine, `haprion-ui` for the
-  web interface on Ubuntu 26.04 or Debian 13, `haprion-node` for the nodes, and the WAF engine and
-  rule set; installing a newer package is the update
-- the web platform's foundation: a versioned application release, a database whose schema and
-  column-level grants are versioned together, and separate service identities that cannot do each
-  other's work
-- a web interface over that foundation, fed by a poller rather than by reads made while
-  somebody is looking at a screen; it reads for everyone and writes only for an admin on an
-  installation that sets `management_writes = true`
-- proxy objects edited as drafts and published as versions, a cluster's network and VIPs, and
-  deploys that roll a published version out node by node and are bound to the version the
-  person saw; every write is a job, and every job is also a command at the terminal
-- metrics collected from the nodes and kept as time series
-- an optional, manager-pulled traffic-log view backed by seven days of indexed, daily PostgreSQL
-  partitions; each cluster must explicitly set `traffic_logging: true`, and the setting reaches
-  its nodes with the next object publication. It is a basic log viewer for the recent requests;
-  analysis, dashboards and alerting belong in an external log platform, which the product does
-  not feed yet
-- certificate issuance from one form: a domain, a challenge method and the targets; DNS-01
-  through a provider profile whose credentials the web process sealed and only root's helper
-  opens, from a catalogue of locked Certbot plugins; and certificate cleanup as one job for a
-  whole selection, refusing row by row anything a committed object, a draft or a cluster still
-  depends on; a certificate issued elsewhere is imported from PEM or PKCS#12 on the command line
-  and taken to its targets the same way; certificates are also distributed from the manager to
-  the nodes and to registered receivers that fetch them
+## What it does
+
+**Proxies and clusters**
+
+- HTTP, HTTPS and TCP objects edited as drafts and published as versions; a deploy rolls a
+  published version out node by node and is bound to the version the person saw
+- DNS load balancing through dnsdist, and syslog over UDP
+- a cluster's network and virtual addresses, carried by keepalived
+- draining a server, maintenance, and replacing a certificate without reloading HAProxy
+- counters shared between a cluster's nodes, so a failover or a deploy does not start them again
+
+**Access and protection**
+
+- who may reach an object - by address, range, named network or country - and who may not
+- rules on path, method and headers, a per-source rate limit per object, and a brake per cluster
+  on any single source address
+- a WAF engine (Coraza with the OWASP Core Rule Set), in log or block mode per object, with
+  exceptions made from the findings
+- an advanced configuration layer per object, behind a feature switch, for what the forms do not
+  cover
+
+**Certificates**
+
+- issuance from one form through ACME, with HTTP-01 or DNS-01; DNS provider credentials are sealed
+  by the web process and opened only by a root helper
+- enrollment and renewal from a Microsoft CA over NDES/SCEP
+- import of a certificate issued elsewhere, a key and signing request made on the manager, and
+  export of a certificate marked exportable
+- distribution to the nodes and to registered receivers that fetch them, and cleanup of a whole
+  selection that refuses anything still in use
+
+**Operations**
+
+- status, metrics and a basic seven-day traffic-log viewer, fed by a poller rather than by reads
+  made while somebody is looking at a screen
+- the traffic log sent to up to four external syslog receivers, and HAProxy's Prometheus exporter
 - scheduled node-state backups, and restoring a node from its archive onto an empty VM or over
   itself, with a preview before anything is written
-- settings for the interface's own certificate, local accounts, feature switches, and sign-in
-  through an OpenID Connect provider with a local break-glass account kept
-- the job path every management operation runs through: an immutable queue, an atomic claim held
-  under a renewable lease, and a worker that records how every job ended — including recovering a
-  job whose worker died, which is decided from readable evidence rather than retried on assumption
+- the interface's own certificate, local accounts, feature switches, and sign-in through an
+  OpenID Connect provider with a local break-glass account kept
+- every write is a job: an immutable queue, an atomic claim under a renewable lease, and a worker
+  that records how every job ended, including one whose worker died
+- Debian packages from one commit: `haprion-cli` for the engine, `haprion-ui` for the web
+  interface on Ubuntu 26.04 or Debian 13, `haprion-node` for the nodes, and the WAF engine and rule
+  set; installing a newer package is the update
 
-With `management_writes` off, the interface is read-only and the worker claims nothing; that is
-the state turning the switch off returns to, so it is a rollback rather than a pause.
+The interface reads for everyone and writes only for an admin on an installation that sets
+`management_writes = true`. With it off, the interface is read-only and the worker claims nothing;
+that is the state turning the switch off returns to, so it is a rollback rather than a pause.
+What the product deliberately leaves to others is listed under
+[What it does not do](docs/user-manual.md#what-it-does-not-do).
 
 ## Security model
 
@@ -95,31 +96,39 @@ VM, backing up the management host and the rest of a recovery plan are the opera
 ## Repository layout
 
 ```text
-src/haprion/   Python management package
-schemas/v1/         versioned JSON command schemas
-fixtures/           valid and invalid contract examples
-contract-tests/     schema and semantic contract verification
-tests/              unit tests
-tools/              development and security gates
-docs/               public contracts and security documentation
+src/haprion/      the management engine and its command-line interface
+ui/               the web interface, a distribution of its own with its own lockfile
+install/          installation steps for the manager, the nodes and the web platform
+certbot/          the locked Certbot environment and its DNS plugins
+schemas/v1/       versioned JSON command schemas
+fixtures/         valid and invalid contract examples
+contract-tests/   schema and semantic contract verification
+examples/         generic configuration examples
+tests/            engine tests
+tools/            development, packaging and security gates
+docs/             installation, user manual, contracts and security documentation
 ```
 
 ## Development
 
-Python dependencies are resolved in the committed `uv.lock`; `.python-version` selects the minimum
-supported Python 3.12 for a fresh environment. With
-[`uv`](https://docs.astral.sh/uv/) installed, bootstrap an editable environment and the pinned
-standalone checks with:
+Python dependencies are resolved in the committed lockfiles (`uv.lock` for the engine,
+`ui/uv.lock` for the interface); `.python-version` selects the minimum supported Python 3.12. With
+[`uv`](https://docs.astral.sh/uv/) installed, set up both environments, the browser the interface
+tests drive, and the pinned standalone checks with:
 
 ```bash
 ./tools/bootstrap-dev
 ```
 
-For a generic checkout, run the complete local gate with the repository's example denylist:
+Chromium needs a few system libraries; on a host that lacks them,
+`sudo .venv-ui/bin/playwright install-deps chromium` adds them. Then run the complete local gate
+with the repository's example denylist - the same command `bootstrap-dev` prints:
 
 ```bash
 PATH="$PWD/.venv/bin:$PWD/.tools/shellcheck/0.11.0:$PWD/.tools/actionlint/1.7.12:$PATH" \
 GITLEAKS_BIN="$PWD/.tools/gitleaks/8.30.1/gitleaks" \
+HAPRION_UI_PYTHON="$PWD/.venv-ui/bin/python" \
+PLAYWRIGHT_BROWSERS_PATH="$PWD/.tools/playwright" \
 HAPRION_SECRET_RULES="$PWD/tools/denylist.example.rules" \
 ./run-checks
 ```

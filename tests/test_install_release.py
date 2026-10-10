@@ -167,8 +167,11 @@ class InstallReleaseTests(unittest.TestCase):
                 stat.S_IMODE((release / "lib/haprion/__init__.py").stat().st_mode), 0o444
             )
             launcher = (release / "bin/haprion-example").read_text()
-            self.assertTrue(launcher.startswith(f"#!{sys.executable} -I\n"))
-            self.assertNotIn(str(INSTALLER_PATH.parents[1]), launcher)
+            shebang = f"#!{sys.executable} -I\n"
+            self.assertTrue(launcher.startswith(shebang))
+            # The body, not the interpreter line: a checkout set up with
+            # tools/bootstrap-dev keeps its interpreter inside it (26-10-10).
+            self.assertNotIn(str(INSTALLER_PATH.parents[1]), launcher.removeprefix(shebang))
             subprocess.run(  # noqa: S603 - generated local test launcher
                 [str(release / "bin/haprion-example")], check=True
             )

@@ -9,7 +9,28 @@ if ! command -v "$gitleaks_bin" >/dev/null 2>&1; then
     exit 2
 fi
 
-"$gitleaks_bin" dir --redact --no-banner "$base"
+#
+# The work tree as Git would commit it - tracked files and untracked ones it
+# does not ignore - like tools/secret_scan.py. Scanning the directory itself
+# read a checkout's own environments (.venv, .venv-ui, .tools) and found a key
+# in Chromium's resources on a fresh clone set up as the README says
+# (26-10-10). An ignored file reaches a commit only through `git add -f`, and
+# the history scan below reads every commit.
+#
+if git -C "$base" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    tree=$(mktemp -d -t haprion-gitleaks.XXXXXX)
+    trap 'rm -rf "$tree"' EXIT
+    # shellcheck disable=SC2016 # $file is the inner shell's, not this one's
+    git -C "$base" ls-files -z --cached --others --exclude-standard \
+        | (cd "$base" && xargs -0 -r sh -c '
+            for file do
+                if [ -f "$file" ] && [ ! -L "$file" ]; then printf "%s\0" "$file"; fi
+            done' sh) \
+        | (cd "$base" && xargs -0 -r cp --parents -t "$tree")
+    "$gitleaks_bin" dir --redact --no-banner "$tree"
+else
+    "$gitleaks_bin" dir --redact --no-banner "$base"
+fi
 
 if git -C "$base" rev-parse --verify HEAD >/dev/null 2>&1; then
     "$gitleaks_bin" git --redact --no-banner --log-opts="--all" "$base"

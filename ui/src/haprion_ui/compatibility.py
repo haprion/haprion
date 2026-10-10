@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import stat
 import subprocess  # noqa: S404 - fixed diagnostic commands are the boundary here
 import sys
@@ -171,12 +172,39 @@ def named_release(root: Path, name: str, what: str) -> Path:
     return release
 
 
-def ui_requirements(release: Path) -> Requirements:
-    metadata = _one(
-        list(release.glob("venv/lib/python*/site-packages/haprion_ui/compatibility.json")),
-        "installed UI compatibility file",
+#
+# The command every UI release installs, and so the one that names the package
+# the release's code lives in. Read from the distribution's metadata rather than
+# assumed, because a release this one replaces or rolls back to may call its
+# package something else - the distribution's name is what stays.
+#
+ANCHOR_COMMAND = "haprion-worker"
+ENTRY_POINT = re.compile(r"^\s*(?P<name>[^\s=]+)\s*=\s*(?P<module>[A-Za-z_][\w.]*):")
+
+
+def release_package(site_packages: Path) -> str:
+    """The import package of the UI distribution installed in one release."""
+
+    entry_points = _one(
+        list(site_packages.glob("haprion_ui-*.dist-info/entry_points.txt")),
+        "UI distribution metadata",
     )
-    return load_requirements(metadata)
+    try:
+        lines = entry_points.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise CompatibilityError(f"cannot read UI distribution metadata: {exc}") from exc
+    for line in lines:
+        match = ENTRY_POINT.match(line)
+        if match is not None and match["name"] == ANCHOR_COMMAND:
+            return match["module"].partition(".")[0]
+    raise CompatibilityError(f"the UI distribution has no {ANCHOR_COMMAND} command")
+
+
+def ui_requirements(release: Path) -> Requirements:
+    site_packages = _one(
+        list(release.glob("venv/lib/python*/site-packages")), "UI release site-packages"
+    )
+    return load_requirements(site_packages / release_package(site_packages) / "compatibility.json")
 
 
 def cli_metadata(release: Path) -> dict[str, Any]:

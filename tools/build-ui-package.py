@@ -19,7 +19,7 @@ and the tool that applies it, and the platform's own installation:
     /usr/share/haprion-ui/install/  the platform steps (install/platform with
                                     lib.sh and accounts.sh), and beside it the
                                     tools and certbot lock the optional steps use
-    /usr/sbin/haprion-<command>     backup, drain, retention, rollback, tls, user
+    /usr/sbin/haprion-<command>     backup, drain, retention, rollback, tls, user, web
 
 `postinst` unpacks the release after checking the archive's digest. On an
 installation that already has a `current`, it then runs the whole
@@ -141,7 +141,7 @@ TOOLS = (
     "tools/install-scep-client.py",
     "certbot/",
 )
-COMMANDS = ("backup", "drain", "retention", "rollback", "tls", "user")
+COMMANDS = ("backup", "drain", "retention", "rollback", "tls", "user", "web")
 #
 # The archive is unpacked beside the releases and moved into place whole, so
 # an interrupted unpack never leaves a directory that looks like a release.

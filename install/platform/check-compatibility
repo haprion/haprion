@@ -47,14 +47,16 @@ if [[ "$before_migration" -eq 1 ]]; then
 fi
 
 CLI_ROOT="${CLI_ROOT:-/opt/haprion}"
+module="$(release_module "${python_root}/venv/bin/python")" \
+    || die "cannot tell which package the checked UI release is"
 ui_lines="$("${python_root}/venv/bin/python" - \
-    "$UI_CONFIG" <<'PY'
+    "$module" "$UI_CONFIG" <<'PY'
+import importlib
 import sys
 from pathlib import Path
 
-from haprion_ui.config import load
-
-config = load(Path(sys.argv[1]))
+load = importlib.import_module(sys.argv[1] + ".config").load
+config = load(Path(sys.argv[2]))
 print("enabled" if config.traffic_logs.enabled else "disabled")
 for cluster in config.clusters:
     print(cluster)
@@ -70,7 +72,7 @@ fi
 if [[ "$traffic_logs_enabled" == "enabled" ]]; then
     # The inventory check belongs to the release being checked, not to this
     # checkout: a release without it is reported without it, never refused.
-    if "${python_root}/venv/bin/python" -m haprion_ui.compatibility --help 2>/dev/null \
+    if "${python_root}/venv/bin/python" -m "${module}.compatibility" --help 2>/dev/null \
         | grep -q -- '--collector-config'; then
         extra_args+=(
             --runtime-policy /etc/haprion/runtime-policy.yaml
@@ -81,7 +83,7 @@ if [[ "$traffic_logs_enabled" == "enabled" ]]; then
     fi
 fi
 
-exec "${python_root}/venv/bin/python" -m haprion_ui.compatibility \
+exec "${python_root}/venv/bin/python" -m "${module}.compatibility" \
     --platform-root "$UI_ROOT" \
     --cli-root "$CLI_ROOT" \
     --database "$DB_NAME" \

@@ -66,6 +66,21 @@ restore_previous() {
         || die "release ${previous_id} was restored but the installation is not compatible"
 }
 
+#
+# The web unit is the same file for every release (haprion-web reads the
+# release's package and port), so the update brings it with it. Installed
+# before the switch and good for the release on either side of it, which is
+# what the restore below needs.
+#
+step "Web service unit"
+web_unit="/etc/systemd/system/${WEB_UNIT}"
+web_unit_before="$(cat "$web_unit" 2>/dev/null || true)"
+install_file "$web_unit" root:root 644 "$(cat examples/haprion-web.service.example)"
+if [[ "$(cat "$web_unit")" != "$web_unit_before" ]]; then
+    systemctl daemon-reload
+    log "  reloaded systemd"
+fi
+
 step "Activating ${release_id}"
 if ! ./install-ui-release "$release_id"; then
     restore_previous

@@ -1,0 +1,38 @@
+#!/bin/bash
+#
+# Start the web interface of the UI release `current` points at.
+#
+#     haprion-web
+#
+# What haprion-web.service runs. The unit names this command rather than the
+# release's package and port, so it stays the same file for every release: the
+# package is asked of the release, and the port of ui.toml through the
+# release's own parser - the file the service itself reads.
+#
+set -Eeuo pipefail
+
+CONFIG=/etc/haprion/ui.toml
+release=/opt/haprion-ui/current
+python="${release}/venv/bin/python"
+
+#
+# The import package of the UI release a Python interpreter belongs to, asked of
+# the release itself: the package behind its `haprion-worker` command. A release
+# this one replaces or rolls back to may call its package something else; the
+# command is what every release has. The same function in lib.sh,
+# haprion-rollback and haprion-web, held together by a test.
+#
+release_module() {
+    "$1" -I -c 'from importlib.metadata import entry_points
+print(entry_points(group="console_scripts")["haprion-worker"].module.partition(".")[0])'
+}
+
+module="$(release_module "$python")"
+port="$("$python" -I -c 'import importlib, sys; from pathlib import Path
+load = importlib.import_module(sys.argv[1] + ".config").load
+print(load(Path(sys.argv[2])).listen.port)' "$module" "$CONFIG")"
+
+exec "${release}/venv/bin/uvicorn" \
+    --factory "${module}.app:create_app" \
+    --host 127.0.0.1 --port "$port" \
+    --no-server-header --proxy-headers --forwarded-allow-ips=127.0.0.1

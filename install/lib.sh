@@ -99,10 +99,24 @@ admin_value() {
 # release's own parser - the file the service itself reads, so a health check
 # cannot ask a port the service was never told.
 #
+#
+# The import package of the UI release a Python interpreter belongs to, asked of
+# the release itself: the package behind its `haprion-worker` command. A release
+# this one replaces or rolls back to may call its package something else; the
+# command is what every release has. The same function in lib.sh,
+# haprion-rollback and haprion-web, held together by a test.
+#
+release_module() {
+    "$1" -I -c 'from importlib.metadata import entry_points
+print(entry_points(group="console_scripts")["haprion-worker"].module.partition(".")[0])'
+}
+
 ui_port() {
-    "${UI_ROOT}/current/venv/bin/python" -I -c \
-        'import sys; from pathlib import Path; from haprion_ui.config import load
-print(load(Path(sys.argv[1])).listen.port)' "$UI_CONFIG"
+    local python="${UI_ROOT}/current/venv/bin/python" module
+    module="$(release_module "$python")" || return 1
+    "$python" -I -c 'import importlib, sys; from pathlib import Path
+load = importlib.import_module(sys.argv[1] + ".config").load
+print(load(Path(sys.argv[2])).listen.port)' "$module" "$UI_CONFIG"
 }
 
 cluster_value() {

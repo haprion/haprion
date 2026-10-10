@@ -315,8 +315,11 @@ partitioned; the timer deletes their hours before the same boundary.
 
 ## Step 4 — the service
 
-`./04-platform-service` renders the unit from the example with the answers file,
-starts it, and then **fetches `/healthz`**. systemd reports a unit as active as
+`./04-platform-service` installs the unit from the example, starts it, and then
+**fetches `/healthz`**. The unit runs `/usr/sbin/haprion-web`, which asks the
+current release for its package and reads the port from `ui.toml`, so the unit
+is the same file for every release; `update-platform-release` installs it again
+before it activates a release. systemd reports a unit as active as
 soon as the process is up, which is before it has reached its database; "up but
 unable to answer" is exactly the state worth catching during an installation.
 

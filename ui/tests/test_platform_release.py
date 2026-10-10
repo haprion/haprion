@@ -73,7 +73,7 @@ class PreparedReleaseTests(unittest.TestCase):
         # may predate the flag. The release answers, the checkout never assumes.
         wrapper = (ROOT / "install/platform/check-compatibility").read_text()
 
-        self.assertIn("-m haprion_ui.compatibility --help", wrapper)
+        self.assertIn('-m "${module}.compatibility" --help', wrapper)
         self.assertIn("grep -q -- '--collector-config'", wrapper)
         self.assertIn("predates the traffic collector inventory check", wrapper)
 
@@ -165,12 +165,16 @@ if __name__ == "__main__":
 # in a module that predates them, refuses flags it does not know.
 #
 STUB_PYTHON = """#!/bin/bash
+if [[ "$1" == "-I" && "$2" == "-c" && "$3" == *haprion-worker* ]]; then
+    echo "${PACKAGE:-haprion_ui}"
+    exit 0
+fi
 if [[ "$1" == "-" ]]; then
     cat >/dev/null
     printf '%s\\n' "$TRAFFIC_LOGS" alpha
     exit 0
 fi
-if [[ "$*" == "-m haprion_ui.compatibility --help" ]]; then
+if [[ "$*" == "-m ${PACKAGE:-haprion_ui}.compatibility --help" ]]; then
     echo "usage: compatibility --platform-root ROOT"
     [[ "$MODULE" == new ]] && echo "  --collector-config PATH"
     exit 0
@@ -215,9 +219,12 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         self.record = work / "arguments"
         self.wrapper = work / "platform/check-compatibility"
 
-    def check(self, *arguments: str, module: str, traffic: str = "enabled") -> tuple[int, str]:
+    def check(
+        self, *arguments: str, module: str, traffic: str = "enabled", package: str = "haprion_ui"
+    ) -> tuple[int, str]:
         environment = {
             **os.environ,
+            "PACKAGE": package,
             "MODULE": module,
             "TRAFFIC_LOGS": traffic,
             "RECORD": str(self.record),
@@ -240,6 +247,11 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         self.assertNotIn("--collector-config", self.recorded())
         self.assertIn("predates the traffic collector inventory check", errors)
 
+    def test_a_release_is_run_under_its_own_package(self) -> None:
+        code, errors = self.check(module="new", package="earlier_ui")
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(self.recorded()[1:3], ["-m", "earlier_ui.compatibility"])
+
     def test_a_release_that_knows_the_check_is_asked_it(self) -> None:
         code, errors = self.check(module="new")
         self.assertEqual(code, 0, errors)
@@ -261,3 +273,50 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         for flag in ("--ui-release", "--skip-services", "--upgrade-from-current"):
             self.assertIn(flag, arguments)
         self.assertNotIn("--environment", arguments)
+
+
+class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
+    """The scripts outside a release ask it for its package (rename 26-10-10)."""
+
+    COPIES = (
+        "install/lib.sh",
+        "install/platform/bin/haprion-rollback",
+        "install/platform/bin/haprion-web",
+    )
+
+    @staticmethod
+    def function(path: str) -> str:
+        text = (ROOT / path).read_text()
+        start = text.index("release_module() {")
+        return text[start : text.index("\n}\n", start) + 3]
+
+    def test_every_copy_is_the_same(self) -> None:
+        first, *others = (self.function(path) for path in self.COPIES)
+        for path, text in zip(self.COPIES[1:], others, strict=True):
+            with self.subTest(path=path):
+                self.assertEqual(text, first)
+
+    def test_it_names_this_releases_package(self) -> None:
+        import sys
+
+        script = self.function(self.COPIES[0]) + 'release_module "$1"\n'
+        result = subprocess.run(  # noqa: S603 - fixed shell, this checkout's function
+            ["/bin/bash", "-c", script, "release_module", sys.executable],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "haprion_ui")
+
+    def test_the_web_unit_names_no_package_and_no_port(self) -> None:
+        unit = (ROOT / "install/platform/examples/haprion-web.service.example").read_text()
+        self.assertIn("ExecStart=/usr/sbin/haprion-web\n", unit)
+        self.assertNotIn("haprion_ui", unit)
+        self.assertNotIn("--port", unit)
+
+    def test_the_update_installs_the_web_unit_before_it_activates(self) -> None:
+        text = (ROOT / "install/platform/update-platform-release").read_text()
+        self.assertLess(
+            text.index("examples/haprion-web.service.example"),
+            text.index('./install-ui-release "$release_id"'),
+        )

@@ -149,6 +149,37 @@ class CompatibilityMetadataTests(unittest.TestCase):
         self.assertEqual(int(node_api.group(1)), requirements.node_api)
 
 
+class ReleasePackageTests(unittest.TestCase):
+    """A release is read under whatever its distribution calls its package."""
+
+    def release(self, root: Path, package: str) -> Path:
+        site = root / "venv/lib/python3.12/site-packages"
+        (site / package).mkdir(parents=True)
+        (site / package / "compatibility.json").write_text(MANIFEST.read_text())
+        info = site / "haprion_ui-0.1.0.dist-info"
+        info.mkdir()
+        (info / "entry_points.txt").write_text(
+            f"[console_scripts]\nhaprion-poller = {package}.poller:_entry\n"
+            f"haprion-worker = {package}.worker:_entry\n"
+        )
+        return root
+
+    def test_the_package_comes_from_the_distribution(self) -> None:
+        for package in ("haprion_ui", "earlier_ui"):
+            with self.subTest(package=package), tempfile.TemporaryDirectory() as raw:
+                release = self.release(Path(raw), package)
+                requirements = compatibility.ui_requirements(release)
+                self.assertEqual(requirements, compatibility.load_requirements(MANIFEST))
+
+    def test_a_release_without_the_command_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            release = self.release(Path(raw), "haprion_ui")
+            info = release / "venv/lib/python3.12/site-packages/haprion_ui-0.1.0.dist-info"
+            (info / "entry_points.txt").write_text("[console_scripts]\n")
+            with self.assertRaisesRegex(compatibility.CompatibilityError, "haprion-worker"):
+                compatibility.ui_requirements(release)
+
+
 class PreparedReleaseTests(unittest.TestCase):
     def test_a_named_release_must_be_a_direct_child_of_releases(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

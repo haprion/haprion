@@ -24,11 +24,11 @@ WEB_PORT="$(ui_port)" || die "cannot read the listening port from ${UI_CONFIG}"
 
 step "Unit"
 #
-# Rendered from the example rather than copied, so the port is the one ui.toml
-# names. The example is what a reader reviews; this is what runs.
+# The example as it is: haprion-web reads the port from ui.toml itself, so the
+# unit holds nothing per installation, and a release update installs the same
+# file (update-platform-release).
 #
-rendered="$(sed -e "s|--port 8080|--port ${WEB_PORT}|" examples/haprion-web.service.example)"
-install_file "$unit" root:root 644 "$rendered"
+install_file "$unit" root:root 644 "$(cat examples/haprion-web.service.example)"
 
 systemctl daemon-reload
 log "  reloaded systemd"

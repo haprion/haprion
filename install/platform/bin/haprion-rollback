@@ -36,6 +36,18 @@ die()  { echo "ERROR: $*" >&2; exit 1; }
 
 usage() { sed -n '3,8p' "$0" | sed 's/^# \?//'; exit 64; }
 
+#
+# The import package of the UI release a Python interpreter belongs to, asked of
+# the release itself: the package behind its `haprion-worker` command. A release
+# this one replaces or rolls back to may call its package something else; the
+# command is what every release has. The same function in lib.sh,
+# haprion-rollback and haprion-web, held together by a test.
+#
+release_module() {
+    "$1" -I -c 'from importlib.metadata import entry_points
+print(entry_points(group="console_scripts")["haprion-worker"].module.partition(".")[0])'
+}
+
 [[ $EUID -eq 0 ]] || die "run this with sudo"
 
 platform_root=/opt/haprion-ui
@@ -100,16 +112,20 @@ step "Can the target run with the configuration that is installed?"
 # Any exception counts as a refusal, not only ConfigError: whatever the target
 # does when it reads this file is what it will do at startup.
 #
-if ! "${releases}/${target}/venv/bin/python" -c '
+target_python="${releases}/${target}/venv/bin/python"
+module="$(release_module "$target_python")" \
+    || die "${target} does not say which package it is; it has no haprion-worker command"
+if ! "$target_python" -c '
+import importlib
 import sys
 from pathlib import Path
-from haprion_ui.config import load
+load = importlib.import_module(sys.argv[1] + ".config").load
 try:
-    load(Path(sys.argv[1]))
+    load(Path(sys.argv[2]))
 except Exception as exc:
     print(f"the target release refuses this configuration: {exc}", file=sys.stderr)
     raise SystemExit(1)
-' "$CONFIG" 2>&1 | sed 's/^/  /'; then
+' "$module" "$CONFIG" 2>&1 | sed 's/^/  /'; then
     die "${target} cannot read ${CONFIG}.
   Configuration follows the same expand/contract rule as the schema: a key added
   for a newer release has to be removed from the configuration before rolling
@@ -119,12 +135,13 @@ log "  ok       the target accepts the configuration"
 #
 # The port the proof below asks, read the way the target will read it.
 #
-port="$("${releases}/${target}/venv/bin/python" -I -c '
+port="$("$target_python" -I -c '
+import importlib
 import sys
 from pathlib import Path
-from haprion_ui.config import load
-print(load(Path(sys.argv[1])).listen.port)
-' "$CONFIG")"
+load = importlib.import_module(sys.argv[1] + ".config").load
+print(load(Path(sys.argv[2])).listen.port)
+' "$module" "$CONFIG")"
 
 step "Does the target contain what the installed units start?"
 missing=""

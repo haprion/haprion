@@ -18,6 +18,11 @@ KEEPALIVED_STATE = Path("/run/haproxy/keepalived.state")
 KEEPALIVED_ADDRESSES = Path("/etc/keepalived/addresses.conf")
 PUBLISHED_ADDRESSES = Path("/etc/haproxy/current/keepalived/addresses.conf")
 RUNTIME_SOCKET = "/run/haproxy/ui-status.sock"
+#
+# The admin socket, root only: a table's entries are not shown at the status
+# socket's level `user` (measured on 3.4.6). This script runs as root.
+#
+ADMIN_SOCKET = "/run/haproxy/manager.sock"
 CURRENT_RELEASE = Path("/etc/haproxy/current/RELEASE")
 RELEASES = Path("/etc/haproxy/releases")
 CONFIG_PENDING = Path("/run/haprion-pull-deploy.pending")
@@ -1094,26 +1099,100 @@ def with_admin_state(stat, states):
     return stat
 
 
-def ask_runtime(command):
-    """One command on the status socket, its answer as text, or None."""
+def ask_runtime(command, path=RUNTIME_SOCKET, max_lines=None):
+    """One command on a runtime socket, its answer as text, or None.
+
+    `max_lines` stops reading once that many lines have arrived: a table's
+    listing is as long as the table, and only its beginning is reported.
+    """
 
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(2.0)
-        sock.connect(RUNTIME_SOCKET)
+        sock.connect(path)
         sock.sendall(command.encode() + b"\n")
 
         chunks = []
+        lines = 0
         while True:
             data = sock.recv(65536)
             if not data:
                 break
             chunks.append(data)
+            lines += data.count(b"\n")
+            if max_lines is not None and lines > max_lines:
+                break
 
         sock.close()
         return b"".join(chunks).decode("utf-8", errors="replace")
     except Exception:
         return None
+
+
+#
+# Dynamic blocking (B271): each object's blocked table, by the generator's name
+# (`generate.block_tables`), and its entries as 3.4.6 writes them (measured
+# 26-10-10):
+#   # table: mgd-shop-dynblock, type: ipv6, size:1048576, used:2
+#   0x...: key=::ffff:192.0.2.7 use=0 exp=1793254 shard=0 gpc0=0
+# Every entry is a block, `exp` its milliseconds left. The count is the
+# table's own; the addresses listed stop at MAX_BLOCKED_LISTED per object.
+#
+BLOCKED_TABLE = re.compile(
+    r"^# table: mgd-([a-z][a-z0-9_-]{0,39})-dynblock, type: \S+, size:\d+, used:(\d+)$"
+)
+BLOCKED_ENTRY = re.compile(r"^0x[0-9a-f]+: key=(\S+) .*\bexp=(\d+)\b")
+MAX_BLOCKED_LISTED = 100
+MAX_BLOCKED_OBJECTS = 500
+
+
+def parse_blocked_tables(text):
+    """`show table` as {object: blocked count}, for the objects with dynamic blocking."""
+
+    found = {}
+    for line in text.splitlines():
+        match = BLOCKED_TABLE.match(line.strip())
+        if match is not None and len(found) < MAX_BLOCKED_OBJECTS:
+            found[match.group(1)] = int(match.group(2))
+    return found
+
+
+def parse_blocked_entries(text):
+    """One table's entries as [{address, expires_in_ms}], an IPv4 address written plainly."""
+
+    entries = []
+    for line in text.splitlines():
+        match = BLOCKED_ENTRY.match(line.strip())
+        if match is None:
+            continue
+        try:
+            address = ipaddress.ip_address(match.group(1))
+        except ValueError:
+            continue
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            address = address.ipv4_mapped
+        entries.append({"address": str(address), "expires_in_ms": int(match.group(2))})
+        if len(entries) == MAX_BLOCKED_LISTED:
+            break
+    return entries
+
+
+def read_blocked():
+    """{object: {count, addresses}} for every object with dynamic blocking; None if unasked."""
+
+    text = ask_runtime("show table", ADMIN_SOCKET)
+    if text is None:
+        return None
+    blocked = {}
+    for name, count in parse_blocked_tables(text).items():
+        addresses = []
+        if count:
+            listing = ask_runtime(
+                f"show table mgd-{name}-dynblock", ADMIN_SOCKET, MAX_BLOCKED_LISTED + 1
+            )
+            addresses = parse_blocked_entries(listing or "")
+        blocked[name] = {"count": count, "addresses": addresses}
+    return blocked
 
 
 #
@@ -1435,6 +1514,7 @@ result = {
     "resources": read_resources(),
     "server_state_unapplied": read_server_state_unapplied(),
     "peers": read_peers(),
+    "blocked": read_blocked(),
     "packages": read_packages(),
 }
 

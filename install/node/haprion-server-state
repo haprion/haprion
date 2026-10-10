@@ -5,6 +5,7 @@
     haprion-server-state reload
     haprion-server-state reapply
     haprion-server-state update-certs <certificate-id>...
+    haprion-server-state unblock <object> <address>...
 
 Runs as root. `set` is what the manager asks for, through the trigger account's
 forced command (`haprion-server-state-trigger`), which validated the words
@@ -45,11 +46,20 @@ holds under that file's name - HAProxy refuses any other ("not referenced by the
 configuration", measured on 3.4.6) - and answers EXIT_NOT_HELD for it, so the
 caller reloads as before. Any other failure is aborted and answered too; the
 files on disk are the new ones either way, and a reload reads them.
+
+**`unblock` lifts an object's dynamic block on addresses** (B271): each is
+cleared from the object's blocked table and from its count, and the blocked
+table is read again. The count too, or the address is blocked again by its
+first request inside the window (measured). A `clear` is not shared with the
+other nodes, and another node can send the entry back, so the manager asks
+every node and asks again where an address is still there; this answers for
+this node only.
 """
 
 from __future__ import annotations
 
 import fcntl
+import ipaddress
 import json
 import os
 import re
@@ -98,6 +108,15 @@ CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
 OPENSSL = "/usr/bin/openssl"
 WAIT_FOR_WORKER_SECONDS = 15
 LOCK_SECONDS = 60
+
+#
+# An object name (`proxy_model.NAME`), the generator's names for its dynamic
+# blocking tables (`generate.block_tables`), and the most addresses one request
+# lifts.
+#
+OBJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+MAX_UNBLOCK = 64
+UNBLOCK_BATCH = 16
 
 EXIT_USAGE = 64
 EXIT_UNKNOWN_SERVER = 65
@@ -550,6 +569,69 @@ def command_update_certs(identifiers: list[str]) -> int:
         os.close(held_lock)
 
 
+def block_tables(name: str) -> tuple[str, str]:
+    return f"mgd-{name}-dynblock-rate", f"mgd-{name}-dynblock"
+
+
+def command_unblock(name: str, words: list[str]) -> int:
+    try:
+        addresses = list(dict.fromkeys(str(ipaddress.ip_address(word)) for word in words))
+    except ValueError:
+        addresses = []
+    if not OBJECT.match(name) or not addresses or len(words) > MAX_UNBLOCK:
+        return answer(
+            {
+                "outcome": "refused",
+                "message": f"expected an object name and 1 to {MAX_UNBLOCK} IP addresses",
+            },
+            EXIT_USAGE,
+        )
+    counted, blocked = block_tables(name)
+    held = lock()
+    try:
+        if f"# table: {blocked}," not in ask(["show table"]):
+            return answer(
+                {
+                    "object": name,
+                    "outcome": "refused",
+                    "message": "the configuration HAProxy runs has no dynamic blocking "
+                    "for that object",
+                },
+                EXIT_UNKNOWN_SERVER,
+            )
+        for start in range(0, len(addresses), UNBLOCK_BATCH):
+            batch = addresses[start : start + UNBLOCK_BATCH]
+            ask(
+                [
+                    command
+                    for address in batch
+                    for command in (
+                        f"clear table {counted} key {address}",
+                        f"clear table {blocked} key {address}",
+                    )
+                ]
+            )
+        results = []
+        for address in addresses:
+            left = "key=" in ask([f"show table {blocked} key {address}"])
+            results.append({"address": address, "outcome": "failed" if left else "done"})
+        failed = any(entry["outcome"] == "failed" for entry in results)
+        return answer(
+            {
+                "object": name,
+                "outcome": "failed" if failed else "done",
+                "addresses": results,
+            },
+            EXIT_REFUSED if failed else 0,
+        )
+    except Unavailable as error:
+        return answer(
+            {"object": name, "outcome": "failed", "message": str(error)}, EXIT_UNAVAILABLE
+        )
+    finally:
+        os.close(held)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[0] == "set":
         return command_set(argv[1], argv[2])
@@ -559,6 +641,8 @@ def main(argv: list[str]) -> int:
         return command_reapply()
     if argv[:1] == ["update-certs"]:
         return command_update_certs(argv[1:])
+    if len(argv) >= 3 and argv[0] == "unblock":
+        return command_unblock(argv[1], argv[2:])
     print(__doc__.split("\n\n")[1], file=sys.stderr)
     return EXIT_USAGE
 

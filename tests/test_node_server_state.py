@@ -70,12 +70,24 @@ def configuration(root: Path, servers: list[tuple[str, str, int]], *, socket: bo
     ]
     for index, (guid, host, port) in enumerate(servers, start=1):
         lines.append(f"    server s{index} {host}:{port} guid {guid}")
-    lines += ["backend mgd-api", f"    server s1 127.0.0.1:18583 guid {API}"]
+    lines += [
+        "backend mgd-api",
+        f"    server s1 127.0.0.1:18583 guid {API}",
+        #
+        # The object's dynamic blocking tables, as the generator writes them.
+        #
+        "backend mgd-shop-dynblock-rate",
+        "    stick-table type ipv6 size 1k expire 10s store http_req_rate(10s)",
+        "backend mgd-shop-dynblock",
+        "    stick-table type ipv6 size 1k expire 30m store gpc(1)",
+    ]
     return "\n".join(line for line in lines if line) + "\n"
 
 
 @unittest.skipUnless(HAPROXY, "haproxy is not installed where the tests run")
-class TheHelperKeepsAServerWhereItWasPut(unittest.TestCase):
+class RunningHaproxy(unittest.TestCase):
+    """The helper pointed at a scratch HAProxy; the tests are the subclasses'."""
+
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp(prefix="srvstate-"))
         self.addCleanup(shutil.rmtree, self.root, True)
@@ -146,6 +158,9 @@ class TheHelperKeepsAServerWhereItWasPut(unittest.TestCase):
         servers: dict[str, str] = data["servers"]
         return servers
 
+
+@unittest.skipUnless(HAPROXY, "haproxy is not installed where the tests run")
+class TheHelperKeepsAServerWhereItWasPut(RunningHaproxy):
     def test_a_drain_is_set_kept_and_named_by_its_guid(self) -> None:
         code, out = self.run_helper("set", WEB_B, "drain")
 
@@ -277,6 +292,59 @@ class TheHelperKeepsAServerWhereItWasPut(unittest.TestCase):
             ("drain", WEB_A),
         ):
             with self.subTest(argv):
+                code, _out = self.run_helper(*argv)
+                self.assertEqual(code, self.helper.EXIT_USAGE)
+
+
+@unittest.skipUnless(HAPROXY, "haproxy is not installed where the tests run")
+class TheHelperLiftsABlock(RunningHaproxy):
+    """`unblock` (B271) against the same real HAProxy."""
+
+    def block(self, *addresses: str) -> None:
+        for address in addresses:
+            for table in ("mgd-shop-dynblock-rate", "mgd-shop-dynblock"):
+                self.helper.ask([f"set table {table} key {address} data.gpc[0] 1"])
+
+    def held(self) -> str:
+        return str(
+            self.helper.ask(["show table mgd-shop-dynblock", "show table mgd-shop-dynblock-rate"])
+        )
+
+    def test_the_addresses_leave_both_tables(self) -> None:
+        self.block("192.0.2.7", "2001:db8::7", "192.0.2.8")
+
+        code, out = self.run_helper("unblock", "shop", "192.0.2.7", "2001:db8::7")
+
+        self.assertEqual(code, 0, out)
+        answer = json.loads(out)
+        self.assertEqual(answer["outcome"], "done")
+        self.assertEqual(
+            answer["addresses"],
+            [
+                {"address": "192.0.2.7", "outcome": "done"},
+                {"address": "2001:db8::7", "outcome": "done"},
+            ],
+        )
+        held = self.held()
+        self.assertNotIn("key=::ffff:192.0.2.7 ", held)
+        self.assertNotIn("key=2001:db8::7 ", held)
+        self.assertEqual(held.count("key=::ffff:192.0.2.8 "), 2, "the neighbour stays in both")
+
+    def test_an_object_without_dynamic_blocking_is_refused(self) -> None:
+        code, out = self.run_helper("unblock", "api", "192.0.2.7")
+
+        self.assertEqual(code, self.helper.EXIT_UNKNOWN_SERVER)
+        self.assertEqual(json.loads(out)["outcome"], "refused")
+
+    def test_words_that_are_not_a_request_are_refused(self) -> None:
+        for argv in (
+            ("unblock", "shop"),
+            ("unblock", "Shop", "192.0.2.7"),
+            ("unblock", "shop", "192.0.2.300"),
+            ("unblock", "shop", "example.com"),
+            ("unblock", "shop", *[f"192.0.2.{index}" for index in range(65)]),
+        ):
+            with self.subTest(argv[:3]):
                 code, _out = self.run_helper(*argv)
                 self.assertEqual(code, self.helper.EXIT_USAGE)
 
@@ -459,6 +527,30 @@ class TheTriggerValidatesBeforeSudo(unittest.TestCase):
         self.assertEqual(
             done.stdout.strip(), f"-n /usr/sbin/haprion-server-state set {WEB_A} drain"
         )
+
+    def test_an_unblock_reaches_the_helper_with_its_addresses(self) -> None:
+        done = self.trigger("unblock shop 192.0.2.7 2001:db8::7")
+
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(
+            done.stdout.strip(),
+            "-n /usr/sbin/haprion-server-state unblock shop 192.0.2.7 2001:db8::7",
+        )
+
+    def test_an_unblock_that_is_not_one_is_refused_before_sudo(self) -> None:
+        for request in (
+            "unblock",
+            "unblock shop",
+            "unblock Shop 192.0.2.7",
+            "unblock shop 192.0.2.7;id",
+            "unblock shop $(id)",
+            "unblock ../x 192.0.2.7",
+            "unblock shop " + " ".join(f"192.0.2.{index}" for index in range(65)),
+        ):
+            with self.subTest(request[:40]):
+                done = self.trigger(request)
+                self.assertEqual(done.returncode, 64)
+                self.assertEqual(done.stdout, "")
 
     def test_anything_else_is_refused_and_never_reaches_sudo(self) -> None:
         for request in (

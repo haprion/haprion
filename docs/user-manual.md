@@ -804,6 +804,15 @@ unless `global` says otherwise, so the cluster's `core/haproxy.cfg` needs:
 A publish that needs more slots than the core allows is refused with that line
 before anything is validated.
 
+Each node reports its blocked addresses in its status (`blocked`): per object,
+how many, and the first 100 with the time left, read on the admin socket
+`/run/haproxy/manager.sock`. A block is lifted on a node by
+`haprion-server-state unblock <object> <address>...`, which the server state
+key's forced command allows; it clears the address from both tables, since one
+left in the count is blocked again by its next request. A cleared entry is not
+shared, and another node can send it back, so a block is lifted on every node
+and checked again.
+
 ## The WAF engine
 
 An http or https object can have its requests inspected by a web application
@@ -3790,8 +3799,8 @@ All root-owned under `/usr/sbin`, installed by the `haprion-node` package, not g
 | `haprion-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB; `waf <cursor>` returns the WAF engine's journal lines after a journal cursor, same cap |
 | `haprion-traffic-log-enable` | installs or removes this node's rsyslog route and retention timer |
 | `haprion-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
-| `haprion-server-state-trigger` | unprivileged wrapper: validates `server-state <guid> <ready\|drain\|maint>`, then escalates |
-| `haprion-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts; replaces certificates HAProxy already holds without a reload (`update-certs`) |
+| `haprion-server-state-trigger` | unprivileged wrapper: validates `server-state <guid> <ready\|drain\|maint>` or `unblock <object> <address>...`, then escalates |
+| `haprion-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts; replaces certificates HAProxy already holds without a reload (`update-certs`); lifts an object's dynamic block on addresses, from its blocked table and its count (`unblock`) |
 
 Step 4 also writes `/etc/haprion/node-installation.json`. It records the
 node compatibility API and a SHA-256 digest for each of these thirteen scripts.

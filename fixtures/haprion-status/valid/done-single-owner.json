@@ -50,7 +50,22 @@
               "fingerprint_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
               "valid": true
             }
-          ]
+          ],
+          "blocked": {
+            "shop": {
+              "count": 1,
+              "addresses": [
+                {
+                  "address": "2001:db8::7",
+                  "expires_in_ms": 1793254
+                }
+              ]
+            },
+            "db": {
+              "count": 0,
+              "addresses": []
+            }
+          }
         },
         "error": null,
         "current": true

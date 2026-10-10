@@ -341,6 +341,33 @@
             "additionalProperties": false
           }
         },
+        "blocked": {
+          "description": "Dynamic blocking (B271): each object with it, by name, with the number of source addresses its blocked table holds on this node and the first 100 of them with the milliseconds left; an IPv4 address is written plainly. Empty when no object blocks, null when HAProxy's admin socket could not be asked, absent from a node reporting before it.",
+          "type": ["object", "null"],
+          "maxProperties": 500,
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_-]{0,39}$" },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["count", "addresses"],
+            "properties": {
+              "count": { "type": "integer", "minimum": 0 },
+              "addresses": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "object",
+                  "required": ["address", "expires_in_ms"],
+                  "properties": {
+                    "address": { "type": "string", "minLength": 2, "maxLength": 45 },
+                    "expires_in_ms": { "type": "integer", "minimum": 0 }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
         "server_state_unapplied": {
           "description": "Drain or maintenance kept for a server on this node that HAProxy does not hold after a reload or a start (review 26-10-09, F1), by the server's GUID; empty when every kept state is in force, null when the node's record cannot be read, absent from a node reporting before it.",
           "type": ["object", "null"],

@@ -17,7 +17,9 @@ shortest block the model takes is a minute, too long to wait for here.
 
 from __future__ import annotations
 
+import contextlib
 import http.client
+import io
 import shutil
 import socket
 import subprocess
@@ -33,12 +35,21 @@ from haprion import cluster_settings
 from haprion.config import Vip
 from haprion.generate import block_tables, generate
 from haprion.proxy_model import load_proxy
+from tests.test_node_blocked import parsing
+from tests.test_node_server_state import load_helper
 
 NODES = (("node-a", "127.0.0.1"), ("node-b", "127.0.0.2"))
 ATTACKER = "127.0.0.10"
 GUESSER = "127.0.0.11"
 EXEMPT = "127.0.0.20"
 TCP_CLIENT = "127.0.0.30"
+#
+# A proxy in front of the cluster, and two visitors behind it whose IPv6
+# addresses end in the same 32 bits - which a table keyed `ip` counted as one.
+#
+PROXY = "127.0.0.50"
+BEHIND = "2001:db8:1::7"
+NEIGHBOUR = "2001:db8:2::7"
 UNTIL = 5.0
 
 
@@ -168,6 +179,7 @@ backends:
                 ports={"http": self.http_port, "https": _free_port()},
                 settings=settings,
                 peer_nodes=NODES,
+                trusted_proxies=(f"{PROXY}/32",),
             ).configuration
             for name, content in files.items():
                 (directory / "conf.d" / name).write_text(content)
@@ -206,21 +218,25 @@ backends:
         return all("ESTA" in self.runtime(node, "show peers") for _, node in NODES)
 
     def blocked(self, node: str, name: str = "shop") -> dict[str, int]:
-        """Each blocked address on one node, with the milliseconds left."""
+        """Each blocked address on one node, read as `haprion-node-status` reads it."""
 
-        found: dict[str, int] = {}
-        for line in self.runtime(node, f"show table {block_tables(name)[1]}").splitlines():
-            fields = dict(part.split("=", 1) for part in line.split() if "=" in part)
-            if "key" in fields and "exp" in fields:
-                found[fields["key"]] = int(fields["exp"])
-        return found
+        node_status = parsing()
+        counts = node_status["parse_blocked_tables"](self.runtime(node, "show table"))
+        entries = node_status["parse_blocked_entries"](
+            self.runtime(node, f"show table {block_tables(name)[1]}")
+        )
+        self.assertEqual(counts.get(name), len(entries))
+        return {entry["address"]: entry["expires_in_ms"] for entry in entries}
 
-    def get(self, node: str, source: str, path: str = "/") -> int:
+    def get(self, node: str, source: str, path: str = "/", forwarded: str = "") -> int:
         connection = http.client.HTTPConnection(
             node, self.http_port, timeout=5, source_address=(source, 0)
         )
+        headers = {"Host": "shop.example.com"}
+        if forwarded:
+            headers["X-Forwarded-For"] = forwarded
         try:
-            connection.request("GET", path, headers={"Host": "shop.example.com"})
+            connection.request("GET", path, headers=headers)
             response = connection.getresponse()
             response.read()
             return response.status
@@ -228,13 +244,15 @@ backends:
             connection.close()
 
     def unblock(self, address: str, name: str = "shop") -> None:
-        """What the node helper does: count and block cleared on every node, twice."""
+        """The node helper's `unblock` on every node, twice, as the manager asks it."""
 
-        counted, blocked = block_tables(name)
+        helper = load_helper()
+        helper.LOCK_FILE = str(self.root / "unblock.lock")
         for _ in range(2):
             for _, node in NODES:
-                self.runtime(node, f"clear table {counted} key {address}")
-                self.runtime(node, f"clear table {blocked} key {address}")
+                helper.ADMIN_SOCKET = str(self.sockets[node])
+                with contextlib.redirect_stdout(io.StringIO()):
+                    helper.command_unblock(name, [address])
 
     def test_over_the_limit_is_blocked_on_both_nodes_and_extended(self) -> None:
         a, b = NODES[0][1], NODES[1][1]
@@ -253,6 +271,14 @@ backends:
             _until(lambda: self.blocked(b).get(ATTACKER, 0) > left - 500),
             "a request during the block started its time again on node B",
         )
+
+    def test_behind_a_proxy_an_ipv6_visitor_is_blocked_alone(self) -> None:
+        a = NODES[0][1]
+        self.assertEqual(
+            [self.get(a, PROXY, forwarded=BEHIND) for _ in range(6)], [200] * 5 + [404]
+        )
+        self.assertEqual(self.get(a, PROXY, forwarded=NEIGHBOUR), 200)
+        self.assertEqual(list(self.blocked(a)), [BEHIND])
 
     def test_an_unblock_clears_both_nodes_and_the_count(self) -> None:
         a, b = NODES[0][1], NODES[1][1]
@@ -281,14 +307,18 @@ backends:
         a = NODES[0][1]
 
         def answered() -> bool:
-            with socket.create_connection(
-                (a, self.tcp_port), timeout=5, source_address=(TCP_CLIENT, 0)
-            ) as connection:
-                connection.sendall(b"GET / HTTP/1.0\r\nHost: db\r\n\r\n")
-                try:
+            #
+            # A rejected connection is reset - while connecting or at the first
+            # read, depending on how fast HAProxy closes it; either is closed.
+            #
+            try:
+                with socket.create_connection(
+                    (a, self.tcp_port), timeout=5, source_address=(TCP_CLIENT, 0)
+                ) as connection:
+                    connection.sendall(b"GET / HTTP/1.0\r\nHost: db\r\n\r\n")
                     return connection.recv(64).startswith(b"HTTP/1.0 200")
-                except ConnectionResetError:
-                    return False
+            except (ConnectionResetError, BrokenPipeError):
+                return False
 
         self.assertEqual([answered() for _ in range(3)], [True] * 3)
         self.assertFalse(answered())

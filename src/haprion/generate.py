@@ -91,12 +91,18 @@ TRUSTED_ACL = f"{PREFIX}-trusted-proxy"
 
 
 #
-# How many source addresses one frontend keeps counters for. Entries expire
-# after a single window, so this bounds a burst of distinct addresses rather
-# than a day of traffic; HAProxy allocates it up front, and 1m of ip entries is
-# a few tens of megabytes.
+# How many source addresses one table keeps counters for. A bound, not an
+# allocation: HAProxy takes memory per entry as addresses arrive (measured on
+# 3.4.6, 26-10-10: forty empty tables of 1m cost under a megabyte).
 #
 ABUSE_TABLE_SIZE = "1m"
+#
+# Keyed `ipv6`, which holds an IPv4 address as `::ffff:a.b.c.d` and answers to
+# it written plainly. `ip` keeps only an IPv6 address's last 32 bits - `::1`
+# became the key `0.0.0.1` (measured on 3.4.6, 26-10-10) - so every IPv6
+# visitor whose address ended the same shared one count, and one block.
+#
+TABLE_KEY = "ipv6"
 #
 # The section the nodes share their stick tables in (B270). Every table the
 # generator writes names it when the cluster has turned sharing on.
@@ -1582,7 +1588,9 @@ def _forwarded_rules(protocol: str, trusted_proxies: Sequence[str]) -> list[str]
 def _stick_table(window: str, stored: str, peers: str | None) -> str:
     """One generated stick table, shared with the other nodes when peers is named (B270)."""
 
-    line = f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} store {stored}"
+    line = (
+        f"    stick-table type {TABLE_KEY} size {ABUSE_TABLE_SIZE} expire {window} store {stored}"
+    )
     return f"{line} peers {peers}" if peers else line
 
 

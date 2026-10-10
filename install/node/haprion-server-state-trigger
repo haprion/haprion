@@ -9,12 +9,18 @@
 # against this wrapper being replaced or bypassed.
 #
 #     server-state <guid> <ready|drain|maint>
+#     unblock <object> <address>...      (dynamic blocking, B271; at most 64)
 #
 set -Eeuo pipefail
 
 HELPER="/usr/sbin/haprion-server-state"
 # The generator's server GUID (`guid.server_guid`); the helper holds the same pattern.
 GUID_PATTERN='^srv:[a-z][a-z0-9_-]{0,39}\.[0-9a-f]{16}$'
+# An object name (`proxy_model.NAME`), and the characters of an IPv4 or IPv6
+# address; the helper parses each address properly.
+OBJECT_PATTERN='^[a-z][a-z0-9_-]{0,39}$'
+ADDRESS_PATTERN='^[0-9a-fA-F.:]{2,45}$'
+MAX_ADDRESSES=64
 
 fail() {
     echo "ERROR: $*" >&2
@@ -26,6 +32,18 @@ request="${SSH_ORIGINAL_COMMAND:-}"
 
 # Word splitting is what is wanted here, and only here.
 read -r -a parts <<< "$request"
+(( ${#parts[@]} > 0 )) || fail "no server state request was sent"
+
+if [[ "${parts[0]}" == "unblock" ]]; then
+    (( ${#parts[@]} >= 3 && ${#parts[@]} <= MAX_ADDRESSES + 2 )) \
+        || fail "expected: unblock <object> <address>... (at most ${MAX_ADDRESSES})"
+    [[ "${parts[1]}" =~ $OBJECT_PATTERN ]] || fail "invalid object name"
+    for address in "${parts[@]:2}"; do
+        [[ "$address" =~ $ADDRESS_PATTERN ]] || fail "invalid address"
+    done
+    exec sudo -n "$HELPER" unblock "${parts[@]:1}"
+fi
+
 (( ${#parts[@]} == 3 )) || fail "expected: server-state <guid> <ready|drain|maint>"
 [[ "${parts[0]}" == "server-state" ]] || fail "unknown request: ${parts[0]}"
 [[ "${parts[1]}" =~ $GUID_PATTERN ]] || fail "invalid server GUID"

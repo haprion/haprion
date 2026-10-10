@@ -390,7 +390,7 @@ Doing this from the UI is planned for the phase that turns on management writes,
 and it will never be a file upload: the web identity must not read private key
 material. The shape is a drop directory the poller lists, an admin choosing a
 candidate, and a job carrying that candidate's id — the web process chooses
-*which*, never *what*. See B21 in the decision log.
+*which*, never *what*.
 
 ## Step 7 — the worker and the poller
 
@@ -411,14 +411,14 @@ rollback returns to, so it has to be a state that runs.
 Set `clusters` in `ui.toml` before running this; with an empty list the poller
 has nothing to do and says so instead of starting.
 
-On production the step also installs the web's way to a name lookup (B253):
+On production the step also installs the web's way to a name lookup:
 `haprion-resolve-helper.socket` (`/run/haprion/resolve.sock`, group
 `_haprion-web`) and the per-request `haprion-resolve-helper@.service`, a dynamic
 user with the network and nothing else. The editor and the preview look a dns
 server's name up through it; the web itself reaches only localhost. The CLI
 release must carry `haprion-resolve-helper`.
 
-And the web's way to an exportable certificate's key (B255):
+And the web's way to an exportable certificate's key:
 `haprion-cert-export-helper.socket` (`/run/haprion/cert-export.sock`, group
 `_haprion-web`) and the per-request `haprion-cert-export-helper@.service`, root with a
 read-only sandbox and no network. It gives out the key of a registry entry marked

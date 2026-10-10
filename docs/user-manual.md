@@ -593,10 +593,10 @@ the capability's tab, pages and operations; a kept URL answers 404. Both are
 off on a new installation, which enables no backup timer either; an
 installation opts in.
 
-- **External certificates** (called *Certificate receivers* until 2026-10-06)
+- **External certificates**
   off hides the receivers page, the receiver choices in the certificate forms
   and in *Publish to…*/*Remove from…*, the certificates page's second view,
-  and *External certificate* with its downloads and key export (B255).
+  and *External certificate* with its downloads and key export.
   Receivers already registered go on getting renewed certificates, and a
   certificate's *Used by* still names them; external certificates stay in the
   registry and are renewed as before.
@@ -894,8 +894,8 @@ kept across renewals - the receiver imported the bundle into a certificate store
 it fetched, and a new one at every renewal would make every renewal a manual re-import.
 
 An `import` entry whose directory does not exist yet is reported as skipped, not failed, and its
-published copy is left as it is. That is what a certificate published by hand before the import
-store existed looks like.
+published copy is left as it is, as for a certificate placed in the distribution directory by
+hand.
 
 With `--deploy`, every cluster that received a new version is rolled out afterwards with
 `haprion-cert-deploy`, once each, after every file is written. Two clusters that carry the same
@@ -1127,8 +1127,7 @@ rollout of its clusters, exactly as after an issue.
 renewed certificate from the same CA - and keeps every target the entry has; targets named on the
 second import are added to them, never a replacement (taking a target away is *Remove from…*, [Deleting a certificate](#deleting-a-certificate)).
 The manager does not renew an imported certificate; its expiry is on the registry view,
-and a new import before that date is the maintainer's job. A certificate registered as `import`
-before this command existed, with its material placed by hand, is replaced the same way.
+and a new import before that date is the maintainer's job.
 
 **From the interface.** *Certificates → Import certificate* takes the same material as a file:
 PEM (certificate, key and chain in any order), PKCS#12 with its password, a DER certificate or a
@@ -1241,7 +1240,7 @@ it is refused while the registry still names the profile or an enrollment reques
 
 Some places that want a certificate will never be connected to this manager: a server's
 BMC, a NAS, a printer, a camera, a UPS card. For those the manager is where the
-certificate is ordered and taken out; it is installed by hand (B255). Behind the
+certificate is ordered and taken out; it is installed by hand. Behind the
 **External certificates** switch, with the receivers.
 
 **Making one.** *New certificate* → *External, installed by hand* (the switch under
@@ -1325,9 +1324,9 @@ goes into `from=` with the rest.
 
 **Where the directory goes** is `receiver_root` in the runtime policy: a new receiver's
 directory is `<receiver_root>/<id>` unless `--path` names another, and a migration's record
-lives there too. The registry, not the root, says where each receiver actually is - one
-registered before this command existed may be elsewhere - so the root is optional until the
-first `add` or `migrate`, which refuse with `dependency_unavailable` until it is declared.
+lives there too. The registry, not the root, says where each receiver actually is, so the root
+is optional until the first `add` or `migrate`, which refuse with `dependency_unavailable` until it
+is declared.
 
 **The private key is never given to the manager.** The pair is made on the receiver
 (`ssh-keygen -t ed25519`), and `--public-key` takes the `.pub` file. A private key that passed
@@ -1353,9 +1352,8 @@ The `location` blocks live in `/etc/nginx/snippets/haprion-receivers.conf`, whic
 command writes and which the interface's site pulls in with one `include` line; the interface's
 block itself is never edited by a receiver. Not a server block of its own beside the interface's:
 nginx serves the first server block for a name and port and silently ignores a second one, so that
-block would test clean and never answer. **An installation set up before this line existed must
-rerun `install/platform/05-platform-nginx`**, which adds the include and creates the empty
-snippet; until then `add --transport https` refuses with `dependency_unavailable` rather than
+block would test clean and never answer. Platform step 05 adds the include and creates the empty
+snippet; without them `add --transport https` refuses with `dependency_unavailable` rather than
 registering a receiver nothing serves.
 
 **What the receiver trusts.** The interface's certificate is what the receiver's `curl` must
@@ -1384,8 +1382,8 @@ stdin and is not meant to be typed. Once nothing names it, the registry entry, t
 directory and the account go in that order; an account another receiver still fetches as (the
 `legacy` ones share one) is kept, and only the key line naming this directory is taken out.
 
-**Migrating the receivers registered before this command** (the ones `list` shows as `legacy`,
-sharing one account and a `flat` directory) is two steps with the receiver's own change in between:
+**Migrating a `legacy` receiver** - one `list` shows as sharing an account and a `flat` directory -
+to its own account and directory is two steps with the receiver's own change in between:
 
 ```bash
 sudo haprion-cert-receiver migrate pve-01.example.net --public-key /tmp/pve-01.pub
@@ -1405,8 +1403,8 @@ Reference fetch scripts for each transport are in
 adapts; the manager never pushes.
 
 **The worker's sandbox must be able to look into a receiver's directory.** A receiver's files
-belong to its fetch account (`0600`), and a directory made before this command existed may belong
-to that account outright. Root inside the worker's unit is only uid 0 - the mode bits are the law
+belong to its fetch account (`0600`), and a `legacy` receiver's directory belongs to that account
+outright. Root inside the worker's unit is only uid 0 - the mode bits are the law
 there unless the bounding set says otherwise - so the worker unit carries `CAP_DAC_READ_SEARCH`,
 the read-and-traverse capability the poller already has. Without it a target change from the
 interface ends `target_missing` on a directory that `haprion-cert-publish` run as root from a
@@ -1949,7 +1947,7 @@ being ungranted would matter.
   (at most a day) — **except each name's newest successful attempt**, which is
   what *Last sign-in* on the Users page reads. A break-glass account may go
   unused for longer than ninety days and must not then read as never used.
-- **Diffs of versions no longer listed** (schema `0046`). The poller keeps what
+- **Diffs of versions no longer listed.** The poller keeps what
   each version changed and may only add; after a history reset, or once a
   version is older than the listing reaches, its diff is removed here. A cluster
   whose last listing failed is left alone.
@@ -1977,10 +1975,8 @@ boundary, which decides when raw pool partitions may go.
 
 The timer is daily because that normally keeps the completed edge six days
 ahead of the seven-day raw retention. The explicit boundary is what keeps a
-longer outage correct; the schedule is no longer treated as proof that work
-finished. The installed command also remains usable against revision `0020`
-during a staged upgrade. There it rolls up before age-based pruning but cannot
-publish a completion boundary until migration `0021` exists.
+longer outage correct; the schedule is not treated as proof that work
+finished.
 
 ## Traffic logs and metrics
 
@@ -2095,8 +2091,7 @@ redirect has no pool and is called after its object and path,
 
 **A rename keeps its history on the interface's pages.** The metrics page lists
 only the backends the cluster's newest poll reports, and each card reads the
-names its backend had before as well: `mgd-<object>-<pool>`, which a pool was
-called until 2026-10-06, and any name a publish renamed. A publish counts as a
+names its backend had before as well: any name a publish renamed. A publish counts as a
 rename when exactly one of an object's pools goes and one comes, and for a
 redirect when its object is renamed; two pools renamed at once are not paired.
 The pair is recorded when the publish is done (table `metric_backend_alias`) - a
@@ -2116,8 +2111,8 @@ global
 
 A new cluster's core has the line. HAProxy then keeps each frontend's,
 listener's and server's counters in that file and finds them again after a
-reload by the GUID the generator gives every object, so a deploy no longer puts
-a step into a dashboard reading the exporter. Changing a server's address is a
+reload by the GUID the generator gives every object, so a deploy puts no
+step into a dashboard reading the exporter. Changing a server's address is a
 different server and starts again; reordering a pool moves nothing.
 
 - **A pool's own figures still start again on every reload.** HAProxy 3.4.6
@@ -2369,8 +2364,7 @@ from the symlink:
   key added for a newer release has to be removed before rolling back past the
   release that introduced it.
 - **Units name programs.** A unit installed for a newer release starts a program
-  an older release does not contain. The poller and the worker did not exist in
-  every release still on disk.
+  an older release does not contain.
 
 So the command checks both against the target *before* switching — asking the
 target's own validator, because the answer is whatever that release says rather
@@ -2720,10 +2714,9 @@ server_state_identity:
 backup_root: /srv/state-backups
 backup_identity:
   key: "/root/.ssh/id_ed25519_node_backup"
-backup_timer: haprion-state-backup.timer
 ```
 
-An identity names only its key. The account it reaches on a node is fixed (B266): the deploy,
+An identity names only its key. The account it reaches on a node is fixed: the deploy,
 certificate and server state keys reach `_haprion-trigger`, the status and probe keys
 `_haprion-status`, the backup key `_haprion-backup`.
 
@@ -2763,8 +2756,7 @@ each backup first puts such runs away as a restore command would. The ordinary l
 UI show every retained archive per node and identify the source node because hostnames, network state and SSH identities are not
 interchangeable between the pair.
 
-`backup_timer` names the legacy fleet-wide timer during migration. With `backup_identity`
-configured, listings instead read the derived `haprion-state-backup@<cluster>.timer`. An admin can
+Listings read each cluster's `haprion-state-backup@<cluster>.timer`. An admin can
 set its schedule on the manager's clock — every day, chosen weekdays, or one day of the month
 (1–28, so no month is skipped) at a given time — enable or disable it, set the retention, and run
 an immediate cluster backup on the Backups page. The browser supplies no unit name or systemd
@@ -2885,8 +2877,8 @@ A release directory holds that subdirectory and, beside it, `MANIFEST.json` - th
 record of what each object in that release amounts to. It is written outside `node_path`
 deliberately: a node fetches that subdirectory whole with `--delete`, and HAProxy loads everything
 in `conf.d` with `-f`, so a file the manager keeps for itself has no business being inside either.
-Nothing on the node side reads it, and a release published before this existed simply has none -
-the status then reports each object as unknown rather than guessing.
+Nothing on the node side reads it. A release without the file has the status report each object
+as unknown rather than guessing.
 
 `address_prefix` and `address_interface` are optional and describe how this pair's nodes write an
 address they carry:
@@ -3119,9 +3111,8 @@ no receiver - the loader refuses either, and refuses a second such entry - and i
 nginx instead of to targets.
 
 `transport` says how the receiver fetches, `layout` how its directory is arranged, and `allow` -
-`https` only - which addresses may fetch at all. Both defaults describe the receivers registered
-before this command existed, so an older file means exactly what it meant before: `rsync` and
-`flat`. `flat` puts `fullchain.pem` and `privkey.pem` straight into the directory, which is why
+`https` only - which addresses may fetch at all. Left out, they are `rsync` and `flat`, the form
+of a `legacy` receiver. `flat` puts `fullchain.pem` and `privkey.pem` straight into the directory, which is why
 such a receiver holds **one** certificate at a time and a second is refused; `per-certificate`
 gives each certificate a directory of its own, and is the only form a new receiver is registered
 in. Neither field is edited afterwards: a receiver finds out about a moved path or a changed
@@ -3147,8 +3138,8 @@ a `.pfx` to a receiver is exactly as sensitive as publishing `privkey.pem` to it
 
 `source.kind` is `acme` for a certificate certbot renews and `import` for one signed elsewhere. An
 ACME certificate's `lineage` is its certbot lineage name; left out, it is the certificate ID, which
-is what a certificate issued from the interface gets. State it only where an existing lineage was
-named before that convention - renaming a lineage moves certbot's archive, and is not worth it.
+is what a certificate issued from the interface gets. State it only where an existing lineage has
+another name - renaming a lineage moves certbot's archive, and is not worth it.
 
 Every command that changes the file - issue, import, delete, a target change, a receiver's
 registration or removal, the scheduled renewal - reads it, changes it and writes it back under one
@@ -3159,9 +3150,8 @@ file that wins is valid, it just lacks what the other one wrote. A command that 
 for longer than two minutes refuses with `operation_locked` rather than waiting on.
 
 `haprion-cert-list` reports `source` and `targets` for every certificate the registry names, and
-`null` for both on a file in the distribution directory that no entry names: that is what a
-certificate published before the registry existed looks like, and it is listed so it can be
-registered rather than hidden.
+`null` for both on a file in the distribution directory that no entry names: a certificate placed
+there by hand, listed so it can be registered rather than hidden.
 
 #### Certificate publication hook
 
@@ -3208,7 +3198,7 @@ and which private keys may open them; [The DNS profile key pair](#the-dns-profil
 
 | Method | certbot | What the installation is responsible for |
 |---|---|---|
-| `dns-01` | the plugin and root-only file selected by `--dns-profile`; without it, legacy `--dns-cloudflare` with the policy file above | the profile may edit that zone |
+| `dns-01` | the plugin and root-only file selected by `--dns-profile`; without it, `--dns-cloudflare` with the policy file above | the profile may edit that zone |
 | `http-01` | `--webroot -w <webroot>` | `http://<name>/.well-known/acme-challenge/` reaches that directory |
 
 A method whose setting is missing is refused by name before certbot runs. A wildcard
@@ -3732,8 +3722,8 @@ are `root:root` (`755`, `755`, `644`); sshd accepts a root-owned key file as rea
 by the account. A key file the account could write would let a session rewrite its own forced
 command, and a home directory it owned would let it replace `.ssh` wholesale. The shell's dotfiles
 are covered by the same rule: Debian's bash sources `~/.bashrc` for a command it runs on behalf of
-sshd, before the forced command, so no dotfiles are created and any left by an earlier installation
-are made root's on the next run of step 4. Edit `authorized_keys` with `sudo`.
+sshd, before the forced command, so no dotfiles are created and any that exist are made root's on
+the next run of step 4. Edit `authorized_keys` with `sudo`.
 
 #### Node scripts
 
@@ -3780,20 +3770,16 @@ Two of these deserve attention:
 as SSH command arguments, and no wildcard rule can safely constrain them. So validation happens
 twice: unprivileged in the wrapper, and again in the root helper. The wrapper escalates with
 `sudo -n` and an exact `NOPASSWD` rule, so a policy mismatch fails immediately instead of falling
-back to an interactive password prompt. Since the cleanup operation ([Deleting a certificate](#deleting-a-certificate)) the wrapper knows two
-verbs, `cert-pull` and `cert-remove`, each with its own root helper and its own sudoers rule; a
-node installed before that answers `cert-remove` with "unknown request", which the manager reports
-as a kept copy rather than as a failure. Rerun step 4 on such a node to give it the verb.
+back to an interactive password prompt. The wrapper knows two verbs, `cert-pull` and `cert-remove`
+([Deleting a certificate](#deleting-a-certificate)), each with its own root helper and its own
+sudoers rule.
 
 **`haprion-health-probe` is held to the same TLS floor as the configuration.** A pool whose object
 names a `legacy` policy is reached by HAProxy over TLS [Service accounts and the config group](#service-accounts-and-the-config-group), so a probe that kept a floor of its own
 would refuse a backend HAProxy accepts and report a healthy pool as down. Each target therefore
 carries a `min_version` — `TLSv1.1`, `TLSv1.2` or `TLSv1.3` — and the script refuses anything else.
 
-A target that names none means `TLSv1.2`, which is what a manager older than the field sends. The
-degradation runs the other way too and is worth knowing: a **node** older than the field ignores it
-and probes at TLS [Directory layout](#directory-layout) regardless, so a `legacy` pool reads as unreachable until that node's script
-is updated. The configuration is unaffected — only the answer the card gives.
+A target that names none means `TLSv1.2`.
 
 **`haprion-server-state` keeps a drain through reloads and restarts.** A state set over HAProxy's
 runtime socket lasts only as long as the worker, and every deploy and certificate rollout starts a
@@ -4075,9 +4061,7 @@ never typed. Without the package the full path works the same:
 `sudo /opt/haprion/current/bin/haprion-cert-receiver ...`.
 
 `INSTALLATION.json` also records the engine compatibility API carried by the
-wheel. A wheel from before that metadata existed remains installable for
-rollback and is recorded as API zero; the whole-installation check will not
-silently treat an unknown old engine as compatible with a newer UI.
+wheel, which the whole-installation check compares with what the UI needs.
 
 #### Order of operations
 
@@ -4253,12 +4237,6 @@ requirements, then `migrate --release <release-id>`, `03-verify`, and the candid
 check again without `--before-migration`. Only after those pass is the same
 prepared release activated by rerunning `install-ui-release` without `--prepare`.
 The final ordinary compatibility check proves the processes after the switch.
-
-The first bridge may encounter a running release from before compatibility
-metadata existed. It can be activated only when its database head is exactly the
-revision already running, so the operation makes no schema change. A candidate
-that would migrate from such a release is refused because rollback safety cannot
-be inferred without metadata.
 
 `update-platform-release` owns that complete order for normal updates, and the
 package's `postinst` runs it when a newer `haprion-ui` is installed over a
@@ -4612,9 +4590,8 @@ through exact sudoers rules:
 Status and inventory reach the nodes. `haprion-readings-helper` answers the six
 readings that touch only the management host - versions, backup archives,
 certificates, the network description, the cluster settings and the stored
-objects - in one call, by running their own helpers; until 2026-10-08 each had
-its own rule and its own sudo call every pass, which was most of the host's
-journal.
+objects - in one call, by running their own helpers, so a pass is one sudo call
+rather than six lines in the host's journal.
 
 For the polling interval and refresh behaviour, see
 [Jobs and status freshness](#jobs-and-status-freshness).
@@ -4727,17 +4704,14 @@ key material; [Deleting a certificate](#deleting-a-certificate) says what bounds
 edits sshd's and nginx's own configuration, is deliberately not in this file: it is reached over
 a socket instead, for the reason given under *The worker's way to the receiver helper*.
 
-Publishing was deliberately absent from that list until the editor existed, on the reasoning that
-it was an operator's decision made at a terminal. What changed is that the interface became where
-those decisions are made: an editor that can only save a draft is an editor whose work has to be
+Publishing is in that list because the interface is where those decisions are made: an editor that can only save a draft is an editor whose work has to be
 finished somewhere else, and asking somebody to leave the screen and log in to a shell to complete
 a change is how a change gets left unfinished. Publishing still writes nothing to a node — that is
 deploy, a separate helper and a separate decision.
 
-**`07-platform-services` installs this file**, `visudo`-checked, since 2026-09-03. Before that it
-was installed by hand, and it fell behind exactly as this document warns: the file predated the
-objects-publish helper, so the publish button would have met sudo's refusal on its first use. If you
-are upgrading an installation that was built earlier, rerun that step.
+**`07-platform-services` installs this file**, `visudo`-checked. A file installed by hand falls
+behind the helpers a release adds, and the first use of a new one meets sudo's refusal; rerun the
+step after a release that names a new helper.
 
 ##### The web service, and why it has no sudoers rule at all
 
@@ -4932,8 +4906,8 @@ This guide is honest about its gaps rather than complete on paper:
   certificates issued through Certbot renew on Certbot's own timer, and those enrolled from a
   Microsoft CA over NDES/SCEP renew through the same daily run. Issuance, import and
   distribution are described in the [user manual](#certificates).
-- **A rebuild from this repository alone** has not yet been re-verified end to end since the
-  latest phases; that is the last step before 1.0.
+- **A rebuild from this repository alone** has not been verified end to end; that is the last
+  step before 1.0.
 
 The acceptance criterion for closing them is mechanical: a new management host and a new pair of nodes, with names of your own choosing, built
 from this repository alone by someone who has never seen the maintainer's environment.

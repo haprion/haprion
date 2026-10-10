@@ -17,7 +17,7 @@ and sudoers output remain private deployment data.
 The traffic collector's key is the one private key an app identity holds: a forced-command key that
 can read a node's logs and do nothing else. Apart from it, no app identity owns or can read SSH
 private keys, certificate private keys, validation dummy-key material, secret files, or raw backup
-archives - with one exception made on purpose (B255): a certificate the registry marks
+archives - with one exception made on purpose: a certificate the registry marks
 `exportable`, made for a device that is installed by hand and never connected here. Its key is
 read by a root helper on a socket only the web account may reach, handed to the person who asked
 in that one response, and written nowhere; the entry has no cluster and no receiver, and the mark
@@ -41,7 +41,7 @@ is a forced command with no argument, and each has its own key; none of them is 
 
 ### Identity provisioning
 
-Account names are fixed (B266): service accounts are `_haprion-*`, the operators' configuration
+Account names are fixed: service accounts are `_haprion-*`, the operators' configuration
 group is `haprion`. Two declarative `sysusers.d` fragments create them, `install/sysusers/haprion.conf`
 on the management host and `haprion-node.conf` on each node; the first installation step on each
 applies its fragment. The web, worker and poller accounts are distinct, locked and no-login; only

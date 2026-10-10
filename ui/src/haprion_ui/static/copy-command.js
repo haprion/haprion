@@ -49,5 +49,5 @@
     }
   });
   wire();
-  document.addEventListener("haproxy-ui:redrawn", wire);
+  document.addEventListener("haprion:redrawn", wire);
 })();

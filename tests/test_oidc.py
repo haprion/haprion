@@ -42,7 +42,7 @@ from haprion.cli import oidc_helper
 from haprion.dns_profile_keys import write_key_pair
 from tests.contract_schema import assert_contract
 
-CLIENT_ID = "haproxy-manager"
+CLIENT_ID = "haprion"
 SECRET = "a client secret long enough for HS256"  # noqa: S105 - the fake provider's own
 NONCE = "n" * 43
 VERIFIER = "v" * 43
@@ -321,9 +321,7 @@ class SigningIn(ProviderTestCase):
         self.assertEqual(fields["code_verifier"], [VERIFIER])
         self.assertEqual(fields["redirect_uri"], [REDIRECT])
         self.assertNotIn("client_secret", fields)
-        expected = base64.b64encode(
-            b"haproxy-manager:a%20client%20secret%20long%20enough%20for%20HS256"
-        )
+        expected = base64.b64encode(b"haprion:a%20client%20secret%20long%20enough%20for%20HS256")
         self.assertEqual(authorization, f"Basic {expected.decode()}")
 
     def test_client_secret_post_sends_the_secret_in_the_form(self) -> None:

@@ -646,7 +646,7 @@ def _wait_for_work(listener: Any, stopping: StopRequest, seconds: int) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(format="%(levelname)s %(message)s", level=logging.INFO)
-    path = Path(os.environ.get("HAPROXY_UI_CONFIG", str(DEFAULT_CONFIG_PATH)))
+    path = Path(os.environ.get("HAPRION_UI_CONFIG", str(DEFAULT_CONFIG_PATH)))
     config = load_config(path)
 
     pool = db.pool(config.database, min_size=1, max_size=2)

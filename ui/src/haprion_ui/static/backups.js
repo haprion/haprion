@@ -25,8 +25,8 @@
   // reader had open is kept per cluster for the tab, so the redraw leaves the
   // view as it was. A browser that refuses storage gets the closed list.
   //
-  const VIEW = "haproxy-ui.backups.archive-view";
-  const POSITION = "haproxy-ui.backups.position";
+  const VIEW = "haprion.backups.archive-view";
+  const POSITION = "haprion.backups.position";
 
   const readViews = () => {
     try {
@@ -146,5 +146,5 @@
     wireAll();
     restorePosition();
   });
-  document.addEventListener("haproxy-ui:redrawn", wireAll);
+  document.addEventListener("haprion:redrawn", wireAll);
 })();

@@ -38,18 +38,18 @@ jobs:
       - name: Materialize required private denylist
         shell: bash
         env:
-          HAPROXY_MANAGER_SECRET_RULES: ${{ runner.temp }}/haprion-private.rules
-          PRIVATE_DENYLIST_B64: ${{ secrets.HAPROXY_MANAGER_DENYLIST }}
+          HAPRION_SECRET_RULES: ${{ runner.temp }}/haprion-private.rules
+          PRIVATE_DENYLIST_B64: ${{ secrets.HAPRION_DENYLIST }}
         run: |
           set -euo pipefail
           if [[ -z "${PRIVATE_DENYLIST_B64}" ]]; then
-            echo "CI: required repository secret HAPROXY_MANAGER_DENYLIST is missing" >&2
+            echo "CI: required repository secret HAPRION_DENYLIST is missing" >&2
             exit 2
           fi
           umask 077
           if ! printf '%s' "${PRIVATE_DENYLIST_B64}" \
-              | base64 --decode > "${HAPROXY_MANAGER_SECRET_RULES}"; then
-            echo "CI: repository secret HAPROXY_MANAGER_DENYLIST is not valid Base64" >&2
+              | base64 --decode > "${HAPRION_SECRET_RULES}"; then
+            echo "CI: repository secret HAPRION_DENYLIST is not valid Base64" >&2
             exit 2
           fi
 
@@ -101,11 +101,11 @@ jobs:
       - name: Run all source, quality, test, and dependency gates
         env:
           GITLEAKS_BIN: ${{ runner.temp }}/gitleaks/gitleaks
-          HAPROXY_MANAGER_SECRET_RULES: ${{ runner.temp }}/haprion-private.rules
+          HAPRION_SECRET_RULES: ${{ runner.temp }}/haprion-private.rules
           # Without this the gate refuses to run rather than skipping the
           # interface. That is the point of it: a gate that passes because it
           # could not import what it was asked to check is not a gate.
-          HAPROXY_UI_PYTHON: ${{ runner.temp }}/venv-ui/bin/python
+          HAPRION_UI_PYTHON: ${{ runner.temp }}/venv-ui/bin/python
           # Same rule again: no browser, no verdict. The interface gate refuses
           # to start rather than reporting a pass it did not earn.
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers

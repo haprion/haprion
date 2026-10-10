@@ -401,7 +401,7 @@ class SigningIn(LoginTestCase):
         self.assertIn('list.addEventListener("toggle", remember)', script)
         self.assertIn("list.open = Boolean(kept.open)", script)
         self.assertIn('querySelectorAll("[data-backup-now]")', script)
-        self.assertIn('document.addEventListener("haproxy-ui:redrawn", wireAll)', script)
+        self.assertIn('document.addEventListener("haprion:redrawn", wireAll)', script)
 
     def test_a_finished_job_redraws_the_content_rather_than_reloading_the_page(self) -> None:
         """A reload blinked the page twice after Back up now: the job, then the reading.

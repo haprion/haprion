@@ -3,9 +3,9 @@
 set -Eeuo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-python_bin="${HAPROXY_UI_PYTHON:-}"
+python_bin="${HAPRION_UI_PYTHON:-}"
 [[ -n "$python_bin" && -x "$python_bin" ]] || {
-    echo "set HAPROXY_UI_PYTHON to the locked UI environment's Python" >&2
+    echo "set HAPRION_UI_PYTHON to the locked UI environment's Python" >&2
     exit 1
 }
 [[ "$(id -u)" -ne 0 ]] || {
@@ -60,17 +60,17 @@ SQL
 "${pg_bindir}/psql" -h "$socket_dir" -d "$database" -v ON_ERROR_STOP=1 -qtAX \
     -c 'create extension pg_trgm'
 
-export HAPROXY_UI_DATABASE_URL="postgresql+psycopg://hm_test_migrate@/${database}?host=${socket_dir}"
-export HAPROXY_UI_TEST_DATABASE_DSN="dbname=${database} host=${socket_dir}"
+export HAPRION_UI_DATABASE_URL="postgresql+psycopg://hm_test_migrate@/${database}?host=${socket_dir}"
+export HAPRION_UI_TEST_DATABASE_DSN="dbname=${database} host=${socket_dir}"
 # Given separately as well: the collector connects by name and socket rather
 # than by DSN, so a check of its behaviour needs the same two values it uses.
-export HAPROXY_UI_TEST_DATABASE_NAME="${database}"
-export HAPROXY_UI_TEST_DATABASE_SOCKET="${socket_dir}"
-export HAPROXY_UI_TEST_MIGRATION_ROLE=hm_test_migrate
-export HAPROXY_UI_TEST_WEB_ROLE=hm_test_web
-export HAPROXY_UI_TEST_WORKER_ROLE=hm_test_worker
-export HAPROXY_UI_TEST_POLLER_ROLE=hm_test_poller
-export HAPROXY_UI_TEST_COLLECTOR_ROLE=hm_test_collector
+export HAPRION_UI_TEST_DATABASE_NAME="${database}"
+export HAPRION_UI_TEST_DATABASE_SOCKET="${socket_dir}"
+export HAPRION_UI_TEST_MIGRATION_ROLE=hm_test_migrate
+export HAPRION_UI_TEST_WEB_ROLE=hm_test_web
+export HAPRION_UI_TEST_WORKER_ROLE=hm_test_worker
+export HAPRION_UI_TEST_POLLER_ROLE=hm_test_poller
+export HAPRION_UI_TEST_COLLECTOR_ROLE=hm_test_collector
 
 (cd "${root}/ui" && "${python_bin%/python}/alembic" upgrade head)
 (cd "${root}/ui" && "$python_bin" -m unittest -v tests.test_database_integration)

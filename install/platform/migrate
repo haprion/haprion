@@ -48,7 +48,7 @@ migration_root="${release}/migration"
 # become one. Peer authentication and the ident map decide whether root may be
 # this role; the URL only states which role it is asking for.
 #
-export HAPROXY_UI_DATABASE_URL="postgresql+psycopg://${DB_MIGRATION_ROLE}@/${DB_NAME}?host=/var/run/postgresql"
+export HAPRION_UI_DATABASE_URL="postgresql+psycopg://${DB_MIGRATION_ROLE}@/${DB_NAME}?host=/var/run/postgresql"
 
 #
 # Checked here rather than left to Postgres. The migrations grant to the three

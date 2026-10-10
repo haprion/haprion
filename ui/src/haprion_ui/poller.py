@@ -523,7 +523,7 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(format="%(levelname)s %(message)s", level=logging.INFO)
-    path = Path(os.environ.get("HAPROXY_UI_CONFIG", str(DEFAULT_CONFIG_PATH)))
+    path = Path(os.environ.get("HAPRION_UI_CONFIG", str(DEFAULT_CONFIG_PATH)))
     config = load_config(path)
 
     #

@@ -197,11 +197,11 @@ class StoppingWhatItStarted(unittest.TestCase):
 
 class TheEnvironmentIsBuiltByName(unittest.TestCase):
     def test_a_variable_the_worker_holds_is_not_inherited(self) -> None:
-        os.environ["HAPROXY_UI_TEST_LEAK"] = "visible"
-        self.addCleanup(os.environ.pop, "HAPROXY_UI_TEST_LEAK", None)
+        os.environ["HAPRION_UI_TEST_LEAK"] = "visible"
+        self.addCleanup(os.environ.pop, "HAPRION_UI_TEST_LEAK", None)
 
         completed = execution.run(
-            script("import os, sys; sys.stdout.write(os.environ.get('HAPROXY_UI_TEST_LEAK', '-'))"),
+            script("import os, sys; sys.stdout.write(os.environ.get('HAPRION_UI_TEST_LEAK', '-'))"),
             request="",
             timeout_seconds=30,
             still_ours=lambda: True,

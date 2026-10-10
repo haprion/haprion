@@ -120,7 +120,7 @@ For a generic checkout, run the complete local gate with the repository's exampl
 ```bash
 PATH="$PWD/.venv/bin:$PWD/.tools/shellcheck/0.11.0:$PWD/.tools/actionlint/1.7.12:$PATH" \
 GITLEAKS_BIN="$PWD/.tools/gitleaks/8.30.1/gitleaks" \
-HAPROXY_MANAGER_SECRET_RULES="$PWD/tools/denylist.example.rules" \
+HAPRION_SECRET_RULES="$PWD/tools/denylist.example.rules" \
 ./run-checks
 ```
 

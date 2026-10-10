@@ -22,7 +22,7 @@ from sqlalchemy import engine_from_config, pool
 
 config = context.config
 
-VARIABLE = "HAPROXY_UI_DATABASE_URL"
+VARIABLE = "HAPRION_UI_DATABASE_URL"
 
 
 def _url() -> str:

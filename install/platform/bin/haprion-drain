@@ -28,14 +28,14 @@ set -Eeuo pipefail
 #
 # Overridable for the database tests only; sudo does not pass it through.
 #
-CONFIG_DIRECTORY="${HAPROXY_UI_DRAIN_CONFIG:-/etc/haprion}"
+CONFIG_DIRECTORY="${HAPRION_UI_DRAIN_CONFIG:-/etc/haprion}"
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 warn() { echo "WARNING: $*" >&2; }
 die()  { echo "ERROR: $*" >&2; exit "${2:-1}"; }
 usage() { sed -n '5,6p' "$0" | sed 's/^# \?//'; exit 64; }
 
-[[ $EUID -eq 0 || -n "${HAPROXY_UI_DRAIN_CONFIG:-}" ]] || die "run this with sudo"
+[[ $EUID -eq 0 || -n "${HAPRION_UI_DRAIN_CONFIG:-}" ]] || die "run this with sudo"
 
 wait_seconds=900
 command="${1:-}"

@@ -9,7 +9,7 @@ Type=exec
 User=_haprion-worker
 Group=_haprion-worker
 
-Environment=HAPROXY_UI_CONFIG=/etc/haprion/ui.toml
+Environment=HAPRION_UI_CONFIG=/etc/haprion/ui.toml
 ExecStart=/opt/haprion-ui/current/venv/bin/haprion-worker
 
 Restart=on-failure

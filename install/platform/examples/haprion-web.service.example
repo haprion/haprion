@@ -11,7 +11,7 @@ Group=_haprion-web
 
 # The release, not a checkout. Switching `current` and restarting is the whole
 # deployment; rolling back is switching it and restarting again.
-Environment=HAPROXY_UI_CONFIG=/etc/haprion/ui.toml
+Environment=HAPRION_UI_CONFIG=/etc/haprion/ui.toml
 ExecStart=/opt/haprion-ui/current/venv/bin/uvicorn \
     --factory haprion_ui.app:create_app \
     --host 127.0.0.1 --port 8080 \

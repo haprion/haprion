@@ -8,12 +8,12 @@ set -eu
 
 base=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 
-if [ -z "${HAPROXY_UI_PYTHON:-}" ]; then
-    echo "run-tests: set HAPROXY_UI_PYTHON to the python of the interface environment" >&2
+if [ -z "${HAPRION_UI_PYTHON:-}" ]; then
+    echo "run-tests: set HAPRION_UI_PYTHON to the python of the interface environment" >&2
     exit 2
 fi
-if [ ! -x "${HAPROXY_UI_PYTHON}" ]; then
-    echo "run-tests: not executable: ${HAPROXY_UI_PYTHON}" >&2
+if [ ! -x "${HAPRION_UI_PYTHON}" ]; then
+    echo "run-tests: not executable: ${HAPRION_UI_PYTHON}" >&2
     exit 2
 fi
 
@@ -33,5 +33,5 @@ export PLAYWRIGHT_BROWSERS_PATH
 cd "$base"
 python3 "$base/../tools/run_test_modules.py" \
     --durations "${XDG_CACHE_HOME:-$HOME/.cache}/haprion/test-durations-ui.json" \
-    --suite ui "$base/tests" "$HAPROXY_UI_PYTHON -m unittest discover -s tests -t . -v"
-"$(dirname -- "$HAPROXY_UI_PYTHON")/mypy"
+    --suite ui "$base/tests" "$HAPRION_UI_PYTHON -m unittest discover -s tests -t . -v"
+"$(dirname -- "$HAPRION_UI_PYTHON")/mypy"

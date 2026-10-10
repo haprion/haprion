@@ -64,7 +64,7 @@ class VersionPagesInABrowser(LoginTestCase):
         self.addCleanup(page.close)
         page.set_content(html)
         page.add_script_tag(path=str(STATIC_DIRECTORY / "versions.js"))
-        page.evaluate("document.dispatchEvent(new Event('haproxy-ui:redrawn'))")
+        page.evaluate("document.dispatchEvent(new Event('haprion:redrawn'))")
         for button in clicks:
             page.click(f"[data-version-page-{button}]")
         return (
@@ -110,7 +110,7 @@ class VersionPagesInABrowser(LoginTestCase):
         page.set_content(html)
         page.add_style_tag(path=str(STATIC_DIRECTORY / "app.css"))
         page.add_script_tag(path=str(STATIC_DIRECTORY / "versions.js"))
-        page.evaluate("document.dispatchEvent(new Event('haproxy-ui:redrawn'))")
+        page.evaluate("document.dispatchEvent(new Event('haprion:redrawn'))")
 
         def top() -> float:
             return float(

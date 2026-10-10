@@ -11,7 +11,6 @@
   // toggle.
   //
   const name = "haprion_ui_theme";
-  const legacyKey = "haproxy-manager-theme";
   const themes = ["light", "dark"];
 
   const readCookie = () => {
@@ -32,13 +31,6 @@
   let selected = readCookie();
   if (!themes.includes(selected)) {
     selected = "light";
-    try {
-      // One-time adoption of the choice the previous localStorage version kept.
-      const stored = window.localStorage.getItem(legacyKey);
-      if (stored && themes.includes(stored)) selected = stored;
-    } catch (_) {
-      // A denied storage API changes persistence, never whether the page works.
-    }
     writeCookie(selected);
   }
 

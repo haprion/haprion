@@ -37,18 +37,18 @@ from psycopg.types.json import Jsonb
 
 from haprion_ui import auth, db, metrics, search_index, timing, traffic_logs
 
-DSN = os.environ.get("HAPROXY_UI_TEST_DATABASE_DSN", "")
+DSN = os.environ.get("HAPRION_UI_TEST_DATABASE_DSN", "")
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class ARealDatabase(unittest.TestCase):
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         role = os.environ[role_variable]
         return psycopg.connect(f"{DSN} user={role}")
 
     def test_the_timing_cursor_counts_each_statement_in_a_request(self) -> None:
         with psycopg.connect(
-            f"{DSN} user={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}",
+            f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}",
             cursor_factory=timing.TimedCursor,
         ) as connection:
             # Outside a request: an ordinary cursor.
@@ -71,8 +71,8 @@ class ARealDatabase(unittest.TestCase):
         directory = Path(tempfile.mkdtemp(prefix="drain-"))
         self.addCleanup(shutil.rmtree, directory)
         (directory / "ui-admin.conf").write_text(
-            f"DB_NAME={os.environ['HAPROXY_UI_TEST_DATABASE_NAME']}\n"
-            f"DB_ROLE={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}\n"
+            f"DB_NAME={os.environ['HAPRION_UI_TEST_DATABASE_NAME']}\n"
+            f"DB_ROLE={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}\n"
         )
         script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-drain"
         return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
@@ -82,8 +82,8 @@ class ARealDatabase(unittest.TestCase):
             check=False,
             env={
                 **os.environ,
-                "HAPROXY_UI_DRAIN_CONFIG": str(directory),
-                "PGHOST": os.environ["HAPROXY_UI_TEST_DATABASE_SOCKET"],
+                "HAPRION_UI_DRAIN_CONFIG": str(directory),
+                "PGHOST": os.environ["HAPRION_UI_TEST_DATABASE_SOCKET"],
             },
         )
 
@@ -144,7 +144,7 @@ class ARealDatabase(unittest.TestCase):
         self.addCleanup(self.forget_job, pending)
         self.assertEqual(self.drain("pause", "--wait", "3").returncode, 0)
 
-        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
             self.assertIsNone(db.claim_job(connection, worker_id="w", lease_seconds=60))
             connection.rollback()
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
@@ -152,7 +152,7 @@ class ARealDatabase(unittest.TestCase):
             connection.rollback()
 
         self.assertEqual(self.drain("resume").returncode, 0)
-        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
             claimed = db.claim_job(connection, worker_id="w", lease_seconds=60)
             connection.rollback()
         self.assertIsNotNone(claimed)
@@ -176,14 +176,14 @@ class ARealDatabase(unittest.TestCase):
         self.addCleanup(self.forget_job, pending)
 
         script = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-drain"
-        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as worker:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as worker:
             claimed = db.claim_job(worker, worker_id="w", lease_seconds=60)
             self.assertIsNotNone(claimed)
             directory = Path(tempfile.mkdtemp(prefix="drain-"))
             self.addCleanup(shutil.rmtree, directory)
             (directory / "ui-admin.conf").write_text(
-                f"DB_NAME={os.environ['HAPROXY_UI_TEST_DATABASE_NAME']}\n"
-                f"DB_ROLE={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}\n"
+                f"DB_NAME={os.environ['HAPRION_UI_TEST_DATABASE_NAME']}\n"
+                f"DB_ROLE={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}\n"
             )
             pausing = subprocess.Popen(  # noqa: S603 - fixed interpreter, the repository's script
                 ["/bin/bash", str(script), "pause", "--wait", "3"],
@@ -192,8 +192,8 @@ class ARealDatabase(unittest.TestCase):
                 text=True,
                 env={
                     **os.environ,
-                    "HAPROXY_UI_DRAIN_CONFIG": str(directory),
-                    "PGHOST": os.environ["HAPROXY_UI_TEST_DATABASE_SOCKET"],
+                    "HAPRION_UI_DRAIN_CONFIG": str(directory),
+                    "PGHOST": os.environ["HAPRION_UI_TEST_DATABASE_SOCKET"],
                 },
             )
             with self.assertRaises(subprocess.TimeoutExpired):
@@ -216,7 +216,7 @@ class ARealDatabase(unittest.TestCase):
             connection.commit()
         self.addCleanup(self.forget_job, pending)
 
-        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
             claimed = db.claim_job(connection, worker_id="w", lease_seconds=60)
             connection.rollback()
 
@@ -296,7 +296,7 @@ class ARealDatabase(unittest.TestCase):
                 "insert into cluster_history (cluster, outcome, result) values (%s, 'done', %s)",
                 ("vd-ask", Jsonb({"versions": [{"hash": h} for h in hashes], "diffs": {}})),
             )
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             self.assertEqual(
                 db.record_version_diffs(
                     connection,
@@ -317,7 +317,7 @@ class ARealDatabase(unittest.TestCase):
                 "kept once; never replaced",
             )
             connection.commit()
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             self.assertEqual(
                 db.read_version_diff(connection, cluster="vd-ask", commit=hashes[0]), {"files": []}
             )
@@ -521,7 +521,7 @@ class ARealDatabase(unittest.TestCase):
             "updated_by": "admin",
         }
         try:
-            with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
                 first = db.save_cluster_change(
                     connection, **common, document="vips: {}\n", expected_revision=None
                 )
@@ -699,7 +699,7 @@ class ARealDatabase(unittest.TestCase):
                 )
             connection.commit()
         try:
-            with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
                 found = db.draft_publishes(connection, cluster="alpha", draft_ids={mine})
             self.assertEqual([job.payload["draft"]["id"] for job in found], [mine])
         finally:
@@ -754,7 +754,7 @@ class ARealDatabase(unittest.TestCase):
         """
 
         try:
-            with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
                 draft = db.save_draft(
                     connection,
                     cluster="alpha",
@@ -794,7 +794,7 @@ class ARealDatabase(unittest.TestCase):
             "updated_by": "admin",
         }
         try:
-            with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
                 saved = db.save_change(
                     connection,
                     **common,
@@ -839,7 +839,7 @@ class ARealDatabase(unittest.TestCase):
                 connection.commit()
 
     def test_an_object_cannot_replace_itself(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             with self.assertRaises(psycopg.errors.CheckViolation):
                 db.save_draft(
                     connection,
@@ -866,10 +866,10 @@ class ARealDatabase(unittest.TestCase):
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
-            "HAPROXY_UI_TEST_WEB_ROLE": "app_web",
-            "HAPROXY_UI_TEST_WORKER_ROLE": "app_worker",
-            "HAPROXY_UI_TEST_POLLER_ROLE": "app_poller",
-            "HAPROXY_UI_TEST_COLLECTOR_ROLE": "app_collector",
+            "HAPRION_UI_TEST_WEB_ROLE": "app_web",
+            "HAPRION_UI_TEST_WORKER_ROLE": "app_worker",
+            "HAPRION_UI_TEST_POLLER_ROLE": "app_poller",
+            "HAPRION_UI_TEST_COLLECTOR_ROLE": "app_collector",
         }
         with self.connect() as connection, connection.cursor() as cursor:
             for variable, contract in expected.items():
@@ -883,7 +883,7 @@ class ARealDatabase(unittest.TestCase):
                 self.assertEqual(cursor.fetchall(), [(contract,)])
 
     def test_web_can_read_status_but_cannot_write_it(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select cluster from cluster_status limit 0")
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 cursor.execute(
@@ -911,7 +911,7 @@ class ARealDatabase(unittest.TestCase):
                 ]
             }
 
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             db.record_cluster_status(
                 connection, cluster="cpu-share", outcome="done", result=answer(1000, 900)
             )
@@ -920,7 +920,7 @@ class ARealDatabase(unittest.TestCase):
                 connection, cluster="cpu-share", outcome="done", result=answer(3000, 2400)
             )
             connection.commit()
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             (row,) = [row for row in db.cluster_statuses(connection) if row.cluster == "cpu-share"]
             self.assertEqual(row.result["nodes"][0]["cpu_percent"], 25)
 
@@ -933,11 +933,11 @@ class ARealDatabase(unittest.TestCase):
             "log_targets": [],
             "metrics": None,
         }
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             db.record_cluster_settings(connection, cluster="alpha", outcome="done", result=result)
             db.record_cluster_settings(connection, cluster="alpha", outcome="done", result=result)
             connection.commit()
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             (row,) = db.cluster_settings(connection)
             self.assertEqual((row.cluster, row.result), ("alpha", result))
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
@@ -950,13 +950,13 @@ class ARealDatabase(unittest.TestCase):
 
     def test_the_poller_replaces_the_cluster_list_and_web_only_reads_it(self) -> None:
         # Fas 16 (B206/B211): one row, replaced by update, so no delete grant.
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             self.assertIsNone(db.cluster_list(connection))
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             db.record_cluster_list(connection, ["alpha", "beta"])
             db.record_cluster_list(connection, ["beta", "gamma"])
             connection.commit()
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             self.assertEqual(db.cluster_list(connection), ("beta", "gamma"))
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 db.record_cluster_list(connection, ["alpha"])
@@ -966,7 +966,7 @@ class ARealDatabase(unittest.TestCase):
 
     def test_worker_can_read_jobs_but_not_accounts(self) -> None:
         with (
-            self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection,
             connection.cursor() as cursor,
         ):
             cursor.execute("select id from job limit 0")
@@ -978,7 +978,7 @@ class ARealDatabase(unittest.TestCase):
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select metric_partition('metric_frontend', %s::date)", (now.date(),))
         with (
-            self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
             connection.cursor() as cursor,
         ):
             cursor.execute(
@@ -987,7 +987,7 @@ class ARealDatabase(unittest.TestCase):
                 "values ('alpha', 'node-a', 'mgd-main-http', true, 60, 1)"
             )
         with (
-            self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
             connection.cursor() as cursor,
             self.assertRaises(psycopg.errors.InsufficientPrivilege),
         ):
@@ -1022,10 +1022,10 @@ class ARealDatabase(unittest.TestCase):
              response_time, total_time, bytes)
             values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             on conflict do nothing"""
-        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
             connection.execute(statement, values)
             connection.execute(statement, values)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select host, path, status from traffic_log "
                 "where cluster = 'alpha' and host = 'service.example.com'"
@@ -1045,7 +1045,7 @@ class ARealDatabase(unittest.TestCase):
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 cursor.execute(statement, values)
         with (
-            self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection,
             connection.cursor() as cursor,
             self.assertRaises(psycopg.errors.InsufficientPrivilege),
         ):
@@ -1081,7 +1081,7 @@ class ARealDatabase(unittest.TestCase):
                         (b"r" * 32, now, "x" * 161),
                     )
             connection.rollback()
-        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
             connection.execute(
                 "insert into traffic_log (event_id, cluster, node, occurred_at, "
                 "request_number, client, method, host, path, frontend, backend, server, "
@@ -1091,7 +1091,7 @@ class ARealDatabase(unittest.TestCase):
                 "0, 0, 0, 0, 0, 0, 'block-admin:deny') on conflict do nothing",
                 (b"q" * 32, now),
             )
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select rule from traffic_log where host = 'rule.example.com'")
             self.assertEqual(cursor.fetchall(), [("block-admin:deny",)])
         #
@@ -1099,7 +1099,7 @@ class ARealDatabase(unittest.TestCase):
         #
         with (
             tempfile.TemporaryDirectory() as temporary,
-            self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
         ):
             hits = traffic_logs.read_database(connection, Path(temporary), ("alpha",), waf="hits")
             none = traffic_logs.read_database(connection, Path(temporary), ("alpha",), waf="none")
@@ -1159,9 +1159,9 @@ class ARealDatabase(unittest.TestCase):
                 self.assertRaises(psycopg.errors.CheckViolation),
             ):
                 connection.execute(insert, (b"w" * 32, now, "waf.example.com", rules, score))
-        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
             connection.execute(insert, (b"v" * 32, now, "waf.example.com", "930120,932160", 43))
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select waf_rules, waf_score from traffic_log where host = 'waf.example.com'"
             )
@@ -1262,7 +1262,7 @@ class ARealDatabase(unittest.TestCase):
                 self.assertRaises(psycopg.errors.CheckViolation),
             ):
                 connection.execute(insert, (b"w" * 32, now, *row))
-        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
             connection.execute(insert, (b"m" * 32, now, *good))
             connection.execute(insert, (b"m" * 32, now, *good))  # a re-read changes nothing
             connection.execute(
@@ -1281,7 +1281,7 @@ class ARealDatabase(unittest.TestCase):
             connection.execute(
                 "update traffic_log set waf_id = 'has space' where host = 'match.example.com'"
             )
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select t.path, m.object, m.rule_id, m.field, m.matched from traffic_log t "
                 "join waf_match m on m.cluster = t.cluster and m.request_id = t.waf_id "
@@ -1331,7 +1331,7 @@ class ARealDatabase(unittest.TestCase):
     )
 
     def waf_findings_both_ways(self, since: datetime) -> tuple[list[tuple[Any, ...]], ...]:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             kept = [
                 (
                     f.cluster,
@@ -1392,7 +1392,7 @@ class ARealDatabase(unittest.TestCase):
             for day in {row[3].date() for row in rows}:
                 connection.execute("select waf_match_partition(%s::date)", (day,))
             connection.commit()
-        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
             # Two imports, and the second read again from an earlier checkpoint.
             for batch in (rows[:4], rows[2:]):
                 with connection.cursor() as cursor, cursor.copy(copy) as writer:
@@ -1574,13 +1574,13 @@ class ARealDatabase(unittest.TestCase):
                 root,
                 (target,),
             )
-            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 _ingest_part(config, connection, target, part)
                 checkpoint = root / f".{part.name}.database-offset"
                 checkpoint.unlink()
                 _ingest_part(config, connection, target, part)
             self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select count(*) from traffic_log where host = 'copy.example.com'")
             self.assertEqual(cursor.fetchone(), (1,))
 
@@ -1618,12 +1618,12 @@ class ARealDatabase(unittest.TestCase):
                 "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
             )
             page = _parse_waf_response(raw, target)
-            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 self.assertEqual(_ingest_waf_pages(config, connection, [(target, page)]), (0, 0))
                 (root / ".alpha--node-a.waf-cursor").unlink()
                 self.assertEqual(_ingest_waf_pages(config, connection, [(target, page)]), (0, 0))
             self.assertEqual((root / ".alpha--node-a.waf-cursor").read_text(), "s=ab;i=2;b=cd\n")
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select object, rule_id, field, matched, path, client, occurred_at "
                 "from waf_match where cluster = 'alpha' and request_id = %s",
@@ -1664,7 +1664,7 @@ class ARealDatabase(unittest.TestCase):
             )
             page = _parse_waf_response(raw, target)
             with (
-                self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection,
+                self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection,
                 self.assertRaises(psycopg.Error) as refused,
             ):
                 _ingest_waf_pages(config, connection, [(target, page)])
@@ -1711,7 +1711,7 @@ class ARealDatabase(unittest.TestCase):
 
         def count(host: str) -> int:
             with (
-                self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection,
+                self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
                 connection.cursor() as cursor,
             ):
                 cursor.execute("select count(*) from traffic_log where host = %s", (host,))
@@ -1726,22 +1726,22 @@ class ARealDatabase(unittest.TestCase):
                 "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
             )
             part.write_text(line("a.restore.example.com", 1) + "\n")
-            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 _ingest_part(config, connection, target, part)
             with part.open("a") as stream:
                 stream.write(line("b.restore.example.com", 2) + "\n")
-            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 _ingest_part(config, connection, target, part)
             with self.connect() as connection, connection.cursor() as cursor:
                 cursor.execute("delete from traffic_log where host = 'b.restore.example.com'")
             self.assertEqual(count("b.restore.example.com"), 0)
 
-            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 _ingest_part(config, connection, target, part)
             self.assertEqual(count("b.restore.example.com"), 0, "without the replay B stays lost")
 
             self.assertEqual(forget_database_positions(config), 1)
-            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 _ingest_part(config, connection, target, part)
 
         self.assertEqual(count("b.restore.example.com"), 1)
@@ -1815,12 +1815,12 @@ class ARealDatabase(unittest.TestCase):
                 root,
                 (target,),
             )
-            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 skipped = _ingest_part(config, connection, target, part)
             self.assertEqual(skipped, 5)
             checkpoint = root / f".{part.name}.database-offset"
             self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select count(*) from traffic_log where host = 'skipped.example.com'")
             self.assertEqual(cursor.fetchone(), (1,))
 
@@ -1862,13 +1862,13 @@ class ARealDatabase(unittest.TestCase):
                 (target,),
             )
             checkpoint = root / f".{part.name}.database-offset"
-            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
                 self.assertEqual(_ingest_part(config, connection, target, part), 0)
                 self.assertFalse(checkpoint.exists())
                 part.write_text(line + "\n")
                 self.assertEqual(_ingest_part(config, connection, target, part), 0)
             self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select count(*) from traffic_log where host = 'partial.example.com'")
             self.assertEqual(cursor.fetchone(), (1,))
 
@@ -1880,7 +1880,7 @@ class ARealDatabase(unittest.TestCase):
         rather than assuming its own window matches the platform's retention.
         """
 
-        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
             days = _database_days(connection)
         self.assertIn(f"{datetime.now(UTC):%Y%m%d}", days)
         self.assertNotIn("19990101", days)
@@ -1927,7 +1927,7 @@ class ARealDatabase(unittest.TestCase):
                 (target,),
             )
             with (
-                self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection,
+                self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection,
                 self.assertRaises(psycopg.Error),
             ):
                 _ingest_part(config, connection, target, part)
@@ -1941,7 +1941,7 @@ class ARealDatabase(unittest.TestCase):
         """
 
         now = datetime.now(UTC)
-        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
             days = _database_days(connection)
         past = sum(1 for day in days if day <= f"{now:%Y%m%d}")
         config = CollectorConfig(
@@ -1951,8 +1951,8 @@ class ARealDatabase(unittest.TestCase):
             Path("/nonexistent/mirror"),
             Path("/nonexistent/staging"),
             (NodeTarget("alpha", "node-a", "node-a.example.com"),),
-            os.environ["HAPROXY_UI_TEST_DATABASE_NAME"],
-            os.environ["HAPROXY_UI_TEST_DATABASE_SOCKET"],
+            os.environ["HAPRION_UI_TEST_DATABASE_NAME"],
+            os.environ["HAPRION_UI_TEST_DATABASE_SOCKET"],
         )
         self.assertEqual(_mirror_window(config, now=now), past + 1)
 
@@ -1981,7 +1981,7 @@ class ARealDatabase(unittest.TestCase):
     def test_database_search_uses_boolean_terms_status_and_newest_first(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary,
-            self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
         ):
             reading = traffic_logs.read_database(
                 connection,
@@ -2031,7 +2031,7 @@ class ARealDatabase(unittest.TestCase):
                 "values ('reload', %s, 'mgd-main-https', %s, true, %s, %s)",
                 rows,
             )
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             connection.execute("set timezone = 'Europe/Stockholm'")
             series = db.read_frontend_series(
                 connection,
@@ -2098,7 +2098,7 @@ class ARealDatabase(unittest.TestCase):
                 ],
             )
         until = start + timedelta(minutes=3)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             summed = db.read_traffic_summary(
                 connection, clusters=["dash-a"], since=start, until=until
             )
@@ -2150,7 +2150,7 @@ class ARealDatabase(unittest.TestCase):
                 ]
                 + [(os.urandom(32), "rt-other", now, 500, 99_999)],
             )
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             answered, median, p95 = db.read_response_times(
                 connection,
                 clusters=["rt-only"],
@@ -2206,7 +2206,7 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
 
     def test_the_tables_and_grants_are_the_ones_the_install_step_expects(self) -> None:
         tables, grants = self.expected()
-        role = os.environ["HAPROXY_UI_TEST_MIGRATION_ROLE"]
+        role = os.environ["HAPRION_UI_TEST_MIGRATION_ROLE"]
         with psycopg.connect(f"{DSN} user={role}") as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select c.relname from pg_class c"
@@ -2247,7 +2247,7 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
         )
         self.assertTrue(calls)
         self.assertNotIn("", calls, "an allow call without its expected answer")
-        role = os.environ["HAPROXY_UI_TEST_WEB_ROLE"]
+        role = os.environ["HAPRION_UI_TEST_WEB_ROLE"]
         for kind, description, statement in probes:
             statement = statement.replace('\\"', '"')
             with self.subTest(description=description):
@@ -2279,7 +2279,7 @@ class TheMetricTablesUnderTheirNewNames(unittest.TestCase):
         / "0023_metric_table_names.py"
     )
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def test_the_old_names_are_views_over_the_new_tables(self) -> None:
@@ -2311,7 +2311,7 @@ class TheMetricTablesUnderTheirNewNames(unittest.TestCase):
             cursor.execute("select metric_partition('metric_listener', %s::date)", (day,))
             self.assertEqual(cursor.fetchone(), (f"metric_frontend_{day:%Y%m%d}",))
         with (
-            self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
             connection.cursor() as cursor,
         ):
             cursor.execute(
@@ -2319,7 +2319,7 @@ class TheMetricTablesUnderTheirNewNames(unittest.TestCase):
                 "(cluster, node, frontend, owns_vip, uptime_sec, req_tot) "
                 "values ('bridge', 'node-a', 'mgd-old-name', true, 60, 7)"
             )
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select req_tot, observed_at is not null from metric_frontend "
                 "where cluster = 'bridge' and frontend = 'mgd-old-name'"
@@ -2327,7 +2327,7 @@ class TheMetricTablesUnderTheirNewNames(unittest.TestCase):
             self.assertEqual(cursor.fetchall(), [(7, True)])
 
     def test_the_rollup_boundary_moved_with_the_table(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select rollup_name from metric_rollup_state order by 1")
             self.assertEqual(cursor.fetchall(), [("backend_hour",)])
 
@@ -2423,7 +2423,7 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
     nothing fails before a worker ever claims the row.
     """
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         role = os.environ[role_variable]
         return psycopg.connect(f"{DSN} user={role}")
 
@@ -2588,14 +2588,14 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
         return psycopg.connect(f"{DSN} user={role}")
 
     def setUp(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
             with connection.cursor() as cursor:
                 cursor.execute("delete from job")
                 cursor.execute("delete from dns_provider_profile")
             connection.commit()
 
     def test_the_web_creates_replaces_and_lists_without_seeing_the_box(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             created = db.create_dns_profile(
                 connection,
                 profile_id="cf-main",
@@ -2661,7 +2661,7 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
             connection.rollback()
 
     def test_the_worker_reads_the_box_and_the_poller_reads_nothing(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             db.create_dns_profile(
                 connection,
                 profile_id="cf-main",
@@ -2672,7 +2672,7 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
                 actor="operator",
             )
             connection.commit()
-        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
             sealed = db.sealed_profile(connection, "cf-main")
             self.assertIsNotNone(sealed)
             self.assertEqual(bytes(sealed.ciphertext if sealed else b""), b"x" * 48)
@@ -2686,14 +2686,14 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
             self.assertFalse(db.delete_dns_profile(connection, "cf-main", 1))
             connection.commit()
         with (
-            self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection,
             connection.cursor() as cursor,
             self.assertRaises(psycopg.errors.InsufficientPrivilege),
         ):
             cursor.execute("select id from dns_provider_profile")
 
     def test_the_apply_job_is_a_certificate_job(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             job = db.queue_job(
                 connection,
                 operation="dns_profile_apply",
@@ -2735,7 +2735,7 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
         migration: Any = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
 
-        with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
             with connection.cursor() as cursor:
                 migration.op = _Executes(cursor)
                 migration.downgrade()
@@ -2761,13 +2761,13 @@ class CertificateDeletion(unittest.TestCase):
         return psycopg.connect(f"{DSN} user={role}")
 
     def setUp(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
             with connection.cursor() as cursor:
                 cursor.execute("delete from job")
             connection.commit()
 
     def test_the_delete_job_is_a_clusterless_certificate_job(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             job = db.queue_job(
                 connection,
                 operation="cert_delete",
@@ -2788,7 +2788,7 @@ class CertificateDeletion(unittest.TestCase):
 
     def test_cert_scep_is_a_clusterless_certificate_job(self) -> None:
         # Migration 0029: the enrollment job in the same slot as the others.
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             job = db.queue_job(
                 connection,
                 operation="cert_scep",
@@ -2827,11 +2827,11 @@ class CertificateDeletion(unittest.TestCase):
         """
 
         with (
-            self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection,
             self.assertRaises(psycopg.errors.InsufficientPrivilege),
         ):
             db.live_drafts(connection)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             self.assertEqual(db.live_drafts(connection), [])
 
     def test_the_migration_downgrades_and_upgrades_cleanly_on_an_empty_queue(self) -> None:
@@ -2844,7 +2844,7 @@ class CertificateDeletion(unittest.TestCase):
         migration: Any = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
 
-        with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
             with connection.cursor() as cursor:
                 migration.op = _Executes(cursor)
                 migration.downgrade()
@@ -2864,7 +2864,7 @@ class CertificateDeletion(unittest.TestCase):
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class NdesDatabase(unittest.TestCase):
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def setUp(self) -> None:
@@ -2874,7 +2874,7 @@ class NdesDatabase(unittest.TestCase):
             connection.commit()
 
     def create(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             db.create_ndes_profile(
                 connection,
                 profile_id="internal-ca",
@@ -2889,7 +2889,7 @@ class NdesDatabase(unittest.TestCase):
 
     def test_web_can_write_list_and_replace_but_cannot_read_ciphertext(self) -> None:
         self.create()
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             listed = db.ndes_profiles(connection)[0]
             self.assertEqual(listed.id, "internal-ca")
             self.assertEqual(listed.endpoint, "https://ca.example.com/certsrv/mscep/mscep.dll")
@@ -2936,7 +2936,7 @@ class NdesDatabase(unittest.TestCase):
 
     def test_worker_reads_only_sealed_binding_and_poller_has_no_access(self) -> None:
         self.create()
-        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
             row = db.sealed_ndes_profile(connection, "internal-ca")
             self.assertIsNotNone(row)
             self.assertEqual(row.ciphertext if row else None, b"x" * 48)
@@ -2950,7 +2950,7 @@ class NdesDatabase(unittest.TestCase):
             ):
                 cursor.execute("select created_by from ndes_provider_profile")
             connection.rollback()
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             with (
                 connection.cursor() as cursor,
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),
@@ -2959,7 +2959,7 @@ class NdesDatabase(unittest.TestCase):
             connection.rollback()
 
     def test_ndes_apply_uses_the_shared_certificate_slot(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             job = db.queue_job(
                 connection,
                 operation="ndes_profile_apply",
@@ -2985,7 +2985,7 @@ class AccountsFromTheWeb(unittest.TestCase):
 
     HASH = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def setUp(self) -> None:
@@ -3012,7 +3012,7 @@ class AccountsFromTheWeb(unittest.TestCase):
             connection.commit()
 
     def web(self, statement: str, parameters: tuple[Any, ...] = ()) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             connection.execute(statement, parameters)
             connection.commit()
 
@@ -3052,7 +3052,7 @@ class AccountsFromTheWeb(unittest.TestCase):
         """U3's one statement pair, under the web's grants and nothing more."""
 
         kept, other = auth.token_hash("kept"), auth.token_hash("other")
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             user_id = connection.execute(
                 "select id from app_user where username = 'carol'"
             ).fetchone()[0]  # type: ignore[index]
@@ -3089,7 +3089,7 @@ class AccountsFromTheWeb(unittest.TestCase):
         self.assertEqual(account, (self.HASH + "x", True))
 
     def web_connection(self) -> Any:
-        return self.connect("HAPROXY_UI_TEST_WEB_ROLE")
+        return self.connect("HAPRION_UI_TEST_WEB_ROLE")
 
     def test_settings_lists_accounts_and_reads_a_lock_from_any_one_address(self) -> None:
         with self.web_connection() as connection:
@@ -3176,8 +3176,8 @@ class AccountsFromTheWeb(unittest.TestCase):
     def test_two_admins_disabling_each_other_at_once_cannot_both_pass(self) -> None:
         import threading
 
-        first = self.connect("HAPROXY_UI_TEST_WEB_ROLE")
-        second = self.connect("HAPROXY_UI_TEST_WEB_ROLE")
+        first = self.connect("HAPRION_UI_TEST_WEB_ROLE")
+        second = self.connect("HAPRION_UI_TEST_WEB_ROLE")
         outcome: list[BaseException | None] = []
         try:
             first.execute("update app_user set disabled = true where username = 'alice'")
@@ -3204,7 +3204,7 @@ class AccountsFromTheWeb(unittest.TestCase):
             second.close()
 
     def test_an_unlock_is_a_row_the_throttle_counts_from(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             for _ in range(3):
                 db.record_login_attempt(
                     connection, username="Carol", client_ip="192.0.2.7", succeeded=False
@@ -3273,7 +3273,7 @@ class AccountsFromTheWeb(unittest.TestCase):
 class FeatureSwitchesFromTheWeb(unittest.TestCase):
     """Migrations 0040, 0042, 0049, 0051: switches the web flips and nothing more (B193, B204, B224, B231)."""
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def tearDown(self) -> None:
@@ -3285,7 +3285,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
             connection.commit()
 
     def test_every_switch_exists_and_starts_where_its_migration_put_it(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             switches = db.feature_switches(connection)
 
         self.assertEqual(
@@ -3364,7 +3364,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
         with self.connect() as connection:
             connection.execute("update feature_switch set enabled = true")
             connection.commit()
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             first = db.set_feature_switch(
                 connection,
                 name="node_backups",
@@ -3394,12 +3394,12 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
             with (
                 self.subTest(statement=statement),
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),
-                self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection,
+                self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
             ):
                 connection.execute(statement)
 
     def test_the_worker_and_the_poller_do_not_read_the_switches(self) -> None:
-        for role in ("HAPROXY_UI_TEST_WORKER_ROLE", "HAPROXY_UI_TEST_POLLER_ROLE"):
+        for role in ("HAPRION_UI_TEST_WORKER_ROLE", "HAPRION_UI_TEST_POLLER_ROLE"):
             with (
                 self.subTest(role=role),
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),
@@ -3415,7 +3415,7 @@ class OidcAccounts(unittest.TestCase):
     HASH = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"
     SECRET = b"sealed"
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def setUp(self) -> None:
@@ -3449,7 +3449,7 @@ class OidcAccounts(unittest.TestCase):
             connection.commit()
 
     def web(self, statement: str, parameters: tuple[Any, ...] = ()) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             connection.execute(statement, parameters)
             connection.commit()
 
@@ -3610,7 +3610,7 @@ class OidcAccounts(unittest.TestCase):
             "values (%s, %s, %s, 'sign_in', %s)",
             (state, "n" * 43, "v" * 43, auth.token_hash("pre")),
         )
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             used = connection.execute(
                 "update oidc_login set used_at = now() "
                 "where state = %s and used_at is null returning state",
@@ -3664,7 +3664,7 @@ class TheAccountToolAgainstARealDatabase(unittest.TestCase):
 
     HASH = OidcAccounts.HASH
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def setUp(self) -> None:
@@ -3818,7 +3818,7 @@ class TheAccountToolAgainstARealDatabase(unittest.TestCase):
 class TheProviderRowFromTheWeb(unittest.TestCase):
     """O4's database functions, under the web role's grants (B197)."""
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     SETTINGS: dict[str, Any] = {
@@ -3843,7 +3843,7 @@ class TheProviderRowFromTheWeb(unittest.TestCase):
         OidcAccounts.reset(self)  # type: ignore[arg-type]
 
     def web(self) -> psycopg.Connection:
-        return self.connect("HAPROXY_UI_TEST_WEB_ROLE")
+        return self.connect("HAPRION_UI_TEST_WEB_ROLE")
 
     def row(self, connection: psycopg.Connection) -> db.OidcProvider:
         provider = db.oidc_provider(connection)
@@ -3919,7 +3919,7 @@ DOTTED_FIXTURE = "header.payload.signature"
 class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
     """O5's database functions, under the web role's grants (B195-B199)."""
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def setUp(self) -> None:
@@ -3936,7 +3936,7 @@ class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
         OidcAccounts.reset(self)  # type: ignore[arg-type]
 
     def web(self) -> psycopg.Connection:
-        return self.connect("HAPROXY_UI_TEST_WEB_ROLE")
+        return self.connect("HAPRION_UI_TEST_WEB_ROLE")
 
     def test_an_account_is_created_found_by_identity_and_never_twice(self) -> None:
         with self.web() as connection:
@@ -4065,12 +4065,12 @@ class TheSearchIndex(unittest.TestCase):
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def write(self, cluster: str, source: str, entries: list[Any]) -> None:
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             db.replace_search_entries(connection, cluster=cluster, source=source, entries=entries)
             connection.commit()
 
     def search(self, query: str, *, role: str = "admin", page: int = 1) -> Any:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             return db.search(connection, query, role=role, clusters=["si-a", "si-b"], page=page)
 
     def objects(self, cluster: str, *names: str) -> list[Any]:
@@ -4091,7 +4091,7 @@ class TheSearchIndex(unittest.TestCase):
         )
 
     def setUp(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             db.prune_search_entries(connection, [])
             connection.commit()
 
@@ -4112,7 +4112,7 @@ class TheSearchIndex(unittest.TestCase):
         """Review 2026-10-03, D5: the same rows are not deleted and inserted again."""
 
         def versions() -> list[Any]:
-            with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
                 rows = connection.execute(
                     "select value, xmin::text from search_entry where cluster = 'si-a' order by value"
                 ).fetchall()
@@ -4162,14 +4162,14 @@ class TheSearchIndex(unittest.TestCase):
     def test_a_removed_cluster_leaves_nothing_behind(self) -> None:
         self.write("si-a", "objects", self.objects("si-a", "shop"))
         self.write("si-b", "objects", self.objects("si-b", "shop"))
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             db.prune_search_entries(connection, ["si-b"])
             connection.commit()
 
         self.assertEqual([h.cluster for h in self.search("shop").groups[0].hits], ["si-b"])
 
     def test_the_web_cannot_write_the_index(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             for statement in (
                 "delete from search_entry",
                 "insert into search_entry (cluster, source, kind, title, value, href) "
@@ -4184,7 +4184,7 @@ class TheSearchIndex(unittest.TestCase):
 
     def test_the_query_uses_the_trigram_index(self) -> None:
         with (
-            self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection,
+            self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
             connection.cursor() as cursor,
         ):
             cursor.execute("set enable_seqscan = off")
@@ -4198,7 +4198,7 @@ class AnUnchangedObjectsListing(unittest.TestCase):
     """B222: confirmed rather than rewritten, and the confirmation is a fresh reading."""
 
     def test_the_poller_reads_back_its_fingerprint_and_confirms_without_rewriting(self) -> None:
-        poller = f"{DSN} user={os.environ['HAPROXY_UI_TEST_POLLER_ROLE']}"
+        poller = f"{DSN} user={os.environ['HAPRION_UI_TEST_POLLER_ROLE']}"
         listing = {"commit": "a" * 40, "fingerprint": "f" * 64, "objects": [{"name": "shop"}]}
         with psycopg.connect(poller) as connection:
             db.record_cluster_objects(connection, cluster="fp-a", outcome="done", result=listing)
@@ -4247,7 +4247,7 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
     start: datetime
     raw_from: datetime
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     @classmethod
@@ -4256,7 +4256,7 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
         cls.start = cls.now - timedelta(days=12)
         cls.raw_from = cls.now - timedelta(days=6, minutes=17)
         with psycopg.connect(
-            f"{DSN} user={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}"
+            f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}"
         ) as connection:
             cursor = connection.cursor()
             day = cls.start.date() - timedelta(days=1)
@@ -4404,7 +4404,7 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
     def test_a_backend_s_figures_are_the_same_as_the_pairing_gave(self) -> None:
         from tests import metric_totals_reference as reference
 
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             for name, since, until, _raw_from in self.ranges():
                 if until <= self.raw_from:
                     continue
@@ -4437,7 +4437,7 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
         from haprion_ui import metrics
         from tests import metric_totals_reference as reference
 
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             for name, since, until, _raw_from in self.ranges():
                 one = {
                     "cluster": self.CLUSTER,
@@ -4501,7 +4501,7 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
             connection.rollback()
 
     def test_the_poller_writes_a_sample_and_may_not_write_what_is_derived_from_it(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             connection.execute(
                 "insert into metric_backend_member (cluster, node, backend, member, uptime_sec, req_tot) "
                 "values (%s, 'a', %s, 'BACKEND', 10000000, 999999)",
@@ -4514,7 +4514,7 @@ class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
                     "values (%s, 'a', %s, 'BACKEND', 5)",
                     (self.CLUSTER, self.BACKEND),
                 )
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             row = connection.execute(
                 "select previous_at is not null, restarted, delta_req_tot from metric_backend_member "
                 "where cluster = %s and req_tot = 999999",
@@ -4574,7 +4574,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
     migration: Any
 
     @classmethod
-    def connect(cls, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(cls, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     @classmethod
@@ -4782,7 +4782,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
     def test_the_carried_backend_s_figures_are_the_reader_s_before_0055(self) -> None:
         from tests import metric_totals_reference as reference
 
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             for name, since, until in self.ranges():
                 arguments = {
                     "cluster": self.CLUSTER,
@@ -4801,7 +4801,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                     self.assertGreater(expected[0] if expected else 0, 0)
 
     def test_the_grown_series_figures_are_the_raw_readers(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             for name, since, until in self.ranges():
                 backend = {
                     "cluster": self.CLUSTER,
@@ -4844,7 +4844,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
         def ordered(found: list[metrics.Interval]) -> list[metrics.Interval]:
             return sorted(found, key=lambda interval: (interval.started_at, interval.ended_at))
 
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             for since, width in self.windows():
                 arguments = {
                     "cluster": self.CLUSTER,
@@ -4909,7 +4909,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
         from tests import metric_totals_reference as reference
 
         names = ("req_tot", "hrsp_2xx", "hrsp_3xx", "hrsp_4xx", "hrsp_5xx", "econ", "wretr")
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             for since, width in self.windows():
                 with self.subTest(width=width):
                     pairs: list[tuple[str, metrics.Interval]] = []
@@ -5085,7 +5085,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
 
     def test_the_poller_s_own_insert_is_summed_without_a_grant_on_the_sums(self) -> None:
         backend = "mgd-poller-web"
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             for total in (10, 25):
                 connection.execute(
                     "insert into metric_backend_member (cluster, node, backend, member, "
@@ -5095,7 +5095,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
                 connection.commit()
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 connection.execute("select 1 from metric_backend_hour_delta limit 1")
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             row = connection.execute(
                 "select sum(samples), sum(delta_req_tot) from metric_backend_hour_delta "
                 "where cluster = %s and backend = %s",
@@ -5184,7 +5184,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
 
             thread = threading.Thread(target=add_second)
             thread.start()
-            with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as watcher:
+            with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as watcher:
                 for _ in range(100):
                     waiting = watcher.execute(
                         "select count(*) from pg_stat_activity "
@@ -5204,7 +5204,7 @@ class TheHourlySumsAnswerAsTheReadersDid(unittest.TestCase):
             first.close()
             second.close()
 
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             row = connection.execute(
                 "select samples, delta_req_tot from metric_backend_hour_delta "
                 "where cluster = %s and backend = %s and not crossing",
@@ -5227,7 +5227,7 @@ class MetricsListsWhatTheNodesServeNow(unittest.TestCase):
     last was.
     """
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def write(self, cluster: str, rows: list[tuple[str, datetime]]) -> None:
@@ -5248,7 +5248,7 @@ class MetricsListsWhatTheNodesServeNow(unittest.TestCase):
                 )
 
     def listed(self, cluster: str, now: datetime) -> tuple[list[str], list[str]]:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             since = now - timedelta(days=7)
             backends = db.read_cluster_backends(connection, cluster=cluster, since=since, until=now)
             frontends = db.read_cluster_frontends(
@@ -5301,7 +5301,7 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
     reused_at: datetime
     rows: list[tuple[str, datetime, int, int]]
 
-    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(self, role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     @classmethod
@@ -5331,7 +5331,7 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
         cls.rows = rows
         with (
             psycopg.connect(
-                f"{DSN} user={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}"
+                f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}"
             ) as connection,
             connection.cursor() as cursor,
         ):
@@ -5347,7 +5347,7 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
                 )
 
     def totals(self, backend: str, since: datetime, earlier: list[db.EarlierName]) -> int:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             measured = db.read_backend_totals(
                 connection,
                 cluster=self.CLUSTER,
@@ -5359,7 +5359,7 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
         return measured.totals[0].value
 
     def series(self, backend: str, since: datetime, earlier: list[db.EarlierName]) -> int:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             found = db.read_backend_series(
                 connection,
                 cluster=self.CLUSTER,
@@ -5419,7 +5419,7 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
     def test_the_worker_writes_renames_and_the_web_reads_them_back_as_a_chain(self) -> None:
         """B253: the worker writes them once a publish is done; the web reads them."""
 
-        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
             db.record_backend_renames(
                 connection, cluster="chain", renamed={"a": "b"}, introduced=["b"]
             )
@@ -5428,7 +5428,7 @@ class ARenamedBackendKeepsItsHistory(unittest.TestCase):
             )
             db.record_backend_renames(connection, cluster="chain", renamed={}, introduced=["a"])
             connection.commit()
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             found = db.read_backend_aliases(connection, cluster="chain")
 
         names = {item.name: item.until for item in found["c"]}
@@ -5449,7 +5449,7 @@ class TheLatencyIsGoneAndTheWorkerAloneRecordsRenames(unittest.TestCase):
     """Migration 0059 (B253): dnsdist's latency dropped, and the alias table the worker's to write."""
 
     @staticmethod
-    def connect(role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     @staticmethod
@@ -5466,7 +5466,7 @@ class TheLatencyIsGoneAndTheWorkerAloneRecordsRenames(unittest.TestCase):
             self.assertEqual(self.latency_columns(cursor), set())
 
     def test_the_web_reads_renames_and_may_not_write_them(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             db.read_backend_aliases(connection, cluster="none")
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 db.record_backend_renames(
@@ -5509,7 +5509,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
     rows: list[tuple[str, datetime, int, dict[str, int]]]
 
     @staticmethod
-    def connect(role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     @classmethod
@@ -5602,7 +5602,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
 
     def test_the_pool_s_figures_are_its_stored_differences(self) -> None:
         for since in self.ranges():
-            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            with self.subTest(since=since), self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
                 found = metrics.dns_measurement(
                     db.read_backend_totals(
                         connection,
@@ -5631,7 +5631,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
 
     def test_the_line_is_drawn_from_the_same_differences(self) -> None:
         for since in self.ranges():
-            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            with self.subTest(since=since), self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
                 drawn = db.read_backend_series(
                     connection,
                     cluster=self.CLUSTER,
@@ -5647,7 +5647,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
 
     def test_the_pool_is_listed_as_dns_and_not_among_the_backends(self) -> None:
         since = self.now - timedelta(days=7)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             dns = db.read_cluster_backends(
                 connection, cluster=self.CLUSTER, since=since, until=self.now, kind="dns"
             )
@@ -5698,7 +5698,7 @@ class ADnsPoolIsCountedAsABackendIs(unittest.TestCase):
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select metric_partition('metric_backend_member', current_date)")
         for queries, answered in ((10, 9), (25, 22)):
-            with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
                 written = db.record_metric_samples(
                     connection, cluster="polled", result=reading(queries, answered)
                 )
@@ -5777,7 +5777,7 @@ class ASyslogPoolIsCountedAsABackendIs(unittest.TestCase):
     rows: list[tuple[str, datetime, dict[str, int]]]
 
     @staticmethod
-    def connect(role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     @classmethod
@@ -5856,7 +5856,7 @@ class ASyslogPoolIsCountedAsABackendIs(unittest.TestCase):
 
     def test_the_pool_s_figures_are_its_stored_differences(self) -> None:
         for since in self.ranges():
-            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            with self.subTest(since=since), self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
                 found = metrics.measured(
                     metrics.SYSLOG_FIGURES,
                     db.read_backend_totals(
@@ -5880,7 +5880,7 @@ class ASyslogPoolIsCountedAsABackendIs(unittest.TestCase):
 
     def test_a_receiver_put_back_has_no_figure_for_the_interval_it_fell_in(self) -> None:
         since = self.now - timedelta(days=3)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             found = db.read_backend_totals(
                 connection,
                 cluster=self.CLUSTER,
@@ -5901,7 +5901,7 @@ class ASyslogPoolIsCountedAsABackendIs(unittest.TestCase):
 
     def test_the_line_is_drawn_from_the_same_differences(self) -> None:
         for since in self.ranges():
-            with self.subTest(since=since), self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            with self.subTest(since=since), self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
                 drawn = db.read_backend_series(
                     connection,
                     cluster=self.CLUSTER,
@@ -5917,7 +5917,7 @@ class ASyslogPoolIsCountedAsABackendIs(unittest.TestCase):
 
     def test_each_kind_of_pool_is_listed_apart(self) -> None:
         since = self.now - timedelta(days=7)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             listed = {
                 kind: db.read_cluster_backends(
                     connection, cluster=self.CLUSTER, since=since, until=self.now, kind=kind
@@ -5966,7 +5966,7 @@ class ASyslogPoolIsCountedAsABackendIs(unittest.TestCase):
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select metric_partition('metric_backend_member', current_date)")
         for messages in (10, 25):
-            with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
                 written = db.record_metric_samples(
                     connection, cluster="polling", result=reading(messages)
                 )
@@ -6072,7 +6072,7 @@ class AReloadThatKeepsTheCountersIsNoRestart(unittest.TestCase):
     )
 
     @staticmethod
-    def connect(role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+    def connect(role_variable: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def setUp(self) -> None:
@@ -6091,7 +6091,7 @@ class AReloadThatKeepsTheCountersIsNoRestart(unittest.TestCase):
                 )
 
     def stored(self, table: str, where: str, value: str) -> list[tuple[bool | None, int | None]]:
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             rows = connection.execute(
                 psycopg.sql.SQL(
                     "select restarted, delta_req_tot from {} where cluster = %s and {} = %s "
@@ -6160,7 +6160,7 @@ class AReloadThatKeepsTheCountersIsNoRestart(unittest.TestCase):
         self.assertEqual(row, (25, False))
 
     def test_the_poller_may_say_whether_the_counters_were_kept(self) -> None:
-        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
             connection.execute(
                 "insert into metric_backend_member (cluster, node, backend, member, "
                 "uptime_sec, counters_kept, req_tot) values (%s, 'p', 'web', 's1', 1, true, 1)",

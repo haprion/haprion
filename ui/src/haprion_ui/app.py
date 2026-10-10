@@ -32,7 +32,7 @@ from haprion_ui import db, timing, views
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 
-CONFIG_PATH_VARIABLE = "HAPROXY_UI_CONFIG"
+CONFIG_PATH_VARIABLE = "HAPRION_UI_CONFIG"
 STATIC_DIRECTORY = Path(__file__).parent / "static"
 
 logger = logging.getLogger("haprion_ui")

@@ -127,7 +127,7 @@
   // A finished job redraws the page's content in place (waiting.js), and the
   // region it brings is new.
   //
-  document.addEventListener("haproxy-ui:redrawn", () => {
+  document.addEventListener("haprion:redrawn", () => {
     wireDeletion();
     wireRefresh();
   });

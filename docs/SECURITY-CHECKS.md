@@ -21,7 +21,7 @@ The repository has complementary gates. No single scanner replaces the others.
    `PLAYWRIGHT_BROWSERS_PATH` must name where the browsers are installed, and the gate refuses to
    start without it. `run-tests` runs the same suite and type check rather than skipping them: a
    gate that passes because it could not import what it was meant to check is not a gate. Both need
-   `HAPROXY_UI_PYTHON` and fail closed without it. The engine's and the interface's test modules
+   `HAPRION_UI_PYTHON` and fail closed without it. The engine's and the interface's test modules
    run through one pool, one module per process (`tools/run_test_modules.py`), heaviest first by
    the previous run's timings; each module's coverage is combined before the report.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,
@@ -51,8 +51,8 @@ both — and the hook refusing a commit that only changed the in-tree copy is th
 not a problem to route around.
 
 The private denylist is never stored in this repository. Local runs provide its path through
-`HAPROXY_MANAGER_SECRET_RULES`. GitHub Actions reconstructs it in a mode-600 temporary file from
-the required repository secret `HAPROXY_MANAGER_DENYLIST`. The repository-secret value is the
+`HAPRION_SECRET_RULES`. GitHub Actions reconstructs it in a mode-600 temporary file from
+the required repository secret `HAPRION_DENYLIST`. The repository-secret value is the
 Base64 encoding of the complete file, used as a transport encoding so tabs and line endings remain
 exact. A missing or invalid value fails CI closed.
 
@@ -67,15 +67,15 @@ Create the locked editable environment and pinned standalone tools once:
 Then run:
 
 ```bash
-export HAPROXY_MANAGER_SECRET_RULES=/path/to/private.rules
+export HAPRION_SECRET_RULES=/path/to/private.rules
 export PATH="$PWD/.venv/bin:$PWD/.tools/shellcheck/0.11.0:$PWD/.tools/actionlint/1.7.12:$PATH"
 export GITLEAKS_BIN="$PWD/.tools/gitleaks/8.30.1/gitleaks"
-export HAPROXY_UI_PYTHON=/path/to/ui-environment/bin/python
+export HAPRION_UI_PYTHON=/path/to/ui-environment/bin/python
 ./run-checks
 ```
 
 The interface has a second locked environment, because it has a second lockfile:
-`ui/uv.lock`. `HAPROXY_UI_PYTHON` points at it, and the gate refuses to run without it rather than
+`ui/uv.lock`. `HAPRION_UI_PYTHON` points at it, and the gate refuses to run without it rather than
 quietly leaving the interface unchecked.
 
 ## Disposable database integration gate
@@ -85,7 +85,7 @@ partition routing or SQL semantics. Run the real-database gate after changing a 
 database read/write path, role grants, metric rollups or retention:
 
 ```bash
-HAPROXY_UI_PYTHON=/path/to/ui-environment/bin/python ui/tools/test-database
+HAPRION_UI_PYTHON=/path/to/ui-environment/bin/python ui/tools/test-database
 ```
 
 The command must run as the developer, not root. It finds the installed PostgreSQL tools through
@@ -170,7 +170,7 @@ gate. Anything that is not a contract working as written is fixed in the code.
 
 ## GitHub repository settings
 
-Before the first push, create the repository secret `HAPROXY_MANAGER_DENYLIST`. When the repository
+Before the first push, create the repository secret `HAPRION_DENYLIST`. When the repository
 becomes public, enable GitHub CodeQL default setup and secret scanning/push protection. Revisit the
 private-denylist job before accepting pull requests from forks, because GitHub deliberately does
 not expose repository secrets to untrusted fork workflows.

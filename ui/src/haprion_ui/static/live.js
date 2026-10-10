@@ -20,7 +20,7 @@
   // A page that comes back in another shape - a redirect, a session that
   // expired into the login form - is not patched up. That page is reloaded.
   //
-  const REDRAWN = "haproxy-ui:redrawn";
+  const REDRAWN = "haprion:redrawn";
   const FIELDS = "input:not([type=hidden]), textarea, select";
   const WAIT = 1000;
 

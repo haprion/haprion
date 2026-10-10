@@ -45,7 +45,7 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.provider = provider(
             enabled=True,
             issuer=ISSUER,
-            client_id="haproxy-manager",
+            client_id="haprion",
             client_secret_sealed=b"x",
             key_id="0123456789abcdef",
             admin_group="haproxy-admins",

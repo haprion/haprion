@@ -9,7 +9,7 @@ Type=exec
 User=_haprion-poller
 Group=_haprion-poller
 
-Environment=HAPROXY_UI_CONFIG=/etc/haprion/ui.toml
+Environment=HAPRION_UI_CONFIG=/etc/haprion/ui.toml
 ExecStart=/opt/haprion-ui/current/venv/bin/haprion-poller
 
 # A second poller exits on the advisory lock rather than running alongside the

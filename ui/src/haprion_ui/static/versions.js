@@ -101,5 +101,5 @@
   //
   const wireAll = () => document.querySelectorAll("[data-version-list]").forEach(page);
   window.addEventListener("DOMContentLoaded", wireAll);
-  document.addEventListener("haproxy-ui:redrawn", wireAll);
+  document.addEventListener("haprion:redrawn", wireAll);
 })();

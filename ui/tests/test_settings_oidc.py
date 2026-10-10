@@ -58,7 +58,7 @@ def provider(**fields: Any) -> db.OidcProvider:
 
 FORM = {
     "issuer": ISSUER,
-    "client_id": "haproxy-manager",
+    "client_id": "haprion",
     "client_secret": "a secret typed once",
     "auth_method": "client_secret_basic",
     "scopes": "openid profile email",
@@ -173,7 +173,7 @@ class SettingsOidc(LoginTestCase):
                 self.private,
                 saved["client_secret_sealed"],
                 issuer=ISSUER,
-                client_id="haproxy-manager",
+                client_id="haprion",
             ),
             "a secret typed once",
         )
@@ -185,7 +185,7 @@ class SettingsOidc(LoginTestCase):
     def test_a_changed_issuer_needs_the_secret_again(self) -> None:
         self.provider = provider(
             issuer="https://old.example.com/",
-            client_id="haproxy-manager",
+            client_id="haprion",
             client_secret_sealed=b"x",
         )
         response = self.post(self.admin(), action="save", **{**FORM, "client_secret": ""})
@@ -194,9 +194,7 @@ class SettingsOidc(LoginTestCase):
         self.assertEqual(self.saved, [])
 
     def test_the_same_issuer_and_client_keep_the_secret(self) -> None:
-        self.provider = provider(
-            issuer=ISSUER, client_id="haproxy-manager", client_secret_sealed=b"x"
-        )
+        self.provider = provider(issuer=ISSUER, client_id="haprion", client_secret_sealed=b"x")
         self.post(self.admin(), action="save", **{**FORM, "client_secret": ""})
         self.assertNotIn("client_secret_sealed", self.saved[-1])
 
@@ -217,7 +215,7 @@ class SettingsOidc(LoginTestCase):
 
     def test_while_on_a_save_is_verified_first_and_saved_as_verified(self) -> None:
         self.provider = provider(
-            issuer=ISSUER, client_id="haproxy-manager", client_secret_sealed=b"x", enabled=True
+            issuer=ISSUER, client_id="haprion", client_secret_sealed=b"x", enabled=True
         )
         client = self.admin()
 
@@ -254,7 +252,7 @@ class SettingsOidc(LoginTestCase):
         self.provider = provider(
             enabled=True,
             issuer=ISSUER,
-            client_id="haproxy-manager",
+            client_id="haprion",
             client_secret_sealed=b"x",
             key_id="0123456789abcdef",
             admin_group="haproxy-admins",

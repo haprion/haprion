@@ -3,16 +3,16 @@ set -eu
 
 base=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 
-if [ -z "${HAPROXY_MANAGER_SECRET_RULES:-}" ]; then
-    echo "run-tests: HAPROXY_MANAGER_SECRET_RULES is required" >&2
+if [ -z "${HAPRION_SECRET_RULES:-}" ]; then
+    echo "run-tests: HAPRION_SECRET_RULES is required" >&2
     exit 2
 fi
 #
 # The interface's suite needs its own environment and a browser; named, not
 # defaulted, for the reasons ui/run-tests gives.
 #
-if [ -z "${HAPROXY_UI_PYTHON:-}" ] || [ ! -x "${HAPROXY_UI_PYTHON}" ]; then
-    echo "run-tests: set HAPROXY_UI_PYTHON to the python of the interface environment" >&2
+if [ -z "${HAPRION_UI_PYTHON:-}" ] || [ ! -x "${HAPRION_UI_PYTHON}" ]; then
+    echo "run-tests: set HAPRION_UI_PYTHON to the python of the interface environment" >&2
     exit 2
 fi
 if [ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
@@ -34,7 +34,7 @@ fi
 
 python3 "$base/tools/secret_scan.py" \
     --worktree "$base" \
-    --rules "$HAPROXY_MANAGER_SECRET_RULES"
+    --rules "$HAPRION_SECRET_RULES"
 #
 # The interface tree is linted by the same pinned ruff as the engine. Its
 # types are checked by its own environment, which is the one holding its
@@ -80,7 +80,7 @@ shellcheck -x -P SCRIPTDIR "$base/run-checks" "$base/run-tests" "$base/tools/ins
 actionlint "$base/.github/workflows"/*.yml
 zizmor --pedantic "$base/.github/workflows"
 mypy
-(cd "$base/ui" && "$(dirname -- "$HAPROXY_UI_PYTHON")/mypy")
+(cd "$base/ui" && "$(dirname -- "$HAPRION_UI_PYTHON")/mypy")
 python3 "$base/contract-tests/validate_contracts.py"
 #
 # Both suites share one pool of processes, one test module each, so the gate
@@ -95,7 +95,7 @@ trap 'rm -rf -- "$coverage_dir"' EXIT HUP INT TERM
 COVERAGE_FILE="$coverage_dir/.coverage" python3 "$base/tools/run_test_modules.py" \
     --durations "${XDG_CACHE_HOME:-$HOME/.cache}/haprion/test-durations.json" \
     --suite engine "$base/tests" "coverage run --parallel-mode -m unittest discover -s tests -v" \
-    --suite ui "$base/ui/tests" "$HAPROXY_UI_PYTHON -m unittest discover -s tests -t . -v"
+    --suite ui "$base/ui/tests" "$HAPRION_UI_PYTHON -m unittest discover -s tests -t . -v"
 COVERAGE_FILE="$coverage_dir/.coverage" coverage combine --quiet
 COVERAGE_FILE="$coverage_dir/.coverage" coverage report
 python3 "$base/tools/build_smoke.py"

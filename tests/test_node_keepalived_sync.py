@@ -15,6 +15,7 @@ silently take a wrong branch.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -62,6 +63,7 @@ class Step(unittest.TestCase):
         assert found, "the function is no longer where the test extracts it from"
         self.function = found.group(0)
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
         (self.root / "bin").mkdir()
         for name, variable in (("keepalived", "TEST_EXIT"), ("systemctl", "RELOAD_EXIT")):
             stub = self.root / "bin" / name

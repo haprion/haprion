@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,6 +46,7 @@ class WhatTheNodeReportsAboutItsAddresses(unittest.TestCase):
         assert found, "the address reading is no longer where the test extracts it from"
         self.source = found.group(0)
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
         self.published = self.root / "published.conf"
         self.installed = self.root / "installed.conf"
         self.config = self.root / "keepalived.conf"

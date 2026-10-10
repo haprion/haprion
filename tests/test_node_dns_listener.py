@@ -13,6 +13,7 @@ the file through its group. That is measured on the first node.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -54,6 +55,7 @@ class TheDnsListenerSteps(unittest.TestCase):
         text = SCRIPT.read_text()
         self.functions = "\n".join(extract(name, text) for name in FUNCTIONS)
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
         self.bin = self.root / "bin"
         self.bin.mkdir()
         for name, body in (("systemctl", SYSTEMCTL), ("ss", SS)):

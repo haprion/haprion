@@ -10,6 +10,7 @@ right helper through `sudo` and refuses everything else.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -33,6 +34,7 @@ exec "$@"
 class ScriptFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
         self.haproxy = self.root / "etc" / "haproxy"
         self.certs = self.haproxy / "certs"
         for directory in (self.certs, self.haproxy / "conf.d", self.haproxy / "crt-lists"):

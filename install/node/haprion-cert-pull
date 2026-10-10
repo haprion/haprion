@@ -114,7 +114,7 @@ umask 077
 #
 rm -f "${CERTS_DIR}"/.haprion-cert-pull.*
 
-WORK="$(mktemp -d /tmp/haproxy-cert.XXXXXX)"
+WORK="$(mktemp -d -t haproxy-cert.XXXXXX)"
 BACKUP="${WORK}/backup"
 mkdir -p "$BACKUP"
 

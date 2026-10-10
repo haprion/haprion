@@ -15,6 +15,7 @@ That is a fact about a real node, measured on one (2026-09-01).
 from __future__ import annotations
 
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,6 +57,7 @@ class ParsingTheNodeSConfiguration(unittest.TestCase):
         assert found, "the parsing is no longer where the test extracts it from"
         self.source = found.group(0)
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
 
     def parse(self, config: str, *, addresses: str | None = None) -> tuple[object, object]:
         path = self.root / "keepalived.conf"

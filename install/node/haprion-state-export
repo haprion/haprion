@@ -39,7 +39,7 @@ source "$NODE_CONF"
     exit 78
 }
 
-TMPDIR="$(mktemp -d /tmp/haprion-state-export.XXXXXX)"
+TMPDIR="$(mktemp -d -t haprion-state-export.XXXXXX)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
 ROOTFS="$TMPDIR/rootfs"

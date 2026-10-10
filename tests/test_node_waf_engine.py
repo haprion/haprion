@@ -13,6 +13,7 @@ the journal reaching the unit's lines. That is measured on the first node.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -68,6 +69,7 @@ class TheWafEngineSteps(unittest.TestCase):
         text = SCRIPT.read_text()
         self.functions = "\n".join(extract(name, text) for name in FUNCTIONS)
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
         self.bin = self.root / "bin"
         self.bin.mkdir()
         for name, body in (("systemctl", SYSTEMCTL), ("journalctl", JOURNALCTL), ("ss", SS)):
@@ -346,6 +348,7 @@ class TheRulesAreReloadedOnlyWhenTheyChange(unittest.TestCase):
         assert found, "the function is no longer where the test extracts it from"
         self.function = found.group(0)
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
 
     def release(self, name: str, rules: str | None) -> Path:
         path = self.root / name

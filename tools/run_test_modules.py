@@ -23,8 +23,10 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -32,6 +34,15 @@ from pathlib import Path
 
 RAN = re.compile(r"^Ran (\d+) tests? in ", re.MULTILINE)
 SKIPPED = re.compile(r"skipped=(\d+)")
+
+#
+# Chromium's shared memory. Playwright starts it with `--disable-dev-shm-usage`,
+# so the blocks are files in TMPDIR, unlinked once mapped - and now and then one
+# outlives a browser that is closing (measured 26-10-10: one in two runs of one
+# module, zero-filled, 128 KiB multiples). Chromium's race rather than a missing
+# cleanup in a test, and removed with the module's directory either way.
+#
+CHROMIUM_SHARED_MEMORY = ".org.chromium.Chromium."
 
 
 @dataclass(frozen=True)
@@ -104,17 +115,37 @@ def key(module: Module) -> str:
 
 
 def run(module: Module) -> Outcome:
-    started = time.monotonic()
-    completed = subprocess.run(  # noqa: S603 - the gate's own suite commands
-        [*module.command, "-p", module.name],
-        cwd=module.directory.parent,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        check=False,
-    )
-    return Outcome(module, completed.returncode, time.monotonic() - started, completed.stdout)
+    #
+    # Each module gets a temporary directory of its own and fails if anything
+    # is left in it. A test that forgot its cleanup used to leave it in /tmp,
+    # which held ten thousand entries by 26-10-10 - among them key files - and
+    # nothing said which module wrote them.
+    #
+    scratch = Path(tempfile.mkdtemp(prefix=f"gate-{module.suite}-{module.name}-"))
+    try:
+        started = time.monotonic()
+        completed = subprocess.run(  # noqa: S603 - the gate's own suite commands
+            [*module.command, "-p", module.name],
+            cwd=module.directory.parent,
+            env={**os.environ, "TMPDIR": str(scratch)},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        returncode, output = completed.returncode, completed.stdout
+        left = sorted(
+            entry.name
+            for entry in scratch.iterdir()
+            if not entry.name.startswith(CHROMIUM_SHARED_MEMORY)
+        )
+        if left:
+            returncode = returncode or 1
+            output += f"\nleft in its temporary directory: {', '.join(left)}\n"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return Outcome(module, returncode, time.monotonic() - started, output)
 
 
 def main() -> int:

@@ -72,6 +72,24 @@ class RunTestModulesTests(unittest.TestCase):
         self.assertIn("failed: demo/test_b.py, demo/test_c.py", result.stderr)
         self.assertIn("demo: 4 tests, 1 skipped, 3 modules", result.stdout)
 
+    def test_a_module_that_leaves_a_temporary_file_fails_and_names_it(self) -> None:
+        leaking = (
+            "import tempfile, unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_leak(self) -> None:\n"
+            "        tempfile.mkdtemp(prefix='forgotten-')\n"
+            "        tempfile.mkstemp(prefix='.org.chromium.Chromium.')\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            tests = self.suite(root, {"test_a.py": PASSING, "test_leak.py": leaking})
+            result = self.execute(tests, root / "durations.json")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("left in its temporary directory: forgotten-", result.stdout)
+        # Chromium's own shared memory is not the test's to clean up.
+        self.assertNotIn(".org.chromium.Chromium.", result.stdout)
+        self.assertIn("failed: demo/test_leak.py", result.stderr)
+
     def test_every_module_discover_would_find_is_run(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

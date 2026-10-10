@@ -17,6 +17,7 @@ import hmac
 import io
 import json
 import os
+import shutil
 import ssl
 import tempfile
 import threading
@@ -80,18 +81,20 @@ def _certificate_authority() -> tuple[str, ssl.SSLContext]:
         .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
-    directory = Path(tempfile.mkdtemp(prefix="oidc-test-"))
-    (directory / "server.pem").write_bytes(
-        server.public_bytes(serialization.Encoding.PEM)
-        + server_key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-    )
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.load_cert_chain(directory / "server.pem")
+    # The chain is read once; the key file is not left behind.
+    with tempfile.TemporaryDirectory(prefix="oidc-test-") as name:
+        pem = Path(name) / "server.pem"
+        pem.write_bytes(
+            server.public_bytes(serialization.Encoding.PEM)
+            + server_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        context.load_cert_chain(pem)
     return ca.public_bytes(serialization.Encoding.PEM).decode("ascii"), context
 
 
@@ -493,6 +496,7 @@ class TheClientCheck(ProviderTestCase):
 class TheSealedSecret(unittest.TestCase):
     def setUp(self) -> None:
         directory = Path(tempfile.mkdtemp(prefix="oidc-keys-"))
+        self.addCleanup(shutil.rmtree, directory, True)
         self.public = write_key_pair(directory / "k.key", directory / "k.pub")
         from haprion.dns_profile_keys import read_private_key
 
@@ -526,6 +530,7 @@ class TheHelper(ProviderTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.keys = Path(tempfile.mkdtemp(prefix="oidc-helper-keys-"))
+        self.addCleanup(shutil.rmtree, self.keys, True)
         public = write_key_pair(self.keys / "tmp.key", self.keys / "tmp.pub")
         (self.keys / "tmp.key").rename(self.keys / f"{public.key_id}.key")
         self.key_id = public.key_id

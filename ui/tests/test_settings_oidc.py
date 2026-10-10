@@ -11,6 +11,7 @@ sentence; each change is audited without the secret.
 from __future__ import annotations
 
 import re
+import shutil
 import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -77,6 +78,7 @@ class SettingsOidc(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         keys = Path(tempfile.mkdtemp(prefix="oidc-web-keys-"))
+        self.addCleanup(shutil.rmtree, keys, True)
         self.public = write_key_pair(keys / "k.key", keys / "k.pub")
         self.private = read_private_key(keys / "k.key", require_secure=False)
         self.public_path = keys / "k.pub"

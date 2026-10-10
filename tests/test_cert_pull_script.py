@@ -14,6 +14,7 @@ certificate stayed in service indefinitely.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -107,6 +108,7 @@ exit 64
 class CertPull(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
         self.certs = self.root / "certs"
         self.certs.mkdir()
         self.offered = self.root / "offered"
@@ -311,6 +313,7 @@ def status_functions(certs: Path, pending: Path) -> dict[str, Any]:
 class TheNodeDoesNotReportWhatItDoesNotServe(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
         self.certs = self.root / "certs"
         self.certs.mkdir()
         self.pending = self.root / "cert.pending"

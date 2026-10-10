@@ -60,8 +60,8 @@ if ! flock -n 9; then
     exit 1
 fi
 
-STAGE="$(mktemp -d /tmp/haproxy-stage.XXXXXX)"
-VALIDATE="$(mktemp -d /tmp/haproxy-validate.XXXXXX)"
+STAGE="$(mktemp -d -t haproxy-stage.XXXXXX)"
+VALIDATE="$(mktemp -d -t haproxy-validate.XXXXXX)"
 
 cleanup() {
     rm -rf "$STAGE" "$VALIDATE"

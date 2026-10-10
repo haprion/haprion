@@ -8,6 +8,7 @@ are. What it must never remove is the release a deploy falls back to.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -23,6 +24,7 @@ class TheNodeKeepsItsNewestReleases(unittest.TestCase):
         assert found, "the function is no longer where the test extracts it from"
         self.function = found.group(0)
         self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
         self.releases = self.root / "releases"
         self.releases.mkdir()
         self.made = [self.release(f"202610{day:02d}-120000") for day in range(1, 16)]

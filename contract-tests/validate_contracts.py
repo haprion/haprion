@@ -976,6 +976,38 @@ def check_node_restore_status_semantics(document: dict[str, object], path: Path)
     check_node_restore_semantics({"outcome": result["outcome"], "result": result["result"]}, path)
 
 
+def check_dynamic_unblock_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] != "failed":
+            raise AssertionError(f"{path}: only a failed dynamic_unblock may carry no result")
+        return
+    assert isinstance(result, dict)
+    nodes = result["nodes"]
+    taken = [node for node in nodes if node["outcome"] == "done"]
+    missed = len(nodes) - len(taken)
+    #
+    # A node is done when every address left it, and the outcome is the count
+    # of nodes: all is `done`, some is `partial`, none is `failed`; one warning
+    # for each node that did not lift the block.
+    #
+    expected = "done" if not missed else "partial" if taken else "failed"
+    if document["outcome"] != expected:
+        raise AssertionError(
+            f"{path}: {len(taken)} of {len(nodes)} nodes is {expected}, not {document['outcome']}"
+        )
+    warnings = document["warnings"]
+    assert isinstance(warnings, list)
+    if len(warnings) != missed:
+        raise AssertionError(f"{path}: one warning per node that did not lift the block")
+    for node in nodes:
+        every = all(entry["outcome"] == "done" for entry in node["addresses"])
+        if node["outcome"] == "done" and (not every or not node["addresses"]):
+            raise AssertionError(f"{path}: a node is done only when every address left it")
+        if (node["outcome"] == "done") != (node["message"] is None):
+            raise AssertionError(f"{path}: a message says why a node did not, and only then")
+
+
 def check_server_state_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1037,6 +1069,7 @@ SEMANTIC_CHECKS = {
     "cluster_node": check_cluster_node_semantics,
     "cluster_define": check_cluster_define_semantics,
     "server_state": check_server_state_semantics,
+    "dynamic_unblock": check_dynamic_unblock_semantics,
     "cluster_list": check_cluster_list_semantics,
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
@@ -1143,6 +1176,9 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
             invalid["outcome"] = "failed"
     elif operation == "server_state":
         first = result["nodes"][0]["servers"][0]
+        first["outcome"] = "failed" if first["outcome"] == "done" else "done"
+    elif operation == "dynamic_unblock":
+        first = result["nodes"][0]
         first["outcome"] = "failed" if first["outcome"] == "done" else "done"
     elif operation == "node_restore_prepare":
         result["mode"] = "new_vm"

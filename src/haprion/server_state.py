@@ -25,6 +25,15 @@ one of them is not drained. Both are asked at once, and one that did not answer
 is reported by name: the job is `partial`, the state on the other node holds,
 and pressing the button again finishes it - the node helper is idempotent.
 
+Lifting a dynamic block (B271)
+------------------------------
+The same key and the same forced command, with the verb `unblock`: an object
+and source addresses. The node clears each from the object's two tables and
+reads them again. A cleared entry is not shared between the nodes, and a node
+that still holds it can send it back to one that just cleared it (measured on
+3.4.6), so every node is asked twice: the second round clears whatever came
+back during the first, and its answers are the result.
+
 Nothing here takes the cluster lock. A deploy may run at the same time: the
 node serialises its own reload and this call with a lock of its own, and puts
 every kept state back after the reload, so the two cannot undo each other.
@@ -32,6 +41,7 @@ every kept state back after the reload, so the two cannot undo each other.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import subprocess
@@ -44,6 +54,14 @@ from haprion.guid import server_guid
 from haprion.proxy_model import NAME, Proxy
 
 OPERATION = "server_state"
+UNBLOCK_OPERATION = "dynamic_unblock"
+UNBLOCK_VERB = "unblock"
+#
+# The node helper's own limit on one request (`MAX_UNBLOCK`), which is also a
+# page of ticked boxes.
+#
+MAX_ADDRESSES = 64
+UNBLOCK_ROUNDS = 2
 
 STATES = ("ready", "drain", "maint")
 
@@ -310,3 +328,156 @@ def apply(
         return ()
     with ThreadPoolExecutor(max_workers=len(nodes)) as pool:
         return tuple(answer for answers in pool.map(one, nodes) for answer in answers)
+
+
+def addresses(value: object) -> tuple[str, ...]:
+    """The source addresses an unblock names, each written as the node writes it."""
+
+    if not isinstance(value, list) or not value:
+        raise ServerStateError("bad_input", "name at least one address")
+    if len(value) > MAX_ADDRESSES:
+        raise ServerStateError("bad_input", f"at most {MAX_ADDRESSES} addresses in one request")
+    found: list[str] = []
+    for entry in value:
+        try:
+            address = ipaddress.ip_address(entry) if isinstance(entry, str) else None
+        except ValueError:
+            address = None
+        if address is None:
+            raise ServerStateError("bad_input", f"{entry!r} is not an IP address")
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            address = address.ipv4_mapped
+        if str(address) not in found:
+            found.append(str(address))
+    return tuple(found)
+
+
+def blocking(proxy: Proxy) -> Proxy:
+    """The object, if its newest version blocks; refused otherwise."""
+
+    if proxy.dynamic_block is None:
+        raise ServerStateError(
+            "bad_input", f"{proxy.name} has no dynamic blocking in its newest version"
+        )
+    return proxy
+
+
+@dataclass(frozen=True, slots=True)
+class Unblocked:
+    """What one node said about lifting a block on some addresses."""
+
+    node: str
+    outcome: str
+    """`done`, `refused` (the node runs no blocking for the object) or `failed`."""
+
+    addresses: tuple[tuple[str, str], ...] = ()
+    """Each address and whether it is gone from this node: `done` or `failed`."""
+
+    message: str | None = None
+    reached: bool = True
+
+
+type UnblockCall = Callable[[Node, DeployIdentity, str], subprocess.CompletedProcess[str]]
+
+
+def ask_unblock(
+    node: Node, identity: DeployIdentity, request: str
+) -> subprocess.CompletedProcess[str]:
+    """One unblock on one node, over the node's forced command."""
+
+    from haprion.cli.deploy_helper import SSH, SSH_ENVIRONMENT, SSH_OPTIONS
+
+    return subprocess.run(  # noqa: S603 - fixed path; host from configuration, words validated
+        [SSH, *SSH_OPTIONS, "-i", str(identity.key), f"{identity.user}@{node.mgmt_host}", request],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=SSH_ENVIRONMENT,
+        timeout=CALL_TIMEOUT_SECONDS,
+    )
+
+
+def read_unblocked(
+    node: str, wanted: Sequence[str], completed: subprocess.CompletedProcess[str]
+) -> Unblocked:
+    """What the node said, or why nothing usable came back (as `read_answer`)."""
+
+    document: object = None
+    if completed.stdout and len(completed.stdout) <= MAX_ANSWER_BYTES:
+        try:
+            document = json.loads(completed.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            document = None
+    if not isinstance(document, Mapping):
+        stderr = (completed.stderr or "").strip().splitlines()
+        reason = stderr[-1][:300] if stderr else "no answer"
+        return Unblocked(
+            node, "failed", message=f"the node could not be reached ({reason})", reached=False
+        )
+    if completed.returncode == NODE_UNKNOWN_SERVER:
+        return Unblocked(
+            node,
+            "refused",
+            message="the node runs no dynamic blocking for this object; deploy the newest "
+            "version to it",
+        )
+    said = document.get("message")
+    message = said[:300] if isinstance(said, str) and said else None
+    reported = document.get("addresses")
+    gone = {
+        str(entry.get("address")): entry.get("outcome") == "done"
+        for entry in (reported if isinstance(reported, list) else [])
+        if isinstance(entry, Mapping)
+    }
+    each = tuple((address, "done" if gone.get(address) else "failed") for address in wanted)
+    if (
+        completed.returncode == 0
+        and document.get("outcome") == "done"
+        and all(outcome == "done" for _, outcome in each)
+    ):
+        return Unblocked(node, "done", each)
+    left = [address for address, outcome in each if outcome == "failed"]
+    return Unblocked(
+        node,
+        "failed",
+        each,
+        message
+        or (f"still blocked: {', '.join(left)}" if left else None)
+        or f"the node answered with exit {completed.returncode}",
+    )
+
+
+def unblock(
+    nodes: Sequence[Node],
+    identity: DeployIdentity,
+    proxy: Proxy,
+    wanted: Sequence[str],
+    *,
+    ask: UnblockCall = ask_unblock,
+) -> tuple[Unblocked, ...]:
+    """Every node asked to lift the block, twice; the second round's answers.
+
+    A node that could not be reached in the first round is not asked again:
+    its answer is already the one to report, and waiting for it twice would
+    only double the time a job holds the worker.
+    """
+
+    request = " ".join((UNBLOCK_VERB, proxy.name, *wanted))
+
+    def one(node: Node) -> Unblocked:
+        try:
+            return read_unblocked(node.name, wanted, ask(node, identity, request))
+        except subprocess.TimeoutExpired:
+            return Unblocked(
+                node.name, "failed", message="the node did not answer in time", reached=False
+            )
+
+    if not nodes:
+        return ()
+    answers: dict[str, Unblocked] = {}
+    with ThreadPoolExecutor(max_workers=len(nodes)) as pool:
+        for _ in range(UNBLOCK_ROUNDS):
+            asked = [node for node in nodes if answers.get(node.name, Unblocked("", "")).reached]
+            for answer in pool.map(one, asked):
+                answers[answer.node] = answer
+    return tuple(answers[node.name] for node in nodes)

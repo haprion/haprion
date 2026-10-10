@@ -65,6 +65,20 @@ backends:
   dns: {balance: roundrobin, servers: [{host: 198.51.100.53, port: 53}]}
 """
 
+STORE = b"""schema: 1
+name: store
+hostnames: [store.example.com]
+listen: {protocol: http}
+dynamic_block: {max_requests: 300, block_for: 30m}
+routes:
+  - {path: /, backend: web}
+backends:
+  web:
+    balance: roundrobin
+    servers:
+      - {host: 198.51.100.30, port: 8080}
+"""
+
 WEB_10 = server_guid("shop", "web", Server(host="198.51.100.10", port=8080))
 WEB_11 = server_guid("shop", "web", Server(host="198.51.100.11", port=8080))
 API_20 = server_guid("shop", "api", Server(host="198.51.100.20", port=9000))
@@ -132,6 +146,7 @@ class HelperFixture(unittest.TestCase):
             {
                 "managed/proxies/shop.yaml": SHOP,
                 "managed/proxies/resolver.yaml": RESOLVER,
+                "managed/proxies/store.yaml": STORE,
                 #
                 # A neighbour that no longer loads. A drain of shop must not
                 # depend on it: only the named object's file is read.
@@ -379,6 +394,176 @@ class NothingIsSentForARequestThatIsWrong(HelperFixture):
         self.assertIn("server_state_identity", error["message"])
 
 
+type UnblockAsk = Callable[[Node, DeployIdentity, str], subprocess.CompletedProcess[str]]
+
+
+def unblocked(
+    request: str, *, still: tuple[str, ...] = (), code: int | None = None
+) -> subprocess.CompletedProcess[str]:
+    """One line as `haprion-server-state unblock` prints it."""
+
+    words = request.split()
+    entries = [
+        {"address": address, "outcome": "failed" if address in still else "done"}
+        for address in words[2:]
+    ]
+    outcome = "failed" if still else "done"
+    document = {"node": "node", "object": words[1], "outcome": outcome, "addresses": entries}
+    exit_code = code if code is not None else (70 if still else 0)
+    return subprocess.CompletedProcess(["ssh"], exit_code, json.dumps(document) + "\n", "")
+
+
+class EveryNodeLiftsTheBlockTwice(HelperFixture):
+    """`dynamic_unblock` (B271): every node, twice, and the second round is the answer."""
+
+    def run_unblock(
+        self, object_name: str, addresses: list[str], ask: UnblockAsk
+    ) -> tuple[int, dict[str, object] | None, str]:
+        request = server_state_helper.build_unblock_request(
+            "alpha", REQUEST_ID, object_name=object_name, addresses=addresses
+        )
+        out, err = io.StringIO(), io.StringIO()
+
+        def no_drain(*_: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("an unblock asked for a server state")
+
+        code = server_state_helper.main(
+            [],
+            policy_path=self.policy,
+            input_stream=io.BytesIO(request.encode()),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+            ask=no_drain,
+            ask_unblocking=ask,
+        )
+        document = json.loads(out.getvalue()) if out.getvalue() else None
+        if document is not None:
+            self.assert_contract(document)
+        return code, document, err.getvalue()
+
+    def test_both_nodes_are_asked_twice_with_every_address(self) -> None:
+        asked: list[tuple[str, str]] = []
+
+        def ask(
+            node: Node, identity: DeployIdentity, request: str
+        ) -> subprocess.CompletedProcess[str]:
+            asked.append((node.name, request))
+            return unblocked(request)
+
+        code, document, _ = self.run_unblock(
+            "store", ["203.0.113.7", "2001:DB8::7", "::ffff:203.0.113.7"], ask
+        )
+
+        self.assertEqual(code, 0)
+        assert document is not None
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(
+            sorted(asked),
+            sorted([(node, "unblock store 203.0.113.7 2001:db8::7") for node in self.nodes] * 2),
+        )
+
+    def test_an_entry_sent_back_during_the_first_round_is_cleared_by_the_second(self) -> None:
+        rounds: dict[str, int] = {}
+
+        def ask(
+            node: Node, identity: DeployIdentity, request: str
+        ) -> subprocess.CompletedProcess[str]:
+            rounds[node.name] = rounds.get(node.name, 0) + 1
+            first = rounds[node.name] == 1
+            return unblocked(request, still=("203.0.113.7",) if first else ())
+
+        code, document, _ = self.run_unblock("store", ["203.0.113.7"], ask)
+
+        self.assertEqual(code, 0)
+        assert document is not None
+        self.assertEqual(document["outcome"], "done")
+
+    def test_a_node_that_did_not_answer_is_partial_and_asked_once(self) -> None:
+        asked: list[str] = []
+
+        def ask(
+            node: Node, identity: DeployIdentity, request: str
+        ) -> subprocess.CompletedProcess[str]:
+            asked.append(node.name)
+            if node.name == self.nodes[1]:
+                raise subprocess.TimeoutExpired(["ssh"], 30)
+            return unblocked(request)
+
+        code, document, _ = self.run_unblock("store", ["203.0.113.7"], ask)
+
+        self.assertEqual(code, server_state_helper.EXIT_INCOMPLETE)
+        assert document is not None
+        self.assertEqual(document["outcome"], "partial")
+        self.assertEqual(asked.count(self.nodes[1]), 1)
+        self.assertEqual(document["warnings"][0]["node"], self.nodes[1])  # type: ignore[index]
+
+    def test_a_node_without_the_blocking_says_deploy(self) -> None:
+        def ask(
+            node: Node, identity: DeployIdentity, request: str
+        ) -> subprocess.CompletedProcess[str]:
+            if node.name == self.nodes[0]:
+                return subprocess.CompletedProcess(
+                    ["ssh"], 65, json.dumps({"outcome": "refused", "message": "no"}) + "\n", ""
+                )
+            return unblocked(request)
+
+        _, document, _ = self.run_unblock("store", ["203.0.113.7"], ask)
+
+        assert document is not None
+        nodes = {node["node"]: node for node in document["result"]["nodes"]}  # type: ignore[index]
+        self.assertEqual(nodes[self.nodes[0]]["outcome"], "refused")
+        self.assertIn("deploy", nodes[self.nodes[0]]["message"])
+
+    def test_nothing_is_sent_for_a_request_that_is_wrong(self) -> None:
+        def ask(*_: object) -> subprocess.CompletedProcess[str]:
+            raise AssertionError("a node was asked")
+
+        for object_name, addresses, code in (
+            ("shop", ["203.0.113.7"], "bad_input"),
+            ("gone", ["203.0.113.7"], "server_not_found"),
+            ("store", ["example.com"], "bad_input"),
+            ("store", [], "bad_input"),
+            ("store", [f"203.0.113.{index}" for index in range(65)], "bad_input"),
+        ):
+            with self.subTest(object_name=object_name, addresses=addresses[:2]):
+                exit_code, document, _ = self.run_unblock(object_name, addresses, ask)
+                self.assertEqual(exit_code, 65)
+                assert document is not None
+                self.assertEqual(document["error"]["code"], code)  # type: ignore[index]
+
+    def test_the_node_trigger_accepts_what_this_side_sends(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="unblockwords-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        sudo = root / "sudo"
+        sudo.write_text('#!/bin/sh\nprintf "%s\\n" "$*"\n')
+        sudo.chmod(0o755)
+        sent: list[str] = []
+
+        def ask(
+            node: Node, identity: DeployIdentity, request: str
+        ) -> subprocess.CompletedProcess[str]:
+            sent.append(request)
+            return unblocked(request)
+
+        self.run_unblock(
+            "store",
+            [f"203.0.113.{index}" for index in range(32)]
+            + [f"2001:db8::{index:x}" for index in range(32)],
+            ask,
+        )
+        done = subprocess.run(  # noqa: S603 - the file under test
+            ["/bin/bash", str(BASE / "install/node/haprion-server-state-trigger")],
+            env={"PATH": f"{root}:{os.environ['PATH']}", "SSH_ORIGINAL_COMMAND": sent[0]},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue(done.stdout.strip().endswith(sent[0]))
+
+
 class TheNodeIsAskedWithItsOwnForcedCommand(unittest.TestCase):
     """The SSH call, and the node's trigger run with exactly the words it sends."""
 
@@ -461,6 +646,29 @@ class TheCommandSendsWhatTheWorkerSends(unittest.TestCase):
             },
         )
         self.assertIn("OK       web/198.51.100.10:8080", out.getvalue())
+        self.assertIn("RESULT: DONE", out.getvalue())
+
+    def test_unblock_becomes_the_helpers_unblock_request(self) -> None:
+        sent: list[str] = []
+
+        def run(request: str) -> subprocess.CompletedProcess[str]:
+            sent.append(request)
+            answer = (BASE / "fixtures/haprion-server-state/valid/unblock-done.json").read_text()
+            return subprocess.CompletedProcess(["sudo"], 0, answer, "")
+
+        out = io.StringIO()
+        with mock.patch.object(command, "run_helper", run):
+            code = command.main(
+                ["-c", "alpha", "-o", "shop", "unblock", "203.0.113.7", "2001:db8::7"], writer=out
+            )
+
+        self.assertEqual(code, 0)
+        request = json.loads(sent[0])
+        self.assertEqual(request["operation"], "dynamic_unblock")
+        self.assertEqual(
+            request["parameters"], {"object": "shop", "addresses": ["203.0.113.7", "2001:db8::7"]}
+        )
+        self.assertIn("UNBLOCKED  2001:db8::7", out.getvalue())
         self.assertIn("RESULT: DONE", out.getvalue())
 
     def test_a_missing_state_or_server_is_usage(self) -> None:

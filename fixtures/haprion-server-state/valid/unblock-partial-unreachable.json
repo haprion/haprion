@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "partial",
+  "operation": "dynamic_unblock",
+  "cluster": "alpha",
+  "request_id": "5a1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f",
+  "result": {
+    "object": "shop",
+    "nodes": [
+      {
+        "node": "node-a",
+        "outcome": "done",
+        "message": null,
+        "addresses": [{"address": "203.0.113.7", "outcome": "done"}]
+      },
+      {
+        "node": "node-b",
+        "outcome": "failed",
+        "message": "the node did not answer in time",
+        "addresses": []
+      }
+    ]
+  },
+  "warnings": [
+    {"code": "node_unblock_failed", "message": "the node did not answer in time", "node": "node-b", "details": null}
+  ],
+  "error": null
+}

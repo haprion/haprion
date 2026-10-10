@@ -813,6 +813,17 @@ left in the count is blocked again by its next request. A cleared entry is not
 shared, and another node can send it back, so a block is lifted on every node
 and checked again.
 
+From the management host, a block is lifted on every node at once, each asked
+twice:
+
+```bash
+haprion-server-state -c alpha -o shop unblock 203.0.113.7 2001:db8::7
+```
+
+`done` means every node no longer blocks any of the addresses; `partial` names
+the nodes that still do, or that did not answer, and running it again finishes
+the job. A node that runs no blocking for the object yet says to deploy.
+
 ## The WAF engine
 
 An http or https object can have its requests inspected by a web application

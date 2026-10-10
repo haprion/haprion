@@ -6,21 +6,77 @@
     { "$ref": "common.schema.json#/$defs/envelope" },
     {
       "properties": {
-        "operation": { "const": "server_state" },
+        "operation": { "enum": ["server_state", "dynamic_unblock"] },
         "cluster": { "type": ["string", "null"] },
         "outcome": { "enum": ["done", "partial", "failed"] },
-        "result": { "oneOf": [{ "$ref": "#/$defs/state_result" }, { "type": "null" }] }
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/state_result" },
+            { "$ref": "#/$defs/unblock_result" },
+            { "type": "null" }
+          ]
+        }
       },
       "allOf": [
         {
-          "if": { "properties": { "outcome": { "enum": ["done", "partial"] } } },
+          "if": {
+            "properties": {
+              "operation": { "const": "server_state" },
+              "outcome": { "enum": ["done", "partial"] }
+            }
+          },
           "then": { "properties": { "result": { "$ref": "#/$defs/state_result" } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "operation": { "const": "dynamic_unblock" },
+              "outcome": { "enum": ["done", "partial"] }
+            }
+          },
+          "then": { "properties": { "result": { "$ref": "#/$defs/unblock_result" } } }
         }
       ]
     }
   ],
   "additionalProperties": true,
   "$defs": {
+    "unblock_result": {
+      "description": "Dynamic blocking lifted (B271): per node, whether every address left both of the object's tables after the second round, each address's own answer, and why not.",
+      "type": "object",
+      "required": ["object", "nodes"],
+      "properties": {
+        "object": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$" },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["node", "outcome", "message", "addresses"],
+            "properties": {
+              "node": { "type": "string", "minLength": 1 },
+              "outcome": { "enum": ["done", "refused", "failed"] },
+              "message": { "type": ["string", "null"], "maxLength": 300 },
+              "addresses": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "required": ["address", "outcome"],
+                  "properties": {
+                    "address": { "type": "string", "minLength": 2, "maxLength": 45 },
+                    "outcome": { "enum": ["done", "failed"] }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "state_result": {
       "type": "object",
       "required": ["object", "state", "nodes"],

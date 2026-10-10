@@ -94,6 +94,7 @@ Command-specific stable codes:
 | `cert_deploy` | `split_brain`, `vip_unknown`, `certificate_missing`, `fingerprint_mismatch`, `node_cert_deploy_failed` |
 | `changes_publish` | `dirty_worktree`, `network_missing`, `network_invalid`, `settings_invalid`, `changes_invalid`, `candidate_invalid`, `advanced_ignored`, `tls_defaults_stale`, `stick_counters_short`, `publish_incomplete` |
 | `server_state` | `server_not_found`, `server_state_unavailable`, `server_not_on_node`, `node_server_state_failed` |
+| `dynamic_unblock` | `server_not_found`, `server_state_unavailable`, `blocking_not_on_node`, `node_unblock_failed` |
 | `cert_issue` | `already_exists`, `certbot_failed`, `publish_failed` |
 
 New codes may be added in schema v1 only when an older caller can safely show them as a generic

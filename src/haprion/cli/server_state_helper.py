@@ -9,6 +9,10 @@ because no application identity may hold a key that reaches a node. Nothing on
 the manager is written, and the cluster lock is not taken - see
 `haprion.server_state` for why a deploy at the same time is safe.
 
+It also lifts dynamic blocks (`dynamic_unblock`, B271) over the same key: the
+request names the operation, and each operation is held to its own parameters,
+as `node_helper` does with its two.
+
 What it does not trust: the servers. They are found in the object, in the
 cluster's newest committed version, before any node is asked; the node then
 validates the GUID and the state again before anything reaches HAProxy.
@@ -16,6 +20,7 @@ validates the GUID and the state again before anything reaches HAProxy.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -31,6 +36,7 @@ from haprion.config import (
 from haprion.envelope import Message, envelope
 from haprion.git_command import GitError
 from haprion.helper_protocol import (
+    MAX_REQUEST_BYTES,
     HelperProtocolError,
     config_error_code,
     read_helper_request,
@@ -44,17 +50,28 @@ from haprion.repo_snapshot import PublishError, read_tree_files, resolve_head
 from haprion.server_state import (
     OPERATION,
     STATES,
+    UNBLOCK_OPERATION,
     Answer,
     NodeCall,
     ServerStateError,
+    Target,
+    UnblockCall,
+    Unblocked,
+    addresses,
     apply,
     ask_node,
+    ask_unblock,
+    blocking,
     find_object,
     object_name,
     resolve,
+    unblock,
 )
 
-PARAMETERS = frozenset({"object", "servers", "state"})
+PARAMETERS = {
+    OPERATION: frozenset({"object", "servers", "state"}),
+    UNBLOCK_OPERATION: frozenset({"object", "addresses"}),
+}
 
 HELPER = "/opt/haprion/current/bin/haprion-server-state-helper"
 SUDO = "/usr/bin/sudo"
@@ -85,6 +102,41 @@ def build_request(
     )
 
 
+def build_unblock_request(
+    cluster_id: str, request_id: str, *, object_name: str, addresses: list[str]
+) -> str:
+    """An unblock, for the command line and the worker alike."""
+
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "operation": UNBLOCK_OPERATION,
+            "cluster": cluster_id,
+            "request_id": request_id,
+            "parameters": {"object": object_name, "addresses": addresses},
+        },
+        separators=(",", ":"),
+    )
+
+
+def _unblock_result(object_name: str, answers: tuple[Unblocked, ...]) -> dict[str, object]:
+    return {
+        "object": object_name,
+        "nodes": [
+            {
+                "node": answer.node,
+                "outcome": answer.outcome,
+                "message": answer.message,
+                "addresses": [
+                    {"address": address, "outcome": outcome}
+                    for address, outcome in answer.addresses
+                ],
+            }
+            for answer in answers
+        ],
+    }
+
+
 def _result(object_name: str, state: str, answers: tuple[Answer, ...]) -> dict[str, object]:
     nodes: dict[str, list[dict[str, object]]] = {}
     for answer in answers:
@@ -113,6 +165,7 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     ask: NodeCall = ask_node,
+    ask_unblocking: UnblockCall = ask_unblock,
 ) -> int:
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
@@ -125,8 +178,19 @@ def main(
             raise HelperProtocolError(
                 "server state helper must run as root", exit_code=EXIT_NOT_ROOT
             )
+        #
+        # Read once, then parsed as the operation it names.
+        #
+        raw = stream.read(MAX_REQUEST_BYTES + 1)
+        try:
+            named = json.loads(raw).get("operation")
+        except (ValueError, AttributeError):
+            named = None
+        operation = named if named in PARAMETERS else OPERATION
         request = read_helper_request(
-            stream, expected_operation=OPERATION, allowed_parameter_keys=PARAMETERS
+            io.BytesIO(raw),
+            expected_operation=operation,
+            allowed_parameter_keys=PARAMETERS[operation],
         )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
@@ -136,7 +200,7 @@ def main(
         errors.write(f"ERROR: [{code}] {message}\n")
         return write_failure(
             writer,
-            operation=OPERATION,
+            operation=request.operation,
             cluster=request.cluster,
             request_id=request.request_id,
             code=code,
@@ -145,11 +209,18 @@ def main(
         )
 
     parameters = request.parameters
+    unblocking = request.operation == UNBLOCK_OPERATION
     state = parameters.get("state")
     servers = parameters.get("servers")
-    if state not in STATES:
+    wanted: tuple[str, ...] = ()
+    if unblocking:
+        try:
+            wanted = addresses(parameters.get("addresses"))
+        except ServerStateError as exc:
+            return refuse(exc.code, str(exc), exc.exit_code)
+    elif state not in STATES:
         return refuse("bad_input", f"state must be one of {', '.join(STATES)}", 65)
-    if not isinstance(servers, list) or not all(isinstance(entry, str) for entry in servers):
+    elif not isinstance(servers, list) or not all(isinstance(entry, str) for entry in servers):
         return refuse("bad_input", "servers must be a list of host:port", 65)
 
     try:
@@ -178,12 +249,25 @@ def main(
         #
         files = read_tree_files(cluster.config_path, head, (f"{PROXY_PREFIX}{name}.yaml",))
         proxy = find_object(managed_proxies(files), name)
-        targets = resolve(proxy, [str(entry) for entry in servers])
+        targets: tuple[Target, ...] = ()
+        if unblocking:
+            blocking(proxy)
+        elif isinstance(servers, list):
+            targets = resolve(proxy, [str(entry) for entry in servers])
     except ServerStateError as exc:
         return refuse(exc.code, str(exc), exc.exit_code)
     except (ConfigError, GitError, PublishError, ModelError, OSError) as exc:
         return refuse(
             "dependency_unavailable", f"cannot read the cluster's newest version: {exc}", 66
+        )
+
+    if unblocking:
+        return _write_unblocked(
+            writer,
+            request.cluster,
+            request.request_id,
+            proxy.name,
+            unblock(cluster.nodes, identity, proxy, wanted, ask=ask_unblocking),
         )
 
     answers = apply(cluster.nodes, identity, targets, str(state), ask=ask)
@@ -228,6 +312,55 @@ def main(
                 code="node_server_state_failed",
                 message=f"no node took {state} for any of the servers",
             ),
+        ),
+    )
+    return EXIT_INCOMPLETE
+
+
+def _write_unblocked(
+    writer: TextIO,
+    cluster: str,
+    request_id: str,
+    name: str,
+    answers: tuple[Unblocked, ...],
+) -> int:
+    """`done` when every node lifted every address, `partial` when some did, else `failed`."""
+
+    result = _unblock_result(name, answers)
+    missed = [answer for answer in answers if answer.outcome != "done"]
+    if not missed:
+        write_document(
+            writer,
+            envelope(
+                operation=UNBLOCK_OPERATION,
+                outcome="done",
+                cluster=cluster,
+                request_id=request_id,
+                result=result,
+            ),
+        )
+        return 0
+    warnings = tuple(
+        Message(
+            code="blocking_not_on_node" if answer.outcome == "refused" else "node_unblock_failed",
+            message=answer.message or "the block was not lifted",
+            node=answer.node,
+        )
+        for answer in missed
+    )
+    taken = len(answers) - len(missed)
+    write_document(
+        writer,
+        envelope(
+            operation=UNBLOCK_OPERATION,
+            outcome="partial" if taken else "failed",
+            cluster=cluster,
+            request_id=request_id,
+            result=result,
+            warnings=warnings,
+            error=None
+            if taken
+            else Message(code="node_unblock_failed", message="no node lifted the block"),
         ),
     )
     return EXIT_INCOMPLETE

@@ -23,7 +23,7 @@ from haproxy_mgmt.backup_schedule import (
     schedule_result,
 )
 
-TIMER = "haprion-state-backup.timer"
+TIMER = "haprion-state-backup@alpha.timer"
 
 #
 # Copied from a real `systemctl show --timestamp=unix` on a manager, with the
@@ -37,7 +37,7 @@ LOADED = {
     "TimersCalendar": "{ OnCalendar=*-*-* 05:00:00 ; next_elapse=Sun 2026-08-30 05:00:00 CEST }",
     "NextElapseUSecRealtime": "@1788058800",
     "LastTriggerUSec": "@1787972440",
-    "Unit": "haprion-state-backup.service",
+    "Unit": "haprion-state-backup@alpha.service",
     "DropInPaths": "",
 }
 
@@ -153,6 +153,7 @@ class ScheduleTests(unittest.TestCase):
     def test_a_name_that_is_not_a_unit_name_never_reaches_an_argv(self) -> None:
         for unit in (
             "haprion-state-backup.service",
+            "haprion-state-backup.timer",
             "other@alpha.timer",
             "haprion-state-backup@Alpha.timer",
             "haprion-state-backup@../alpha.timer",

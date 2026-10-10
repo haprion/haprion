@@ -28,14 +28,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haproxy_mgmt.backup_retention import DEFAULT_RETENTION, RetentionError, bounded
-from haproxy_mgmt.config import CLUSTER_ID, TIMER_UNIT
+from haproxy_mgmt.config import CLUSTER_ID
 
 SYSTEMCTL = "/usr/bin/systemctl"
 #
-# The policy's own timer name refuses template instances on purpose (see
-# TIMER_UNIT). The per-cluster instance is the one exception, and only in the
-# exact shape `timer_unit` derives it in: the project's template, an `@`, and
-# a cluster ID that passed the same check the configuration applies.
+# The per-cluster timer, in the exact shape `timer_unit` derives it in: the
+# project's template, an `@`, and a cluster ID that passed the same check the
+# configuration applies. Nothing else reaches systemctl.
 #
 SCHEDULE_DROPIN = "schedule.conf"
 TIMER_INSTANCE = re.compile(rf"^haprion-state-backup@{CLUSTER_ID.pattern[1:-1]}\.timer$")
@@ -249,8 +248,8 @@ def schedule_result(unit: str | None, *, show: ShowProperties = _run) -> dict[st
 
     if unit is None:
         return None
-    if not (TIMER_UNIT.fullmatch(unit) or TIMER_INSTANCE.fullmatch(unit)):
-        raise ScheduleError(f"backup_timer is not a valid systemd timer name: {unit}")
+    if not TIMER_INSTANCE.fullmatch(unit):
+        raise ScheduleError(f"not a cluster's backup timer: {unit}")
 
     timer = show(
         unit,

@@ -199,7 +199,7 @@ def main(
         result["schedule"] = schedule_result(
             timer_unit(request.cluster)
             if getattr(policy, "backup_identity", None) is not None
-            else policy.backup_timer
+            else None
         )
         #
         # And how many each node keeps, from the same file the pruning reads.

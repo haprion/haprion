@@ -153,7 +153,7 @@ class HelperTests(unittest.TestCase):
         parameters: dict[str, object],
         *,
         cluster: str = "alpha",
-        timer: str | None = None,
+        scheduled: bool = False,
     ) -> tuple[dict[str, Any], int]:
         request = {
             "schema_version": 1,
@@ -166,7 +166,7 @@ class HelperTests(unittest.TestCase):
 
         class Policy:
             backup_root = root
-            backup_timer = timer
+            backup_identity = object() if scheduled else None
 
         class Config:
             @staticmethod
@@ -215,7 +215,7 @@ class HelperTests(unittest.TestCase):
             root = Path(directory)
             for node in NODES:
                 _archive(root / node.name, "2026-08-29_05-00-00")
-            document, code = self._run(root, {"limit": 10}, timer="haprion-state-backup.timer")
+            document, code = self._run(root, {"limit": 10}, scheduled=True)
 
         self.assertEqual(code, 0)
         self.assertEqual(document["result"]["schedule"]["retention"], 60)

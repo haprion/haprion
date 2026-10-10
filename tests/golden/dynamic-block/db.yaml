@@ -1,0 +1,19 @@
+schema: 1
+name: db
+listen:
+  protocol: tcp
+  port: 5432
+dynamic_block:
+  window: 1m
+  max_new_connections: 50
+  block_for: 2h
+  exempt: [office]
+backend: pool
+backends:
+  pool:
+    balance: leastconn
+    health:
+      type: tcp
+    servers:
+      - host: 198.51.100.10
+        port: 5432

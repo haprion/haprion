@@ -24,6 +24,7 @@ chooses a name; this module is where a name becomes syntax.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import date
 
 #
@@ -256,6 +257,55 @@ def core_defaults_problem(core_cfg: bytes, *, cluster: str, config_path: str) ->
         )
 
     return None
+
+
+#
+# HAProxy's own number of stick counter slots when `global` names none, and the
+# line that raises it. Generated configuration uses up to `sc4` once an object
+# has dynamic blocking (B271).
+#
+DEFAULT_STICK_COUNTERS = 3
+STICK_COUNTERS_KEYWORD = "tune.stick-counters"
+_TRACK_SLOT = re.compile(rb"\btrack-sc(\d+)\b")
+GENERATED_CONFIGURATION = "managed/generated/"
+
+
+def stick_counters_problem(
+    files: Mapping[str, bytes], *, cluster: str, config_path: str
+) -> str | None:
+    """Why this release uses more stick counter slots than its core allows, if it does.
+
+    The slots a release needs are read from what it carries: the highest
+    `track-scN` in its generated configuration needs N+1. Checked before the
+    sandbox, because there HAProxy answers only "3 track-sc number exceeding 2
+    (tune.stick-counters-1) value", which says nothing about which file to change
+    or why (measured on 3.4.6, 26-10-10).
+    """
+
+    needed = 0
+    for path, content in files.items():
+        if path.startswith(GENERATED_CONFIGURATION) and path.endswith(".cfg"):
+            for slot in _TRACK_SLOT.findall(content):
+                needed = max(needed, int(slot) + 1)
+    core = files.get("core/haproxy.cfg", b"").decode("utf-8", errors="replace")
+    stated = _stated(core, re.escape(STICK_COUNTERS_KEYWORD))
+    have = int(stated) if stated is not None and stated.isdigit() else DEFAULT_STICK_COUNTERS
+    if needed <= have:
+        return None
+    return (
+        f"{cluster}: an object uses dynamic blocking, which needs {needed} stick counters, "
+        f"and core/haproxy.cfg allows {have}.\n"
+        f"\n"
+        f"  Fix it, then publish again:\n"
+        f"    sudoedit {config_path}/core/haproxy.cfg\n"
+        f"    add this line to the `global` section:\n"
+        f"      {STICK_COUNTERS_KEYWORD} {needed}\n"
+        f"\n"
+        f"  Why this stops a publish: dynamic blocking counts and marks an address on\n"
+        f"  counters of its own, past the cluster's brake and the object's rate limit,\n"
+        f"  and HAProxy keeps three unless `global` says otherwise. `global` is the\n"
+        f"  cluster's own file, which the generator never writes."
+    )
 
 
 def core_defaults_lines(indent: str = "    ") -> str:

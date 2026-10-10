@@ -19,6 +19,7 @@ from haprion.proxy_model import (
     PROXY_KEYS,
     SYSLOG_REFUSED_KEYS,
     TCP_ONLY_KEYS,
+    DynamicBlock,
     Health,
     ModelError,
     RateLimit,
@@ -759,6 +760,102 @@ class HowMuchOneSourceMayAsk(unittest.TestCase):
             with self.subTest(value), self.assertRaises(ModelError) as raised:
                 self.http(f"  window: {value}\n  max_requests: 5")
             self.assertIn("window must be a duration", str(raised.exception))
+
+
+class AnAddressBlockedForAWhile(unittest.TestCase):
+    """`dynamic_block` (B271): a trigger, a time, an answer and who is never blocked."""
+
+    def http(self, block: str) -> DynamicBlock | None:
+        document = with_lines(("routes:", f"dynamic_block:\n{block}\nroutes:"))
+        return load_proxy("shop", document).dynamic_block
+
+    def tcp(self, block: str) -> DynamicBlock | None:
+        document = TCP.replace(
+            b"backend: pool\n", f"dynamic_block:\n{block}\nbackend: pool\n".encode()
+        )
+        return load_proxy("db", document).dynamic_block
+
+    def refused(self, reader: Any, block: str) -> str:
+        with self.assertRaises(ModelError) as raised:
+            reader(block)
+        return str(raised.exception)
+
+    def test_there_is_no_block_unless_one_is_written(self) -> None:
+        self.assertIsNone(load_proxy("shop", MINIMAL).dynamic_block)
+
+    def test_the_window_and_the_answer_have_defaults(self) -> None:
+        self.assertEqual(
+            self.http("  max_requests: 300\n  block_for: 30m"),
+            DynamicBlock(window="10s", block_for="30m", max_requests=300, status=404),
+        )
+
+    def test_both_triggers_and_an_exemption(self) -> None:
+        block = self.http(
+            "  window: 1m\n  max_requests: 300\n  max_errors: 20\n  block_for: 2h\n"
+            "  status: 429\n  exempt: [office, 192.0.2.10]"
+        )
+        self.assertEqual(
+            block,
+            DynamicBlock(
+                window="1m",
+                block_for="2h",
+                max_requests=300,
+                max_errors=20,
+                status=429,
+                exempt=("office", "192.0.2.10/32"),
+            ),
+        )
+
+    def test_a_tcp_object_counts_connections_and_is_not_answered(self) -> None:
+        self.assertEqual(
+            self.tcp("  max_new_connections: 50\n  block_for: 1m"),
+            DynamicBlock(window="10s", block_for="1m", max_new_connections=50),
+        )
+        self.assertIn(
+            "has no requests", self.refused(self.tcp, "  max_requests: 5\n  block_for: 1m")
+        )
+        self.assertIn(
+            "closed, not answered",
+            self.refused(self.tcp, "  max_new_connections: 5\n  block_for: 1m\n  status: 404"),
+        )
+        self.assertIn(
+            "counts requests and errors",
+            self.refused(self.http, "  max_new_connections: 5\n  block_for: 1m"),
+        )
+
+    def test_without_a_trigger_nothing_would_start_a_block(self) -> None:
+        self.assertIn("nothing would start a block", self.refused(self.http, "  block_for: 30m"))
+
+    def test_the_time_is_a_minute_to_a_day(self) -> None:
+        for value in ("1m", "24h", "1440m"):
+            with self.subTest(value):
+                self.assertIsNotNone(self.http(f"  max_errors: 5\n  block_for: {value}"))
+        for value in ("0m", "25h", "1441m", "30s", "30", "1d"):
+            with self.subTest(value):
+                self.assertIn(
+                    "block_for must be",
+                    self.refused(self.http, f"  max_errors: 5\n  block_for: {value}"),
+                )
+        self.assertIn("block_for must be", self.refused(self.http, "  max_errors: 5"))
+
+    def test_the_answer_is_one_of_three(self) -> None:
+        for value in ("200", "500", "true", "'404'"):
+            with self.subTest(value):
+                self.assertIn(
+                    "status must be one of: 403, 404, 429",
+                    self.refused(self.http, f"  max_errors: 5\n  block_for: 1m\n  status: {value}"),
+                )
+
+    def test_a_country_is_too_wide_to_exempt(self) -> None:
+        self.assertIn(
+            "too wide",
+            self.refused(self.http, "  max_errors: 5\n  block_for: 1m\n  exempt: [country:SE]"),
+        )
+
+    def test_dns_and_syslog_refuse_it(self) -> None:
+        self.assertIn("dynamic_block", COMMON_KEYS)
+        self.assertIn("dynamic_block", DNS_REFUSED_KEYS)
+        self.assertIn("dynamic_block", SYSLOG_REFUSED_KEYS)
 
 
 class TheHealthCheckMayUseItsOwnPort(unittest.TestCase):

@@ -491,6 +491,11 @@ def _publish(
         )
         if stale is not None:
             return refuse("tls_defaults_stale", stale, BLOCKED_EXIT)
+        short = tls_policy.stick_counters_problem(
+            current_files, cluster=request.cluster, config_path=str(cluster.config_path)
+        )
+        if short is not None:
+            return refuse("stick_counters_short", short, BLOCKED_EXIT)
         installed = install_release(
             cluster.publish_path,
             node_path=cluster.node_path,
@@ -536,6 +541,16 @@ def _publish(
     artifact = build_node_artifact(published_files)
     index = build_release_index(published_files)
     candidate = candidate_from_files(artifact)
+
+    #
+    # Before the sandbox, where HAProxy would refuse the same release in words
+    # that name neither the file nor the line (`stick_counters_problem`).
+    #
+    short = tls_policy.stick_counters_problem(
+        published_files, cluster=request.cluster, config_path=str(cluster.config_path)
+    )
+    if short is not None:
+        return refuse("stick_counters_short", short, BLOCKED_EXIT)
 
     #
     # 4. Validation, in the sandbox, on exactly those bytes.

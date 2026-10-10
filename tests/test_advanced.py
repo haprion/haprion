@@ -171,6 +171,18 @@ class TheCountersBelongToWhoeverTracksThemFirst(unittest.TestCase):
         self.assertEqual(fate(line, rate_limit=False), PLACED)
         self.assertEqual(fate("http-request sc-set-gpt(0,1) 1", rate_limit=True), REFUSED_FATE)
 
+    def test_sc3_and_sc4_are_the_text_s_only_while_the_form_has_no_dynamic_blocking(self) -> None:
+        for slot in (3, 4):
+            line = f"http-request track-sc{slot} src table shop-t"
+            with self.subTest(slot):
+                self.assertEqual(fate(line, dynamic_block=True), REFUSED_FATE)
+                self.assertEqual(fate(line, dynamic_block=False), PLACED)
+                self.assertEqual(
+                    fate(f"http-request sc-inc-gpc0({slot})", dynamic_block=True), REFUSED_FATE
+                )
+        section = "backend shop-t\n    http-request track-sc4 src\n"
+        self.assertEqual(fates(section, dynamic_block=True)[1][1], REFUSED_FATE)
+
     def test_the_counters_may_be_read(self) -> None:
         self.assertEqual(
             fate("http-request deny if { sc_http_req_rate(1) gt 5 }", rate_limit=True), PLACED

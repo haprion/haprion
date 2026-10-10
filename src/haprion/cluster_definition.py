@@ -124,6 +124,10 @@ global
     # ready per server (docs/user-manual.md, 'Node scripts').
     stats socket /run/haproxy/manager.sock mode 600 level admin
 
+    # Stick counter slots: dynamic blocking counts on the fourth and marks on
+    # the fifth (docs/user-manual.md, 'Dynamic blocking').
+    tune.stick-counters 5
+
     # The TLS defaults the publish path checks this file against, written
     # from the same source (docs/user-manual.md, 'Runtime policy').
 {tls}

@@ -59,6 +59,7 @@ CORE = """
 global
     daemon
     default-path config
+    tune.stick-counters 5
 resolvers cluster-dns
     nameserver ns1 192.0.2.53:53
     resolve_retries 3
@@ -1205,3 +1206,70 @@ class SharedTablesAreCheckedAsANode(unittest.TestCase):
 
     def test_as_nobody_it_is_dropped_with_a_warning(self) -> None:
         self.assertIn("Removing incomplete section", self.check("-L", "mgr"))
+
+
+class DynamicBlockingInTheGeneratedText(unittest.TestCase):
+    """What the golden case does not show: no trusted proxy, and refusals (B271)."""
+
+    SHOP = """schema: 1
+name: shop
+hostnames: [shop.example.com]
+listen:
+  protocol: http
+rate_limit:
+  max_requests: 100
+dynamic_block:
+  max_requests: 300
+  block_for: 30m
+  status: 429
+  exempt: [{exempt}]
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    servers:
+      - host: 198.51.100.10
+        port: 8080
+"""
+
+    def files(self, exempt: str = "192.0.2.10", **options: Any) -> dict[str, str]:
+        proxy = load_proxy("shop", self.SHOP.format(exempt=exempt).encode())
+        return generate(
+            [proxy], vips=dict(DEFAULT_VIPS), default_vip="main", **options
+        ).configuration
+
+    def test_without_a_trusted_proxy_the_source_is_counted_and_blocked(self) -> None:
+        text = self.files()["1001-shop.cfg"]
+        rules = [line.strip() for line in text.splitlines() if "dynblock" in line]
+        self.assertEqual(
+            rules,
+            [
+                "acl mgd-shop-dynblock-exempt src 192.0.2.10/32",
+                "acl mgd-shop-dynblock-over sc_http_req_rate(3) gt 300",
+                "http-request track-sc3 src table mgd-shop-dynblock-rate "
+                "if !mgd-shop-dynblock-exempt",
+                "http-request track-sc4 src table mgd-shop-dynblock "
+                "if !mgd-shop-dynblock-exempt mgd-shop-dynblock-over",
+                "http-request set-var(txn.rule) str(dynamic-block:deny) "
+                "if !mgd-shop-dynblock-exempt { src,in_table(mgd-shop-dynblock) }",
+                "backend mgd-shop-dynblock-rate",
+                "backend mgd-shop-dynblock",
+            ],
+        )
+        self.assertNotIn("mgd-trusted-proxy", text)
+        self.assertIn("deny_status 429 if { var(txn.rule) -m str dynamic-block:deny }", text)
+
+    def test_the_block_is_counted_before_the_rate_limit_refuses(self) -> None:
+        """A flood refused with 429 first would never be counted, and never blocked."""
+
+        text = self.files()["1001-shop.cfg"]
+        self.assertLess(text.index("track-sc3"), text.index("track-sc1"))
+
+    def test_an_exempt_group_the_cluster_does_not_define_is_refused(self) -> None:
+        with self.assertRaises(GeneratorError) as raised:
+            self.files(exempt="monitoring")
+        self.assertIn("names the group monitoring", str(raised.exception))
+        text = self.files(exempt="monitoring", networks={"monitoring": ("203.0.113.0/24",)})
+        self.assertIn("acl mgd-shop-dynblock-exempt src 203.0.113.0/24", text["1001-shop.cfg"])

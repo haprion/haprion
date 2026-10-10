@@ -437,6 +437,11 @@ TCP_REFUSED_FILTERS = frozenset({"compression", "cache", "fcgi-app"})
 #
 CLUSTER_SLOT = 0
 RATE_SLOT = 1
+#
+# Dynamic blocking counts on the fourth slot and marks on the fifth (B271),
+# which is why a cluster with it needs `tune.stick-counters 5`.
+#
+BLOCK_SLOTS = (3, 4)
 TRACK = re.compile(r"^track-sc(\d+)$")
 COUNTER_ACTION = re.compile(r"^sc-[a-z0-9-]+\(([^)]*)\)$")
 STICK_RULES = frozenset({"on", "match", "store-request", "store-response"})
@@ -608,6 +613,7 @@ def _counter_problem(
     rate_limit: bool,
     *,
     own_table: bool,
+    dynamic_block: bool = False,
 ) -> str:
     """Why this rule's stick counter cannot be the text's, or "".
 
@@ -633,6 +639,8 @@ def _counter_problem(
             return "sc0 is the cluster's abuse brake; the text counts on sc2"
         if slot == RATE_SLOT and rate_limit:
             return "sc1 is this object's rate limit; the text counts on sc2"
+        if slot in BLOCK_SLOTS and dynamic_block:
+            return f"sc{slot} is this object's dynamic blocking; the text counts on sc2"
         if table is None and not own_table:
             return (
                 "a counter here needs `table <name>` of a backend the text adds: "
@@ -649,6 +657,11 @@ def _counter_problem(
             return "sc0 is the cluster's abuse brake; the text may read it but not change it"
         if slot_written == RATE_SLOT and rate_limit:
             return "sc1 is this object's rate limit; the text may read it but not change it"
+        if slot_written in BLOCK_SLOTS and dynamic_block:
+            return (
+                f"sc{slot_written} is this object's dynamic blocking; "
+                f"the text may read it but not change it"
+            )
     return ""
 
 
@@ -702,11 +715,20 @@ def _server_fact(tokens: Sequence[str]) -> tuple[str, str] | None:
     return tokens[1], f"{host.strip('[]')}:{port}"
 
 
-def place(text: str, *, name: str, protocol: str, rate_limit: bool, handwritten: bool) -> Placement:
+def place(
+    text: str,
+    *,
+    name: str,
+    protocol: str,
+    rate_limit: bool,
+    handwritten: bool,
+    dynamic_block: bool = False,
+) -> Placement:
     """Decide, line by line, where the text goes and what is refused.
 
     `rate_limit` is whether the form has the object's limit on (it owns sc1
-    then), and `handwritten` whether the object's one pool is written here
+    then), `dynamic_block` whether its dynamic blocking is (sc3 and sc4), and
+    `handwritten` whether the object's one pool is written here
     (B224). The answer covers every line, so the dialog and the CLI can show
     the whole text with what became of each.
     """
@@ -825,7 +847,14 @@ def place(text: str, *, name: str, protocol: str, rate_limit: bool, handwritten:
                 problem = (
                     _server_problem(tokens, keyword)
                     or _waf_problem(tokens, keyword)
-                    or _counter_problem(tokens, keyword, name, rate_limit, own_table=True)
+                    or _counter_problem(
+                        tokens,
+                        keyword,
+                        name,
+                        rate_limit,
+                        own_table=True,
+                        dynamic_block=dynamic_block,
+                    )
                 )
             if problem:
                 record(REFUSED_FATE, where, problem)
@@ -860,7 +889,9 @@ def place(text: str, *, name: str, protocol: str, rate_limit: bool, handwritten:
         problem = (
             _server_problem(tokens, keyword)
             or _waf_problem(tokens, keyword)
-            or _counter_problem(tokens, keyword, name, rate_limit, own_table=False)
+            or _counter_problem(
+                tokens, keyword, name, rate_limit, own_table=False, dynamic_block=dynamic_block
+            )
             or _stick_problem(tokens, keyword, name)
         )
         if problem:

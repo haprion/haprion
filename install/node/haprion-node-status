@@ -924,6 +924,12 @@ def shared_counters(pid, release, proc=Path("/proc")):
 # that quietly becomes another field after an upgrade.
 #
 MAX_STAT_ROWS = 500
+#
+# The sections holding an object's dynamic blocking tables (B271): backends with
+# no servers that carry no traffic, so not pools. Named by the generator's
+# `block_tables`, in the `mgd-` space no pool may take.
+#
+BLOCK_TABLE = re.compile(r"^mgd-.+-dynblock(-rate)?$")
 
 #
 # Why the frontends are reported at all, when they carry no health check: a
@@ -999,7 +1005,7 @@ def parse_stat(text):
         row = line.split(",")
         pool = value(row, "pxname")
         member = value(row, "svname")
-        if pool is None or member is None:
+        if pool is None or member is None or BLOCK_TABLE.match(pool):
             continue
         if member == "FRONTEND":
             frontends.append(

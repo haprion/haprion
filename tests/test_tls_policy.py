@@ -303,3 +303,46 @@ class TheProbeIsHeldToTheSameFloorAsHaproxy(unittest.TestCase):
             with self.subTest(policy=name):
                 self.assertNotIn("TLSv1.1", line)
                 self.assertNotIn(tls_policy.SECURITY_LEVEL_OFF, line)
+
+
+class EnoughStickCountersForWhatIsGenerated(unittest.TestCase):
+    """`stick_counters_problem`: the slots a release tracks against its core (B271)."""
+
+    GENERATED = b"backend web\n    http-request track-sc4 src table mgd-shop-dynblock\n"
+
+    def problem(self, core: str, generated: bytes = GENERATED, path: str = "") -> str | None:
+        return tls_policy.stick_counters_problem(
+            {
+                "core/haproxy.cfg": core.encode(),
+                path or f"{tls_policy.GENERATED_CONFIGURATION}1001-shop.cfg": generated,
+            },
+            cluster="alpha",
+            config_path="/srv/alpha",
+        )
+
+    def test_the_default_three_do_not_reach_sc4_and_the_message_says_the_line(self) -> None:
+        problem = self.problem("global\n    daemon\n")
+        assert problem is not None
+        self.assertIn("needs 5 stick counters, and core/haproxy.cfg allows 3", problem)
+        self.assertIn("sudoedit /srv/alpha/core/haproxy.cfg", problem)
+        self.assertIn("      tune.stick-counters 5\n", problem)
+
+    def test_five_are_enough_and_four_are_not(self) -> None:
+        self.assertIsNone(self.problem("global\n    tune.stick-counters 5\n"))
+        self.assertIsNotNone(self.problem("global\n    tune.stick-counters 4\n"))
+
+    def test_without_dynamic_blocking_the_default_is_enough(self) -> None:
+        self.assertIsNone(self.problem("global\n", b"    http-request track-sc2 src\n"))
+
+    def test_only_generated_configuration_is_read(self) -> None:
+        """A handwritten file under core/ is the cluster's to make work with its own core."""
+
+        self.assertIsNone(self.problem("global\n", path="core/conf.d/0010-core.cfg"))
+
+    def test_the_template_a_new_cluster_starts_from_has_the_line(self) -> None:
+        from haprion.cluster_definition import seed_files  # noqa: PLC0415
+        from haprion.managed_publish import GENERATED_PREFIX  # noqa: PLC0415
+
+        self.assertEqual(tls_policy.GENERATED_CONFIGURATION, GENERATED_PREFIX)
+        core = seed_files("192.0.2.20")["core/haproxy.cfg"].decode()
+        self.assertIsNone(self.problem(core))

@@ -457,7 +457,17 @@ BACKEND_POLICY_NAMES = ("modern", "intermediate", "legacy")
 # its author writes first.
 #
 COMMON_KEYS = frozenset(
-    {"schema", "name", "listen", "backends", "allow_from", "deny_from", "rate_limit", "advanced"}
+    {
+        "schema",
+        "name",
+        "listen",
+        "backends",
+        "allow_from",
+        "deny_from",
+        "rate_limit",
+        "dynamic_block",
+        "advanced",
+    }
 )
 
 HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
@@ -483,6 +493,7 @@ DNS_REFUSED_KEYS: Mapping[str, str] = MappingProxyType(
     {
         "advanced": "advanced config is HAProxy text, and dnsdist serves this object",
         "rate_limit": "the request limit is HAProxy's, and dnsdist serves this object",
+        "dynamic_block": "dynamic blocking is HAProxy's, and dnsdist serves this object",
         "deny_from": "refusals by address are HAProxy's; list who may ask in allow_from",
     }
 )
@@ -499,6 +510,7 @@ SYSLOG_REFUSED_KEYS: Mapping[str, str] = MappingProxyType(
         "deny_from": "IPVS forwards every packet that reaches the address and refuses no sender",
         "advanced": "advanced config is HAProxy text, and the kernel's IPVS serves this object",
         "rate_limit": "the request limit is HAProxy's, and the kernel's IPVS serves this object",
+        "dynamic_block": "dynamic blocking is HAProxy's, and the kernel's IPVS serves this object",
     }
 )
 
@@ -863,13 +875,39 @@ class RateLimit:
     is the only question a raw stream can be asked before it is forwarded.
     Exactly one of the two is set.
 
-    Counted per node and forgotten on reload, like the cluster's: HAProxy
-    keeps the table in the process, and nothing here synchronises it.
+    Shared between the cluster's nodes when the cluster shares counters
+    (B270); otherwise counted per node.
     """
 
     window: str
     max_requests: int | None = None
     max_new_connections: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicBlock:
+    """A source address blocked for a while once it asks too much (B271).
+
+    Not a brake: the rate limit refuses what is over the limit and serves the
+    rest, while this refuses everything from the address for `block_for`, and
+    every request over the limit during the block starts that time again - so
+    the block lasts as long as the attack and then `block_for` more. The time
+    is the table's own expiry on the node, not anybody's clock.
+
+    An http object has two triggers, requests and errors per window, and at
+    least one is set; the errors are the 4xx answers its servers give, which
+    is what a scanner and a password guesser leave behind. A tcp object counts
+    new connections. `exempt` are groups and ranges never counted and never
+    blocked: monitoring, and an office whose visitors share one address.
+    """
+
+    window: str
+    block_for: str
+    max_requests: int | None = None
+    max_errors: int | None = None
+    max_new_connections: int | None = None
+    status: int = 404
+    exempt: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1067,6 +1105,9 @@ class Proxy:
 
     rate_limit: RateLimit | None = None
     """How much one source may ask of this object. None means no limit."""
+
+    dynamic_block: DynamicBlock | None = None
+    """When a source is blocked for a while (B271). None means never."""
 
     advanced: Advanced | None = None
     """HAProxy text pasted onto the object (Fas 17, B223). None means none."""
@@ -1797,6 +1838,9 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     unavailable = _unavailable(data.get("unavailable"), f"{name}.unavailable")
     headers = _headers(data.get("headers"), f"{name}.headers")
     rate_limit = _rate_limit(data.get("rate_limit"), f"{name}.rate_limit", listen.protocol)
+    dynamic_block = _dynamic_block(
+        data.get("dynamic_block"), f"{name}.dynamic_block", listen.protocol
+    )
     deny_from = _deny_from(data.get("deny_from"), f"{name}.deny_from", listen.protocol)
     deny_rules = _deny_rules(data.get("deny_rules"), f"{name}.deny_rules")
     max_request_body = _body_size(data.get("max_request_body"), f"{name}.max_request_body")
@@ -1807,6 +1851,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         name,
         listen.protocol,
         rate_limit=rate_limit is not None,
+        dynamic_block=dynamic_block is not None,
         handwritten=bool(handwritten),
     )
     if handwritten:
@@ -1824,6 +1869,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         headers=headers,
         backend=backend,
         rate_limit=rate_limit,
+        dynamic_block=dynamic_block,
         advanced=advanced,
         deny_from=deny_from,
         deny_rules=deny_rules,
@@ -1841,7 +1887,13 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 def _advanced(
-    value: Any, name: str, protocol: str, *, rate_limit: bool, handwritten: bool
+    value: Any,
+    name: str,
+    protocol: str,
+    *,
+    rate_limit: bool,
+    dynamic_block: bool = False,
+    handwritten: bool,
 ) -> Advanced | None:
     if value is None:
         return None
@@ -1853,7 +1905,12 @@ def _advanced(
     if not text:
         raise ModelError(f"{name}.advanced is empty; leave it out instead")
     placement = advanced_config.place(
-        text, name=name, protocol=protocol, rate_limit=rate_limit, handwritten=handwritten
+        text,
+        name=name,
+        protocol=protocol,
+        rate_limit=rate_limit,
+        dynamic_block=dynamic_block,
+        handwritten=handwritten,
     )
     refused = placement.refused
     if refused:
@@ -1896,6 +1953,7 @@ def advanced_placement(name: str, document: bytes) -> advanced_config.Placement 
         name=name,
         protocol=str(protocol or ""),
         rate_limit=data.get("rate_limit") is not None,
+        dynamic_block=data.get("dynamic_block") is not None,
         handwritten=handwritten,
     )
 
@@ -2300,6 +2358,78 @@ def _rate_limit(value: Any, location: str, protocol: str) -> RateLimit | None:
     if protocol == "tcp":
         return RateLimit(window=window, max_new_connections=limit)
     return RateLimit(window=window, max_requests=limit)
+
+
+#
+# How long a block lasts, from a minute to a day. Shorter is the rate limit's
+# job; longer is a permanent refusal by another name, which `deny_from` says
+# honestly.
+#
+BLOCK_FOR = re.compile(r"^[1-9][0-9]{0,3}(m|h)$")
+MIN_BLOCK_MINUTES = 1
+MAX_BLOCK_MINUTES = 24 * 60
+BLOCK_STATUSES = (403, 404, 429)
+DEFAULT_BLOCK_STATUS = 404
+
+
+def _dynamic_block(value: Any, location: str, protocol: str) -> DynamicBlock | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    tcp = protocol == "tcp"
+    triggers = ("max_new_connections",) if tcp else ("max_requests", "max_errors")
+    #
+    # A key that means nothing for this shape is refused, not ignored, for the
+    # reason `_rate_limit` gives.
+    #
+    for key, reason in (
+        ("max_requests", "a tcp object has no requests; use max_new_connections"),
+        ("max_errors", "a tcp object has no answers to count; use max_new_connections"),
+        ("status", "a tcp connection is closed, not answered"),
+    ):
+        if tcp and key in data:
+            raise ModelError(f"{location}.{key} does not apply: {reason}")
+    if not tcp and "max_new_connections" in data:
+        raise ModelError(
+            f"{location}.max_new_connections does not apply: an http or https object counts "
+            f"requests and errors"
+        )
+    _only_keys(
+        data,
+        {"window", "block_for", "exempt", *triggers, *(() if tcp else ("status",))},
+        location,
+    )
+    window = data.get("window", DEFAULT_ABUSE_WINDOW)
+    if not isinstance(window, str) or not ABUSE_WINDOW.fullmatch(window):
+        raise ModelError(f"{location}.window must be a duration such as 10s or 1m")
+    block_for = data.get("block_for")
+    if not isinstance(block_for, str) or not BLOCK_FOR.fullmatch(block_for):
+        raise ModelError(f"{location}.block_for must be a duration such as 30m or 2h")
+    minutes = int(block_for[:-1]) * (60 if block_for.endswith("h") else 1)
+    if not MIN_BLOCK_MINUTES <= minutes <= MAX_BLOCK_MINUTES:
+        raise ModelError(f"{location}.block_for must be from 1m to 24h")
+    limits: dict[str, int] = {}
+    for key in triggers:
+        limit = data.get(key)
+        if limit is None:
+            continue
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_RATE:
+            raise ModelError(f"{location}.{key} must be a count from 1 to {MAX_RATE}")
+        limits[key] = limit
+    if not limits:
+        raise ModelError(f"{location} needs {' or '.join(triggers)}: nothing would start a block")
+    status = data.get("status", DEFAULT_BLOCK_STATUS)
+    if status not in BLOCK_STATUSES or isinstance(status, bool):
+        raise ModelError(
+            f"{location}.status must be one of: {', '.join(str(code) for code in BLOCK_STATUSES)}"
+        )
+    exempt = _sources(data.get("exempt", []), f"{location}.exempt", "exempt")
+    countries = [entry for entry in exempt if entry.startswith(geo.PREFIX)]
+    if countries:
+        raise ModelError(
+            f"{location}.exempt: a country is too wide to exempt from blocking ({countries[0]})"
+        )
+    return DynamicBlock(window=window, block_for=block_for, status=status, exempt=exempt, **limits)
 
 
 def _unavailable(value: Any, location: str) -> Unavailable | None:

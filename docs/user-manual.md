@@ -640,7 +640,8 @@ prints the same answer as the dialog's *Check*):
   `source`/`usesrc` (also as a server parameter) — routing, listening and the
   outgoing address are the form's; a keyword HAProxy would ignore in that place;
   `track-sc0` (the cluster's counter), `track-sc1` while the object's rate limit
-  is on (the limit's counter); a `stick-table` on the object's own lines (its
+  is on (the limit's counter), `track-sc3` and `track-sc4` while its dynamic
+  blocking is on; a `stick-table` on the object's own lines (its
   pool already carries the rate limit's). The text counts on `sc2`, with tables
   in a backend of its own: `track-sc2 src table <object>-logins`. Reading `sc0`
   and `sc1` is allowed.
@@ -753,6 +754,55 @@ the line would be ignored, which `-c` alone lets pass. Beyond what
 is refused here and what `haproxy -c` checks, what the text does is the author's
 responsibility: a valid line can still mean something else than intended, and
 the dialog's list of where each line went is the review before a publish.
+
+## Dynamic blocking
+
+An http, https or tcp object can block a source address for a while once it
+asks too much: every request from it is refused for the time set, and every
+request over the limit during the block starts that time again. A block
+therefore lasts as long as the attack and then the time set, and ends on its
+own. The rate limit is a brake beside it: it refuses what is over the limit and
+serves the rest.
+
+```yaml
+dynamic_block:
+  window: 10s          # the default; seconds or minutes
+  max_requests: 300    # http/https: requests per window (optional)
+  max_errors: 20       # http/https: 4xx answers from the servers per window (optional)
+  # tcp instead: max_new_connections
+  block_for: 30m       # 1m to 24h
+  status: 404          # http/https: 403, 404 or 429; 404 is the default
+  exempt: [monitoring, 192.0.2.10]   # groups and ranges never counted or blocked
+```
+
+At least one trigger is set. The errors are the 4xx answers the object's
+servers give - what a scanner and a password guesser leave behind; a 5xx is
+the application's fault and is not counted, and nor are answers HAProxy gives
+itself, so a block cannot extend itself. A blocked request's traffic record says
+`dynamic-block:deny`, which tells it apart from a 404 the application gave. A tcp
+object closes a blocked address's connection before a byte is forwarded.
+
+The address is the one the rate limit counts: behind a trusted proxy the last
+`X-Forwarded-For` element, otherwise the address the connection came from.
+Many visitors behind one NAT address are blocked together; name such an
+address in `exempt`, as well as monitoring that polls the object often. A
+country cannot be exempt.
+
+The time is the node's own: the block is an entry in a stick table whose
+expiry is `block_for`. On a cluster with shared counters the block reaches the
+other nodes and survives a reload and a failover; without them it is per node.
+The tables are two backends with no servers, `mgd-<object>-dynblock-rate` and
+`mgd-<object>-dynblock`, which `show stat` lists and the node status leaves out.
+
+Dynamic blocking counts on stick counter slots 4 and 5, and HAProxy keeps three
+unless `global` says otherwise, so the cluster's `core/haproxy.cfg` needs:
+
+```
+    tune.stick-counters 5
+```
+
+A publish that needs more slots than the core allows is refused with that line
+before anything is validated.
 
 ## The WAF engine
 

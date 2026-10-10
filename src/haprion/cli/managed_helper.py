@@ -311,6 +311,16 @@ def _publish(
             config_path=str(cluster.config_path),
         )
 
+    #
+    # Before the sandbox, where HAProxy would refuse the same release in words
+    # that name neither the file nor the line (`stick_counters_problem`).
+    #
+    short = tls_policy.stick_counters_problem(
+        published_files, cluster=request.cluster, config_path=str(cluster.config_path)
+    )
+    if short is not None:
+        return refuse("stick_counters_short", short, BLOCKED_EXIT)
+
     if snapshot.unchanged:
         problem = stale()
         if problem is not None:

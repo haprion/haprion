@@ -356,6 +356,28 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertEqual(again, 75)
             self.assertEqual(document["error"]["code"], "tls_defaults_stale")
 
+    def test_dynamic_blocking_without_the_stick_counters_is_refused_before_the_sandbox(
+        self,
+    ) -> None:
+        """`valid=False` would answer `candidate_invalid` had the sandbox run (B271)."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            before = git(self.repo, "rev-parse", "HEAD")
+            document = proxy("shop", "shop.example.com") + (
+                "dynamic_block:\n  max_requests: 300\n  block_for: 30m\n"
+            )
+
+            code, answer, _err = self.publish_objects(
+                policy, self.request(objects={"shop": document}), valid=False
+            )
+
+            self.assertEqual(code, 75)
+            self.assertEqual(answer["error"]["code"], "stick_counters_short")
+            self.assertIn("tune.stick-counters 5", answer["error"]["message"])
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
     def test_an_unchanged_retry_is_held_to_the_same_policy(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))

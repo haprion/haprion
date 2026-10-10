@@ -44,7 +44,7 @@ class ReadingShowStat(unittest.TestCase):
     def setUp(self) -> None:
         found = PARSING.search(SCRIPT.read_text())
         assert found, "the parsing is no longer where the test extracts it from"
-        namespace: dict[str, Any] = {}
+        namespace: dict[str, Any] = {"re": re}
         exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
         self.parse = namespace["parse_stat"]
 
@@ -64,6 +64,23 @@ class ReadingShowStat(unittest.TestCase):
         self.assertEqual(parsed["frontends"][0]["frontend"], "mgd-vip-https")
         self.assertEqual(parsed["frontends"][0]["counters"]["req_tot"], 41)
         self.assertEqual(parsed["servers"], [])
+
+    def test_a_dynamic_blocking_table_is_not_a_pool(self) -> None:
+        """A backend that holds a table and nothing else (B271)."""
+
+        parsed = self.stat(
+            row(pxname="mgd-shop-dynblock-rate", svname="BACKEND", status="UP"),
+            row(pxname="mgd-shop-dynblock", svname="BACKEND", status="UP"),
+            row(pxname="shop-dynblock", svname="BACKEND", status="UP"),
+        )
+
+        self.assertEqual([entry["backend"] for entry in parsed["servers"]], ["shop-dynblock"])
+
+    def test_the_shape_is_the_generator_s_names(self) -> None:
+        from haprion.generate import block_tables  # noqa: PLC0415
+
+        rows = [row(pxname=name, svname="BACKEND", status="UP") for name in block_tables("a-b")]
+        self.assertEqual(self.stat(*rows)["servers"], [])
 
     def test_a_pool_member_keeps_its_verdict_and_gains_counters(self) -> None:
         parsed = self.stat(
@@ -158,7 +175,7 @@ class ReadingAdminState(unittest.TestCase):
     def setUp(self) -> None:
         found = PARSING.search(SCRIPT.read_text())
         assert found, "the parsing is no longer where the test extracts it from"
-        namespace: dict[str, Any] = {}
+        namespace: dict[str, Any] = {"re": re}
         exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
         self.states = namespace["parse_servers_state"]
         self.merge = namespace["with_admin_state"]

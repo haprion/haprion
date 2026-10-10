@@ -295,6 +295,37 @@ class PublishTests(PublishFixture):
             self.assertEqual(json.loads(stdout)["error"]["code"], "tls_defaults_stale")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
+    def test_too_few_stick_counters_are_refused_before_the_sandbox(self) -> None:
+        """HAProxy's own refusal there names neither the file nor the line (B271)."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit(
+                "managed/generated/1040-managed.cfg",
+                GENERATED + b"  http-request track-sc4 src table mgd-x-dynblock\n",
+            )
+            git(self.repo, "commit", "-qam", "An object with dynamic blocking")
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            for core in (HAPROXY_CFG, HAPROXY_CFG + b"  option httplog\n"):
+                with self.subTest("changed" if core != HAPROXY_CFG else "unchanged"):
+                    self.edit("core/haproxy.cfg", core)
+                    code, stdout, _stderr = self.run_publish(policy_path, self.request())
+
+                    self.assertEqual(code, 75)
+                    error = json.loads(stdout)["error"]
+                    self.assertEqual(error["code"], "stick_counters_short")
+                    self.assertIn("tune.stick-counters 5", error["message"])
+                    self.assertEqual(self.sandbox_roots, [])
+                    self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+            self.edit(
+                "core/haproxy.cfg",
+                HAPROXY_CFG.replace(b"  daemon\n", b"  daemon\n  tune.stick-counters 5\n"),
+            )
+            code, _stdout, stderr = self.run_publish(policy_path, self.request())
+            self.assertEqual((code, stderr), (0, ""))
+
     def test_an_unchanged_retry_is_held_to_the_same_policy(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))

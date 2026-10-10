@@ -854,6 +854,12 @@ class WhereTheFormStops(unittest.TestCase):
         self.assertEqual(
             refused,
             [
+                #
+                # Refused whole until the form has its group (B271), so the key
+                # is never dropped by a save.
+                #
+                ("dynamic-block/db.yaml", "dynamic_block"),
+                ("dynamic-block/shop.yaml", "dynamic_block"),
                 ("monitors/probes.yaml", "routes"),
                 ("routes/shop.yaml", "routes"),
             ],

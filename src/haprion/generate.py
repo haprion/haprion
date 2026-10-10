@@ -108,6 +108,15 @@ PEERS_SECTION = f"{PREFIX}-peers"
 # cluster's abuse brake holds in the frontend; see `_rate_lines`.
 #
 RATE_COUNTER = 1
+#
+# Dynamic blocking's two slots (B271): the address is counted on the fourth and
+# marked on the fifth, past the cluster's brake, the rate limit and the one the
+# advanced text may use. HAProxy's default is three slots, so a cluster with it
+# needs `tune.stick-counters 5` in its core (`stick_counters_problem`).
+#
+BLOCK_COUNT_COUNTER = 3
+BLOCK_MARK_COUNTER = 4
+BLOCK_RULE = "dynamic-block:deny"
 
 FRONTEND_FILE = "1000-frontends.cfg"
 #
@@ -473,6 +482,7 @@ def generate(
             resolvers,
             tuple(trusted_proxies),
             PEERS_SECTION if peers else None,
+            known_networks,
         )
     parts = {
         proxy.name: {
@@ -1053,6 +1063,7 @@ def _refuse_unknown_networks(
             *proxy.allow_from,
             *(proxy.deny_from.sources if proxy.deny_from is not None else ()),
             *(source for rule in proxy.deny_rules for source in rule.sources),
+            *(proxy.dynamic_block.exempt if proxy.dynamic_block is not None else ()),
         ]
         for name in named:
             if is_range(name) or geo.is_country(name) or name in networks:
@@ -1505,6 +1516,7 @@ def _tcp_frontend(
         # then refuse on the node instead of here.
         #
         raise GeneratorError(f"{proxy.name} listens on tcp without naming a backend")
+    lines += _tcp_block_lines(proxy, networks)
     limit = proxy.rate_limit
     if limit is not None and limit.max_new_connections is not None:
         #
@@ -2406,6 +2418,7 @@ def _object_file(
     resolvers: str | None,
     trusted_proxies: Sequence[str] = (),
     peers: str | None = None,
+    networks: Mapping[str, Sequence[str]] | None = None,
 ) -> str:
     rewrites = _rewrites_per_backend(proxy)
     body: list[str] = []
@@ -2418,10 +2431,11 @@ def _object_file(
                 rewrites[name],
                 source,
                 resolvers,
-                _rate_lines(proxy, name, names[0], trusted_proxies, peers),
+                _counter_lines(proxy, name, names[0], trusted_proxies, peers, networks or {}),
             )
         )
     body.extend(_redirect_backends(proxy))
+    body.extend(_block_tables(proxy, peers))
     body.extend(_added_sections(proxy, source))
     return _lines(HEADER, ["#", f"# Object: {proxy.name}", "#"], body)
 
@@ -2447,13 +2461,188 @@ def _added_sections(proxy: Proxy, source: str | None) -> list[str]:
     return lines
 
 
+def block_tables(proxy_name: str) -> tuple[str, str]:
+    """The two tables of an object's dynamic blocking: (counted, blocked) (B271).
+
+    In the generator's own `mgd-` space, which no pool may take, so neither can
+    meet a pool's name; `haprion-node-status` knows them by the same shape and
+    leaves them out of what it reports as pools.
+    """
+
+    return f"{PREFIX}-{proxy_name}-dynblock-rate", f"{PREFIX}-{proxy_name}-dynblock"
+
+
+def _block_tables(proxy: Proxy, peers: str | None) -> list[str]:
+    """The sections holding the object's dynamic blocking tables, or nothing.
+
+    A section holds one table, and the object's first pool holds the rate
+    limit's, so each table is a backend of its own with nothing else in it.
+    The alternatives were measured on 3.4.6 (26-10-10) and both crash
+    `haproxy -c`: tables in a `peers` section with no peer of the node's own,
+    and a `disabled` backend holding a table.
+
+    The blocked table's expiry is the block: an entry lives `block_for` after
+    the last request that went over the limit, by the node's own timer, and
+    `show table` reads the time left from it.
+    """
+
+    block = proxy.dynamic_block
+    if block is None:
+        return []
+    counted, blocked = block_tables(proxy.name)
+    window = block.window
+    if block.max_new_connections is not None:
+        stored = f"conn_rate({window})"
+    else:
+        stored = f"http_req_rate({window}),http_err_rate({window})"
+    return [
+        "",
+        f"backend {counted}",
+        _stick_table(window, stored, peers),
+        "",
+        f"backend {blocked}",
+        _stick_table(block.block_for, "gpc(1)", peers),
+    ]
+
+
+def _block_exempt(
+    proxy: Proxy, networks: Mapping[str, Sequence[str]], *, forwarded: bool
+) -> tuple[list[str], str, str]:
+    """The exemption ACLs and the conditions that use them: (lines, by source, forwarded).
+
+    One ACL per key: an address behind a trusted proxy is its forwarded one,
+    every other address the one it came from. Empty conditions without an
+    exemption, so the rules read as if it did not exist.
+    """
+
+    block = proxy.dynamic_block
+    if block is None or not block.exempt:
+        return [], "", ""
+    by_source = _acl_name(proxy.name, "dynblock-exempt")
+    lines = _address_acl(by_source, "src", block.exempt, networks)
+    if not forwarded:
+        return lines, f" !{by_source}", ""
+    by_forwarded = _acl_name(proxy.name, "dynblock-exempt-fwd")
+    lines += _address_acl(by_forwarded, "req.hdr_ip(X-Forwarded-For,-1)", block.exempt, networks)
+    return lines, f" !{by_source}", f" !{by_forwarded}"
+
+
+def _http_block_lines(
+    proxy: Proxy, trusted: bool, networks: Mapping[str, Sequence[str]]
+) -> list[str]:
+    """An http object's dynamic blocking, as it lands in each of its pools (B271).
+
+    Every request is counted, and one over either limit marks its address in
+    the blocked table - or starts its time again if it is already there. A
+    marked address is answered with the chosen status for as long as the mark
+    lives, and its traffic record says `dynamic-block:deny`, which is what
+    tells it apart from a 404 the application gave. The answer is HAProxy's
+    own, so it is not one of the errors counted: a block cannot extend itself.
+    Measured on 3.4.6 (26-10-10, `private/ban-prov-20261010/`).
+
+    Written before the rate limit's rules, which would otherwise refuse a
+    flood with 429 before it was counted here, and the block would never
+    start. An exempt address is neither counted nor answered with a block.
+    """
+
+    block = proxy.dynamic_block
+    if block is None or block.max_new_connections is not None:
+        return []
+    counted, blocked = block_tables(proxy.name)
+    over = _acl_name(proxy.name, "dynblock-over")
+    lines, exempt_source, exempt_forwarded = _block_exempt(proxy, networks, forwarded=trusted)
+    #
+    # Two lines with one name are one condition, read as an OR - so either
+    # limit is enough. Read when a rule asks, after this request was counted.
+    #
+    for fetch, limit in (
+        (f"sc_http_req_rate({BLOCK_COUNT_COUNTER})", block.max_requests),
+        (f"sc_http_err_rate({BLOCK_COUNT_COUNTER})", block.max_errors),
+    ):
+        if limit is not None:
+            lines.append(f"    acl {over} {fetch} gt {limit}")
+    count = f"    http-request track-sc{BLOCK_COUNT_COUNTER}"
+    mark = f"    http-request track-sc{BLOCK_MARK_COUNTER}"
+    forwarded = "req.hdr_ip(X-Forwarded-For,-1)"
+    if trusted:
+        lines += [
+            f"{count} {forwarded} table {counted} if {TRUSTED_ACL}{exempt_forwarded}",
+            f"{count} src table {counted} if !{TRUSTED_ACL}{exempt_source}",
+            f"{mark} {forwarded} table {blocked} if {TRUSTED_ACL}{exempt_forwarded} {over}",
+            f"{mark} src table {blocked} if !{TRUSTED_ACL}{exempt_source} {over}",
+            f"    http-request set-var(txn.rule) str({BLOCK_RULE}) "
+            f"if {TRUSTED_ACL}{exempt_forwarded} {{ {forwarded},in_table({blocked}) }} "
+            f"|| !{TRUSTED_ACL}{exempt_source} {{ src,in_table({blocked}) }}",
+        ]
+    else:
+        condition = f" if{exempt_source}" if exempt_source else ""
+        lines += [
+            f"{count} src table {counted}{condition}",
+            f"{mark} src table {blocked} if{exempt_source} {over}",
+            f"    http-request set-var(txn.rule) str({BLOCK_RULE}) "
+            f"if{exempt_source} {{ src,in_table({blocked}) }}",
+        ]
+    lines.append(
+        f"    http-request deny deny_status {block.status} "
+        f"if {{ var(txn.rule) -m str {BLOCK_RULE} }}"
+    )
+    return lines
+
+
+def _tcp_block_lines(proxy: Proxy, networks: Mapping[str, Sequence[str]]) -> list[str]:
+    """A tcp object's dynamic blocking, at connection time in its own frontend (B271).
+
+    The same counter and mark as an http object's, on new connections: a
+    blocked address has its connection closed before a byte is forwarded.
+    Before the rate limit's reject, for the reason `_http_block_lines` gives.
+    """
+
+    block = proxy.dynamic_block
+    if block is None or block.max_new_connections is None:
+        return []
+    counted, blocked = block_tables(proxy.name)
+    over = _acl_name(proxy.name, "dynblock-over")
+    lines, exempt, _ = _block_exempt(proxy, networks, forwarded=False)
+    condition = f" if{exempt}" if exempt else ""
+    return [
+        *lines,
+        f"    acl {over} sc_conn_rate({BLOCK_COUNT_COUNTER}) gt {block.max_new_connections}",
+        f"    tcp-request connection track-sc{BLOCK_COUNT_COUNTER} src table {counted}{condition}",
+        f"    tcp-request connection track-sc{BLOCK_MARK_COUNTER} src table {blocked} "
+        f"if{exempt} {over}",
+        f"    tcp-request connection reject if{exempt} {{ src,in_table({blocked}) }}",
+    ]
+
+
+def _counter_lines(
+    proxy: Proxy,
+    backend: str,
+    holder: str,
+    trusted_proxies: Sequence[str],
+    peers: str | None,
+    networks: Mapping[str, Sequence[str]],
+) -> list[str]:
+    """The object's counters in one of its pools: dynamic blocking, then the rate limit.
+
+    The trust ACL is written once per pool, ahead of both: an ACL belongs to
+    the section that declares it, and the frontend's copy is invisible here.
+    """
+
+    table, rules = _rate_lines(proxy, backend, holder, trusted_proxies, peers)
+    blocking = _http_block_lines(proxy, bool(trusted_proxies), networks)
+    trust: list[str] = []
+    if trusted_proxies and (blocking or rules):
+        trust = [f"    acl {TRUSTED_ACL} src {' '.join(sorted(trusted_proxies))}"]
+    return [*table, *trust, *blocking, *rules]
+
+
 def _rate_lines(
     proxy: Proxy,
     backend: str,
     holder: str,
     trusted_proxies: Sequence[str],
     peers: str | None = None,
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     """The object's own rate limit, as it lands in one of its backends.
 
     One table for the whole object, kept in its first pool, and every pool
@@ -2477,24 +2666,27 @@ def _rate_lines(
 
     A tcp object's limit is not written here: it has no request to refuse, so
     the rule sits in its own frontend and only the table lives in the backend.
+
+    Returned as (the table, the rules), so the trust ACL the rules need can be
+    written between them once for every counter in the pool (`_counter_lines`).
     """
 
     limit = proxy.rate_limit
     if limit is None:
-        return []
+        return [], []
     window = limit.window
     table = backend_name(proxy, holder)
     if limit.max_requests is None:
         if backend != holder:
-            return []
-        return [_stick_table(window, f"conn_rate({window})", peers)]
-    lines: list[str] = []
+            return [], []
+        return [_stick_table(window, f"conn_rate({window})", peers)], []
+    held: list[str] = []
     if backend == holder:
-        lines.append(_stick_table(window, f"http_req_rate({window})", peers))
+        held.append(_stick_table(window, f"http_req_rate({window})", peers))
+    lines: list[str] = []
     track = f"    http-request track-sc{RATE_COUNTER}"
     if trusted_proxies:
         lines += [
-            f"    acl {TRUSTED_ACL} src {' '.join(sorted(trusted_proxies))}",
             f"{track} req.hdr_ip(X-Forwarded-For,-1) table {table} if {TRUSTED_ACL}",
             f"{track} src table {table} unless {TRUSTED_ACL}",
         ]
@@ -2504,7 +2696,7 @@ def _rate_lines(
         f"    http-request deny deny_status 429 "
         f"if {{ sc_http_req_rate({RATE_COUNTER}) gt {limit.max_requests} }}"
     )
-    return lines
+    return held, lines
 
 
 def _rewrites_per_backend(proxy: Proxy) -> dict[str, list[str]]:

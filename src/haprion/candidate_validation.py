@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -46,6 +47,11 @@ WAF_ENGINE = "/usr/sbin/coraza-spoa"
 # 2.1.2), so a warning or an error in its output refuses as well.
 #
 DNSDIST = "/usr/bin/dnsdist"
+#
+# A `peer` line, as the generator writes them (B270). The first one names the
+# node the check runs as.
+#
+PEER_LINE = re.compile(r"^\s*peer\s+([A-Za-z0-9][A-Za-z0-9._-]{0,63})\s")
 DNSDIST_REFUSALS = ('prio="Warning"', 'prio="Error"')
 
 
@@ -263,6 +269,23 @@ def materialize_candidate(
             output.write(validation_certificate)
 
 
+def peer_arguments(configuration: Path) -> list[str]:
+    """`-L <node>` when the configuration shares its tables, else nothing (B270).
+
+    A node finds its own `peer` line by its host name; the manager's is none of
+    them, and `haproxy -c` then drops the whole section with a warning and
+    checks the rest (measured on 3.4.6). Run as the first node, the section is
+    checked like every other.
+    """
+
+    for path in sorted(configuration.glob("*.cfg")):
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = PEER_LINE.match(line)
+            if match is not None:
+                return ["-L", match.group(1)]
+    return []
+
+
 def sandbox_command(
     candidate_root: Path, request_id: str, program: Sequence[str] | None = None
 ) -> list[str]:
@@ -391,6 +414,7 @@ def sandbox_command(
         (
             HAPROXY,
             "-c",
+            *peer_arguments(candidate_root / "conf.d"),
             #
             # Ignore server address resolution failures. The sandbox has no
             # network at all, so every `server` line naming a hostname would

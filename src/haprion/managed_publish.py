@@ -116,6 +116,7 @@ def managed_files(
     settings_document: bytes | None = None,
     country_reader: geo.CountryReader | None = None,
     rule_set: Callable[[], crs.RuleSet | None] | None = None,
+    peer_nodes: Callable[[], Sequence[tuple[str, str]]] | None = None,
 ) -> dict[str, bytes]:
     """Return the complete managed snapshot created by one network document.
 
@@ -196,6 +197,12 @@ def managed_files(
         allow_certificate_mismatch=allow_certificate_mismatch,
         settings=settings,
         countries=countries,
+        #
+        # Looked up only when the cluster shares its tables, as the location
+        # database is opened only for a country: a cluster that does not share
+        # never asks DNS anything here (B270).
+        #
+        peer_nodes=(peer_nodes() if settings.peers is not None and peer_nodes is not None else ()),
     )
     result.update(
         {

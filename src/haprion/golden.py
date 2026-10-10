@@ -134,6 +134,13 @@ ABUSE_PROTECTION = AbuseProtection(
 )
 
 
+#
+# The nodes a case shares its tables with, when its `_cluster.yaml` turns
+# sharing on (B270). The addresses a publish would have looked up.
+#
+PEER_NODES = (("node-a", "192.0.2.1"), ("node-b", "192.0.2.2"))
+
+
 def arguments(case: Path) -> dict[str, Any]:
     """Everything the generator needs besides the objects themselves.
 
@@ -159,6 +166,7 @@ def arguments(case: Path) -> dict[str, Any]:
         "settings": cluster_settings.load_document(
             (case / SETTINGS).read_bytes() if (case / SETTINGS).exists() else None
         ),
+        "peer_nodes": PEER_NODES,
     }
 
 

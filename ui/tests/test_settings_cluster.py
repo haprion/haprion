@@ -193,6 +193,22 @@ class ThePage(SettingsClusterTestCase):
         self.assertEqual(settings.metrics.port, 8405)  # type: ignore[union-attr]
         self.assertEqual((change["base_hash"], change["updated_by"]), ("b" * 40, "operator"))
 
+    def test_shared_counters_are_saved_with_their_port(self) -> None:
+        response = self.save(self.client_for(), peers_on="on", peers_port="10000")
+
+        self.assertEqual(response.status_code, 303, response.text)
+        (change,) = self.saved_changes
+        settings = load_document(change["document"].encode())
+        self.assertEqual(settings.peers.port, 10000)  # type: ignore[union-attr]
+        self.assertIn("counters shared on 10000", cluster_settings_page.comment_for(settings))
+
+    def test_shared_counters_need_a_port(self) -> None:
+        response = self.save(self.client_for(), peers_on="on", peers_port="")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("The port for shared counters must be a number.", response.text)
+        self.assertEqual(self.saved_changes, [])
+
     def test_a_target_named_rather_than_addressed_never_reaches_the_queue(self) -> None:
         response = self.save(self.client_for(), target_address=["logs.example.com", ""])
 

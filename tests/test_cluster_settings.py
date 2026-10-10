@@ -176,5 +176,41 @@ class EveryPublishCarriesTheSettings(unittest.TestCase):
         self.assertNotIn("managed/generated/1000-cluster.cfg", emptied)
 
 
+class SharingIsLookedUpOnlyWhenItIsOn(unittest.TestCase):
+    """The nodes' addresses are asked for by a publish that shares, and only then (B270)."""
+
+    def publish(self, settings: bytes) -> tuple[dict[str, bytes], list[str]]:
+        asked: list[str] = []
+
+        def nodes() -> tuple[tuple[str, str], ...]:
+            asked.append("nodes")
+            return (("node-a", "192.0.2.1"), ("node-b", "192.0.2.2"))
+
+        files = managed_files(
+            {"managed/proxies/shop.yaml": PROXY, "managed/network.yaml": NETWORK},
+            network_document=NETWORK,
+            cluster=cluster(),
+            settings_document=settings,
+            peer_nodes=nodes,
+        )
+        return files, asked
+
+    def test_a_cluster_that_shares_writes_the_section(self) -> None:
+        files, asked = self.publish(b"peers:\n  port: 10000\n")
+        self.assertEqual(asked, ["nodes"])
+        written = files["managed/generated/1000-cluster.cfg"].decode()
+        self.assertIn("peers mgd-peers\n    peer node-a 192.0.2.1:10000\n", written)
+
+    def test_a_cluster_that_does_not_asks_nothing(self) -> None:
+        _, asked = self.publish(b"{}\n")
+        self.assertEqual(asked, [])
+
+    def test_the_metrics_port_is_not_the_peers_port(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "same port for metrics and peers"):
+            load_document(
+                b"metrics:\n  port: 8405\n  sources: [192.0.2.0/24]\npeers:\n  port: 8405\n"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import cluster_settings, crs, geo
+from haprion import cluster_settings, crs, geo, peers
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     SandboxValidator,
@@ -239,6 +239,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     rule_set=crs.installed,
                     allow_certificate_mismatch=allow_certificate_mismatch,
                     settings_document=canonical,
+                    peer_nodes=lambda: peers.addresses(cluster),
                 )
             except ConfigError as exc:
                 raise Refusal("changes_invalid", str(exc), 65) from exc

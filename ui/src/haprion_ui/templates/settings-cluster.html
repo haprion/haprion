@@ -2,7 +2,7 @@
 {% block title %}Logs & metrics — {{ cluster }} — Haprion{% endblock %}
 {% block content %}
 {#
-  One cluster's log targets and metrics exporter (Fas 15, B209). Saved
+  One cluster's log targets, metrics exporter and shared counters (Fas 15, B209; B270). Saved
   settings go out with the next publish from Versions (B257); deploying it is
   what reaches the nodes. A receiver is an
   IP address: a name that fails to resolve at a reload would fail the deploy.
@@ -45,6 +45,15 @@
     <div class="form-grid">
       <label><span class="field-title">Port</span><input name="metrics_port" value="{{ form.metrics_port }}" inputmode="numeric" maxlength="5" placeholder="8405"></label>
       <label><span class="field-title">Allowed sources</span><textarea name="metrics_sources" rows="4" spellcheck="false" placeholder="One address or network per line">{{ form.metrics_sources }}</textarea></label>
+    </div>
+  </section>
+  <section class="cluster-card {{ accent | accent_class }}">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Shared counters</h3><p>Between the cluster's nodes</p></div></div></header>
+    <div class="form-checks">
+      <label class="check"><input type="checkbox" name="peers_on" value="on"{% if form.peers_on %} checked{% endif %}> <span>Share counters</span></label>
+    </div>
+    <div class="form-grid">
+      <label><span class="field-title">Port</span><input name="peers_port" value="{{ form.peers_port }}" inputmode="numeric" maxlength="5" placeholder="10000"></label>
     </div>
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/settings#logs-metrics">Cancel</a>{% if saved %}<button type="submit" name="settings_action" value="discard" class="secondary-button" formnovalidate>Discard the changes</button>{% endif %}<button type="submit" name="settings_action" value="save" class="secondary-button">Save</button></div>

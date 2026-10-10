@@ -4363,6 +4363,8 @@ def build_router(config: Config) -> APIRouter:
         metrics_on: str = Form(default="", max_length=4),
         metrics_port: str = Form(default="", max_length=8),
         metrics_sources: str = Form(default="", max_length=2048),
+        peers_on: str = Form(default="", max_length=4),
+        peers_port: str = Form(default="", max_length=8),
         expected_head: str = Form(default="", max_length=40),
         #
         # Save, or discard what was saved (B257); published from Versions.
@@ -4432,6 +4434,8 @@ def build_router(config: Config) -> APIRouter:
             metrics_on=metrics_on == "on",
             metrics_port=metrics_port,
             metrics_sources=metrics_sources,
+            peers_on=peers_on == "on",
+            peers_port=peers_port,
         )
         try:
             settings = cluster_settings_page.settings_from_form(form)

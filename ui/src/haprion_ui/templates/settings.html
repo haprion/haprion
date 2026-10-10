@@ -100,7 +100,7 @@
 <section class="cluster-card settings-card" id="logs-metrics">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Logs &amp; metrics</h3></div></div></header>
   <div class="table-scroll"><table class="node-table settings-cluster-table">
-    <thead><tr><th>Cluster</th><th>Traffic log</th><th>Metrics</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+    <thead><tr><th>Cluster</th><th>Traffic log</th><th>Metrics</th><th>Counters</th><th><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>
       {% for row in cluster_settings %}
       <tr{% if row.readable %} data-href="{{ row.href }}"{% endif %}>
@@ -109,6 +109,7 @@
         {% set live = not row.waiting and not row.running %}
         <td data-label="Traffic log"{% if row.logs_title %} title="{{ row.logs_title }}"{% endif %}{% if not row.logs_set %} class="table-empty"{% endif %}>{% if row.logs_set and live %}{{ check() }}{% endif %}{{ row.logs }}</td>
         <td data-label="Metrics"{% if row.metrics_title %} title="{{ row.metrics_title }}"{% endif %}{% if not row.metrics_set %} class="table-empty"{% endif %}>{% if row.metrics_set and live %}{{ check() }}{% endif %}{{ row.metrics }}</td>
+        <td data-label="Counters"{% if not row.counters_set %} class="table-empty"{% endif %}>{% if row.counters_set and live %}{{ check() }}{% endif %}{{ row.counters }}</td>
         <td data-label="">{% if row.running %}<span class="status-badge status-badge-info settings-active" data-busy="{{ row.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ row.running }}</span>{% elif row.waiting %}<span class="status-badge status-badge-warning settings-active">Reconfigured · deploy to activate</span>{% endif %}{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>
       </tr>
       {% endfor %}

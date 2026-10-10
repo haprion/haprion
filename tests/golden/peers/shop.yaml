@@ -1,0 +1,19 @@
+schema: 1
+name: shop
+hostnames: [shop.example.com]
+listen:
+  protocol: http
+rate_limit:
+  window: 10s
+  max_requests: 100
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 198.51.100.10
+        port: 8080

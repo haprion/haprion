@@ -1,0 +1,22 @@
+schema: 1
+name: db
+listen:
+  protocol: tcp
+  port: 5432
+allow_from: [office]
+rate_limit:
+  window: 1m
+  max_new_connections: 20
+backend: pool
+backends:
+  pool:
+    balance: leastconn
+    max_connections: 40
+    health:
+      type: tcp
+    servers:
+      - host: 198.51.100.10
+        port: 5432
+      - host: 198.51.100.11
+        port: 5432
+        backup: true

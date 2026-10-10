@@ -97,6 +97,11 @@ TRUSTED_ACL = f"{PREFIX}-trusted-proxy"
 # a few tens of megabytes.
 #
 ABUSE_TABLE_SIZE = "1m"
+#
+# The section the nodes share their stick tables in (B270). Every table the
+# generator writes names it when the cluster has turned sharing on.
+#
+PEERS_SECTION = f"{PREFIX}-peers"
 
 #
 # The stick counter an object's own rate limit tracks on. Not 0, which the
@@ -349,6 +354,7 @@ def generate(
     traffic_logging: bool = False,
     settings: ClusterSettings = NO_SETTINGS,
     countries: geo.Countries | None = None,
+    peer_nodes: Sequence[tuple[str, str]] = (),
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
 
@@ -404,6 +410,7 @@ def generate(
     _refuse_shared_listeners(everything, ports)
     if settings.metrics is not None:
         _refuse_metrics_port(settings.metrics, everything, reservations, ports)
+    peers = _peers_section(settings, peer_nodes, reservations)
     placed = [
         (vip, proxy) for vip, proxy in everything if proxy.listen.protocol not in OUTSIDE_HAPROXY
     ]
@@ -450,17 +457,22 @@ def generate(
             shared,
             traffic_logging,
             settings.log_targets,
+            PEERS_SECTION if peers else None,
         )
     }
-    if settings.log_targets or settings.metrics is not None:
-        files[CLUSTER_FILE] = _cluster_file(settings)
+    if settings.log_targets or settings.metrics is not None or peers:
+        files[CLUSTER_FILE] = _cluster_file(settings, peers)
     guarded = [proxy for proxy in ordered if proxy.inspected is not None]
     if guarded:
         _refuse_loopback_port(WAF_ENGINE_PORT, "the WAF engine", settings, reservations)
         files[WAF_FILE] = _waf_backend_file()
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
-            proxy, source_of(proxy, vip, known_sources), resolvers, tuple(trusted_proxies)
+            proxy,
+            source_of(proxy, vip, known_sources),
+            resolvers,
+            tuple(trusted_proxies),
+            PEERS_SECTION if peers else None,
         )
     parts = {
         proxy.name: {
@@ -708,7 +720,7 @@ def _ring_name(target: LogTarget) -> str:
     return f"{PREFIX}-log-{target.name}"
 
 
-def _cluster_file(settings: ClusterSettings) -> str:
+def _cluster_file(settings: ClusterSettings, peers: Sequence[str] = ()) -> str:
     """The rings to external log receivers, and the metrics exporter.
 
     One ring per receiver and never two servers in one: every server in a ring
@@ -737,7 +749,38 @@ def _cluster_file(settings: ClusterSettings) -> str:
         )
     if settings.metrics is not None:
         body.extend(_metrics_frontend(settings.metrics))
+    body.extend(peers)
     return _lines(HEADER, body)
+
+
+def _peers_section(
+    settings: ClusterSettings,
+    nodes: Sequence[tuple[str, str]],
+    reservations: Reservations,
+) -> list[str]:
+    """The section the nodes share their stick tables in, or nothing (B270).
+
+    One `peer` line per node with the address the caller looked up, and the
+    same file on every node: HAProxy finds its own line by its host name, so a
+    node's name has to be its host name. The other form - `bind` and `server`
+    lines - cannot be one file for all nodes, because the local node's line may
+    carry no address there (measured on 3.4.6).
+    """
+
+    if settings.peers is None:
+        return []
+    port = settings.peers.port
+    if not nodes:
+        raise GeneratorError("sharing counters needs the nodes' addresses, and none were given")
+    if port in reservations.tcp_ports:
+        raise GeneratorError(
+            f"peers port {port} is reserved in manual/reservations.yaml for every address"
+        )
+    lines = ["", f"peers {PEERS_SECTION}"]
+    for name, address in nodes:
+        shown = f"[{address}]" if ":" in address else address
+        lines.append(f"    peer {name} {shown}:{port}")
+    return lines
 
 
 def _metrics_frontend(metrics: Metrics) -> list[str]:
@@ -1260,6 +1303,7 @@ def _frontend_file(
     shared: dict[str, dict[str, list[str]]],
     traffic_logging: bool,
     log_targets: Sequence[LogTarget] = (),
+    peers: str | None = None,
 ) -> str:
     """Where every request is decided: one frontend per address and protocol.
 
@@ -1363,7 +1407,7 @@ def _frontend_file(
             ),
             f"    timeout client {TIMEOUT_CLIENT}",
             *_forwarded_rules(protocol, trusted_proxies),
-            *_abuse_rules(abuse_protection, bool(trusted_proxies)),
+            *_abuse_rules(abuse_protection, bool(trusted_proxies), peers),
         ]
         #
         # Written after the members in the file, but part of the same envelope:
@@ -1387,7 +1431,7 @@ def _frontend_file(
         # A tcp object owns its whole frontend, so there is no envelope to
         # separate: the bind line is as much its own as the rules are.
         #
-        block = _tcp_frontend(vip, proxy, networks, abuse_protection)
+        block = _tcp_frontend(vip, proxy, networks, abuse_protection, peers)
         body.extend(block)
         _record(shared, proxy.name, routing=block)
     body.extend(fallbacks)
@@ -1401,6 +1445,7 @@ def _tcp_frontend(
     proxy: Proxy,
     networks: Mapping[str, Sequence[str]],
     abuse_protection: AbuseProtection | None,
+    peers: str | None = None,
 ) -> list[str]:
     """One raw port, forwarded to one pool.
 
@@ -1447,8 +1492,7 @@ def _tcp_frontend(
     if abuse_protection is not None and abuse_protection.max_new_connections is not None:
         window = abuse_protection.window
         lines += [
-            f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} "
-            f"store conn_rate({window})",
+            _stick_table(window, f"conn_rate({window})", peers),
             "    tcp-request connection track-sc0 src",
             f"    tcp-request connection reject "
             f"if {{ sc_conn_rate(0) gt {abuse_protection.max_new_connections} }}",
@@ -1523,7 +1567,16 @@ def _forwarded_rules(protocol: str, trusted_proxies: Sequence[str]) -> list[str]
     ]
 
 
-def _abuse_rules(protection: AbuseProtection | None, trusted: bool) -> list[str]:
+def _stick_table(window: str, stored: str, peers: str | None) -> str:
+    """One generated stick table, shared with the other nodes when peers is named (B270)."""
+
+    line = f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} store {stored}"
+    return f"{line} peers {peers}" if peers else line
+
+
+def _abuse_rules(
+    protection: AbuseProtection | None, trusted: bool, peers: str | None = None
+) -> list[str]:
     """A brake on one source address that is plainly not a visitor.
 
     The table lives in the frontend because the address is what gets flooded,
@@ -1554,10 +1607,7 @@ def _abuse_rules(protection: AbuseProtection | None, trusted: bool) -> list[str]
     # ACL alongside the counter rather than as a second `unless` - which parses
     # as an ACL named "unless" and is refused by HAProxy, measured here.
     #
-    lines = [
-        f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} "
-        f"store {','.join(f'{name}({window})' for name in stored)}",
-    ]
+    lines = [_stick_table(window, ",".join(f"{name}({window})" for name in stored), peers)]
     if trusted:
         #
         # Two rules with opposite conditions rather than one: HAProxy takes the
@@ -2355,6 +2405,7 @@ def _object_file(
     source: str | None,
     resolvers: str | None,
     trusted_proxies: Sequence[str] = (),
+    peers: str | None = None,
 ) -> str:
     rewrites = _rewrites_per_backend(proxy)
     body: list[str] = []
@@ -2367,7 +2418,7 @@ def _object_file(
                 rewrites[name],
                 source,
                 resolvers,
-                _rate_lines(proxy, name, names[0], trusted_proxies),
+                _rate_lines(proxy, name, names[0], trusted_proxies, peers),
             )
         )
     body.extend(_redirect_backends(proxy))
@@ -2397,7 +2448,11 @@ def _added_sections(proxy: Proxy, source: str | None) -> list[str]:
 
 
 def _rate_lines(
-    proxy: Proxy, backend: str, holder: str, trusted_proxies: Sequence[str]
+    proxy: Proxy,
+    backend: str,
+    holder: str,
+    trusted_proxies: Sequence[str],
+    peers: str | None = None,
 ) -> list[str]:
     """The object's own rate limit, as it lands in one of its backends.
 
@@ -2432,16 +2487,10 @@ def _rate_lines(
     if limit.max_requests is None:
         if backend != holder:
             return []
-        return [
-            f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} "
-            f"store conn_rate({window})"
-        ]
+        return [_stick_table(window, f"conn_rate({window})", peers)]
     lines: list[str] = []
     if backend == holder:
-        lines.append(
-            f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} "
-            f"store http_req_rate({window})"
-        )
+        lines.append(_stick_table(window, f"http_req_rate({window})", peers))
     track = f"    http-request track-sc{RATE_COUNTER}"
     if trusted_proxies:
         lines += [

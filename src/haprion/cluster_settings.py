@@ -1,8 +1,9 @@
-"""The cluster's own HAProxy settings: where its traffic log goes, and metrics.
+"""The cluster's own HAProxy settings: its traffic log, metrics and shared counters.
 
 `managed/cluster.yaml` holds what applies to a whole cluster rather than to an
 object or an address (Fas 15, B209): the external targets the traffic log is
-sent to, and the Prometheus exporter. Application-owned, published through its
+sent to, the Prometheus exporter, and the port the nodes share their stick
+tables over (B270). Application-owned, published through its
 own helper like `managed/network.yaml`, and this module is its one parser and
 serializer - the form, the helper and the generator all read it through here.
 
@@ -67,9 +68,24 @@ class Metrics:
 
 
 @dataclass(frozen=True, slots=True)
+class Peers:
+    """The nodes share their stick tables over this port (B270).
+
+    What is shared is the counters the generated tables keep - the abuse
+    brake's and the rate limits' - so they survive a failover and a reload.
+    The port has to be open between the nodes, both ways, and nowhere else
+    needs it; that firewall is the operator's, which is why this is off until
+    somebody turns it on.
+    """
+
+    port: int
+
+
+@dataclass(frozen=True, slots=True)
 class ClusterSettings:
     log_targets: tuple[LogTarget, ...] = ()
     metrics: Metrics | None = None
+    peers: Peers | None = None
 
 
 NOTHING = ClusterSettings()
@@ -161,11 +177,20 @@ def _metrics(raw: Any) -> Metrics | None:
     return Metrics(port=_port(entry.get("port"), f"{where}.port"), sources=parsed)
 
 
+def _peers(raw: Any) -> Peers | None:
+    if raw is None:
+        return None
+    where = f"{LOCATION} peers"
+    entry = _mapping(raw, where)
+    _only(entry, {"port"}, where)
+    return Peers(port=_port(entry.get("port"), f"{where}.port"))
+
+
 def load_mapping(raw: Any) -> ClusterSettings:
     """Apply the schema to already-decoded, untrusted YAML."""
 
     document = _mapping(raw, LOCATION)
-    _only(document, {"log_targets", "metrics"}, LOCATION)
+    _only(document, {"log_targets", "metrics", "peers"}, LOCATION)
     targets_raw = _mapping(document.get("log_targets"), f"{LOCATION} log_targets")
     if len(targets_raw) > MAX_TARGETS:
         raise ConfigError(f"{LOCATION} names more than {MAX_TARGETS} log targets")
@@ -176,7 +201,11 @@ def load_mapping(raw: Any) -> ClusterSettings:
         # Two rings to one receiver would send every record twice.
         #
         raise ConfigError(f"{LOCATION} names the same address and port for two log targets")
-    return ClusterSettings(log_targets=targets, metrics=_metrics(document.get("metrics")))
+    metrics = _metrics(document.get("metrics"))
+    peers = _peers(document.get("peers"))
+    if metrics is not None and peers is not None and metrics.port == peers.port:
+        raise ConfigError(f"{LOCATION} names the same port for metrics and peers")
+    return ClusterSettings(log_targets=targets, metrics=metrics, peers=peers)
 
 
 def load_document(document: bytes | None) -> ClusterSettings:
@@ -212,6 +241,8 @@ def dump_document(settings: ClusterSettings) -> bytes:
             "port": settings.metrics.port,
             "sources": list(settings.metrics.sources),
         }
+    if settings.peers is not None:
+        document["peers"] = {"port": settings.peers.port}
     return yaml.safe_dump(document, sort_keys=False, default_flow_style=False).encode("utf-8")
 
 
@@ -234,4 +265,5 @@ def document_result(settings: ClusterSettings) -> dict[str, object]:
             if settings.metrics is None
             else {"port": settings.metrics.port, "sources": list(settings.metrics.sources)}
         ),
+        "peers": None if settings.peers is None else {"port": settings.peers.port},
     }

@@ -1,4 +1,6 @@
-"""Settings -> Logs & metrics: each cluster's log targets and exporter (Fas 15, B209).
+"""Settings -> Logs & metrics: each cluster's log targets, exporter and shared counters.
+
+Fas 15 (B209) for the first two, B270 for the third.
 
 The card reads the poller's cached `cluster_settings` rows and says, one line
 per cluster, where its traffic log goes and whether metrics are on. A cluster's
@@ -37,6 +39,7 @@ class ClusterSettingsView:
     readable: bool
     logs: str
     metrics: str
+    counters: str = ""
     #
     # Whether something is set, for the check mark; and the whole of it for the
     # hover. The cell names the receivers only - four of them with addresses
@@ -44,6 +47,7 @@ class ClusterSettingsView:
     #
     logs_set: bool = False
     metrics_set: bool = False
+    counters_set: bool = False
     logs_title: str = ""
     metrics_title: str = ""
     #
@@ -77,6 +81,8 @@ class SettingsForm:
     metrics_on: bool = False
     metrics_port: str = ""
     metrics_sources: str = ""
+    peers_on: bool = False
+    peers_port: str = ""
 
 
 def href(cluster: str) -> str:
@@ -125,6 +131,17 @@ def _metrics(result: Mapping[str, Any]) -> str:
     return f"Port {metrics.get('port')} · {count} source{'' if count == 1 else 's'}"
 
 
+def _peers_port(result: Mapping[str, Any]) -> int | None:
+    peers = result.get("peers")
+    port = peers.get("port") if isinstance(peers, Mapping) else None
+    return port if isinstance(port, int) else None
+
+
+def _counters(result: Mapping[str, Any]) -> str:
+    port = _peers_port(result)
+    return "Off" if port is None else f"Shared on port {port}"
+
+
 def card_views(
     clusters: Sequence[str],
     rows: Iterable[Any],
@@ -150,6 +167,8 @@ def card_views(
                 readable=readable,
                 logs=_logs(result) if isinstance(result, Mapping) else "Not read yet",
                 metrics=_metrics(result) if isinstance(result, Mapping) else "",
+                counters=_counters(result) if isinstance(result, Mapping) else "",
+                counters_set=isinstance(result, Mapping) and _peers_port(result) is not None,
                 waiting=cluster in waiting,
                 running=(running or {}).get(cluster, ""),
                 logs_set=isinstance(result, Mapping) and bool(_targets(result)),
@@ -178,15 +197,16 @@ def form_from_result(result: Mapping[str, Any]) -> SettingsForm:
     ]
     rows += [TargetRow()] * (MAX_TARGETS - len(rows))
     metrics = result.get("metrics")
-    if isinstance(metrics, Mapping):
-        sources = metrics.get("sources")
-        return SettingsForm(
-            targets=tuple(rows[:MAX_TARGETS]),
-            metrics_on=True,
-            metrics_port=str(metrics.get("port", "")),
-            metrics_sources="\n".join(str(source) for source in sources or []),
-        )
-    return SettingsForm(targets=tuple(rows[:MAX_TARGETS]))
+    sources = metrics.get("sources") if isinstance(metrics, Mapping) else None
+    peers_port = _peers_port(result)
+    return SettingsForm(
+        targets=tuple(rows[:MAX_TARGETS]),
+        metrics_on=isinstance(metrics, Mapping),
+        metrics_port=str(metrics.get("port", "")) if isinstance(metrics, Mapping) else "",
+        metrics_sources="\n".join(str(source) for source in sources or []),
+        peers_on=peers_port is not None,
+        peers_port="" if peers_port is None else str(peers_port),
+    )
 
 
 def _number(value: str, what: str) -> int:
@@ -228,6 +248,8 @@ def settings_from_form(form: SettingsForm) -> cluster_settings.ClusterSettings:
             "port": _number(form.metrics_port, "The metrics port"),
             "sources": [line.strip() for line in form.metrics_sources.splitlines() if line.strip()],
         }
+    if form.peers_on:
+        document["peers"] = {"port": _number(form.peers_port, "The port for shared counters")}
     try:
         return cluster_settings.load_mapping(document)
     except ConfigError as exc:
@@ -250,4 +272,9 @@ def comment_for(settings: cluster_settings.ClusterSettings) -> str:
     metrics = (
         f"metrics on {settings.metrics.port}" if settings.metrics is not None else "metrics off"
     )
-    return f"Logs & metrics: {logs}; {metrics}"
+    counters = (
+        f"counters shared on {settings.peers.port}"
+        if settings.peers is not None
+        else "counters not shared"
+    )
+    return f"Logs & metrics: {logs}; {metrics}; {counters}"

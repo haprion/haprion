@@ -10,7 +10,8 @@
     "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "stored": false,
     "log_targets": [],
-    "metrics": null
+    "metrics": null,
+    "peers": null
   },
   "warnings": [],
   "error": null

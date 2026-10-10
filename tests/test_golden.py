@@ -21,6 +21,7 @@ from typing import Any
 
 from haprion import advanced
 from haprion import generate as generate_module
+from haprion.candidate_validation import peer_arguments
 from haprion.config import TLS_POLICY_NAMES, AbuseProtection, Vip
 from haprion.generate import (
     HTTP_TRAFFIC_LOG_FORMAT,
@@ -264,7 +265,13 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
                     for name, content in listings.items():
                         (root / "crt-lists" / name).write_text(local(content))
 
-                arguments = ["-f", str(root / "haproxy.cfg"), "-f", str(root / "conf.d")]
+                arguments = [
+                    *peer_arguments(root / "conf.d"),
+                    "-f",
+                    str(root / "haproxy.cfg"),
+                    "-f",
+                    str(root / "conf.d"),
+                ]
                 binary = shutil.which("haproxy")
                 assert binary is not None
                 result = subprocess.run(
@@ -1159,3 +1166,41 @@ class OneCertificateMayCarrySeveralNamedPolicies(unittest.TestCase):
 
         self.assertIn("1000-frontends.cfg", files)
         self.assertNotIn("deny_status 421", files["1000-frontends.cfg"])
+
+
+class SharedTablesAreCheckedAsANode(unittest.TestCase):
+    """`haproxy -c` on the manager drops a peers section it is not in (B270)."""
+
+    def check(self, *extra: str) -> str:
+        case = next(case for case in cases() if case.name == "peers")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "conf.d").mkdir()
+            (root / "haproxy.cfg").write_text(CORE)
+            for name, content in produced(case).items():
+                (root / "conf.d" / name).write_text(content)
+            binary = shutil.which("haproxy")
+            assert binary is not None
+            result = subprocess.run(  # noqa: S603 - the local haproxy, a generated case
+                [
+                    binary,
+                    "-c",
+                    *extra,
+                    *(peer_arguments(root / "conf.d") if not extra else ()),
+                    "-f",
+                    str(root / "haproxy.cfg"),
+                    "-f",
+                    str(root / "conf.d"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout + result.stderr
+
+    def test_as_the_first_node_the_section_is_kept(self) -> None:
+        self.assertNotIn("Removing incomplete section", self.check())
+
+    def test_as_nobody_it_is_dropped_with_a_warning(self) -> None:
+        self.assertIn("Removing incomplete section", self.check("-L", "mgr"))

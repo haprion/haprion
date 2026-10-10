@@ -1,5 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}{{ object.name }} — Haprion{% endblock %}
+{#- Kept current once per poll while the object blocks (B271): the card says what the nodes hold now. -#}
+{% block head_extra %}{% if live_seconds %}<meta name="haproxy-live" content="{{ live_seconds }}">{% endif %}{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/traffic.js') }}?v={{ asset_token }}"></script>
 {% if advanced_offered %}<script defer src="{{ url_for('static', path='/advanced.js') }}?v={{ asset_token }}"></script>{% endif %}
@@ -131,7 +133,7 @@
     <thead><tr>{% if management_writes %}<th class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}<th class="address-column">Address</th><th class="count-column">Time left</th><th>Nodes</th></tr></thead>
     <tbody>
       {% for row in blocked.addresses %}
-      <tr>{% if management_writes %}<td class="select-column" data-label="Select"><label class="select-box"><input type="checkbox" name="address" value="{{ row.address }}" aria-label="Select {{ row.address }}"></label></td>{% endif %}<td class="address-column" data-label="Address"><strong>{{ row.address }}</strong></td><td data-label="Time left">{{ time_left(row.until) }}</td><td data-label="Nodes">{{ row.nodes | join(', ') }}</td></tr>
+      <tr{% if row.ending %} class="blocked-ending" title="The time ran out; the next reading says whether the block is gone"{% endif %}>{% if management_writes %}<td class="select-column" data-label="Select"><label class="select-box"><input type="checkbox" name="address" value="{{ row.address }}" aria-label="Select {{ row.address }}"></label></td>{% endif %}<td class="address-column" data-label="Address"><strong>{{ row.address }}</strong></td><td data-label="Time left">{{ 'Ending…' if row.ending else time_left(row.until) }}</td><td data-label="Nodes">{{ row.nodes | join(', ') }}</td></tr>
       {% endfor %}
     </tbody>
   </table></div>

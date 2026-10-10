@@ -1043,6 +1043,8 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .blocked-table .count-column { width: 130px; }
 .blocked-table.selectable-rows tbody tr { cursor: pointer; }
 .blocked-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+.blocked-table tr.blocked-ending td { color: var(--muted); }
+.blocked-table tr.blocked-ending strong { color: var(--muted); font-weight: var(--font-weight-regular); }
 /* The whole row opens its detail, so the whole row says so. */
 .registry-row { cursor: pointer; }
 .registry-table tbody tr.registry-open { background: var(--panel-soft); }

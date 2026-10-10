@@ -802,7 +802,18 @@ def build_router(config: Config) -> APIRouter:
                 # memory and freshness on it move without a reload. Not for a
                 # the demo data: nothing behind it changes.
                 #
-                "live_seconds": (None if config.demo_fixture else config.poller.interval_seconds),
+                #
+                # Sooner when a block runs out before the next poll (B271), so
+                # the card's warning goes when the block does.
+                #
+                "live_seconds": (
+                    None
+                    if config.demo_fixture
+                    else blocked.live_seconds(
+                        config.poller.interval_seconds,
+                        blocked.next_change(status_rows, clusters),
+                    )
+                ),
             },
         )
 
@@ -1737,6 +1748,7 @@ def build_router(config: Config) -> APIRouter:
         #
         figures = metrics.HTTP_FIGURES
         servers: server_card.ServerCard | None = None
+        proxy: proxy_model.Proxy | None = None
         if detail.stored is not None:
             try:
                 proxy = load_proxy(name, detail.stored.document.encode())
@@ -1829,6 +1841,14 @@ def build_router(config: Config) -> APIRouter:
         # last unblock that not every node took said until the next one.
         #
         blocked_card = blocked.object_card(status_rows, cluster=cluster, name=name)
+        #
+        # A block comes and goes on its own time, so a page that can show one
+        # draws itself again once per poll; other objects' pages stay still,
+        # since each drawing reads their traffic again.
+        #
+        blocking = blocked_card is not None or (
+            proxy is not None and proxy.dynamic_block is not None
+        )
         blocked_missed = ""
         if servers is not None or blocked_card is not None:
             with request.app.state.pool.connection() as connection:
@@ -1880,6 +1900,14 @@ def build_router(config: Config) -> APIRouter:
                 "blocked_notice": BLOCKED_NOTICES.get(request.query_params.get("blocked", "")),
                 "blocked_missed": blocked_missed,
                 "time_left": blocked.time_left,
+                "live_seconds": (
+                    blocked.live_seconds(
+                        config.poller.interval_seconds,
+                        blocked.next_change(status_rows, (cluster,)),
+                    )
+                    if blocking and not config.demo_fixture
+                    else None
+                ),
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),

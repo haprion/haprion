@@ -15,6 +15,7 @@ on its own, and the list is the union of what each one said.
 from __future__ import annotations
 
 import ipaddress
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -27,6 +28,14 @@ class BlockedAddress:
     nodes: tuple[str, ...]
     until: datetime | None
     """When the longest of the nodes' blocks ends, from the reading's time."""
+
+    ending: bool = False
+    """The time ran out by the reading's account, and no reading has said since.
+
+    Drawn faded as *Ending…* rather than dropped: the attack may have extended
+    the block after the reading, and a row that went and came back would say
+    something untrue twice (26-10-10). The next reading settles it.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,11 +77,19 @@ def _nodes(rows: Iterable[Any], cluster: str) -> list[tuple[str, Mapping[str, An
     ]
 
 
-def object_card(rows: Iterable[Any], *, cluster: str, name: str) -> BlockedCard | None:
-    """The object's blocked addresses on every node, or None where none is blocked."""
+def object_card(
+    rows: Iterable[Any], *, cluster: str, name: str, now: datetime | None = None
+) -> BlockedCard | None:
+    """The object's blocked addresses on every node, or None where none is blocked.
+
+    An address whose time ran out by the reading's own account is marked
+    `ending` and still counted, until the next reading says whether it is
+    gone or was extended.
+    """
 
     rows = list(rows)
     observed = _observed(rows, cluster)
+    moment = now or datetime.now(UTC)
     counts: list[int] = []
     found: dict[str, tuple[list[str], int]] = {}
     for node, blocked in _nodes(rows, cluster):
@@ -89,32 +106,75 @@ def object_card(rows: Iterable[Any], *, cluster: str, name: str) -> BlockedCard 
             left = left if isinstance(left, int) and not isinstance(left, bool) else 0
             nodes, longest = found.get(item["address"], ([], 0))
             found[item["address"]] = ([*nodes, node], max(longest, left))
-    count = max([*counts, len(found)], default=0)
-    if not count:
-        return None
     addresses = tuple(
         BlockedAddress(
             address=address,
             nodes=tuple(nodes),
-            until=observed + timedelta(milliseconds=left) if observed is not None else None,
+            until=until,
+            ending=until is not None and until <= moment,
         )
         for address, (nodes, left) in sorted(found.items(), key=lambda pair: _sort_key(pair[0]))
+        for until in (observed + timedelta(milliseconds=left) if observed is not None else None,)
     )
+    count = max([*counts, len(found)], default=0)
+    if not count:
+        return None
     return BlockedCard(addresses=addresses, count=count, observed_at=observed)
 
 
-def cluster_counts(rows: Iterable[Any], *, cluster: str) -> dict[str, int]:
+def _object_names(rows: Iterable[Any], cluster: str) -> list[str]:
+    names = {
+        str(name)
+        for _node, blocked in _nodes(rows, cluster)
+        for name, mine in blocked.items()
+        if isinstance(mine, Mapping)
+    }
+    return sorted(names)
+
+
+def cluster_counts(
+    rows: Iterable[Any], *, cluster: str, now: datetime | None = None
+) -> dict[str, int]:
     """How many addresses each object of the cluster holds blocked, objects in name order."""
 
+    rows = list(rows)
     counts: dict[str, int] = {}
-    for _node, blocked in _nodes(rows, cluster):
-        for name, mine in blocked.items():
-            if not isinstance(mine, Mapping):
-                continue
-            count = mine.get("count")
-            if isinstance(count, int) and not isinstance(count, bool) and count > 0:
-                counts[str(name)] = max(counts.get(str(name), 0), count)
-    return dict(sorted(counts.items()))
+    for name in _object_names(rows, cluster):
+        card = object_card(rows, cluster=cluster, name=name, now=now)
+        if card is not None:
+            counts[name] = card.count
+    return counts
+
+
+def next_change(
+    rows: Iterable[Any], clusters: Iterable[str], now: datetime | None = None
+) -> float | None:
+    """Seconds until the next listed block in these clusters runs out, or None.
+
+    What a page showing blocks redraws itself at, so a block that ends says
+    *Ending…* when it ends rather than a poll later. One already ending waits
+    for the next reading, at the poll's own pace.
+    """
+
+    rows = list(rows)
+    moment = now or datetime.now(UTC)
+    ends = [
+        row.until
+        for cluster in clusters
+        for name in _object_names(rows, cluster)
+        if (card := object_card(rows, cluster=cluster, name=name, now=moment)) is not None
+        for row in card.addresses
+        if row.until is not None and not row.ending
+    ]
+    return min((end - moment).total_seconds() for end in ends) if ends else None
+
+
+def live_seconds(interval: int, change: float | None) -> int:
+    """The poll interval, or sooner when a block runs out before it: a second after it does."""
+
+    if change is None:
+        return interval
+    return max(1, min(interval, math.ceil(change) + 1))
 
 
 def time_left(until: datetime | None, now: datetime | None = None) -> str:

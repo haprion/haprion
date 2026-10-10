@@ -61,6 +61,7 @@ class TheCard(unittest.TestCase):
             ],
             cluster="alpha",
             name="shop",
+            now=OBSERVED,
         )
         if card is None:
             self.fail("an object holding blocked addresses has a card")
@@ -76,10 +77,45 @@ class TheCard(unittest.TestCase):
             [reading(("node-a", {"shop": held(250, ("192.0.2.7", 1000))}))],
             cluster="alpha",
             name="shop",
+            now=OBSERVED,
         )
         if card is None:
             self.fail("an object holding blocked addresses has a card")
         self.assertEqual((card.count, card.more), (250, 249))
+
+    def test_a_block_whose_time_ran_out_is_ending_until_the_next_reading(self) -> None:
+        """Faded and still counted, never dropped and brought back (26-10-10)."""
+
+        rows = [
+            reading(
+                ("node-a", {"shop": held(2, ("192.0.2.7", 60_000), ("192.0.2.8", 600_000))}),
+            )
+        ]
+        later = OBSERVED + timedelta(minutes=2)
+
+        card = blocked.object_card(rows, cluster="alpha", name="shop", now=later)
+        if card is None:
+            self.fail("a block ending is still on the card")
+        self.assertEqual(
+            [(row.address, row.ending) for row in card.addresses],
+            [("192.0.2.7", True), ("192.0.2.8", False)],
+        )
+        self.assertEqual(card.count, 2)
+        self.assertEqual(blocked.cluster_counts(rows, cluster="alpha", now=later), {"shop": 2})
+        #
+        # The one ending waits for the next reading; the redraw is for the other.
+        #
+        self.assertEqual(blocked.next_change(rows, ("alpha",), now=later), 480.0)
+
+    def test_the_page_is_drawn_again_a_second_after_the_first_block_ends(self) -> None:
+        rows = [reading(("node-a", {"shop": held(1, ("192.0.2.7", 12_500))}))]
+
+        change = blocked.next_change(rows, ("alpha",), now=OBSERVED)
+        self.assertEqual(change, 12.5)
+        self.assertEqual(blocked.live_seconds(20, change), 14)
+        self.assertEqual(blocked.live_seconds(20, 300.0), 20)
+        self.assertEqual(blocked.live_seconds(20, None), 20)
+        self.assertEqual(blocked.live_seconds(20, -3.0), 1)
 
     def test_nothing_blocked_or_an_older_node_has_no_card(self) -> None:
         for nodes in (
@@ -247,6 +283,30 @@ class TheObjectPageAndTheDashboard(DraftReading):
         client = self.writing_client()
         self.assertEqual(self.post(client, **{auth.CSRF_FIELD: "forged"}).status_code, 403)
         self.assertEqual(self.queued, [])
+
+    def test_the_page_keeps_itself_current_while_the_object_blocks(self) -> None:
+        """A block comes and goes on its own time; the card follows it once per poll."""
+
+        from haprion_ui import views  # noqa: PLC0415
+
+        original = views.read_source
+
+        def demo_rows(request: Any, config: Any, source: Any) -> Any:
+            return original(request, replace(config, demo_fixture=True), source)
+
+        self.account = replace(self.account, role="admin")
+        config = replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
+        client = self.client(config)
+        self.sign_in(client)
+        with mock.patch("haprion_ui.views.read_source", side_effect=demo_rows):
+            page = client.get("/proxies/edge-demo/public-web").text
+            with mock.patch.object(demo, "BLOCKED", {}):
+                quiet = client.get("/proxies/edge-demo/public-web").text
+
+        self.assertIn(
+            f'<meta name="haproxy-live" content="{config.poller.interval_seconds}">', page
+        )
+        self.assertNotIn('<meta name="haproxy-live"', quiet)
 
     def test_the_dashboard_links_the_objects_for_an_admin(self) -> None:
         page = self.writing_client().get("/")

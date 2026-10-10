@@ -8281,10 +8281,12 @@ def _editor_page(
         others=tuple((view.name, view.document) for view in state.stored),
     )
     dns_form = fields.get("protocol") == "dns"
+    held = blocked.object_card(status_rows, cluster=cluster, name=name) if name else None
     return TEMPLATES.TemplateResponse(
         request,
         "editor.html",
         {
+            "blocked_here": held.count if held is not None else 0,
             "username": session.username,
             "role": session.role,
             "csrf_token": auth.csrf_token(token),

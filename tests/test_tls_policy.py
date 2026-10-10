@@ -327,9 +327,27 @@ class EnoughStickCountersForWhatIsGenerated(unittest.TestCase):
         self.assertIn("sudoedit /srv/alpha/core/haproxy.cfg", problem)
         self.assertIn("      tune.stick-counters 5\n", problem)
 
+    SOCKET = "    stats socket /run/haproxy/manager.sock mode 600 level admin\n"
+
     def test_five_are_enough_and_four_are_not(self) -> None:
-        self.assertIsNone(self.problem("global\n    tune.stick-counters 5\n"))
-        self.assertIsNotNone(self.problem("global\n    tune.stick-counters 4\n"))
+        self.assertIsNone(self.problem(f"global\n    tune.stick-counters 5\n{self.SOCKET}"))
+        self.assertIsNotNone(self.problem(f"global\n    tune.stick-counters 4\n{self.SOCKET}"))
+
+    def test_blocking_without_the_admin_socket_is_refused_with_its_line(self) -> None:
+        """A block nobody could see or lift (review 26-10-10, F3)."""
+
+        problem = self.problem("global\n    tune.stick-counters 5\n")
+        assert problem is not None
+        self.assertIn("no admin socket", problem)
+        self.assertIn(
+            "      stats socket /run/haproxy/manager.sock mode 600 level admin\n", problem
+        )
+        self.assertIsNotNone(
+            self.problem(
+                "global\n    tune.stick-counters 5\n"
+                "    stats socket /run/haproxy/manager.sock mode 600 level operator\n"
+            )
+        )
 
     def test_without_dynamic_blocking_the_default_is_enough(self) -> None:
         self.assertIsNone(self.problem("global\n", b"    http-request track-sc2 src\n"))
@@ -340,9 +358,10 @@ class EnoughStickCountersForWhatIsGenerated(unittest.TestCase):
         self.assertIsNone(self.problem("global\n", path="core/conf.d/0010-core.cfg"))
 
     def test_the_template_a_new_cluster_starts_from_has_the_line(self) -> None:
-        from haprion.cluster_definition import seed_files  # noqa: PLC0415
+        from haprion.cluster_definition import MANAGER_SOCKET, seed_files  # noqa: PLC0415
         from haprion.managed_publish import GENERATED_PREFIX  # noqa: PLC0415
 
         self.assertEqual(tls_policy.GENERATED_CONFIGURATION, GENERATED_PREFIX)
+        self.assertEqual(tls_policy.MANAGER_SOCKET, MANAGER_SOCKET)
         core = seed_files("192.0.2.20")["core/haproxy.cfg"].decode()
         self.assertIsNone(self.problem(core))

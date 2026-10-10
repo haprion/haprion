@@ -75,6 +75,12 @@ NODE_VERB = "server-state"
 # The node helper's own exit codes (`install/node/haprion-server-state`).
 #
 NODE_UNKNOWN_SERVER = 65
+#
+# The trigger's refusal of words it does not know, and how a trigger from
+# before `unblock` words it (`haprion-server-state-trigger`).
+#
+NODE_USAGE = 64
+OLDER_TRIGGER_WORDS = ("unknown request: unblock", "expected: server-state")
 
 #
 # A bound, not a working figure: a pool of this many servers is one nobody
@@ -411,6 +417,19 @@ def read_unblocked(
     if not isinstance(document, Mapping):
         stderr = (completed.stderr or "").strip().splitlines()
         reason = stderr[-1][:300] if stderr else "no answer"
+        if completed.returncode == NODE_USAGE and any(
+            word in reason for word in OLDER_TRIGGER_WORDS
+        ):
+            #
+            # Reached, and answered by a trigger from before the verb: the node
+            # needs its newer release, not a network (review 26-10-10, F1).
+            #
+            return Unblocked(
+                node,
+                "refused",
+                message="the node's scripts have no unblock yet; install the newest node "
+                "release on it",
+            )
         return Unblocked(
             node, "failed", message=f"the node could not be reached ({reason})", reached=False
         )

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from haprion_ui import auth, blocked, db, demo
 from haprion_ui.db import ClusterStatus
+from haprion_ui.form_groups import form_groups
 from tests.test_login import configuration
 from tests.test_object_page import DraftReading
 from tests.test_queue_route import queued
@@ -111,6 +112,24 @@ class TheCard(unittest.TestCase):
             with self.subTest(said):
                 self.assertEqual(blocked.time_left(now + left, now), said)
         self.assertEqual(blocked.time_left(None), "—")
+
+
+class TheFormSaysHowManyAreBlocked(unittest.TestCase):
+    """The mock's line (B271, review 26-10-10 F2): the count after the settings."""
+
+    def test_the_count_ends_the_group_line(self) -> None:
+        form = {
+            "protocol": "http",
+            "block_requests": "300",
+            "block_window": "10s",
+            "block_for": "30m",
+        }
+
+        self.assertEqual(
+            form_groups(form, 2)["blocking"].summary,
+            "300 requests / 10s → blocked 30m, 404 · 2 blocked",
+        )
+        self.assertNotIn("blocked ·", form_groups(form)["blocking"].summary)
 
 
 class TheObjectPageAndTheDashboard(DraftReading):

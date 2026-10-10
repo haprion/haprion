@@ -516,6 +516,33 @@ class EveryNodeLiftsTheBlockTwice(HelperFixture):
         self.assertEqual(nodes[self.nodes[0]]["outcome"], "refused")
         self.assertIn("deploy", nodes[self.nodes[0]]["message"])
 
+    def test_a_node_with_an_older_trigger_is_reached_and_said_to_need_its_release(self) -> None:
+        """Review 26-10-10, F1: answered by a trigger from before `unblock`, not unreachable."""
+
+        for said in ("ERROR: unknown request: unblock", "ERROR: expected: server-state <guid>"):
+            with self.subTest(said=said):
+                asked: list[str] = []
+
+                def ask(
+                    node: Node,
+                    identity: DeployIdentity,
+                    request: str,
+                    said: str = said,
+                    asked: list[str] = asked,
+                ) -> subprocess.CompletedProcess[str]:
+                    asked.append(node.name)
+                    if node.name == self.nodes[0]:
+                        return subprocess.CompletedProcess(["ssh"], 64, "", said + "\n")
+                    return unblocked(request)
+
+                _, document, _ = self.run_unblock("store", ["203.0.113.7"], ask)
+
+                assert document is not None
+                nodes = {node["node"]: node for node in document["result"]["nodes"]}  # type: ignore[index]
+                self.assertEqual(nodes[self.nodes[0]]["outcome"], "refused")
+                self.assertIn("newest node release", nodes[self.nodes[0]]["message"])
+                self.assertEqual(asked.count(self.nodes[0]), 2)
+
     def test_nothing_is_sent_for_a_request_that_is_wrong(self) -> None:
         def ask(*_: object) -> subprocess.CompletedProcess[str]:
             raise AssertionError("a node was asked")

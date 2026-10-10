@@ -268,6 +268,12 @@ DEFAULT_STICK_COUNTERS = 3
 STICK_COUNTERS_KEYWORD = "tune.stick-counters"
 _TRACK_SLOT = re.compile(rb"\btrack-sc(\d+)\b")
 GENERATED_CONFIGURATION = "managed/generated/"
+#
+# The admin socket the nodes list and lift blocks on (`cluster_definition.
+# MANAGER_SOCKET`; a test holds the two together).
+#
+MANAGER_SOCKET = "/run/haproxy/manager.sock"
+BLOCK_COUNTERS = 5
 
 
 def stick_counters_problem(
@@ -291,6 +297,28 @@ def stick_counters_problem(
     stated = _stated(core, re.escape(STICK_COUNTERS_KEYWORD))
     have = int(stated) if stated is not None and stated.isdigit() else DEFAULT_STICK_COUNTERS
     if needed <= have:
+        if needed >= BLOCK_COUNTERS and not re.search(
+            rf"^[ \t]*stats socket {re.escape(MANAGER_SOCKET)}[ \t].*\blevel admin\b",
+            core,
+            re.MULTILINE,
+        ):
+            #
+            # Blocking would work and nobody could see or lift a block: the
+            # node lists and clears them only on this socket (review
+            # 26-10-10, F3).
+            #
+            return (
+                f"{cluster}: an object uses dynamic blocking, and core/haproxy.cfg has no admin "
+                f"socket for the nodes to list and lift blocks on.\n"
+                f"\n"
+                f"  Fix it, then publish again:\n"
+                f"    sudoedit {config_path}/core/haproxy.cfg\n"
+                f"    add this line to the `global` section:\n"
+                f"      stats socket {MANAGER_SOCKET} mode 600 level admin\n"
+                f"\n"
+                f"  Without it a block works, but no page shows it and nothing can lift it\n"
+                f"  before its time runs out."
+            )
         return None
     return (
         f"{cluster}: an object uses dynamic blocking, which needs {needed} stick counters, "

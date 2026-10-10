@@ -814,7 +814,10 @@ unless `global` says otherwise, so the cluster's `core/haproxy.cfg` needs:
     tune.stick-counters 5
 ```
 
-A publish that needs more slots than the core allows is refused with that line
+The nodes list and lift blocks on the admin socket the core names for drain and
+maintenance (`stats socket /run/haproxy/manager.sock mode 600 level admin`). A
+publish that needs more slots than the core allows, or an object that blocks on
+a cluster whose core has no such socket, is refused with the missing line
 before anything is validated.
 
 Each node reports its blocked addresses in its status (`blocked`): per object,

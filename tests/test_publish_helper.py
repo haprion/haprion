@@ -321,7 +321,11 @@ class PublishTests(PublishFixture):
 
             self.edit(
                 "core/haproxy.cfg",
-                HAPROXY_CFG.replace(b"  daemon\n", b"  daemon\n  tune.stick-counters 5\n"),
+                HAPROXY_CFG.replace(
+                    b"  daemon\n",
+                    b"  daemon\n  tune.stick-counters 5\n"
+                    b"  stats socket /run/haproxy/manager.sock mode 600 level admin\n",
+                ),
             )
             code, _stdout, stderr = self.run_publish(policy_path, self.request())
             self.assertEqual((code, stderr), (0, ""))

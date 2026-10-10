@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from haprion.config import DEFAULT_ABUSE_WINDOW
@@ -398,10 +398,18 @@ ALWAYS_SHOWN = (
 CARRIED = ("advanced", "handwritten_pool", "waf_exceptions")
 
 
-def form_groups(form: Mapping[str, Any]) -> dict[str, GroupState]:
-    """Each group's title and the line it shows while closed."""
+def form_groups(form: Mapping[str, Any], blocked: int = 0) -> dict[str, GroupState]:
+    """Each group's title and the line it shows while closed.
 
-    return {
+    `blocked` is how many addresses the object's dynamic blocking holds on the
+    nodes now (B271), said at the end of that group's line.
+    """
+
+    states = {
         key: GroupState(title=group.title, summary=group.summary(form), badges=group.badges(form))
         for key, group in GROUPS.items()
     }
+    if blocked:
+        state = states["blocking"]
+        states["blocking"] = replace(state, summary=f"{state.summary} · {blocked} blocked")
+    return states

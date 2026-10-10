@@ -111,6 +111,16 @@ release_module() {
 print(entry_points(group="console_scripts")["haprion-worker"].module.partition(".")[0])'
 }
 
+#
+# What the worker's sandbox opens beyond the product's own directories, read
+# from the runtime policy by the current release (haprion.config,
+# worker_writable_paths). One line, space separated.
+#
+worker_writable_paths() {
+    "${UI_ROOT}/current/venv/bin/python" -I -c 'from haprion.config import load_policy, worker_writable_paths
+print(" ".join(str(path) for path in worker_writable_paths(load_policy())))'
+}
+
 ui_port() {
     local python="${UI_ROOT}/current/venv/bin/python" module
     module="$(release_module "$python")" || return 1

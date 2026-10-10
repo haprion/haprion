@@ -1046,6 +1046,25 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
     )
 
 
+def worker_writable_paths(policy: PathPolicy) -> tuple[Path, ...]:
+    """The policy's directories the worker's sandbox opens for its root helpers.
+
+    Rendered into `haprion-worker.service` by platform step 07, so the unit opens
+    the roots this installation chose rather than the ones an example names:
+    the configuration repositories and their publish and validation roots, the
+    registry's directory, and the directories the certificate publisher writes
+    in. Each once, in this order.
+    """
+
+    paths = [policy.config_root, policy.publish_root, policy.validation_certs_root]
+    if policy.certificate_registry is not None:
+        paths.append(policy.certificate_registry.parent)
+    for root in (policy.certificate_root, policy.receiver_root):
+        if root is not None:
+            paths.append(root.parent)
+    return tuple(dict.fromkeys(paths))
+
+
 def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
     raw = data.get("ndes")
     if raw is None:

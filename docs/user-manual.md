@@ -2536,7 +2536,7 @@ sudo usermod -a -G haprion <your-account>
 /srv/haprion/published/alpha/current      symlink to the current release
 
 /srv/haprion/validation/certs/            validation-only certificate material
-/srv/haprion/clusters.yaml                cluster definitions
+/etc/haprion/registry/clusters.yaml       cluster definitions
 /etc/haprion/runtime-policy.yaml          the outer path boundary
 ```
 
@@ -2664,7 +2664,7 @@ escapes its root.
 ```yaml
 schema_version: 1
 
-cluster_file: /srv/haprion/clusters.yaml
+cluster_file: /etc/haprion/registry/clusters.yaml
 config_root: /srv/haprion/config
 publish_root: /srv/haprion/published
 validation_certs_root: /srv/haprion/validation
@@ -2937,7 +2937,7 @@ instead live in `managed/network.yaml` inside the cluster repository, and that i
 installation puts them:
 
 ```yaml
-# /configs/haproxy/<cluster>/managed/network.yaml
+# <config_root>/<cluster>/managed/network.yaml
 vips:
   internal:
     address: 192.0.2.10
@@ -3065,7 +3065,8 @@ certificates:
       - lb-01.example.net
 ```
 
-Name it in the runtime policy as `certificate_registry`. From that moment a cluster's certificates
+Name it in the runtime policy as `certificate_registry`, beside `clusters.yaml`
+(`/etc/haprion/registry/certificates.yaml`): the worker's sandbox opens the registry's directory. From that moment a cluster's certificates
 are the ones that name it under `clusters`, and a `certificate_ids` list left in `clusters.yaml` is
 refused - the two would otherwise be two answers to one question, free to drift apart without
 anything noticing. Declaring the registry and moving the lists out of `clusters.yaml` is therefore
@@ -3239,9 +3240,9 @@ on one whose plugin it cannot load, which is why the distribution's timer is mas
 left disabled.
 
 The step also checks that the worker's unit opens certbot's directories (`/etc/letsencrypt`,
-`/var/lib/letsencrypt`, `/var/log/letsencrypt`), the publisher's target (`/srv/certdist`), the
-registry's directory (`/configs/haproxy-mgmt`) and the DNS profile directory
-(`/etc/haprion/dns-profiles`). The issue helper runs certbot inside the worker's sandbox,
+`/var/lib/letsencrypt`, `/var/log/letsencrypt`), the runtime policy's roots - among them the
+publisher's target and the registry's directory, which step 07 writes into the unit from the
+policy - and the DNS profile directory (`/etc/haprion/dns-profiles`). The issue helper runs certbot inside the worker's sandbox,
 and without those paths every issuance from the web interface fails on a write such as certbot's
 log lock. Step 07 installs the unit; rerun it from a `haprion-ui` package that has them before
 running step 14.

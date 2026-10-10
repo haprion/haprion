@@ -72,9 +72,12 @@ ProtectHome=read-only
 # publishes - failed on "git commit-tree: Read-only file system".
 #
 #   /run/haprion           the cluster lock, which stops two rollouts at once
-#   /configs/haproxy            the clusters' Git repositories; revert commits here
-#   /configs/haproxy-published  the immutable release the commit is swapped into
-#   /configs/haproxy-validation a revert validates before it publishes
+#   config_root            the clusters' Git repositories; revert commits here
+#   publish_root           the immutable release the commit is swapped into
+#   validation_certs_root  a revert validates before it publishes
+#
+# The last three are the runtime policy's, written in by platform step 07 as
+# @POLICY_PATHS@ below, with the registry's and the publisher's directories.
 #
 # And what issuing a certificate writes (Phase 11), because the issue helper
 # runs certbot inside this namespace too. Found the same way: the first
@@ -84,8 +87,10 @@ ProtectHome=read-only
 #   /etc/letsencrypt            certbot's lineages, account and renewal configs
 #   /var/lib/letsencrypt        certbot's working directory
 #   /var/log/letsencrypt        certbot's log, and the lock it takes first
-#   /srv/certdist               where the publisher writes what certbot made
-#   /configs/haproxy-mgmt       the registry the new certificate is entered in
+#   @POLICY_PATHS@              the runtime policy's roots: the configuration
+#                               repositories, their publish and validation roots,
+#                               the registry's directory and where the publisher
+#                               writes - written in by platform step 07
 #   /etc/haprion/dns-profiles  root-only provider credentials
 #   /etc/haprion/certificates  the import store a deletion removes from
 #
@@ -94,7 +99,7 @@ ProtectHome=read-only
 # writes as root, and file permissions stay the real boundary. This list is the
 # second layer, not the only one.
 ProtectSystem=strict
-ReadWritePaths=/run/haprion /configs/haproxy /configs/haproxy-published /configs/haproxy-validation /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt /etc/haprion/dns-profiles /etc/haprion/certificates /etc/haprion/ndes-profiles /etc/haprion/ndes-requests
+ReadWritePaths=/run/haprion @POLICY_PATHS@ /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /etc/haprion/dns-profiles /etc/haprion/certificates /etc/haprion/ndes-profiles /etc/haprion/ndes-requests
 
 # Unchanged, and none of them stand in the helper's way. Kept so that opening
 # the four above is a decision about four things and not about the whole file.

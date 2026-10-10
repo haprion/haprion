@@ -249,8 +249,11 @@ ensure_dir /etc/haprion/ndes-profiles root:root 700
 ensure_dir /etc/haprion/ndes-requests root:root 700
 
 step "Units"
+policy_paths="$(worker_writable_paths)" \
+    || die "cannot read the runtime policy's roots for the worker's sandbox"
+[[ -n "$policy_paths" ]] || die "the runtime policy names no roots for the worker's sandbox"
 install_file "/etc/systemd/system/${WORKER_UNIT}" root:root 644 \
-    "$(cat examples/haprion-worker.service.example)"
+    "$(sed -e "s|@POLICY_PATHS@|${policy_paths}|" examples/haprion-worker.service.example)"
 install_file "/etc/systemd/system/${POLLER_UNIT}" root:root 644 \
     "$(cat examples/haprion-poller.service.example)"
 systemctl daemon-reload

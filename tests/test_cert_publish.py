@@ -35,7 +35,7 @@ from haprion import cert_pending, cert_publish
 from haprion.cert_inventory import registry_result
 from haprion.cert_publish import PublishError, publish
 from haprion.cli import cert_publish as command
-from haprion.config import Receiver, load_policy, load_runtime_config
+from haprion.config import Receiver, load_policy, load_runtime_config, worker_writable_paths
 
 BASE = Path(__file__).resolve().parents[1]
 ME = pwd.getpwuid(os.getuid()).pw_name
@@ -1086,10 +1086,38 @@ class TheWorkerCanLookWhereItPublishes(unittest.TestCase):
     def test_the_sandbox_does_not_get_to_write_past_the_mode_bits(self) -> None:
         self.assertNotIn("CAP_DAC_OVERRIDE", self.bounding_set())
 
-    def test_the_distribution_root_is_writable(self) -> None:
+    def test_the_policys_roots_are_written_in_by_step_07(self) -> None:
         text = self.UNIT.read_text(encoding="utf-8")
         line = next(line for line in text.splitlines() if line.startswith("ReadWritePaths="))
-        self.assertIn("/srv/certdist", line.split())
+        self.assertIn("@POLICY_PATHS@", line.split())
+        step = (BASE / "install/platform/07-platform-services").read_text(encoding="utf-8")
+        self.assertIn("s|@POLICY_PATHS@|${policy_paths}|", step)
+
+    def test_the_roots_come_from_the_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "runtime-policy.yaml"
+            path.write_text(
+                "schema_version: 1\n"
+                "cluster_file: /srv/example/registry/clusters.yaml\n"
+                "config_root: /srv/example/config\n"
+                "publish_root: /srv/example/published\n"
+                "validation_certs_root: /srv/example/validation\n"
+                "certificate_registry: /srv/example/registry/certificates.yaml\n"
+                "certificate_root: /srv/example/certdist/clusters\n"
+                "receiver_root: /srv/example/certdist/receivers\n",
+                encoding="utf-8",
+            )
+            paths = worker_writable_paths(load_policy(path, require_secure=False))
+        self.assertEqual(
+            [str(path) for path in paths],
+            [
+                "/srv/example/config",
+                "/srv/example/published",
+                "/srv/example/validation",
+                "/srv/example/registry",
+                "/srv/example/certdist",
+            ],
+        )
 
 
 class TheFileIsModedWhileItIsStillOurs(unittest.TestCase):

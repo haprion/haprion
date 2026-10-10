@@ -50,7 +50,10 @@ step "The worker's sandbox"
 #
 worker_unit_file="/etc/systemd/system/${WORKER_UNIT}"
 [[ -f "$worker_unit_file" ]] || die "${worker_unit_file} is missing; run 07-platform-services first"
-for path in /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt /etc/haprion/dns-profiles; do
+policy_paths="$(worker_writable_paths)" \
+    || die "cannot read the runtime policy's roots for the worker's sandbox"
+# shellcheck disable=SC2086 # one path per word, as the unit lists them
+for path in /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt $policy_paths /etc/haprion/dns-profiles; do
     grep -Eq "^ReadWritePaths=(.* )?${path}( .*)?$" "$worker_unit_file" \
         || die "${worker_unit_file} does not open ${path}; rerun 07-platform-services with this source tree"
 done

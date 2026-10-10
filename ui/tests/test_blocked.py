@@ -247,6 +247,24 @@ class TheObjectPageAndTheDashboard(DraftReading):
                     page = self.writing_client().get("/proxies/edge-demo/public-web")
                 self.assertIn(said, page.text)
 
+    def test_an_unblock_in_flight_spins_on_its_own_card_only(self) -> None:
+        """Both cards lose their buttons; only the one the job is for says so (26-10-10)."""
+
+        for operation, spinning, still in (
+            ("dynamic_unblock", 'id="blocked"', "<h3>Servers</h3>"),
+            ("server_state", "<h3>Servers</h3>", 'id="blocked"'),
+        ):
+            with self.subTest(operation):
+                running = replace(queued(operation=operation, cluster="edge-demo"), state="running")
+                with mock.patch("haprion_ui.db.recent_jobs", return_value=[running]):
+                    page = self.writing_client().get("/proxies/edge-demo/public-web").text
+                own = page.split(spinning)[1].split("</header>")[0]
+                other = page.split(still)[1].split("</header>")[0]
+                self.assertIn('data-busy="edge-demo"', own)
+                self.assertNotIn("data-busy", other)
+                self.assertNotIn(">Unblock</button>", page)
+                self.assertNotIn('name="state" value="drain"', page)
+
     def test_the_ticked_addresses_are_queued(self) -> None:
         answer = self.post(self.writing_client())
 
@@ -312,13 +330,14 @@ class TheObjectPageAndTheDashboard(DraftReading):
         page = self.writing_client().get("/")
 
         self.assertIn(
-            '2 addresses blocked: <a href="/proxies/edge-demo/public-web#blocked"', page.text
+            '2 addresses blocked dynamically: <a href="/proxies/edge-demo/public-web#blocked"',
+            page.text,
         )
 
     def test_a_reader_is_told_how_many_without_a_link(self) -> None:
         page = self.writing_client(role="reader").get("/")
 
-        self.assertIn("2 addresses blocked</span>", page.text)
+        self.assertIn("2 addresses blocked dynamically</span>", page.text)
         self.assertNotIn("public-web#blocked", page.text)
 
 

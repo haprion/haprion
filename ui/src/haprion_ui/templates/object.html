@@ -100,7 +100,7 @@
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
   <header class="cluster-header">
     <div class="cluster-identity"><div><h3>Servers</h3><p>{{ 'Pool' if servers.pools | length == 1 else 'Pools' }} {% for pool in servers.pools %}<code>{{ pool }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p></div></div>
-    {% if management_writes %}{% if servers_busy %}<div class="cluster-state"><span class="status-badge status-badge-info" data-busy="{{ object.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ servers_busy }}</span></div>{% else %}<div class="action-buttons"><button class="secondary-button" type="submit" name="state" value="drain">Drain</button><button class="secondary-button" type="submit" name="state" value="maint">Maintenance</button><button class="secondary-button" type="submit" name="state" value="ready">Ready</button></div>{% endif %}{% endif %}
+    {% if management_writes %}{% if cluster_busy %}{% if servers_busy %}<div class="cluster-state"><span class="status-badge status-badge-info" data-busy="{{ object.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ servers_busy }}</span></div>{% endif %}{% else %}<div class="action-buttons"><button class="secondary-button" type="submit" name="state" value="drain">Drain</button><button class="secondary-button" type="submit" name="state" value="maint">Maintenance</button><button class="secondary-button" type="submit" name="state" value="ready">Ready</button></div>{% endif %}{% endif %}
   </header>
   {% if servers_notice %}<p class="preview-notice form-problem">{{ servers_notice }}</p>{% elif servers_missed %}<p class="preview-notice form-problem">{{ servers_missed }} <a href="/jobs">See Jobs</a></p>{% endif %}
   <div class="table-scroll"><table class="node-table server-table{% if management_writes %} selectable-rows" data-select-rows{% else %}"{% endif %}>
@@ -126,7 +126,7 @@
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
   <header class="cluster-header">
     <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Blocked addresses</h3><p>{{ blocked.count }} blocked by dynamic blocking{% if blocked.more %}, {{ blocked.more }} not listed{% endif %}</p></div></div>
-    {% if management_writes %}{% if servers_busy %}<div class="cluster-state"><span class="status-badge status-badge-info" data-busy="{{ object.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ servers_busy }}</span></div>{% else %}<div class="action-buttons"><button class="secondary-button" type="submit">Unblock</button></div>{% endif %}{% endif %}
+    {% if management_writes %}{% if cluster_busy %}{% if blocked_busy %}<div class="cluster-state"><span class="status-badge status-badge-info" data-busy="{{ object.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ blocked_busy }}</span></div>{% endif %}{% else %}<div class="action-buttons"><button class="secondary-button" type="submit">Unblock</button></div>{% endif %}{% endif %}
   </header>
   {% if blocked_notice %}<p class="preview-notice form-problem">{{ blocked_notice }}</p>{% elif blocked_missed %}<p class="preview-notice form-problem">{{ blocked_missed }} <a href="/jobs">See Jobs</a></p>{% endif %}
   <div class="table-scroll"><table class="node-table blocked-table{% if management_writes %} selectable-rows" data-select-rows{% else %}"{% endif %}>

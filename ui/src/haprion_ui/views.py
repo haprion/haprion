@@ -1835,6 +1835,8 @@ def build_router(config: Config) -> APIRouter:
         # this object that not every node took is said until the next one.
         #
         servers_busy: str | None = None
+        blocked_busy: str | None = None
+        cluster_busy: str | None = None
         servers_missed = ""
         #
         # The addresses the object's dynamic blocking holds (B271), with the
@@ -1853,7 +1855,22 @@ def build_router(config: Config) -> APIRouter:
         if servers is not None or blocked_card is not None:
             with request.app.state.pool.connection() as connection:
                 recent = db.recent_jobs(connection, cluster=cluster)
-            servers_busy = jobs.in_flight(recent).get(cluster)
+            cluster_busy = jobs.in_flight(recent).get(cluster)
+            #
+            # The queue takes one job per cluster, so while any runs both
+            # cards lose their buttons; the spinner says what runs on the card
+            # it belongs to, and a job for the whole cluster on both (26-10-10).
+            #
+            in_progress: str | None = next(
+                (
+                    job.operation
+                    for job in recent
+                    if job.cluster == cluster and job.state in {"pending", "running"}
+                ),
+                None,
+            )
+            servers_busy = cluster_busy if in_progress != server_state.UNBLOCK_OPERATION else None
+            blocked_busy = cluster_busy if in_progress != server_state.OPERATION else None
             unblocked = next(
                 (
                     job
@@ -1895,6 +1912,8 @@ def build_router(config: Config) -> APIRouter:
                 "servers": servers,
                 "servers_notice": SERVER_NOTICES.get(request.query_params.get("servers", "")),
                 "servers_busy": servers_busy,
+                "blocked_busy": blocked_busy,
+                "cluster_busy": cluster_busy,
                 "servers_missed": servers_missed,
                 "blocked": blocked_card,
                 "blocked_notice": BLOCKED_NOTICES.get(request.query_params.get("blocked", "")),

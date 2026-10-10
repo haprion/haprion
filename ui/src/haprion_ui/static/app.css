@@ -472,6 +472,9 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .cluster-actions strong { color: var(--text-strong); font-size: 12px; }
 .cluster-actions span { overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .cluster-actions .status-dot { margin-right: 8px; vertical-align: 1px; }
+/* Dynamic blocking said on the heading's own line (B271). */
+.cluster-actions .operations-line { display: flex; min-width: 0; align-items: baseline; gap: 14px; }
+.cluster-actions .operations-line span { margin-top: 0; }
 .action-buttons { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 8px; }
 .action-buttons form { margin: 0; }
 .secondary-button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-raised); color: var(--text-primary); font-size: 12px; font-weight: 650; cursor: pointer; }

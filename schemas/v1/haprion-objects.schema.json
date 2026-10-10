@@ -222,6 +222,26 @@
             "minLength": 1,
             "maxLength": 128
           }
+        },
+        "description": {
+          "description": "What the object is for, as its author wrote it: one line, empty where nobody did; null where the document could not be read. Absent from an older release.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "groups": {
+          "description": "The cluster groups the object names as sources (allow_from, deny_from, access rules, dynamic blocking's exempt), in name order; null where the document could not be read. Absent from an older release.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
         }
       },
       "additionalProperties": true

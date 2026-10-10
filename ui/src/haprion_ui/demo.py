@@ -884,7 +884,15 @@ def _engine_fields(cluster: str, entries: list[dict[str, Any]]) -> list[dict[str
     # `runtime_backends` too: the nodes report `public-web`'s pool as `web`
     # (B263's servers), and only the objects say whose pool that is.
     #
-    fields = ("vip", "source", "servers", "health_checked", "runtime_backends")
+    fields = (
+        "vip",
+        "source",
+        "servers",
+        "health_checked",
+        "runtime_backends",
+        "description",
+        "groups",
+    )
     return [{**entry, **{key: computed[entry["name"]][key] for key in fields}} for entry in entries]
 
 

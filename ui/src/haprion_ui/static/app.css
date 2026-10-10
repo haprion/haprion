@@ -1206,7 +1206,8 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 .preview-notice.notice-warning { border-left-color: var(--warning); background: var(--panel); }
 .notice-with-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .notice-with-action > form { margin: 0; flex: none; }
-.preview-form { display: grid; gap: 18px; margin-bottom: 18px; }
+/* One column that never grows past the page: an implicit one is as wide as its widest content (400 px, 26-10-10). */
+.preview-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; margin-bottom: 18px; }
 /* Outside the form's grid, so its gap does not reach it (measured 0 px, 26-10-02). */
 .draft-card { margin-bottom: 18px; }
 .preview-form .cluster-card { padding-bottom: 18px; }
@@ -1290,7 +1291,9 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
    one on a phone, where four would be too narrow to type in. */
 .object-card .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .object-card .form-grid .field-wide { grid-column: 1 / -1; }
-@media (max-width: 899px) { .object-card .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Beside the last field rather than on a row of its own; the whole row where the grid is one column. */
+.object-card .form-grid .field-note { grid-column: span 3; }
+@media (max-width: 899px) { .object-card .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .object-card .form-grid .field-note { grid-column: 1 / -1; } }
 @media (max-width: 559px) { .object-card .form-grid { grid-template-columns: minmax(0, 1fr); } }
 /* One group per row, one line each: the title and what the group holds, cut
    with an ellipsis and whole in its tooltip. Side by side was tried on
@@ -1749,18 +1752,20 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * widths: they have different columns and are not read as one form.
  */
 .editor-table.network-table th, .editor-table.network-table td { width: auto; }
-.editor-table .col-name { width: 19%; }
-.editor-table .col-address { width: 21%; }
-.editor-table .col-source { width: 20%; }
+.editor-table .col-name { width: 17%; }
+.editor-table .col-address { width: 17%; }
+.editor-table .col-source { width: 17%; }
 /*
  * Wide enough for "TLS 1.2 and 1.3" on one line, arrow included. The options
  * name both ends of the range rather than only the floor, so they are longer
  * than the "TLS 1.2" they replaced - and a wrapped option in a select is read
  * as two options.
  */
-.editor-table .col-tls { width: 18%; }
-.editor-table .col-default { width: 11%; }
-.editor-table .col-remove { width: 11%; }
+.editor-table .col-tls { width: 15%; }
+.editor-table .col-default { width: 8%; }
+.editor-table .col-used { width: 18%; }
+.editor-table .col-remove { width: 8%; }
+.editor-table .editor-used { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /*
  * The same control as the ones in the object editor, and it has to look like
  * them: this select was left with the browser's own chrome while the inputs
@@ -2053,6 +2058,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .log-warning-popover b { color: var(--text-strong); font-weight: 650; }
 .log-filters { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(100px, .45fr) minmax(240px, 1.35fr) minmax(185px, .8fr) minmax(185px, .8fr) auto auto; gap: 12px; align-items: end; margin: 0 0 18px; }
 .log-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.log-object-filter { margin: -6px 0 14px; color: var(--text-secondary); font-size: 13px; }
 .log-filters input, .log-filters select { min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
 .log-date-field { position: relative; display: grid; gap: 5px; min-width: 0; }
 .log-date-field > label { color: var(--muted); font-size: 12px; }
@@ -2343,11 +2349,12 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .finding-more { color: var(--muted); font-size: 12px; }
 .finding-draft { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 .finding-table .secondary-button, .exception-table .secondary-button { min-height: 24px; padding: 0 9px; font-size: 12px; white-space: nowrap; }
-.exception-table th:nth-child(1), .exception-table td:nth-child(1) { width: 200px; }
+.exception-table th:nth-child(1), .exception-table td:nth-child(1) { width: 190px; }
 .exception-table th:nth-child(2), .exception-table td:nth-child(2) { width: auto; }
-.exception-table th:nth-child(3), .exception-table td:nth-child(3) { width: 250px; }
-.exception-table th:nth-child(4), .exception-table td:nth-child(4) { width: 230px; }
-.exception-table th:nth-child(5), .exception-table td:nth-child(5) { width: 110px; text-align: right; }
+.exception-table th:nth-child(3), .exception-table td:nth-child(3) { width: 180px; }
+.exception-table th:nth-child(4), .exception-table td:nth-child(4) { width: 210px; }
+.exception-table th:nth-child(5), .exception-table td:nth-child(5) { width: 230px; }
+.exception-table th:nth-child(6), .exception-table td:nth-child(6) { width: 100px; text-align: right; }
 /* One line: the node table's cell `strong` is a block, which put the cluster under the name. */
 .exception-table td strong { display: inline; }
 .exception-cluster { margin-left: 6px; color: var(--muted); font-size: 12px; }
@@ -2364,3 +2371,5 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .allow-dialog .scope-sub { display: grid; gap: 4px; margin: 2px 0 4px 24px; }
 .allow-dialog .paths { display: grid; gap: 4px; }
 .allow-dialog .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.allow-dialog .allow-reason { margin-top: 14px; }
+.allow-dialog .allow-reason input { flex: 1; min-width: 0; }

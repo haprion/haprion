@@ -98,6 +98,15 @@ class TheRowsFromAReading(unittest.TestCase):
         self.assertIn(("Source outbound", "203.0.113.5"), api)
         self.assertEqual({row.href for row in rows if row.title == "api"}, {"/proxies/alpha/api"})
 
+    def test_a_description_is_found_by_its_words(self) -> None:
+        described = dict(SHOP_ENTRY, description="Web shop, ask the web team")
+        rows = search_index.object_entries("alpha", {"objects": [described]})
+
+        self.assertIn(
+            ("Description", "Web shop, ask the web team"),
+            {(row.label, row.value) for row in rows},
+        )
+
     def test_an_older_helper_contributes_names_and_hosts_only(self) -> None:
         older = {
             key: value

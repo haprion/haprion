@@ -1,7 +1,7 @@
 """What the header's search finds, as rows the poller writes (B222).
 
 Each reading the poller makes is turned into the values somebody might search
-for - an object's name, hostnames, VIP and backends, a VIP's address, a
+for - an object's name, hostnames, description, VIP and backends, a VIP's address, a
 certificate's names, a node's name - one row per value. The search page is then
 one query against an index rather than a pass over every document in Python,
 which at ten thousand objects was the difference between milliseconds and most
@@ -128,6 +128,8 @@ def object_entries(cluster: str, result: Mapping[str, Any]) -> list[Entry]:
             ("", name),
             *(("Host", _text(host)) for host in _sequence(entry.get("hostnames"))),
         ]
+        if _text(entry.get("description")):
+            values.append(("Description", _text(entry.get("description"))))
         if vip:
             values.append((f"VIP {_text(vip.get('name'))}", _text(vip.get("address"))))
         if source:

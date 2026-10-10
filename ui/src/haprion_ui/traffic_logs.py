@@ -11,7 +11,7 @@ import heapq
 import json
 import os
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -516,6 +516,14 @@ def _targets(directory: Path, clusters: tuple[str, ...]) -> tuple[list[tuple[str
     return sorted(found)[:MAX_NODES], unavailable
 
 
+def owned_by(entry: Entry, owned: tuple[Sequence[str], Sequence[str]]) -> bool:
+    """Whether a record is one object's: one of its backends, or one of its names before any."""
+
+    backends, hosts = owned
+    host = entry.host.split(":", 1)[0].lower()
+    return entry.backend in backends or host in {name.lower() for name in hosts}
+
+
 def read(
     directory: Path,
     clusters: tuple[str, ...],
@@ -528,7 +536,10 @@ def read(
     to_at: datetime | None = None,
     server_addresses: Mapping[tuple[str, str, str], str] | None = None,
     waf: str = "",
+    owned: tuple[Sequence[str], Sequence[str]] | None = None,
 ) -> Reading:
+    """The mirror files' records, filtered as `read_database` filters the table."""
+
     wanted = (cluster,) if cluster else clusters
     if cluster and cluster not in clusters:
         return Reading((), (), 0, False)
@@ -553,7 +564,9 @@ def read(
     # the newest records are in the newest bytes. Every other filter is a
     # question the whole mirror has to answer.
     #
-    searching = bool(status or substring or waf or from_at is not None or to_at is not None)
+    searching = bool(
+        status or substring or waf or owned is not None or from_at is not None or to_at is not None
+    )
     targets, unavailable = _targets(directory, tuple(wanted))
     entries: list[Entry] = []
     nodes: list[Freshness] = []
@@ -600,6 +613,8 @@ def read(
                     continue
                 if (waf == "hits" and not entry.rule) or (waf == "none" and entry.rule):
                     continue
+                if owned is not None and not owned_by(entry, owned):
+                    continue
                 searchable = (
                     f"{entry.cluster} {entry.node} {entry.client} {entry.method} {entry.host} "
                     f"{entry.path} {entry.frontend} {entry.backend} {entry.server} "
@@ -637,11 +652,17 @@ def read_database(
     to_at: datetime | None = None,
     server_addresses: Mapping[tuple[str, str, str], str] | None = None,
     waf: str = "",
+    owned: tuple[Sequence[str], Sequence[str]] | None = None,
 ) -> Reading:
     """Read indexed rows while retaining the collector's per-node freshness files.
 
     `waf` narrows to the requests an access rule met (`hits`) or did not
     (`none`); empty is every request (Fas 21).
+
+    `owned` narrows to one object (26-10-10): its backends, and its hostnames
+    for the requests refused or redirected before any backend - an access rule,
+    a dynamic block, the WAF - which carry the frontend's name instead. A name
+    is compared without its port and case, as the Host header may carry both.
     """
 
     wanted = (cluster,) if cluster else clusters
@@ -668,6 +689,12 @@ def read_database(
         parameters.extend((status_class * 100, status_class * 100 + 99))
     if substring:
         conditions.append(_search_sql(expression, parameters))
+    if owned is not None:
+        backends, hosts = owned
+        conditions.append(
+            sql.SQL("(backend = any(%s) or split_part(lower(host), ':', 1) = any(%s))")
+        )
+        parameters.extend((list(backends), [host.lower() for host in hosts]))
     if waf == "hits":
         conditions.append(sql.SQL("rule <> ''"))
     elif waf == "none":

@@ -103,10 +103,10 @@ class TheReadingBecomesTheCard(unittest.TestCase):
         #
         edge = next(view for view in overview() if view.cluster == "edge-demo")
 
-        addresses = {source.address: source.used_by for source in edge.sources}
-        self.assertEqual(addresses["192.0.2.25"], "default for VIP public")
-        self.assertEqual(addresses["192.0.2.26"], "default for VIP partner")
-        self.assertEqual(addresses["192.0.2.35"], "named; a site must ask for it")
+        addresses = {source.address: source.name for source in edge.sources}
+        self.assertEqual(addresses["192.0.2.25"], "public")
+        self.assertEqual(addresses["192.0.2.26"], "partner")
+        self.assertEqual(addresses["192.0.2.35"], "outbound")
 
     def test_a_cluster_with_no_source_address_at_all_still_says_none(self) -> None:
         service = next(view for view in overview() if view.cluster == "service-demo")
@@ -500,15 +500,45 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         self.assertNotIn("Node ownership is checked against", page.text)
 
-    def editable_page(self) -> Any:
+    def editable_page(self, objects: Any = None) -> Any:
         """The page as an admin sees it on a cluster it may publish to."""
 
-        with mock.patch("haprion_ui.db.cluster_networks", return_value=demo.network_rows(NOW)):
+        with (
+            mock.patch("haprion_ui.db.cluster_networks", return_value=demo.network_rows(NOW)),
+            mock.patch(
+                "haprion_ui.db.cluster_objects",
+                return_value=demo.object_rows(NOW) if objects is None else objects,
+            ),
+        ):
             client = self.client(
                 replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
             )
             self.sign_in(client)
             return client.get("/network")
+
+    def test_each_address_and_group_names_the_objects_using_it(self) -> None:
+        page = self.editable_page().text
+
+        vips = page.split("Add a virtual address", 1)[0]
+        self.assertIn(
+            '<a href="/proxies/edge-demo/public-web">public-web</a>, '
+            '<a href="/proxies/edge-demo/shop">shop</a>',
+            vips,
+        )
+        self.assertIn('<span class="table-empty">not used</span>', page)
+
+    def test_a_reader_reads_the_names_without_links(self) -> None:
+        self.account = replace(self.account, role="reader")
+        page = self.editable_page().text
+
+        self.assertIn("public-web, shop", page)
+        self.assertNotIn('<a href="/proxies/edge-demo/shop">', page)
+
+    def test_objects_that_could_not_be_read_say_nothing(self) -> None:
+        page = self.editable_page(objects=[]).text
+
+        self.assertNotIn("not used", page)
+        self.assertIn('<td class="editor-used"><span class="table-empty">—</span></td>', page)
 
     def test_an_editable_repository_description_gets_a_fenced_publish_form(self) -> None:
         page = self.editable_page()
@@ -617,7 +647,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         self.assertEqual(page.text.count("192.0.2.21"), 1)
 
     def test_the_spare_rows_line_up_with_the_rows_above_them(self) -> None:
-        """Six cells need six columns.
+        """As many columns as cells, and the same as the table above.
 
         The spare rows carry a TLS cell like the rows above, but their
         colgroup named five columns - so the select landed in the width meant
@@ -625,9 +655,13 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         """
 
         page = self.editable_page()
-        spare = page.text.split("Add a virtual address", 1)[1].split("</table>", 1)[0]
+        above, rest = page.text.split("Add a virtual address", 1)
+        listed = above.rsplit("<colgroup>", 1)[1].split("</colgroup>", 1)[0]
+        spare = rest.split("</table>", 1)[0]
+        row = spare.split("<tr>", 1)[1].split("</tr>", 1)[0]
 
-        self.assertEqual(spare.count("<col "), 6)
+        self.assertEqual(spare.count("<col "), row.count("<td"))
+        self.assertEqual(spare.count("<col "), listed.count("<col "))
         self.assertIn('<col class="col-tls">', spare)
 
     def test_the_blank_rows_are_folded_away_but_still_in_the_form(self) -> None:

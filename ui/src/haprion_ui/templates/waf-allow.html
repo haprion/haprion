@@ -32,6 +32,7 @@
     {% endif %}
     <label><input type="radio" name="scope" value="object"{% if scope == 'object' %} checked{% endif %}> Everywhere on {{ name }}</label>
   </fieldset>
+  <label class="allow-reason">Reason <span class="optional">(optional)</span><input name="reason" value="{{ reason }}" maxlength="200" placeholder="Why this traffic is let through"></label>
   <div class="dialog-buttons"><a class="secondary-button" href="/waf" data-allow-cancel>Cancel</a><button type="submit" class="secondary-button">Allow</button></div>
 </form>
 {% endblock %}

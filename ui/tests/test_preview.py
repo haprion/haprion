@@ -160,6 +160,29 @@ class TheFieldsAddedAfterTheFirstLook(unittest.TestCase):
         self.assertEqual(suggested_cookie(""), "hap_site")
 
 
+class WhatTheObjectIsFor(unittest.TestCase):
+    """`description` (26-10-10): beside the name, absent where nobody wrote one."""
+
+    def test_it_is_written_beside_the_name_and_read_back(self) -> None:
+        written = form(description="  The shop, ask the web team ")
+        document = build_document(written)
+
+        self.assertEqual(list(yaml.safe_load(document))[:3], ["schema", "name", "description"])
+        self.assertEqual(
+            form_from_document(document, networks=())["description"],
+            "The shop, ask the web team",
+        )
+        self.assertIsNone(preview(written, PREVIEW_CLUSTER).problem)
+
+    def test_an_empty_one_is_not_written(self) -> None:
+        self.assertNotIn("description", yaml.safe_load(build_document(form())))
+
+    def test_the_engine_refuses_what_is_not_a_note(self) -> None:
+        result = preview(form(description="x" * 201), PREVIEW_CLUSTER)
+
+        self.assertIn("at most 200", result.problem or "")
+
+
 class TheSourceAddressMayBeChosen(unittest.TestCase):
     """A VIP carries a default source; it is not a rule.
 

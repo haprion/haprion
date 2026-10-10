@@ -83,6 +83,16 @@ class ObjectView:
     # A raw port's servers as written (26-10-06); empty for a site.
     #
     servers: tuple[str, ...] = ()
+    #
+    # What the object is for, from the envelope (26-10-10); empty where nobody
+    # wrote it or the helper did not say.
+    #
+    description: str = ""
+    #
+    # The cluster groups it names as sources, by the generator's rule
+    # (26-10-10); None where the helper did not say.
+    #
+    groups: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +169,12 @@ def _count(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _note(value: Any) -> str:
+    """A note the engine read, or nothing: a helper that did not say, or an unreadable document."""
+
+    return value if isinstance(value, str) else ""
+
+
 def object_view(value: Any) -> ObjectView | None:
     entry = _mapping(value)
     name = entry.get("name")
@@ -204,6 +220,8 @@ def object_view(value: Any) -> ObjectView | None:
         #
         sourced=isinstance(entry.get("source"), Mapping) or protocol in SENDERS_ADDRESS,
         runtime_backends=_names(entry.get("runtime_backends")),
+        description=_note(entry.get("description")),
+        groups=_names(entry.get("groups")),
     )
 
 
@@ -420,6 +438,12 @@ def build_object_detail(
         detail = "This version cannot read the stored document"
     elif stale:
         detail = "The stored objects need a fresh read"
+    elif stored.description:
+        #
+        # What it is for says more than where it is kept, once nothing is
+        # wrong with the reading (26-10-10).
+        #
+        detail = stored.description
     else:
         detail = "Stored in the cluster repository"
 

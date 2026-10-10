@@ -336,5 +336,29 @@ class WhereAnEntryIsServedFrom(unittest.TestCase):
         entry = result["objects"][0]
 
         self.assertEqual(
-            (entry["vip"], entry["servers"], entry["health_checked"]), (None, [], None)
+            (entry["vip"], entry["servers"], entry["health_checked"], entry["description"]),
+            (None, [], None, None),
         )
+
+    def test_the_description_as_the_author_wrote_it(self) -> None:
+        described = SHOP.replace(b"listen:\n", b"description: The web shop\nlisten:\n", 1)
+        result: dict[str, Any] = objects_result(
+            {"managed/proxies/shop.yaml": described}, COMMIT, network=NETWORK, generated_at=TIME
+        )
+
+        self.assertEqual(result["objects"][0]["description"], "The web shop")
+        self.assertEqual(self.entry()["description"], "")
+
+    def test_the_groups_it_names_wherever_it_names_sources(self) -> None:
+        document = SHOP.replace(
+            b"listen:\n",
+            b"allow_from: [office, 198.51.100.0/24, country:SE]\n"
+            b"deny_from: {sources: [vpn]}\nlisten:\n",
+            1,
+        )
+        result: dict[str, Any] = objects_result(
+            {"managed/proxies/shop.yaml": document}, COMMIT, network=NETWORK, generated_at=TIME
+        )
+
+        self.assertEqual(result["objects"][0]["groups"], ["office", "vpn"])
+        self.assertEqual(self.entry()["groups"], [])

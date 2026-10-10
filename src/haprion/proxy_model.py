@@ -467,8 +467,17 @@ COMMON_KEYS = frozenset(
         "rate_limit",
         "dynamic_block",
         "advanced",
+        "description",
     }
 )
+
+#
+# A note a person writes for the next person (26-10-10): what an object is for,
+# why a WAF exception lets its traffic through. One line, as the list and the
+# page show it, and short enough to read there; nothing reads it but people,
+# so nothing about it reaches HAProxy.
+#
+MAX_NOTE = 200
 
 HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
     {
@@ -1007,6 +1016,8 @@ class WafException:
     paths: tuple[str, ...] = ()
     by: str = ""
     at: str = ""
+    reason: str = ""
+    """Why the traffic is let through, as whoever let it through wrote it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1120,6 +1131,9 @@ class Proxy:
 
     waf: Waf | None = None
     """The WAF engine's settings. None, or `mode: off`, means the engine does not see this object."""
+
+    description: str = ""
+    """What the object is for, for whoever opens it next. Nothing generated reads it."""
 
     @property
     def inspected(self) -> Waf | None:
@@ -1772,6 +1786,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         )
 
     listen = _listen(data.get("listen"), f"{name}.listen")
+    description = _note(data.get("description", ""), f"{name}.description")
 
     backends_raw = _mapping(data.get("backends"), f"{name}.backends")
     if not backends_raw:
@@ -1875,6 +1890,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         deny_rules=deny_rules,
         max_request_body=max_request_body,
         waf=waf,
+        description=description,
     )
 
 
@@ -1884,6 +1900,20 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
 # interface draws. A tab is a separator in HAProxy's grammar and is kept.
 #
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _note(value: Any, location: str) -> str:
+    """A note for people: one line of at most MAX_NOTE characters, without control characters."""
+
+    if not isinstance(value, str):
+        raise ModelError(f"{location} must be text")
+    if len(value) > MAX_NOTE:
+        raise ModelError(f"{location} must be at most {MAX_NOTE} characters")
+    if "\n" in value or "\r" in value or "\t" in value or _CONTROL.search(value):
+        raise ModelError(f"{location} must be one line without control characters")
+    if value != value.strip():
+        raise ModelError(f"{location} may not begin or end with spaces")
+    return value
 
 
 def _advanced(
@@ -2789,7 +2819,7 @@ def _waf_path(value: Any, location: str) -> str:
 
 def _waf_exception(value: Any, location: str) -> WafException:
     data = _mapping(value, location)
-    _only_keys(data, {"rule", "field", "paths", "by", "at"}, location)
+    _only_keys(data, {"rule", "field", "paths", "by", "at", "reason"}, location)
     rule = data.get("rule")
     if isinstance(rule, bool) or not isinstance(rule, int) or rule not in WAF_RULE_IDS:
         raise ModelError(f"{location}.rule must be a CRS rule ID, 900000 to 999999")
@@ -2822,7 +2852,10 @@ def _waf_exception(value: Any, location: str) -> WafException:
         at = at.strftime("%Y-%m-%dT%H:%M:%SZ")
     if not isinstance(at, str) or (at and WAF_EXCEPTION_TIME.fullmatch(at) is None):
         raise ModelError(f"{location}.at must be a UTC time such as 2026-10-03T09:10:00Z")
-    return WafException(rule=rule, field=field, paths=tuple(sorted(checked)), by=by, at=at)
+    reason = _note(data.get("reason", ""), f"{location}.reason")
+    return WafException(
+        rule=rule, field=field, paths=tuple(sorted(checked)), by=by, at=at, reason=reason
+    )
 
 
 def _waf(value: Any, location: str) -> Waf | None:

@@ -241,6 +241,32 @@ class ThePage(EditorTestCase):
         self.assertRegex(exception["at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertIsNone(saved["expected_revision"])
 
+    def test_allow_keeps_the_reason_on_one_line(self) -> None:
+        client = self.editor()
+        answer = client.post(
+            "/waf/allow",
+            data={
+                "csrf_token": self.token(client),
+                "cluster": "alpha",
+                "object": "shop",
+                "rule": "942100",
+                "scope": "object",
+                "reason": "  SQL examples\r\n in the docs  ",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(answer.status_code, 303)
+        exception = yaml.safe_load(self.saved[0]["yaml"])["waf"]["exceptions"][0]
+        self.assertEqual(exception["reason"], "SQL examples in the docs")
+        self.assertEqual(list(exception), ["rule", "reason", "by", "at"])
+
+    def test_the_reason_has_a_column_of_its_own(self) -> None:
+        document = LOGGING + "  exceptions: [{rule: 920350, reason: The probe sends no Accept}]\n"
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=objects(document)):
+            listing = self.editor().get("/waf?view=exceptions").text
+        self.assertIn("<th>Where</th><th>Reason</th><th>Added</th>", listing)
+        self.assertIn('title="The probe sends no Accept">The probe sends no Accept</td>', listing)
+
     def test_a_choice_without_its_paths_is_answered_on_the_dialog(self) -> None:
         client = self.editor()
         answer = client.post(

@@ -95,6 +95,20 @@ class AStoredObject(unittest.TestCase):
 
         self.assertEqual(view.stored.document, APP)  # type: ignore[union-attr]
 
+    def test_what_it_is_for_is_said_where_nothing_is_wrong(self) -> None:
+        entry = {
+            "name": "app",
+            "document": APP,
+            "readable": True,
+            "problem": None,
+            "protocol": "https",
+            "hostnames": ["app.example.com"],
+            "description": "The web shop",
+        }
+
+        self.assertEqual(detail(readings=[reading(objects=[entry])]).detail, "The web shop")
+        self.assertEqual(detail().detail, "Stored in the cluster repository")
+
     def test_the_commit_is_shown_short_and_kept_whole(self) -> None:
         view = detail()
 

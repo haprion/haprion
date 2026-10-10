@@ -114,6 +114,11 @@ haprion-deploy -c alpha
 A converged deploy skips nodes already current. See the installation guide for
 [cluster and network configuration](#cluster-definitions).
 
+**Say what an object is for.** *Description* in the form's *Frontend* part is one line of at most
+200 characters - what the service is and who to ask. The object's page shows it under the name,
+and the search finds it. In YAML it is `description:` beside `name:`; nothing generated reads it,
+so a publish that changes only the description deploys the same HAProxy configuration.
+
 ### A pool's servers
 
 The *Servers* field takes one `address:port` or `hostname:port` per line, and two words after
@@ -173,6 +178,10 @@ HAProxy did not answer in time, or the admin socket is missing - reports it, and
 `DRAIN LOST` or `MAINT LOST` in red on that node: the server takes traffic there. Press the button
 again; the deploy itself is not undone. A drained server is not a fault: the Proxies listing does not turn amber for it, and says
 how many are drained or in maintenance when you point at the lamp.
+The dashboard says on each cluster's card how many servers are in drain or maintenance, so one
+left that way is not forgotten; an admin's *Operations* row names the objects, three of them and how
+many more, each linked to its *Servers* card. A state the node keeps but HAProxy does not hold is
+not counted there - that server takes traffic - and is said on the card in red.
 
 ### Addresses, and what to call them
 
@@ -200,6 +209,13 @@ case needs no words; the [`sources` table](#optional-per-cluster-sections) exist
 `unicast_src_ip` is spelled out in full everywhere in this document. It is the node's own address,
 it never moves, and confusing it with a source address produces a cluster that looks correct and
 cannot fail over.
+
+**What uses an address.** *Network* lists, beside each VIP, source address and reachable-from
+group, the objects that use it - three by name, then how many more - so a change to a shared
+address or group shows what it touches before it is saved. A VIP counts the objects served on it,
+a source address the objects that leave from it (its VIP's or one named), and a group the objects
+that name it as a source anywhere: who may reach them, who is refused, an access rule or dynamic
+blocking's exempt. *not used* is a value nothing names; a dash means the objects could not be read.
 
 ### DNS objects
 
@@ -773,7 +789,8 @@ with both empty there is no block. *Window* (`10s`), *Block for* (`30m`) and
 The object's page lists the addresses its block holds, with the nodes holding
 each and the time left; an admin ticks them and presses *Unblock*. The
 dashboard says on the cluster's card how many addresses are blocked, and an
-admin's *Operations* row names the objects with a link to each.
+admin's *Operations* row names the objects, three of them and how many more,
+with a link to each.
 
 The same in the object's YAML:
 
@@ -857,6 +874,7 @@ waf:
     - rule: 942100         # a CRS rule ID
       field: ARGS:q        # optional: one part of the request; absent = all of it
       paths: [/search]     # optional: exact paths; absent = every path
+      reason: SQL examples in the docs  # optional: why, one line of at most 200 characters
       by: admin            # who made it, and when (the WAF page fills these in)
       at: 2026-10-03T09:10:00Z
   large_bodies: [/upload]  # optional: paths where a body past the buffer is expected
@@ -887,7 +905,9 @@ are compared exactly, after the engine decodes and normalises the path:
 are not. Without `field` the rule is off for the whole request on those paths;
 without `paths` on every path; without either, on the whole object. The rules
 that decide and report rather than detect (CRS 949xxx, 959xxx, 980xxx) cannot be
-excepted - that would turn the engine off. A field name with characters other
+excepted - that would turn the engine off. *Allow* takes an optional *Reason*, which the
+exceptions list on *WAF logs* shows in a column of its own: why the traffic is let through
+outlives the findings that led to it. A field name with characters other
 than letters, digits and `_ . - [ ]` cannot be named; except the path instead.
 `exceptions` came with engine API 13 and replaced engine API 12's
 `exclude_rules`, which is refused with a message saying so. `large_bodies`, the
@@ -2056,6 +2076,12 @@ default, at most 10 000). A column heading reorders **those rows**; it does not 
 the database for another order, so sorting on *Bytes* shows the largest of the
 newest matches, not the largest of the week. Each row shows the time, cluster and
 node, client, request, status, destination and size, and nothing more.
+
+An object's page links to its own requests: *Traffic log* and *WAF logs* on its
+*Metrics* card open the page narrowed to that object, said above the table with a
+link back to all of them. An object's requests are those to its backends, and those
+for its hostnames that never reached one - refused by an access rule, dynamic
+blocking or the WAF, or redirected.
 
 That is deliberate. Aggregation over time, dashboards, alerting, long retention
 and correlation with other systems are what dedicated log platforms such as Loki

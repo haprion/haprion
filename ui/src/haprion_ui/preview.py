@@ -118,6 +118,10 @@ DEFAULTS = {
     # a value that can be saved by not being looked at.
     #
     "hostnames": "",
+    #
+    # What the object is for (26-10-10): nobody's default, so empty.
+    #
+    "description": "",
     "protocol": "https",
     "tcp_port": "",
     "vip": "",
@@ -835,6 +839,12 @@ def build_document(form: dict[str, object]) -> str:
     #
     backend_name = text("backend") or text("name")
     document: dict[str, object] = {"schema": 1, "name": text("name")}
+    #
+    # Beside the name, as what the object is; absent rather than empty, so an
+    # object nobody described reads as it did before the field existed.
+    #
+    if text("description"):
+        document["description"] = text("description")
     written = [name for name in hostnames if name]
     if protocol in OWN_PORT:
         #
@@ -947,7 +957,7 @@ def build_document(form: dict[str, object]) -> str:
     return dump_document(document)
 
 
-WAF_EXCEPTION_KEYS = ("rule", "field", "paths", "by", "at")
+WAF_EXCEPTION_KEYS = ("rule", "field", "paths", "reason", "by", "at")
 
 
 def canonical_waf_exception(value: Any) -> Any:
@@ -960,7 +970,7 @@ def canonical_waf_exception(value: Any) -> Any:
     if not isinstance(value, Mapping):
         return value
     out: dict[str, Any] = {"rule": value.get("rule")}
-    for key in ("field", "paths", "by", "at"):
+    for key in WAF_EXCEPTION_KEYS[1:]:
         item = value.get(key)
         #
         # As the engine reads it: YAML's unquoted time is the same value as the
@@ -1629,6 +1639,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
 
     return {
         "name": str(data.get("name", "") or ""),
+        "description": str(data.get("description", "") or ""),
         "hostnames": ", ".join(written),
         "protocol": protocol,
         "tcp_port": str(listen.get("port", "") or ""),

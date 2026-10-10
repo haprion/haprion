@@ -99,6 +99,7 @@ from haprion_ui import (
     dns_profile_form,
     features,
     health,
+    held_servers,
     history,
     jobs,
     location_data,
@@ -795,6 +796,11 @@ def build_router(config: Config) -> APIRouter:
                     for cluster in clusters
                     if (counted := blocked.cluster_counts(status_rows, cluster=cluster))
                 },
+                #
+                # Servers somebody took out of service, per cluster and object
+                # (26-10-10): said beside the blocks, linked for an admin.
+                #
+                "held_servers": _held_servers(request, config, clusters, status_rows),
                 "section": "dashboard",
                 "demo_fixture": config.demo_fixture,
                 #
@@ -1962,6 +1968,11 @@ def build_router(config: Config) -> APIRouter:
                 "traffic_chosen": chosen.key,
                 **_traffic_marks(request, marked),
                 #
+                # The object's own traffic and WAF requests are one link away
+                # (26-10-10), where there is a traffic log to open.
+                #
+                "traffic_logs_enabled": config.traffic_logs.enabled,
+                #
                 # More than one backend is the only case where naming them helps.
                 # With one, the name is the object's own backend written twice
                 # in a row and answers nothing the page has not said.
@@ -2483,6 +2494,14 @@ def build_router(config: Config) -> APIRouter:
         selected_waf = "hits" if waf_page else request.query_params.get("waf", "")[:4]
         if selected_waf not in ("", "hits", "none"):
             selected_waf = ""
+        #
+        # One object (26-10-10), from its own page: only with its cluster, as a
+        # name is an object only within one.
+        #
+        selected_object = request.query_params.get("object", "")[:40]
+        if not selected_cluster or not proxy_model.NAME.fullmatch(selected_object):
+            selected_object = ""
+        owned: tuple[tuple[str, ...], tuple[str, ...]] | None = None
         now = datetime.now(UTC)
         local_now = metrics.shown(now)
         local_earliest = metrics.wall(
@@ -2517,6 +2536,24 @@ def build_router(config: Config) -> APIRouter:
             _, object_rows = read_source(request, config, OBJECTS_SOURCE)
             for object_row in object_rows:
                 parsed = []
+                if selected_object and object_row.cluster == selected_cluster:
+                    #
+                    # An object the cluster does not have matches nothing,
+                    # rather than every request.
+                    #
+                    found = next(
+                        (
+                            view
+                            for view in objects.cluster_object_views(object_row)
+                            if view.name == selected_object
+                        ),
+                        None,
+                    )
+                    owned = (
+                        (tuple(found.runtime_backends or ()), found.hostnames)
+                        if found is not None
+                        else ((), ())
+                    )
                 for obj in objects.cluster_object_views(object_row):
                     if not obj.readable:
                         continue
@@ -2547,6 +2584,7 @@ def build_router(config: Config) -> APIRouter:
                     to_at=to_at,
                     server_addresses=server_addresses,
                     waf=selected_waf,
+                    owned=(owned or ((), ())) if selected_object else None,
                 )
         else:
             reading = traffic_logs.Reading((), (), 0, False)
@@ -2569,6 +2607,7 @@ def build_router(config: Config) -> APIRouter:
                 ("to", selected_to),
                 ("waf", "" if waf_page else selected_waf),
                 ("view", "requests" if waf_page else ""),
+                ("object", selected_object),
             )
             if value
         }
@@ -2616,6 +2655,9 @@ def build_router(config: Config) -> APIRouter:
                 "section": "waf" if waf_page else "logs",
                 "waf_page": waf_page,
                 "selected_waf": selected_waf,
+                "selected_object": selected_object,
+                "all_objects": ("/waf?" if waf_page else "/logs?")
+                + urlencode({key: value for key, value in filters.items() if key != "object"}),
                 "management_writes": config.management_writes,
                 "enabled": config.traffic_logs.enabled,
                 "reading": reading,
@@ -9053,6 +9095,35 @@ class Package:
         return hashlib.sha256(encoded).hexdigest()
 
 
+def _held_servers(
+    request: Request, config: Config, clusters: Iterable[str], status_rows: Iterable[Any]
+) -> dict[str, held_servers.HeldServers]:
+    """Each cluster's servers in drain or maintenance, by object.
+
+    The objects are read only for a cluster where a node holds a server: telling
+    a pool's owner needs them, and at ten thousand objects that read is the
+    cost of the whole dashboard (2026-10-01) for a line that is usually absent.
+    """
+
+    rows = list(status_rows)
+    held = {
+        cluster: found
+        for cluster in clusters
+        if (found := held_servers.held_backends(rows, cluster=cluster))
+    }
+    if not held:
+        return {}
+    _, object_rows = read_source(request, config, OBJECTS_SOURCE)
+    stored = {reading.cluster: reading for reading in object_rows}
+    counted = {
+        cluster: held_servers.by_object(
+            found, health.backend_owners(objects.cluster_object_views(stored.get(cluster)))
+        )
+        for cluster, found in held.items()
+    }
+    return {cluster: found for cluster, found in counted.items() if found is not None}
+
+
 def _pending_count(request: Request, config: Config, cluster: str) -> int:
     """How many saved changes one cluster has, each cleared once its publish is read (B257)."""
 
@@ -10035,6 +10106,17 @@ def _network_page(request: Request, config: Config) -> Response:
         stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
     )
     serving = {view.cluster: view for view in board.clusters}
+    #
+    # Which objects use each VIP, source and group (26-10-10), from the stored
+    # objects as the helper read them. A cluster whose objects could not be
+    # read says nothing rather than "not used".
+    #
+    _, object_rows = read_source(request, config, OBJECTS_SOURCE)
+    used = {
+        reading.cluster: network.usage(objects.cluster_object_views(reading))
+        for reading in object_rows
+        if reading.outcome == "done" and not reading.poll_error
+    }
     awaiting = network.awaiting_deploy(recent)
     busy = jobs.in_flight(recent)
     failures = jobs.last_failure(recent)
@@ -10057,6 +10139,7 @@ def _network_page(request: Request, config: Config) -> Response:
             "csrf_token": auth.csrf_token(token),
             "section": "network",
             "clusters": overview,
+            "usage": used,
             "saved_network": saved_network,
             "awaiting_deploy": awaiting,
             "deployment": state,
@@ -10496,6 +10579,11 @@ def _waf_allow(request: Request, config: Config, form: Any) -> Response:
     # empty segment - is not offered; the object or the field still is.
     #
     paths = [path for path in dict.fromkeys(offered) if proxy_model.WAF_PATH.fullmatch(path)]
+    #
+    # Why, in one line (26-10-10): a pasted line break becomes a space, and
+    # the engine refuses whatever else a note may not hold, in its own words.
+    #
+    reason = " ".join(str(values.get("reason", ""))[: proxy_model.MAX_NOTE].split())
     problem = ""
     if form is not None:
         chosen = str(values.get("scope", ""))
@@ -10508,6 +10596,7 @@ def _waf_allow(request: Request, config: Config, form: Any) -> Response:
                 paths=[path for path in values.getlist("chosen_path") if path in paths],
                 by=session.username,
                 at=at,
+                reason=reason,
             )
         except ValueError as exc:
             problem = str(exc)
@@ -10553,6 +10642,7 @@ def _waf_allow(request: Request, config: Config, form: Any) -> Response:
             else f"Rule {rule}",
             "severity": catalog.severity if catalog is not None else "",
             "matched": str(values.get("matched", ""))[:1024],
+            "reason": reason,
             "scope": str(values.get("scope", ""))
             or (
                 "field_paths"

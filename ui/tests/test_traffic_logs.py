@@ -652,6 +652,33 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertEqual(everything.count("log-rule"), 1)
         self.assertIn('href="/logs?waf=hits&amp;sort=', hits)
 
+    def test_one_object_is_its_backends_and_its_names_before_any(self) -> None:
+        self.healthy_meta()
+        reading = object_reading()
+        entry = dict(reading.result["objects"][0], runtime_backends=["sample"])
+        objects = (replace(reading, result=dict(reading.result, objects=[entry])),)
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(record(request=1, path="/served", backend="sample"))
+            mirror.write(
+                record(
+                    request=2, path="/refused", host="Service.Example.com:443", backend="fe-https"
+                )
+            )
+            mirror.write(record(request=3, path="/other", backend="be-app"))
+
+        page = self.page(objects=objects, query="?cluster=alpha&object=sample-proxy")
+        unknown = self.page(objects=objects, query="?cluster=alpha&object=gone")
+        unscoped = self.page(objects=objects, query="?object=sample-proxy")
+
+        self.assertIn(">/served<", page)
+        self.assertIn(">/refused<", page)
+        self.assertNotIn(">/other<", page)
+        self.assertIn('<input type="hidden" name="object" value="sample-proxy">', page)
+        self.assertIn('Only <strong>sample-proxy</strong> · <a href="/logs?cluster=alpha">', page)
+        self.assertIn('href="/logs?cluster=alpha&amp;object=sample-proxy&amp;sort=', page)
+        self.assertNotIn(">/served<", unknown, "an object the cluster lacks matches nothing")
+        self.assertIn(">/other<", unscoped, "a name without its cluster is no object")
+
     def test_a_heading_reorders_the_rows_and_keeps_the_filter(self) -> None:
         self.healthy_meta()
         with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:

@@ -105,6 +105,55 @@ class TheSmallestUsableObject(unittest.TestCase):
         self.assertIn("must match the file", str(caught.exception))
 
 
+class ANoteForWhoeverComesNext(unittest.TestCase):
+    """`description` on the object and `reason` on a WAF exception (26-10-10)."""
+
+    def test_a_description_reads_and_is_empty_where_nobody_wrote_one(self) -> None:
+        described = load_proxy(
+            "shop", with_lines(("listen:", "description: The shop, ask the web team\nlisten:"))
+        )
+
+        self.assertEqual("The shop, ask the web team", described.description)
+        self.assertEqual("", load_proxy("shop", MINIMAL).description)
+
+    def test_a_description_is_one_short_line(self) -> None:
+        for value, word in (
+            ("[a list]", "must be text"),
+            ("'" + "x" * 201 + "'", "at most 200"),
+            ('"two\\nlines"', "one line"),
+            ('"bell\\a"', "one line"),
+            ("' padded'", "begin or end"),
+        ):
+            with self.subTest(value), self.assertRaises(ModelError) as raised:
+                load_proxy("shop", with_lines(("listen:", f"description: {value}\nlisten:")))
+            self.assertIn(word, str(raised.exception))
+
+    def test_a_waf_exception_keeps_its_reason(self) -> None:
+        waf = load_proxy(
+            "shop",
+            with_lines(
+                (
+                    "routes:",
+                    "waf:\n  exceptions:\n    - {rule: 942100, reason: SQL examples in the docs}\n"
+                    "routes:",
+                )
+            ),
+        ).waf
+
+        self.assertEqual("SQL examples in the docs", waf.exceptions[0].reason if waf else None)
+
+    def test_a_reason_is_held_to_the_same_line(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop",
+                with_lines(
+                    ("routes:", "waf:\n  exceptions:\n    - {rule: 942100, reason: [x]}\nroutes:")
+                ),
+            )
+
+        self.assertIn("exceptions[0].reason must be text", str(raised.exception))
+
+
 class RoutesAndPaths(unittest.TestCase):
     def test_a_route_naming_no_backend_is_refused(self) -> None:
         with self.assertRaises(ModelError) as caught:

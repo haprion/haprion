@@ -193,6 +193,7 @@ class ObjectException:
     paths: tuple[str, ...]
     by: str
     at: str
+    reason: str = ""
 
     def covers(self, rule: int, field: str, paths: Iterable[str]) -> bool:
         """Whether this lets the rule through wherever it was found."""
@@ -230,6 +231,7 @@ def _exceptions_from(block: Mapping[str, Any]) -> tuple[ObjectException, ...]:
                 paths=tuple(str(p) for p in paths) if isinstance(paths, list) else (),
                 by=str(item.get("by", "") or ""),
                 at=str(item.get("at", "") or ""),
+                reason=str(item.get("reason", "") or ""),
             )
         )
     return tuple(found)
@@ -509,9 +511,16 @@ SCOPES = ("field_paths", "field", "paths", "object")
 
 
 def exception_for(
-    scope: str, *, rule: int, field: str, paths: Iterable[str], by: str, at: str
+    scope: str,
+    *,
+    rule: int,
+    field: str,
+    paths: Iterable[str],
+    by: str,
+    at: str,
+    reason: str = "",
 ) -> dict[str, Any]:
-    """The exception a choice in the Allow dialog makes."""
+    """The exception a choice in the Allow dialog makes, with why where somebody said."""
 
     if scope not in SCOPES or (scope.startswith("field") and not field):
         raise ValueError("choose where to let it through")
@@ -523,6 +532,8 @@ def exception_for(
         exception["field"] = field
     if scope in ("field_paths", "paths"):
         exception["paths"] = chosen
+    if reason:
+        exception["reason"] = reason
     exception["by"] = by
     exception["at"] = at
     return exception

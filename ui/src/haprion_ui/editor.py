@@ -287,6 +287,7 @@ class ObjectForm(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     name: Annotated[str, StringConstraints(max_length=64)] = ""
+    description: Annotated[str, StringConstraints(max_length=200)] = ""
     hostnames: Annotated[str, StringConstraints(max_length=2048)] = ""
     protocol: Annotated[str, StringConstraints(max_length=8)] = "https"
     tcp_port: Annotated[str, StringConstraints(max_length=5)] = ""

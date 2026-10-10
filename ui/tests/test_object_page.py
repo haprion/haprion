@@ -283,6 +283,23 @@ class TheFixtureDescribesARealCluster(LoginTestCase):
         self.assertNotIn("legacy-tcp", stored)
 
 
+class TheObjectsOwnLogs(DraftReading):
+    def test_the_objects_own_requests_are_a_link_away(self) -> None:
+        logs = replace(configuration().traffic_logs, enabled=True)
+        client = self.client(replace(configuration(), demo_fixture=True, traffic_logs=logs))
+        self.sign_in(client)
+
+        page = client.get("/proxies/edge-demo/public-web").text
+
+        self.assertIn(
+            '<a href="/logs?cluster=edge-demo&amp;object=public-web">Traffic log</a>', page
+        )
+        self.assertIn(
+            '<a href="/waf?view=requests&amp;cluster=edge-demo&amp;object=public-web">WAF logs</a>',
+            page,
+        )
+
+
 class TheDraftOnTheObjectPage(DraftReading):
     """A draft is why this page exists after a save, so it has to be on it.
 

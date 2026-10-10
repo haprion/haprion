@@ -104,6 +104,7 @@
           {% for certificate in choices.certificates %}<option value="{{ certificate }}"{% if form.certificate == certificate %} selected{% endif %}>{{ certificate }}</option>{% endfor %}
         </select>
       </label>
+      <label class="field-note"><span>Description <span class="optional">(optional)</span></span><input name="description" value="{{ form.description }}" maxlength="200" placeholder="What it is for, and who to ask"></label>
     </div>
 
     <div class="form-groups">

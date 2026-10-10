@@ -66,13 +66,12 @@ class SourceView:
     configuration separates the address a VIP pairs with from the extra ones an
     object may ask for by name, because they are decided in different places -
     but a page that showed only the second told a cluster with a paired source
-    that it had none. The distinction belongs in a column, not in whether the
-    row exists.
+    that it had none. A paired one carries its VIP's name; which objects leave
+    from either kind is the page's *Used by* (`Usage`), not a word about the kind.
     """
 
     name: str
     address: str
-    used_by: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +237,40 @@ def deployment(
     return Deployment(f"{version} deployed" if version else "Deployed", "healthy", False, None)
 
 
+@dataclass(frozen=True, slots=True)
+class Usage:
+    """Which objects use each VIP, source address and group of one cluster (26-10-10).
+
+    From the objects helper, which works each out with the generator's rule: a
+    VIP by name, a source by the address the object leaves from - so a VIP's
+    paired source and a named one are answered alike - and the groups an object
+    names wherever it names sources. Objects in name order.
+    """
+
+    vips: Mapping[str, tuple[str, ...]]
+    sources: Mapping[str, tuple[str, ...]]
+    groups: Mapping[str, tuple[str, ...]]
+
+
+def usage(views: Iterable[Any]) -> Usage:
+    vips: dict[str, list[str]] = {}
+    sources: dict[str, list[str]] = {}
+    groups: dict[str, list[str]] = {}
+    for view in sorted(views, key=lambda item: item.name):
+        addresses = view.addresses
+        if addresses is not None:
+            vips.setdefault(addresses.vip_name, []).append(view.name)
+            if addresses.source is not None and addresses.source.address:
+                sources.setdefault(addresses.source.address, []).append(view.name)
+        for group in view.groups or ():
+            groups.setdefault(group, []).append(view.name)
+    return Usage(
+        vips={key: tuple(names) for key, names in vips.items()},
+        sources={key: tuple(names) for key, names in sources.items()},
+        groups={key: tuple(names) for key, names in groups.items()},
+    )
+
+
 def _text(value: Any, fallback: str = "—") -> str:
     return value if isinstance(value, str) and value else fallback
 
@@ -276,7 +309,6 @@ def _paired_sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
         SourceView(
             name=_text(row.get("name")),
             address=_text(row.get("source")),
-            used_by=f"default for VIP {_text(row.get('name'))}",
         )
         for row in _rows(result, "vips")
         if isinstance(row.get("source"), str) and row.get("source")
@@ -288,7 +320,6 @@ def _sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
         SourceView(
             name=_text(row.get("name")),
             address=_text(row.get("address")),
-            used_by="named; a site must ask for it",
         )
         for row in _rows(result, "sources")
     )

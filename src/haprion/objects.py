@@ -29,7 +29,7 @@ from pathlib import Path, PurePosixPath
 
 from haprion import geo
 from haprion.config import ConfigError, Network
-from haprion.generate import GeneratorError, runtime_backends, source_of, vip_of
+from haprion.generate import GeneratorError, groups_named, runtime_backends, source_of, vip_of
 from haprion.proxy_model import (
     MAX_MODEL_BYTES,
     SENDERS_ADDRESS,
@@ -193,6 +193,18 @@ def _entry(name: str, document: str, network: Network | None = None) -> dict[str
         # interface cannot tell whose a backend is from its name any more.
         #
         "runtime_backends": None,
+        #
+        # Added 2026-10-10, on the same terms: what the object is for, as its
+        # author wrote it; empty where nobody did, null where the document
+        # could not be read.
+        #
+        "description": None,
+        #
+        # And the cluster groups it names as sources (allow_from, deny_from,
+        # access rules, dynamic blocking's exempt), by the generator's rule:
+        # the network page lists each group's users from it.
+        #
+        "groups": None,
     }
     try:
         proxy = load_proxy(name, document.encode("utf-8"))
@@ -210,6 +222,8 @@ def _entry(name: str, document: str, network: Network | None = None) -> dict[str
     entry["hostnames"] = sorted(proxy.hostnames)
     entry["backend_count"] = len(proxy.backends)
     entry["runtime_backends"] = runtime_backends(proxy)
+    entry["description"] = proxy.description
+    entry["groups"] = list(groups_named(proxy))
     #
     # A property of this object, not a second object. An https listener that
     # redirects plain HTTP produces routing in two generated frontends - the

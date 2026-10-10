@@ -367,11 +367,13 @@ GROUPS: Mapping[str, FormGroup] = {
 }
 
 #
-# What is never folded: the fields an object cannot be written without, and the
-# ones whose meaning changes what the rest of the form asks.
+# What is never folded: the fields an object cannot be written without, the
+# ones whose meaning changes what the rest of the form asks, and what the
+# object is for (26-10-10), which is read first.
 #
 ALWAYS_SHOWN = (
     "name",
+    "description",
     "hostnames",
     "protocol",
     "tcp_port",

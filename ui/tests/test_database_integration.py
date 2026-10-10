@@ -1113,6 +1113,26 @@ class ARealDatabase(unittest.TestCase):
         self.assertIn(
             ("rule.example.com", "block-admin:deny"), [(e.host, e.rule) for e in hits.entries]
         )
+        #
+        # One object's requests (26-10-10): its backend, or its name before any.
+        #
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+        ):
+            by_name = traffic_logs.read_database(
+                connection, Path(temporary), ("alpha",), owned=((), ("Rule.Example.com",))
+            )
+            by_backend = traffic_logs.read_database(
+                connection, Path(temporary), ("alpha",), owned=(("b",), ())
+            )
+            nothing = traffic_logs.read_database(
+                connection, Path(temporary), ("alpha",), owned=((), ())
+            )
+        self.assertEqual({entry.host for entry in by_name.entries}, {"rule.example.com"})
+        self.assertTrue(by_backend.entries)
+        self.assertTrue(all(entry.backend == "b" for entry in by_backend.entries))
+        self.assertEqual(nothing.entries, ())
         self.assertTrue(all(entry.rule for entry in hits.entries))
         self.assertTrue(all(not entry.rule for entry in none.entries))
         with self.connect() as connection:

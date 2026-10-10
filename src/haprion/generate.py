@@ -1053,6 +1053,25 @@ def _refuse_uncovered_hostnames(
             )
 
 
+def groups_named(proxy: Proxy) -> tuple[str, ...]:
+    """The cluster groups an object names anywhere it names sources, in name order.
+
+    Every entry that is neither a range nor a country is a group's name: what
+    the generator resolves against the network, and what the network page
+    lists as the group's users (26-10-10).
+    """
+
+    named = (
+        *proxy.allow_from,
+        *(proxy.deny_from.sources if proxy.deny_from is not None else ()),
+        *(source for rule in proxy.deny_rules for source in rule.sources),
+        *(proxy.dynamic_block.exempt if proxy.dynamic_block is not None else ()),
+    )
+    return tuple(
+        sorted({name for name in named if not is_range(name) and not geo.is_country(name)})
+    )
+
+
 def _refuse_unknown_networks(
     proxies: Sequence[Proxy], networks: Mapping[str, Sequence[str]]
 ) -> None:
@@ -1065,14 +1084,8 @@ def _refuse_unknown_networks(
     """
 
     for proxy in proxies:
-        named = [
-            *proxy.allow_from,
-            *(proxy.deny_from.sources if proxy.deny_from is not None else ()),
-            *(source for rule in proxy.deny_rules for source in rule.sources),
-            *(proxy.dynamic_block.exempt if proxy.dynamic_block is not None else ()),
-        ]
-        for name in named:
-            if is_range(name) or geo.is_country(name) or name in networks:
+        for name in groups_named(proxy):
+            if name in networks:
                 continue
             known = ", ".join(sorted(networks)) or "none"
             raise GeneratorError(

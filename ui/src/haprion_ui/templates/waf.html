@@ -58,13 +58,14 @@
 <section class="cluster-card">
   {% if exceptions %}
   <div class="table-scroll"><table class="node-table exception-table">
-    <thead><tr><th>Object</th><th>Finding</th><th>Where</th><th>Added</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+    <thead><tr><th>Object</th><th>Finding</th><th>Where</th><th>Reason</th><th>Added</th><th><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>
       {% for row in exceptions %}
       <tr>
         <td><strong>{{ row.name }}</strong>{% if clusters | length > 1 %} <span class="exception-cluster">{{ row.cluster }}</span>{% endif %}</td>
         <td title="{{ row.message }}">{{ finding_what(row.kind, row.explanation, row.severity, row.message) }}</td>
         <td title="{{ where(row.exception, row.name) }}">{{ where(row.exception, row.name) }}</td>
+        <td{% if row.exception.reason %} title="{{ row.exception.reason }}">{{ row.exception.reason }}{% else %}><span class="table-empty">—</span>{% endif %}</td>
         <td><span class="users-date">{% if row.exception.by %}{{ row.exception.by }}{% endif %}{% if row.exception.by and row.exception.at %} · {% endif %}{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">In draft</span>{% endif %}</td>
         <td>{% if can_write %}<form method="post" action="/waf/exceptions/remove" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

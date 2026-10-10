@@ -142,6 +142,15 @@ def _counters(result: Mapping[str, Any]) -> str:
     return "Off" if port is None else f"Port {port}"
 
 
+#
+# What makes a row's settings not yet what its nodes run: publishing them, on
+# their own or with other changes, and deploying. Another job on the cluster -
+# a backup schedule switched off with its feature, a drain - holds the queue's
+# slot for a second but says nothing about logs and metrics (26-10-10).
+#
+SETTINGS_OPERATIONS = frozenset({"cluster_settings_publish", "changes_publish", "deploy"})
+
+
 def card_views(
     clusters: Sequence[str],
     rows: Iterable[Any],

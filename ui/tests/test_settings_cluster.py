@@ -127,6 +127,31 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         self.assertNotIn("deploy to activate", edge)
         self.assertIn("/static/waiting.js", page)
 
+    def test_a_job_that_is_not_the_settings_is_not_shown_on_their_row(self) -> None:
+        """Switching node backups off queued `backup_schedule`, and the row said so (26-10-10)."""
+
+        patch = mock.patch(
+            "haprion_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+        recent = mock.patch(
+            "haprion_ui.db.recent_jobs",
+            return_value=[self.job("backup_schedule", "edge-demo", state="pending")],
+        )
+        recent.start()
+        self.addCleanup(recent.stop)
+        self.account = replace(self.account, role="admin")
+        client = self.client(
+            replace(configuration(), management_writes=True, clusters=("edge-demo", "service-demo"))
+        )
+        self.sign_in(client)
+        card = client.get("/settings").text.split('id="logs-metrics"')[1].split("</section>")[0]
+        edge = next(row for row in card.split("<tr")[1:] if "/settings/clusters/edge-demo" in row)
+        self.assertNotIn("data-busy", edge)
+        self.assertNotIn("backup schedule", edge)
+        self.assertIn(">Active<", edge)
+
 
 class SettingsClusterTestCase(QueueRouteTestCase):
     """The settings page with the demo readings, and its form posted."""

@@ -22,7 +22,7 @@ every failure. See B44.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -903,8 +903,8 @@ def certificate_in_flight(jobs: Iterable[Job]) -> str | None:
     return None
 
 
-def in_flight(jobs: Iterable[Job]) -> dict[str, str]:
-    """What each cluster is busy with, by cluster.
+def in_flight(jobs: Iterable[Job], operations: Collection[str] | None = None) -> dict[str, str]:
+    """What each cluster is busy with, by cluster - or only with these operations.
 
     One entry at most per cluster, because the queue permits one pending job per
     cluster - which is what lets a page draw this as a single state rather than
@@ -926,6 +926,8 @@ def in_flight(jobs: Iterable[Job]) -> dict[str, str]:
             #
             continue
         if job.state not in {"pending", "running"} or job.cluster in busy:
+            continue
+        if operations is not None and job.operation not in operations:
             continue
         busy[job.cluster] = running_label(job)
     return busy

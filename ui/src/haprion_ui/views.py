@@ -3977,7 +3977,7 @@ def build_router(config: Config) -> APIRouter:
                 "cluster_settings": cluster_settings_page.card_views(
                     *read_source(request, config, SETTINGS_SOURCE),
                     waiting=network.awaiting_deploy(recent, part="settings"),
-                    running=jobs.in_flight(recent),
+                    running=jobs.in_flight(recent, cluster_settings_page.SETTINGS_OPERATIONS),
                 ),
                 "cluster_nodes": cluster_nodes.card_rows(
                     *read_source(request, config, STATUS_SOURCE)

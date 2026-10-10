@@ -176,8 +176,8 @@ marker="# haprion platform"
 # satisfies without the line this one needs - and the step then reports ok while
 # having done nothing. Measured on 2026-08-28.
 #
-ident_line="haproxy_manager_migration   root   ${DB_MIGRATION_ROLE}"
-hba_line="local   ${DB_NAME}   ${DB_MIGRATION_ROLE}   peer   map=haproxy_manager_migration"
+ident_line="haprion_migration   root   ${DB_MIGRATION_ROLE}"
+hba_line="local   ${DB_NAME}   ${DB_MIGRATION_ROLE}   peer   map=haprion_migration"
 
 if grep -qF "$ident_line" "$ident"; then
     log "  ok       ${ident}  (${DB_MIGRATION_ROLE})"

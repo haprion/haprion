@@ -3814,17 +3814,11 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         #
-        # Back on the row when one certificate was changed; a selection of
-        # several has no single row to stand on.
+        # Back on the list as it was, also for one certificate: the change is
+        # made from the selection, where no row was open, and the row's state
+        # column follows the job (like a deletion or a renewal).
         #
-        named = payload.get("certificates")
-        opened = named[0] if isinstance(named, list) and len(named) == 1 else ""
-        return RedirectResponse(
-            f"/certificates?view=registry&open={opened}"
-            if opened
-            else "/certificates?view=registry",
-            status_code=303,
-        )
+        return RedirectResponse("/certificates?view=registry", status_code=303)
 
     # - Receivers (B142, 2026-09-18) ------------------------------------------
 

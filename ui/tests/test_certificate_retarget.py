@@ -168,7 +168,6 @@ class Confirming(RetargetRouteTestCase):
             receivers=("lb-01",),
         )
         self.assertEqual(response.status_code, 303)
-        # Two certificates changed: no single row to land on.
         self.assertEqual(response.headers["location"], "/certificates?view=registry")
         (job,) = self.queued
         self.assertEqual(job["operation"], "cert_target")
@@ -183,6 +182,16 @@ class Confirming(RetargetRouteTestCase):
             },
         )
         self.assertIn("queue_job", self.audit)
+
+    def test_one_certificate_lands_on_the_list_with_no_row_opened(self) -> None:
+        # The change is made from the selection, where no row was open
+        # (26-10-10: the row opened after every publish or removal).
+        for action, certificate in (("add", "example.com"), ("remove", "imported.example")):
+            response = self.confirm(
+                self.writing_client(), action, certificate, receivers=("lb-01",)
+            )
+            self.assertEqual(response.status_code, 303, response.text)
+            self.assertEqual(response.headers["location"], "/certificates?view=registry")
 
     def test_an_added_receiver_carries_its_format_and_a_removal_never_does(self) -> None:
         response = self.confirm(

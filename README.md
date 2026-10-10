@@ -68,6 +68,38 @@ that is the state turning the switch off returns to, so it is a rollback rather 
 What the product deliberately leaves to others is listed under
 [What it does not do](docs/user-manual.md#what-it-does-not-do).
 
+## How it differs from what you might expect
+
+Coming from another load-balancer interface, a few choices here are deliberate and may surprise:
+
+- **The manager is a machine of its own.** It is not one of the HAProxy nodes: a separate host
+  holds the configuration, the releases, the keys and the web interface, and manages one or more
+  clusters of two to eight nodes - so it is one more machine to run. It is not in the traffic
+  path: without it the nodes go on serving and keepalived still moves the virtual address, and
+  what stops is changing anything ([what keeps working](docs/DISASTER-RECOVERY.md)).
+- **The nodes fetch; the manager never pushes.** Every key the manager holds on a node can only
+  ask it to pull, and each node validates a release before it switches to it.
+- **Saving, publishing and deploying are three steps.** A change becomes a version when it is
+  published; a deploy rolls out exactly the version the person saw, the nodes that do not hold
+  the virtual address first and its owner last.
+- **The command line is the engine.** The web interface calls the same commands and has no
+  configuration path of its own, and every write is a job with a recorded outcome.
+- **Writing is off until it is turned on.** A new installation reads only; `management_writes`
+  turns writing on, and turning it off again is a rollback.
+- **The screen never asks the nodes.** What the interface shows comes from a poller, so a page
+  load cannot overload or hang on a node.
+- **Certificates are renewed by their own clients.** Certbot and the NDES enrollment renew on
+  their own timers; the manager issues, imports and distributes what they renew.
+- **Beyond HAProxy, optional capabilities are switched on per installation.** Distributing
+  certificates to other services - hosts that fetch them over rsync, SFTP or HTTPS - and node
+  backups are off on a new installation; node backups include restoring a node onto an empty VM
+  or over itself.
+- **Nothing is fetched from the internet at run time.** Fonts, scripts and icons are local, so the
+  interface works while the network it manages is broken.
+- **Built to be scripted.** Commands answer with `--json`; making every setting the interface
+  offers settable from the command line, idempotently, so that a tool such as Ansible can drive
+  a whole installation, is part of the work before 1.0.
+
 ## Security model
 
 Environment-specific configuration and credentials never belong in this repository or its Git

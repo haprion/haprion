@@ -2058,8 +2058,9 @@ installation, not of this setting.
 on every node of the cluster, so a failover or a deploy no longer starts them
 from zero. With `peers` set, a publish writes a `peers` section with one line
 per node and has every generated stick table name it; each node keeps the
-others up to date over the port, and a reloading HAProxy hands its tables to
-the new process. What is shared is counters, not connections: a connection open
+others up to date over the port, and a node that reloads takes the counts back
+from the others within seconds. A node that reloads while no other node is up
+starts from zero. What is shared is counters, not connections: a connection open
 on the node that fails still ends, and the client's next one is counted with
 what it had already used. Persistence is unaffected - it is a cookie or a hash
 and needs nothing shared.

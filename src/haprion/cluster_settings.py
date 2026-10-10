@@ -72,7 +72,9 @@ class Peers:
     """The nodes share their stick tables over this port (B270).
 
     What is shared is the counters the generated tables keep - the abuse
-    brake's and the rate limits' - so they survive a failover and a reload.
+    brake's and the rate limits' - so they survive a failover, and a reload
+    while another node is up: the reloaded node takes them back from it within
+    seconds (measured on 3.4.6; alone, it starts from zero).
     The port has to be open between the nodes, both ways, and nowhere else
     needs it; that firewall is the operator's, which is why this is off until
     somebody turns it on.

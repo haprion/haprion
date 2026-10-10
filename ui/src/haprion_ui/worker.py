@@ -173,6 +173,10 @@ _OPERATION_OUTCOMES = {
     # and a refused request fails before any node is asked.
     #
     "server_state": frozenset({"done", "partial", "failed"}),
+    #
+    # `dynamic_unblock` lifts a block on every node, the same way (B271).
+    #
+    "dynamic_unblock": frozenset({"done", "partial", "failed"}),
 }
 
 

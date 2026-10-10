@@ -131,6 +131,27 @@ def _access_badges(form: Mapping[str, Any]) -> tuple[Badge, ...]:
     )
 
 
+def _blocking(form: Mapping[str, Any]) -> str:
+    """What starts a block and for how long (B271); *Off* while no trigger is written."""
+
+    tcp = _text(form, "protocol") == "tcp"
+    if tcp:
+        connections = _text(form, "block_connections")
+        triggers = [f"{connections} new connections"] if connections else []
+    else:
+        requests, errors = _text(form, "block_requests"), _text(form, "block_errors")
+        triggers = [
+            f"{requests} requests" if requests else "",
+            f"{errors} errors" if errors else "",
+        ]
+        triggers = [part for part in triggers if part]
+    if not triggers:
+        return "Off"
+    window = _text(form, "block_window") or DEFAULT_ABUSE_WINDOW
+    answer = "" if tcp else f", {_text(form, 'block_status') or '404'}"
+    return f"{' or '.join(triggers)} / {window} → blocked {_text(form, 'block_for')}{answer}"
+
+
 def waf_exception_count(form: Mapping[str, Any]) -> int:
     """How many exceptions the object carries, from the field that carries them."""
 
@@ -287,6 +308,20 @@ GROUPS: Mapping[str, FormGroup] = {
         ),
         _access,
         _access_badges,
+    ),
+    "blocking": FormGroup(
+        "Dynamic blocking",
+        (
+            "block_requests",
+            "block_errors",
+            "block_connections",
+            "block_window",
+            "block_for",
+            "block_status",
+            "block_exempt_from",
+            "block_exempt_ranges",
+        ),
+        _blocking,
     ),
     "waf": FormGroup(
         "WAF",

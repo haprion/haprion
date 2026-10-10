@@ -164,6 +164,33 @@
     {% endcall %}
 
     {#
+      Dynamic blocking (B271): a trigger turns it on; the window, the time and
+      the answer stand filled in. A raw port counts new connections and closes.
+    #}
+    {% call group(groups.blocking, when('protocol', 'http https tcp')) %}
+    <div class="form-grid">
+      <label{{ when('protocol', 'http https') }}><span class="field-title">Requests <span class="optional">(optional)</span></span><input name="block_requests" value="{{ form.block_requests }}" size="10" placeholder="300"><small>Per source address, in the window.</small></label>
+      <label{{ when('protocol', 'http https') }}><span class="field-title">Errors <span class="optional">(optional)</span></span><input name="block_errors" value="{{ form.block_errors }}" size="10" placeholder="20"><small>4xx answers from the servers.</small></label>
+      <label{{ when('protocol', 'tcp') }}><span class="field-title">New connections <span class="optional">(optional)</span></span><input name="block_connections" value="{{ form.block_connections }}" size="10" placeholder="50"><small>Per source address, in the window.</small></label>
+      <label><span class="field-title">Window</span><input name="block_window" value="{{ form.block_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
+      <label><span class="field-title">Block for</span><input name="block_for" value="{{ form.block_for }}" size="10" placeholder="30m"><small>From <code>1m</code> to <code>24h</code>; longer while it goes on.</small></label>
+    </div>
+    <div class="form-grid form-grid-pair">
+      <div class="field">
+        <label><span class="field-title">Never blocked — groups <span class="optional">(optional)</span></span>
+          <select name="block_exempt_from" multiple size="5">
+            <option value="" {% if form.block_exempt_ranges|trim %}hidden{% elif not form.block_exempt_from %}selected{% endif %}>Nobody</option>
+            {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.block_exempt_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
+          </select>
+        </label>
+        <small>Defined on the <a href="/network">Network</a> page.</small>
+      </div>
+      <label><span class="field-title">Never blocked — addresses <span class="optional">(optional)</span></span><textarea name="block_exempt_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.block_exempt_ranges }}</textarea><small>One address or range per line.</small></label>
+      <label{{ when('protocol', 'http https') }}><span class="field-title">Answer with</span><select name="block_status" class="single-select">{% for code in ('403', '404', '429') %}<option{% if form.block_status == code %} selected{% endif %}>{{ code }}</option>{% endfor %}</select></label>
+    </div>
+    {% endcall %}
+
+    {#
       The WAF engine (Fas 21, B231, B234): offered while its switch is on, and
       shown whenever the object already uses it, so a save never drops what the
       page did not show. Choosing it waits until the engine is installed on the

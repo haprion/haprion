@@ -64,6 +64,9 @@
       </dl>
       {% endif %}
       <div class="cluster-state">
+        {#- Dynamic blocking (B271), for whoever has no Operations row below. -#}
+        {% set held_here = blocked_counts.get(cluster.cluster) if blocked_counts else none %}
+        {% if held_here and not (management_writes and role == 'admin' and cluster.configured) %}<span class="warning-text"><span class="status-dot status-warning" aria-hidden="true"></span>{% set total = held_here.values() | sum %}{{ total }} {{ 'address' if total == 1 else 'addresses' }} blocked</span>{% endif %}
         <span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>
         {% if cluster.observed_at %}
         <time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at | shown_at }}">{{ cluster.age_label }}</time>
@@ -113,7 +116,8 @@
     {% if management_writes and role == 'admin' and cluster.configured %}
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
       {% set block = certificate_blocks.get(cluster.cluster) if certificate_blocks else none %}
-      <div><strong>Operations</strong>{% if block %}<span class="warning-text" title="{{ block.sentence }}"><span class="status-dot status-warning" aria-hidden="true"></span>{{ block.headline }}</span>{% endif %}</div>
+      {% set held = blocked_counts.get(cluster.cluster) if blocked_counts else none %}
+      <div><strong>Operations</strong>{% if block %}<span class="warning-text" title="{{ block.sentence }}"><span class="status-dot status-warning" aria-hidden="true"></span>{{ block.headline }}</span>{% endif %}{% if held %}<span class="warning-text"><span class="status-dot status-warning" aria-hidden="true"></span>{% set total = held.values() | sum %}{{ total }} {{ 'address' if total == 1 else 'addresses' }} blocked: {% for name, count in held.items() %}<a href="/proxies/{{ cluster.cluster }}/{{ name }}#blocked" title="{{ count }} blocked">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}</div>
       {#
         One job per cluster at a time, so this is one state and not two: while
         something is running here, both buttons are gone and the operation that

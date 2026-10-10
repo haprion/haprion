@@ -69,6 +69,7 @@ def _node(
     memory: int,
     servers: list[dict[str, Any]] | None = None,
     packages: dict[str, str] | None = None,
+    blocked: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # A node with 1 GiB; `memory` is the share in use (B239).
     total = 1_048_576
@@ -78,6 +79,8 @@ def _node(
     # of them, as a node patched second is (26-10-09).
     #
     extra["packages"] = packages or PACKAGES
+    if blocked is not None:
+        extra["blocked"] = blocked
     return {
         "name": name,
         "mgmt_host": f"{name}.demo.example",
@@ -104,6 +107,21 @@ def _node(
     }
 
 
+#
+# Two scanners caught by public-web's dynamic blocking (B271), shared by both
+# nodes as a cluster with shared counters holds them.
+#
+BLOCKED = {
+    "public-web": {
+        "count": 2,
+        "addresses": [
+            {"address": "198.51.100.23", "expires_in_ms": 1_640_000},
+            {"address": "2001:db8:44::17", "expires_in_ms": 734_000},
+        ],
+    }
+}
+
+
 def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
     """Two representative healthy/degraded pairs for the dashboard."""
 
@@ -123,6 +141,7 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
                         cpu=3,
                         memory=38,
                         servers=_public_web((14, 12, 3)),
+                        blocked=BLOCKED,
                     ),
                     _node(
                         "edge-b",
@@ -132,6 +151,7 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
                         cpu=1,
                         memory=36,
                         servers=_public_web((0, 0, 0)),
+                        blocked=BLOCKED,
                     ),
                 ],
                 "summary": {

@@ -427,6 +427,7 @@
   const EMPTY_CHOICES = [
     ["allow_from", "allow_ranges"],
     ["deny_from", "deny_ranges"],
+    ["block_exempt_from", "block_exempt_ranges"],
   ];
 
   const wireEmptyChoices = () => {

@@ -81,6 +81,7 @@ from haprion_ui import (
     advanced_dialog,
     auth,
     backups,
+    blocked,
     certificate_activity,
     certificate_delete,
     certificate_form,
@@ -652,6 +653,10 @@ SERVER_NOTICES = {
     "none": "Tick the servers first.",
     "busy": "A job is already running for this cluster. Try again when it has finished.",
 }
+BLOCKED_NOTICES = {
+    "none": "Tick the addresses first.",
+    "busy": SERVER_NOTICES["busy"],
+}
 
 
 #
@@ -781,6 +786,15 @@ def build_router(config: Config) -> APIRouter:
                 # engine asked for, beside the deploy button.
                 #
                 "certificate_blocks": jobs.certificate_blocks(recent),
+                #
+                # Addresses dynamic blocking holds, per cluster and object
+                # (B271): said on every card, the objects linked for an admin.
+                #
+                "blocked_counts": {
+                    cluster: counted
+                    for cluster in clusters
+                    if (counted := blocked.cluster_counts(status_rows, cluster=cluster))
+                },
                 "section": "dashboard",
                 "demo_fixture": config.demo_fixture,
                 #
@@ -1417,6 +1431,85 @@ def build_router(config: Config) -> APIRouter:
             connection.commit()
         return RedirectResponse(back, status_code=303)
 
+    @router.post("/proxies/{cluster}/{name}/unblock")
+    async def proxy_unblock(
+        request: Request,
+        cluster: str,
+        name: str,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        idempotency_key: Annotated[str, Form(max_length=64)],
+    ) -> Response:
+        """Queue lifting the object's dynamic block on the ticked addresses (B271).
+
+        The helper reads each address and the object's newest version again
+        before a node is asked; what is checked here is the shape only.
+        """
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        listed = next((one for one in listed_clusters(request, config) if one == cluster), None)
+        if listed is None or not proxy_model.NAME.fullmatch(name):
+            return PlainTextResponse("Not found", status_code=404)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        back = f"/proxies/{listed}/{name}"
+        posted = await request.form()
+        #
+        # One past the bound, so the helper's own limit refuses a request over
+        # it rather than this quietly sending part of one.
+        #
+        chosen = list(dict.fromkeys(str(entry)[:64] for entry in posted.getlist("address")))[
+            : server_state.MAX_ADDRESSES + 1
+        ]
+        if not chosen:
+            return RedirectResponse(f"{back}?blocked=none", status_code=303)
+        payload = {"object": name, "addresses": chosen}
+        try:
+            operations.prepare(
+                operation=server_state.UNBLOCK_OPERATION,
+                cluster=listed,
+                request_id=uuid4(),
+                payload=payload,
+            )
+        except operations.BadPayload:
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation=server_state.UNBLOCK_OPERATION,
+                    cluster=listed,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.ClusterBusy:
+                connection.rollback()
+                return RedirectResponse(f"{back}?blocked=busy", status_code=303)
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=listed,
+                request_id=job.request_id,
+                detail={
+                    "operation": server_state.UNBLOCK_OPERATION,
+                    "job": job.id,
+                    "object": name,
+                    "addresses": chosen,
+                },
+            )
+            connection.commit()
+        return RedirectResponse(back, status_code=303)
+
     @router.get("/proxies/{cluster}/{name}", response_class=HTMLResponse)
     def proxy_object(request: Request, cluster: str, name: str) -> Response:
         """One proxy as it is written, beside the row the nodes are serving.
@@ -1731,10 +1824,30 @@ def build_router(config: Config) -> APIRouter:
         #
         servers_busy: str | None = None
         servers_missed = ""
-        if servers is not None:
+        #
+        # The addresses the object's dynamic blocking holds (B271), with the
+        # last unblock that not every node took said until the next one.
+        #
+        blocked_card = blocked.object_card(status_rows, cluster=cluster, name=name)
+        blocked_missed = ""
+        if servers is not None or blocked_card is not None:
             with request.app.state.pool.connection() as connection:
                 recent = db.recent_jobs(connection, cluster=cluster)
             servers_busy = jobs.in_flight(recent).get(cluster)
+            unblocked = next(
+                (
+                    job
+                    for job in recent
+                    if job.operation == server_state.UNBLOCK_OPERATION
+                    and job.payload.get("object") == name
+                ),
+                None,
+            )
+            if unblocked is not None and unblocked.state not in {"pending", "running"}:
+                if unblocked.outcome == "partial":
+                    blocked_missed = "Not every node lifted the last unblock."
+                elif unblocked.outcome != "done":
+                    blocked_missed = "The last unblock was not made."
             last = next(
                 (
                     job
@@ -1763,6 +1876,10 @@ def build_router(config: Config) -> APIRouter:
                 "servers_notice": SERVER_NOTICES.get(request.query_params.get("servers", "")),
                 "servers_busy": servers_busy,
                 "servers_missed": servers_missed,
+                "blocked": blocked_card,
+                "blocked_notice": BLOCKED_NOTICES.get(request.query_params.get("blocked", "")),
+                "blocked_missed": blocked_missed,
+                "time_left": blocked.time_left,
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
@@ -8370,6 +8487,7 @@ def _form_defaults(fields: dict[str, Any]) -> dict[str, Any]:
     values = dict(fields)
     values["allow_from"] = list(values.get("allow_from") or ())
     values["deny_from"] = list(values.get("deny_from") or ())
+    values["block_exempt_from"] = list(values.get("block_exempt_from") or ())
     return values
 
 

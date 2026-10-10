@@ -345,6 +345,20 @@ class ObjectForm(BaseModel):
     rate_limit: Annotated[str, StringConstraints(max_length=8)] = ""
     rate_window: Annotated[str, StringConstraints(max_length=8)] = ""
     #
+    # Dynamic blocking (B271). The window, the time and the answer come filled
+    # in from `preview.DEFAULTS`; a trigger is what turns it on.
+    #
+    block_requests: Annotated[str, StringConstraints(max_length=8)] = ""
+    block_errors: Annotated[str, StringConstraints(max_length=8)] = ""
+    block_connections: Annotated[str, StringConstraints(max_length=8)] = ""
+    block_window: Annotated[str, StringConstraints(max_length=8)] = ""
+    block_for: Annotated[str, StringConstraints(max_length=8)] = ""
+    block_status: Annotated[str, StringConstraints(max_length=3)] = ""
+    block_exempt_from: list[Annotated[str, StringConstraints(max_length=64)]] = Field(
+        default_factory=list
+    )
+    block_exempt_ranges: Annotated[str, StringConstraints(max_length=2048)] = ""
+    #
     # Access rules (Fas 21, B227). A rule is a row of parallel lists, one entry
     # per rule in page order; the boxes a browser leaves out when unticked
     # carry their row's index instead - `2:POST`, `2` - so a missing box
@@ -442,5 +456,6 @@ class ObjectForm(BaseModel):
             values.pop(key)
         values["allow_from"] = tuple(entry for entry in self.allow_from if entry)
         values["deny_from"] = tuple(entry for entry in self.deny_from if entry)
+        values["block_exempt_from"] = tuple(entry for entry in self.block_exempt_from if entry)
         values["deny_rules"] = access_rules(values)
         return values

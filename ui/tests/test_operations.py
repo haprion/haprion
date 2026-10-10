@@ -647,6 +647,48 @@ class AServerStateJob(unittest.TestCase):
                 )
 
 
+class ADynamicUnblockJob(unittest.TestCase):
+    """B271: the command line's unblock request, and a shape it never could be refused."""
+
+    PAYLOAD = {"object": "shop", "addresses": ["203.0.113.7", "2001:db8::7"]}
+
+    def test_it_is_the_engines_own_request_through_sudo(self) -> None:
+        prepared = operations.prepare(
+            operation="dynamic_unblock", cluster="alpha", request_id=REQUEST, payload=self.PAYLOAD
+        )
+
+        self.assertEqual(prepared.argv[-1], server_state_helper.HELPER)
+        self.assertEqual(
+            json.loads(prepared.request),
+            json.loads(
+                server_state_helper.build_unblock_request(
+                    "alpha",
+                    str(REQUEST),
+                    object_name="shop",
+                    addresses=["203.0.113.7", "2001:db8::7"],
+                )
+            ),
+        )
+
+    def test_a_payload_that_could_never_be_right_is_refused_before_sudo(self) -> None:
+        changes: tuple[dict[str, object], ...] = (
+            {"addresses": []},
+            {"addresses": "203.0.113.7"},
+            {"addresses": ["203.0.113.7"] * 65},
+            {"addresses": [""]},
+            {"object": "Shop;id"},
+            {"state": "drain"},
+        )
+        for change in changes:
+            with self.subTest(change=change), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="dynamic_unblock",
+                    cluster="alpha",
+                    request_id=REQUEST,
+                    payload={**self.PAYLOAD, **change},
+                )
+
+
 class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
     """Every helper the worker is prepared to run needs a rule naming it.
 
@@ -854,6 +896,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("cluster_node", "haprion-cluster-node.schema.json"),
             ("cluster_define", "haprion-cluster-define.schema.json"),
             ("server_state", "haprion-server-state.schema.json"),
+            ("dynamic_unblock", "haprion-server-state.schema.json"),
             ("cert_import", "haprion-cert-import.schema.json"),
             ("cert_request", "haprion-cert-request.schema.json"),
             ("node_restore_prepare", "haprion-node-restore-prepare.schema.json"),

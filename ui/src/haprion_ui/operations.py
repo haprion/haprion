@@ -55,7 +55,7 @@ from haprion.cli import (
 )
 from haprion.config import CERTIFICATE_ID, RECEIVER_FORMATS, RECEIVER_ID, RECEIVER_TRANSPORTS
 from haprion.proxy_model import NAME
-from haprion.server_state import MAX_SERVERS, STATES
+from haprion.server_state import MAX_ADDRESSES, MAX_SERVERS, STATES, UNBLOCK_OPERATION
 from haprion.version_history import UnfitName, trailer_name
 
 # The installation key's identifier as `dns_profile_keys.key_id_of` makes it.
@@ -1230,6 +1230,28 @@ def prepare(
             argv=(server_state_helper.SUDO, *SUDO_FLAGS, server_state_helper.HELPER),
             request=server_state_helper.build_request(
                 cluster, str(request_id), object_name=object_name, servers=servers, state=state
+            ),
+        )
+
+    if operation == UNBLOCK_OPERATION:
+        #
+        # Lift a dynamic block (B271). The helper reads the addresses as IP
+        # addresses and the object in its newest version; this is the shape.
+        #
+        _only(payload, "object", "addresses")
+        object_name, addresses = payload.get("object"), payload.get("addresses")
+        if not isinstance(object_name, str) or not NAME.fullmatch(object_name):
+            raise BadPayload("object must be an object name")
+        if (
+            not isinstance(addresses, list)
+            or not 0 < len(addresses) <= MAX_ADDRESSES
+            or not all(isinstance(entry, str) and entry for entry in addresses)
+        ):
+            raise BadPayload(f"addresses must list 1-{MAX_ADDRESSES} addresses")
+        return Prepared(
+            argv=(server_state_helper.SUDO, *SUDO_FLAGS, server_state_helper.HELPER),
+            request=server_state_helper.build_unblock_request(
+                cluster, str(request_id), object_name=object_name, addresses=addresses
             ),
         )
 

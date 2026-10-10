@@ -25,10 +25,11 @@ from typing import Any
 
 from haprion import dnsdist_config, geo, resolve_socket
 from haprion.advanced import normalise as normalise_advanced
-from haprion.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
+from haprion.config import DEFAULT_ABUSE_WINDOW, AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haprion.generate import GeneratorError, countries_named, generate
 from haprion.proxy_model import (
     BALANCE,
+    DEFAULT_BLOCK_STATUS,
     DNS_BALANCE,
     DNS_QUERY_TYPES,
     MAX_DENY_RULES,
@@ -166,6 +167,18 @@ DEFAULTS = {
     "allow_ranges": "",
     "rate_limit": "",
     "rate_window": "",
+    #
+    # Dynamic blocking (B271): a trigger is what turns it on, and the time, the
+    # window and the answer stand filled in so that typing one number is enough.
+    #
+    "block_requests": "",
+    "block_errors": "",
+    "block_connections": "",
+    "block_window": DEFAULT_ABUSE_WINDOW,
+    "block_for": "30m",
+    "block_status": str(DEFAULT_BLOCK_STATUS),
+    "block_exempt_from": (),
+    "block_exempt_ranges": "",
     "deny_from": (),
     "deny_ranges": "",
     "deny_mode": "log",
@@ -464,8 +477,26 @@ def _servers(raw: str) -> list[dict[str, object]]:
 # field the person could no longer see or clear. What the form hides, it does
 # not send. The template hides the same ones (`_object-form.html`).
 #
+BLOCK_FIELDS = (
+    "block_requests",
+    "block_errors",
+    "block_connections",
+    "block_window",
+    "block_for",
+    "block_status",
+    "block_exempt_from",
+    "block_exempt_ranges",
+)
 HIDDEN_FOR: Mapping[str, tuple[str, ...]] = {
     "tcp": (
+        #
+        # A raw port counts new connections, and its connection is closed
+        # rather than answered (B271). A site's `block_connections` is never
+        # read: `_blocking_document` asks only for the protocol's triggers.
+        #
+        "block_requests",
+        "block_errors",
+        "block_status",
         "hostnames",
         "certificate",
         "listen_tls_policy",
@@ -489,6 +520,7 @@ HIDDEN_FOR = {
     **HIDDEN_FOR,
     "dns": (
         *HIDDEN_FOR["tcp"],
+        *BLOCK_FIELDS,
         "rate_limit",
         "rate_window",
         "deny_from",
@@ -555,6 +587,56 @@ def saved_document(form: dict[str, object]) -> str:
         # Not an object at all; `load_proxy` says why, as it does for any.
         #
         return document
+
+
+def _blocking_document(form: Mapping[str, object], protocol: str) -> dict[str, object] | None:
+    """`dynamic_block` as the form says it, or None while no trigger is written (B271).
+
+    The window, the time and the answer stand filled in, so they mean nothing
+    until a trigger does; the window and the answer are written only where they
+    differ from the engine's defaults, so an object keeps saying what it said.
+    Groups and addresses never blocked without a trigger are refused rather
+    than dropped: somebody meant something by them.
+    """
+
+    def text(key: str) -> str:
+        return str(form.get(key, "") or "").strip()
+
+    triggers = (
+        (("block_connections", "max_new_connections", "New connections"),)
+        if protocol == "tcp"
+        else (
+            ("block_requests", "max_requests", "Requests"),
+            ("block_errors", "max_errors", "Errors"),
+        )
+    )
+    exempt = _listed(form.get("block_exempt_from", ())) + _entries(text("block_exempt_ranges"))
+    written = [(key, name, label) for name, key, label in triggers if text(name)]
+    if not written:
+        if exempt:
+            names = " or ".join(label for _, _, label in triggers)
+            raise ValueError(f"Never blocked needs {names}: nothing would start a block")
+        return None
+    block: dict[str, object] = {}
+    window = text("block_window")
+    if window and window != DEFAULT_ABUSE_WINDOW:
+        block["window"] = window
+    for key, name, label in written:
+        if not text(name).isdigit():
+            raise ValueError(f"{label} must be a number")
+        block[key] = int(text(name))
+    if not text("block_for"):
+        raise ValueError("Block for needs a time, such as 30m")
+    block["block_for"] = text("block_for")
+    if protocol != "tcp":
+        status = text("block_status") or str(DEFAULT_BLOCK_STATUS)
+        if not status.isdigit():
+            raise ValueError("Answer with must be a status code")
+        if int(status) != DEFAULT_BLOCK_STATUS:
+            block["status"] = int(status)
+    if exempt:
+        block["exempt"] = exempt
+    return block
 
 
 def build_document(form: dict[str, object]) -> str:
@@ -820,6 +902,10 @@ def build_document(form: dict[str, object]) -> str:
         document["rate_limit"] = rate
     elif text("rate_window"):
         raise ValueError("a rate limit window needs a limit")
+
+    blocking = _blocking_document(form, protocol)
+    if blocking is not None:
+        document["dynamic_block"] = blocking
 
     #
     # Written last because it is the one field that is about the object's state
@@ -1307,6 +1393,48 @@ def _rule_document(rule: Mapping[str, Any]) -> dict[str, Any]:
     return document
 
 
+def _blocking_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str, Any]:
+    """`dynamic_block` as the form holds it; the filled-in defaults when there is none."""
+
+    known = set(networks)
+    block = _sub(data, "dynamic_block")
+    exempt = block.get("exempt")
+    exempt = [str(entry) for entry in exempt] if isinstance(exempt, list) else []
+    return {
+        "block_requests": str(block.get("max_requests", "") or ""),
+        "block_errors": str(block.get("max_errors", "") or ""),
+        "block_connections": str(block.get("max_new_connections", "") or ""),
+        "block_window": str(block.get("window", "") or "") or DEFAULT_ABUSE_WINDOW,
+        "block_for": str(block.get("block_for", "") or "") or str(DEFAULTS["block_for"]),
+        "block_status": str(block.get("status", "") or "") or str(DEFAULT_BLOCK_STATUS),
+        "block_exempt_from": tuple(entry for entry in exempt if entry in known),
+        "block_exempt_ranges": "\n".join(entry for entry in exempt if entry not in known),
+    }
+
+
+def _with_normalised_blocking(data: Any, networks: Collection[str]) -> Any:
+    """The stored object with `dynamic_block` written as the form writes it.
+
+    The engine's defaults left unsaid, and the groups never blocked ahead of
+    the addresses, as the form's two boxes give them back: the same block.
+    """
+
+    if not isinstance(data, Mapping) or not isinstance(data.get("dynamic_block"), Mapping):
+        return data
+    block = dict(data["dynamic_block"])
+    if block.get("window") == DEFAULT_ABUSE_WINDOW:
+        block.pop("window")
+    if block.get("status") == DEFAULT_BLOCK_STATUS:
+        block.pop("status")
+    exempt = block.get("exempt")
+    if isinstance(exempt, list):
+        known = set(networks)
+        block["exempt"] = [entry for entry in exempt if entry in known] + [
+            entry for entry in exempt if entry not in known
+        ]
+    return {**data, "dynamic_block": block}
+
+
 def _access_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str, Any]:
     """`deny_from`, `deny_rules` and `max_request_body` as the form holds them."""
 
@@ -1419,12 +1547,15 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
     except (ModelError, ValueError) as exc:
         raise Unexpressible(str(exc)) from exc
     difference = _first_difference(
-        _with_normalised_waf(
-            _with_normalised_advanced(
-                _without_a_redundant_check_protocol(
-                    _with_an_unwritten_check_said(_without_saved_addresses(data))
+        _with_normalised_blocking(
+            _with_normalised_waf(
+                _with_normalised_advanced(
+                    _without_a_redundant_check_protocol(
+                        _with_an_unwritten_check_said(_without_saved_addresses(data))
+                    )
                 )
-            )
+            ),
+            networks,
         ),
         rebuilt,
     )
@@ -1557,6 +1688,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         ),
         "rate_window": str(rate.get("window", "") or ""),
         **_access_fields(data, networks),
+        **_blocking_fields(data, networks),
         "maintenance": "maintenance" in data,
         "maintenance_message": str(_sub(data, "maintenance").get("message", "") or ""),
         "unavailable_message": str(_sub(data, "unavailable").get("message", "") or ""),

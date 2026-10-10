@@ -449,6 +449,9 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+/* Dynamic blocking said beside the badge for whoever has no Operations row (B271). */
+.cluster-state .warning-text { font-size: 12px; white-space: nowrap; }
+.cluster-state .warning-text .status-dot { margin-right: 6px; vertical-align: 1px; }
 .status-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .status-badge-healthy { color: var(--healthy); background: var(--healthy-soft); }
 .status-badge-warning { color: var(--warning); background: var(--warning-soft); }
@@ -1032,6 +1035,14 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    health table. */
 .server-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .server-table .status-dot { margin-right: 8px; vertical-align: 1px; }
+/* The object page's Blocked addresses card (B271): the same box and density,
+   the address wide enough for IPv6, the time narrow and the nodes the rest. */
+.blocked-table th.select-column, .blocked-table td.select-column { width: 44px; padding-left: 18px; padding-right: 0; }
+.blocked-table th.address-column, .blocked-table td.address-column { width: 320px; }
+.blocked-table.selectable-rows th.address-column, .blocked-table.selectable-rows td.address-column { padding-left: 8px; }
+.blocked-table .count-column { width: 130px; }
+.blocked-table.selectable-rows tbody tr { cursor: pointer; }
+.blocked-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 /* The whole row opens its detail, so the whole row says so. */
 .registry-row { cursor: pointer; }
 .registry-table tbody tr.registry-open { background: var(--panel-soft); }

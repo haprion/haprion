@@ -764,6 +764,19 @@ therefore lasts as long as the attack and then the time set, and ends on its
 own. The rate limit is a brake beside it: it refuses what is over the limit and
 serves the rest.
 
+In the object's form, *Dynamic blocking* sits between *Access* and *WAF*.
+*Requests* and *Errors* (a tcp object: *New connections*) are what turn it on;
+with both empty there is no block. *Window* (`10s`), *Block for* (`30m`) and
+*Answer with* (`404`) stand filled in. *Never blocked* takes groups from the
+*Network* page and addresses or ranges, as *Reachable from* does.
+
+The object's page lists the addresses its block holds, with the nodes holding
+each and the time left; an admin ticks them and presses *Unblock*. The
+dashboard says on the cluster's card how many addresses are blocked, and an
+admin's *Operations* row names the objects with a link to each.
+
+The same in the object's YAML:
+
 ```yaml
 dynamic_block:
   window: 10s          # the default; seconds or minutes

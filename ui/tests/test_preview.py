@@ -554,6 +554,121 @@ class TheRateLimitTheObjectAsksFor(unittest.TestCase):
                 self.assertEqual(reopened["rate_window"], written["rate_window"])
 
 
+class TheDynamicBlockTheObjectAsksFor(unittest.TestCase):
+    """B271: a trigger turns it on; the window, the time and the answer stand filled in."""
+
+    def test_the_filled_in_fields_alone_write_nothing(self) -> None:
+        self.assertEqual(
+            (DEFAULTS["block_window"], DEFAULTS["block_for"], DEFAULTS["block_status"]),
+            ("10s", "30m", "404"),
+        )
+        self.assertNotIn("dynamic_block", build_document(form()))
+
+    def test_a_trigger_writes_only_what_differs_from_the_engine(self) -> None:
+        document = yaml.safe_load(build_document(form(block_requests="300")))
+
+        self.assertEqual(document["dynamic_block"], {"max_requests": 300, "block_for": "30m"})
+
+    def test_everything_written_reaches_the_generated_configuration(self) -> None:
+        written = form(
+            block_requests="300",
+            block_errors="20",
+            block_window="1m",
+            block_for="2h",
+            block_status="429",
+            block_exempt_from=("office",),
+            block_exempt_ranges="192.0.2.10",
+        )
+        document = yaml.safe_load(build_document(written))
+        self.assertEqual(
+            document["dynamic_block"],
+            {
+                "window": "1m",
+                "max_requests": 300,
+                "max_errors": 20,
+                "block_for": "2h",
+                "status": 429,
+                "exempt": ["office", "192.0.2.10"],
+            },
+        )
+        result = preview(written, PREVIEW_CLUSTER)
+        self.assertIsNone(result.problem)
+        self.assertIn(
+            "deny_status 429 if { var(txn.rule) -m str dynamic-block:deny }",
+            result.files["1001-app.cfg"],
+        )
+
+    def test_a_raw_port_counts_connections_and_sends_no_answer(self) -> None:
+        written = form(
+            protocol="tcp",
+            tcp_port="5432",
+            hostnames="",
+            block_connections="50",
+            block_requests="300",
+            block_status="429",
+        )
+        document = yaml.safe_load(build_document(written))
+
+        self.assertEqual(document["dynamic_block"], {"max_new_connections": 50, "block_for": "30m"})
+        self.assertIsNone(preview(written, PREVIEW_CLUSTER).problem)
+
+    def test_never_blocked_without_a_trigger_is_refused(self) -> None:
+        with self.assertRaises(ValueError) as raised:
+            build_document(form(block_exempt_ranges="192.0.2.10"))
+
+        self.assertIn("Never blocked needs Requests or Errors", str(raised.exception))
+
+    def test_numbers_that_are_not_numbers_are_named(self) -> None:
+        for fields, said in (
+            ({"block_requests": "many"}, "Requests must be a number"),
+            ({"block_errors": "2O"}, "Errors must be a number"),
+            ({"block_requests": "5", "block_for": ""}, "Block for needs a time"),
+        ):
+            with self.subTest(fields), self.assertRaises(ValueError) as raised:
+                build_document(form(**fields))
+            self.assertIn(said, str(raised.exception))
+
+    def test_it_survives_a_round_trip_with_its_groups_apart(self) -> None:
+        for written in (
+            form(block_requests="300"),
+            form(block_errors="20", block_window="1m", block_for="1h", block_status="403"),
+            form(
+                block_requests="5",
+                block_exempt_from=("office",),
+                block_exempt_ranges="192.0.2.10/32",
+            ),
+            form(protocol="tcp", tcp_port="5432", hostnames="", block_connections="50"),
+        ):
+            with self.subTest(written["protocol"], requests=written["block_requests"]):
+                reopened = form_from_document(build_document(written), networks=("office",))
+                for key in (
+                    "block_requests",
+                    "block_errors",
+                    "block_connections",
+                    "block_window",
+                    "block_for",
+                    "block_exempt_from",
+                    "block_exempt_ranges",
+                ):
+                    expected = (
+                        written[key]
+                        if written["protocol"] != "tcp"
+                        or key not in ("block_requests", "block_errors")
+                        else ""
+                    )
+                    self.assertEqual(reopened[key], expected, key)
+
+    def test_a_stored_block_that_spells_out_the_defaults_still_opens(self) -> None:
+        stored = build_document(form(block_requests="300")).replace(
+            "  block_for: 30m\n", "  block_for: 30m\n  window: 10s\n  status: 404\n"
+        )
+        self.assertIn("status: 404", stored)
+
+        reopened = form_from_document(stored, networks=())
+
+        self.assertEqual((reopened["block_window"], reopened["block_status"]), ("10s", "404"))
+
+
 class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
     """Interval, rise and fall, which the form had no field for until now.
 
@@ -854,12 +969,7 @@ class WhereTheFormStops(unittest.TestCase):
         self.assertEqual(
             refused,
             [
-                #
-                # Refused whole until the form has its group (B271), so the key
-                # is never dropped by a save.
-                #
-                ("dynamic-block/db.yaml", "dynamic_block"),
-                ("dynamic-block/shop.yaml", "dynamic_block"),
+                ("dynamic-block/shop.yaml", "routes"),
                 ("monitors/probes.yaml", "routes"),
                 ("routes/shop.yaml", "routes"),
             ],

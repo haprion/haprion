@@ -3,7 +3,7 @@
 {% block content %}
 <script defer src="{{ url_for('static', path='/traffic.js') }}?v={{ asset_token }}"></script>
 {% if advanced_offered %}<script defer src="{{ url_for('static', path='/advanced.js') }}?v={{ asset_token }}"></script>{% endif %}
-{% if servers %}<script defer src="{{ url_for('static', path='/servers.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>{% endif %}
+{% if servers or blocked %}<script defer src="{{ url_for('static', path='/servers.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>{% endif %}
 <section class="page-heading">
   <div class="heading-title">
     <p class="page-breadcrumb"><a href="/proxies">Proxies</a> · {{ object.cluster }}</p>
@@ -106,6 +106,32 @@
     <tbody>
       {% for row in servers.rows %}
       <tr>{% if management_writes %}<td class="select-column" data-label="Select"><label class="select-box"><input type="checkbox" name="server" value="{{ row.target }}" aria-label="Select {{ row.shown }}"></label></td>{% endif %}<td class="server-column" data-label="Server"><strong>{{ row.shown }}{% if row.backup %} backup{% endif %}</strong></td>{% for cell in row.cells %}<td data-label="{{ servers.nodes[loop.index0] }}"{% if cell.title %} title="{{ cell.title }}"{% endif %}><span class="status-dot status-{{ cell.tone }}"></span>{{ cell.label }}</td>{% endfor %}<td data-label="Sessions">{{ row.sessions if row.sessions is not none else '—' }}</td><td data-label="Weight">{{ row.weight }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  </form>
+</article>
+{% endif %}
+
+{#
+  Dynamic blocking (B271): the addresses the object's block holds on each node,
+  beside drain and maintenance because lifting one is operation too.
+#}
+{% if blocked %}
+<article class="cluster-card {{ object.accent | accent_class }}" id="blocked"{% if blocked.observed_at %} data-observed="{{ blocked.observed_at.isoformat() }}"{% endif %}>
+  <form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/unblock">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <header class="cluster-header">
+    <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div><h3>Blocked addresses</h3><p>{{ blocked.count }} blocked by dynamic blocking{% if blocked.more %}, {{ blocked.more }} not listed{% endif %}</p></div></div>
+    {% if management_writes %}{% if servers_busy %}<div class="cluster-state"><span class="status-badge status-badge-info" data-busy="{{ object.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ servers_busy }}</span></div>{% else %}<div class="action-buttons"><button class="secondary-button" type="submit">Unblock</button></div>{% endif %}{% endif %}
+  </header>
+  {% if blocked_notice %}<p class="preview-notice form-problem">{{ blocked_notice }}</p>{% elif blocked_missed %}<p class="preview-notice form-problem">{{ blocked_missed }} <a href="/jobs">See Jobs</a></p>{% endif %}
+  <div class="table-scroll"><table class="node-table blocked-table{% if management_writes %} selectable-rows" data-select-rows{% else %}"{% endif %}>
+    <thead><tr>{% if management_writes %}<th class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}<th class="address-column">Address</th><th class="count-column">Time left</th><th>Nodes</th></tr></thead>
+    <tbody>
+      {% for row in blocked.addresses %}
+      <tr>{% if management_writes %}<td class="select-column" data-label="Select"><label class="select-box"><input type="checkbox" name="address" value="{{ row.address }}" aria-label="Select {{ row.address }}"></label></td>{% endif %}<td class="address-column" data-label="Address"><strong>{{ row.address }}</strong></td><td data-label="Time left">{{ time_left(row.until) }}</td><td data-label="Nodes">{{ row.nodes | join(', ') }}</td></tr>
       {% endfor %}
     </tbody>
   </table></div>

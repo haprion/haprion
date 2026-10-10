@@ -1168,6 +1168,7 @@ class OneCertificateMayCarrySeveralNamedPolicies(unittest.TestCase):
         self.assertNotIn("deny_status 421", files["1000-frontends.cfg"])
 
 
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
 class SharedTablesAreCheckedAsANode(unittest.TestCase):
     """`haproxy -c` on the manager drops a peers section it is not in (B270)."""
 

@@ -96,6 +96,19 @@ COVERAGE_FILE="$coverage_dir/.coverage" python3 "$base/tools/run_test_modules.py
     --durations "${XDG_CACHE_HOME:-$HOME/.cache}/haprion/test-durations.json" \
     --suite engine "$base/tests" "coverage run --parallel-mode -m unittest discover -s tests -v" \
     --suite ui "$base/ui/tests" "$HAPRION_UI_PYTHON -m unittest discover -s tests -t . -v"
+#
+# Again without HAProxy, as CI's runner has none: every module that looks the
+# binary up must skip what needs it rather than fail. Two of them asserted it
+# was there, passed here and failed on the first push to CI (26-10-10).
+# Dropping the sbin directories from PATH is what hides it.
+#
+without_haproxy=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v 'sbin/*$' | paste -sd: -)
+for module in $(cd "$base/tests" && grep -l 'which("haproxy")' test_*.py); do
+    (cd "$base" && PATH="$without_haproxy" python3 -m unittest -q "tests.${module%.py}")
+done
+for module in $(cd "$base/ui/tests" && grep -l 'which("haproxy")' test_*.py); do
+    (cd "$base/ui" && PATH="$without_haproxy" "$HAPRION_UI_PYTHON" -m unittest -q "tests.${module%.py}")
+done
 COVERAGE_FILE="$coverage_dir/.coverage" coverage combine --quiet
 COVERAGE_FILE="$coverage_dir/.coverage" coverage report
 python3 "$base/tools/build_smoke.py"

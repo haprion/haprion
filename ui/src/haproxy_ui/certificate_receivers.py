@@ -85,16 +85,12 @@ class ReceiverRow:
     holds: tuple[Held, ...]
 
     @property
-    def legacy(self) -> bool:
-        return self.layout == "flat"
-
-    @property
     def transport_label(self) -> str:
         return TRANSPORT_LABELS.get(self.transport, self.transport)
 
     @property
     def removable(self) -> bool:
-        return not self.holds and not self.legacy
+        return not self.holds
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +150,7 @@ def parse_receiver_rows(block: Mapping[str, Any]) -> tuple[str | None, tuple[Rec
             ReceiverRow(
                 identifier=identifier,
                 transport=_text(record.get("transport")) or "rsync",
-                layout=_text(record.get("layout")) or "flat",
+                layout=_text(record.get("layout")) or "per-certificate",
                 owner=_text(record.get("owner")),
                 path=_text(record.get("path")),
                 allow=tuple(item for item in allow if isinstance(item, str))
@@ -512,10 +508,5 @@ def removal(receiver_id: str, existing: Sequence[ReceiverRow]) -> dict[str, Any]
         raise ReceiverProblem(
             f"{receiver_id} still receives {names}. Use Remove from… on the certificate "
             "first; that is the step that says what stops being fetched."
-        )
-    if row.legacy:
-        raise ReceiverProblem(
-            f"{receiver_id} was registered before this page and is migrated from the "
-            "terminal (haprion-cert-receiver migrate); it is not removed from here."
         )
     return {"receiver": receiver_id, "action": "remove"}

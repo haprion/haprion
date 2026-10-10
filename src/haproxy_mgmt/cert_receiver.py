@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import contextlib
 import ipaddress
-import json
 import os
 import pwd
 import re
@@ -47,7 +46,6 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt import cert_registry, ui_interface
-from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE, measure_registered
 from haproxy_mgmt.cert_lock import DEFAULT_LOCK_PATH
 from haproxy_mgmt.cert_publish import PublishError
 from haproxy_mgmt.config import (
@@ -84,8 +82,7 @@ ROOT_GID = 0
 #
 # The account name derived from the ID, and the limit Linux holds it to. A
 # name that would be cut off is refused rather than truncated: two receivers
-# whose IDs differ late in a long name would otherwise share one account, and
-# a shared account is what §4 of the design exists to end.
+# whose IDs differ late in a long name would otherwise share one account.
 #
 OWNER_PREFIX = "crx-"
 MAX_OWNER = 32
@@ -180,7 +177,7 @@ class Tools:
 
 @dataclass(frozen=True, slots=True)
 class Result:
-    """What a registration, a removal or a migration did, layer by layer."""
+    """What a registration or a removal did, layer by layer."""
 
     receiver_id: str
     action: str
@@ -632,28 +629,8 @@ def _without(registry: Registry, receiver_id: str) -> Registry:
     )
 
 
-def migration_record(policy: PathPolicy, receiver_id: str) -> Path:
-    """Where a half-finished migration is remembered (B158).
-
-    Beside the receivers rather than in the registry: the old account and the
-    old directory are not a target anyone may publish to, they are a layer
-    waiting to be taken away, and a field in the registry would have to be
-    read by every command that reads the registry at all.
-    """
-
-    root = policy.receiver_root
-    if root is None:
-        raise ReceiverError(
-            "dependency_unavailable",
-            "no receiver_root is configured. Add it to the runtime policy.",
-            exit_code=78,
-        )
-    return root / ".migrations" / f"{receiver_id}.json"
-
-
 def check_request(
     transport: str,
-    layout: str,
     allow: Sequence[str],
     public_key: Path | str | None,
 ) -> None:
@@ -666,12 +643,6 @@ def check_request(
     if transport not in RECEIVER_TRANSPORTS:
         raise ReceiverError(
             "bad_input", f"--transport must be one of: {', '.join(RECEIVER_TRANSPORTS)}"
-        )
-    if layout != "per-certificate":
-        raise ReceiverError(
-            "bad_input",
-            "a new receiver is per-certificate. `flat` is the form the receivers registered "
-            "before C7 have, and it holds one certificate at a time (B138).",
         )
     if transport == "https":
         if not allow:
@@ -712,7 +683,6 @@ def add(
     owner: str | None = None,
     path: Path | None = None,
     allow: Sequence[str] = (),
-    layout: str = "per-certificate",
     tools: Tools | None = None,
     locations: Locations | None = None,
     require_secure: bool = True,
@@ -727,7 +697,7 @@ def add(
 
     tools = tools or Tools()
     locations = locations or Locations()
-    check_request(transport, layout, allow, public_key)
+    check_request(transport, allow, public_key)
     check_identity(receiver_id, tools)
 
     registry = runtime.registry
@@ -788,7 +758,7 @@ def add(
         path=directory,
         owner=account,
         transport=transport,
-        layout=layout,
+        layout="per-certificate",
         allow=tuple(allow),
     )
 
@@ -954,12 +924,7 @@ def instructions(receiver: Receiver, locations: Locations) -> tuple[str, ...]:
 
 
 def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:
-    """Every registered receiver, what it fetches with, and what it holds.
-
-    `state` is the one word an operator reads first: `legacy` for a receiver
-    still in the form the three PVE hosts have, `migrating` for one whose old
-    account is waiting to be taken away, `ready` for the rest.
-    """
+    """Every registered receiver, what it fetches with, and what it holds."""
 
     registry = runtime.registry
     if registry is None:
@@ -968,11 +933,6 @@ def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:
         )
     rows: list[dict[str, Any]] = []
     for receiver_id, receiver in sorted(registry.receivers.items()):
-        state = "ready"
-        if receiver.layout == "flat":
-            state = "legacy"
-        if policy.receiver_root is not None and migration_record(policy, receiver_id).exists():
-            state = "migrating"
         rows.append(
             {
                 "id": receiver_id,
@@ -981,7 +941,6 @@ def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:
                 "path": str(receiver.path),
                 "owner": receiver.owner,
                 "allow": list(receiver.allow),
-                "state": state,
                 "certificates": list(cert_registry.receiver_in_use(registry, receiver_id)),
             }
         )
@@ -1050,9 +1009,7 @@ def remove(
             )
         else:
             home = tools.home(receiver.owner) or receiver.path
-            layers.append(
-                _remove_lock(home, receiver.path, shared=_shared(receiver.owner, remaining))
-            )
+            layers.append(_remove_lock(home))
             if receiver.transport == "sftp":
                 _write_checked(
                     locations.sshd_dropin,
@@ -1065,7 +1022,7 @@ def remove(
 
         layers.append(_remove_directory(receiver.path))
         if receiver.transport != "https":
-            layers.append(_remove_account_unless_shared(receiver.owner, remaining, home, tools))
+            layers.append(_remove_account(receiver.owner, home, tools))
 
         cert_registry.drop_receiver(
             _registry_path(policy),
@@ -1082,47 +1039,22 @@ def remove(
     return Result(receiver_id, "removed", tuple(layers))
 
 
-def _shared(owner: str, registry: Registry) -> bool:
-    """Whether another receiver still fetches as this account.
-
-    True only of the receivers registered before this command, which share
-    one account and one `authorized_keys` with a line per host (the `legacy`
-    ones `list` shows). Taking the account or the file with the first of them
-    would stop the others fetching without a word.
-    """
-
-    return any(other.owner == owner for other in registry.receivers.values())
-
-
-def _remove_lock(home: Path, path: Path, *, shared: bool) -> Layer:
-    """The lock goes; with a shared account, only the line that names this directory."""
+def _remove_lock(home: Path) -> Layer:
+    """The lock goes first, so the key stops working before the material is gone."""
 
     keys = home / ".ssh" / "authorized_keys"
     if not keys.exists():
         return Layer("lock", "absent", str(keys))
-    if not shared:
-        keys.unlink()
-        return Layer("lock", "removed", str(keys))
-    lines = keys.read_text(encoding="utf-8").splitlines()
-    kept = [line for line in lines if str(path) not in line]
-    if len(kept) == len(lines):
-        return Layer("lock", "absent", f"no line in {keys} names {path}")
-    keys.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8")
-    return Layer("lock", "removed", f"the line naming {path} in {keys}")
+    keys.unlink()
+    return Layer("lock", "removed", str(keys))
 
 
-def _remove_account_unless_shared(
-    owner: str, registry: Registry, home: Path, tools: Tools
-) -> Layer:
-    """The account goes with its last receiver, and its home with the account.
+def _remove_account(owner: str, home: Path, tools: Tools) -> Layer:
+    """The account goes with its receiver, and its home with the account.
 
-    A home that is the receiver's directory (B160) is already gone by now; an
-    older account's separate home goes here, and only once nothing fetches
-    as it.
+    A home that is the receiver's directory is already gone by now.
     """
 
-    if _shared(owner, registry):
-        return Layer("account", "kept", f"{owner} still fetches for another")
     layer = remove_account(owner, tools)
     if layer.state == "removed":
         shutil.rmtree(home, ignore_errors=True)
@@ -1137,237 +1069,3 @@ def _remove_directory(path: Path) -> Layer:
     except OSError as exc:
         return Layer("directory", "failed", f"{path}: {exc}")
     return Layer("directory", "removed", str(path))
-
-
-def _remove_empty_parent(path: Path, receiver_root: Path | None) -> Layer:
-    parent = path.parent
-    if receiver_root is not None and parent == receiver_root:
-        return Layer("parent", "kept", f"{parent} is the receiver root")
-    if not parent.is_dir():
-        return Layer("parent", "absent", str(parent))
-    if any(parent.iterdir()):
-        return Layer("parent", "kept", f"{parent} is not empty")
-    try:
-        parent.rmdir()
-    except OSError as exc:
-        return Layer("parent", "failed", f"{parent}: {exc}")
-    return Layer("parent", "removed", str(parent))
-
-
-def migrate(
-    policy: PathPolicy,
-    runtime: RuntimeConfig,
-    *,
-    receiver_id: str,
-    public_key: Path,
-    owner: str | None = None,
-    path: Path | None = None,
-    tools: Tools | None = None,
-    locations: Locations | None = None,
-    require_secure: bool = True,
-    min_remaining_days: int = 7,
-    live: Path = LETSENCRYPT_LIVE,
-    store: Path = IMPORT_STORE,
-    lock_path: Path = DEFAULT_LOCK_PATH,
-) -> Result:
-    """Build the new layer beside the old one and point the registry at it (B158).
-
-    Nothing is taken away here. The receiver goes on fetching from its old
-    account and its old directory until its operator has changed key, account
-    and path and fetched once; `--finish` is what removes the old layer, and
-    an operator who never runs it has a machine with one account too many
-    rather than a receiver that stopped fetching without knowing why.
-
-    Refused close to expiry, for a reason that is only obvious once: the new
-    directory is empty until the next publish, and the publisher will not
-    write a certificate with less than a week left (`MIN_REMAINING`). A
-    migration started there would point the registry at a directory that
-    stays empty until the certificate is renewed.
-    """
-
-    tools = tools or Tools()
-    locations = locations or Locations()
-    registry = runtime.registry
-    if registry is None:
-        raise ReceiverError(
-            "dependency_unavailable", "no certificate registry is configured", exit_code=78
-        )
-    receiver = registry.receivers.get(receiver_id)
-    if receiver is None:
-        raise ReceiverError("unknown_receiver", f"receiver {receiver_id} is not registered")
-    #
-    # The record first: once the registry has been pointed at the new layer,
-    # the entry looks finished, and "already per-certificate" would be a
-    # worse answer than "a migration is under way and has not been finished".
-    #
-    record = migration_record(policy, receiver_id)
-    if record.exists():
-        raise ReceiverError(
-            "already_exists",
-            f"a migration of {receiver_id} is already under way. Finish it with --finish "
-            "once the receiver has fetched from its new account.",
-        )
-    if receiver.layout != "flat":
-        raise ReceiverError(
-            "bad_input", f"receiver {receiver_id} is already per-certificate; nothing to migrate"
-        )
-    _refuse_near_expiry(
-        policy, registry, receiver_id, min_remaining_days, tools, live=live, store=store
-    )
-
-    account = owner or default_owner(receiver_id)
-    if account == receiver.owner:
-        raise ReceiverError(
-            "bad_input",
-            f"the new account would be the old one ({account}). One account per receiver is "
-            "the point of the migration; name a different one with --owner.",
-        )
-    directory = path or (
-        policy.receiver_root / receiver_id
-        if policy.receiver_root is not None
-        else receiver.path.parent / f"{receiver_id}-per-certificate"
-    )
-    if directory == receiver.path:
-        raise ReceiverError("bad_input", "the new directory would be the old one")
-
-    moved = Receiver(
-        receiver_id=receiver_id,
-        path=directory,
-        owner=account,
-        transport=receiver.transport,
-        layout="per-certificate",
-        allow=receiver.allow,
-    )
-    key_line = read_public_key(public_key)
-    old_home = tools.home(receiver.owner) or receiver.path
-
-    undo: list[Callable[[], None]] = []
-    layers: list[Layer] = []
-    try:
-        if not account_exists(account):
-            create_account(account, directory, moved.transport, tools)
-            undo.append(lambda: _discard(tools.run([USERDEL, account])))
-            layers.append(Layer("account", "created", account))
-        else:
-            layers.append(Layer("account", "present", account))
-        layers.append(create_directory(directory, account))
-        undo.append(lambda: shutil.rmtree(directory, ignore_errors=True))
-        layers.append(
-            _write_lock(moved, key_line, _without(registry, receiver_id), locations, tools, undo)
-        )
-        cert_registry.set_receiver(
-            _registry_path(policy),
-            receiver_id=receiver_id,
-            fields=_entry_fields(moved),
-            runtime=runtime,
-            require_secure=require_secure,
-            lock_path=lock_path,
-        )
-        layers.append(Layer("registry", "created", receiver_id))
-        record.parent.mkdir(parents=True, exist_ok=True)
-        os.chmod(record.parent, 0o700)
-        record.write_text(
-            json.dumps(
-                {
-                    "id": receiver_id,
-                    "old_owner": receiver.owner,
-                    "old_path": str(receiver.path),
-                    "old_home": str(old_home),
-                    "started": tools.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        os.chmod(record, 0o600)
-        layers.append(Layer("old layer", "kept", f"{receiver.owner} at {receiver.path}"))
-    except (ReceiverError, OSError, cert_registry.RegistryError) as exc:
-        for step in reversed(undo):
-            with contextlib.suppress(Exception):
-                step()
-        if isinstance(exc, ReceiverError):
-            raise
-        raise ReceiverError("write_failed", str(exc), exit_code=74) from exc
-
-    return Result(receiver_id, "migrated", tuple(layers), instructions(moved, locations))
-
-
-def _refuse_near_expiry(
-    policy: PathPolicy,
-    registry: Registry,
-    receiver_id: str,
-    days: int,
-    tools: Tools,
-    *,
-    live: Path,
-    store: Path,
-) -> None:
-    """B158's seven days, measured on the certificates this receiver holds."""
-
-    if policy.certificate_root is None:
-        return
-    for certificate_id in cert_registry.receiver_in_use(registry, receiver_id):
-        measured = measure_registered(
-            registry.certificates[certificate_id],
-            certificate_root=policy.certificate_root,
-            live=live,
-            store=store,
-        )
-        if isinstance(measured, str):
-            continue
-        _, facts, _ = measured
-        remaining = (facts.not_after - tools.now()).days
-        if remaining < days:
-            raise ReceiverError(
-                "certificate_expiring",
-                f"{certificate_id} has {remaining} days left, and the publisher does not "
-                f"write a certificate with less than {days}. The new directory would stay "
-                "empty until it is renewed; migrate after the renewal.",
-            )
-
-
-def finish(
-    policy: PathPolicy,
-    runtime: RuntimeConfig,
-    *,
-    receiver_id: str,
-    tools: Tools | None = None,
-    locations: Locations | None = None,
-) -> Result:
-    """Take away the layer the migration left standing."""
-
-    tools = tools or Tools()
-    locations = locations or Locations()
-    record = migration_record(policy, receiver_id)
-    try:
-        held = json.loads(record.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ReceiverError(
-            "unknown_receiver",
-            f"no migration of {receiver_id} is under way",
-        ) from exc
-
-    layers: list[Layer] = []
-    old_owner = str(held.get("old_owner", ""))
-    old_path = Path(str(held.get("old_path", "")))
-    old_home = Path(str(held.get("old_home", old_path)))
-    registry = runtime.registry
-    remaining = registry if registry is not None else Registry(receivers={}, certificates={})
-    if old_owner and old_owner != HTTPS_OWNER:
-        shared = _shared(old_owner, remaining)
-        layers.append(_remove_lock(old_home, old_path, shared=shared))
-        layers.append(_remove_directory(old_path))
-        layers.append(_remove_account_unless_shared(old_owner, remaining, old_home, tools))
-    else:
-        layers.append(_remove_directory(old_path))
-    #
-    # The last migration out of a flat layout leaves its parent - the old
-    # `/srv/certdist/pve` - empty and owned by an account that no longer
-    # exists (PVE migration 2026-09-18, finding 4). Taken away when it is
-    # empty and not the receiver root, which is where the new layer lives.
-    #
-    layers.append(_remove_empty_parent(old_path, policy.receiver_root))
-    record.unlink(missing_ok=True)
-    layers.append(Layer("migration", "removed", str(record)))
-    return Result(receiver_id, "finished", tuple(layers))

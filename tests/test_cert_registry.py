@@ -237,7 +237,7 @@ class WhatRetargetingDoes(RegistryFixture):
         #
         self.retarget(policy_path, registry, "example.com", receivers=["lb-01"])
         self.run_publish(policy_path)
-        delivered = self.receiver_dir / "fullchain.pem"
+        delivered = self.receiver_dir / "example.com" / "fullchain.pem"
         self.assertTrue(delivered.is_file())
         material = delivered.read_bytes()
 
@@ -384,21 +384,18 @@ class TheRulesThatMakeB138True(RegistryFixture):
     the same end state either way, and the end state is what is refused.
     """
 
-    def test_a_flat_receiver_takes_one_certificate_at_a_time(self) -> None:
+    def test_a_receiver_takes_more_than_one_certificate(self) -> None:
         policy_path, registry = self.prepared(
             {
                 "one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
                 "two.example": {"source": {"kind": "acme"}},
             }
         )
-        before = registry.read_bytes()
 
-        with self.assertRaises(RegistryError) as caught:
-            self.retarget(policy_path, registry, "two.example", receivers=["lb-01"])
+        self.retarget(policy_path, registry, "two.example", receivers=["lb-01"])
 
-        self.assertEqual(caught.exception.code, "receiver_full")
-        self.assertIn("one certificate at a time", str(caught.exception))
-        self.assertEqual(registry.read_bytes(), before)
+        document = yaml.safe_load(registry.read_text(encoding="utf-8"))
+        self.assertEqual(document["certificates"]["two.example"]["receivers"], ["lb-01"])
 
     def test_a_per_certificate_receiver_takes_as_many_as_it_is_given(self) -> None:
         policy_path, registry = self.prepared(

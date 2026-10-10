@@ -40,7 +40,7 @@
     {% endfor %}
     {% for row, steps in rows %}{% set item = on_rows.get(row.identifier) %}
     <tr class="receiver-row">
-      <td data-label="Receiver"><strong>{{ row.identifier }}</strong>{% if row.legacy %} <span class="warning-text">· legacy layout</span>{% endif %}</td>
+      <td data-label="Receiver"><strong>{{ row.identifier }}</strong></td>
       <td data-label="Transport">{{ row.transport_label }}{% if row.allow %} <span class="optional">· {{ row.allow | join(', ') }}</span>{% endif %}</td>
       <td data-label="Account"><code>{{ row.owner }}</code></td>
       <td data-label="Holds">{% if item %}{{ job_badge(item) }}{% elif row.holds %}{% for held in row.holds %}{% if not loop.first %}, {% endif %}{{ held.certificate_id }}{% if held.format == 'pkcs12' %} <span class="target-kind">pkcs12</span>{% endif %}{% endfor %}{% else %}<span class="optional">nothing yet</span>{% endif %}</td>

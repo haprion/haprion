@@ -79,8 +79,10 @@ class DeleteFixture(Fixture):
             (self.dist / f"{certificate_id}.pem").write_text("pem\n", encoding="utf-8")
             (self.renewal / f"{certificate_id}.conf").write_text("version = 5.8.0\n")
             if "lb-01" in (raw.get("receivers") or []):
-                (self.receiver_dir / FULLCHAIN).write_text("chain\n", encoding="utf-8")
-                (self.receiver_dir / PRIVKEY).write_text("key\n", encoding="utf-8")
+                held = self.receiver_dir / certificate_id
+                held.mkdir(exist_ok=True)
+                (held / FULLCHAIN).write_text("chain\n", encoding="utf-8")
+                (held / PRIVKEY).write_text("key\n", encoding="utf-8")
         #
         # Nodes reachable through an identity the policy names; the key only
         # has to exist for the loader.
@@ -184,18 +186,6 @@ class WhatIsRefused(DeleteFixture):
         self.assert_untouched(report, "example.com", "shared_source")
         self.assertIn("'example.com'", report.outcomes[0].reason)
 
-    def test_a_receiver_another_entry_also_publishes_to(self) -> None:
-        policy_path = self.prepared(
-            {
-                "one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
-                "two.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
-            }
-        )
-        self.before = (self.root / "certificates.yaml").read_bytes()
-        report = self.run_delete(policy_path, "one.example")
-        self.assert_untouched(report, "one.example", "shared_receiver")
-        self.assertTrue((self.receiver_dir / FULLCHAIN).exists())
-
     def test_a_per_certificate_receiver_is_not_shared_by_its_certificates(self) -> None:
         #
         # Seen 2026-09-20: a throwaway import to a per-certificate receiver
@@ -209,17 +199,6 @@ class WhatIsRefused(DeleteFixture):
                 "two.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
             }
         )
-        registry = self.root / "certificates.yaml"
-        raw = yaml.safe_load(registry.read_text())
-        raw["receivers"]["lb-01"]["layout"] = "per-certificate"
-        registry.write_text(yaml.safe_dump(raw), encoding="utf-8")
-        registry.chmod(0o640)
-        for name in ("one.example", "two.example"):
-            directory = self.receiver_dir / name
-            directory.mkdir()
-            (directory / FULLCHAIN).write_text("chain\n", encoding="utf-8")
-            (directory / PRIVKEY).write_text("key\n", encoding="utf-8")
-
         report = self.run_delete(policy_path, "one.example")
 
         (outcome,) = report.outcomes
@@ -619,12 +598,12 @@ class DeletingABundleFollowsTheLayout(DeleteFixture):
         )
         registry = self.root / "certificates.yaml"
         raw = yaml.safe_load(registry.read_text())
-        raw["receivers"]["lb-01"]["layout"] = "per-certificate"
         raw["certificates"]["certserver1.example"]["receivers"] = [{"id": "lb-01", "format": "pkcs12"}]
         registry.write_text(yaml.safe_dump(raw), encoding="utf-8")
         registry.chmod(0o640)
         directory = self.receiver_dir / "certserver1.example"
-        directory.mkdir()
+        for stale in (FULLCHAIN, PRIVKEY):
+            (directory / stale).unlink()
         (directory / "certserver1.example.pfx").write_bytes(b"bundle")
         (directory / "certserver1.example.password").write_text("pw\n", encoding="utf-8")
 

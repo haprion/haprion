@@ -251,9 +251,10 @@ class ExactTargets(Fixture):
         chain = (self.live / "example.com-wildcard" / "fullchain.pem").read_bytes()
         self.assertEqual(combined.read_bytes(), key + chain)
         self.assertEqual(combined.stat().st_mode & 0o777, 0o640)
-        self.assertEqual((self.receiver_dir / "fullchain.pem").read_bytes(), chain)
-        self.assertEqual((self.receiver_dir / "privkey.pem").read_bytes(), key)
-        self.assertEqual((self.receiver_dir / "privkey.pem").stat().st_mode & 0o777, 0o600)
+        held = self.receiver_dir / "example.com"
+        self.assertEqual((held / "fullchain.pem").read_bytes(), chain)
+        self.assertEqual((held / "privkey.pem").read_bytes(), key)
+        self.assertEqual((held / "privkey.pem").stat().st_mode & 0o777, 0o600)
         self.assertEqual(report.changed_clusters, ("alpha",))
 
     def test_no_spill_between_targets(self) -> None:
@@ -279,10 +280,10 @@ class ExactTargets(Fixture):
         self.assertEqual(
             sorted(p.name for p in self.dist.iterdir()), ["example.com.pem", "example.net.pem"]
         )
-        self.assertEqual(
-            sorted(p.name for p in self.receiver_dir.iterdir()), ["fullchain.pem", "privkey.pem"]
-        )
-        self.assertIn(b"BEGIN CERTIFICATE", (self.receiver_dir / "fullchain.pem").read_bytes())
+        held = self.receiver_dir / "lb-01.example.org"
+        self.assertEqual([p.name for p in self.receiver_dir.iterdir()], ["lb-01.example.org"])
+        self.assertEqual(sorted(p.name for p in held.iterdir()), ["fullchain.pem", "privkey.pem"])
+        self.assertIn(b"BEGIN CERTIFICATE", (held / "fullchain.pem").read_bytes())
         self.assertEqual(report.changed_clusters, ("alpha", "beta"))
 
     def test_only_selects_named_certificates(self) -> None:
@@ -321,8 +322,8 @@ class Idempotence(Fixture):
             path: path.stat().st_ino
             for path in (
                 self.dist / "example.com.pem",
-                self.receiver_dir / "fullchain.pem",
-                self.receiver_dir / "privkey.pem",
+                self.receiver_dir / "example.com" / "fullchain.pem",
+                self.receiver_dir / "example.com" / "privkey.pem",
             )
         }
 
@@ -869,20 +870,6 @@ class PerCertificateLayout(Fixture):
                 (directory / "privkey.pem").read_bytes(),
                 (self.live / certificate_id / "privkey.pem").read_bytes(),
             )
-
-    def test_a_flat_receiver_still_reads_its_own_directory(self) -> None:
-        """The three receivers registered before C7 are not moved by this."""
-
-        policy_path = self.write_config(
-            self.keeper() | {"one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]}}
-        )
-
-        self.run_publish(policy_path)
-
-        self.assertEqual(
-            sorted(path.name for path in self.receiver_dir.iterdir()),
-            ["fullchain.pem", "privkey.pem"],
-        )
 
     def test_a_second_run_changes_nothing(self) -> None:
         policy_path = self.write_config(

@@ -531,9 +531,9 @@ class WhenCertbotSucceeds(IssueFixture):
 
         # Published to exactly the named targets; the pre-existing certificate untouched.
         self.assertEqual([p.name for p in self.dist.iterdir()], ["example.com.pem"])
-        self.assertEqual(
-            sorted(p.name for p in self.receiver_dir.iterdir()), ["fullchain.pem", "privkey.pem"]
-        )
+        held = self.receiver_dir / "example.com"
+        self.assertEqual([p.name for p in self.receiver_dir.iterdir()], ["example.com"])
+        self.assertEqual(sorted(p.name for p in held.iterdir()), ["fullchain.pem", "privkey.pem"])
         [published] = result["publish"]["certificates"]
         self.assertEqual(published["status"], "published")
         self.assertEqual(deployed, ["alpha"])

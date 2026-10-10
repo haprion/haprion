@@ -390,11 +390,11 @@ class RegistryListingTests(unittest.TestCase):
             material = _pem("one.example.net")
             (source / "fullchain.pem").write_text(material, encoding="ascii")
 
-            published = root / "receivers" / "current"
+            published = root / "receivers" / "current" / "one"
             published.mkdir(parents=True)
             (published / "fullchain.pem").write_text(material, encoding="ascii")
 
-            stale = root / "receivers" / "stale"
+            stale = root / "receivers" / "stale" / "one"
             stale.mkdir(parents=True)
             (stale / "fullchain.pem").write_text(_pem("one.example.net"), encoding="ascii")
 

@@ -130,7 +130,7 @@ class PublishingToMoreTargets(RetargetFixture):
 
         self.assertEqual(report.changed, ("example.com",))
         self.assertEqual(self.targets("example.com")["receivers"], ["lb-01"])
-        self.assertTrue((self.receiver_dir / FULLCHAIN).exists())
+        self.assertTrue((self.receiver_dir / "example.com" / FULLCHAIN).exists())
         self.assertEqual(self.deployed, [])
 
     def test_an_unknown_target_or_certificate_is_refused_and_the_rest_go_through(self) -> None:
@@ -203,7 +203,7 @@ class RemovingFromATarget(RetargetFixture):
             [(layer.name, layer.state) for layer in report.outcomes[0].layers],
         )
         # The receiver it still publishes to keeps its pair.
-        self.assertTrue((self.receiver_dir / FULLCHAIN).exists())
+        self.assertTrue((self.receiver_dir / "shop.example" / FULLCHAIN).exists())
 
     def test_a_node_that_keeps_its_copy_makes_the_row_incomplete_not_the_registry(self) -> None:
         self.node_answers["node-b.example.com"] = (1, "unknown request: cert-remove")
@@ -219,11 +219,11 @@ class RemovingFromATarget(RetargetFixture):
 
         self.assertEqual(report.changed, ("shop.example",))
         self.assertEqual(self.targets("shop.example")["receivers"], [])
-        self.assertFalse((self.receiver_dir / FULLCHAIN).exists())
-        self.assertFalse((self.receiver_dir / PRIVKEY).exists())
+        self.assertFalse((self.receiver_dir / "shop.example" / FULLCHAIN).exists())
+        self.assertFalse((self.receiver_dir / "shop.example" / PRIVKEY).exists())
         self.assertEqual(self.node_calls, [])
 
-    def test_a_shared_receiver_keeps_its_pair_for_the_other_certificate(self) -> None:
+    def test_another_certificate_on_the_receiver_keeps_its_own_directory(self) -> None:
         self.policy_path = self.prepared(
             {
                 "shop.example": {
@@ -242,9 +242,8 @@ class RemovingFromATarget(RetargetFixture):
 
         self.assertEqual(report.changed, ("shop.example",))
         self.assertEqual(self.targets("shop.example")["receivers"], [])
-        self.assertTrue((self.receiver_dir / FULLCHAIN).exists())
-        self.assertEqual(report.outcomes[0].layers[0].state, "kept")
-        self.assertIn("other.example", report.outcomes[0].layers[0].detail)
+        self.assertFalse((self.receiver_dir / "shop.example").exists())
+        self.assertTrue((self.receiver_dir / "other.example" / FULLCHAIN).exists())
 
     def test_a_certificate_not_on_that_target_is_unchanged(self) -> None:
         report = self.retarget(self.policy_path, "remove", "shop.example", clusters=("beta",))
@@ -370,14 +369,14 @@ class WhatALayoutChangesAboutRemoval(RetargetFixture):
         # The files as a publish would have left them: a PEM pair for one, a
         # bundle and its password for the other, each under its own directory.
         #
-        (self.receiver_dir / "shop.example").mkdir()
+        (self.receiver_dir / "shop.example").mkdir(exist_ok=True)
         (self.receiver_dir / "shop.example" / FULLCHAIN).write_text("chain\n", encoding="utf-8")
         (self.receiver_dir / "shop.example" / PRIVKEY).write_text("key\n", encoding="utf-8")
-        (self.receiver_dir / "other.example").mkdir()
+        (self.receiver_dir / "other.example").mkdir(exist_ok=True)
         (self.receiver_dir / "other.example" / "other.example.pfx").write_bytes(b"bundle")
         (self.receiver_dir / "other.example" / "other.example.password").write_text("pw\n")
         for stale in (FULLCHAIN, PRIVKEY):
-            (self.receiver_dir / stale).unlink(missing_ok=True)
+            (self.receiver_dir / "other.example" / stale).unlink(missing_ok=True)
 
     def test_one_certificate_leaves_and_the_other_keeps_its_directory(self) -> None:
         report = self.retarget(self.policy_path, "remove", "shop.example", receivers=("lb-01",))

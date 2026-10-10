@@ -395,8 +395,8 @@ class WhatAnImportIs(ImportFixture):
 
     def test_a_receiver_only_import_publishes_the_pair(self) -> None:
         self.run_import("pve.example", self.material(), receivers=["lb-01"])
-        self.assertTrue((self.receiver_dir / FULLCHAIN).exists())
-        self.assertTrue((self.receiver_dir / PRIVKEY).exists())
+        self.assertTrue((self.receiver_dir / "pve.example" / FULLCHAIN).exists())
+        self.assertTrue((self.receiver_dir / "pve.example" / PRIVKEY).exists())
         self.assertFalse((self.dist / "pve.example.pem").exists())
         self.assertEqual(self.deployed, [])
 

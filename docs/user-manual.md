@@ -875,8 +875,7 @@ for all three: which certificates exist, where each comes from, and where each g
 | Target | Written as | Owner and mode |
 |---|---|---|
 | a cluster | `<certificate_root>/<id>.pem`, the private key followed by the full chain - HAProxy's own format | `root`, the group that owns `certificate_root`, `640` |
-| a receiver, `layout: flat` | `<path>/fullchain.pem` and `<path>/privkey.pem` | the receiver's `owner`, `600`; the directory itself belongs to root or to the owner and is writable by nobody else |
-| a receiver, `layout: per-certificate` | `<path>/<id>/fullchain.pem` and `<path>/<id>/privkey.pem` | the same, and the per-certificate directory is `root` with the account's group, `750`, made by the publisher |
+| a receiver | `<path>/<id>/fullchain.pem` and `<path>/<id>/privkey.pem` | the receiver's `owner`, `600`; the per-certificate directory is `root` with the account's group, `750`, made by the publisher |
 | a receiver, `format: pkcs12` | `<path>/<id>/<id>.pfx` and `<path>/<id>/<id>.password` | the receiver's `owner`, `600` |
 
 Every certificate is checked before its first file is written - it parses, its private key
@@ -1323,10 +1322,9 @@ neither); a host that fetches over IPv6 is registered under its DNS name, and it
 goes into `from=` with the rest.
 
 **Where the directory goes** is `receiver_root` in the runtime policy: a new receiver's
-directory is `<receiver_root>/<id>` unless `--path` names another, and a migration's record
-lives there too. The registry, not the root, says where each receiver actually is, so the root
-is optional until the first `add` or `migrate`, which refuse with `dependency_unavailable` until it
-is declared.
+directory is `<receiver_root>/<id>` unless `--path` names another. The registry, not the root,
+says where each receiver actually is, so the root is optional until the first `add`, which refuses
+with `dependency_unavailable` until it is declared.
 
 **The private key is never given to the manager.** The pair is made on the receiver
 (`ssh-keygen -t ed25519`), and `--public-key` takes the `.pub` file. A private key that passed
@@ -1379,32 +1377,14 @@ interface ([Deleting a certificate](#deleting-a-certificate)) is what lets a cer
 says what that costs. There is no operator command for that step: the interface queues a
 `cert_target` job and the worker runs `haprion-cert-target-helper`, which takes its request on
 stdin and is not meant to be typed. Once nothing names it, the registry entry, the lock, the
-directory and the account go in that order; an account another receiver still fetches as (the
-`legacy` ones share one) is kept, and only the key line naming this directory is taken out.
-
-**Migrating a `legacy` receiver** - one `list` shows as sharing an account and a `flat` directory -
-to its own account and directory is two steps with the receiver's own change in between:
-
-```bash
-sudo haprion-cert-receiver migrate pve-01.example.net --public-key /tmp/pve-01.pub
-# ... the host changes account, path and key, and fetches once ...
-sudo haprion-cert-receiver migrate pve-01.example.net --finish
-```
-
-The first builds the new account, directory and lock **beside** the old ones and points the
-registry at the new path; nothing is taken away, so the host goes on fetching as before until it is
-changed. `--finish` removes the old layer, and keeps the old account if another receiver still
-fetches as it. A migration is refused while any certificate on that receiver has less than seven
-days left: the new directory is empty until the next publish, and the publisher will not write a
-certificate that close to expiry.
+directory and the account go in that order.
 
 Reference fetch scripts for each transport are in
 [`../examples/receivers/`](../examples/receivers/). They are what a receiver's own operator
 adapts; the manager never pushes.
 
 **The worker's sandbox must be able to look into a receiver's directory.** A receiver's files
-belong to its fetch account (`0600`), and a `legacy` receiver's directory belongs to that account
-outright. Root inside the worker's unit is only uid 0 - the mode bits are the law
+belong to its fetch account (`0600`). Root inside the worker's unit is only uid 0 - the mode bits are the law
 there unless the bounding set says otherwise - so the worker unit carries `CAP_DAC_READ_SEARCH`,
 the read-and-traverse capability the poller already has. Without it a target change from the
 interface ends `target_missing` on a directory that `haprion-cert-publish` run as root from a
@@ -1421,8 +1401,7 @@ helper takes the key as text and never as a path, so the interface cannot point 
 receiver it writes out the exact commands that host runs to fetch - the account, the manager's
 name and each certificate it holds filled in, for Linux and for Windows where the transport
 allows both - together with the `ssh-keygen` line the host runs first. Removal from the page is
-refused while any certificate names the receiver, as at the terminal; a `legacy` receiver is
-migrated from the terminal and not removed from the page.
+refused while any certificate names the receiver, as at the terminal.
 
 The receivers page reads its rows from `registry.receiver_records` and the manager's name from
 `registry.manager` in the `cert_list` answer (the interface's `SERVER_NAME`); an installation
@@ -3068,7 +3047,7 @@ receivers:
     path: /srv/certificates/receivers/lb-01.example.net
     owner: svc-app
     transport: sftp            # rsync | sftp | https; left out, rsync
-    layout: per-certificate    # flat | per-certificate; left out, flat
+    layout: per-certificate    # the only layout; may be left out
     allow:                     # https only, and required there
       - 192.0.2.0/24
 
@@ -3106,11 +3085,9 @@ no receiver - the loader refuses either, and refuses a second such entry - and i
 nginx instead of to targets.
 
 `transport` says how the receiver fetches, `layout` how its directory is arranged, and `allow` -
-`https` only - which addresses may fetch at all. Left out, they are `rsync` and `flat`, the form
-of a `legacy` receiver. `flat` puts `fullchain.pem` and `privkey.pem` straight into the directory, which is why
-such a receiver holds **one** certificate at a time and a second is refused; `per-certificate`
-gives each certificate a directory of its own, and is the only form a new receiver is registered
-in. Neither field is edited afterwards: a receiver finds out about a moved path or a changed
+`https` only - which addresses may fetch at all. Left out, they are `rsync` and
+`per-certificate`, which gives each certificate a directory of its own under the receiver's.
+Neither field is edited afterwards: a receiver finds out about a moved path or a changed
 transport at its next fetch, which is a renewal away, so a change is `remove` and `add` again.
 
 A certificate's `receivers` list may name a receiver as `{id: <id>, format: pkcs12}` instead of as

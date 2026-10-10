@@ -415,10 +415,10 @@ HOSTNAME = re.compile(
 # shape of one line of YAML.
 #
 RECEIVER_TRANSPORTS = ("rsync", "sftp", "https")
-RECEIVER_LAYOUTS = ("flat", "per-certificate")
+RECEIVER_LAYOUTS = ("per-certificate",)
 RECEIVER_FORMATS = ("pem", "pkcs12")
 DEFAULT_RECEIVER_TRANSPORT = "rsync"
-DEFAULT_RECEIVER_LAYOUT = "flat"
+DEFAULT_RECEIVER_LAYOUT = "per-certificate"
 DEFAULT_RECEIVER_FORMAT = "pem"
 
 

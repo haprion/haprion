@@ -430,11 +430,6 @@ class WhatRegistrationRefuses(ReceiverFixture):
         self.add()
         self.assertEqual(self.refusal().code, "already_exists")
 
-    def test_a_new_flat_receiver(self) -> None:
-        error = self.refusal(layout="flat")
-        self.assertEqual(error.code, "bad_input")
-        self.assertIn("per-certificate", str(error))
-
     def test_https_without_a_whitelist_and_a_whitelist_without_https(self) -> None:
         self.assertEqual(
             self.refusal(transport="https", public_key=None, owner=None).code, "bad_input"
@@ -562,207 +557,14 @@ class Listing(ReceiverFixture):
         policy, runtime = self.loaded()
         return cert_receiver.listing(policy, runtime)
 
-    def test_a_new_receiver_is_ready_and_an_old_one_is_legacy(self) -> None:
+    def test_a_receiver_is_listed_with_its_transport_and_what_it_holds(self) -> None:
         self.add()
-        document = yaml.safe_load((self.root / "certificates.yaml").read_text())
-        document["receivers"]["lb-01"] = {"path": str(self.receiver_dir), "owner": ME}
-        (self.root / "certificates.yaml").write_text(yaml.safe_dump(document), encoding="utf-8")
 
         by_id = {row["id"]: row for row in self.rows()}
 
-        self.assertEqual(by_id["lb-02.example.net"]["state"], "ready")
-        self.assertEqual(by_id["lb-01"]["state"], "legacy")
-        self.assertEqual(by_id["lb-01"]["layout"], "flat")
+        self.assertEqual(by_id["lb-02.example.net"]["transport"], "rsync")
+        self.assertEqual(by_id["lb-02.example.net"]["layout"], "per-certificate")
         self.assertEqual(by_id["lb-02.example.net"]["certificates"], [])
-
-
-class MigratingTheOldOnes(ReceiverFixture):
-    """B158: the new layer is built beside the old, and `--finish` takes the old away."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        document = yaml.safe_load((self.root / "certificates.yaml").read_text())
-        document["receivers"]["pve-01.example.net"] = {
-            "path": str(self.root / "old" / "pve-01"),
-            "owner": ME,
-        }
-        (self.root / "certificates.yaml").write_text(yaml.safe_dump(document), encoding="utf-8")
-        (self.root / "old" / "pve-01").mkdir(parents=True)
-        (self.root / "old" / "pve-01" / "fullchain.pem").write_text("chain\n", encoding="utf-8")
-        # The old shared account keeps its lock under a home of its own, as
-        # the accounts made before this command do on a machine.
-        self.old_keys = self.root / "home" / ME / ".ssh" / "authorized_keys"
-        self.old_keys.parent.mkdir(parents=True, exist_ok=True)
-        self.old_keys.write_text(
-            f'restrict,command="/usr/bin/rrsync -ro {self.root / "old" / "pve-01"}/" {KEY}\n'
-            f'restrict,command="/usr/bin/rrsync -ro {self.root / "old" / "pve-02"}/" {KEY}\n',
-            encoding="ascii",
-        )
-
-    def migrate(self, **options: Any) -> Result:
-        policy, runtime = self.loaded()
-        return cert_receiver.migrate(
-            policy,
-            runtime,
-            receiver_id="pve-01.example.net",
-            public_key=self.key_file,
-            owner=options.pop("owner", "crx-pve-01"),
-            tools=self.tools,
-            locations=self.locations,
-            require_secure=False,
-            lock_path=self.root / "cert-publish.lock",
-            **options,
-        )
-
-    def test_the_registry_points_at_the_new_layer_and_the_old_one_stays(self) -> None:
-        with (
-            mock.patch.object(cert_receiver, "account_exists", return_value=False),
-            mock.patch.object(cert_receiver, "_own"),
-        ):
-            result = self.migrate()
-
-        entry = self.registered()["pve-01.example.net"]
-        self.assertEqual(entry["layout"], "per-certificate")
-        self.assertEqual(entry["owner"], "crx-pve-01")
-        self.assertEqual(entry["path"], str(self.root / "receivers" / "pve-01.example.net"))
-        self.assertTrue((self.root / "old" / "pve-01" / "fullchain.pem").exists())
-        self.assertTrue(self.old_keys.exists())
-        self.assertTrue(self.keys_file("pve-01.example.net").exists())
-        self.assertIn("kept", [layer.state for layer in result.layers])
-        record = json.loads(
-            (self.root / "receivers" / ".migrations" / "pve-01.example.net.json").read_text()
-        )
-        self.assertEqual(record["old_path"], str(self.root / "old" / "pve-01"))
-        self.assertEqual(record["old_home"], str(self.root / "home" / ME))
-
-    def test_a_second_migration_while_one_is_under_way(self) -> None:
-        with (
-            mock.patch.object(cert_receiver, "account_exists", return_value=False),
-            mock.patch.object(cert_receiver, "_own"),
-        ):
-            self.migrate()
-            with self.assertRaises(ReceiverError) as caught:
-                self.migrate(owner="crx-pve-01b")
-
-        self.assertEqual(caught.exception.code, "already_exists")
-
-    def test_a_certificate_with_less_than_a_week_left_is_refused(self) -> None:
-        document = yaml.safe_load((self.root / "certificates.yaml").read_text())
-        document["certificates"]["short.example"] = {
-            "source": {"kind": "acme"},
-            "receivers": ["pve-01.example.net"],
-        }
-        (self.root / "certificates.yaml").write_text(yaml.safe_dump(document), encoding="utf-8")
-        issue(self.live / "short.example", "short.example", days=3)
-
-        with (
-            mock.patch.object(cert_receiver, "account_exists", return_value=False),
-            self.assertRaises(ReceiverError) as caught,
-        ):
-            self.migrate(live=self.live, store=self.store)
-
-        self.assertEqual(caught.exception.code, "certificate_expiring")
-
-    def test_finish_takes_the_old_account_and_directory(self) -> None:
-        with (
-            mock.patch.object(cert_receiver, "account_exists", return_value=False),
-            mock.patch.object(cert_receiver, "_own"),
-        ):
-            self.migrate()
-        policy, runtime = self.loaded()
-
-        result = cert_receiver.finish(
-            policy,
-            runtime,
-            receiver_id="pve-01.example.net",
-            tools=self.tools,
-            locations=self.locations,
-        )
-
-        self.assertEqual(result.action, "finished")
-        self.assertFalse((self.root / "old" / "pve-01").exists())
-        self.assertFalse(self.old_keys.exists())
-        self.assertFalse((self.root / "home" / ME).exists())
-        self.assertTrue(self.runner.ran(f"userdel {ME}"))
-        self.assertFalse(
-            (self.root / "receivers" / ".migrations" / "pve-01.example.net.json").exists()
-        )
-
-    def test_finish_takes_the_emptied_legacy_parent_with_it(self) -> None:
-        """PVE migration 2026-09-18, finding 4: `/srv/certdist/pve` was left orphaned."""
-
-        with (
-            mock.patch.object(cert_receiver, "account_exists", return_value=False),
-            mock.patch.object(cert_receiver, "_own"),
-        ):
-            self.migrate()
-        policy, runtime = self.loaded()
-
-        result = cert_receiver.finish(
-            policy,
-            runtime,
-            receiver_id="pve-01.example.net",
-            tools=self.tools,
-            locations=self.locations,
-        )
-
-        parents = [layer for layer in result.layers if layer.name == "parent"]
-        self.assertEqual([layer.state for layer in parents], ["removed"])
-        self.assertFalse((self.root / "old").exists())
-        self.assertTrue((self.root / "receivers").exists())
-
-    def test_finish_leaves_a_parent_that_still_holds_a_sibling(self) -> None:
-        (self.root / "old" / "pve-02").mkdir(parents=True)
-        with (
-            mock.patch.object(cert_receiver, "account_exists", return_value=False),
-            mock.patch.object(cert_receiver, "_own"),
-        ):
-            self.migrate()
-        policy, runtime = self.loaded()
-
-        result = cert_receiver.finish(
-            policy,
-            runtime,
-            receiver_id="pve-01.example.net",
-            tools=self.tools,
-            locations=self.locations,
-        )
-
-        parents = [layer for layer in result.layers if layer.name == "parent"]
-        self.assertEqual([layer.state for layer in parents], ["kept"])
-        self.assertTrue((self.root / "old" / "pve-02").exists())
-
-    def test_finish_keeps_an_account_another_receiver_still_fetches_as(self) -> None:
-        document = yaml.safe_load((self.root / "certificates.yaml").read_text())
-        document["receivers"]["pve-02.example.net"] = {
-            "path": str(self.root / "old" / "pve-02"),
-            "owner": ME,
-        }
-        (self.root / "certificates.yaml").write_text(yaml.safe_dump(document), encoding="utf-8")
-        (self.root / "old" / "pve-02").mkdir(parents=True)
-        with (
-            mock.patch.object(cert_receiver, "account_exists", return_value=False),
-            mock.patch.object(cert_receiver, "_own"),
-        ):
-            self.migrate()
-        policy, runtime = self.loaded()
-
-        result = cert_receiver.finish(
-            policy,
-            runtime,
-            receiver_id="pve-01.example.net",
-            tools=self.tools,
-            locations=self.locations,
-        )
-
-        kept = [layer for layer in result.layers if layer.name == "account"]
-        self.assertEqual([layer.state for layer in kept], ["kept"])
-        self.assertFalse(self.runner.ran("userdel"))
-        # The shared file loses one line, the one naming pve-01's directory;
-        # pve-02 goes on fetching with the other.
-        remaining = self.old_keys.read_text(encoding="ascii")
-        self.assertNotIn("pve-01", remaining)
-        self.assertIn("pve-02", remaining)
 
 
 class TheCommand(ReceiverFixture):
@@ -800,11 +602,17 @@ class TheCommand(ReceiverFixture):
         code, out, _ = self.run_cli("list")
         self.assertEqual(code, 0)
         self.assertIn("lb-02.example.net", out)
-        self.assertIn("ready", out)
+        self.assertIn("rsync", out)
 
         code, out, _ = self.run_cli("remove", "lb-02.example.net")
         self.assertEqual(code, 0, out)
         self.assertNotIn("lb-02.example.net", self.registered())
+
+    def test_there_is_no_migrate_verb(self) -> None:
+        code, out, _ = self.run_cli("migrate", "lb-02.example.net", "--finish")
+
+        self.assertEqual(code, 64)
+        self.assertIn("Usage:", out)
 
     def test_the_json_envelope_carries_the_layers(self) -> None:
         code, out, _ = self.run_cli(

@@ -86,13 +86,6 @@ class ReadingTheRows(unittest.TestCase):
         self.assertIsNone(manager)
         self.assertEqual(rows, ())
 
-    def test_a_legacy_row_is_not_removable_from_here(self) -> None:
-        _, rows = certificate_receivers.parse_receiver_rows(
-            block(record("pve-01.example.net", layout="flat", owner="svc-app"))
-        )
-        self.assertTrue(rows[0].legacy)
-        self.assertFalse(rows[0].removable)
-
 
 class WhatTheHostRuns(unittest.TestCase):
     def rows(self, *records: dict[str, object]) -> tuple[Any, ...]:
@@ -236,14 +229,13 @@ class TheFormRefuses(unittest.TestCase):
             block(
                 record("lb-01", certificates=("app.example.com",)),
                 record("lb-02.example.net"),
-                record("pve-01.example.net", layout="flat"),
             )
         )[1]
         self.assertEqual(
             certificate_receivers.removal("lb-02.example.net", rows),
             {"receiver": "lb-02.example.net", "action": "remove"},
         )
-        for name in ("lb-01", "pve-01.example.net", "nobody"):
+        for name in ("lb-01", "nobody"):
             with self.subTest(name), self.assertRaises(certificate_receivers.ReceiverProblem):
                 certificate_receivers.removal(name, rows)
 

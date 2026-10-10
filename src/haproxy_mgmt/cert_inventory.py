@@ -76,19 +76,15 @@ PASSWORD_SUFFIX = ".password"  # noqa: S105 - a file name, not a password
 
 
 def receiver_directory(receiver: Receiver, certificate_id: str) -> Path:
-    """Where this certificate's files live for this receiver (B138 layout).
+    """Where this certificate's files live for this receiver: a directory of its own.
 
     One function rather than five, because five readers ask it: the publisher
     that writes, the retarget and delete paths that unlink, the listing that
     reports when the manager last wrote, and the registration command that
-    creates the directory. A reader that guessed `flat` while the registry
-    said `per-certificate` would unlink a file that is not there and report a
-    receiver as never published.
+    creates the directory.
     """
 
-    if receiver.layout == "per-certificate":
-        return receiver.path / certificate_id
-    return receiver.path
+    return receiver.path / certificate_id
 
 
 def receiver_files(

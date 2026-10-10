@@ -25,9 +25,7 @@ from haproxy_mgmt.cert_receiver import (
     Result,
     Tools,
     add,
-    finish,
     listing,
-    migrate,
     remove,
 )
 from haproxy_mgmt.cli.cert_publish import EXIT_NOT_ROOT
@@ -45,9 +43,6 @@ USAGE = (
     "                        [--json]\n"
     "  haprion-cert-receiver list [--json]\n"
     "  haprion-cert-receiver remove <id> [--json]\n"
-    "  haprion-cert-receiver migrate <id> --public-key <file> [--owner <name>]\n"
-    "                        [--path <dir>] [--json]\n"
-    "  haprion-cert-receiver migrate <id> --finish [--json]\n"
     "\n"
     "A receiver is a machine outside this installation that fetches certificates.\n"
     "Registering one makes an account, a directory only that account may read, a\n"
@@ -68,8 +63,6 @@ USAGE = (
     "                        May be repeated. Required for https, refused otherwise.\n"
     "  --owner <name>        The account. Defaults to crx- and the ID.\n"
     "  --path <dir>          The directory. Defaults to receiver_root/<id>.\n"
-    "  --finish              Take away the layer a migration left standing, once\n"
-    "                        the receiver has fetched from its new account.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 
@@ -83,13 +76,12 @@ class Arguments:
         self.owner: str | None = None
         self.path: Path | None = None
         self.allow: list[str] = []
-        self.finish = False
         self.json_mode = False
 
 
 def _parse(argv: list[str], writer: TextIO) -> Arguments:
     parsed = Arguments()
-    if not argv or argv[0] not in {"add", "list", "remove", "migrate"}:
+    if not argv or argv[0] not in {"add", "list", "remove"}:
         writer.write(USAGE)
         raise SystemExit(EXIT_USAGE)
     parsed.action = argv[0]
@@ -124,9 +116,6 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
         elif argument == "--allow":
             parsed.allow.append(value())
             index += 2
-        elif argument == "--finish":
-            parsed.finish = True
-            index += 1
         elif argument == "--json":
             parsed.json_mode = True
             index += 1
@@ -151,13 +140,10 @@ def _print_listing(rows: list[dict[str, Any]], writer: TextIO) -> None:
     if not rows:
         writer.write("no receivers are registered\n")
         return
-    writer.write(f"{'ID':<28} {'TRANSPORT':<9} {'LAYOUT':<16} {'STATE':<10} HOLDS\n")
+    writer.write(f"{'ID':<28} {'TRANSPORT':<9} HOLDS\n")
     for row in rows:
         holds = ", ".join(row["certificates"]) or "-"
-        writer.write(
-            f"{row['id']:<28} {row['transport']:<9} {row['layout']:<16} "
-            f"{row['state']:<10} {holds}\n"
-        )
+        writer.write(f"{row['id']:<28} {row['transport']:<9} {holds}\n")
 
 
 def main(
@@ -246,35 +232,11 @@ def main(
                 require_secure=require_secure,
                 lock_path=lock_path,
             )
-        elif arguments.action == "remove":
+        else:
             result = remove(
                 policy,
                 runtime,
                 receiver_id=arguments.receiver_id,
-                tools=tools,
-                locations=locations,
-                require_secure=require_secure,
-                lock_path=lock_path,
-            )
-        elif arguments.finish:
-            result = finish(
-                policy,
-                runtime,
-                receiver_id=arguments.receiver_id,
-                tools=tools,
-                locations=locations,
-            )
-        else:
-            if arguments.public_key is None:
-                writer.write(USAGE)
-                return EXIT_USAGE
-            result = migrate(
-                policy,
-                runtime,
-                receiver_id=arguments.receiver_id,
-                public_key=arguments.public_key,
-                owner=arguments.owner,
-                path=arguments.path,
                 tools=tools,
                 locations=locations,
                 require_secure=require_secure,

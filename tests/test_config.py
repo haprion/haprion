@@ -925,14 +925,7 @@ class TheCertificateRegistry(RegistryTestCase):
 
 
 class AReceiverSaysHowItFetches(RegistryTestCase):
-    """C7 step 1: transport, layout and format, with defaults that keep today's file.
-
-    The three receivers registered before C7 state neither transport nor
-    layout, and the sentence the defaults have to make true is that their
-    entries mean exactly what they meant yesterday - `rsync` and `flat`. The
-    test that matters most here is therefore the one that reads the shipped
-    example unchanged; the rest hold the new fields to their own rules.
-    """
+    """Transport, layout and format: defaults for what an entry leaves out, rules for the rest."""
 
     def receiver(self, **fields: object) -> Receiver:
         def mutate(data: dict[str, Any]) -> None:
@@ -942,12 +935,12 @@ class AReceiverSaysHowItFetches(RegistryTestCase):
         assert registry is not None
         return registry.receivers["lb-01.example.net"]
 
-    def test_an_entry_without_the_new_fields_is_rsync_and_flat(self) -> None:
+    def test_an_entry_without_the_optional_fields_is_rsync_and_per_certificate(self) -> None:
         registry = self.load().registry
         assert registry is not None
         receiver = registry.receivers["lb-01.example.net"]
         self.assertEqual(
-            (receiver.transport, receiver.layout, receiver.allow), ("rsync", "flat", ())
+            (receiver.transport, receiver.layout, receiver.allow), ("rsync", "per-certificate", ())
         )
         entry = registry.certificates["lb-01.example.net"]
         self.assertEqual(entry.format_for("lb-01.example.net"), "pem")
@@ -961,6 +954,8 @@ class AReceiverSaysHowItFetches(RegistryTestCase):
             self.receiver(transport="scp")
         with self.assertRaisesRegex(ConfigError, "layout must be one of"):
             self.receiver(layout="one-big-file")
+        with self.assertRaisesRegex(ConfigError, "layout must be one of"):
+            self.receiver(layout="flat")
 
     def test_an_https_receiver_carries_a_whitelist_and_no_other_one_may(self) -> None:
         receiver = self.receiver(

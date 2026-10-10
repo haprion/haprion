@@ -22,10 +22,9 @@ backup_identity:
 # certificate_registry: /srv/haprion/config/certificates.yaml
 
 # Where haprion-cert-receiver puts a new receiver's directory (<root>/<id>)
-# unless --path says otherwise, and where it keeps a migration's record. The
-# registry, not this root, says where each receiver actually is; one made
-# before the command existed may live elsewhere. Optional until the first
-# receiver is registered; `add` and `migrate` refuse without it.
+# unless --path says otherwise. The registry, not this root, says where each
+# receiver actually is. Optional until the first receiver is registered;
+# `add` refuses without it.
 # receiver_root: /srv/haprion/receivers
 
 # How haprion-cert-issue answers ACME challenges. Each method needs one

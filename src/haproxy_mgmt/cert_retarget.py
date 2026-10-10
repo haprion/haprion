@@ -263,12 +263,7 @@ def _unlink(path: Path) -> Layer:
 def _clear_receivers(
     certificate_id: str, receiver_ids: Sequence[str], runtime: RuntimeConfig
 ) -> tuple[Layer, ...]:
-    """A dropped receiver's pair, unless another certificate still publishes there.
-
-    The pair is the directory's, not the entry's alone: two certificates
-    naming the same receiver write the same two files, and unlinking them for
-    one would take the other's published copy with it.
-    """
+    """A dropped receiver's files for this certificate, and its directory there."""
 
     registry = runtime.registry
     assert registry is not None  # noqa: S101
@@ -277,31 +272,6 @@ def _clear_receivers(
     for receiver_id in receiver_ids:
         receiver = registry.receivers.get(receiver_id)
         if receiver is None:
-            continue
-        #
-        # Only a `flat` receiver can have someone else's copy in the same
-        # place. Under `per-certificate` every certificate has its own
-        # directory, so another certificate publishing to this receiver is
-        # not a reason to keep this one's files - and keeping them would
-        # leave a private key in a directory no entry names any more.
-        #
-        sharing = (
-            sorted(
-                other.certificate_id
-                for other in registry.certificates.values()
-                if other.certificate_id != certificate_id and receiver_id in other.receivers
-            )
-            if receiver.layout == "flat"
-            else []
-        )
-        if sharing:
-            layers.append(
-                Layer(
-                    f"receiver {receiver_id}",
-                    "kept",
-                    "also published to by " + ", ".join(sharing),
-                )
-            )
             continue
         form = entry.format_for(receiver_id) if entry is not None else DEFAULT_RECEIVER_FORMAT
         for path in receiver_files(receiver, certificate_id, form=form):

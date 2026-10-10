@@ -102,7 +102,7 @@
       "properties": {
         "id": { "type": "string", "maxLength": 63 },
         "transport": { "enum": ["rsync", "sftp", "https"] },
-        "layout": { "enum": ["flat", "per-certificate"] },
+        "layout": { "enum": ["per-certificate"] },
         "owner": { "type": "string", "maxLength": 32 },
         "path": { "type": "string", "maxLength": 4096 },
         "allow": { "type": "array", "items": { "type": "string", "maxLength": 64 } },

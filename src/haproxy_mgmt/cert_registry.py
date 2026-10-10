@@ -185,7 +185,6 @@ def write(
             unknown = sorted(set(certificate.clusters) - set(runtime.clusters))
             if unknown:
                 raise ConfigError(f"unknown cluster(s): {', '.join(unknown)}")
-        check_receiver_rules(candidate)
         #
         # The check that is not obvious from this file, and the one that cost an
         # installation in testing: `load_runtime_config` refuses a cluster that
@@ -259,49 +258,6 @@ def claim_interface(certificates: dict[str, Any], certificate_id: str) -> str | 
     entry = certificates[certificate_id]
     entry["interface"] = True
     return displaced
-
-
-def check_receiver_rules(registry: Registry) -> None:
-    """The rule B138 states for `flat` receivers, checked on the whole registry rather than on a delta.
-
-    Here rather than in `set_targets` because four paths write this file -
-    issuing, importing, retargeting and deleting - and a rule enforced in one
-    of them is a rule three others can break. What the candidate registry says
-    is the whole truth about targets, so the rule is answerable from it
-    alone, and refused before the file is renamed into place.
-
-    The rule is stated as a property of the end state, which is why it is
-    refused from either direction on its own: giving a `flat` receiver a
-    second certificate and giving a second certificate that receiver are the
-    same registry. An `https` receiver is not fenced here any more: what it
-    may hold is the operator's call (B164).
-    """
-
-    holders: dict[str, list[str]] = {}
-    for certificate in registry.certificates.values():
-        for receiver_id in certificate.receivers:
-            receiver = registry.receivers.get(receiver_id)
-            if receiver is None:
-                continue
-            holders.setdefault(receiver_id, []).append(certificate.certificate_id)
-
-    #
-    # Spärr 1 (B138). A `flat` receiver reads `fullchain.pem` and
-    # `privkey.pem` straight out of its directory, so a second certificate
-    # there is not a second certificate - it is the first one overwritten,
-    # silently, at whichever publish ran last. New receivers are
-    # `per-certificate` for exactly this reason; the older ones are refused a
-    # second certificate instead.
-    #
-    for receiver_id, certificates in sorted(holders.items()):
-        receiver = registry.receivers[receiver_id]
-        if receiver.layout == "flat" and len(certificates) > 1:
-            raise RegistryError(
-                "receiver_full",
-                f"receiver {receiver_id} keeps its files directly in its directory, so it "
-                f"holds one certificate at a time, and {', '.join(sorted(certificates))} "
-                "would share it. Take the other one away first.",
-            )
 
 
 def set_receiver(

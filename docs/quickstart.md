@@ -125,7 +125,9 @@ requests, and *WAF logs* what the web application firewall matched, if you use i
 
 ## 8. Back up the nodes
 
-Turn on **Node backups** under *Settings → Features*. Then, on *Node backups*:
+Node backups are **off on a new installation**, and the *Node backups* page is not in the menu
+until they are turned on. Turn them on under *Settings → Features → Node backups*. Then, on the
+*Node backups* page:
 
 1. set a schedule per cluster - for example every day at 04:00 - and how many backups each node
    keeps, and press **Save schedule**;

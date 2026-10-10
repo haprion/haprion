@@ -520,6 +520,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         page = self.editable_page().text
 
         vips = page.split("Add a virtual address", 1)[0]
+        self.assertIn("</span>2 objects</summary>", vips, "two or more fold out from a count")
         self.assertIn(
             '<a href="/proxies/edge-demo/public-web">public-web</a>, '
             '<a href="/proxies/edge-demo/shop">shop</a>',

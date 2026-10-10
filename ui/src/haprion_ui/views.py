@@ -2367,6 +2367,16 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "section": "metrics",
                 "clusters": drawn,
+                #
+                # Which object each backend card is generated for, by the name
+                # the card shows, so it can link to that object's logs
+                # (26-10-10); where there is a traffic log to open.
+                #
+                "backend_owners": {
+                    cluster: {target.label: target.owner for target in targets.values()}
+                    for cluster, targets in targets_of.items()
+                },
+                "traffic_logs_enabled": config.traffic_logs.enabled,
                 "one_cluster": only,
                 "traffic_window": chosen.label,
                 "traffic_bucket": chosen.bucket_label,

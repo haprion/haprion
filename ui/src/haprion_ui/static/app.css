@@ -1765,7 +1765,12 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .editor-table .col-default { width: 8%; }
 .editor-table .col-used { width: 18%; }
 .editor-table .col-remove { width: 8%; }
-.editor-table .editor-used { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.editor-table .editor-used { overflow-wrap: anywhere; }
+/* Used by (26-10-10): one name, or a count that folds out to every name inside its own cell. */
+.used-by > summary { display: inline-flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; white-space: nowrap; }
+.used-by > summary::-webkit-details-marker { display: none; }
+.used-by > summary:hover { color: var(--text-strong); }
+.used-by-names { margin-top: 6px; line-height: 1.6; overflow-wrap: anywhere; }
 /*
  * The same control as the ones in the object editor, and it has to look like
  * them: this select was left with the browser's own chrome while the inputs
@@ -1893,6 +1898,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 }
 .traffic-backend { color: var(--muted); font-size: 12px; }
 .traffic-rate { flex-basis: 100%; color: var(--muted); font-size: 11px; }
+.traffic-links { color: var(--muted); font-size: 12px; }
+.object-description { margin-top: 2px; color: var(--text-secondary); }
 /* The shape first and the figures after it, with the line taking every pixel
    the figures do not need. A month is 120 points, and they have to be far
    enough apart that a reader can put a finger on one and read the date under

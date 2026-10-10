@@ -240,6 +240,20 @@ class WhatThePageSays(ReadingACluster):
 
         self.assertEqual(text.count('class="traffic-rate">Requests / h'), 5)
 
+    def test_a_backend_links_to_its_objects_logs(self) -> None:
+        self.backends = ["web"]
+        logs = replace(configuration().traffic_logs, enabled=True)
+        client = self.client(replace(configuration(), demo_fixture=True, traffic_logs=logs))
+        self.sign_in(client)
+
+        text = client.get("/clusters/edge-demo/metrics").text
+
+        self.assertIn(
+            '<code class="traffic-backend">web</code><span class="traffic-links">'
+            '<a href="/logs?cluster=edge-demo&amp;object=public-web">Traffic log</a>',
+            text,
+        )
+
     def test_a_backend_is_named_without_the_generator_prefix(self) -> None:
         text = self.page().text  # type: ignore[attr-defined]
 
@@ -546,6 +560,9 @@ backends:
         proxy = load_proxy("shop", self.DOCUMENT)
         self.assertEqual(f"shop-{redirect_suffixes(proxy)[('/old', 'prefix')]}", self.CURRENT)
         self.assertEqual(self.targets()[self.CURRENT].current, self.CURRENT)
+
+    def test_each_backend_knows_the_object_it_is_for(self) -> None:
+        self.assertEqual({target.owner for target in self.targets().values()}, {"shop"})
 
     def test_a_pool_is_labelled_by_its_own_name(self) -> None:
         targets = self.targets()

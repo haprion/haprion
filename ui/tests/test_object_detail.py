@@ -95,7 +95,7 @@ class AStoredObject(unittest.TestCase):
 
         self.assertEqual(view.stored.document, APP)  # type: ignore[union-attr]
 
-    def test_what_it_is_for_is_said_where_nothing_is_wrong(self) -> None:
+    def test_what_it_is_for_is_carried_beside_where_it_is_kept(self) -> None:
         entry = {
             "name": "app",
             "document": APP,
@@ -106,8 +106,10 @@ class AStoredObject(unittest.TestCase):
             "description": "The web shop",
         }
 
-        self.assertEqual(detail(readings=[reading(objects=[entry])]).detail, "The web shop")
-        self.assertEqual(detail().detail, "Stored in the cluster repository")
+        described = detail(readings=[reading(objects=[entry])])
+
+        self.assertEqual(described.stored.description, "The web shop")  # type: ignore[union-attr]
+        self.assertEqual(described.detail, "Stored in the cluster repository")
 
     def test_the_commit_is_shown_short_and_kept_whole(self) -> None:
         view = detail()

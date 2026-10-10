@@ -438,12 +438,6 @@ def build_object_detail(
         detail = "This version cannot read the stored document"
     elif stale:
         detail = "The stored objects need a fresh read"
-    elif stored.description:
-        #
-        # What it is for says more than where it is kept, once nothing is
-        # wrong with the reading (26-10-10).
-        #
-        detail = stored.description
     else:
         detail = "Stored in the cluster repository"
 

@@ -2,12 +2,17 @@
 {% block title %}Network — Haprion{% endblock %}
 {% block content %}
 {#-
-  Which objects use a VIP, a source or a group (26-10-10): three named, the
-  rest counted with their names on the count. Linked for an admin, who is the
-  one the object page is for. A dash where the objects could not be read.
+  Which objects use a VIP, a source or a group (26-10-10): one by name, more
+  as a count that folds out to every name, so the row stays one line until
+  somebody asks (chosen after the first release, where long names cut off
+  the third). Linked for an admin, who is the one the object page is for. A
+  dash where the objects could not be read.
 -#}
+{% macro object_name(name, cluster) -%}
+{% if role == 'admin' %}<a href="/proxies/{{ cluster }}/{{ name }}">{{ name }}</a>{% else %}{{ name }}{% endif %}
+{%- endmacro %}
 {% macro used_by(known, names, cluster) -%}
-{% if known is none %}<span class="table-empty">—</span>{% elif not names %}<span class="table-empty">not used</span>{% else %}{% for name in names[:3] %}{% if role == 'admin' %}<a href="/proxies/{{ cluster }}/{{ name }}">{{ name }}</a>{% else %}{{ name }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if names | length > 3 %} <span class="table-empty" title="{{ names[3:] | join(', ') }}">+{{ names | length - 3 }} more</span>{% endif %}{% endif %}
+{% if known is none %}<span class="table-empty">—</span>{% elif not names %}<span class="table-empty">not used</span>{% elif names | length == 1 %}{{ object_name(names[0], cluster) }}{% else %}<details class="used-by"><summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>{{ names | length }} objects</summary><div class="used-by-names">{% for name in names %}{{ object_name(name, cluster) }}{% if not loop.last %}, {% endif %}{% endfor %}</div></details>{% endif %}
 {%- endmacro %}
 {#
   The same watcher the dashboard and the listing use. Without it the spinner

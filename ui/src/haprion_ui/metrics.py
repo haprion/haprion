@@ -1814,6 +1814,8 @@ class BackendTarget:
     label: str
     current: str
     redirect: bool = False
+    owner: str = ""
+    """The object it is generated for (26-10-10), whose logs the card links to."""
 
 
 def backend_targets(objects: Mapping[str, Proxy]) -> dict[str, BackendTarget]:
@@ -1832,7 +1834,7 @@ def backend_targets(objects: Mapping[str, Proxy]) -> dict[str, BackendTarget]:
     for name, proxy in objects.items():
         for pool in proxy.backends:
             current = backend_name(proxy, pool)
-            target = BackendTarget(label=current, current=current)
+            target = BackendTarget(label=current, current=current, owner=name)
             found[current] = target
         suffixes = redirect_suffixes(proxy)
         for route in proxy.routes:
@@ -1845,6 +1847,7 @@ def backend_targets(objects: Mapping[str, Proxy]) -> dict[str, BackendTarget]:
                 label=f"{name} · {route.path} → {redirect.location}",
                 current=current,
                 redirect=True,
+                owner=name,
             )
             found[current] = target
     return found

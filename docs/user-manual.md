@@ -115,8 +115,8 @@ A converged deploy skips nodes already current. See the installation guide for
 [cluster and network configuration](#cluster-definitions).
 
 **Say what an object is for.** *Description* in the form's *Frontend* part is one line of at most
-200 characters - what the service is and who to ask. The object's page shows it under the name,
-and the search finds it. In YAML it is `description:` beside `name:`; nothing generated reads it,
+200 characters - what the service is and who to ask. The object's page shows it in the *Stored
+object* card as *Description:*, and the search finds it. In YAML it is `description:` beside `name:`; nothing generated reads it,
 so a publish that changes only the description deploys the same HAProxy configuration.
 
 ### A pool's servers
@@ -2078,7 +2078,8 @@ newest matches, not the largest of the week. Each row shows the time, cluster an
 node, client, request, status, destination and size, and nothing more.
 
 An object's page links to its own requests: *Traffic log* and *WAF logs* on its
-*Metrics* card open the page narrowed to that object, said above the table with a
+*Metrics* card, and beside each backend on the cluster's *Metrics* page, open the
+page narrowed to that object, said above the table with a
 link back to all of them. An object's requests are those to its backends, and those
 for its hostnames that never reached one - refused by an access rule, dynamic
 blocking or the WAF, or redirected.

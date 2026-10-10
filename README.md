@@ -5,6 +5,10 @@ small HAProxy clusters safely. The command-line engine is the authoritative cont
 web application calls the same versioned commands rather than implementing a second
 configuration path.
 
+**Start with the [quickstart](docs/quickstart.md)**: from an installed manager to a site served by
+your HAProxy pair, in the web interface. [Installing](docs/install.md) covers the installation, and
+the [user manual](docs/user-manual.md) is the reference for everything else.
+
 ## Project status
 
 The project has not reached 1.0 and is **not yet declared ready for production deployment**:

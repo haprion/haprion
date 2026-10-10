@@ -209,8 +209,8 @@ the cluster reports dnsdist installed; a node without it refuses a release that 
 a DNS listener. The pool's servers are addresses or host names with a port, and the list
 shows the names. dnsdist takes addresses only, so a name is looked up on the manager when
 the object is **saved**, by asking `haprion-resolve-helper` over
-`/run/haprion/resolve.sock` (production only; the web service itself reaches nothing
-past localhost), and the address is stored in the object beside it:
+`/run/haprion/resolve.sock` (the web service itself reaches nothing past
+localhost), and the address is stored in the object beside it:
 
 ```yaml
 servers:
@@ -2292,10 +2292,6 @@ The platform check deliberately compares the independently installed CLI before
 it activates a UI candidate, so releasing the UI first stops its own update —
 correctly, but after it has already prepared and migrated.
 
-**Development before production**, for the same reason both exist: production
-is where the real configuration lives, so it is the environment where a bad
-release costs something.
-
 A CLI-only change does not need a UI release, and forcing one would be the
 mistake the compatibility check was built to avoid. It compares engine API
 levels and helper names, never release hashes, precisely so an engine
@@ -2378,11 +2374,10 @@ in a commit hash, which sorts alphabetically and says nothing about when it was
 built.
 
 How far back that list reaches is bounded: `update-platform-release` keeps the
-ten newest releases on a production platform and three on a development one,
-pruning the rest only after the update has been proved, and always keeping the
+ten newest releases, pruning the rest only after the update has been proved, and always keeping the
 release just activated and the one it replaced. A release is reproducible from
 its commit, so nothing older is lost with the directory. `RELEASES_KEPT` in the
-answers file changes the number (at least two).
+command's environment changes the number (at least two).
 
 ## What it does not do
 
@@ -3458,8 +3453,7 @@ review the necessary registry permissions in your installation.
 The master challenge is a long-lived credential. Endpoint access and NDES protection remain
 operator responsibilities. Keep its plaintext out of command arguments, job payloads, logs,
 job results and the database; only the sealed ciphertext may be stored in the database. A CSR contains this credential as `challengePassword`, so protect CSRs and any temporary
-OpenSSL request configuration as secret material too. Rotate a challenge exposed during testing
-before using it in production.
+OpenSSL request configuration as secret material too. Rotate a challenge that has been exposed.
 
 **Interoperability and verification.** The tested NDES installation accepted `challengePassword`
 as ASN.1 PrintableString. A missing attribute caused NDES Event ID 28; the trial's initial encoding
@@ -3703,7 +3697,7 @@ directory for `authorized_keys`, and — deliberately — a real login shell:
 | `_haprion-trigger` | the management host's deploy and cert-deploy keys | the pull scripts, through forced commands |
 | `_haprion-backup` | the management host's backup path | the state export |
 | `_haprion-status` | the management host's status key | the node status reporter, read-only |
-| `_haprion-logread` | the production collector's traffic-log key | the bounded traffic-log reader, read-only and without sudo |
+| `_haprion-logread` | the collector's traffic-log key | the bounded traffic-log reader, read-only and without sudo |
 
 **The shell looks like a mistake and is not.** sshd runs a forced command through the account's
 login shell, so `nologin` here does not harden anything — it stops every forced command from
@@ -3964,9 +3958,8 @@ rollback never deletes evidence.
 
 ### Part 3 — the versioned CLI release
 
-The management CLI is installed independently of the application data filesystem. Source and
-development environments may live anywhere, but an installed release lives under
-`/opt/haprion` so recovery and diagnostics remain available if application storage is not.
+The management CLI is installed independently of the application data filesystem: a release lives
+under `/opt/haprion` so recovery and diagnostics remain available if application storage is not.
 
 Application code is installed from a wheel, through the `haprion-cli` package. It is never
 imported from a checkout, an editable environment, a developer-owned virtual environment, or any
@@ -4282,7 +4275,7 @@ the step leaves an existing snippet alone.
 That is the whole point of it. The UI is the tool used to repair that pair, so
 putting the UI behind it means a broken publish locks you out of the only thing
 that could revert it. A reverse proxy elsewhere — anything from another nginx to
-a Proxy Manager on a container host — may be added in front as an *additional*
+Nginx Proxy Manager on a container host — may be added in front as an *additional*
 path, terminating with its own certificate. It must never become the only path.
 
 **The certificate is what a browser meets at login**, not something internal. It
@@ -4313,7 +4306,7 @@ trade while a proper pair is being arranged.
 
 ##### Behind another reverse proxy
 
-A proxy in front - another nginx, a Proxy Manager, a load balancer - is an additional path; the
+A proxy in front - another nginx, Nginx Proxy Manager, a load balancer - is an additional path; the
 direct one stays. Without being told about it, the management host knows every user by the proxy's
 address, and three things go wrong:
 
@@ -4377,7 +4370,7 @@ server {
 }
 ```
 
-In a Proxy Manager, the same thing is a proxy host for the manager's name with scheme `https`,
+In Nginx Proxy Manager, the same thing is a proxy host for the manager's name with scheme `https`,
 the manager's address and port 443, and `client_max_body_size 1m;` in its advanced field. Check in
 its generated configuration that `Host` is passed unchanged and `X-Forwarded-For` is appended.
 
@@ -4427,7 +4420,7 @@ For reports, pruning and retention rules, see
 
 `install/platform/13-platform-traffic-collector` installs a fourth, deliberately
 small identity and a timer that asks each node for its own traffic log. Optional,
-production only, and last: nothing else on the platform depends on it.
+and last: nothing else on the platform depends on it.
 
 ```text
 /var/lib/haprion-ui/logs/mirror     collector writes freshness metadata, the interface reads
@@ -4531,7 +4524,7 @@ is written by whoever made the request and is escaped as text, never as markup.
 
 The numbers below were measured, not estimated, on a management host at the
 reference size — 2 vCPU, 4 GiB, PostgreSQL with stock `shared_buffers` of
-128 MB, the production services running beside the test. A throwaway cluster on
+128 MB, the interface's services running alongside. A throwaway cluster on
 the platform volume took the real migrations, was filled through the collector's
 own `COPY` path with realistic cardinality (twenty hostnames, three hundred
 paths, ten proxies, weighted methods and status codes, seven days of

@@ -38,6 +38,61 @@ def findings(text: str) -> list[str]:
     return found
 
 
+LINK = re.compile(r"\]\(([^)\s]+)\)")
+HEADING = re.compile(r"^#{1,6} (.+?)\s*$")
+FENCE = re.compile(r"^(```|~~~)")
+
+
+def slug(heading: str) -> str:
+    """GitHub's anchor for a heading: lower case, punctuation dropped, spaces as hyphens."""
+    text = re.sub(r"[`*_]", "", heading).lower()
+    text = re.sub(r"[^\w\- ]", "", text)
+    return text.replace(" ", "-")
+
+
+def anchors(text: str) -> set[str]:
+    found: set[str] = set()
+    fenced = False
+    for line in text.splitlines():
+        if FENCE.match(line):
+            fenced = not fenced
+            continue
+        match = None if fenced else HEADING.match(line)
+        if match:
+            found.add(slug(match.group(1)))
+    return found
+
+
+def broken_links(path: Path) -> list[str]:
+    broken = []
+    for target in LINK.findall(path.read_text(encoding="utf-8")):
+        if re.match(r"^[a-z]+:", target):
+            continue
+        file_part, _, anchor = target.partition("#")
+        linked = (path.parent / file_part).resolve() if file_part else path
+        heading_missing = (
+            linked.exists()
+            and bool(anchor)
+            and linked.suffix == ".md"
+            and anchor not in anchors(linked.read_text("utf-8"))
+        )
+        if not linked.exists() or heading_missing:
+            broken.append(target)
+    return broken
+
+
+class PublicDocumentationLinksResolve(unittest.TestCase):
+    def test_every_relative_link_names_a_file_and_heading_that_exist(self) -> None:
+        for path in markdown_files():
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                self.assertEqual(broken_links(path), [])
+
+    def test_slugs_follow_github(self) -> None:
+        self.assertEqual(slug("Part 1 — the management host"), "part-1--the-management-host")
+        self.assertEqual(slug("The `haprion-cli` package"), "the-haprion-cli-package")
+        self.assertEqual(slug("A pool's servers"), "a-pools-servers")
+
+
 class PublicDocumentationHasNoProjectHistory(unittest.TestCase):
     def test_tracked_markdown_names_no_decision_or_dated_history(self) -> None:
         files = markdown_files()

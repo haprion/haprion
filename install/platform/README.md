@@ -41,7 +41,7 @@ the only thing here that touches rows in a live table, and it deletes nothing
 itself: it reports what the first run would remove and leaves that to the timer.
 
 Step 13 mirrors each node's structured traffic log onto this host and imports it
-into daily PostgreSQL partitions. Production only, and it fetches nothing until
+into daily PostgreSQL partitions. It fetches nothing until
 each node has accepted the key it prints.
 
 Step 14 builds the locked certbot environment - certbot and every DNS plugin
@@ -319,11 +319,6 @@ The WAF page's per-hour counts (`waf_finding_path`, `waf_finding_client`,
 revision `0054`) are kept by a trigger as matches are imported and are not
 partitioned; the timer deletes their hours before the same boundary.
 
-Its units are named after the environment, unlike the backup step's. Development
-runs this step and does not run step 6, so these are the units that would
-otherwise collide on a machine carrying both platforms — and two timers pruning
-each other's database is a failure that would look like retention working.
-
 ## Step 4 — the service
 
 `./04-platform-service` renders the unit from the example with the answers file,
@@ -411,7 +406,7 @@ rollback returns to, so it has to be a state that runs.
 Set `clusters` in `ui.toml` before running this; with an empty list the poller
 has nothing to do and says so instead of starting.
 
-On production the step also installs the web's way to a name lookup:
+The step also installs the web's way to a name lookup:
 `haprion-resolve-helper.socket` (`/run/haprion/resolve.sock`, group
 `_haprion-web`) and the per-request `haprion-resolve-helper@.service`, a dynamic
 user with the network and nothing else. The editor and the preview look a dns
@@ -532,7 +527,7 @@ installs the socket (group `_haprion-web`) and the per-request service.
 
 The account must exist first: add `oidc: <name>` under `roles` in the identity
 policy, render the sysusers fragment and apply it. The CLI release must carry
-`haprion-oidc-helper`. Production only.
+`haprion-oidc-helper`.
 
 ### Optional SCEP client bundle
 

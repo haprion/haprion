@@ -27,6 +27,9 @@ re-verification of a rebuild from this repository, and documentation. What is bu
   whether the nodes are running the published configuration without starting a deployment to
   find out
 - a scripted installation covering the management host, the nodes, and the web platform
+- Debian packages, reproducible from one commit: `haprion-cli` for the engine, `haprion-ui` for the
+  web interface on Ubuntu 26.04 or Debian 13, `haprion-node` for the nodes, and the WAF engine and
+  rule set; installing a newer package is the update
 - the web platform's foundation: a versioned application release, a database whose schema and
   column-level grants are versioned together, and separate service identities that cannot do each
   other's work

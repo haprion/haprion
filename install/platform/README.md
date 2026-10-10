@@ -1,6 +1,6 @@
 # Installing the web platform
 
-Five numbered steps plus two build helpers, all on the management host. They are
+Numbered steps and the release commands beside them, all on the management host. They are
 separate from the five CLI steps one directory up, and deliberately so: the CLI is the authoritative engine
 and installs and runs without any of this. A management host that only ever uses
 the command line never needs the platform at all.
@@ -21,8 +21,11 @@ sudo ./check-compatibility --release <release-id>
 sudo ./install-ui-release <release-id>
 sudo ./04-platform-service /path/to/answers.env
 sudo ./05-platform-nginx /path/to/answers.env
+sudo ./07-platform-services /path/to/answers.env
 sudo ./check-compatibility
 ```
+
+The last check reads the real worker and poller processes, so it comes after step 07.
 
 Steps 11, 13, 14 and 15 are optional and come after them:
 
@@ -77,7 +80,7 @@ the previous release is the one running.
 **Which pieces a change releases at all, and in what order, is decided in
 [`docs/user-manual.md` — Releasing a change](../../docs/user-manual.md#releasing-a-change).**
 Read it before running this command. In short: a commit that changes both the
-management engine and the UI releases the CLI wheel first — the platform check
+management engine and the UI releases the CLI package first — the platform check
 compares the independently installed CLI before it activates the UI candidate,
 so reversing the order stops the update after it has already migrated. A change
 confined to the UI needs only the applicable platform updates; rerun optional

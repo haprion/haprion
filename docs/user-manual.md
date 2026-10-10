@@ -2287,12 +2287,12 @@ git show --stat <commit>
 
 | What the commit touched | What to release |
 |---|---|
-| `src/haproxy_mgmt/`, `tools/`, `install/` | the CLI wheel — [Part 3](#part-3--the-versioned-cli-release) |
-| `ui/` | the platform, `update-platform-release`, development then production |
-| `install/node/`, node scripts | the node package, per [Part 2](#part-2--the-nodes) |
-| more than one of those | **the CLI wheel first**, then the platform, then the nodes |
+| `src/haproxy_mgmt/`, `tools/`, `install/` | the `haprion-cli` package — [Part 3](#part-3--the-versioned-cli-release) |
+| `ui/` | the `haprion-ui` package; installing it runs `update-platform-release` |
+| `install/node/`, node scripts | the `haprion-node` package on every node, per [Part 2](#part-2--the-nodes) |
+| more than one of those | **the CLI package first**, then the platform, then the nodes |
 
-**The CLI wheel goes first when both move**, and the order is not a preference.
+**The CLI package goes first when both move**, and the order is not a preference.
 The platform check deliberately compares the independently installed CLI before
 it activates a UI candidate, so releasing the UI first stops its own update —
 correctly, but after it has already prepared and migrated.
@@ -2307,7 +2307,7 @@ levels and helper names, never release hashes, precisely so an engine
 correction does not drag an unrelated UI rollout along with it. What decides
 whether the running UI still fits the new engine is:
 
-- `src/haproxy_mgmt/compatibility.json` — the engine API the wheel carries. A
+- `src/haproxy_mgmt/compatibility.json` — the engine API the CLI release carries. A
   UI release declares the minimum it needs.
 - the console scripts in `pyproject.toml` — the check requires every helper the
   UI names by name.
@@ -2333,9 +2333,15 @@ out that a test fails.
 
 ### CLI rollback
 
-Re-run the same installer with the retained previous wheel and its recorded digest - and its node
-bundle, if it was installed with one. An already installed matching release is verified and
-`current` is atomically switched back.
+Install the retained previous package, which lets apt put the older version in place:
+
+```bash
+sudo apt-get install --allow-downgrades /path/to/haprion-cli_<previous version>_all.deb
+```
+
+Its `postinst` runs the release installer with the wheel and node package it carries; an already
+installed matching release is verified and `current` is atomically switched back. Without the
+package, re-run the installer with the retained wheel, node package and their recorded digests.
 
 **Ten releases stay on disk; older ones go when a new one activates.** The installer prunes after
 a successful activation and never before it - a failed activation is exactly when nothing may be
@@ -3244,7 +3250,8 @@ resolved. Nothing installs a plugin at runtime.
 Platform step 14 builds it:
 
 ```bash
-sudo UV_BIN=/path/to/uv ./install/platform/14-platform-certbot answers.env /path/to/source-tree
+cd /usr/share/haprion-ui/install/platform
+sudo UV_BIN=/path/to/uv ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui
 ```
 
 The step hands the lock to [`../tools/install-certbot-env.py`](../tools/install-certbot-env.py),
@@ -3274,12 +3281,13 @@ The step also checks that the worker's unit opens certbot's directories (`/etc/l
 registry's directory (`/configs/haproxy-mgmt`) and the DNS profile directory
 (`/etc/haprion/dns-profiles`). The issue helper runs certbot inside the worker's sandbox,
 and without those paths every issuance from the web interface fails on a write such as certbot's
-log lock. Step 07 installs the unit; rerun it with a source tree that has them before running step
-14.
+log lock. Step 07 installs the unit; rerun it from a `haprion-ui` package that has them before
+running step 14.
 
 Point the runtime policy at the release afterwards - `acme.certbot` in [ACME configuration and challenge routing](#acme-configuration-and-challenge-routing) - and the issue
 helper runs it too. Upgrading is the same step with a newer lock, a few times a year: bump
-`certbot/uv.lock` in the source tree (`uv lock --upgrade` in `certbot/`), run the step, read its
+`certbot/uv.lock` in the source tree (`uv lock --upgrade` in `certbot/`), commit it, install the
+`haprion-ui` package built from that commit, and run the step with `/usr/share/haprion-ui`; read its
 gate. A plugin that no longer resolves against the newer certbot falls out of the lock, and so out
 of what the interface offers; a release that fails the dry run is never made current. Rolling back
 by hand is one symlink, which the step prints, followed by the same dry run.
@@ -3292,10 +3300,11 @@ root helper that runs certbot holds the one private key that opens them (libsodi
 through PyNaCl). A compromised web process can therefore add or replace a profile but never read
 one back, and a database dump carries nothing a reader can use without root's key file.
 
-Platform step 15 makes the pair, under the platform root of the answers file it is given:
+Platform step 15 makes the pair:
 
 ```bash
-sudo ./install/platform/15-platform-dns-keys answers.env /path/to/source-tree
+cd /usr/share/haprion-ui/install/platform
+sudo ./15-platform-dns-keys /path/to/answers.env /usr/share/haprion-ui
 ```
 
 The private key lands in `/etc/haprion/ui-secrets/dns-profile-keys/<key id>.key`, root-only; the
@@ -3973,13 +3982,37 @@ The management CLI is installed independently of the application data filesystem
 development environments may live anywhere, but an installed release lives under
 `/opt/haprion` so recovery and diagnostics remain available if application storage is not.
 
-Application code is installed from a wheel. It is never imported from a checkout, an editable
-environment, a developer-owned virtual environment, or any development path.
+Application code is installed from a wheel, through the `haprion-cli` package. It is never
+imported from a checkout, an editable environment, a developer-owned virtual environment, or any
+development path.
 
-#### Build and install
+#### The `haprion-cli` package
 
-Run the complete repository gate before producing the wheel. Build into a protected staging
-directory outside the repository and record its SHA-256 digest:
+This is how the CLI is installed and updated. The package carries the wheel, the node package of
+the same commit, the release installer and the operators' sudo rules, and its `postinst` runs the
+installer described below. Run the complete repository gate first, then build it from the clean
+commit, with the `uv` the repository is locked with:
+
+```bash
+tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv
+sudo apt-get install /path/to/protected/staging/haprion-cli_0.1.0+git20261009120000.0123456789ab_all.deb
+```
+
+The same commit gives the same bytes. It installs:
+
+| Path | What |
+|---|---|
+| `/usr/lib/haprion/cli/` | the wheel, the node package, `install-release.py` and `PAYLOAD` with their digests |
+| `/usr/bin/haprion-*` | one line per operator command, into `/opt/haprion/current/bin` |
+| `/etc/sudoers.d/haprion` | the operators' rules: `%sudo` may run each read helper without a password and each write helper with one; never `%haprion`, which holds the worker. Checked with `visudo` when the package is built |
+
+`apt-get purge haprion-cli` also removes `/opt/haprion`; `remove` leaves the releases.
+
+#### The release installer
+
+The package's `postinst` runs `install-release.py` with the wheel and node package it carries. It
+can also be run by hand, which is what installing without the package means. Build into a
+protected staging directory outside the repository and record its SHA-256 digest:
 
 ```bash
 python -m build --wheel --outdir /path/to/protected/staging
@@ -4028,7 +4061,7 @@ Short stable wrappers and exact sudoers rules may point into `current/bin`; they
 into a source checkout.
 
 **`current/bin` is not on `sudo`'s path.** `sudo` resets `PATH` to its `secure_path`, which does
-not include `/opt/haprion/current/bin`. The `haprion-cli` package (below) therefore installs one
+not include `/opt/haprion/current/bin`. The `haprion-cli` package (above) therefore installs one
 line per operator command in `/usr/bin`, of the shape
 
 ```bash
@@ -4040,28 +4073,6 @@ so that a release switch moves every command at once and nothing points at a rel
 by name. Root helpers get none: a helper is run through its exact sudo rule by its calling half,
 never typed. Without the package the full path works the same:
 `sudo /opt/haprion/current/bin/haprion-cert-receiver ...`.
-
-#### The `haprion-cli` package
-
-The package carries the wheel, the node package of the same commit, the installer and the
-operators' sudo rules, and its `postinst` runs the installer above - so the releases, `current`,
-`INSTALLATION.json` and rollback stay exactly as described. Build it from a clean commit, with the
-`uv` the repository is locked with:
-
-```bash
-tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv
-sudo apt-get install /path/to/protected/staging/haprion-cli_0.1.0+git20261009120000.0123456789ab_all.deb
-```
-
-The same commit gives the same bytes. It installs:
-
-| Path | What |
-|---|---|
-| `/usr/lib/haprion/cli/` | the wheel, the node package, `install-release.py` and `PAYLOAD` with their digests |
-| `/usr/bin/haprion-*` | one line per operator command, into `/opt/haprion/current/bin` |
-| `/etc/sudoers.d/haprion` | the operators' rules: `%sudo` may run each read helper without a password and each write helper with one; never `%haprion`, which holds the worker. Checked with `visudo` when the package is built |
-
-`apt-get purge haprion-cli` also removes `/opt/haprion`; `remove` leaves the releases.
 
 `INSTALLATION.json` also records the engine compatibility API carried by the
 wheel. A wheel from before that metadata existed remains installable for

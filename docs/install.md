@@ -14,8 +14,16 @@ On the management host, install:
 - `git`, `rsync`, `openssh-client` and `sudo` supporting no-argument rules
 - for the web interface: PostgreSQL 16 or newer, nginx and `uv`
 
-Have the source tree, a wheel built from the selected commit and the matching node package
-available, and the `haprion-ui` package built for your distribution. The scripts use an
+Haprion is installed from Debian packages built from one commit:
+
+| Package | Installed on | Carries |
+|---|---|---|
+| `haprion-cli` | the management host | the CLI engine, the node package of the same commit, the operators' commands and sudo rules |
+| `haprion-ui` | the management host, for the web interface | the interface's release for one distribution (Ubuntu 26.04 or Debian 13) and the platform steps |
+| `haprion-node` | each node | the node scripts and `04-node-prepare` |
+| `haprion-crs`, `haprion-coraza-spoa` | the management host and the nodes, for the WAF | the rule set and the engine |
+
+Keep the source tree of the same commit for the manager steps in `install/`. The scripts use an
 answers file; its example includes `UV_BIN`, which names the uv the certbot step uses.
 
 HAProxy nodes must already be prepared before the application can manage them. The
@@ -35,31 +43,19 @@ your installation. The file is described in [install/answers.example.env](../ins
 
 ## 2. Install the CLI engine
 
-Build from a clean, committed source tree that has passed the repository checks. From the
-source-tree root, build the wheel into a protected directory outside the repository:
+Build from a clean, committed source tree that has passed the repository checks, into a
+protected directory outside the repository, with the `uv` the repository is locked with:
 
 ```bash
-python -m build --wheel --outdir /path/to/protected/staging
-sha256sum /path/to/protected/staging/haprion-*.whl
+tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv
+sudo apt-get install /path/to/protected/staging/haprion-cli_<version>_all.deb
 ```
 
-Build the matching node package from the same commit and record the digest it prints:
-
-```bash
-tools/node-package.py build \
-  --source "$(pwd)" \
-  --output-dir /path/to/protected/staging
-```
-
-Install the wheel and package, using their actual absolute paths and SHA-256 digests:
-
-```bash
-sudo /usr/bin/python3 tools/install-release.py \
-  --wheel /path/to/protected/staging/haprion-0.1.0-py3-none-any.whl \
-  --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --node-package /path/to/protected/staging/haprion-node_0.1.0+git20261009120000.0123456789ab_all.deb \
-  --node-package-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
-```
+The package's `postinst` verifies the wheel and the node package it carries against their
+digests, installs the release under `/opt/haprion/releases/` and switches `/opt/haprion/current`.
+The operator commands are in `/usr/bin`. A later version of the package is the whole update.
+What the installer does, and installing without the package, are in the manual's
+[Part 3](user-manual.md#part-3--the-versioned-cli-release).
 
 ## 3. Install the manager configuration and keys
 
@@ -85,12 +81,20 @@ For a command-line-only installation, the application is now installed.
 
 ## 4. Install the web interface
 
+Build the package for the management host's distribution (`ubuntu26.04` or `debian13`); the
+release is built inside a container of that distribution with rootless podman:
+
+```bash
+tools/build-ui-package.py --source "$(pwd)" --output-dir /path/to/protected/staging \
+  --distribution ubuntu26.04 --uv /path/to/uv
+```
+
 Install the package; it unpacks the release and prints its ID. Then, with the same answers
 file, from `/usr/share/haprion-ui/install/platform/`, prepare the platform, migrate its
 database and verify the candidate before activating it:
 
 ```bash
-sudo apt install ./haprion-ui_<version>_amd64.deb
+sudo apt install ./haprion-ui_<version>~ubuntu26.04_amd64.deb
 cd /usr/share/haprion-ui/install/platform
 sudo ./01-platform-prepare /path/to/answers.env
 sudo ./02-platform-database /path/to/answers.env
@@ -104,8 +108,10 @@ sudo ./07-platform-services /path/to/answers.env
 sudo ./check-compatibility
 ```
 
-Later versions of the package update the running platform themselves. Before step 7, ensure the
-`clusters` list in the generated `ui.toml` names the configured clusters.
+Before step 7, ensure the `clusters` list in the generated `ui.toml` names the configured
+clusters. Later versions of the package update the running platform themselves: their
+`postinst` runs `update-platform-release` with the release they carry, reads no answers file,
+and leaves the previous release running if it fails.
 
 The first activation creates the `admin` account if no account exists and asks for its
 password at the terminal. If installation ran without a terminal, create it afterwards:
@@ -116,16 +122,18 @@ sudo haprion-user init-admin
 
 ## 5. Install optional components
 
-Run the installers for the components your installation needs, from `install/platform/`:
+Run the installers for the components your installation needs, from
+`/usr/share/haprion-ui/install/platform/`. The steps that take a tree take the package's
+`/usr/share/haprion-ui`, which carries the tools and the certbot lock they read:
 
 | Component | Installer |
 |---|---|
-| Platform database backups | `sudo ./06-platform-backup ../answers.env` |
-| History and metrics retention | `sudo ./11-platform-retention ../answers.env` |
-| Traffic-log collection | `sudo ./13-platform-traffic-collector ../answers.env` |
-| Certbot and DNS plugins | `sudo UV_BIN=/path/to/uv ./14-platform-certbot ../answers.env /path/to/source-tree` |
-| Certificate and provider sealing keys | `sudo ./15-platform-dns-keys ../answers.env /path/to/source-tree` |
-| OpenID Connect helper | `sudo ./17-platform-oidc ../answers.env /path/to/source-tree` |
+| Platform database backups | `sudo ./06-platform-backup /path/to/answers.env` |
+| History and metrics retention | `sudo ./11-platform-retention /path/to/answers.env` |
+| Traffic-log collection | `sudo ./13-platform-traffic-collector /path/to/answers.env` |
+| Certbot and DNS plugins | `sudo UV_BIN=/path/to/uv ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui` |
+| Certificate and provider sealing keys | `sudo ./15-platform-dns-keys /path/to/answers.env /usr/share/haprion-ui` |
+| OpenID Connect helper | `sudo ./17-platform-oidc /path/to/answers.env /usr/share/haprion-ui` |
 
 The SCEP client uses a separately built and verified bundle:
 
@@ -173,7 +181,7 @@ collector reads it through the same forced command as the traffic log.
 
 The engine runs as a dynamic user, which belongs to no group, and `/etc/haproxy/releases`
 is closed to every account but root. `04-node-prepare` therefore creates the group
-`haprion-waf`, with no members, lets it pass through that directory without listing it
+`_haprion-waf`, with no members, lets it pass through that directory without listing it
 (`/etc/tmpfiles.d/haprion-waf-engine.conf`), and gives the engine the group in a
 drop-in, `/etc/systemd/system/coraza-spoa.service.d/haprion.conf`. A node installation
 from before this cannot start the engine: the first deploy with rules fails on that node
@@ -199,7 +207,7 @@ Installing the package starts nothing. On a node, a drop-in
 when that file exists. The deploy starts dnsdist when a release carries a listener, restarts
 it when the listener's file changed, stops it when a release no longer has one, and refuses
 a release with a listener on a node that has not been prepared for one. dnsdist runs as
-`_dnsdist`; the drop-in gives it the member-less group `haproxy-dns`, which may pass
+`_dnsdist`; the drop-in gives it the member-less group `_haprion-dns`, which may pass
 through `/etc/haproxy/releases` (`/etc/tmpfiles.d/haprion-dns.conf`), as the WAF
 engine's group does. A configuration dnsdist warns about is refused like one it cannot
 load: its check ignores a setting it does not know with only a warning.

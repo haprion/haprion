@@ -139,7 +139,7 @@ def _peers_port(result: Mapping[str, Any]) -> int | None:
 
 def _counters(result: Mapping[str, Any]) -> str:
     port = _peers_port(result)
-    return "Off" if port is None else f"Shared on port {port}"
+    return "Off" if port is None else f"Port {port}"
 
 
 def card_views(

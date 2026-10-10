@@ -628,7 +628,7 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
 
 
 def settings_rows(now: datetime | None = None) -> tuple[ClusterSettingsRow, ...]:
-    """One cluster that sends its log and exposes metrics, and one that does neither."""
+    """One cluster that sends its log, exposes metrics and shares counters, and one that does none."""
 
     observed = (now or datetime.now(UTC)) - timedelta(seconds=18)
     return (
@@ -657,6 +657,7 @@ def settings_rows(now: datetime | None = None) -> tuple[ClusterSettingsRow, ...]
                     },
                 ],
                 "metrics": {"port": 8405, "sources": ["192.0.2.0/24", "198.51.100.7/32"]},
+                "peers": {"port": 10000},
             },
             warnings=[],
             error=None,
@@ -672,6 +673,7 @@ def settings_rows(now: datetime | None = None) -> tuple[ClusterSettingsRow, ...]
                 "stored": False,
                 "log_targets": [],
                 "metrics": None,
+                "peers": None,
             },
             warnings=[],
             error=None,

@@ -548,8 +548,10 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 /* Logs & metrics (Fas 15): the cluster narrow, the two settings sharing the rest; a long value ends in an ellipsis with the whole of it on hover. */
 .settings-cluster-table { table-layout: fixed; }
 .settings-cluster-table th:nth-child(1), .settings-cluster-table td:nth-child(1) { width: 200px; }
-.settings-cluster-table th:nth-child(3), .settings-cluster-table td:nth-child(3) { width: 30%; }
-.settings-cluster-table th:nth-child(4), .settings-cluster-table td:nth-child(4) { width: 330px; text-align: right; }
+.settings-cluster-table th:nth-child(3), .settings-cluster-table td:nth-child(3) { width: 260px; }
+.settings-cluster-table th:nth-child(4), .settings-cluster-table td:nth-child(4) { width: 170px; }
+/* By class, not position: a column added before it took its width and alignment (review 26-10-10, F1). */
+.settings-cluster-table th.settings-actions, .settings-cluster-table td.settings-actions { width: 330px; text-align: right; }
 .settings-cluster-table td { overflow: hidden; text-overflow: ellipsis; }
 /* The Nodes card: three columns, the action last as in Logs & metrics, and a
    node list that wraps rather than being cut - eight names do not fit a line. */
@@ -2246,7 +2248,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 }
 /* As cards, the row's state and Edit take the card's width, not half of it. */
 @media (max-width: 1049px) {
-  .settings-cluster-table td:nth-child(4) { grid-column: 1 / -1; }
+  .settings-cluster-table td.settings-actions { grid-column: 1 / -1; }
 }
 
 /* The advanced config dialog (Fas 17): the Diff dialog's frame, a text field and the lines' fates. */

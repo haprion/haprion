@@ -180,6 +180,47 @@ class ReleasePackageTests(unittest.TestCase):
                 compatibility.ui_requirements(release)
 
 
+class WorkerSandboxTests(unittest.TestCase):
+    """The worker's unit opens what the runtime policy names (review 26-10-10, F4)."""
+
+    POLICY = (
+        "schema_version: 1\n"
+        "cluster_file: /srv/example/registry/clusters.yaml\n"
+        "config_root: /srv/example/config\n"
+        "publish_root: /srv/example/published\n"
+        "validation_certs_root: /srv/example/validation\n"
+        "certificate_registry: /srv/example/registry/certificates.yaml\n"
+    )
+
+    def check(self, unit: str) -> compatibility.Report:
+        report = compatibility.Report()
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "policy.yaml").write_text(self.POLICY)
+            (root / "worker.service").write_text(unit)
+            compatibility.check_worker_sandbox(
+                report,
+                unit_file=root / "worker.service",
+                policy_file=root / "policy.yaml",
+                require_secure=False,
+            )
+        return report
+
+    def test_a_unit_written_from_the_policy_passes(self) -> None:
+        unit = (
+            "ReadWritePaths=/run/haprion /srv/example/config /srv/example/published "
+            "-/srv/example/validation /srv/example/registry /etc/letsencrypt\n"
+        )
+        self.assertEqual(self.check(unit).failures, 0)
+
+    def test_a_moved_registry_the_unit_does_not_open_fails(self) -> None:
+        unit = (
+            "ReadWritePaths=/run/haprion /srv/example/config /srv/example/published "
+            "/srv/example/validation /srv/old/registry\n"
+        )
+        self.assertEqual(self.check(unit).failures, 1)
+
+
 class PreparedReleaseTests(unittest.TestCase):
     def test_a_named_release_must_be_a_direct_child_of_releases(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

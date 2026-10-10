@@ -426,6 +426,17 @@ def run(
 PEERS_WAIT_SECONDS = 15
 
 
+def _unconnected_peers(status: ClusterStatus, node_name: str) -> list[str]:
+    """The peers of one node it is not connected to that report sharing themselves."""
+
+    sharing = {node.name for node in status.nodes if node.peers}
+    return [
+        name
+        for name, connected in status.node(node_name).peers or ()
+        if not connected and name in sharing
+    ]
+
+
 def _await_peers(
     status: ClusterStatus,
     node_name: str,
@@ -436,15 +447,17 @@ def _await_peers(
 ) -> ClusterStatus:
     """The status once the deployed node is connected to its peers, or after the wait.
 
-    Only a node that shares anything is waited for. One that has not connected
-    when the wait ends is named and the deploy goes on: the counts are a
-    convenience, and holding a rollout for them would trade the release for
-    them.
+    Only a peer that shares itself is waited for: one still on a release
+    without `peers` - the other node, the first time sharing is turned on - or
+    one that could not be read has nothing to connect to, and waiting for it
+    only delayed the rollout and warned about nothing (review 26-10-10, F2).
+    One that has not connected when the wait ends is named and the deploy goes
+    on: the counts are a convenience, and holding a rollout for them would
+    trade the release for them.
     """
 
     for _ in range(PEERS_WAIT_SECONDS):
-        peers = status.node(node_name).peers
-        waiting = [name for name, connected in peers or () if not connected]
+        waiting = _unconnected_peers(status, node_name)
         if not waiting:
             return status
         pause(1.0)
@@ -452,8 +465,7 @@ def _await_peers(
             status = read_status()
         except StatusError:
             break
-    peers = status.node(node_name).peers
-    waiting = [name for name, connected in peers or () if not connected]
+    waiting = _unconnected_peers(status, node_name)
     if waiting:
         warning = (
             f"{node_name} has not reached {', '.join(waiting)} to share counters; "

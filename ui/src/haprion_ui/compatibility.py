@@ -23,8 +23,13 @@ from pathlib import Path
 from typing import Any
 
 from haprion import accounts
+from haprion.config import (
+    DEFAULT_POLICY_PATH,
+    load_policy,
+    load_runtime_config,
+    worker_writable_paths,
+)
 from haprion.config import ConfigError as EngineConfigError
-from haprion.config import load_policy, load_runtime_config
 from haprion.traffic_collector import CollectorError
 from haprion.traffic_collector import load_config as load_collector_config
 
@@ -355,6 +360,52 @@ def check_service(report: Report, *, unit: str, release: Path) -> None:
         report.fail(unit, f"runs outside {release.name}")
 
 
+def opened_paths(unit_text: str) -> set[str]:
+    """Every path a unit's `ReadWritePaths` lines open, without the optional dash."""
+
+    opened: set[str] = set()
+    for line in unit_text.splitlines():
+        if line.startswith("ReadWritePaths="):
+            opened.update(word.removeprefix("-") for word in line.partition("=")[2].split())
+    return opened
+
+
+def check_worker_sandbox(
+    report: Report, *, unit_file: Path, policy_file: Path, require_secure: bool = True
+) -> None:
+    """Does the worker's unit open the roots the runtime policy names? (review 26-10-10, F4)
+
+    Platform step 07 writes them in from the policy. A policy changed since -
+    the registry moved - without the step run again is otherwise found by the
+    first certificate job, on "Read-only file system".
+    """
+
+    subject = "worker sandbox"
+    try:
+        required = [
+            str(path)
+            for path in worker_writable_paths(
+                load_policy(policy_file, require_secure=require_secure)
+            )
+        ]
+    except (EngineConfigError, OSError) as exc:
+        report.fail(subject, f"cannot read the runtime policy: {exc}")
+        return
+    try:
+        opened = opened_paths(unit_file.read_text(encoding="utf-8"))
+    except OSError as exc:
+        report.fail(subject, f"cannot read {unit_file}: {exc}")
+        return
+    missing = [path for path in required if path not in opened]
+    if missing:
+        report.fail(
+            subject,
+            f"{unit_file.name} does not open {', '.join(missing)}; rerun platform step 07",
+        )
+    else:
+        report.pass_(subject, f"opens the policy's {len(required)} roots")
+
+
 def database_revision(role: str, database: str) -> str:
     completed = _command(
         [PSQL, "-U", role, "-d", database, "-qtAX", "-c", "select version_num from alembic_version"]
@@ -490,6 +541,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--runtime-policy", type=Path)
     parser.add_argument("--collector-config", type=Path)
     parser.add_argument("--sudoers-root", type=Path, default=Path("/etc/sudoers.d"))
+    parser.add_argument("--systemd-root", type=Path, default=Path("/etc/systemd/system"))
     parser.add_argument("--ui-release")
     parser.add_argument("--skip-database", action="store_true")
     parser.add_argument("--skip-services", action="store_true")
@@ -612,6 +664,13 @@ def main(argv: list[str] | None = None) -> int:
         print("\n== Services")
         for unit in (accounts.WORKER_UNIT, accounts.POLLER_UNIT, accounts.WEB_UNIT):
             check_service(report, unit=unit, release=ui_release)
+
+    print("\n== Worker sandbox")
+    check_worker_sandbox(
+        report,
+        unit_file=args.systemd_root / accounts.WORKER_UNIT,
+        policy_file=args.runtime_policy or DEFAULT_POLICY_PATH,
+    )
 
     print("\n== Sudo rules")
     check_sudoers(

@@ -244,6 +244,29 @@ class SharedCountersTests(unittest.TestCase):
         codes = [warning.code for warning in LAST_REPORT[0].warnings]
         self.assertIn("counters_not_shared", codes)
 
+    def test_turning_sharing_on_does_not_wait_for_a_node_still_without_it(self) -> None:
+        # Review 26-10-10, F2: the node deployed first reports the other, which
+        # still runs the release without `peers` and has nothing to connect to.
+        cluster = pair()
+        paused: list[float] = []
+
+        def turn_on(_: FakeCluster, node: FakeNode) -> None:
+            other = "node-a" if node.name == "node-b" else "node-b"
+            node.peers = [{"name": other, "address": "192.0.2.9:10000", "connected": False}]
+            for peer in cluster.nodes:
+                if peer.name == other and peer.peers is None:
+                    peer.peers = []
+                elif peer.name == other and peer.peers:
+                    peer.peers[0]["connected"] = True
+                    node.peers[0]["connected"] = True
+
+        cluster.on_deploy = turn_on
+        code, shown = deploy(cluster, pause=paused.append)
+
+        self.assertEqual(code, 0, shown)
+        self.assertEqual(paused, [])
+        self.assertNotIn("share counters", shown)
+
     def test_a_cluster_that_shares_nothing_is_not_waited_for(self) -> None:
         cluster = pair()
         paused: list[float] = []

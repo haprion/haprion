@@ -94,12 +94,6 @@ SCRIPTS=(
 # not take a drain, reported by name in a `partial` job.
 NODE_API=1
 
-#
-# A node installed under the project's earlier name keeps its accounts, files
-# and keys under the new names rather than gaining a second set (B266).
-#
-./migrate-legacy-node before
-
 step "Service accounts"
 apply_sysusers sysusers/haprion-node.conf
 
@@ -683,8 +677,6 @@ if [[ -n "${NODE_CERT_PULL_KEY:-}" && -n "${CERTIFICATE_ROOT:-}" ]]; then
     echo "restrict,command=\"rrsync -ro ${CERTIFICATE_ROOT}\" $(pub "${NODE_CERT_PULL_KEY}.pub")"
     echo
 fi
-
-./migrate-legacy-node finish
 
 cat <<'OUTRO'
 One line per NODE, not one per cluster: each node has its own key, so a node

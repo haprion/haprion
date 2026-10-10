@@ -25,12 +25,6 @@ APPARMOR_SNIPPET="/etc/apparmor.d/rsyslog.d/haprion-traffic"
 PRUNE_SERVICE="/etc/systemd/system/haprion-traffic-log-prune.service"
 PRUNE_TIMER="/etc/systemd/system/haprion-traffic-log-prune.timer"
 PRUNE_COMMAND="/usr/sbin/haprion-traffic-log-prune"
-# Left behind by the withdrawn push build. A node that still carries it keeps
-# trying to open a TLS connection to the management host that must not exist.
-WITHDRAWN=(
-    /etc/rsyslog.d/48-haproxy-manager-forward.conf
-    /etc/rsyslog.d/51-haproxy-manager-forward.conf
-)
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
@@ -272,13 +266,6 @@ writer="$(rsyslog_writer)"
 
 [[ -x "$PRUNE_COMMAND" ]] \
     || die "${PRUNE_COMMAND} is missing; run 04-node-prepare on this node first"
-
-for stale in "${WITHDRAWN[@]}"; do
-    if [[ -e "$stale" ]]; then
-        rm -f "$stale"
-        log "  removed  ${stale}  (withdrawn push build)"
-    fi
-done
 
 install -o root -g root -m 755 -d "$(dirname "$APPARMOR_SNIPPET")"
 render_apparmor > "${APPARMOR_SNIPPET}.new-$$"

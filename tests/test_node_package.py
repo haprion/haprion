@@ -205,20 +205,6 @@ class NodeCommandPathTests(unittest.TestCase):
         text = (BASE / "install/04-node-prepare").read_text()
         self.assertIn(f'SBIN="{node_package.SBIN}"', text)
 
-    def test_an_earlier_installation_is_taken_over_before_the_accounts_are_made(self) -> None:
-        """B266: renamed before sysusers runs, or the node gets a second set of accounts."""
-
-        text = (BASE / "install/04-node-prepare").read_text()
-        before = text.index("./migrate-legacy-node before")
-        self.assertLess(before, text.index("apply_sysusers sysusers/haprion-node.conf"))
-        self.assertGreater(
-            text.index("./migrate-legacy-node finish"), text.index('step "Sudo rules"')
-        )
-        self.assertIn(
-            ("install/migrate-legacy-node", 0o755),
-            list(node_package.CONTENTS.values()),
-        )
-
 
 class NodePackageTransportContractTests(unittest.TestCase):
     def setUp(self) -> None:

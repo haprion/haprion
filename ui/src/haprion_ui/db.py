@@ -1513,6 +1513,36 @@ def server_state_events(
         return cursor.fetchall()
 
 
+@dataclass(frozen=True, slots=True)
+class StatusAccess:
+    """One network allowed to ask `/status/` what needs doing (B274)."""
+
+    network: str
+    added_by: str
+    added_at: datetime
+
+
+def status_access(connection: Connection[Any]) -> list[StatusAccess]:
+    with connection.cursor(row_factory=class_row(StatusAccess)) as cursor:
+        cursor.execute(
+            "select network::text as network, added_by, added_at "
+            "  from status_access order by network"
+        )
+        return cursor.fetchall()
+
+
+def set_status_access(connection: Connection[Any], *, networks: Sequence[str], actor: str) -> None:
+    """The list, replaced whole in the caller's transaction (B274)."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("delete from status_access")
+        for network in networks:
+            cursor.execute(
+                "insert into status_access (network, added_by) values (%(network)s, %(actor)s)",
+                {"network": network, "actor": actor},
+            )
+
+
 def record_audit_event(
     connection: Connection[Any],
     *,

@@ -79,6 +79,7 @@ from starlette.templating import _TemplateResponse
 
 from haprion_ui import (
     advanced_dialog,
+    attention,
     audit,
     auth,
     backups,
@@ -770,6 +771,10 @@ def build_router(config: Config) -> APIRouter:
             request,
             "index.html",
             {
+                #
+                # What needs doing, under the four cards (B274).
+                #
+                "attention": _attention(request, config),
                 "pending": pending,
                 "traffic": traffic,
                 "username": session.username,
@@ -4234,6 +4239,35 @@ def build_router(config: Config) -> APIRouter:
     # for it, and the ways to replace it - the certificate forms, in their
     # interface mode.
     #
+    @router.post("/settings/status-access")
+    async def save_status_access(
+        request: Request,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        networks: Annotated[str, Form(max_length=4096)] = "",
+    ) -> Response:
+        """Replace the list of addresses that may ask /status/ (B274); empty switches it off."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            checked = attention.access_list(networks)
+        except ValueError as problem:
+            return _settings_page(request, gate, problem=str(problem), status_code=400)
+        with request.app.state.pool.connection() as connection:
+            db.set_status_access(connection, networks=checked, actor=gate.username)
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="status_access_changed",
+                detail={"networks": list(checked)},
+            )
+            connection.commit()
+        return RedirectResponse("/settings#status-endpoint", status_code=303)
+
     @router.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request) -> Response:
         gate = _admin_write_gate(request)
@@ -4265,12 +4299,17 @@ def build_router(config: Config) -> APIRouter:
             switches = db.feature_switches(connection)
             provider = db.oidc_provider(connection)
             recent = db.recent_jobs(connection)
+            status_access = db.status_access(connection)
         response = TEMPLATES.TemplateResponse(
             request,
             "settings.html",
             {
                 **context,
                 "section": "settings",
+                #
+                # Who may ask /status/ what needs doing (B274).
+                #
+                "status_access": status_access,
                 "served": served,
                 "entry": entry,
                 "waiting": registry.interface_request if registry else None,
@@ -7360,6 +7399,43 @@ def build_router(config: Config) -> APIRouter:
         if deploy:
             return RedirectResponse("/", status_code=303)
         return RedirectResponse(f"/history?published={cluster}", status_code=303)
+
+    def _status_allowed(request: Request) -> bool:
+        """Whether the asking address is on Settings' list for `/status/` (B274)."""
+
+        with request.app.state.pool.connection() as connection:
+            allowed = db.status_access(connection)
+        if not allowed:
+            return False
+        address = ipaddress.ip_address(client_address(request))
+        return any(
+            address in ipaddress.ip_network(entry.network, strict=False) for entry in allowed
+        )
+
+    #
+    # What needs doing, for a monitor (B274): no sign-in, and only for the
+    # addresses an admin listed. Anybody else - and everybody while the list
+    # is empty - is told there is nothing here.
+    #
+    @router.get("/status/attention.json")
+    def status_attention(request: Request) -> Response:
+        if not _status_allowed(request):
+            return PlainTextResponse("Not found", status_code=404)
+        return Response(
+            _attention(request, config).as_json(),
+            media_type="application/json",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/status/metrics")
+    def status_metrics(request: Request) -> Response:
+        if not _status_allowed(request):
+            return PlainTextResponse("Not found", status_code=404)
+        return Response(
+            _attention(request, config).as_metrics(),
+            media_type="text/plain; version=0.0.4",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @router.get("/jobs", response_class=HTMLResponse)
     def latest_jobs(request: Request) -> Response:
@@ -10625,6 +10701,74 @@ class WafOverview:
             "exceptions": len(self.exceptions),
             "requests": self.request_count,
         }
+
+
+def _waf_not_working(
+    request: Request, config: Config, connection: Any, chosen: Sequence[str]
+) -> set[tuple[str, str, Any]]:
+    """The published exceptions the WAF page marks *Not working*, for the attention list."""
+
+    days = min(WAF_DAYS, config.traffic_logs.retention_days)
+    since = datetime.now(UTC) - timedelta(days=days)
+    stored, _drafted = _waf_documents(request, config, connection, chosen)
+    rows = db.waf_findings(connection, clusters=chosen, since=since)
+    reached = {
+        (cluster, moment): done
+        for cluster, moments in waf.exception_moments(rows, stored).items()
+        for moment, done in db.deploys_carrying(
+            connection, cluster=cluster, moments=sorted(moments)
+        ).items()
+    }
+    return waf.ineffective_exceptions(rows, stored, reached)
+
+
+def _attention(request: Request, config: Config) -> attention.Attention:
+    """What needs doing, worked out from the pages' own builders (B274)."""
+
+    stale_after = timedelta(seconds=config.poller.interval_seconds * 2)
+    now = datetime.now(UTC)
+    clusters, status_rows = read_source(request, config, STATUS_SOURCE)
+    status_rows = tuple(status_rows)
+    _, network_rows = read_source(request, config, NETWORK_SOURCE)
+    board = dashboard.build_dashboard(
+        clusters, status_rows, stale_after=stale_after, network_readings=network_rows
+    )
+    certificate_clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
+    certificate_view = certificates.build_certificate_overview(
+        certificate_clusters,
+        certificate_rows,
+        stale_after=stale_after,
+        status_readings=status_rows,
+    )
+    items: list[attention.Item] = []
+    with request.app.state.pool.connection() as connection:
+        features.read_in(db.feature_switches(connection))
+        items += attention.from_jobs(db.recent_jobs(connection, limit=200))
+        if config.traffic_logs.enabled:
+            items += attention.from_waf(
+                _waf_not_working(request, config, connection, clusters),
+                describe=waf.where,
+            )
+    items += attention.from_dashboard(board.clusters, behind_label=dashboard.BEHIND)
+    items += attention.from_certificates(certificate_view.registry, certificate_view.clusters)
+    if features.is_on(features.NODE_BACKUPS):
+        backup_clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
+        items += attention.from_backups(
+            backups.build_backup_overview(
+                backup_clusters, backup_rows, stale_after=stale_after
+            ).clusters
+        )
+    status_age: dict[str, int | None] = {
+        row.cluster: int((now - row.observed_at).total_seconds()) for row in status_rows
+    }
+    for cluster in clusters:
+        status_age.setdefault(cluster, None)
+    return attention.build_attention(
+        items,
+        status_age=status_age,
+        stale_after_seconds=int(stale_after.total_seconds()),
+        now=now,
+    )
 
 
 def _waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> WafOverview:

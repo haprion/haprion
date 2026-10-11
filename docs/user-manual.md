@@ -51,6 +51,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [A basic log viewer, on purpose](#a-basic-log-viewer-on-purpose)
   - [Sending the traffic log elsewhere, and metrics](#sending-the-traffic-log-elsewhere-and-metrics)
 - [Jobs and status freshness](#jobs-and-status-freshness)
+  - [Needs attention, and the status endpoint](#needs-attention-and-the-status-endpoint)
   - [Events: jobs and the audit record](#events-jobs-and-the-audit-record)
   - [How often status is refreshed](#how-often-status-is-refreshed)
   - [The worker](#the-worker)
@@ -2367,6 +2368,37 @@ process, not per pool. dnsdist's counters are read on the node and are not part
 of HAProxy's exporter, so a dashboard reading the exporter does not see them.
 
 ## Jobs and status freshness
+
+### Needs attention, and the status endpoint
+
+Under the dashboard's four cards, *Needs attention* lists what is wrong and wants somebody, across
+every cluster, the worst first, each row linked to where it is fixed: a certificate that is running
+out, unreadable or not where it should be (the interface's own included); a cluster's latest job of
+an operation that failed, partly worked, was blocked or ended unknown - until a later run of the
+same operation works; a node that is down or not on the published version; a cluster whose status
+has not been read for two poll intervals; a WAF exception marked *Not working*; a node backup that
+is missing, old or failed. Nothing there, no box. What somebody chose - a drained server, a
+maintenance page, a block - is not on it: those are on the cluster's *Operations* line.
+
+The same list answers a monitor, without a sign-in:
+
+```
+GET https://<manager>/status/attention.json
+GET https://<manager>/status/metrics
+```
+
+The first is `{"generated_at", "fresh", "counts": {"critical", "warning"}, "items": [...]}`, each
+item with `kind`, `severity`, `cluster`, `subject`, `message`, `since` and `link`; `fresh` is false
+once any cluster's status reading is older than two poll intervals, which is how a monitor sees that
+the manager itself has stopped reading. The second is Prometheus's text format:
+`haprion_attention_items{kind, severity}` for every kind and `haprion_status_age_seconds{cluster}`.
+Uptime Kuma asks the first with *HTTP(s) - Json Query* and `counts.critical = 0`; Prometheus scrapes
+the second and alerts on `haprion_attention_items{severity="critical"} > 0`.
+
+Who may ask is a list on *Settings → Status endpoint*: addresses or networks, one per line. Every
+other address - and every address while the list is empty, which is the endpoint switched off - is
+answered 404. The address is the one nginx hands the interface, so with a reverse proxy in front it
+is the client the proxy names.
 
 ### Events: jobs and the audit record
 

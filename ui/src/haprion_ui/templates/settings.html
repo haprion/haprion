@@ -148,6 +148,26 @@
 </section>
 {% endif %}
 {#
+  Who may ask /status/attention.json and /status/metrics what needs doing
+  (B274): Uptime Kuma, Prometheus. The list is the switch - empty is off.
+#}
+<section class="cluster-card settings-card" id="status-endpoint">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Status endpoint</h3><p>{% if status_access %}<code>/status/attention.json</code> and <code>/status/metrics</code> answer these addresses.{% else %}Off: no address may ask.{% endif %}</p></div></div></header>
+  {% if status_access %}<div class="table-scroll"><table class="node-table settings-cluster-table">
+    <thead><tr><th>Address</th><th>Added by</th><th>Added</th></tr></thead>
+    <tbody>{% for entry in status_access %}<tr><td data-label="Address"><code>{{ entry.network }}</code></td><td data-label="Added by">{{ entry.added_by }}</td><td data-label="Added">{{ (entry.added_at | shown).strftime('%y-%m-%d %H:%M') }}</td></tr>{% endfor %}</tbody>
+  </table></div>{% endif %}
+  <details class="editor-add">
+    <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>Edit</summary>
+    <form method="post" action="/settings/status-access" class="form-grid status-access-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label><span class="field-title">Addresses <span class="optional">(optional)</span></span><textarea name="networks" rows="{{ [status_access | length + 1, 3] | max }}" placeholder="192.0.2.10">{% for entry in status_access %}{{ entry.network }}
+{% endfor %}</textarea><small>One address or network per line. Empty switches it off.</small></label>
+      <div class="form-buttons"><button type="submit" class="secondary-button">Save</button></div>
+    </form>
+  </details>
+</section>
+{#
   What this installation offers (B193). Off hides a feature; node backups off
   also stops the clusters' timers, so that one asks first on its own page.
 #}

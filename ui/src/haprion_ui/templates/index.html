@@ -41,6 +41,24 @@
   </article>
 </section>
 
+{#
+  What needs doing (B274): under the four cards, only when there is
+  something, worst first. Each row goes where the fix is; a reader is told
+  and not sent to a page that only writes. What somebody chose - a drain, a
+  maintenance page, a block - is on the cluster's Operations line instead.
+#}
+{% if attention and attention.items %}
+<section class="cluster-card attention-card" aria-label="Needs attention">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Needs attention</h3></div></div></header>
+  <ul class="attention-list">
+    {% for item in attention.items %}
+    {% set text %}<span class="status-dot status-{{ item.severity }}" aria-hidden="true"></span><span class="attention-text">{% if item.cluster %}<strong>{{ item.cluster }}</strong>: {% endif %}{% if item.subject and item.subject != item.cluster %}{{ item.subject }} · {% endif %}{{ item.message }}{% if item.since %} <time datetime="{{ item.since.isoformat() }}">{{ (item.since | shown).strftime('%y-%m-%d %H:%M') }}</time>{% endif %}</span><span class="attention-go">{{ {'certificate': 'Certificates', 'job': 'Events', 'node': 'Dashboard', 'reading': 'Dashboard', 'waf': 'WAF logs', 'backup': 'Node backups'}[item.kind] }}</span>{% endset %}
+    <li>{% if role == 'admin' %}<a class="attention-row" href="{{ item.link }}">{{ text }}</a>{% else %}<div class="attention-row">{{ text }}</div>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 <section class="section-heading">
   <h2>Clusters</h2>
 </section>

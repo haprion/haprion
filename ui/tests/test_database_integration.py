@@ -1079,6 +1079,25 @@ class ARealDatabase(unittest.TestCase):
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             self.assertIn(marker, db.account_names(connection))
 
+    def test_the_web_keeps_the_status_endpoint_s_list(self) -> None:
+        """B274: replaced whole, read back as networks."""
+
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            db.set_status_access(
+                connection, networks=("192.0.2.10/32", "198.51.100.0/24"), actor="admin"
+            )
+            connection.commit()
+            first = [entry.network for entry in db.status_access(connection)]
+            db.set_status_access(connection, networks=("203.0.113.0/24",), actor="admin")
+            connection.commit()
+            second = [entry.network for entry in db.status_access(connection)]
+            db.set_status_access(connection, networks=(), actor="admin")
+            connection.commit()
+            emptied = db.status_access(connection)
+        self.assertEqual(first, ["192.0.2.10/32", "198.51.100.0/24"])
+        self.assertEqual(second, ["203.0.113.0/24"])
+        self.assertEqual(emptied, [])
+
     def test_worker_can_read_jobs_but_not_accounts(self) -> None:
         with (
             self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection,

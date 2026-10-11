@@ -342,6 +342,7 @@ class ObjectForm(BaseModel):
 
     backend_tls_policy: Annotated[str, StringConstraints(max_length=16)] = ""
     backend_tls_ca: Annotated[str, StringConstraints(max_length=255)] = ""
+    proxy_protocol: bool = False
     """How old a handshake to this backend may be. Empty means the default.
 
     Empty rather than the name itself, so a form that has never been touched

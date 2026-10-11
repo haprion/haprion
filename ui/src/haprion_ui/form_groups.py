@@ -221,6 +221,9 @@ def _connections(form: Mapping[str, Any]) -> str:
             f"cookie {cookie}" if cookie else "",
             f"{limit} per server" if limit else "",
             f"slow start {ramp}" if ramp else "",
+            "client address by PROXY v2"
+            if form.get("proxy_protocol") and _text(form, "protocol") == "tcp"
+            else "",
         ],
         "",
     )
@@ -341,6 +344,7 @@ GROUPS: Mapping[str, FormGroup] = {
             "backend_tls",
             "backend_tls_policy",
             "backend_tls_ca",
+            "proxy_protocol",
             "cookie",
             "max_connections",
             "slow_start",

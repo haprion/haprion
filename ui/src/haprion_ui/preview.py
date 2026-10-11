@@ -166,6 +166,7 @@ DEFAULTS = {
     "backend_tls": "",
     "backend_tls_policy": "",
     "backend_tls_ca": "",
+    "proxy_protocol": False,
     "listen_tls_policy": "",
     "max_connections": "",
     "slow_start": "",
@@ -534,6 +535,7 @@ HIDDEN_FOR = {
         "backend_tls",
         "backend_tls_policy",
         "backend_tls_ca",
+        "proxy_protocol",
         "max_connections",
         "slow_start",
         "balance_key",
@@ -815,6 +817,12 @@ def build_document(form: dict[str, object]) -> str:
         if policy and policy != DEFAULT_BACKEND_POLICY:
             backend_tls_box["policy"] = policy
         backend["tls"] = backend_tls_box
+    #
+    # A tcp pool's (B279); the box is not drawn for anything else, but a
+    # protocol changed after ticking it would still post it.
+    #
+    if protocol == "tcp" and flag("proxy_protocol"):
+        backend["proxy_protocol"] = "v2"
     if text("max_connections"):
         limit = text("max_connections")
         if not limit.isdigit():
@@ -1698,6 +1706,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "backend_tls": str(_sub(backend, "tls").get("verify", "") or ""),
         "backend_tls_policy": str(_sub(backend, "tls").get("policy", "") or ""),
         "backend_tls_ca": str(_sub(backend, "tls").get("ca", "") or ""),
+        "proxy_protocol": backend.get("proxy_protocol") == "v2",
         "max_connections": str(backend.get("max_connections", "") or ""),
         "slow_start": str(backend.get("slow_start", "") or ""),
         "allow_from": tuple(groups),

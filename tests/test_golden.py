@@ -1316,5 +1316,60 @@ class APoolVerifiesAgainstTheClustersOwnCa(unittest.TestCase):
             load_proxy("shop", self.document().replace(b"pool-a.example.net", b"192.0.2.10"))
 
 
+TCP_PROXIED = b"""\
+schema: 1
+name: mail
+listen:
+  protocol: tcp
+  port: 2525
+backend: pool
+backends:
+  pool:
+    balance: roundrobin
+    proxy_protocol: v2
+    health:
+      type: tcp
+    servers:
+      - host: 192.0.2.25
+        port: 25
+"""
+
+
+class ATcpPoolMayBeToldTheClientsAddress(unittest.TestCase):
+    """B279: `send-proxy-v2` on every server, and the check sends a header too."""
+
+    def server_line(self, document: bytes) -> str:
+        text = generate(
+            [load_proxy("mail", document)], vips=dict(DEFAULT_VIPS), default_vip="main"
+        ).configuration["1001-mail.cfg"]
+        return next(line for line in text.splitlines() if line.strip().startswith("server "))
+
+    def test_the_server_and_its_check_send_the_header(self) -> None:
+        self.assertIn(" send-proxy-v2 check-send-proxy", self.server_line(TCP_PROXIED))
+
+    def test_without_a_check_there_is_no_check_to_send_it(self) -> None:
+        line = self.server_line(TCP_PROXIED.replace(b"type: tcp", b"type: disabled"))
+
+        self.assertIn(" send-proxy-v2", line)
+        self.assertNotIn("check-send-proxy", line)
+
+    def test_a_pool_that_does_not_ask_gets_nothing(self) -> None:
+        line = self.server_line(TCP_PROXIED.replace(b"    proxy_protocol: v2\n", b""))
+
+        self.assertNotIn("send-proxy", line)
+
+    def test_only_version_2_and_only_on_a_tcp_object(self) -> None:
+        with self.assertRaises(ModelError):
+            load_proxy("mail", TCP_PROXIED.replace(b"proxy_protocol: v2", b"proxy_protocol: v1"))
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop",
+                VERIFIED.replace(
+                    b"    balance: roundrobin", b"    balance: roundrobin\n    proxy_protocol: v2"
+                ),
+            )
+        self.assertIn("X-Forwarded-For", str(raised.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

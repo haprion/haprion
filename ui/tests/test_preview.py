@@ -1118,3 +1118,27 @@ class APoolVerifiedAgainstACa(unittest.TestCase):
 
         self.assertNotIn("ca:", document)
         self.assertIn("verify: system", document)
+
+
+class ATcpPoolToldTheClientsAddress(unittest.TestCase):
+    """B279: the box is a tcp pool's, written as `proxy_protocol: v2` and read back."""
+
+    def tcp(self, **fields: object) -> dict[str, object]:
+        return form(protocol="tcp", tcp_port="2525", hostnames="", certificate="", **fields)
+
+    def test_the_box_becomes_the_key_and_the_server_line(self) -> None:
+        result = preview(self.tcp(proxy_protocol="on"), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertIn("proxy_protocol: v2", result.document)
+        self.assertIn("send-proxy-v2", "".join(result.files.values()))
+
+    def test_it_reads_back_ticked(self) -> None:
+        document = build_document(self.tcp(proxy_protocol="on"))
+
+        self.assertIs(form_from_document(document)["proxy_protocol"], True)
+
+    def test_an_http_object_does_not_send_what_it_cannot_see(self) -> None:
+        document = build_document(form(protocol="https", proxy_protocol="on"))
+
+        self.assertNotIn("proxy_protocol", document)

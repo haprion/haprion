@@ -79,6 +79,22 @@
   };
 
   //
+  // The PROXY header's warning, under its box only while it is ticked
+  // (B279): a server that does not expect the header refuses every
+  // connection, and that is said where the choice is made.
+  //
+  const wireProxyProtocol = () => {
+    const box = document.querySelector("input[data-proxy-protocol]");
+    const note = document.querySelector("[data-proxy-protocol-note]");
+    if (!box || !note) return;
+    const apply = () => {
+      note.hidden = !box.checked;
+    };
+    box.addEventListener("change", apply);
+    apply();
+  };
+
+  //
   // The balancing key has nothing to name unless the algorithm hashes
   // something: `hdr` takes a header, `url_param` a query parameter, and the
   // engine refuses a key beside any other algorithm rather than ignoring it.
@@ -468,6 +484,7 @@
     wire();
     wireBalanceKey();
     wireBackendTlsPolicy();
+    wireProxyProtocol();
     wireListenTlsPolicy();
     wireRedirectStatus();
     keepPosition();

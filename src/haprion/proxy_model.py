@@ -440,6 +440,13 @@ VERIFY_MODES = ("system", "none", "ca")
 #
 BACKEND_POLICY_NAMES = ("modern", "intermediate", "legacy")
 
+#
+# The PROXY protocol a pool's servers are sent the client's address in (B279).
+# Version 2 only: the binary form every receiver that takes one takes, and the
+# one that carries IPv6 as it carries IPv4.
+#
+PROXY_PROTOCOL_VERSIONS = ("v2",)
+
 
 #
 # Every key a proxy document may carry, split by the shape it belongs to. This
@@ -680,6 +687,16 @@ class Backend:
     A limit protects the application behind it: a pool of servers that each
     take what they can serve keeps answering under a load that would otherwise
     make all of them slow at once. What does not fit waits in the pool's queue.
+    """
+
+    proxy_protocol: str | None = None
+    """`v2` to send each server the client's address in a PROXY header (B279).
+
+    For a tcp object, where the pool would otherwise see only the node's
+    address; an http pool has `X-Forwarded-For`. The servers must expect the
+    header - a server that does not reads it as the first bytes of the stream
+    and refuses every connection - and so must the health check, which is why
+    the check sends it too.
     """
 
     slow_start: str | None = None
@@ -1484,6 +1501,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
             "tls",
             "max_connections",
             "slow_start",
+            "proxy_protocol",
         },
         location,
     )
@@ -1630,6 +1648,12 @@ def _backend(name: str, value: Any, location: str) -> Backend:
                 f"({health.interval}); the ramp moves one step per check"
             )
 
+    proxy_protocol = data.get("proxy_protocol")
+    if proxy_protocol is not None and proxy_protocol not in PROXY_PROTOCOL_VERSIONS:
+        raise ModelError(
+            f"{location}.proxy_protocol must be one of: {', '.join(PROXY_PROTOCOL_VERSIONS)}"
+        )
+
     return Backend(
         name=name,
         balance=balance,
@@ -1640,6 +1664,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
         tls=backend_tls,
         max_connections=max_connections,
         slow_start=slow_start,
+        proxy_protocol=proxy_protocol,
     )
 
 
@@ -1844,7 +1869,12 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
             _refuse_http_only_pools(backends, name)
         if listen.protocol != "dns":
             _refuse_saved_addresses(backends, name, listen.protocol)
+        if listen.protocol != "tcp":
+            _refuse_proxy_protocol(backends, name, f"a {listen.protocol} object")
     else:
+        _refuse_proxy_protocol(
+            backends, name, "an http or https object, whose pool has X-Forwarded-For"
+        )
         _refuse_keys(data, TCP_ONLY_KEYS, name, "an http or https object")
         _refuse_dns_only_pools(backends, name)
         _refuse_saved_addresses(backends, name, listen.protocol)
@@ -2100,6 +2130,14 @@ def _refuse_http_only_pools(backends: Mapping[str, Backend], name: str) -> None:
                 f"{where}.balance: {pool.balance} hashes something only an HTTP request has; "
                 f"HAProxy falls back to roundrobin in tcp mode without failing"
             )
+
+
+def _refuse_proxy_protocol(backends: Mapping[str, Backend], name: str, what: str) -> None:
+    """The PROXY header is a tcp pool's (B279); anywhere else it would be refused here."""
+
+    for key, pool in backends.items():
+        if pool.proxy_protocol is not None:
+            raise ModelError(f"{name}.backends.{key}.proxy_protocol is not for {what}")
 
 
 def _refuse_dns_only_pools(backends: Mapping[str, Backend], name: str) -> None:

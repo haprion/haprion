@@ -14,6 +14,7 @@ only works with the names used below, that is a bug in the software, not in this
 - [Configuration and deployment](#configuration-and-deployment)
   - [A pool's servers](#a-pools-servers)
   - [A pool over HTTPS](#a-pool-over-https)
+  - [The client's address on a tcp pool](#the-clients-address-on-a-tcp-pool)
   - [Drain and maintenance](#drain-and-maintenance)
   - [Addresses, and what to call them](#addresses-and-what-to-call-them)
   - [DNS objects](#dns-objects)
@@ -165,6 +166,15 @@ backends:
       verify: ca
       ca: corp-root
 ```
+
+### The client's address on a tcp pool
+
+An http pool is told who the client is in `X-Forwarded-For`. A tcp pool sees only the node's
+address unless it is sent a PROXY header: *Send the client address (PROXY protocol v2)* in the
+pool's group, `proxy_protocol: v2` in the stored object, `send-proxy-v2` on every server line.
+The health check sends the header too (`check-send-proxy`), since a server that expects one closes a
+connection that opens without it. The servers must be set up to read the header first - a mail
+server, a database proxy, another HAProxy with `accept-proxy` - or every connection is refused.
 
 ### Drain and maintenance
 

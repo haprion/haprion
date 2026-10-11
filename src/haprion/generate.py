@@ -3160,7 +3160,8 @@ def _backend(
             f"    server {name} {server.host}:{server.port}"
             f" guid {server_guid(proxy.name, backend.name, server)}"
             f"{_server_tls(backend, server)}{_server_address(server, resolvers)}"
-            f"{_server_check(backend, server)}{cookie}{weight}{backup}{limit}{ramp}"
+            f"{_server_check(backend, server)}{_proxy_protocol(backend)}"
+            f"{cookie}{weight}{backup}{limit}{ramp}"
         )
     #
     # Last, so the cluster's brake and the object's limit have run and the
@@ -3302,6 +3303,20 @@ def _check_encryption(backend: Backend, health: Health) -> str:
         #
         return " check-ssl"
     return ""
+
+
+def _proxy_protocol(backend: Backend) -> str:
+    """The client's address to the server in a PROXY v2 header (B279).
+
+    The check sends one too, with `check-send-proxy`: a server that expects
+    the header closes a connection that opens without it, so a check without
+    it fails on every server and the pool stands down while it would serve.
+    """
+
+    if backend.proxy_protocol is None:
+        return ""
+    check = " check-send-proxy" if backend.health.type != "disabled" else ""
+    return f" send-proxy-v2{check}"
 
 
 def _server_check(backend: Backend, server: Server) -> str:

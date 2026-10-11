@@ -209,6 +209,21 @@ class ThePage(LoginTestCase):
 
         self.assertIn(f"AUDIT_KEEP_DAYS={views.AUDIT_KEEP_DAYS}\n", script)
 
+    def test_a_heading_sorts_the_whole_record_in_the_database(self) -> None:
+        client = self.client()
+        self.sign_in(client)
+        with mock.patch("haprion_ui.db.audit_events", return_value=[]) as listed:
+            default = client.get("/jobs?view=audit").text
+            client.get("/jobs?view=audit&sort=who")
+            by_who = dict(listed.call_args.kwargs)
+            client.get("/jobs?view=audit&sort=-time")
+            oldest = dict(listed.call_args.kwargs)
+
+        self.assertIn('aria-sort="descending"', default)
+        self.assertIn("sort=-time", default)
+        self.assertEqual((by_who["order"], by_who["descending"]), ("who", False))
+        self.assertEqual((oldest["order"], oldest["descending"]), ("time", False))
+
     def test_a_reader_has_no_audit_view(self) -> None:
         self.account = replace(self.account, role="reader")
         client = self.client()

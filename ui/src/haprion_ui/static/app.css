@@ -2421,8 +2421,11 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .log-filters.audit-filters { grid-template-columns: minmax(120px, .6fr) minmax(120px, .6fr) minmax(200px, 1.3fr) minmax(175px, .8fr) minmax(175px, .8fr) auto auto; }
 @media (max-width: 1000px) { .log-filters.audit-filters { grid-template-columns: 1fr 1fr; } }
 .audit-table { table-layout: fixed; }
-/* The time in characters, not pixels, so it fits at whatever size the reader's font draws it. */
-.audit-table th:nth-child(1), .audit-table td:nth-child(1) { width: calc(17ch + 36px); }
+/* The time is never cut. Pixels, not ch or em: a fixed table takes its widths
+   from the heading row, whose 11 px capitals made 17ch too narrow for the
+   13 px time under it (26-10-11). 121 px of text measured, 156 px of room. */
+.audit-table th:nth-child(1), .audit-table td:nth-child(1) { width: 190px; }
+.audit-table td:nth-child(1) { overflow: visible; text-overflow: clip; }
 .audit-table th:nth-child(2), .audit-table td:nth-child(2) { width: 170px; }
 .audit-table th:nth-child(3), .audit-table td:nth-child(3) { width: auto; }
 .audit-table th:nth-child(4), .audit-table td:nth-child(4) { width: 130px; }

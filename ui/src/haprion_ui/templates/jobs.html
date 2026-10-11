@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% from "_date-picker.html" import date_time_picker %}
+{% import "_sort.html" as sort %}
 {% block title %}Events — Haprion{% endblock %}
 {#
   Reloads only while something is queued or running, and stops on its own once
@@ -48,7 +49,7 @@
 {% if time_error %}<p class="preview-notice form-problem" role="alert"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ time_error }}</strong></p>{% endif %}
 <div class="table-scroll">
   <table class="node-table audit-table">
-    <thead><tr><th>Time</th><th>Who</th><th>What</th><th>Where</th></tr></thead>
+    <thead><tr>{{ sort.heading(audit_sorts.time, 'Time') }}{{ sort.heading(audit_sorts.who, 'Who') }}{{ sort.heading(audit_sorts.what, 'What') }}{{ sort.heading(audit_sorts.where, 'Where') }}</tr></thead>
     <tbody>
     {% for event in events %}
       {% set open = event.id == opened %}

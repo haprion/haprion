@@ -1464,9 +1464,24 @@ def _audit_filter(
     }
 
 
+#
+# What each sortable Audit heading orders by (26-10-11). The sentence under
+# *What* is built from the action, so it groups by kind of event; a tie keeps
+# the newest first. Names only - the direction is the caller's bool.
+#
+AUDIT_ORDER_COLUMNS: Mapping[str, str] = {
+    "time": "id",
+    "who": "actor",
+    "what": "action",
+    "where": "cluster",
+}
+
+
 def audit_events(
     connection: Connection[Any],
     *,
+    order: str = "time",
+    descending: bool = True,
     offset: int = 0,
     limit: int = 50,
     actor: str = "",
@@ -1483,7 +1498,8 @@ def audit_events(
             "select id, at, actor, action, cluster, request_id, detail "  # noqa: S608 - constant
             "  from audit_event "
             + _AUDIT_WHERE
-            + " order by id desc limit %(limit)s offset %(offset)s",
+            + f" order by {AUDIT_ORDER_COLUMNS.get(order, 'id')} {'desc' if descending else 'asc'}"
+            " nulls last, id desc limit %(limit)s offset %(offset)s",
             {
                 **_audit_filter(
                     actor=actor,

@@ -1079,6 +1079,7 @@ class ARealDatabase(unittest.TestCase):
             searched = db.audit_events(connection, search="192.0.2.10:8080")
             page = db.audit_events(connection, actor=marker, limit=1)
             older = db.audit_events(connection, actor=marker, offset=1)
+            by_kind = db.audit_events(connection, actor=marker, order="what", descending=False)
             counted = db.audit_count(connection, actor=marker)
             future = db.audit_count(
                 connection, actor=marker, since=datetime.now(UTC) + timedelta(days=1)
@@ -1091,6 +1092,7 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual([event.action for event in older], ["queue_job", "login"])
         self.assertEqual(len(page), 1)
         self.assertEqual(counted, 3)
+        self.assertEqual([event.action for event in by_kind], ["login", "queue_job", "queue_job"])
         self.assertEqual(future, 0)
         self.assertEqual(queued, {request: marker})
         self.assertEqual([event.detail["state"] for event in drains], ["drain"])

@@ -115,6 +115,7 @@ from haprion_ui import (
     proxies,
     search_index,
     server_card,
+    sorting,
     timing,
     traffic_log_table,
     traffic_logs,
@@ -7519,6 +7520,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError as exc:
             since = until = None
             time_error = str(exc)
+        sort, asked = AUDIT_TABLE.chosen(request)
         with request.app.state.pool.connection() as connection:
             total = db.audit_count(
                 connection, actor=actor, cluster=cluster, search=search, since=since, until=until
@@ -7527,6 +7529,8 @@ def build_router(config: Config) -> APIRouter:
             page = min(page, pages)
             events = db.audit_events(
                 connection,
+                order=sort.lstrip("-"),
+                descending=AUDIT_TABLE.descending(sort),
                 offset=(page - 1) * size,
                 limit=size,
                 actor=actor,
@@ -7547,7 +7551,7 @@ def build_router(config: Config) -> APIRouter:
             "to": selected_to,
             "size": str(size),
         }
-        return TEMPLATES.TemplateResponse(
+        response = TEMPLATES.TemplateResponse(
             request,
             "jobs.html",
             {
@@ -7581,8 +7585,12 @@ def build_router(config: Config) -> APIRouter:
                 "time_max": local_now.strftime("%y-%m-%d %H:%M"),
                 "time_today": local_now.strftime("%y-%m-%d 00:00"),
                 "clusters": listed_clusters(request, config),
+                "audit_sorts": AUDIT_TABLE.links(sort, kept),
             },
         )
+        if asked:
+            AUDIT_TABLE.remember(response, sort, secure=config.session.cookie_secure)
+        return response
 
     @router.get("/login", response_class=HTMLResponse)
     def login_form(request: Request) -> Response:
@@ -9352,6 +9360,22 @@ AUDIT_PAGE = 50
 # removes what is older. The From and To fields are bounded by it.
 #
 AUDIT_KEEP_DAYS = 730
+
+#
+# Audit's headings, sorted as every sortable table is (THEME.md) but in the
+# database: the page holds one page of the record, and ordering only that
+# would be a lie about the rest. The keys are unused for the same reason.
+#
+AUDIT_TABLE = sorting.Table(
+    columns=(
+        sorting.Column("time", lambda _row, _: None, descending_first=True),
+        sorting.Column("who", lambda _row, _: None),
+        sorting.Column("what", lambda _row, _: None),
+        sorting.Column("where", lambda _row, _: None),
+    ),
+    cookie="haprion_ui_audit_sort",
+    path="/jobs",
+)
 
 
 @dataclass(frozen=True, slots=True)

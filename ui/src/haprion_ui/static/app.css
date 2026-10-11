@@ -426,7 +426,21 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .cluster-traffic { display: flex; flex: 1 1 auto; justify-content: center; gap: 22px; min-width: 0; margin: 0; white-space: nowrap; }
 .cluster-traffic > div { display: flex; align-items: baseline; gap: 7px; }
 .cluster-traffic dt { color: var(--muted); font-size: 12px; }
-.cluster-traffic dd { margin: 0; color: var(--text-strong); font-size: 13px; font-weight: 620; }
+.cluster-traffic dd { margin: 0; color: var(--text-strong); font-size: 13px; font-weight: 620; font-variant-numeric: tabular-nums; }
+/*
+ * The same four figures in the same place on every cluster card (26-10-11).
+ * Centred on the card rather than in what the name and the badges leave over,
+ * and each in a box as wide as its longest figure (99.9k, 999 kbit/s, 999 ms),
+ * so neither a longer name nor a busier cluster moves them. A side that needs
+ * more than half of what is left still gets it, and only then do they move.
+ */
+.cluster-header:has(> .cluster-traffic) { display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr); gap: 16px; }
+.cluster-header:has(> .cluster-traffic) .cluster-traffic { gap: 16px; }
+.cluster-header:has(> .cluster-traffic) .cluster-state { justify-content: flex-end; }
+.cluster-traffic > div:nth-child(1) { width: 130px; }
+.cluster-traffic > div:nth-child(2) { width: 92px; }
+.cluster-traffic > div:nth-child(3) { width: 102px; }
+.cluster-traffic > div:nth-child(4) { width: 136px; }
 /*
  * RULE: a label that rewrites itself while the page is open gets a fixed box.
  *
@@ -1138,6 +1152,8 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   .cluster-header { align-items: flex-start; flex-direction: column; gap: 12px; }
   .cluster-state { width: 100%; flex-wrap: wrap; justify-content: space-between; }
   .cluster-traffic { flex-wrap: wrap; justify-content: flex-start; row-gap: 4px; }
+  .cluster-header:has(> .cluster-traffic) { display: flex; }
+  .cluster-traffic > div:nth-child(n) { width: auto; }
   .users-card .cluster-state { justify-content: flex-start; }
   .users-card .users-sso { flex-basis: 100%; overflow-wrap: anywhere; }
   .cluster-actions { align-items: flex-start; flex-direction: column; }

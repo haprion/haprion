@@ -406,6 +406,24 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(removable, {"old-failure", "old-success", "older-old-success"})
             connection.rollback()
 
+    def test_retention_removes_audit_records_after_two_years(self) -> None:
+        """26-10-11: the record is kept two years, and nothing younger goes."""
+
+        clause = self.retention_clause("where_audit_old", "AUDIT_KEEP_DAYS")
+        with self.connect() as connection, connection.cursor() as cursor:
+            ids = {}
+            for label, age in (("old", "731 days"), ("kept", "729 days"), ("new", "1 day")):
+                cursor.execute(
+                    "insert into audit_event (at, actor, action, detail) "
+                    "values (now() - %s::interval, 'admin', 'login', '{}') returning id",
+                    (age,),
+                )
+                ids[_first(cursor)] = label
+            cursor.execute(f"select id from audit_event where {clause}")  # noqa: S608 - the script's own
+            removable = {ids[row[0]] for row in cursor.fetchall() if row[0] in ids}
+            self.assertEqual(removable, {"old"})
+            connection.rollback()
+
     def test_retention_keeps_what_a_profile_s_state_is_read_from(self) -> None:
         """A profile in effect for months must not read "Not applied" after a week.
 
@@ -1060,13 +1078,20 @@ class ARealDatabase(unittest.TestCase):
             in_alpha = db.audit_events(connection, actor=marker, cluster="alpha")
             searched = db.audit_events(connection, search="192.0.2.10:8080")
             page = db.audit_events(connection, actor=marker, limit=1)
-            older = db.audit_events(connection, actor=marker, before_id=page[0].id)
+            older = db.audit_events(connection, actor=marker, offset=1)
+            counted = db.audit_count(connection, actor=marker)
+            future = db.audit_count(
+                connection, actor=marker, since=datetime.now(UTC) + timedelta(days=1)
+            )
             queued = db.requested_by(connection, [request, uuid4()])
             drains = db.server_state_events(connection, cluster="alpha", object_name=marker)
         self.assertEqual([event.action for event in mine], ["queue_job", "queue_job", "login"])
         self.assertEqual(len(in_alpha), 2)
         self.assertTrue(any(event.actor == marker for event in searched))
         self.assertEqual([event.action for event in older], ["queue_job", "login"])
+        self.assertEqual(len(page), 1)
+        self.assertEqual(counted, 3)
+        self.assertEqual(future, 0)
         self.assertEqual(queued, {request: marker})
         self.assertEqual([event.detail["state"] for event in drains], ["drain"])
 

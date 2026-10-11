@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_date-picker.html" import date_time_picker %}
 {% block title %}Events — Haprion{% endblock %}
 {#
   Reloads only while something is queued or running, and stops on its own once
@@ -11,7 +12,7 @@
 #}
 {% block head_extra %}{% if view == 'jobs' and jobs.active_count %}<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endblock %}
 {% block content %}
-{% if view == 'audit' %}<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script>{% endif %}
+{% if view == 'audit' %}<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/date-picker.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/page-size.js') }}?v={{ asset_token }}"></script>{% endif %}
 <section class="page-heading">
   <div class="heading-title"><h1>Events</h1><p class="page-lede">{% if view == 'audit' %}Who did what, and where.{% else %}The newest management requests and their recorded outcome.{% endif %}</p></div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}</div>
@@ -35,22 +36,23 @@
   under itself, as a registry row does; the sentence's job link still goes to
   the job.
 #}
-{% set kept = {'view': 'audit', 'who': filters.who, 'cluster': filters.cluster, 'q': filters.q} %}
-{% if before %}{% set _ = kept.update({'before': before}) %}{% endif %}
-<form class="log-filters audit-filters" method="get" action="/jobs">
+<form class="log-filters audit-filters" method="get" action="/jobs" id="audit-filters">
   <input type="hidden" name="view" value="audit">
   <label>Cluster<select name="cluster"><option value="">All clusters</option>{% for name in clusters %}<option value="{{ name }}"{% if filters.cluster == name %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
   <label>Who<input name="who" value="{{ filters.who }}" maxlength="255" autocomplete="off" spellcheck="false"></label>
   <label>Search<input name="q" value="{{ filters.q }}" maxlength="200" autocomplete="off"></label>
+  {{ date_time_picker('from', 'From', filters['from'], time_today, time_min, time_max) }}
+  {{ date_time_picker('to', 'To', filters.to, time_max, time_min, time_max) }}
   <button class="secondary-button" type="submit">Filter</button><a class="text-link" href="/jobs?view=audit">Clear</a>
 </form>
+{% if time_error %}<p class="preview-notice form-problem" role="alert"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ time_error }}</strong></p>{% endif %}
 <div class="table-scroll">
   <table class="node-table audit-table">
     <thead><tr><th>Time</th><th>Who</th><th>What</th><th>Where</th></tr></thead>
     <tbody>
     {% for event in events %}
       {% set open = event.id == opened %}
-      {% set href = '/jobs?' ~ (kept if open else dict(kept, open=event.id)) | urlencode %}
+      {% set here = dict(kept, page=paging.page) %}{% set href = '/jobs?' ~ (here if open else dict(here, open=event.id)) | urlencode %}
       <tr{% if event.facts %} class="audit-row{% if open %} audit-open{% endif %}" data-href="{{ href }}"{% endif %}>
         <td data-label="Time"><time datetime="{{ event.at.isoformat() }}">{{ event.shown_at }}</time></td>
         <td data-label="Who">{{ event.who }}</td>
@@ -61,12 +63,16 @@
       <tr class="registry-detail audit-detail"><td colspan="4"><div class="registry-detail-grid">{% for label, value in event.facts %}<div><strong>{{ label }}</strong><span>{{ value }}</span></div>{% endfor %}</div></td></tr>
       {% endif %}
     {% else %}
-      <tr><td colspan="4"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>Nothing recorded</strong><span>{% if filters.who or filters.cluster or filters.q %}No event matches the filter.{% else %}Sign-ins, changes and queued jobs will appear here.{% endif %}</span></div></div></td></tr>
+      <tr><td colspan="4"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>Nothing recorded</strong><span>{% if filters.who or filters.cluster or filters.q or filters['from'] or filters.to %}No event matches the filter.{% else %}Sign-ins, changes and queued jobs will appear here.{% endif %}</span></div></div></td></tr>
     {% endfor %}
     </tbody>
   </table>
 </div>
-{% if older %}<p class="table-note"><a href="/jobs?{{ {'view': 'audit', 'before': older, 'who': filters.who, 'cluster': filters.cluster, 'q': filters.q} | urlencode }}">Older events</a></p>{% endif %}
+{% if paging.total %}<nav class="log-pagination" aria-label="Audit pages">
+  <label>Rows per page <select name="size" form="audit-filters" data-page-size>{% for choice in [25, 50, 100] %}<option value="{{ choice }}"{% if choice == paging.size %} selected{% endif %}>{{ choice }}</option>{% endfor %}</select></label>
+  <span>{{ paging.first }}–{{ paging.last }} of {{ paging.total }}</span>
+  <div>{% if paging.page > 1 %}<a class="secondary-button" href="/jobs?{{ dict(kept, page=paging.page - 1) | urlencode }}">Previous</a>{% else %}<button class="secondary-button" type="button" disabled>Previous</button>{% endif %}{% if paging.page < paging.pages %}<a class="secondary-button" href="/jobs?{{ dict(kept, page=paging.page + 1) | urlencode }}">Next</a>{% else %}<button class="secondary-button" type="button" disabled>Next</button>{% endif %}</div>
+</nav>{% endif %}
 {% else %}
 
 <section class="metric-grid activity-summary" aria-label="Job summary">

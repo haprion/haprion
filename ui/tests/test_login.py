@@ -171,6 +171,7 @@ class LoginTestCase(unittest.TestCase):
             #
             mock.patch("haprion_ui.db.requested_by", return_value={}),
             mock.patch("haprion_ui.db.audit_events", return_value=[]),
+            mock.patch("haprion_ui.db.audit_count", return_value=0),
             mock.patch("haprion_ui.db.account_names", return_value=frozenset()),
             mock.patch("haprion_ui.db.server_state_events", return_value=[]),
             # Nobody may ask /status/ (B274) unless a test says otherwise.

@@ -7,8 +7,8 @@
 #
 # The job table grows without limit otherwise: it holds one row per management
 # request ever made, and nothing has ever removed one. The audit trail is what
-# records that an operation happened and is deliberately untouched here - this
-# removes the queue's working copy, not the history.
+# records that an operation happened, and is kept far longer than the queue's
+# working copy: two years (26-10-11).
 #
 # It is a root command rather than something the interface does, because no
 # application role holds `delete` on any table and none is going to. That is the
@@ -103,10 +103,17 @@ OIDC_LOGIN_KEEP_HOURS=24
 # than ninety days is far outside any throttle window (at most a day), with
 # one exception: each name keeps its newest successful attempt, because the
 # Users page reads "Last sign-in" from it and a break-glass account may go
-# unused for longer than that. The audit trail is not touched, here or anywhere.
+# unused for longer than that.
 #
 SESSION_KEEP_DAYS=30
 LOGIN_ATTEMPT_KEEP_DAYS=90
+
+#
+# The audit trail: two years (26-10-11). It is append-only for every
+# application role; this root command is the one hand that removes from it,
+# and only by age.
+#
+AUDIT_KEEP_DAYS=730
 
 #
 # HAProxy's own counter column names, in the order the rest of the project
@@ -267,6 +274,10 @@ at < statement_timestamp() - make_interval(days => ${LOGIN_ATTEMPT_KEEP_DAYS})
 SQL
 }
 
+where_audit_old() {
+    echo "at < statement_timestamp() - make_interval(days => ${AUDIT_KEEP_DAYS})"
+}
+
 #
 # One table at a time, with the same predicate for the count and the delete.
 #
@@ -291,6 +302,7 @@ account_history_table() {
 account_history() {
     account_history_table app_session "$(where_session_ended)" "${SESSION_KEEP_DAYS} day(s) after they ended"
     account_history_table login_attempt "$(where_login_attempt_old)" "${LOGIN_ATTEMPT_KEEP_DAYS} day(s)"
+    account_history_table audit_event "$(where_audit_old)" "${AUDIT_KEEP_DAYS} day(s)"
 }
 
 #

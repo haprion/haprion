@@ -2093,7 +2093,12 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .log-date-field { position: relative; display: grid; gap: 5px; min-width: 0; }
 .log-date-field > label { color: var(--muted); font-size: 12px; }
 .log-calendar { position: absolute; z-index: 25; top: calc(100% + 7px); right: 0; width: 294px; padding: 13px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-raised); box-shadow: var(--shadow-menu); }
-.log-calendar > strong { display: block; margin-bottom: 10px; color: var(--text-strong); font-size: 12px; text-align: center; }
+.log-calendar-month { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.log-calendar-month strong { color: var(--text-strong); font-size: 12px; }
+.log-calendar-step { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text-secondary); cursor: pointer; }
+.log-calendar-step svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.log-calendar-step:hover:not(:disabled) { border-color: var(--line-strong); color: var(--text-strong); }
+.log-calendar-step:disabled { opacity: .35; cursor: default; }
 .log-calendar-weekdays, .log-calendar-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
 .log-calendar-weekdays span { padding: 3px 0; color: var(--muted); font-size: 10px; font-weight: 700; text-align: center; text-transform: uppercase; }
 .log-calendar-days button { min-width: 0; height: 30px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text); cursor: pointer; font-variant-numeric: tabular-nums; }
@@ -2413,10 +2418,11 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 /* Events → Audit (B275): the filters on one line, a row's detail behind a disclosure. */
 /* Events -> Audit: the traffic log's filter row, and four columns of its own
    rather than the job table's nine shares or .node-table's fixed widths. */
-.log-filters.audit-filters { grid-template-columns: minmax(130px, .7fr) minmax(160px, .8fr) minmax(240px, 1.6fr) auto auto; }
+.log-filters.audit-filters { grid-template-columns: minmax(120px, .6fr) minmax(120px, .6fr) minmax(200px, 1.3fr) minmax(175px, .8fr) minmax(175px, .8fr) auto auto; }
 @media (max-width: 1000px) { .log-filters.audit-filters { grid-template-columns: 1fr 1fr; } }
 .audit-table { table-layout: fixed; }
-.audit-table th:nth-child(1), .audit-table td:nth-child(1) { width: 160px; }
+/* The time in characters, not pixels, so it fits at whatever size the reader's font draws it. */
+.audit-table th:nth-child(1), .audit-table td:nth-child(1) { width: calc(17ch + 36px); }
 .audit-table th:nth-child(2), .audit-table td:nth-child(2) { width: 170px; }
 .audit-table th:nth-child(3), .audit-table td:nth-child(3) { width: auto; }
 .audit-table th:nth-child(4), .audit-table td:nth-child(4) { width: 130px; }

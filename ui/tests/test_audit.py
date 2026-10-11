@@ -11,7 +11,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haprion_ui import audit
+from haprion_ui import audit, views
 from haprion_ui.db import AuditEvent
 from tests.test_job_page import job
 from tests.test_login import LoginTestCase
@@ -171,13 +171,43 @@ class ThePage(LoginTestCase):
             closed = client.get("/jobs?view=audit").text
             opened = client.get("/jobs?view=audit&open=21").text
 
-        self.assertIn(
-            'data-href="/jobs?view=audit&amp;who=&amp;cluster=&amp;q=&amp;open=21"', closed
-        )
+        self.assertIn('&amp;page=1&amp;open=21"', closed)
         self.assertNotIn("registry-detail", closed)
         self.assertIn("<strong>Address</strong><span>192.0.2.10</span>", opened)
         self.assertIn("<strong>Role</strong><span>admin</span>", opened)
         self.assertNotIn("tojson", opened)
+
+    def test_pages_and_dates_are_asked_of_the_database(self) -> None:
+        client = self.client()
+        self.sign_in(client)
+        with (
+            mock.patch("haprion_ui.db.audit_events", return_value=[]) as listed,
+            mock.patch("haprion_ui.db.audit_count", return_value=120),
+        ):
+            page = client.get("/jobs?view=audit&size=25&page=2&from=26-10-01%2000:00").text
+
+        self.assertEqual(listed.call_args.kwargs["offset"], 25)
+        self.assertEqual(listed.call_args.kwargs["limit"], 25)
+        self.assertIsNotNone(listed.call_args.kwargs["since"])
+        self.assertIn("26–50 of 120", page)
+        self.assertIn("page=1", page)
+        self.assertIn("page=3", page)
+        self.assertIn('<option value="25" selected>', page)
+
+    def test_a_time_outside_the_record_is_refused_in_words(self) -> None:
+        client = self.client()
+        self.sign_in(client)
+
+        page = client.get("/jobs?view=audit&from=99-99-99%2099:99").text
+
+        self.assertIn("Choose a valid date and time.", page)
+
+    def test_the_page_and_the_retention_keep_the_same_two_years(self) -> None:
+        script = (
+            Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
+        ).read_text()
+
+        self.assertIn(f"AUDIT_KEEP_DAYS={views.AUDIT_KEEP_DAYS}\n", script)
 
     def test_a_reader_has_no_audit_view(self) -> None:
         self.account = replace(self.account, role="reader")

@@ -274,14 +274,19 @@ TEMPLATES.env.globals["proxy_page_size"] = proxies.PAGE_SIZE
 
 
 def _log_time_filter(
-    value: str, *, earliest: datetime, latest: datetime, end_of_minute: bool = False
+    value: str,
+    *,
+    earliest: datetime,
+    latest: datetime,
+    end_of_minute: bool = False,
+    outside: str = "Choose a date and time within the available 14 days.",
 ) -> datetime | None:
     """Turn a date and time in the reader's clock into the UTC used by log records."""
 
     if not value:
         return None
     if len(value) != 14:
-        raise ValueError("Choose a date and time within the available 14 days.")
+        raise ValueError(outside)
     try:
         local = datetime.strptime(value, "%y-%m-%d %H:%M")
     except ValueError as exc:
@@ -290,7 +295,7 @@ def _log_time_filter(
         raise ValueError("Choose a local date and time.")
     result = metrics.wall(local).astimezone(UTC)
     if result < earliest or result > latest:
-        raise ValueError("Choose a date and time within the available 14 days.")
+        raise ValueError(outside)
     if end_of_minute:
         result = min(result + timedelta(minutes=1, microseconds=-1), latest)
     return result
@@ -2726,18 +2731,6 @@ def build_router(config: Config) -> APIRouter:
             or item[1] is None
             or item[1] > 300
         )
-        calendar_start = local_earliest.date() - timedelta(days=local_earliest.weekday())
-        calendar_end = local_now.date() + timedelta(days=6 - local_now.weekday())
-        calendar_days = tuple(
-            {
-                "value": day.strftime("%y-%m-%d"),
-                "number": day.day,
-                "enabled": local_earliest.date() <= day <= local_now.date(),
-                "today": day == local_now.date(),
-            }
-            for offset in range((calendar_end - calendar_start).days + 1)
-            for day in (calendar_start + timedelta(days=offset),)
-        )
         #
         # The WAF page's Requests tab carries the same three figures as its
         # other two (mock round 7), over the same clusters and days.
@@ -2773,7 +2766,6 @@ def build_router(config: Config) -> APIRouter:
                 "selected_to": selected_to,
                 "time_min": local_earliest.strftime("%y-%m-%d %H:%M"),
                 "time_max": local_now.strftime("%y-%m-%d %H:%M"),
-                "calendar_days": calendar_days,
                 "max_lines": config.traffic_logs.max_lines,
                 "log_sorts": table.links(sort, filters),
             },
@@ -7488,29 +7480,73 @@ def build_router(config: Config) -> APIRouter:
         )
 
     def _audit_page(request: Request, session: AuthenticatedSession, token: str) -> Response:
-        """Everything else the record holds, newest first, fifty at a time (B275)."""
+        """The record, newest first, a page at a time as the traffic log pages (B275, 26-10-11)."""
 
         query = request.query_params
-        before_raw = query.get("before", "")
-        before = int(before_raw) if before_raw.isdigit() else None
         actor = query.get("who", "")[:255]
         cluster = query.get("cluster", "")[:32]
         search = query.get("q", "")[:200]
+        selected_from = query.get("from", "")[:14]
+        selected_to = query.get("to", "")[:14]
+        size_raw = query.get("size", "")
+        size = int(size_raw) if size_raw in ("25", "50", "100") else AUDIT_PAGE
+        page_raw = query.get("page", "")
+        page = int(page_raw) if page_raw.isdigit() and 0 < int(page_raw) < 100000 else 1
         opened_raw = query.get("open", "")
         opened = int(opened_raw) if opened_raw.isdigit() else None
+        now = datetime.now(UTC)
+        local_now = metrics.shown(now)
+        local_earliest = metrics.wall(
+            datetime.combine(
+                local_now.date() - timedelta(days=AUDIT_KEEP_DAYS - 1), datetime.min.time()
+            )
+        )
+        outside = "Choose a date and time within the two years the record keeps."
+        time_error: str | None = None
+        try:
+            since = _log_time_filter(
+                selected_from, earliest=local_earliest.astimezone(UTC), latest=now, outside=outside
+            )
+            until = _log_time_filter(
+                selected_to,
+                earliest=local_earliest.astimezone(UTC),
+                latest=now,
+                end_of_minute=True,
+                outside=outside,
+            )
+            if since is not None and until is not None and since > until:
+                raise ValueError("From must be earlier than To.")
+        except ValueError as exc:
+            since = until = None
+            time_error = str(exc)
         with request.app.state.pool.connection() as connection:
+            total = db.audit_count(
+                connection, actor=actor, cluster=cluster, search=search, since=since, until=until
+            )
+            pages = max(1, -(-total // size))
+            page = min(page, pages)
             events = db.audit_events(
                 connection,
-                before_id=before,
-                limit=AUDIT_PAGE + 1,
+                offset=(page - 1) * size,
+                limit=size,
                 actor=actor,
                 cluster=cluster,
                 search=search,
+                since=since,
+                until=until,
             )
             accounts = db.account_names(connection)
             recent = {job.id for job in db.recent_jobs(connection, limit=200)}
-        shown = audit.rows(events[:AUDIT_PAGE], accounts)
-        older = shown[-1].id if len(events) > AUDIT_PAGE and shown else None
+        shown = audit.rows(events, accounts)
+        kept = {
+            "view": "audit",
+            "cluster": cluster,
+            "who": actor,
+            "q": search,
+            "from": selected_from,
+            "to": selected_to,
+            "size": str(size),
+        }
         return TEMPLATES.TemplateResponse(
             request,
             "jobs.html",
@@ -7523,10 +7559,27 @@ def build_router(config: Config) -> APIRouter:
                 "view": "audit",
                 "events": shown,
                 "recent_jobs": recent,
-                "older": older,
                 "opened": opened,
-                "before": before,
-                "filters": {"who": actor, "cluster": cluster, "q": search},
+                "filters": {
+                    "who": actor,
+                    "cluster": cluster,
+                    "q": search,
+                    "from": selected_from,
+                    "to": selected_to,
+                },
+                "time_error": time_error,
+                "kept": kept,
+                "paging": {
+                    "page": page,
+                    "pages": pages,
+                    "size": size,
+                    "total": total,
+                    "first": (page - 1) * size + 1 if total else 0,
+                    "last": min(page * size, total),
+                },
+                "time_min": local_earliest.strftime("%y-%m-%d %H:%M"),
+                "time_max": local_now.strftime("%y-%m-%d %H:%M"),
+                "time_today": local_now.strftime("%y-%m-%d 00:00"),
                 "clusters": listed_clusters(request, config),
             },
         )
@@ -9289,9 +9342,16 @@ def _removal_bookkeeping(
 
 
 #
-# How many rows *Audit* shows at a time; older ones are a link away (B275).
+# How many rows *Audit* shows to a page unless the reader chooses 25 or 100,
+# as the traffic log does (B275, 26-10-11).
 #
 AUDIT_PAGE = 50
+
+#
+# How far back the record reaches: haprion-retention's AUDIT_KEEP_DAYS, which
+# removes what is older. The From and To fields are bounded by it.
+#
+AUDIT_KEEP_DAYS = 730
 
 
 @dataclass(frozen=True, slots=True)

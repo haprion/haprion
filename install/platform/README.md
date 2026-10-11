@@ -290,8 +290,8 @@ It removes finished jobs older than seven days. Never a `pending` or `running`
 one, however old, because those are the states the single-active-job index rests
 on; and never the twenty most recent, because a quiet fortnight would otherwise
 empty the jobs page and read as lost history rather than as a quiet fortnight.
-The audit trail is untouched: this removes the queue's working copy, not the
-record of what happened.
+The audit trail is kept for two years: the job rows are the queue's working
+copy, the audit trail the record of what happened.
 
 It also creates metric partitions, writes the hourly pool rollup and only then
 prunes raw metric partitions. Revision `0021` records the continuously completed

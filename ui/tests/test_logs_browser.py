@@ -35,34 +35,53 @@ class LogControlsInABrowser(unittest.TestCase):
         self.page = self.browser.new_page()
         self.addCleanup(self.page.close)
 
-    def load(self, markup: str) -> None:
+    def load(self, markup: str, script: str = "logs.js") -> None:
         self.page.set_content(markup)
-        self.page.add_script_tag(path=str(STATIC_DIRECTORY / "logs.js"))
+        self.page.add_script_tag(path=str(STATIC_DIRECTORY / script))
+
+    PICKER = """
+        <div data-log-date-picker data-default="26-09-10 17:04"
+             data-min="26-08-01 00:00" data-max="26-09-10 17:04">
+          <input name="from" aria-expanded="false">
+          <div class="log-calendar" hidden>
+            <button type="button" data-log-month-step="-1">Previous</button>
+            <strong data-log-month-label></strong>
+            <button type="button" data-log-month-step="1">Next</button>
+            <div data-log-days></div>
+            <select data-log-hour></select><select data-log-minute></select>
+            <button type="button" data-log-clear>Clear</button>
+            <button type="button" data-log-apply>Apply</button>
+          </div>
+        </div>
+    """
 
     def test_the_picker_writes_a_two_digit_date_and_a_24_hour_time(self) -> None:
-        self.load(
-            """
-            <div data-log-date-picker data-default="26-09-10 17:04">
-              <input name="from" aria-expanded="false">
-              <div class="log-calendar" hidden>
-                <button type="button" data-log-day="26-09-08">8</button>
-                <button type="button" data-log-clear>Clear</button>
-                <button type="button" data-log-apply>Apply</button>
-                <select data-log-hour></select><select data-log-minute></select>
-              </div>
-            </div>
-            """
-        )
+        self.load(self.PICKER, "date-picker.js")
 
         self.page.click("input[name=from]")
         self.assertEqual(self.page.locator("[data-log-hour] option").count(), 24)
         self.assertEqual(self.page.locator("[data-log-minute] option").count(), 60)
-        self.page.click("[data-log-day]")
+        self.page.click('[data-log-day="26-09-08"]')
         self.page.select_option("[data-log-hour]", "23")
         self.page.select_option("[data-log-minute]", "59")
         self.page.click("[data-log-apply]")
 
         self.assertEqual(self.page.input_value("input[name=from]"), "26-09-08 23:59")
+
+    def test_the_picker_steps_a_month_at_a_time_inside_the_window(self) -> None:
+        self.load(self.PICKER, "date-picker.js")
+
+        self.page.click("input[name=from]")
+        self.assertEqual(self.page.text_content("[data-log-month-label]"), "September 2026")
+        self.assertTrue(self.page.is_disabled('[data-log-month-step="1"]'))
+        self.assertTrue(self.page.is_disabled('[data-log-day="26-09-11"]'))
+        self.page.click('[data-log-month-step="-1"]')
+        self.assertEqual(self.page.text_content("[data-log-month-label]"), "August 2026")
+        self.assertTrue(self.page.is_disabled('[data-log-month-step="-1"]'))
+        self.page.click('[data-log-day="26-08-01"]')
+        self.page.click("[data-log-apply]")
+
+        self.assertEqual(self.page.input_value("input[name=from]"), "26-08-01 17:04")
 
     def test_csv_contains_the_complete_selected_row_and_not_the_unselected_one(self) -> None:
         path = "/" + "complete-segment/" * 40

@@ -1430,44 +1430,102 @@ JOB_EVENTS = ("job_finished", "job_requeued", "job_abandoned")
 AUDIT_SEARCH_WINDOW_DAYS = 90
 
 
+_AUDIT_WHERE = (
+    " where not action = any(%(excluded)s) "
+    "   and (%(actor)s = '' or actor = %(actor)s) "
+    "   and (%(cluster)s = '' or cluster = %(cluster)s) "
+    "   and (%(since)s::timestamptz is null or at >= %(since)s) "
+    "   and (%(until)s::timestamptz is null or at <= %(until)s) "
+    "   and (%(search)s = '' or ("
+    "        at > statement_timestamp() - make_interval(days => %(window)s) "
+    "        and (actor ilike %(like)s or action ilike %(like)s "
+    "             or detail::text ilike %(like)s))) "
+)
+
+
+def _audit_filter(
+    *,
+    actor: str,
+    cluster: str,
+    search: str,
+    since: datetime | None,
+    until: datetime | None,
+    excluded: Sequence[str],
+) -> dict[str, Any]:
+    return {
+        "excluded": list(excluded),
+        "actor": actor,
+        "cluster": cluster,
+        "since": since,
+        "until": until,
+        "search": search,
+        "like": _like_pattern(search),
+        "window": AUDIT_SEARCH_WINDOW_DAYS,
+    }
+
+
 def audit_events(
     connection: Connection[Any],
     *,
-    before_id: int | None = None,
+    offset: int = 0,
     limit: int = 50,
     actor: str = "",
     cluster: str = "",
     search: str = "",
+    since: datetime | None = None,
+    until: datetime | None = None,
     excluded: Sequence[str] = JOB_EVENTS,
 ) -> list[AuditEvent]:
-    """The record, newest first, a page at a time backwards from `before_id` (B275)."""
+    """One page of the record, newest first (B275; pages as the traffic log's, 26-10-11)."""
 
     with connection.cursor(row_factory=class_row(AuditEvent)) as cursor:
         cursor.execute(
-            "select id, at, actor, action, cluster, request_id, detail "
+            "select id, at, actor, action, cluster, request_id, detail "  # noqa: S608 - constant
             "  from audit_event "
-            " where (%(before)s::bigint is null or id < %(before)s) "
-            "   and not action = any(%(excluded)s) "
-            "   and (%(actor)s = '' or actor = %(actor)s) "
-            "   and (%(cluster)s = '' or cluster = %(cluster)s) "
-            "   and (%(search)s = '' or ("
-            "        at > statement_timestamp() - make_interval(days => %(window)s) "
-            "        and (actor ilike %(like)s or action ilike %(like)s "
-            "             or detail::text ilike %(like)s))) "
-            " order by id desc "
-            " limit %(limit)s",
+            + _AUDIT_WHERE
+            + " order by id desc limit %(limit)s offset %(offset)s",
             {
-                "before": before_id,
-                "excluded": list(excluded),
-                "actor": actor,
-                "cluster": cluster,
-                "search": search,
-                "like": _like_pattern(search),
-                "window": AUDIT_SEARCH_WINDOW_DAYS,
+                **_audit_filter(
+                    actor=actor,
+                    cluster=cluster,
+                    search=search,
+                    since=since,
+                    until=until,
+                    excluded=excluded,
+                ),
                 "limit": max(1, min(limit, 500)),
+                "offset": max(0, offset),
             },
         )
         return cursor.fetchall()
+
+
+def audit_count(
+    connection: Connection[Any],
+    *,
+    actor: str = "",
+    cluster: str = "",
+    search: str = "",
+    since: datetime | None = None,
+    until: datetime | None = None,
+    excluded: Sequence[str] = JOB_EVENTS,
+) -> int:
+    """How many rows the same filter matches: the "of N" under the page."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select count(*) from audit_event " + _AUDIT_WHERE,  # noqa: S608 - constant
+            _audit_filter(
+                actor=actor,
+                cluster=cluster,
+                search=search,
+                since=since,
+                until=until,
+                excluded=excluded,
+            ),
+        )
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
 
 
 def requested_by(connection: Connection[Any], request_ids: Collection[UUID]) -> dict[UUID, str]:

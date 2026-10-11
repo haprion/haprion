@@ -2118,8 +2118,9 @@ being ungranted would matter.
 #### What it removes, and what it will not
 
 - **Finished jobs older than seven days.** A management request older than that
-  has been acted on or superseded, and *what it did* is in the audit trail,
-  which this never touches.
+  has been acted on or superseded, and *what it did* is in the audit trail.
+- **Audit records older than two years.** Nothing younger is ever removed, and
+  no application role may remove anything at all.
 - **Never a `pending` or `running` job**, however old. Those are the states the
   single-active-job index is built on, and removing one would let a second
   operation start against a cluster that is still being changed. Every other
@@ -2404,13 +2405,14 @@ is the client the proxy names.
 
 *Events* has two views. **Jobs** lists the newest jobs, their outcome and diagnostics, and *By*:
 who queued each one, from the record. **Audit**, for an admin only, is the rest of the record,
-newest first and fifty at a time: sign-ins and failed attempts, account and role changes, password
+newest first, fifty to a page by default: sign-ins and failed attempts, account and role changes, password
 changes, the identity provider, feature switches, key exports, saved and discarded changes and
 drafts, and every queued job with a link to it while the job is still listed. Each row is one
-sentence, with the stored detail behind *Details*; filter by who, cluster or a word (a search reaches
-back 90 days). A failed sign-in under a name no account has shows as *unknown user* and never the
-name typed, which may have been a password. The record is append-only and kept: no role may change
-or delete a row, and retention leaves it alone.
+sentence; a row with more to it opens under itself when clicked. Filter by cluster, who or a word (a
+search reaches back 90 days), and page through it as through the traffic log. A failed sign-in under
+a name no account has shows as *unknown user* and never the name typed, which may have been a
+password. The record is append-only: no role may change or delete a row, and the nightly retention
+removes rows older than two years.
 
 On an object's *Servers* card, a server in drain or maintenance says *Set by <name> · <time>*: the
 newest request that asked for the state it is in.

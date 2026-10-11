@@ -1,0 +1,19 @@
+{#
+  A From or To field with its calendar, shared by the traffic and WAF logs and
+  Events -> Audit (26-10-11). `earliest` and `latest` bound the window the
+  page can answer, as yy-mm-dd HH:mm in the reader's clock; the calendar is
+  drawn a month at a time by date-picker.js.
+#}
+{% macro date_time_picker(name, label, value, default, earliest, latest) %}
+<div class="log-date-field" data-log-date-picker data-default="{{ default }}" data-min="{{ earliest }}" data-max="{{ latest }}">
+  <label for="log-{{ name }}">{{ label }}</label>
+  <input id="log-{{ name }}" name="{{ name }}" value="{{ value }}" maxlength="14" inputmode="numeric" autocomplete="off" placeholder="yy-mm-dd HH:mm" pattern="[0-9]{2}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}" aria-haspopup="dialog" aria-expanded="false">
+  <div class="log-calendar" role="dialog" aria-label="Choose {{ label | lower }} date and time" hidden>
+    <div class="log-calendar-month"><button type="button" class="log-calendar-step" data-log-month-step="-1" aria-label="Previous month"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 5-5 5 5 5"></path></svg></button><strong data-log-month-label></strong><button type="button" class="log-calendar-step" data-log-month-step="1" aria-label="Next month"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5"></path></svg></button></div>
+    <div class="log-calendar-weekdays" aria-hidden="true">{% for weekday in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}<span>{{ weekday }}</span>{% endfor %}</div>
+    <div class="log-calendar-days" data-log-days></div>
+    <div class="log-calendar-time"><span>Time</span><label><span class="visually-hidden">Hour</span><select data-log-hour aria-label="Hour"></select></label><b>:</b><label><span class="visually-hidden">Minute</span><select data-log-minute aria-label="Minute"></select></label></div>
+    <div class="log-calendar-actions"><button class="text-link" type="button" data-log-clear>Clear</button><button class="secondary-button" type="button" data-log-apply>Apply</button></div>
+  </div>
+</div>
+{% endmacro %}

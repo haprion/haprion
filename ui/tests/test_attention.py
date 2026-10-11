@@ -74,21 +74,23 @@ class EachKindComesAndGoes(unittest.TestCase):
             [("node", "node-a"), ("reading", "beta")],
         )
 
-    def test_a_cluster_behind_is_one_line_not_one_per_node(self) -> None:
+    def test_a_cluster_behind_is_said_by_the_nodes_that_are(self) -> None:
         behind = "Not on the latest version"
         items = attention.from_dashboard(
             [
                 cluster(
                     behind=True,
-                    nodes=(node("node-a", "warning", behind), node("node-b", "warning", behind)),
+                    nodes=(
+                        node("node-a", "healthy", "Online"),
+                        node("node-b", "warning", "Version drift"),
+                    ),
                 )
             ],
             behind_label=behind,
         )
 
-        self.assertEqual(
-            [item.message for item in items], ["the nodes are not on the published version"]
-        )
+        self.assertEqual([item.subject for item in items], ["node-b"])
+        self.assertIsNone(items[0].since)
 
     def test_a_certificate_running_out_is_listed_once(self) -> None:
         row = SimpleNamespace(

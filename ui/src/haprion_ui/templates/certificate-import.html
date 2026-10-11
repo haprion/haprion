@@ -40,17 +40,16 @@
   {% if authority %}<input type="hidden" name="kind" value="authority">{% endif %}
 
   <section class="cluster-card">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
     {#
       What is imported (B276): a certificate with its key, or a CA
-      certificate the pools verify their servers against. Two radios that
-      open each other's form, as the kind does on New certificate, carrying
-      the name.
+      certificate the pools verify their servers against. Two radios in the
+      card's header that open each other's form, as the kind does on New
+      certificate, carrying the name.
     #}
-    {% if not form.interface %}<div class="method-choices certificate-kind" role="radiogroup" aria-label="What is imported">
-      <label class="check"><input type="radio" name="import_kind" value="certificate" data-kind-href="/certificates/import"{% if not authority %} checked{% endif %}> <span><span class="method-name">Certificate</span> <span class="optional">— with its key, served by the clusters</span></span></label>
-      <label class="check"><input type="radio" name="import_kind" value="authority" data-kind-href="/certificates/import?kind=authority"{% if authority %} checked{% endif %}> <span><span class="method-name">CA certificate</span> <span class="optional">— pools verify their servers against it</span></span></label>
-    </div>{% endif %}
+    <header class="cluster-header certificate-targets-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div>{% if not form.interface %}<div class="method-choices certificate-kind" role="radiogroup" aria-label="What is imported">
+      <label class="check"><input type="radio" name="import_kind" value="certificate" data-kind-href="/certificates/import"{% if not authority %} checked{% endif %}> <span><span class="method-name">Certificate</span> <span class="optional">— with its key</span></span></label>
+      <label class="check"><input type="radio" name="import_kind" value="authority" data-kind-href="/certificates/import?kind=authority"{% if authority %} checked{% endif %}> <span><span class="method-name">CA certificate</span> <span class="optional">— for pools to verify against</span></span></label>
+    </div>{% endif %}</header>
     {% if authority %}
     <div class="form-grid">
       <label>Name<input name="name" value="{{ form.name }}" maxlength="255" placeholder="corp-root-ca" autocomplete="off" spellcheck="false" required autofocus><small>What the CA is called here; a pool's <em>Verify against a CA</em> names it. A CA's name replaces its file.</small></label>

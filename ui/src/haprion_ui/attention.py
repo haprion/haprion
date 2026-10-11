@@ -157,6 +157,12 @@ def _severity(tone: str) -> Severity | None:
     return tone if tone in ("critical", "warning") else None  # type: ignore[return-value]
 
 
+def _expires(label: str) -> str:
+    """`in 16 days` as `expires in 16 days`; `Expired` and the rest as they are."""
+
+    return f"expires {label}" if label.startswith("in ") else label
+
+
 def from_jobs(rows: Sequence[Job]) -> list[Item]:
     """The newest finished job per cluster and operation, when it did not work."""
 
@@ -205,22 +211,18 @@ def from_dashboard(clusters: Iterable[Any], *, behind_label: str) -> list[Item]:
                 )
             )
             continue
-        if cluster.behind:
-            items.append(
-                Item(
-                    kind="node",
-                    severity="warning",
-                    cluster=cluster.cluster,
-                    subject=cluster.cluster,
-                    message="the nodes are not on the published version",
-                    since=cluster.observed_at,
-                    link="/",
-                )
-            )
+        #
+        # One line per node that is wrong, behind included: the node's own
+        # verdict names which node, where the cluster's would only say that
+        # one is. A node's time is the reading's, which says nothing about
+        # when it went wrong, so there is none.
+        #
+        flagged = False
         for node in cluster.nodes:
             severity = _severity(node.tone)
-            if severity is None or node.label == behind_label:
+            if severity is None:
                 continue
+            flagged = True
             items.append(
                 Item(
                     kind="node",
@@ -228,7 +230,19 @@ def from_dashboard(clusters: Iterable[Any], *, behind_label: str) -> list[Item]:
                     cluster=cluster.cluster,
                     subject=node.name,
                     message=f"{node.label}" + (f" · {node.detail}" if node.detail else ""),
-                    since=cluster.observed_at,
+                    since=None,
+                    link="/",
+                )
+            )
+        if cluster.behind and not flagged:
+            items.append(
+                Item(
+                    kind="node",
+                    severity="warning",
+                    cluster=cluster.cluster,
+                    subject=cluster.cluster,
+                    message=behind_label.lower().replace("latest", "published"),
+                    since=None,
                     link="/",
                 )
             )
@@ -249,7 +263,7 @@ def from_certificates(registry: Any, clusters: Iterable[Any]) -> list[Item]:
             severity: Severity = "critical" if "critical" in tones else "warning"
             parts = []
             if _severity(row.tone):
-                parts.append(row.expiry_label)
+                parts.append(_expires(row.expiry_label))
             if _severity(row.state_tone):
                 parts.append(row.state_label)
             items.append(
@@ -271,7 +285,7 @@ def from_certificates(registry: Any, clusters: Iterable[Any]) -> list[Item]:
                     severity=_severity(served.tone) or "warning",
                     cluster=None,
                     subject=served.server_name,
-                    message=f"the interface's certificate · {served.expiry_label}",
+                    message=f"the interface's certificate · {_expires(served.expiry_label)}",
                     since=None,
                     link="/settings",
                 )
@@ -291,7 +305,7 @@ def from_certificates(registry: Any, clusters: Iterable[Any]) -> list[Item]:
                     severity=found,
                     cluster=cluster.cluster,
                     subject=row.identifier,
-                    message=row.expiry_label,
+                    message=_expires(row.expiry_label),
                     since=None,
                     link="/certificates",
                 )
@@ -311,7 +325,7 @@ def from_backups(clusters: Iterable[Any]) -> list[Item]:
                 severity=severity,
                 cluster=cluster.cluster,
                 subject=cluster.cluster,
-                message=f"node backup: {cluster.label}",
+                message=f"node backup · {cluster.label}",
                 since=None,
                 link="/backups",
             )

@@ -583,6 +583,17 @@ def build_exceptions(
     return rows
 
 
+def by_object(
+    rows: Iterable[ExceptionRow],
+) -> list[tuple[tuple[str, str], list[ExceptionRow]]]:
+    """The rows per object, in the order they came: the Exceptions tab's cards (26-10-11)."""
+
+    grouped: dict[tuple[str, str], list[ExceptionRow]] = {}
+    for row in rows:
+        grouped.setdefault((row.cluster, row.name), []).append(row)
+    return list(grouped.items())
+
+
 def form_exceptions(
     cluster: str,
     name: str,

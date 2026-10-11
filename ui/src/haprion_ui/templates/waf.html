@@ -56,14 +56,22 @@
 <section class="cluster-card"><p class="empty-state">Nothing found in the last {{ days }} days.</p></section>
 {% endfor %}
 {% else %}
-<section class="cluster-card">
-  {% if exceptions %}
+{#
+  One card per object, as on Findings (26-10-11): an exception belongs to the
+  object that carries it, and a single table over every object read as if the
+  exceptions were global. The rows arrive sorted by cluster and object.
+#}
+{% for (cluster, name), rows in exceptions | groupby_object %}
+<section class="cluster-card finding-card {{ cluster | cluster_accent }}">
+  <header class="cluster-header">
+    <div class="cluster-identity"><div><h3>{{ name }}</h3><p>{{ cluster }}</p></div></div>
+    {% if can_write %}<div class="cluster-state"><a class="secondary-button" href="/proxies/{{ cluster | urlencode }}/{{ name | urlencode }}/edit">Edit object</a></div>{% endif %}
+  </header>
   <div class="table-scroll"><table class="node-table exception-table">
-    <thead><tr><th>Object</th><th>Finding</th><th>Where</th><th>Reason</th><th>Let through</th><th>Clients</th><th>Last seen</th><th>Added</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+    <thead><tr><th>Finding</th><th>Where</th><th>Reason</th><th>Let through</th><th>Clients</th><th>Last seen</th><th>Added</th><th><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>
-      {% for row in exceptions %}
+      {% for row in rows %}
       <tr>
-        <td><strong>{{ row.name }}</strong>{% if clusters | length > 1 %} <span class="exception-cluster">{{ row.cluster }}</span>{% endif %}</td>
         <td title="{{ row.message }}">{{ finding_what(row.kind, row.explanation, row.severity, row.message) }}</td>
         <td title="{{ where(row.exception, row.name) }}">{{ where(row.exception, row.name) }}</td>
         <td{% if row.exception.reason %} title="{{ row.exception.reason }}">{{ row.exception.reason }}{% else %}><span class="table-empty">—</span>{% endif %}</td>
@@ -84,9 +92,9 @@
       {% endfor %}
     </tbody>
   </table></div>
-  {% else %}
-  <p class="empty-state">No object has an exception.</p>
-  {% endif %}
 </section>
+{% else %}
+<section class="cluster-card"><p class="empty-state">No object has an exception.</p></section>
+{% endfor %}
 {% endif %}
 {% endblock %}

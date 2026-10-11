@@ -419,6 +419,23 @@ class ThePage(EditorTestCase):
         )
         self.assertIn('title="The probe sends no Accept">The probe sends no Accept</td>', listing)
 
+    def test_exceptions_sit_on_a_card_of_the_object_that_carries_them(self) -> None:
+        # One table over every object read as if the exceptions were global (26-10-11).
+        document = LOGGING + "  exceptions: [{rule: 920350, paths: [/health]}]\n"
+        with mock.patch("haprion_ui.db.cluster_objects", return_value=objects(document)):
+            listing = self.editor().get("/waf?view=exceptions").text
+        opened = listing.split('<section class="cluster-card finding-card', 1)[1]
+        card = opened.split("</section>", 1)[0]
+        self.assertIn("<h3>shop</h3><p>alpha</p>", card)
+        self.assertIn('href="/proxies/alpha/shop/edit">Edit object</a>', card)
+        self.assertIn("<thead><tr><th>Finding</th><th>Where</th>", card)
+        self.assertNotIn("<th>Object</th>", listing)
+
+    def test_no_exception_anywhere_says_so_once(self) -> None:
+        listing = self.editor().get("/waf?view=exceptions").text
+        self.assertEqual(listing.count("No object has an exception."), 1)
+        self.assertNotIn("finding-card", listing)
+
     def test_a_choice_without_its_paths_is_answered_on_the_dialog(self) -> None:
         client = self.editor()
         answer = client.post(

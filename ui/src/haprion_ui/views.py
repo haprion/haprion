@@ -259,6 +259,7 @@ def shown_at(moment: datetime) -> str:
 
 
 TEMPLATES.env.filters["shown_at"] = shown_at
+TEMPLATES.env.filters["groupby_object"] = waf.by_object
 TEMPLATES.env.filters["shown"] = metrics.shown
 TEMPLATES.env.filters["certificate_order"] = lambda rows, sort: certificates.TABLE.ordered(
     rows, sort

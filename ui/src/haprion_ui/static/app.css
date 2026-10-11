@@ -2354,20 +2354,17 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .finding-draft { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 .finding-table .secondary-button, .exception-table .secondary-button { min-height: 24px; padding: 0 9px; font-size: 12px; white-space: nowrap; }
 .exception-table th, .exception-table td { padding-left: 10px; padding-right: 10px; }
-.exception-table th:nth-child(1), .exception-table td:nth-child(1) { width: 190px; }
-.exception-table th:nth-child(2), .exception-table td:nth-child(2) { width: auto; }
+/* One card per object (26-10-11), so no Object column: the card's header names it. */
+.exception-table th:nth-child(1), .exception-table td:nth-child(1) { width: auto; }
+.exception-table th:nth-child(2), .exception-table td:nth-child(2) { width: 190px; }
 .exception-table th:nth-child(3), .exception-table td:nth-child(3) { width: 150px; }
-.exception-table th:nth-child(4), .exception-table td:nth-child(4) { width: 110px; }
 /* What the exception let through (B273): the count, or Not working where the rule still matched. */
-.exception-table th:nth-child(5), .exception-table td:nth-child(5) { width: 112px; text-align: right; }
-.exception-table th:nth-child(6), .exception-table td:nth-child(6) { width: 74px; text-align: right; }
+.exception-table th:nth-child(4), .exception-table td:nth-child(4) { width: 112px; text-align: right; }
+.exception-table th:nth-child(5), .exception-table td:nth-child(5) { width: 74px; text-align: right; }
+.exception-table th:nth-child(6), .exception-table td:nth-child(6) { width: 150px; }
 .exception-table th:nth-child(7), .exception-table td:nth-child(7) { width: 150px; }
-.exception-table th:nth-child(8), .exception-table td:nth-child(8) { width: 150px; }
 .exception-table .inline-form { display: inline; }
-.exception-table th:nth-child(9), .exception-table td:nth-child(9) { width: 100px; text-align: right; }
-/* One line: the node table's cell `strong` is a block, which put the cluster under the name. */
-.exception-table td strong { display: inline; }
-.exception-cluster { margin-left: 6px; color: var(--muted); font-size: 12px; }
+.exception-table th:nth-child(8), .exception-table td:nth-child(8) { width: 100px; text-align: right; }
 .allow-dialog { max-width: 560px; margin: 0; padding: 18px 20px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-raised); box-shadow: var(--shadow-menu); }
 /* Allow… over the WAF page (waf.js): the form's own card is the dialog. */
 .allow-modal { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 0; border: 0; background: transparent; overflow: visible; }

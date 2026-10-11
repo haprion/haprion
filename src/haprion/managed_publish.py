@@ -174,6 +174,16 @@ def managed_files(
     #
     named = countries_named(proxies)
     countries = country_reader(named) if named and country_reader is not None else None
+    #
+    # Read before generating when an object uses the engine, as the location
+    # database is when one names a country: each exception's counter is its
+    # rule's own text (B273). A cluster without the engine never opens it.
+    #
+    rules = (
+        rule_set()
+        if rule_set is not None and any(proxy.inspected is not None for proxy in proxies)
+        else None
+    )
     generated = generate(
         proxies,
         vips=network.vips,
@@ -203,6 +213,7 @@ def managed_files(
         # never asks DNS anything here (B270).
         #
         peer_nodes=(peer_nodes() if settings.peers is not None and peer_nodes is not None else ()),
+        rule_definitions=crs.definitions(rules) if rules is not None else None,
     )
     result.update(
         {
@@ -211,11 +222,6 @@ def managed_files(
         }
     )
     if generated.waf_files:
-        #
-        # Read only when an object uses the engine, as the location database
-        # is: a cluster without one never needs the package to exist.
-        #
-        rules = rule_set() if rule_set is not None else None
         if rules is None:
             raise ConfigError(
                 "objects use the WAF engine and the rule set is not installed on the manager: "

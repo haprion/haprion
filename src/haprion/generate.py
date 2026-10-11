@@ -30,12 +30,13 @@ meaning without being regenerated.
 from __future__ import annotations
 
 import ipaddress
+import re
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from haprion import advanced as advanced_config
-from haprion import dnsdist_config, geo, ipvs_config
+from haprion import crs, dnsdist_config, geo, ipvs_config
 from haprion.check_policy import check_speaks_tls
 from haprion.cluster_settings import NOTHING as NO_SETTINGS
 from haprion.cluster_settings import ClusterSettings, LogTarget, Metrics
@@ -370,6 +371,7 @@ def generate(
     settings: ClusterSettings = NO_SETTINGS,
     countries: geo.Countries | None = None,
     peer_nodes: Sequence[tuple[str, str]] = (),
+    rule_definitions: Mapping[int, crs.Definition] | None = None,
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
 
@@ -506,7 +508,7 @@ def generate(
         certificate_lists=listings,
         object_parts=parts,
         map_files=_country_files(ordered, countries),
-        waf_files=_waf_files(guarded),
+        waf_files=_waf_files(guarded, rule_definitions or {}),
         dns_files=dns.files,
         ipvs=ipvs.file,
     )
@@ -650,6 +652,157 @@ def _waf_exception_directives(exceptions: Sequence[WafException]) -> tuple[list[
     return before, after
 
 
+#
+# A counter per exception (B273): what the exception let through, which the
+# engine otherwise leaves no trace of - a target it does not inspect is not a
+# match. The counter is the rule itself, narrowed to what the exception names,
+# logging and scoring nothing. Its ID is six digits, which the engine, the
+# collector and the tables all require, and unique within the object, which
+# the engine requires (a repeated ID stops it starting - measured 26-10-11):
+# (3 + slot) x 100000 + the rule's last five digits, the slot counting the
+# object's earlier exceptions on the same rule. Six per rule and object are
+# counted; 300000-899999 meets neither the rule set's 9xxxxx nor our 2xxxxx.
+#
+WAF_COUNTER_SLOTS = 6
+WAF_COUNTER_MESSAGE = "Allowed by exception"
+#
+# The actions a counter keeps from the rule's links: how the value is
+# transformed and matched, and whether the chain goes on. Everything that
+# blocks, scores, tags or names the rule goes; a variable a later link reads
+# is kept (below).
+#
+_COUNTER_KEPT = ("t:", "multiMatch", "capture", "chain")
+_FROM_FILE = re.compile(r"^(!?@(?:pmFromFile|pmf|ipMatchFromFile|ipMatchF)\s+)(.*)$")
+_SETVAR = re.compile(r"^setvar:'?tx\.([A-Za-z0-9_]+)=", re.IGNORECASE)
+
+
+def waf_counter_ids(exceptions: Sequence[WafException]) -> tuple[int | None, ...]:
+    """Each exception's counter ID in the engine, None past the slots (B273)."""
+
+    seen: Counter[int] = Counter()
+    ids: list[int | None] = []
+    for exception in exceptions:
+        slot = seen[exception.rule]
+        seen[exception.rule] += 1
+        ids.append(
+            (3 + slot) * 100000 + exception.rule % 100000 if slot < WAF_COUNTER_SLOTS else None
+        )
+    return tuple(ids)
+
+
+def waf_counter_rule(counter: int) -> int:
+    """The rule a counter ID counts for."""
+
+    return 900000 + counter % 100000
+
+
+def _counter_operator(operator: str) -> str:
+    """The operator, with a list file named where the engine can find it.
+
+    The rule set names its lists relative to the rule file; a counter is
+    written in `coraza.yaml`, which has no rule file to be relative to.
+    """
+
+    found = _FROM_FILE.match(operator)
+    if found is None:
+        return operator
+    files = [
+        name if name.startswith("/") else f"{WAF_DIRECTORY}/crs/rules/{name}"
+        for name in found.group(2).split()
+    ]
+    return found.group(1) + " ".join(files)
+
+
+def _counter_actions(links: Sequence[crs.Link], index: int) -> list[str]:
+    """What one of the rule's links keeps in a counter."""
+
+    later = " ".join(f"{link.variables} {link.operator}" for link in links[index + 1 :]).lower()
+    kept = []
+    for action in links[index].actions:
+        variable = _SETVAR.match(action)
+        if variable is not None:
+            name = variable.group(1).lower()
+            if "score" not in name and (f"tx:{name}" in later or f"tx.{name}" in later):
+                kept.append(action)
+            continue
+        if action.startswith(_COUNTER_KEPT) and action != "chain":
+            kept.append(action)
+    return kept
+
+
+def _waf_counter(exception: WafException, counter: int, definition: crs.Definition) -> list[str]:
+    """One exception's counter: guards, then the rule's links, as one chain."""
+
+    links: list[tuple[str, str, list[str]]] = []
+    if definition.paranoia > 1:
+        links.append(("TX:BLOCKING_PARANOIA_LEVEL", f"@ge {definition.paranoia}", ["t:none"]))
+    if exception.paths:
+        alternatives = "|".join(_waf_path_pattern(path) for path in exception.paths)
+        links.append(
+            (
+                "REQUEST_FILENAME",
+                f"@rx ^(?:{alternatives})$",
+                ["t:none", "t:urlDecodeUni", "t:normalisePath"],
+            )
+        )
+    for index, link in enumerate(definition.links):
+        #
+        # The field narrows the rule's first link, as the exception's own
+        # `ctl:ruleRemoveTargetById` takes it from the first link only.
+        #
+        variables = exception.field if index == 0 and exception.field else link.variables
+        links.append(
+            (variables, _counter_operator(link.operator), _counter_actions(definition.links, index))
+        )
+    #
+    # Where the field was found, for the collector's `found within`. A chain's
+    # last match is its last link's, so a chained rule's counter names the
+    # exception's field itself; without one, the field is not known.
+    #
+    within = "%{MATCHED_VAR_NAME}" if len(definition.links) == 1 else exception.field or "REQUEST"
+    first = [
+        f"id:{counter}",
+        f"phase:{definition.phase}",
+        "pass",
+        "log",
+        f"msg:'{WAF_COUNTER_MESSAGE} {exception.rule}'",
+        f"logdata:'Matched Data: %{{MATCHED_VAR}} found within {within}: %{{MATCHED_VAR}}'",
+    ]
+    lines = []
+    for index, (variables, operator, actions) in enumerate(links):
+        chained = ["chain"] if index < len(links) - 1 else []
+        written = ",".join([*(first if index == 0 else []), *actions, *chained])
+        indent = "" if index == 0 else "  "
+        lines.append(f'{indent}SecRule {variables} "{operator}" "{written}"')
+    return lines
+
+
+def _waf_counter_directives(
+    exceptions: Sequence[WafException], definitions: Mapping[int, crs.Definition]
+) -> list[str]:
+    """Every exception's counter; none for a rule the rule set does not define."""
+
+    lines: list[str] = []
+    for exception, counter in zip(exceptions, waf_counter_ids(exceptions), strict=True):
+        definition = definitions.get(exception.rule)
+        if counter is not None and definition is not None:
+            lines.extend(_waf_counter(exception, counter, definition))
+    return lines
+
+
+def _waf_path_pattern(path: str) -> str:
+    """One exception path as a regular expression of the engine's normalised path.
+
+    Each character a pattern would read as an operator stands in a class of
+    its own rather than behind a backslash, which the directive's quoting
+    would have to carry too. The root is `//?`, as `_waf_path_operator` says.
+    """
+
+    if path == "/":
+        return "//?"
+    return "".join(f"[{c}]" if c in ".$()*+" else c for c in path)
+
+
 def _waf_path_operator(path: str) -> str:
     """The comparison an exception's path makes, after the engine's normalising.
 
@@ -664,7 +817,9 @@ def _waf_path_operator(path: str) -> str:
     return "@rx ^//?$" if path == "/" else f"@streq {path}"
 
 
-def _waf_files(guarded: Sequence[Proxy]) -> dict[str, str]:
+def _waf_files(
+    guarded: Sequence[Proxy], definitions: Mapping[int, crs.Definition]
+) -> dict[str, str]:
     """`coraza.yaml` - one application per object - and the SPOE configuration."""
 
     if not guarded:
@@ -684,6 +839,12 @@ def _waf_files(guarded: Sequence[Proxy]) -> dict[str, str]:
             #
             f'SecAction "id:900000,phase:1,pass,t:none,nolog,'
             f'setvar:tx.blocking_paranoia_level={proxy.waf.paranoia}"',
+            #
+            # After the level is set and before the rule set: a counter in
+            # phase 1 can read the level, and one in phase 2 runs before the
+            # score is judged, so it counts a request refused for other rules.
+            #
+            *_waf_counter_directives(proxy.waf.exceptions, definitions),
             f"Include {crs}/rules/*.conf",
             *after,
         ]

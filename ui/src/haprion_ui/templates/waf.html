@@ -58,7 +58,7 @@
 <section class="cluster-card">
   {% if exceptions %}
   <div class="table-scroll"><table class="node-table exception-table">
-    <thead><tr><th>Object</th><th>Finding</th><th>Where</th><th>Reason</th><th>Added</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+    <thead><tr><th>Object</th><th>Finding</th><th>Where</th><th>Reason</th><th>Let through</th><th>Clients</th><th>Last seen</th><th>Added</th><th><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>
       {% for row in exceptions %}
       <tr>
@@ -66,8 +66,13 @@
         <td title="{{ row.message }}">{{ finding_what(row.kind, row.explanation, row.severity, row.message) }}</td>
         <td title="{{ where(row.exception, row.name) }}">{{ where(row.exception, row.name) }}</td>
         <td{% if row.exception.reason %} title="{{ row.exception.reason }}">{{ row.exception.reason }}{% else %}><span class="table-empty">—</span>{% endif %}</td>
-        <td><span class="users-date">{% if row.exception.by %}{{ row.exception.by }}{% endif %}{% if row.exception.by and row.exception.at %} · {% endif %}{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">In draft</span>{% endif %}</td>
-        <td>{% if row.ineffective %}<span class="status-badge status-badge-warning">Not working</span> {% endif %}{% if can_write %}<form method="post" action="/waf/exceptions/remove" class="inline-form">
+        {#- What the exception let through, as its counter counted it (B273); a dash where nothing counts it. -#}
+        <td>{% if row.ineffective %}<span class="status-badge status-badge-warning" title="{{ row.requests }} let through">Not working</span>{% elif row.counted %}<span class="finding-count">{{ row.requests }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td>{% if row.counted %}<span class="finding-count">{{ row.clients }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td>{% if row.last_seen %}<span class="users-date">{{ row.last_seen | shown_at }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        {#- Who in the title, beside the counts (B273): the time is what a row is compared by. -#}
+        <td{% if row.exception.by %} title="Added by {{ row.exception.by }}"{% endif %}><span class="users-date">{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% elif row.exception.by %}{{ row.exception.by }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">In draft</span>{% endif %}</td>
+        <td>{% if can_write %}<form method="post" action="/waf/exceptions/remove" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="cluster" value="{{ row.cluster }}"><input type="hidden" name="object" value="{{ row.name }}">
           <input type="hidden" name="rule" value="{{ row.exception.rule }}"><input type="hidden" name="field" value="{{ row.exception.field }}">

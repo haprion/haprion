@@ -10463,6 +10463,10 @@ def _waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> Wa
         verdicts = db.waf_verdicts(connection, clusters=chosen, since=since)
         request_count = db.waf_request_count(connection, clusters=chosen, since=since)
         #
+        # What each exception let through, as its counter counted it (B273).
+        #
+        counted = db.waf_counted(connection, clusters=chosen, since=since)
+        #
         # When each published exception that covers a finding reached the
         # nodes: the first deploy after it was made (26-10-11). Matches after
         # that mean the exception is not working, which the page says rather
@@ -10479,7 +10483,7 @@ def _waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> Wa
         days=days,
         findings=waf.build_findings(rows, verdicts, stored, drafted, rules, reached),
         exceptions=waf.build_exceptions(
-            stored, drafted, rules, waf.ineffective_exceptions(rows, stored, reached)
+            stored, drafted, rules, waf.ineffective_exceptions(rows, stored, reached), counted
         ),
         request_count=request_count,
     )

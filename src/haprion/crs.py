@@ -154,6 +154,132 @@ def catalog(rule_set: RuleSet) -> dict[int, Rule]:
     return rules
 
 
+@dataclass(frozen=True, slots=True)
+class Link:
+    """One `SecRule` of a rule: the first, or one its `chain` continues with.
+
+    `operator` is the text between the quotes as written, escapes and all;
+    `actions` are the comma-separated actions, each as written.
+    """
+
+    variables: str
+    operator: str
+    actions: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Definition:
+    """A rule as the rule set writes it: its links in order (B273)."""
+
+    id: int
+    links: tuple[Link, ...]
+
+    @property
+    def phase(self) -> int:
+        for action in self.links[0].actions:
+            name, _, value = action.partition(":")
+            if name == "phase" and value.strip().isdigit():
+                return int(value.strip())
+        return 2
+
+    @property
+    def paranoia(self) -> int:
+        for action in self.links[0].actions:
+            found = re.fullmatch(r"tag:'paranoia-level/([1-4])'", action)
+            if found:
+                return int(found.group(1))
+        return 1
+
+
+def _quoted(text: str, start: int) -> tuple[str, int]:
+    """The double-quoted string at `start`, without its quotes, and the index after it."""
+
+    if start >= len(text) or text[start] != '"':
+        raise RuleSetError("a directive's argument is not quoted")
+    index = start + 1
+    while index < len(text):
+        if text[index] == "\\" and index + 1 < len(text):
+            index += 2
+            continue
+        if text[index] == '"':
+            return text[start + 1 : index], index + 1
+        index += 1
+    raise RuleSetError("a directive's argument does not end")
+
+
+def _actions(text: str) -> tuple[str, ...]:
+    """Actions split on the commas outside single quotes, each stripped."""
+
+    parts: list[str] = []
+    current: list[str] = []
+    quoted = False
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if character == "\\" and index + 1 < len(text):
+            current.append(text[index : index + 2])
+            index += 2
+            continue
+        if character == "'":
+            quoted = not quoted
+        if character == "," and not quoted:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(character)
+        index += 1
+    parts.append("".join(current).strip())
+    return tuple(part for part in parts if part)
+
+
+def _link(line: str) -> Link:
+    """One joined `SecRule` line as its three arguments."""
+
+    rest = line.strip()[len("SecRule") :].lstrip()
+    if rest.startswith('"'):
+        variables, after = _quoted(rest, 0)
+    else:
+        end = rest.find(" ")
+        if end < 0:
+            raise RuleSetError("a rule has no operator")
+        variables, after = rest[:end], end
+    rest = rest[after:].lstrip()
+    operator, after = _quoted(rest, 0)
+    rest = rest[after:].lstrip()
+    actions, _ = _quoted(rest, 0) if rest else ("", 0)
+    return Link(variables=variables, operator=operator, actions=_actions(actions))
+
+
+def definitions(rule_set: RuleSet) -> dict[int, Definition]:
+    """Every rule with an ID in the rule set's request `.conf` files, with its chain.
+
+    What a WAF exception's counter copies (B273). Lines ending in a backslash
+    continue the directive; a rule whose actions say `chain` continues with
+    the next `SecRule`.
+    """
+
+    found: dict[int, Definition] = {}
+    for name, content in sorted(rule_set.files.items()):
+        if not name.startswith("rules/REQUEST-") or not name.endswith(".conf"):
+            continue
+        text = content.decode("utf-8", "replace").replace("\\\n", " ")
+        links: list[Link] = []
+        for line in text.splitlines():
+            if not line.lstrip().startswith("SecRule "):
+                continue
+            link = _link(line)
+            links.append(link)
+            if "chain" in link.actions:
+                continue
+            first = next((a for a in links[0].actions if a.startswith("id:")), "").removeprefix(
+                "id:"
+            )
+            if first.isdigit():
+                found.setdefault(int(first), Definition(id=int(first), links=tuple(links)))
+            links = []
+    return found
+
+
 _catalogs: dict[tuple[Path, str], dict[int, Rule]] = {}
 
 

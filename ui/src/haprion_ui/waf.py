@@ -9,13 +9,20 @@ with an exception that becomes a draft of the object.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
-from haprion.proxy_model import ModelError, dump_document, load_proxy, read_document
+from haprion.generate import waf_counter_ids
+from haprion.proxy_model import (
+    ModelError,
+    WafException,
+    dump_document,
+    load_proxy,
+    read_document,
+)
 
 from haprion_ui import objects
 from haprion_ui.preview import canonical_waf, canonical_waf_exception
@@ -496,6 +503,21 @@ class ExceptionRow:
     """Its place in the form's own list, which the editor's Remove names; -1 elsewhere."""
     ineffective: bool = False
     """Its rule still matched what it covers after it reached the nodes."""
+    counted: bool = False
+    """Whether the engine counts what it lets through (B273): published, a rule the
+    installed rule set defines, and within the counters an object has per rule."""
+    requests: int = 0
+    clients: int = 0
+    last_seen: datetime | None = None
+
+
+def _counters(published: Sequence[ObjectException]) -> dict[ObjectException, int]:
+    """Each published exception's counter, numbered as the generator numbers them."""
+
+    ids = waf_counter_ids(
+        [WafException(rule=e.rule, field=e.field, paths=e.paths) for e in published]
+    )
+    return {e: counter for e, counter in zip(published, ids, strict=True) if counter is not None}
 
 
 def build_exceptions(
@@ -503,21 +525,38 @@ def build_exceptions(
     drafted: Mapping[tuple[str, str], str],
     rules: Mapping[int, Any],
     ineffective: Iterable[tuple[str, str, ObjectException]] = (),
+    counted: Iterable[Any] = (),
 ) -> list[ExceptionRow]:
     """Every exception the objects carry: the draft's where there is one, marked when unpublished.
 
     Marked too where its rule still matched after it reached the nodes
     (`ineffective_exceptions`): the row the person removes or changes it from.
+    And with what its counter counted (`db.waf_counted`, B273): the requests
+    the rule would have matched and the exception let through.
     """
 
     failing = set(ineffective)
+    tallies: dict[tuple[str, str, int], list[Any]] = {}
+    for tally in counted:
+        tallies.setdefault((tally.cluster, tally.object, tally.counter), []).append(tally)
     rows = []
     for key in sorted(set(stored) | set(drafted)):
         published = object_exceptions(stored.get(key, "")) or ()
         current = object_exceptions(drafted[key]) or () if key in drafted else published
+        counters = _counters(published)
         for exception in current:
             rule = rules.get(exception.rule)
             name, explanation = kind(exception.rule // 1000)
+            counter = counters.get(exception) if rule is not None else None
+            mine = (
+                [
+                    tally
+                    for tally in tallies.get((key[0], key[1], counter), [])
+                    if not exception.field or tally.field == exception.field
+                ]
+                if counter is not None
+                else []
+            )
             rows.append(
                 ExceptionRow(
                     cluster=key[0],
@@ -531,6 +570,14 @@ def build_exceptions(
                     severity=rule.severity if rule is not None else "",
                     in_draft=exception not in published,
                     ineffective=(key[0], key[1], exception) in failing,
+                    counted=counter is not None,
+                    requests=sum(tally.requests for tally in mine),
+                    clients=(
+                        (mine[0].clients if exception.field else mine[0].clients_any_field)
+                        if mine
+                        else 0
+                    ),
+                    last_seen=max((tally.last_seen for tally in mine), default=None),
                 )
             )
     return rows

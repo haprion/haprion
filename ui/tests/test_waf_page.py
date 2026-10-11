@@ -12,7 +12,7 @@ import yaml
 from haprion.crs import Rule
 
 from haprion_ui import waf
-from haprion_ui.db import WafFinding
+from haprion_ui.db import WafCounted, WafFinding
 from tests.test_editor_page import OBJECTS, SHOP, EditorTestCase
 
 SEEN = datetime(2026, 10, 2, 14, 30, tzinfo=UTC)
@@ -174,6 +174,61 @@ class AnExceptionThatDoesNotWork(unittest.TestCase):
         self.assertTrue(findings[0].findings[0].ineffective)
 
 
+class WhatAnExceptionLetThrough(unittest.TestCase):
+    """B273: each exception's counter, as the generator numbers it, summed on its field."""
+
+    STORED = LOGGING + (
+        "  exceptions:\n"
+        "    - {rule: 942100, field: 'ARGS:q', paths: [/search]}\n"
+        "    - {rule: 942100}\n"
+        "    - {rule: 941100, field: 'ARGS:z'}\n"
+    )
+
+    def tally(self, counter: int, field: str, requests: int, clients: int, **values: Any) -> Any:
+        fields: dict[str, Any] = {
+            "cluster": "alpha",
+            "object": "shop",
+            "counter": counter,
+            "field": field,
+            "requests": requests,
+            "clients": clients,
+            "last_seen": SEEN,
+            "clients_any_field": 5,
+        }
+        fields.update(values)
+        return WafCounted(**fields)
+
+    def rows(self, *tallies: Any, draft: str | None = None) -> list[waf.ExceptionRow]:
+        drafted = {("alpha", "shop"): draft} if draft is not None else {}
+        return waf.build_exceptions({("alpha", "shop"): self.STORED}, drafted, CATALOG, (), tallies)
+
+    def test_each_exception_has_its_own_counter_and_field(self) -> None:
+        later = datetime(2026, 10, 2, 15, 0, tzinfo=UTC)
+        narrow, whole, unknown = self.rows(
+            self.tally(342100, "ARGS:q", 6, 2),
+            self.tally(342100, "ARGS:other", 9, 9),  # not the field it names
+            self.tally(442100, "ARGS:a", 3, 1),
+            self.tally(442100, "ARGS:b", 4, 2, last_seen=later),
+            self.tally(642100, "ARGS:q", 100, 100),  # a counter no exception has now
+        )
+        self.assertEqual(
+            (narrow.counted, narrow.requests, narrow.clients, narrow.last_seen),
+            (True, 6, 2, SEEN),
+        )
+        # Every field, and its clients over all of them rather than summed.
+        self.assertEqual((whole.requests, whole.clients, whole.last_seen), (7, 5, later))
+        # A rule the installed rule set does not define has no counter.
+        self.assertEqual((unknown.counted, unknown.requests), (False, 0))
+
+    def test_nothing_counted_is_zero_and_a_draft_counts_nothing(self) -> None:
+        narrow = self.rows()[0]
+        self.assertEqual((narrow.counted, narrow.requests, narrow.last_seen), (True, 0, None))
+        draft = self.STORED + "    - {rule: 942100, field: 'ARGS:new'}\n"
+        added = self.rows(self.tally(642100, "ARGS:new", 4, 1), draft=draft)[-1]
+        self.assertTrue(added.in_draft)
+        self.assertFalse(added.counted)
+
+
 class ChangingTheObject(unittest.TestCase):
     def test_an_exception_is_added_once_and_removed_by_its_scope(self) -> None:
         exception = waf.exception_for(
@@ -243,6 +298,7 @@ class ThePage(EditorTestCase):
             ("haprion_ui.db.waf_findings", [finding()]),
             ("haprion_ui.db.waf_verdicts", {("alpha", "shop"): (14, 3)}),
             ("haprion_ui.db.waf_request_count", 1297),
+            ("haprion_ui.db.waf_counted", []),
             ("haprion_ui.db.cluster_objects", objects(LOGGING)),
             ("haprion.crs.installed_catalog", CATALOG),
         ):
@@ -280,7 +336,7 @@ class ThePage(EditorTestCase):
         self.assertEqual(asked.call_args.kwargs, {"cluster": "alpha", "moments": [moment]})
         self.assertIn('status-badge-warning">Not working<', findings)
         self.assertNotIn("/waf/allow?cluster=alpha&amp;object=shop&amp;rule=942100", findings)
-        self.assertIn('status-badge-warning">Not working<', exceptions)
+        self.assertIn('status-badge-warning" title="0 let through">Not working<', exceptions)
 
     def test_allow_offers_the_narrowest_choice_first(self) -> None:
         text = (
@@ -348,7 +404,11 @@ class ThePage(EditorTestCase):
         document = LOGGING + "  exceptions: [{rule: 920350, reason: The probe sends no Accept}]\n"
         with mock.patch("haprion_ui.db.cluster_objects", return_value=objects(document)):
             listing = self.editor().get("/waf?view=exceptions").text
-        self.assertIn("<th>Where</th><th>Reason</th><th>Added</th>", listing)
+        self.assertIn(
+            "<th>Where</th><th>Reason</th><th>Let through</th><th>Clients</th>"
+            "<th>Last seen</th><th>Added</th>",
+            listing,
+        )
         self.assertIn('title="The probe sends no Accept">The probe sends no Accept</td>', listing)
 
     def test_a_choice_without_its_paths_is_answered_on_the_dialog(self) -> None:

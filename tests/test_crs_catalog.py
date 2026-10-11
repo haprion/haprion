@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -124,3 +125,62 @@ class TheManagerSaysWhatItHas(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EachRuleAsItIsWritten(unittest.TestCase):
+    """B273: what an exception's counter copies - every link, as written."""
+
+    def test_a_rule_and_a_chain_with_its_continuations(self) -> None:
+        found = crs.definitions(rule_set({"rules/REQUEST-942-APPLICATION-ATTACK-SQLI.conf": SQLI}))
+        self.assertEqual(sorted(found), [942100, 942101])
+        single, chained = found[942100], found[942101]
+        self.assertEqual(single.links[0].variables, "REQUEST_COOKIES|ARGS_NAMES|ARGS")
+        self.assertEqual(single.links[0].operator, "@detectSQLi")
+        self.assertIn(
+            "logdata:'Matched Data: %{TX.0} found within %{MATCHED_VAR_NAME}: %{MATCHED_VAR}'",
+            single.links[0].actions,
+            "a comma inside quotes is not a separator",
+        )
+        self.assertEqual((single.phase, single.paranoia), (2, 1))
+        self.assertEqual([link.operator for link in chained.links], ["@rx x", "@rx y"])
+        self.assertIn("msg:'It\\'s quoted'", chained.links[0].actions)
+        self.assertEqual(chained.paranoia, 2)
+
+    def test_only_request_rules_and_never_a_commented_one(self) -> None:
+        found = crs.definitions(
+            rule_set(
+                {
+                    "rules/REQUEST-942-APPLICATION-ATTACK-SQLI.conf": SQLI,
+                    "rules/RESPONSE-951-DATA-LEAKAGES-SQL.conf": SQLI.replace(b"942", b"951"),
+                    "crs-setup.conf": b'SecRule ARGS "@rx a" "id:900990,pass"\n',
+                }
+            )
+        )
+        self.assertNotIn(942999, found)
+        self.assertEqual(sorted(found), [942100, 942101])
+
+    def test_an_operator_with_an_escaped_quote(self) -> None:
+        text = b'SecRule ARGS "@rx a\\"b" "id:941999,phase:1,pass"\n'
+        [link] = crs.definitions(rule_set({"rules/REQUEST-941-APPLICATION-ATTACK-XSS.conf": text}))[
+            941999
+        ].links
+        self.assertEqual(link.operator, '@rx a\\"b')
+        self.assertEqual(link.actions, ("id:941999", "phase:1", "pass"))
+
+    @unittest.skipUnless(crs.ROOT.is_dir(), "the rule set is not installed here")
+    def test_the_installed_rule_set_reads_whole(self) -> None:
+        installed = crs.installed()
+        assert installed is not None
+        found = crs.definitions(installed)
+        written = {
+            int(rule)
+            for name, content in installed.files.items()
+            if name.startswith("rules/REQUEST-") and name.endswith(".conf")
+            for rule in re.findall(
+                r"^SecRule [^\n]*?\bid:([0-9]{6})",
+                content.decode().replace("\\\n", " "),
+                re.MULTILINE,
+            )
+        }
+        self.assertEqual(written, set(found))
+        self.assertTrue(all(link.operator for d in found.values() for link in d.links))

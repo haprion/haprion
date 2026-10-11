@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import base64
 import hashlib
+import json
 import os
 import shutil
 import socket
@@ -31,6 +32,8 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
+from collections.abc import Mapping
 from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,7 +41,7 @@ from typing import Any
 
 import yaml
 
-from haprion import geo
+from haprion import crs, geo
 from haprion.cluster_settings import ClusterSettings, Metrics
 from haprion.config import AbuseProtection, Vip
 from haprion.generate import (
@@ -46,6 +49,8 @@ from haprion.generate import (
     GeneratedLayer,
     GeneratorError,
     generate,
+    waf_counter_ids,
+    waf_counter_rule,
 )
 from haprion.proxy_model import Proxy, load_proxy
 from haprion.route_match import order_routes, rewrite, select
@@ -2709,6 +2714,13 @@ BLOCKS_WITH_EXCEPTIONS = """  mode: block
       paths: [/health]
       by: admin
       at: 2026-10-03T09:10:00Z
+    - rule: 930120
+      field: ARGS:f
+      paths: [/files]
+    - rule: 920310
+      paths: [/chained]
+    - rule: 942440
+      field: ARGS:c
   large_bodies: [/upload]"""
 
 
@@ -2731,6 +2743,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
     servers: list[ThreadingHTTPServer]
     haproxy: subprocess.Popen[bytes]
     engine: subprocess.Popen[bytes] | None
+    engine_log: Path
     directory: tempfile.TemporaryDirectory[str]
     port: int
 
@@ -2748,6 +2761,8 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             "blocks": BLOCKS_WITH_EXCEPTIONS,
             "closed": "  mode: block\n  on_engine_error: deny",
         }
+        installed = crs.installed(WAF_RULES)
+        assert installed is not None
         layer = generate(
             [
                 load_apart(name, WAF_OBJECT.format(name=name, waf=waf, web=web).encode())
@@ -2756,6 +2771,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
             ports={"http": cls.port},
+            rule_definitions=crs.definitions(installed),
         )
         waf_files = layer.waf_files
 
@@ -2785,12 +2801,14 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         arguments = write_release(root, layer)
         cls.engine = None
         if cls.engine_running:
-            cls.engine = subprocess.Popen(
-                [str(WAF_ENGINE), "-config", str(root / "waf" / "coraza.yaml")],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                preexec_fn=spawned.die_with_the_test_run,
-            )
+            cls.engine_log = root / "engine.log"
+            with cls.engine_log.open("wb") as written:
+                cls.engine = subprocess.Popen(
+                    [str(WAF_ENGINE), "-config", str(root / "waf" / "coraza.yaml")],
+                    stdout=written,
+                    stderr=subprocess.STDOUT,
+                    preexec_fn=spawned.die_with_the_test_run,
+                )
             wait_for(engine_port)
         binary = shutil.which("haproxy")
         assert binary is not None
@@ -2807,13 +2825,22 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             server.shutdown()
         cls.directory.cleanup()
 
-    def ask(self, target: str, *, name: str, body: bytes | None = None) -> tuple[int, str, str]:
+    def ask(
+        self,
+        target: str,
+        *,
+        name: str,
+        body: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> tuple[int, str, str]:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
             connection.putrequest(
                 "GET" if body is None else "POST", target, skip_host=True, skip_accept_encoding=True
             )
             connection.putheader("Host", f"{name}.example.com")
+            for header, value in (headers or {}).items():
+                connection.putheader(header, value)
             if body is not None:
                 connection.putheader("Content-Type", "application/x-www-form-urlencoded")
                 connection.putheader("Content-Length", str(len(body)))
@@ -2882,6 +2909,76 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             with self.subTest(target):
                 self.assertEqual(self.ask(target, name="blocks")[0], status)
 
+    def counted(self, marker: str) -> list[tuple[int, str]]:
+        """The counters the engine logged for the request carrying `marker` (B273)."""
+
+        found: list[tuple[int, str]] = []
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            found = []
+            for line in self.engine_log.read_text(errors="replace").splitlines():
+                match = json.loads(line).get("match") if line.startswith("{") else None
+                if (
+                    isinstance(match, dict)
+                    and marker in str(match.get("uri", ""))
+                    and 300000 <= match["rule_id"] < 900000
+                ):
+                    found.append((match["rule_id"], match.get("data", "")))
+            if found:
+                return found
+            time.sleep(0.05)
+        return found
+
+    def test_an_exception_counts_what_it_let_through_and_nothing_else(self) -> None:
+        """B273: the rule as a counter, narrowed to what the exception names."""
+
+        for target, status, counters in (
+            # 942100's exceptions in order: slots 0-3, so 342100, 442100, 542100, 642100.
+            (f"/search?q={ATTACK}", 200, {342100}),
+            ("/search?q=hello", 200, set()),
+            (f"/other?q={ATTACK}", 403, set()),
+            (f"/anywhere?token={ATTACK}", 200, {442100}),
+            (f"/?r={ATTACK}", 200, {542100}),
+            (f"//?r={ATTACK}", 200, {542100}),
+            (f"/health?a={ATTACK}", 200, {642100}),
+            # A list file the rule set names relative to its rule file.
+            ("/files?f=/etc/passwd", None, {330120}),
+            ("/elsewhere?f=/etc/passwd", None, set()),
+            # A paranoia 2 rule on an object at 1: the rule does not run, nor its counter.
+            ("/x?c=a'--", None, set()),
+        ):
+            with self.subTest(target):
+                marker = uuid.uuid4().hex
+                joiner = "&" if "?" in target else "?"
+                answer = self.ask(f"{target}{joiner}m={marker}", name="blocks")
+                if status is not None:
+                    self.assertEqual(answer[0], status)
+                for counter in counters:
+                    self.assertNotIn(str(counter), answer[2], "a counter is not on the record")
+                if not counters:
+                    time.sleep(0.2)
+                self.assertEqual({rule for rule, _ in self.counted(marker)}, counters)
+
+    def test_a_counter_says_where_it_found_what_it_counted(self) -> None:
+        marker = uuid.uuid4().hex
+        self.ask(f"/search?q={ATTACK}&m={marker}", name="blocks")
+        [(rule, data)] = self.counted(marker)
+        self.assertEqual(rule, 342100)
+        self.assertTrue(data.startswith("Matched Data: "), data)
+        self.assertIn(" found within ARGS:q: ", data)
+
+    def test_a_chained_rule_counts_through_its_chain(self) -> None:
+        # 920310: an empty Accept header, from a client that is no browser.
+        marker = uuid.uuid4().hex
+        self.ask(
+            f"/chained?m={marker}", name="blocks", headers={"Accept": "", "User-Agent": "probe"}
+        )
+        self.assertEqual({rule for rule, _ in self.counted(marker)}, {320310})
+        marker = uuid.uuid4().hex
+        self.ask(f"/chained?m={marker}", name="blocks", headers={"Accept": "text/html"})
+        time.sleep(0.2)
+        self.assertEqual(self.counted(marker), [])
+
     def test_a_body_the_engine_could_not_read_to_its_end_is_refused_in_block(self) -> None:
         # Review 2026-10-04 F1: padding before the attack carried it past `block`.
         padded = b"pad=" + b"a" * 20_000 + b"&name=x' UNION SELECT password FROM users--"
@@ -2945,6 +3042,15 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
     def test_a_large_body_path_lets_it_through_with_what_fitted_inspected(self) -> None:
         self.skipTest("the engine is not running")
 
+    def test_an_exception_counts_what_it_let_through_and_nothing_else(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_a_counter_says_where_it_found_what_it_counted(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_a_chained_rule_counts_through_its_chain(self) -> None:
+        self.skipTest("the engine is not running")
+
     def test_open_lets_through_and_says_so_closed_refuses(self) -> None:
         self.assertEqual(self.ask(SQLI, name="blocks"), (200, "waf-engine:log", ""))
         self.assertEqual(self.ask(SQLI, name="closed"), (503, "waf-engine:deny", ""))
@@ -2956,6 +3062,115 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
                 started = time.monotonic()
                 self.ask("/?q=hello", name=name)
                 self.assertLess(time.monotonic() - started, 0.25)
+
+
+class EachExceptionHasACounter(unittest.TestCase):
+    """B273: the rule as written, narrowed to the exception, logging and scoring nothing."""
+
+    DEFINITIONS = {
+        942100: crs.Definition(
+            942100,
+            (
+                crs.Link(
+                    "ARGS|ARGS_NAMES",
+                    "@detectSQLi",
+                    (
+                        "id:942100",
+                        "phase:2",
+                        "block",
+                        "capture",
+                        "t:none",
+                        "t:urlDecodeUni",
+                        "msg:'SQL injection'",
+                        "tag:'paranoia-level/1'",
+                        "setvar:'tx.inbound_anomaly_score_pl1=+%{tx.critical_anomaly_score}'",
+                    ),
+                ),
+            ),
+        ),
+        930120: crs.Definition(
+            930120,
+            (
+                crs.Link(
+                    "ARGS",
+                    "@pmFromFile lfi-os-files.data",
+                    ("id:930120", "phase:1", "block", "tag:'paranoia-level/2'", "chain"),
+                ),
+                crs.Link(
+                    "MATCHED_VARS",
+                    "!@rx ^%{tx.kept}$",
+                    ("t:none", "setvar:'tx.kept=1'", "setvar:'tx.lfi_score=+5'", "chain"),
+                ),
+                crs.Link("TX:kept", "@eq 1", ("t:none",)),
+            ),
+        ),
+    }
+
+    def counters(self, exceptions: str) -> list[str]:
+        layer = generate(
+            [load_proxy("shop", WAF_OBJECT.format(name="shop", waf=exceptions, web=8080).encode())],
+            vips={"main": Vip(name="main", address="192.0.2.1")},
+            default_vip="main",
+            rule_definitions=self.DEFINITIONS,
+        )
+        engine = layer.waf_files["coraza.yaml"]
+        if "Allowed by exception" in engine:
+            self.assertLess(engine.index("id:900000"), engine.index("Allowed by exception"))
+            self.assertLess(
+                engine.index("Allowed by exception"),
+                engine.index("Include /etc/haproxy/waf/crs/rules/*.conf"),
+            )
+        return [
+            line.strip()
+            for line in engine.splitlines()
+            if "SecRule" in line
+            and ("Allowed by exception" in line or line.startswith("        SecRule"))
+        ]
+
+    def test_the_rule_narrowed_to_the_field_and_its_paths(self) -> None:
+        [first, second] = self.counters(
+            "  exceptions:\n    - {rule: 942100, field: 'ARGS:q', paths: [/, /a.b(c)]}"
+        )
+        self.assertEqual(
+            first,
+            'SecRule REQUEST_FILENAME "@rx ^(?://?|/a[.]b[(]c[)])$" "id:342100,phase:2,pass,log,'
+            "msg:'Allowed by exception 942100',logdata:'Matched Data: %{MATCHED_VAR} found within "
+            "%{MATCHED_VAR_NAME}: %{MATCHED_VAR}',t:none,t:urlDecodeUni,t:normalisePath,chain\"",
+        )
+        self.assertEqual(second, 'SecRule ARGS:q "@detectSQLi" "capture,t:none,t:urlDecodeUni"')
+
+    def test_one_slot_per_exception_on_a_rule_six_at_most(self) -> None:
+        listed = "".join(f"    - {{rule: 942100, field: 'ARGS:a{n}'}}\n" for n in range(7))
+        written = self.counters("  exceptions:\n" + listed + "    - {rule: 941100}")
+        ids = [line.split('"id:', 1)[1].split(",", 1)[0] for line in written if '"id:' in line]
+        self.assertEqual(ids, ["342100", "442100", "542100", "642100", "742100", "842100"])
+        waf = load_proxy(
+            "shop",
+            WAF_OBJECT.format(name="shop", waf="  exceptions:\n" + listed, web=8080).encode(),
+        ).waf
+        assert waf is not None
+        self.assertEqual(waf_counter_ids(waf.exceptions)[-1], None)
+        self.assertEqual(waf_counter_rule(842100), 942100)
+
+    def test_a_chain_its_list_file_its_level_and_what_a_later_link_reads(self) -> None:
+        written = self.counters("  exceptions:\n    - {rule: 930120}")
+        self.assertEqual(
+            written[0],
+            'SecRule TX:BLOCKING_PARANOIA_LEVEL "@ge 2" "id:330120,phase:1,pass,log,'
+            "msg:'Allowed by exception 930120',logdata:'Matched Data: %{MATCHED_VAR} found within "
+            "REQUEST: %{MATCHED_VAR}',t:none,chain\"",
+        )
+        self.assertEqual(
+            written[1:],
+            [
+                'SecRule ARGS "@pmFromFile /etc/haproxy/waf/crs/rules/lfi-os-files.data" "chain"',
+                'SecRule MATCHED_VARS "!@rx ^%{tx.kept}$" "t:none,setvar:\'tx.kept=1\',chain"',
+                'SecRule TX:kept "@eq 1" "t:none"',
+            ],
+        )
+
+    def test_no_counter_without_the_rule_s_text(self) -> None:
+        self.assertEqual(self.counters("  exceptions:\n    - {rule: 941100}"), [])
 
 
 class TwoObjectsMayNotShareAName(unittest.TestCase):

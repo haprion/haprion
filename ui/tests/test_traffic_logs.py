@@ -612,6 +612,7 @@ class TheTrafficLogPage(LoginTestCase):
             patch("haprion_ui.db.waf_findings", return_value=[]),
             patch("haprion_ui.db.waf_verdicts", return_value={}),
             patch("haprion_ui.db.waf_request_count", return_value=2),
+            patch("haprion_ui.db.waf_counted", return_value=[]),
             patch("haprion.crs.installed_catalog", return_value={}),
         ):
             waf = self.page(path="/waf", query="?view=requests")

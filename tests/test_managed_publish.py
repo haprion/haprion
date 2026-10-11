@@ -408,6 +408,31 @@ class TheWafLayerTravelsWithTheRelease(unittest.TestCase):
         self.assertIn("waf/coraza.yaml", artifact)
         self.assertIn("waf/crs/rules/REQUEST-901-INITIALIZATION.conf", artifact)
 
+    def test_an_exception_s_counter_is_the_installed_rule_s_text(self) -> None:
+        """B273: read before generating, so the counter copies the rule as installed."""
+
+        rules = crs.RuleSet(
+            version=self.RULES.version,
+            files={
+                **self.RULES.files,
+                "rules/REQUEST-942-APPLICATION-ATTACK-SQLI.conf": (
+                    b'SecRule ARGS "@detectSQLi" "id:942100,phase:2,block,t:none"\n'
+                ),
+            },
+        )
+        files = self.publish(
+            PROXY.replace(
+                b"routes:",
+                b"waf: {mode: block, exceptions: [{rule: 942100, field: 'ARGS:q'}]}\nroutes:",
+            ),
+            rule_set=lambda: rules,
+        )
+
+        self.assertIn(
+            b'SecRule ARGS:q "@detectSQLi" "id:342100,phase:2,pass,log,',
+            files["managed/waf/coraza.yaml"],
+        )
+
     def test_without_the_engine_the_layer_is_gone_and_the_package_never_read(self) -> None:
         def unread() -> crs.RuleSet:
             raise AssertionError("read the rule set for a cluster that uses no engine")

@@ -910,7 +910,17 @@ exceptions list on *WAF logs* shows in a column of its own: why the traffic is l
 outlives the findings that led to it. A finding an exception covers leaves *Findings*,
 unless the rule still matches it after the first deploy that followed the exception: then
 the finding stays, and it and the exception are marked *Not working*. An exception without
-its time (`at`), or deployed only from the command line, cannot be judged this way. A field
+its time (`at`), or deployed only from the command line, cannot be judged this way.
+
+Each exception also **counts what it lets through**, as a firewall rule counts its hits: the
+exceptions list shows *Let through*, *Clients* and *Last seen* for the last seven days. The
+engine leaves no trace of a check it was told to skip, so the count comes from a counter the
+generator writes beside the exception: the rule itself, as the installed rule set writes it,
+narrowed to the exception's field and paths, logging and scoring nothing. It counts a request
+the rule would have matched there, also when other rules refuse it. Six exceptions on the same
+rule in one object are counted; a seventh, an exception the installed rule set does not define,
+and one still in a draft show a dash. Counters came with engine API 27; an exception published
+before it counts from the cluster's next publish. A field
 name with characters other than letters, digits and `_ . - [ ]` cannot be named; except the
 path instead.
 `exceptions` came with engine API 13 and replaced engine API 12's

@@ -4144,6 +4144,64 @@ class WhenAnExceptionReachedTheNodes(unittest.TestCase):
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class WhatAnExceptionLetThroughIsNoFinding(unittest.TestCase):
+    """B273: the counters share the rollup with the rule set's matches, and are read apart."""
+
+    def connect(self, role_variable: str) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def setUp(self) -> None:
+        hour = datetime(2026, 10, 11, 8, 0, tzinfo=UTC)
+        rows = (
+            # (rule, field, path, requests, client)
+            (942100, "ARGS:q", "/search", 3, "192.0.2.1"),
+            (342100, "ARGS:q", "/", 5, "192.0.2.2"),
+            (342100, "ARGS:q", "//", 1, "192.0.2.3"),
+            (342100, "ARGS:z", "/", 2, "192.0.2.2"),
+        )
+        with (
+            self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
+            connection.cursor() as cursor,
+        ):
+            for rule, field, path, requests, client in rows:
+                cursor.execute(
+                    "insert into waf_finding_path (cluster, object, rule_id, field, hour, path, "
+                    "requests, last_seen, matched) values ('ct-a', 'shop', %s, %s, %s, %s, %s, "
+                    "%s, 'x')",
+                    (rule, field, hour, path, requests, hour + timedelta(minutes=requests)),
+                )
+                cursor.execute(
+                    "insert into waf_finding_client (cluster, object, rule_id, field, hour, client) "
+                    "values ('ct-a', 'shop', %s, %s, %s, %s) on conflict do nothing",
+                    (rule, field, hour, client),
+                )
+            connection.commit()
+        self.addCleanup(self.forget)
+
+    def forget(self) -> None:
+        with (
+            self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute("delete from waf_finding_path where cluster = 'ct-a'")
+            cursor.execute("delete from waf_finding_client where cluster = 'ct-a'")
+            connection.commit()
+
+    def test_findings_are_the_rule_set_s_and_the_counters_are_apart(self) -> None:
+        since = datetime(2026, 10, 10, tzinfo=UTC)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            findings = db.waf_findings(connection, clusters=["ct-a"], since=since)
+            counted = db.waf_counted(connection, clusters=["ct-a"], since=since)
+        self.assertEqual([row.rule_id for row in findings], [942100])
+        self.assertEqual(
+            [(row.counter, row.field, row.requests, row.clients) for row in counted],
+            [(342100, "ARGS:q", 6, 2), (342100, "ARGS:z", 2, 1)],
+        )
+        self.assertEqual({row.clients_any_field for row in counted}, {2})
+        self.assertEqual(counted[0].last_seen, datetime(2026, 10, 11, 8, 5, tzinfo=UTC))
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheSearchIndex(unittest.TestCase):
     """B222: the poller writes the rows, the web searches them, through the trigram index."""
 

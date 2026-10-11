@@ -4248,12 +4248,14 @@ def waf_findings(
             "         count(distinct path)::int as path_count "
             "    from waf_finding_path "
             "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "     and rule_id >= %(first)s "
             "   group by cluster, object, rule_id, field"
             "), clients as ("
             "  select cluster, object, rule_id, field, "
             "         count(distinct nullif(client, ''))::int as clients "
             "    from waf_finding_client "
             "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "     and rule_id >= %(first)s "
             "   group by cluster, object, rule_id, field"
             ") "
             "select paths.cluster, paths.object, paths.rule_id, paths.field, paths.requests, "
@@ -4267,6 +4269,75 @@ def waf_findings(
                 "since": since,
                 "paths": WAF_FINDING_PATHS,
                 "limit": WAF_FINDING_LIMIT,
+                "first": WAF_RULE_FIRST,
+            },
+        )
+        return cursor.fetchall()
+
+
+#
+# The rule set's IDs start here; below are the exceptions' counters (B273),
+# which count what was let through and are no finding.
+#
+WAF_RULE_FIRST = 900000
+WAF_COUNTER_FIRST = 300000
+
+
+@dataclass(frozen=True, slots=True)
+class WafCounted:
+    """What one exception's counter counted on one field (B273)."""
+
+    cluster: str
+    object: str
+    counter: int
+    field: str
+    requests: int
+    clients: int
+    last_seen: datetime
+    clients_any_field: int
+    """Distinct clients on any field of the counter, for an exception that names none."""
+
+
+def waf_counted(
+    connection: Connection[Any], *, clusters: Sequence[str], since: datetime
+) -> list[WafCounted]:
+    """What each exception's counter counted since then, per object, counter and field."""
+
+    with connection.cursor(row_factory=class_row(WafCounted)) as cursor:
+        cursor.execute(
+            "with paths as ("
+            "  select cluster, object, rule_id, field, sum(requests)::int as requests, "
+            "         max(last_seen) as last_seen "
+            "    from waf_finding_path "
+            "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "     and rule_id >= %(counters)s and rule_id < %(first)s "
+            "   group by cluster, object, rule_id, field"
+            "), clients as ("
+            "  select cluster, object, rule_id, field, "
+            "         count(distinct nullif(client, ''))::int as clients "
+            "    from waf_finding_client "
+            "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "     and rule_id >= %(counters)s and rule_id < %(first)s "
+            "   group by cluster, object, rule_id, field"
+            "), anyone as ("
+            "  select cluster, object, rule_id, "
+            "         count(distinct nullif(client, ''))::int as clients "
+            "    from waf_finding_client "
+            "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "     and rule_id >= %(counters)s and rule_id < %(first)s "
+            "   group by cluster, object, rule_id"
+            ") "
+            "select paths.cluster, paths.object, paths.rule_id as counter, paths.field, "
+            "       paths.requests, coalesce(clients.clients, 0) as clients, paths.last_seen, "
+            "       coalesce(anyone.clients, 0) as clients_any_field "
+            "  from paths left join clients using (cluster, object, rule_id, field) "
+            "  left join anyone using (cluster, object, rule_id) "
+            " order by paths.cluster, paths.object, paths.rule_id, paths.field",
+            {
+                "clusters": list(clusters),
+                "since": since,
+                "counters": WAF_COUNTER_FIRST,
+                "first": WAF_RULE_FIRST,
             },
         )
         return cursor.fetchall()

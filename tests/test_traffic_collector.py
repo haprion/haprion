@@ -747,6 +747,20 @@ class WafJournalCollectorTests(unittest.TestCase):
             with self.subTest(data=data):
                 self.assertEqual(_waf_data(data), wanted)
 
+    def test_an_exception_s_counter_is_stored_as_the_engine_logged_it(self) -> None:
+        """B273: a counter's line, as the generator writes its log data, is a row."""
+
+        line = engine_line(
+            341100,
+            msg="Allowed by exception 941100",
+            data="Matched Data: <script> found within ARGS:q: <script>",
+            severity="unknown",
+            uri="/?q=%3Cscript%3E",
+        )
+        row = self.row(line)
+        assert row is not None
+        self.assertEqual(row[6:10], (341100, "ARGS:q", "<script>", "/"))
+
     def test_a_field_no_exception_could_name_is_not_kept(self) -> None:
         """The requester names the field; only what `waf_field` accepts survives,
         since the page offers it to the exception model as written."""

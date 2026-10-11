@@ -1139,17 +1139,18 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             busy = jobs.in_flight(db.recent_jobs(connection))
             #
-            # And when each cluster was last read. A job finishing is not the
-            # same moment as the poller seeing what it did, so a page that
-            # reloaded on the first still showed the reading from before the
-            # deploy: the spinner gone, and every number beside it stale.
+            # And which clusters the poller has not read through since their
+            # last job ended (0068). A job finishing is not the same moment as
+            # the poller seeing what it did; a page redrawn on the first showed
+            # the spinner gone beside counts from before the job. Waited for at
+            # most two intervals, the age at which a reading is called stale.
             #
-            observed = {
-                status.cluster: status.observed_at.isoformat()
-                for status in db.cluster_statuses(connection)
-                if status.observed_at is not None
-            }
-        return JSONResponse({"busy": busy, "observed": observed})
+            catching_up = db.clusters_catching_up(
+                connection,
+                listed_clusters(request, config),
+                within=timedelta(seconds=config.poller.interval_seconds * 2),
+            )
+        return JSONResponse({"busy": busy, "catching_up": catching_up})
 
     @router.get("/proxies", response_class=HTMLResponse)
     def proxy_overview(request: Request) -> Response:

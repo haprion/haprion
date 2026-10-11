@@ -65,53 +65,31 @@
     new Set(Array.from(document.querySelectorAll("[data-busy]"), (el) => el.dataset.busy));
 
   //
+  // Set while a cluster is catching up and the page on screen was drawn
+  // before it had: drawn from readings the job's change is not in yet, with
+  // no spinner left to say so. Cleared by the redraw once it has caught up.
+  // The content is redrawn in place and this script stays, so the page's own
+  // memory is enough; nothing carries it to the next page.
+  //
+  let watched = false;
+
+  const watching = () => watched;
+
+  const watch = (on) => {
+    watched = on;
+  };
+
+  //
   // What is still on its way: a draft, a publish in flight, an object the nodes
   // are not serving yet, or a job this page is watching. When the server stops
   // drawing one of these there is nothing left to wait for, and the asking
   // stops with it.
   //
-  //
-  // When each cluster on this page was last read. A job finishing and the
-  // poller seeing what it did are two moments, and only the first is a job -
-  // so a page reloaded on the job alone shows the deploy's buttons back and
-  // every number beside them still describing the release before it.
-  //
-  const drawnObserved = () =>
-    new Map(
-      Array.from(document.querySelectorAll("[data-observed]"), (el) => [
-        el.dataset.observed,
-        el.dataset.observed,
-      ]),
-    );
-
-  //
-  // Set when a job finishes, cleared when the reading that followed it arrives.
-  // Without it the page would stop asking the moment the spinner went, which is
-  // one poll too early.
-  //
-  const WATCH = "waiting-observe";
-
-  const watching = () => {
-    try {
-      return sessionStorage.getItem(WATCH) === "1";
-    } catch (error) {
-      return false;
-    }
-  };
-
-  const watch = (on) => {
-    try {
-      if (on) sessionStorage.setItem(WATCH, "1");
-      else sessionStorage.removeItem(WATCH);
-    } catch (error) {
-      // A browser that refuses storage simply stops at the spinner, as before.
-    }
-  };
-
-  const pending = () =>
+  const drawnPending = () =>
     document.querySelectorAll("tr.proxy-draft, tr.proxy-waiting").length > 0 ||
-    drawnBusy().size > 0 ||
-    watching();
+    drawnBusy().size > 0;
+
+  const pending = () => drawnPending() || watching();
 
   const apply = (payload) => {
     const clusters = payload && payload.clusters ? payload.clusters : {};
@@ -171,31 +149,28 @@
           return;
         }
         //
-        // Reloaded only when the answer differs from what is on the screen. A
+        // Redrawn only when the answer differs from what is on the screen. A
         // cluster that is still busy leaves the page alone; one that has
         // finished, or a new one that has started, is a page that no longer
         // describes anything true.
         //
         const busy = new Set(Object.keys(payload.busy || {}));
+        const catching = new Set(payload.catching_up || []);
         const drawn = drawnBusy();
         const same = busy.size === drawn.size && Array.from(drawn).every((one) => busy.has(one));
         if (!same) {
           //
-          // A job started or finished. The page is redrawn, and it keeps
-          // asking afterwards: what the job did is not on the screen until the
-          // poller has read the nodes again.
+          // A job finishing and the poller reading what it did are two
+          // moments (0068). The spinner stays until the second: redrawn on
+          // the first, the page had the buttons back beside counts from
+          // before the job - Publish & deploy offering what it had just done.
           //
-          watch(true);
+          if (Array.from(drawn).some((one) => !busy.has(one) && catching.has(one))) return;
+          watch(false);
           redraw();
           return;
         }
-        if (!watching()) return;
-        const readings = payload.observed || {};
-        const drawnReadings = drawnObserved();
-        const moved = Object.keys(readings).some(
-          (cluster) => readings[cluster] && !drawnReadings.has(readings[cluster]),
-        );
-        if (moved) {
+        if (watching() && catching.size === 0) {
           watch(false);
           redraw();
         }
@@ -211,7 +186,27 @@
       });
   };
 
+  //
+  // A page drawn while a cluster was catching up - the answer to a job that
+  // ended before the browser was back, or a reload at that moment - has no
+  // spinner to watch, yet shows readings from before the job. It asks once,
+  // and if the server says so it waits for the reading like any other.
+  //
+  const settle = () => {
+    fetch(BUSY, { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        const catching = payload && payload.catching_up ? payload.catching_up : [];
+        watch(catching.length > 0);
+        if (catching.length > 0) window.setTimeout(tick, INTERVAL);
+      })
+      .catch(() => {
+        // Nothing learnt is nothing to wait for; the page stays as drawn.
+      });
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
-    if (pending()) window.setTimeout(tick, INTERVAL);
+    if (drawnPending()) window.setTimeout(tick, INTERVAL);
+    else if (!rows()) settle();
   });
 })();

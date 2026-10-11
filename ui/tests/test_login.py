@@ -164,6 +164,8 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.discard_cluster_change"),
             mock.patch("haprion_ui.db.change_publishes", return_value=[]),
             mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
+            # Every cluster read through since its last job (0068).
+            mock.patch("haprion_ui.db.clusters_catching_up", return_value=[]),
             #
             # The dashboard's traffic row (B220): no readings, as an
             # installation the poller has not measured yet. A test about the

@@ -40,7 +40,8 @@
       {% set shown = (finding.shown_field ~ ': ' ~ finding.matched) if finding.shown_field else finding.matched %}
       <tr>
         <td title="{{ finding.message }}">{{ finding_what(finding.kind, finding.explanation, finding.severity, finding.message) }}</td>
-        <td title="{{ shown }}"><code class="matched">{{ shown }}</code></td>
+        {# A rule that logs no data (CRS's empty-header rules) matched nothing to show. #}
+        <td{% if shown %} title="{{ shown }}"{% endif %}>{% if shown %}<code class="matched">{{ shown }}</code>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td title="{{ finding.paths | join(', ') }}"><code>{{ finding.paths | join(', ') }}</code>{% if finding.more_paths %} <span class="finding-more">+{{ finding.more_paths }}</span>{% endif %}</td>
         <td><span class="finding-count">{{ finding.requests }}</span></td>
         <td><span class="finding-count">{{ finding.clients }}</span></td>

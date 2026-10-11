@@ -626,18 +626,17 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         self.assertNotIn('name="network"', page.text)
 
     def test_the_page_can_stop_a_spinner_it_starts(self) -> None:
-        """The watcher, and the two attributes it reads.
+        """The watcher is on the page.
 
         Drawing a running job is only half of it: this page was rendered once
         and never asked again, so the badge turned until somebody left the tab
-        and came back. `data-busy` is what it watches, and `data-observed` is
-        what tells it the poller has caught up with the job.
+        and came back. `data-busy` is what it watches; whether the poller has
+        caught up with the job the server answers itself (0068).
         """
 
         page = self.editable_page()
 
         self.assertIn("waiting.js", page.text)
-        self.assertIn("data-observed=", page.text)
 
     def test_the_editable_cluster_shows_each_address_once(self) -> None:
         #

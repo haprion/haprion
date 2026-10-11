@@ -484,6 +484,12 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
     """One cluster's sources in order; 1 when its status reading was done."""
 
     healthy = 0
+    #
+    # Before anything is read (0068): a page that watched a job finish redraws
+    # once a pass begun after the job's end is recorded whole, not on the first
+    # reading of a pass that may have started before it.
+    #
+    _mark_pass(pool, db.begin_cluster_pass, cluster)
     local = [source for source in sources if source.run is None]
     answered = _local_readings(pool, cluster, local) if local else {}
     for source in sources:
@@ -518,7 +524,23 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
             reading["outcome"],
             f" ({reading['poll_error']})" if reading.get("poll_error") else "",
         )
+    _mark_pass(pool, db.settle_cluster_pass, cluster)
     return healthy
+
+
+def _mark_pass(pool: Any, mark: Callable[[Any, str], None], cluster: str) -> None:
+    """Record where a pass stands. A hint for the pages, so it never stops a reading.
+
+    Missing, a page that watched a job keeps waiting until the job is older
+    than two intervals, and then draws what is there.
+    """
+
+    try:
+        with pool.connection() as connection:
+            mark(connection, cluster)
+            connection.commit()
+    except Exception as exc:  # noqa: BLE001 - the readings matter more than the marker
+        logger.warning("cluster %s: pass not marked: %s", cluster, exc)
 
 
 def main(argv: list[str] | None = None) -> int:

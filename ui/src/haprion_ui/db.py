@@ -2070,6 +2070,58 @@ def cluster_list(connection: Connection[Any]) -> tuple[str, ...] | None:
     return tuple(str(name) for name in row[0])
 
 
+def begin_cluster_pass(connection: Connection[Any], cluster: str) -> None:
+    """Mark the start of a pass over one cluster (0068). The moment is the database's."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into cluster_pass (cluster) values (%(cluster)s) "
+            "on conflict (cluster) do update set began_at = statement_timestamp()",
+            {"cluster": cluster},
+        )
+
+
+def settle_cluster_pass(connection: Connection[Any], cluster: str) -> None:
+    """Every reading of the pass begun last is recorded: it is what the cluster is read through."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update cluster_pass set settled_from = began_at where cluster = %(cluster)s",
+            {"cluster": cluster},
+        )
+
+
+def clusters_catching_up(
+    connection: Connection[Any], clusters: Sequence[str], *, within: timedelta
+) -> list[str]:
+    """The clusters whose last finished job no whole pass has read since (0068).
+
+    A job that ended more than `within` ago is caught up whatever the poller
+    did: a poller that is down must not leave a page waiting on it for good,
+    and the pages say for themselves how old their readings are. Only a
+    cluster's two newest jobs are looked at - one runs at a time, so the newest
+    finished one is among them - which the job's own index answers.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select c.cluster"
+            "  from unnest(%(clusters)s::text[]) as c (cluster)"
+            "  cross join lateral ("
+            "      select max(recent.finished_at) as finished"
+            "        from (select finished_at from job"
+            "               where job.cluster = c.cluster"
+            "               order by created_at desc limit 2) recent"
+            "  ) last"
+            "  left join cluster_pass p on p.cluster = c.cluster"
+            " where last.finished > statement_timestamp() - %(within)s"
+            "   and (p.settled_from is null or p.settled_from <= last.finished)"
+            " order by c.cluster",
+            {"clusters": list(clusters), "within": within},
+        )
+        return [str(cluster) for (cluster,) in cursor.fetchall()]
+
+
 def cluster_settings(connection: Connection[Any]) -> list[ClusterSettingsRow]:
     """Every cluster's newest settings reading, with the stalest one first."""
 

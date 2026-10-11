@@ -210,6 +210,88 @@ class Passes(unittest.TestCase):
             ],
         )
 
+    def test_a_pass_is_marked_begun_before_its_readings_and_settled_after_them(self) -> None:
+        #
+        # 0068: a page waits for a pass begun after its job ended to be
+        # recorded whole. Marked any later, a reading taken before the job's
+        # change would count; settled any earlier, a page would redraw between
+        # the status and the objects it counts its buttons from.
+        #
+        order: list[str] = []
+
+        class Pool:
+            def connection(self) -> Any:
+                return self
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def commit(self) -> None:
+                return None
+
+        def record(_c: object, **kwargs: Any) -> None:
+            order.append(f"record {kwargs['cluster']}")
+
+        sources = (
+            poller.Source("status", lambda *_: completed(envelope()), record, partial_ok=True),
+            poller.Source("inventory", lambda *_: completed(inventory_envelope()), record),
+        )
+        with (
+            unittest.mock.patch(
+                "haprion_ui.db.begin_cluster_pass",
+                side_effect=lambda _c, cluster: order.append(f"begin {cluster}"),
+            ),
+            unittest.mock.patch(
+                "haprion_ui.db.settle_cluster_pass",
+                side_effect=lambda _c, cluster: order.append(f"settle {cluster}"),
+            ),
+        ):
+            poller.poll_once(Pool(), None, sources, clusters=("alpha",))  # type: ignore[arg-type]
+
+        self.assertEqual(order, ["begin alpha", "record alpha", "record alpha", "settle alpha"])
+
+    def test_a_pass_that_cannot_be_marked_is_still_read(self) -> None:
+        #
+        # The mark is a hint for the pages. Without it they wait two intervals
+        # at most; without the readings every page would be wrong.
+        #
+        written: list[str] = []
+
+        class Pool:
+            def connection(self) -> Any:
+                return self
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def commit(self) -> None:
+                return None
+
+        sources = (
+            poller.Source(
+                "status",
+                lambda *_: completed(envelope()),
+                lambda _c, **kwargs: written.append(kwargs["cluster"]),
+                partial_ok=True,
+            ),
+        )
+        refused = psycopg.errors.InsufficientPrivilege("no grant")
+        with (
+            unittest.mock.patch("haprion_ui.db.begin_cluster_pass", side_effect=refused),
+            unittest.mock.patch("haprion_ui.db.settle_cluster_pass", side_effect=refused),
+            self.assertLogs("haprion_ui.poller", level="WARNING") as logged,
+        ):
+            healthy = poller.poll_once(Pool(), None, sources, clusters=("alpha",))  # type: ignore[arg-type]
+
+        self.assertEqual((healthy, written), (1, ["alpha"]))
+        self.assertEqual(len([line for line in logged.output if "pass not marked" in line]), 2)
+
     def test_the_shipped_source_table_covers_every_polled_read(self) -> None:
         #
         # The table is what a new source has to be added to. This states which

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import timedelta
 from typing import Any
 from unittest import mock
 
-from haprion_ui.db import ClusterStatus, Job
+from haprion_ui.db import Job
 from tests.test_certificates import reading as certificate_reading
 from tests.test_history import reading as history_reading
 from tests.test_job_page import job
@@ -148,50 +148,45 @@ class TheBusyStateIsAlsoAvailableAsData(BusyPagesTestCase):
 
 
 class WhenTheReadingCatchesUp(BusyPagesTestCase):
-    """A job finishing and the poller seeing what it did are two moments.
+    """A job finishing and the poller seeing what it did are two moments (0068).
 
-    Only the first is a job. A page reloaded on that alone has the buttons back
-    and every number beside them still describing the release before the
-    deploy - which is the state somebody reads as "it did not work".
+    Only the first is a job. A page redrawn on that alone had the spinner gone
+    beside counts from before the job - the dashboard offering Publish & deploy
+    for what it had just published. The server says which clusters the poller
+    has not read through since their last job ended, and the page waits on it.
     """
 
-    def answer(self, statuses: list[ClusterStatus]) -> Any:
+    def answer(self, catching: list[str]) -> tuple[Any, mock.MagicMock]:
         client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
         self.sign_in(client)
-        with (
-            mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
-            mock.patch("haprion_ui.db.cluster_statuses", return_value=statuses),
-        ):
-            return client.get("/clusters/busy").json()
+        with mock.patch("haprion_ui.db.clusters_catching_up", return_value=catching) as asked:
+            return client.get("/clusters/busy").json(), asked
 
-    def status(self, observed: datetime) -> ClusterStatus:
-        return ClusterStatus(
-            cluster="alpha",
-            observed_at=observed,
-            outcome="done",
-            result={},
-            warnings=[],
-            error=None,
-            poll_error=None,
-        )
+    def test_it_names_the_clusters_still_being_read(self) -> None:
+        answer, _ = self.answer(["alpha"])
 
-    def test_it_says_when_each_cluster_was_last_read(self) -> None:
-        moment = datetime(2026, 9, 3, 21, 0, tzinfo=UTC)
+        self.assertEqual(answer["catching_up"], ["alpha"])
 
+    def test_it_asks_about_the_listed_clusters_for_two_intervals_at_most(self) -> None:
+        #
+        # Two intervals is the age at which a reading is called stale; a
+        # poller that is down must not leave a page waiting on it for good.
+        #
+        _, asked = self.answer([])
+
+        (call,) = asked.call_args_list
+        self.assertEqual(list(call.args[1]), ["alpha"])
         self.assertEqual(
-            self.answer([self.status(moment)])["observed"], {"alpha": moment.isoformat()}
+            call.kwargs["within"], timedelta(seconds=configuration().poller.interval_seconds * 2)
         )
 
-    def test_a_cluster_never_read_names_no_moment(self) -> None:
-        # Never read is no row at all: the column is `not null` (0004).
-        self.assertEqual(self.answer([])["observed"], {})
+    def test_the_watcher_keeps_the_spinner_until_the_reading_has_caught_up(self) -> None:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        waiting = client.get("/static/waiting.js").text
 
-    def test_the_cards_carry_the_reading_they_were_drawn_from(self) -> None:
-        #
-        # The comparison is against what is on the screen, so the screen has to
-        # say what it was drawn from.
-        #
-        for path, source, _ in self.PAGES:
-            with self.subTest(page=path):
-                page = self.page(path, source, [])
-                self.assertIn("data-observed=", page.text)
+        self.assertIn("payload.catching_up", waiting)
+        self.assertIn("!busy.has(one) && catching.has(one)", waiting)
+        # A page drawn while catching up asks once rather than standing still.
+        self.assertIn("else if (!rows()) settle();", waiting)
+        self.assertNotIn("sessionStorage", waiting)

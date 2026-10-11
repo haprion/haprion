@@ -45,7 +45,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\ntraffic_log\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\ntraffic_log\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -105,6 +105,9 @@ app_poller	cluster_network	UPDATE	error, outcome, poll_error, result, warnings
 app_poller	cluster_objects	INSERT	cluster, error, outcome, poll_error, result, warnings
 app_poller	cluster_objects	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_poller	cluster_objects	UPDATE	error, outcome, poll_error, result, warnings
+app_poller	cluster_pass	INSERT	cluster
+app_poller	cluster_pass	SELECT	began_at, cluster, settled_from
+app_poller	cluster_pass	UPDATE	began_at, settled_from
 app_poller	cluster_settings	INSERT	cluster, error, outcome, poll_error, result, warnings
 app_poller	cluster_settings	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_poller	cluster_settings	UPDATE	error, outcome, poll_error, result, warnings
@@ -143,6 +146,7 @@ app_web	cluster_inventory	SELECT	cluster, error, observed_at, outcome, poll_erro
 app_web	cluster_list	SELECT	clusters, id, observed_at
 app_web	cluster_network	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_web	cluster_objects	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_web	cluster_pass	SELECT	began_at, cluster, settled_from
 app_web	cluster_settings	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_web	cluster_status	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_web	dns_provider_profile	INSERT	ciphertext, created_by, id, key_id, name, provider_id, revision, schema_version, updated_by

@@ -964,6 +964,64 @@ class ARealDatabase(unittest.TestCase):
             connection.execute("delete from cluster_list")
             connection.commit()
 
+    def test_a_cluster_catches_up_once_a_pass_begun_after_its_job_is_settled(self) -> None:
+        # 0068: the moment the dashboard's spinner may go.
+        def finished_job(ago: str) -> None:
+            with self.connect() as connection:
+                connection.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values ('deploy', 'passa', '{}', %s, 'done', "
+                    "now() - %s::interval, now() - %s::interval)",
+                    (uuid4(), ago, ago),
+                )
+                connection.commit()
+
+        def catching(within: timedelta = timedelta(minutes=1)) -> list[str]:
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+                return db.clusters_catching_up(connection, ["passa", "passb"], within=within)
+
+        def mark(*marks: Any) -> None:
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+                for one in marks:
+                    one(connection, "passa")
+                    connection.commit()
+
+        def forget() -> None:
+            with self.connect() as connection:
+                connection.execute("delete from job where cluster = 'passa'")
+                connection.execute("delete from cluster_pass")
+                connection.commit()
+
+        self.addCleanup(forget)
+        finished_job("10 minutes")
+        self.assertEqual(catching(), [], "a job older than the window is caught up")
+        self.assertEqual(catching(timedelta(hours=1)), ["passa"], "never read since")
+
+        finished_job("0 seconds")
+        self.assertEqual(catching(), ["passa"])
+        mark(db.begin_cluster_pass)
+        self.assertEqual(catching(), ["passa"], "begun is not read through")
+        mark(db.settle_cluster_pass)
+        self.assertEqual(catching(), [])
+        mark(db.begin_cluster_pass)
+        self.assertEqual(catching(), [], "the next pass running takes nothing back")
+
+        #
+        # The pass that was running when the job ended: settled, yet every
+        # reading in it may be from before the change.
+        #
+        finished_job("0 seconds")
+        mark(db.settle_cluster_pass)
+        self.assertEqual(catching(), ["passa"])
+        mark(db.begin_cluster_pass, db.settle_cluster_pass)
+        self.assertEqual(catching(), [])
+
+        with (
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+            self.assertRaises(psycopg.errors.InsufficientPrivilege),
+        ):
+            db.begin_cluster_pass(connection, "passa")
+
     def test_worker_can_read_jobs_but_not_accounts(self) -> None:
         with (
             self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection,

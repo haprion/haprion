@@ -29,13 +29,7 @@
 
 <div class="cluster-list">
 {% for cluster in clusters %}
-  {#
-    `data-observed` is what tells the watcher that the *reading* caught up, not
-    only the job. A job finishing and the poller seeing what it did are two
-    moments, and redrawing on the first shows the buttons back beside numbers
-    that still describe the release before the deploy.
-  #}
-  <article class="cluster-card {{ cluster.accent | accent_class }}" data-observed="{{ cluster.observed_iso or '' }}">
+  <article class="cluster-card {{ cluster.accent | accent_class }}">
     <header class="cluster-header">
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
       {#

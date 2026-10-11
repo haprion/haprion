@@ -94,7 +94,7 @@
   cluster is busy with, and `waiting.js` draws the page again when it is done.
 #}
 {% if servers %}
-<article class="cluster-card {{ object.accent | accent_class }}" id="servers"{% if servers.observed_at %} data-observed="{{ servers.observed_at.isoformat() }}"{% endif %}>
+<article class="cluster-card {{ object.accent | accent_class }}" id="servers">
   <form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/servers">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
@@ -120,7 +120,7 @@
   beside drain and maintenance because lifting one is operation too.
 #}
 {% if blocked %}
-<article class="cluster-card {{ object.accent | accent_class }}" id="blocked"{% if blocked.observed_at %} data-observed="{{ blocked.observed_at.isoformat() }}"{% endif %}>
+<article class="cluster-card {{ object.accent | accent_class }}" id="blocked">
   <form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/unblock">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">

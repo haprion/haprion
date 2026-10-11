@@ -321,6 +321,14 @@ class ThePage(EditorTestCase):
         self.assertIn("Exceptions <b>0</b>", text)
         self.assertIn("Requests <b>1297</b>", text)
 
+    def test_a_rule_that_logs_no_data_shows_a_dash_rather_than_an_empty_box(self) -> None:
+        # CRS's empty-header rules (920310, 920330) write no log data (26-10-11).
+        empty = finding(920350, "", ("/",), matched="")
+        with mock.patch("haprion_ui.db.waf_findings", return_value=[empty]):
+            text = self.editor().get("/waf").text
+        self.assertNotIn('<code class="matched"></code>', text)
+        self.assertIn('<td><span class="table-empty">—</span></td>', text)
+
     def test_an_exception_that_does_not_work_is_said_on_both_tabs(self) -> None:
         stored = AnExceptionThatDoesNotWork.STORED
         moment, deployed = AnExceptionThatDoesNotWork.MADE, AnExceptionThatDoesNotWork.DEPLOYED

@@ -1489,11 +1489,18 @@ class ARealDatabase(unittest.TestCase):
 
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                #
+                # 0069 changed the client rollup after it, so it goes first
+                # and comes back last, leaving the schema at head.
+                #
+                later = _migration("0069_waf_counter_client_path.py", cursor)
+                later.downgrade()
                 migration = _migration("0054_waf_finding_rollup.py", cursor)
                 migration.downgrade()
                 cursor.execute("select to_regclass('public.waf_finding_path')")
                 self.assertEqual(cursor.fetchone(), (None,))
                 migration.upgrade()
+                later.upgrade()
             connection.commit()
         self.assertEqual(self.waf_findings_both_ways(since), (counted, counted))
 
@@ -4137,7 +4144,7 @@ class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class WhenAnExceptionReachedTheNodes(unittest.TestCase):
-    """The first finished deploy after an exception was made (26-10-11), read as web."""
+    """The first finished deploy carrying an exception (26-10-11), read as web."""
 
     def connect(self, role_variable: str) -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
@@ -4175,63 +4182,76 @@ class WhenAnExceptionReachedTheNodes(unittest.TestCase):
             cursor.execute("delete from job where id = %s", (job,))
             connection.commit()
 
-    def test_a_deploy_or_a_publish_and_deploy_after_it_and_on_its_cluster(self) -> None:
+    def test_the_first_deploy_after_the_publish_that_took_it(self) -> None:
         self.job("deploy", "ex-a", "2026-10-02 13:00Z")  # before
+        #
+        # Saved at 14:00 and deployed before it was published: that deploy
+        # rolled out the version before the exception (review 26-10-11, F1).
+        #
+        self.job("deploy", "ex-a", "2026-10-02 14:00:30Z")
         self.job("changes_publish", "ex-a", "2026-10-02 14:01Z")  # a publish alone
         self.job("deploy", "ex-a", "2026-10-02 14:02Z", state="failed")
         self.job("deploy", "ex-b", "2026-10-02 14:03Z")  # another cluster
-        self.job("changes_publish", "ex-a", "2026-10-02 14:04Z", deploy=True)
-        self.job("deploy", "ex-a", "2026-10-02 14:06Z")
+        self.job("deploy", "ex-a", "2026-10-02 14:04Z")
+        self.job("changes_publish", "ex-a", "2026-10-02 14:10Z", deploy=True)
         made = datetime(2026, 10, 2, 14, 0, tzinfo=UTC)
-        later = datetime(2026, 10, 2, 14, 5, tzinfo=UTC)
-        unanswered = datetime(2026, 10, 2, 15, 0, tzinfo=UTC)
+        published_and_deployed = datetime(2026, 10, 2, 14, 9, tzinfo=UTC)
+        never_published = datetime(2026, 10, 2, 14, 30, tzinfo=UTC)
 
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
-            found = db.first_deploys_after(
-                connection, cluster="ex-a", moments=[made, later, unanswered]
+            found = db.deploys_carrying(
+                connection, cluster="ex-a", moments=[made, published_and_deployed, never_published]
             )
-            self.assertEqual(db.first_deploys_after(connection, cluster="ex-a", moments=[]), {})
+            self.assertEqual(db.deploys_carrying(connection, cluster="ex-a", moments=[]), {})
 
         self.assertEqual(
             found,
             {
                 made: datetime(2026, 10, 2, 14, 4, 4, tzinfo=UTC),
-                later: datetime(2026, 10, 2, 14, 6, 4, tzinfo=UTC),
+                published_and_deployed: datetime(2026, 10, 2, 14, 10, 4, tzinfo=UTC),
             },
         )
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class WhatAnExceptionLetThroughIsNoFinding(unittest.TestCase):
-    """B273: the counters share the rollup with the rule set's matches, and are read apart."""
+    """B273: the counters share the rollup with the rule set's matches, and are read apart.
+
+    And each exception within what it covers (review 26-10-11): a counter's
+    number passes to the next exception on the rule when one is removed, and
+    the one that stayed showed the removed one's week.
+    """
 
     def connect(self, role_variable: str) -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def setUp(self) -> None:
-        hour = datetime(2026, 10, 11, 8, 0, tzinfo=UTC)
+        self.now = datetime.now(UTC).replace(microsecond=0)
         rows = (
-            # (rule, field, path, requests, client)
-            (942100, "ARGS:q", "/search", 3, "192.0.2.1"),
-            (342100, "ARGS:q", "/", 5, "192.0.2.2"),
-            (342100, "ARGS:q", "//", 1, "192.0.2.3"),
-            (342100, "ARGS:z", "/", 2, "192.0.2.2"),
+            # (rule, field, path, client)
+            (942100, "ARGS:q", "/search", "192.0.2.1"),
+            (342100, "ARGS:q", "/", "192.0.2.2"),
+            (342100, "ARGS:q", "/", "192.0.2.2"),
+            (342100, "ARGS:q", "//", "192.0.2.3"),
+            (342100, "ARGS:q", "/x", "192.0.2.4"),
+            (342100, "ARGS:z", "/", "192.0.2.2"),
         )
-        with (
-            self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
-            connection.cursor() as cursor,
-        ):
-            for rule, field, path, requests, client in rows:
-                cursor.execute(
-                    "insert into waf_finding_path (cluster, object, rule_id, field, hour, path, "
-                    "requests, last_seen, matched) values ('ct-a', 'shop', %s, %s, %s, %s, %s, "
-                    "%s, 'x')",
-                    (rule, field, hour, path, requests, hour + timedelta(minutes=requests)),
-                )
-                cursor.execute(
-                    "insert into waf_finding_client (cluster, object, rule_id, field, hour, client) "
-                    "values ('ct-a', 'shop', %s, %s, %s, %s) on conflict do nothing",
-                    (rule, field, hour, client),
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
+            connection.execute("select waf_match_partition(%s::date)", (self.now.date(),))
+            for index, (rule, field, path, client) in enumerate(rows):
+                connection.execute(
+                    "insert into waf_match (event_id, cluster, node, occurred_at, request_id, "
+                    "object, rule_id, field, matched, path, client) values "
+                    "(%s, 'ct-a', 'node-a', %s, %s, 'shop', %s, %s, 'x', %s, %s)",
+                    (
+                        os.urandom(32),
+                        self.now - timedelta(minutes=len(rows) - index),
+                        f"shop.{uuid4()}",
+                        rule,
+                        field,
+                        path,
+                        client,
+                    ),
                 )
             connection.commit()
         self.addCleanup(self.forget)
@@ -4241,22 +4261,51 @@ class WhatAnExceptionLetThroughIsNoFinding(unittest.TestCase):
             self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
             connection.cursor() as cursor,
         ):
+            cursor.execute("delete from waf_match where cluster = 'ct-a'")
             cursor.execute("delete from waf_finding_path where cluster = 'ct-a'")
             cursor.execute("delete from waf_finding_client where cluster = 'ct-a'")
             connection.commit()
 
-    def test_findings_are_the_rule_set_s_and_the_counters_are_apart(self) -> None:
-        since = datetime(2026, 10, 10, tzinfo=UTC)
+    def counted(self, *scopes: db.CounterScope) -> dict[db.CounterScope, db.WafCounted]:
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
-            findings = db.waf_findings(connection, clusters=["ct-a"], since=since)
-            counted = db.waf_counted(connection, clusters=["ct-a"], since=since)
+            return db.waf_counted(connection, scopes=scopes, since=self.now - timedelta(days=1))
+
+    def test_findings_are_the_rule_set_s_and_the_counters_are_apart(self) -> None:
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            findings = db.waf_findings(
+                connection, clusters=["ct-a"], since=self.now - timedelta(days=1)
+            )
         self.assertEqual([row.rule_id for row in findings], [942100])
+
+    def test_each_exception_counts_within_its_field_and_paths(self) -> None:
+        root = db.CounterScope("ct-a", "shop", 342100, "ARGS:q", ("/",))
+        other = db.CounterScope("ct-a", "shop", 342100, "ARGS:q", ("/x",))
+        field = db.CounterScope("ct-a", "shop", 342100, "ARGS:q", ())
+        anything = db.CounterScope("ct-a", "shop", 342100, "", ())
+        found = self.counted(root, other, field, anything)
+        # The root also as `//`, which the counter counts.
+        self.assertEqual((found[root].requests, found[root].clients), (3, 2))
+        # The removed exception's matches on `/` stay off the one on `/x`.
+        self.assertEqual((found[other].requests, found[other].clients), (1, 1))
+        self.assertEqual((found[field].requests, found[field].clients), (4, 3))
+        self.assertEqual((found[anything].requests, found[anything].clients), (5, 3))
+        self.assertIsNotNone(found[root].last_seen)
+        self.assertEqual(self.counted(), {})
+
+    def test_only_a_counter_s_clients_carry_their_path(self) -> None:
+        with (
+            self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                "select rule_id, path from waf_finding_client where cluster = 'ct-a' "
+                "order by rule_id, path"
+            )
+            kept = cursor.fetchall()
+        self.assertIn((942100, ""), kept)
         self.assertEqual(
-            [(row.counter, row.field, row.requests, row.clients) for row in counted],
-            [(342100, "ARGS:q", 6, 2), (342100, "ARGS:z", 2, 1)],
+            sorted(path for rule, path in kept if rule == 342100), ["/", "/", "//", "/x"]
         )
-        self.assertEqual({row.clients_any_field for row in counted}, {2})
-        self.assertEqual(counted[0].last_seen, datetime(2026, 10, 11, 8, 5, tzinfo=UTC))
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

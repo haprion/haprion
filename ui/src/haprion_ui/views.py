@@ -10465,9 +10465,10 @@ def _waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> Wa
         verdicts = db.waf_verdicts(connection, clusters=chosen, since=since)
         request_count = db.waf_request_count(connection, clusters=chosen, since=since)
         #
-        # What each exception let through, as its counter counted it (B273).
+        # What each exception let through, as its counter counted it within
+        # what the exception covers (B273, review 26-10-11).
         #
-        counted = db.waf_counted(connection, clusters=chosen, since=since)
+        counted = db.waf_counted(connection, scopes=waf.counter_scopes(stored, rules), since=since)
         #
         # When each published exception that covers a finding reached the
         # nodes: the first deploy after it was made (26-10-11). Matches after
@@ -10477,7 +10478,7 @@ def _waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> Wa
         reached = {
             (cluster, moment): done
             for cluster, moments in waf.exception_moments(rows, stored).items()
-            for moment, done in db.first_deploys_after(
+            for moment, done in db.deploys_carrying(
                 connection, cluster=cluster, moments=sorted(moments)
             ).items()
         }

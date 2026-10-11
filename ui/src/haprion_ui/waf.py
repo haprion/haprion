@@ -25,6 +25,7 @@ from haprion.proxy_model import (
 )
 
 from haprion_ui import objects
+from haprion_ui.db import CounterScope, WafCounted
 from haprion_ui.preview import canonical_waf, canonical_waf_exception
 
 #
@@ -520,25 +521,52 @@ def _counters(published: Sequence[ObjectException]) -> dict[ObjectException, int
     return {e: counter for e, counter in zip(published, ids, strict=True) if counter is not None}
 
 
+def counter_scopes(
+    stored: Mapping[tuple[str, str], str], rules: Mapping[int, Any]
+) -> list[CounterScope]:
+    """What each published exception with a counter covers, for `db.waf_counted`.
+
+    A counter exists where the installed rule set defines the rule and the
+    object has a slot left for it on that rule (B273).
+    """
+
+    scopes = []
+    for key in sorted(stored):
+        published = object_exceptions(stored[key]) or ()
+        for exception, counter in _counters(published).items():
+            if exception.rule in rules:
+                scopes.append(_counter_scope(key, exception, counter))
+    return scopes
+
+
+def _counter_scope(key: tuple[str, str], exception: ObjectException, counter: int) -> CounterScope:
+    return CounterScope(
+        cluster=key[0],
+        object=key[1],
+        counter=counter,
+        field=exception.field,
+        paths=exception.paths,
+    )
+
+
 def build_exceptions(
     stored: Mapping[tuple[str, str], str],
     drafted: Mapping[tuple[str, str], str],
     rules: Mapping[int, Any],
     ineffective: Iterable[tuple[str, str, ObjectException]] = (),
-    counted: Iterable[Any] = (),
+    counted: Mapping[CounterScope, WafCounted] | None = None,
 ) -> list[ExceptionRow]:
     """Every exception the objects carry: the draft's where there is one, marked when unpublished.
 
     Marked too where its rule still matched after it reached the nodes
     (`ineffective_exceptions`): the row the person removes or changes it from.
-    And with what its counter counted (`db.waf_counted`, B273): the requests
-    the rule would have matched and the exception let through.
+    And with what its counter counted within what it covers (`db.waf_counted`,
+    B273): the requests the rule would have matched and the exception let
+    through.
     """
 
     failing = set(ineffective)
-    tallies: dict[tuple[str, str, int], list[Any]] = {}
-    for tally in counted:
-        tallies.setdefault((tally.cluster, tally.object, tally.counter), []).append(tally)
+    tallies = counted or {}
     rows = []
     for key in sorted(set(stored) | set(drafted)):
         published = object_exceptions(stored.get(key, "")) or ()
@@ -548,14 +576,10 @@ def build_exceptions(
             rule = rules.get(exception.rule)
             name, explanation = kind(exception.rule // 1000)
             counter = counters.get(exception) if rule is not None else None
-            mine = (
-                [
-                    tally
-                    for tally in tallies.get((key[0], key[1], counter), [])
-                    if not exception.field or tally.field == exception.field
-                ]
+            tally = (
+                tallies.get(_counter_scope(key, exception, counter))
                 if counter is not None
-                else []
+                else None
             )
             rows.append(
                 ExceptionRow(
@@ -571,13 +595,9 @@ def build_exceptions(
                     in_draft=exception not in published,
                     ineffective=(key[0], key[1], exception) in failing,
                     counted=counter is not None,
-                    requests=sum(tally.requests for tally in mine),
-                    clients=(
-                        (mine[0].clients if exception.field else mine[0].clients_any_field)
-                        if mine
-                        else 0
-                    ),
-                    last_seen=max((tally.last_seen for tally in mine), default=None),
+                    requests=tally.requests if tally is not None else 0,
+                    clients=tally.clients if tally is not None else 0,
+                    last_seen=tally.last_seen if tally is not None else None,
                 )
             )
     return rows

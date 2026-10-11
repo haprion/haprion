@@ -4332,78 +4332,109 @@ def waf_findings(
 # which count what was let through and are no finding.
 #
 WAF_RULE_FIRST = 900000
-WAF_COUNTER_FIRST = 300000
 
 
 @dataclass(frozen=True, slots=True)
-class WafCounted:
-    """What one exception's counter counted on one field (B273)."""
+class CounterScope:
+    """What one exception covers, as its counter is read (review 26-10-11).
+
+    Its counter's number is its place among the object's exceptions on the
+    same rule, so a number can pass to another exception when one is removed;
+    reading only within what this one covers - its field where it names one,
+    its paths where it names any - keeps another's matches off its row.
+    """
 
     cluster: str
     object: str
     counter: int
     field: str
+    paths: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class WafCounted:
+    """What one exception's counter counted within what it covers (B273)."""
+
     requests: int
     clients: int
-    last_seen: datetime
-    clients_any_field: int
-    """Distinct clients on any field of the counter, for an exception that names none."""
+    last_seen: datetime | None
+
+
+def _counted_paths(paths: Sequence[str]) -> list[str]:
+    """The paths as the collector stores them: the root also as `//`, which the counter counts."""
+
+    return sorted({*paths, *(("//",) if "/" in paths else ())})
 
 
 def waf_counted(
-    connection: Connection[Any], *, clusters: Sequence[str], since: datetime
-) -> list[WafCounted]:
-    """What each exception's counter counted since then, per object, counter and field."""
+    connection: Connection[Any], *, scopes: Sequence[CounterScope], since: datetime
+) -> dict[CounterScope, WafCounted]:
+    """What each exception's counter counted since then, within what the exception covers.
 
-    with connection.cursor(row_factory=class_row(WafCounted)) as cursor:
+    A path is compared as the collector stored it, the request's own path; one
+    the engine reached through normalising (`/a/./b`, an encoded letter) is
+    counted by the counter and left out here.
+    """
+
+    if not scopes:
+        return {}
+    listed = [
+        {
+            "id": index,
+            "cluster": scope.cluster,
+            "object": scope.object,
+            "counter": scope.counter,
+            "field": scope.field,
+            "paths": _counted_paths(scope.paths),
+        }
+        for index, scope in enumerate(scopes)
+    ]
+    with connection.cursor() as cursor:
         cursor.execute(
-            "with paths as ("
-            "  select cluster, object, rule_id, field, sum(requests)::int as requests, "
-            "         max(last_seen) as last_seen "
-            "    from waf_finding_path "
-            "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
-            "     and rule_id >= %(counters)s and rule_id < %(first)s "
-            "   group by cluster, object, rule_id, field"
-            "), clients as ("
-            "  select cluster, object, rule_id, field, "
-            "         count(distinct nullif(client, ''))::int as clients "
-            "    from waf_finding_client "
-            "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
-            "     and rule_id >= %(counters)s and rule_id < %(first)s "
-            "   group by cluster, object, rule_id, field"
-            "), anyone as ("
-            "  select cluster, object, rule_id, "
-            "         count(distinct nullif(client, ''))::int as clients "
-            "    from waf_finding_client "
-            "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
-            "     and rule_id >= %(counters)s and rule_id < %(first)s "
-            "   group by cluster, object, rule_id"
+            "with scope as ("
+            "  select * from jsonb_to_recordset(%(scopes)s) "
+            "    as s (id int, cluster text, object text, counter int, field text, paths text[])"
             ") "
-            "select paths.cluster, paths.object, paths.rule_id as counter, paths.field, "
-            "       paths.requests, coalesce(clients.clients, 0) as clients, paths.last_seen, "
-            "       coalesce(anyone.clients, 0) as clients_any_field "
-            "  from paths left join clients using (cluster, object, rule_id, field) "
-            "  left join anyone using (cluster, object, rule_id) "
-            " order by paths.cluster, paths.object, paths.rule_id, paths.field",
-            {
-                "clusters": list(clusters),
-                "since": since,
-                "counters": WAF_COUNTER_FIRST,
-                "first": WAF_RULE_FIRST,
-            },
+            "select scope.id, "
+            "  (select coalesce(sum(p.requests), 0)::int from waf_finding_path p "
+            "    where p.cluster = scope.cluster and p.object = scope.object "
+            "      and p.rule_id = scope.counter and p.hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "      and (scope.field = '' or p.field = scope.field) "
+            "      and (cardinality(scope.paths) = 0 or p.path = any(scope.paths))), "
+            "  (select count(distinct nullif(c.client, ''))::int from waf_finding_client c "
+            "    where c.cluster = scope.cluster and c.object = scope.object "
+            "      and c.rule_id = scope.counter and c.hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "      and (scope.field = '' or c.field = scope.field) "
+            "      and (cardinality(scope.paths) = 0 or c.path = any(scope.paths))), "
+            "  (select max(p.last_seen) from waf_finding_path p "
+            "    where p.cluster = scope.cluster and p.object = scope.object "
+            "      and p.rule_id = scope.counter and p.hour >= date_trunc('hour', %(since)s, 'UTC') "
+            "      and (scope.field = '' or p.field = scope.field) "
+            "      and (cardinality(scope.paths) = 0 or p.path = any(scope.paths))) "
+            "  from scope",
+            {"scopes": Jsonb(listed), "since": since},
         )
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+    return {
+        scopes[index]: WafCounted(requests=requests, clients=clients, last_seen=last_seen)
+        for index, requests, clients, last_seen in rows
+    }
 
 
-def first_deploys_after(
+def deploys_carrying(
     connection: Connection[Any], *, cluster: str, moments: Sequence[datetime]
 ) -> dict[datetime, datetime]:
-    """For each moment, when the cluster's first deploy created after it finished.
+    """For each moment something was saved, when a deploy carrying it finished.
 
-    A deploy, or a *Publish & deploy* (B257); `done` only, which is a deploy
-    whose every node took the release and reloaded the WAF engine. Asked by the
-    WAF page for when a published exception reached the nodes (26-10-11); a
-    moment no deploy has followed yet is left out.
+    The moment is when an exception was saved, which is not when it was
+    published: a deploy in between rolls out the version before it (review
+    26-10-11). So first the publish that took it - the first `changes_publish`
+    created after the moment, which publishes everything saved for the cluster
+    - and then the first deploy created after that publish finished, or that
+    publish itself where it deployed (*Publish & deploy*, B257). `done` only,
+    which is a deploy whose every node took the release and reloaded the WAF
+    engine. A moment no such deploy has followed yet is left out, as is one
+    published outside the job queue: unknown is not *Not working*.
     """
 
     if not moments:
@@ -4411,11 +4442,19 @@ def first_deploys_after(
     with connection.cursor() as cursor:
         cursor.execute(
             "select moment, ("
-            "  select min(finished_at) from job "
-            "   where cluster = %(cluster)s and created_at >= moment and state = 'done' "
-            "     and (operation = 'deploy' "
-            "          or (operation = 'changes_publish' and payload->>'deploy' = 'true'))"
-            ") from unnest(%(moments)s::timestamptz[]) as asked(moment)",
+            "  select min(deployed.finished_at) from job deployed "
+            "   where deployed.cluster = %(cluster)s and deployed.state = 'done' "
+            "     and ((deployed.operation = 'deploy' and deployed.created_at >= published.at) "
+            "          or (deployed.operation = 'changes_publish' "
+            "              and deployed.payload->>'deploy' = 'true' "
+            "              and deployed.created_at >= moment "
+            "              and deployed.finished_at >= published.at))"
+            ") from unnest(%(moments)s::timestamptz[]) as asked(moment) "
+            "cross join lateral ("
+            "  select min(finished_at) as at from job "
+            "   where cluster = %(cluster)s and state = 'done' "
+            "     and operation = 'changes_publish' and created_at >= moment"
+            ") published",
             {"cluster": cluster, "moments": list(moments)},
         )
         return {moment: done for moment, done in cursor.fetchall() if done is not None}

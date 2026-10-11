@@ -184,39 +184,35 @@ class WhatAnExceptionLetThrough(unittest.TestCase):
         "    - {rule: 941100, field: 'ARGS:z'}\n"
     )
 
-    def tally(self, counter: int, field: str, requests: int, clients: int, **values: Any) -> Any:
-        fields: dict[str, Any] = {
-            "cluster": "alpha",
-            "object": "shop",
-            "counter": counter,
-            "field": field,
-            "requests": requests,
-            "clients": clients,
-            "last_seen": SEEN,
-            "clients_any_field": 5,
-        }
-        fields.update(values)
-        return WafCounted(**fields)
-
-    def rows(self, *tallies: Any, draft: str | None = None) -> list[waf.ExceptionRow]:
+    def rows(
+        self, counted: dict[Any, WafCounted] | None = None, draft: str | None = None
+    ) -> list[waf.ExceptionRow]:
         drafted = {("alpha", "shop"): draft} if draft is not None else {}
-        return waf.build_exceptions({("alpha", "shop"): self.STORED}, drafted, CATALOG, (), tallies)
+        return waf.build_exceptions(
+            {("alpha", "shop"): self.STORED}, drafted, CATALOG, (), counted or {}
+        )
 
-    def test_each_exception_has_its_own_counter_and_field(self) -> None:
-        later = datetime(2026, 10, 2, 15, 0, tzinfo=UTC)
+    def test_each_counted_exception_is_asked_about_within_what_it_covers(self) -> None:
+        scopes = waf.counter_scopes({("alpha", "shop"): self.STORED}, CATALOG)
+        self.assertEqual(
+            [(scope.counter, scope.field, scope.paths) for scope in scopes],
+            # 941100 is not in the installed catalog here: no counter to ask.
+            [(342100, "ARGS:q", ("/search",)), (442100, "", ())],
+        )
+
+    def test_each_row_shows_what_its_own_scope_counted(self) -> None:
+        narrow_scope, whole_scope = waf.counter_scopes({("alpha", "shop"): self.STORED}, CATALOG)
         narrow, whole, unknown = self.rows(
-            self.tally(342100, "ARGS:q", 6, 2),
-            self.tally(342100, "ARGS:other", 9, 9),  # not the field it names
-            self.tally(442100, "ARGS:a", 3, 1),
-            self.tally(442100, "ARGS:b", 4, 2, last_seen=later),
-            self.tally(642100, "ARGS:q", 100, 100),  # a counter no exception has now
+            {
+                narrow_scope: WafCounted(requests=6, clients=2, last_seen=SEEN),
+                whole_scope: WafCounted(requests=7, clients=5, last_seen=None),
+            }
         )
         self.assertEqual(
             (narrow.counted, narrow.requests, narrow.clients, narrow.last_seen),
             (True, 6, 2, SEEN),
         )
-        # Every field, and its clients over all of them rather than summed.
-        self.assertEqual((whole.requests, whole.clients, whole.last_seen), (7, 5, later))
+        self.assertEqual((whole.requests, whole.clients), (7, 5))
         # A rule the installed rule set does not define has no counter.
         self.assertEqual((unknown.counted, unknown.requests), (False, 0))
 
@@ -224,7 +220,7 @@ class WhatAnExceptionLetThrough(unittest.TestCase):
         narrow = self.rows()[0]
         self.assertEqual((narrow.counted, narrow.requests, narrow.last_seen), (True, 0, None))
         draft = self.STORED + "    - {rule: 942100, field: 'ARGS:new'}\n"
-        added = self.rows(self.tally(642100, "ARGS:new", 4, 1), draft=draft)[-1]
+        added = self.rows(draft=draft)[-1]
         self.assertTrue(added.in_draft)
         self.assertFalse(added.counted)
 
@@ -298,7 +294,7 @@ class ThePage(EditorTestCase):
             ("haprion_ui.db.waf_findings", [finding()]),
             ("haprion_ui.db.waf_verdicts", {("alpha", "shop"): (14, 3)}),
             ("haprion_ui.db.waf_request_count", 1297),
-            ("haprion_ui.db.waf_counted", []),
+            ("haprion_ui.db.waf_counted", {}),
             ("haprion_ui.db.cluster_objects", objects(LOGGING)),
             ("haprion.crs.installed_catalog", CATALOG),
         ):
@@ -334,9 +330,7 @@ class ThePage(EditorTestCase):
         moment, deployed = AnExceptionThatDoesNotWork.MADE, AnExceptionThatDoesNotWork.DEPLOYED
         with (
             mock.patch("haprion_ui.db.cluster_objects", return_value=objects(stored)),
-            mock.patch(
-                "haprion_ui.db.first_deploys_after", return_value={moment: deployed}
-            ) as asked,
+            mock.patch("haprion_ui.db.deploys_carrying", return_value={moment: deployed}) as asked,
         ):
             client = self.editor()
             findings = client.get("/waf").text

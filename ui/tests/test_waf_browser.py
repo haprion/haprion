@@ -43,7 +43,7 @@ class TheAllowDialog(EditorTestCase):
             ("haprion_ui.db.waf_findings", [finding()]),
             ("haprion_ui.db.waf_verdicts", {("alpha", "shop"): (14, 3)}),
             ("haprion_ui.db.waf_request_count", 0),
-            ("haprion_ui.db.waf_counted", []),
+            ("haprion_ui.db.waf_counted", {}),
             ("haprion_ui.db.cluster_objects", objects(LOGGING)),
             ("haprion.crs.installed_catalog", CATALOG),
         ):

@@ -30,6 +30,7 @@ import unittest
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from haprion import cluster_settings
 from haprion.config import Vip
@@ -221,11 +222,26 @@ backends:
         """Each blocked address on one node, read as `haprion-node-status` reads it."""
 
         node_status = parsing()
-        counts = node_status["parse_blocked_tables"](self.runtime(node, "show table"))
-        entries = node_status["parse_blocked_entries"](
-            self.runtime(node, f"show table {block_tables(name)[1]}")
-        )
-        self.assertEqual(counts.get(name), len(entries))
+
+        def read() -> tuple[int | None, list[dict[str, Any]]]:
+            counts = node_status["parse_blocked_tables"](self.runtime(node, "show table"))
+            entries = node_status["parse_blocked_entries"](
+                self.runtime(node, f"show table {block_tables(name)[1]}")
+            )
+            return counts.get(name), entries
+
+        #
+        # Two questions to the socket, and a peer update may land between
+        # them (seen under the gate's load 26-10-11: count 0, one entry). The
+        # count and the entries must agree once the table is still, so they
+        # are read again until they do, and only never agreeing fails.
+        #
+        count, entries = read()
+        deadline = time.monotonic() + UNTIL
+        while count != len(entries) and time.monotonic() < deadline:
+            time.sleep(0.1)
+            count, entries = read()
+        self.assertEqual(count, len(entries))
         return {entry["address"]: entry["expires_in_ms"] for entry in entries}
 
     def get(self, node: str, source: str, path: str = "/", forwarded: str = "") -> int:

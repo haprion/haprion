@@ -159,11 +159,11 @@
   </table></div>{% endif %}
   <details class="editor-add">
     <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>Edit</summary>
-    <form method="post" action="/settings/status-access" class="form-grid status-access-form">
+    <form method="post" action="/settings/status-access" class="status-access-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label><span class="field-title">Addresses <span class="optional">(optional)</span></span><textarea name="networks" rows="{{ [status_access | length + 1, 3] | max }}" placeholder="192.0.2.10">{% for entry in status_access %}{{ entry.network }}
-{% endfor %}</textarea><small>One address or network per line. Empty switches it off.</small></label>
-      <div class="form-buttons"><button type="submit" class="secondary-button">Save</button></div>
+      <div class="form-grid"><label><span class="field-title">Addresses <span class="optional">(optional)</span></span><textarea name="networks" rows="{{ [status_access | length + 1, 3] | max }}" placeholder="192.0.2.10">{% for entry in status_access %}{{ entry.network }}
+{% endfor %}</textarea><small>One address or network per line. Empty switches it off.</small></label></div>
+      <div class="editor-actions editor-submit"><div class="form-buttons"><button type="submit" class="secondary-button">Save</button></div></div>
     </form>
   </details>
 </section>

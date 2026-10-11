@@ -153,7 +153,7 @@ def _stamp(moment: datetime | None) -> str | None:
     return moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _severity(tone: str) -> Severity | None:
+def _severity(tone: str | None) -> Severity | None:
     return tone if tone in ("critical", "warning") else None  # type: ignore[return-value]
 
 
@@ -257,14 +257,20 @@ def from_certificates(registry: Any, clusters: Iterable[Any]) -> list[Item]:
         for row in (*registry.certificates, registry.interface):
             if row is None or getattr(row, "placeholder", False):
                 continue
-            tones = [tone for tone in (row.tone, row.state_tone) if _severity(tone)]
+            #
+            # The interface's own certificate is served by the manager, not
+            # published to a target, so its row's state ("No targets") says
+            # nothing; only its expiry counts.
+            #
+            state_tone = None if row.interface else row.state_tone
+            tones = [tone for tone in (row.tone, state_tone) if _severity(tone)]
             if not tones:
                 continue
             severity: Severity = "critical" if "critical" in tones else "warning"
             parts = []
             if _severity(row.tone):
                 parts.append(_expires(row.expiry_label))
-            if _severity(row.state_tone):
+            if _severity(state_tone):
                 parts.append(row.state_label)
             items.append(
                 Item(

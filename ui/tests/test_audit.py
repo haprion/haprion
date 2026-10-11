@@ -153,6 +153,32 @@ class ThePage(LoginTestCase):
         self.assertIn("Queued a deploy (job 9)", page)
         self.assertIn('<td data-label="Where">alpha</td>', page)
 
+    def test_a_row_opens_its_detail_under_itself(self) -> None:
+        client = self.client()
+        self.sign_in(client)
+        rows = [
+            AuditEvent(
+                id=21,
+                at=AT,
+                actor="operator",
+                action="login",
+                cluster=None,
+                request_id=None,
+                detail={"client_ip": "192.0.2.10", "role": "admin"},
+            )
+        ]
+        with mock.patch("haprion_ui.db.audit_events", return_value=rows):
+            closed = client.get("/jobs?view=audit").text
+            opened = client.get("/jobs?view=audit&open=21").text
+
+        self.assertIn(
+            'data-href="/jobs?view=audit&amp;who=&amp;cluster=&amp;q=&amp;open=21"', closed
+        )
+        self.assertNotIn("registry-detail", closed)
+        self.assertIn("<strong>Address</strong><span>192.0.2.10</span>", opened)
+        self.assertIn("<strong>Role</strong><span>admin</span>", opened)
+        self.assertNotIn("tojson", opened)
+
     def test_a_reader_has_no_audit_view(self) -> None:
         self.account = replace(self.account, role="reader")
         client = self.client()

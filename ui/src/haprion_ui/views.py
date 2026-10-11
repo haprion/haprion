@@ -7496,6 +7496,8 @@ def build_router(config: Config) -> APIRouter:
         actor = query.get("who", "")[:255]
         cluster = query.get("cluster", "")[:32]
         search = query.get("q", "")[:200]
+        opened_raw = query.get("open", "")
+        opened = int(opened_raw) if opened_raw.isdigit() else None
         with request.app.state.pool.connection() as connection:
             events = db.audit_events(
                 connection,
@@ -7522,6 +7524,8 @@ def build_router(config: Config) -> APIRouter:
                 "events": shown,
                 "recent_jobs": recent,
                 "older": older,
+                "opened": opened,
+                "before": before,
                 "filters": {"who": actor, "cluster": cluster, "q": search},
                 "clusters": listed_clusters(request, config),
             },

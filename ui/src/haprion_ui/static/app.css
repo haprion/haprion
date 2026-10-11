@@ -1306,6 +1306,9 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
    at the same window. A fifth field starts the next row. Two below 900px and
    one on a phone, where four would be too narrow to type in. */
 .object-card .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.authority-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.authority-grid .authority-source { grid-column: span 2; }
+@media (max-width: 899px) { .authority-grid { grid-template-columns: minmax(0, 1fr); } .authority-grid .authority-source { grid-column: auto; } }
 .object-card .form-grid .field-wide { grid-column: 1 / -1; }
 /* Beside the last field rather than on a row of its own; the whole row where the grid is one column. */
 .object-card .form-grid .field-note { grid-column: span 3; }
@@ -2407,12 +2410,22 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .server-set-by { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 
 /* Events → Audit (B275): the filters on one line, a row's detail behind a disclosure. */
-.audit-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 0 0 16px; }
-.audit-filters label { display: grid; gap: 4px; }
-.audit-filters input, .audit-filters select { min-width: 160px; }
-.audit-detail { display: inline-block; margin-left: 8px; color: var(--text-secondary); }
-.audit-detail summary { cursor: pointer; font-size: 12px; }
-.audit-detail pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+/* Events -> Audit: the traffic log's filter row, and four columns of its own
+   rather than the job table's nine shares or .node-table's fixed widths. */
+.log-filters.audit-filters { grid-template-columns: minmax(130px, .7fr) minmax(160px, .8fr) minmax(240px, 1.6fr) auto auto; }
+@media (max-width: 1000px) { .log-filters.audit-filters { grid-template-columns: 1fr 1fr; } }
+.audit-table { table-layout: fixed; }
+.audit-table th:nth-child(1), .audit-table td:nth-child(1) { width: 160px; }
+.audit-table th:nth-child(2), .audit-table td:nth-child(2) { width: 170px; }
+.audit-table th:nth-child(3), .audit-table td:nth-child(3) { width: auto; }
+.audit-table th:nth-child(4), .audit-table td:nth-child(4) { width: 130px; }
+.audit-table td { padding-top: 7px; padding-bottom: 7px; overflow: hidden; text-overflow: ellipsis; }
+.audit-table time { font-variant-numeric: tabular-nums; }
+.audit-row { cursor: pointer; }
+.audit-table tbody tr.audit-open { background: var(--panel-soft); }
+.audit-table tbody tr.audit-detail:hover { background: transparent; }
+.audit-table tr.audit-open td { border-bottom: 0; }
+.audit-table .audit-detail td { padding: 4px 20px 14px; }
 
 /* Needs attention (B274): one row per thing, the link to where it is fixed at the end. */
 .attention-card { margin: 0 0 24px; }

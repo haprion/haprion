@@ -178,6 +178,39 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
 }
 
 
+#
+# What a detail key is called on the row's opened line. A key not here is
+# shown by its own name with the underscores spaced, so nothing recorded is
+# hidden.
+#
+FACT_LABELS: Mapping[str, str] = {
+    "client_ip": "Address",
+    "via": "Through",
+    "operation": "Job",
+    "networks": "Allowed",
+}
+
+
+def _fact_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, list):
+        return ", ".join(_fact_value(item) for item in value) or "—"
+    if isinstance(value, dict):
+        return ", ".join(f"{key} {_fact_value(item)}" for key, item in value.items()) or "—"
+    return str(value)
+
+
+def facts(detail: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    """The detail as label and value, for the line under an opened row."""
+
+    return tuple(
+        (FACT_LABELS.get(key, key.replace("_", " ").capitalize()), _fact_value(value))
+        for key, value in detail.items()
+        if value not in (None, "", [], {})
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AuditRow:
     id: int
@@ -188,7 +221,7 @@ class AuditRow:
     where: str
     job: int | None
     request_id: UUID | None
-    detail: Mapping[str, Any]
+    facts: tuple[tuple[str, str], ...]
 
 
 def who(event: AuditEvent, accounts: frozenset[str]) -> str:
@@ -231,7 +264,7 @@ def rows(events: Iterable[AuditEvent], accounts: frozenset[str]) -> tuple[AuditR
                 where=event.cluster or "—",
                 job=job if isinstance(job, int) else None,
                 request_id=event.request_id,
-                detail=detail,
+                facts=facts(detail),
             )
         )
     return tuple(built)

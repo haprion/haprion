@@ -51,9 +51,10 @@
       <label class="check"><input type="radio" name="import_kind" value="authority" data-kind-href="/certificates/import?kind=authority"{% if authority %} checked{% endif %}> <span><span class="method-name">CA certificate</span> <span class="optional">— for pools to verify against</span></span></label>
     </div>{% endif %}</header>
     {% if authority %}
-    <div class="form-grid">
+    {#- Four fixed columns, as the object form has: choosing the NDES CA hides the file and moves nothing. -#}
+    <div class="form-grid authority-grid">
       <label>Name<input name="name" value="{{ form.name }}" maxlength="255" placeholder="corp-root-ca" autocomplete="off" spellcheck="false" required autofocus><small>What the CA is called here; a pool's <em>Verify against a CA</em> names it. A CA's name replaces its file.</small></label>
-      <div class="field">
+      <div class="field authority-source">
         <span class="field-title">Source</span>
         <div class="method-choices" role="radiogroup" aria-label="Source">
           <label class="check"><input type="radio" name="source" value="upload" data-authority-source{% if form.source != 'ndes' or not choices.ndes_profiles %} checked{% endif %}> <span><span class="method-name">Upload</span> <span class="optional">— PEM, DER or PKCS#7, without a key</span></span></label>

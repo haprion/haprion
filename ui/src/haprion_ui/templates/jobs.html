@@ -11,6 +11,7 @@
 #}
 {% block head_extra %}{% if view == 'jobs' and jobs.active_count %}<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endblock %}
 {% block content %}
+{% if view == 'audit' %}<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script>{% endif %}
 <section class="page-heading">
   <div class="heading-title"><h1>Events</h1><p class="page-lede">{% if view == 'audit' %}Who did what, and where.{% else %}The newest management requests and their recorded outcome.{% endif %}</p></div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}</div>
@@ -28,24 +29,37 @@
 {% endif %}
 
 {% if view == 'audit' %}
-<form method="get" action="/jobs" class="audit-filters">
+{#
+  The traffic log's filter row and its table, so the record reads like the
+  other records (26-10-11). A row with more to say than its sentence opens
+  under itself, as a registry row does; the sentence's job link still goes to
+  the job.
+#}
+{% set kept = {'view': 'audit', 'who': filters.who, 'cluster': filters.cluster, 'q': filters.q} %}
+{% if before %}{% set _ = kept.update({'before': before}) %}{% endif %}
+<form class="log-filters audit-filters" method="get" action="/jobs">
   <input type="hidden" name="view" value="audit">
-  <label><span class="field-title">Who</span><input name="who" value="{{ filters.who }}" maxlength="255" autocomplete="off"></label>
-  <label><span class="field-title">Cluster</span><select name="cluster"><option value="">All</option>{% for name in clusters %}<option value="{{ name }}"{% if filters.cluster == name %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
-  <label><span class="field-title">Search</span><input type="search" name="q" value="{{ filters.q }}" maxlength="200" autocomplete="off"></label>
-  <div class="form-buttons"><button type="submit" class="secondary-button">Filter</button></div>
+  <label>Cluster<select name="cluster"><option value="">All clusters</option>{% for name in clusters %}<option value="{{ name }}"{% if filters.cluster == name %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+  <label>Who<input name="who" value="{{ filters.who }}" maxlength="255" autocomplete="off" spellcheck="false"></label>
+  <label>Search<input name="q" value="{{ filters.q }}" maxlength="200" autocomplete="off"></label>
+  <button class="secondary-button" type="submit">Filter</button><a class="text-link" href="/jobs?view=audit">Clear</a>
 </form>
-<div class="table-scroll job-table-wrap">
-  <table class="node-table job-table audit-table">
+<div class="table-scroll">
+  <table class="node-table audit-table">
     <thead><tr><th>Time</th><th>Who</th><th>What</th><th>Where</th></tr></thead>
     <tbody>
     {% for event in events %}
-      <tr>
+      {% set open = event.id == opened %}
+      {% set href = '/jobs?' ~ (kept if open else dict(kept, open=event.id)) | urlencode %}
+      <tr{% if event.facts %} class="audit-row{% if open %} audit-open{% endif %}" data-href="{{ href }}"{% endif %}>
         <td data-label="Time"><time datetime="{{ event.at.isoformat() }}">{{ event.shown_at }}</time></td>
         <td data-label="Who">{{ event.who }}</td>
-        <td data-label="What">{% if event.job and event.job in recent_jobs %}<a href="/jobs#job-{{ event.job }}">{{ event.what }}</a>{% else %}{{ event.what }}{% endif %}{% if event.detail %} <details class="job-diagnostics audit-detail"><summary>Details</summary><pre>{{ event.detail | tojson(indent=2) }}</pre></details>{% endif %}</td>
+        <td data-label="What" title="{{ event.what }}">{% if event.job and event.job in recent_jobs %}<a href="/jobs#job-{{ event.job }}">{{ event.what }}</a>{% else %}{{ event.what }}{% endif %}</td>
         <td data-label="Where">{{ event.where }}</td>
       </tr>
+      {% if open %}
+      <tr class="registry-detail audit-detail"><td colspan="4"><div class="registry-detail-grid">{% for label, value in event.facts %}<div><strong>{{ label }}</strong><span>{{ value }}</span></div>{% endfor %}</div></td></tr>
+      {% endif %}
     {% else %}
       <tr><td colspan="4"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>Nothing recorded</strong><span>{% if filters.who or filters.cluster or filters.q %}No event matches the filter.{% else %}Sign-ins, changes and queued jobs will appear here.{% endif %}</span></div></div></td></tr>
     {% endfor %}

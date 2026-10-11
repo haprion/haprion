@@ -110,6 +110,20 @@ class EachKindComesAndGoes(unittest.TestCase):
             [(item.subject, item.message) for item in items], [("shop.example.com", "4 days left")]
         )
 
+    def test_the_interface_certificate_counts_only_by_its_expiry(self) -> None:
+        row = SimpleNamespace(
+            identifier="mgr.example.com",
+            tone="healthy",
+            state_tone="warning",
+            expiry_label="in 300 days",
+            state_label="No targets",
+            interface=True,
+            placeholder=False,
+        )
+        registry = SimpleNamespace(certificates=(), interface=row, served=None)
+
+        self.assertEqual(attention.from_certificates(registry, ()), [])
+
     def test_the_worst_comes_first_and_the_counts_add_up(self) -> None:
         warning = attention.Item("waf", "warning", "alpha", "shop", "x", NOW, "/waf")
         critical = attention.Item("job", "critical", "alpha", "job 1", "y", NOW, "/jobs")

@@ -79,6 +79,7 @@ from starlette.templating import _TemplateResponse
 
 from haprion_ui import (
     advanced_dialog,
+    audit,
     auth,
     backups,
     blocked,
@@ -1783,6 +1784,7 @@ def build_router(config: Config) -> APIRouter:
         #
         figures = metrics.HTTP_FIGURES
         servers: server_card.ServerCard | None = None
+        server_set_by: dict[str, str] = {}
         proxy: proxy_model.Proxy | None = None
         if detail.stored is not None:
             try:
@@ -1801,6 +1803,25 @@ def build_router(config: Config) -> APIRouter:
                     current=detail.publication is not None and detail.publication.tone == "healthy",
                     sourced=written is not None and written.sourced,
                 )
+                #
+                # Who took a server out, and when (B275): the newest queue that
+                # asked for the state it is in now.
+                #
+                held = [
+                    (row.target, state)
+                    for row in (servers.rows if servers is not None else ())
+                    for state in ("drain", "maint")
+                    if any(cell.label.startswith(state.upper()) for cell in row.cells)
+                ]
+                if held:
+                    with request.app.state.pool.connection() as connection:
+                        asked = audit.set_by(
+                            db.server_state_events(connection, cluster=cluster, object_name=name)
+                        )
+                    for target, state in held:
+                        found = asked.get((target, state))
+                        if found is not None and target not in server_set_by:
+                            server_set_by[target] = f"Set by {found.actor} · {found.shown_at}"
             if proxy is not None:
                 #
                 # One card per backend the object has now, each reading the
@@ -1945,6 +1966,7 @@ def build_router(config: Config) -> APIRouter:
             {
                 "dns_moved": moved,
                 "servers": servers,
+                "server_set_by": server_set_by,
                 "servers_notice": SERVER_NOTICES.get(request.query_params.get("servers", "")),
                 "servers_busy": servers_busy,
                 "blocked_busy": blocked_busy,
@@ -7347,14 +7369,21 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
+        #
+        # *Events* (B275): the jobs, and for an admin the rest of the record.
+        #
+        if request.query_params.get("view") == "audit" and session.role == "admin":
+            return _audit_page(request, session, token)
         with request.app.state.pool.connection() as connection:
+            listed = db.recent_jobs(connection)
+            queued_by = db.requested_by(connection, [row.request_id for row in listed])
             #
             # The cluster readings decide whether a job's follow-up line is
             # still true, so they are read here rather than the job rows being
             # trusted to describe the present on their own.
             #
             overview = jobs.build_job_overview(
-                db.recent_jobs(connection),
+                listed,
                 awaiting=jobs.awaiting_deployment(db.cluster_statuses(connection)),
                 #
                 # The contract withholds raw stderr from a reader role, and only
@@ -7364,6 +7393,10 @@ def build_router(config: Config) -> APIRouter:
                 #
                 diagnostics=session.role == "admin",
             )
+        by_job = {row.id: queued_by.get(row.request_id, "") for row in listed}
+        overview = replace(
+            overview, jobs=tuple(replace(job, by=by_job.get(job.id, "")) for job in overview.jobs)
+        )
         return TEMPLATES.TemplateResponse(
             request,
             "jobs.html",
@@ -7374,6 +7407,47 @@ def build_router(config: Config) -> APIRouter:
                 "jobs": overview,
                 "management_writes": config.management_writes,
                 "section": "jobs",
+                "view": "jobs",
+            },
+        )
+
+    def _audit_page(request: Request, session: AuthenticatedSession, token: str) -> Response:
+        """Everything else the record holds, newest first, fifty at a time (B275)."""
+
+        query = request.query_params
+        before_raw = query.get("before", "")
+        before = int(before_raw) if before_raw.isdigit() else None
+        actor = query.get("who", "")[:255]
+        cluster = query.get("cluster", "")[:32]
+        search = query.get("q", "")[:200]
+        with request.app.state.pool.connection() as connection:
+            events = db.audit_events(
+                connection,
+                before_id=before,
+                limit=AUDIT_PAGE + 1,
+                actor=actor,
+                cluster=cluster,
+                search=search,
+            )
+            accounts = db.account_names(connection)
+            recent = {job.id for job in db.recent_jobs(connection, limit=200)}
+        shown = audit.rows(events[:AUDIT_PAGE], accounts)
+        older = shown[-1].id if len(events) > AUDIT_PAGE and shown else None
+        return TEMPLATES.TemplateResponse(
+            request,
+            "jobs.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "management_writes": config.management_writes,
+                "section": "jobs",
+                "view": "audit",
+                "events": shown,
+                "recent_jobs": recent,
+                "older": older,
+                "filters": {"who": actor, "cluster": cluster, "q": search},
+                "clusters": listed_clusters(request, config),
             },
         )
 
@@ -9132,6 +9206,12 @@ def _removal_bookkeeping(
         and view.runtime_backends is not None
     }
     return {"removed_backends": written} if written else {}
+
+
+#
+# How many rows *Audit* shows at a time; older ones are a link away (B275).
+#
+AUDIT_PAGE = 50
 
 
 @dataclass(frozen=True, slots=True)

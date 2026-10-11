@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}Jobs — Haprion{% endblock %}
+{% block title %}Events — Haprion{% endblock %}
 {#
   Reloads only while something is queued or running, and stops on its own once
   nothing is. A page that reloaded forever would close the diagnostics somebody
@@ -9,12 +9,51 @@
   job's id; the meta refresh is the fallback inside <noscript>, for a browser
   with JavaScript turned off.
 #}
-{% block head_extra %}{% if jobs.active_count %}<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endblock %}
+{% block head_extra %}{% if view == 'jobs' and jobs.active_count %}<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div class="heading-title"><h1>Jobs</h1><p class="page-lede">The newest management requests and their recorded outcome.</p></div>
+  <div class="heading-title"><h1>Events</h1><p class="page-lede">{% if view == 'audit' %}Who did what, and where.{% else %}The newest management requests and their recorded outcome.{% endif %}</p></div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}</div>
 </section>
+{#
+  Two views, as Certificates has (B275): the jobs, and for an admin the rest
+  of the record. A reader has one view, and a switch offering one choice is
+  furniture.
+#}
+{% if role == 'admin' %}
+<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges certificate-views" aria-label="Event views">
+  <a href="/jobs"{% if view == 'jobs' %} class="is-current" aria-current="true"{% endif %}><span>Jobs</span><span class="segment-reserve" aria-hidden="true">Jobs</span></a>
+  <a href="/jobs?view=audit"{% if view == 'audit' %} class="is-current" aria-current="true"{% endif %}><span>Audit</span><span class="segment-reserve" aria-hidden="true">Audit</span></a>
+</nav></div>
+{% endif %}
+
+{% if view == 'audit' %}
+<form method="get" action="/jobs" class="audit-filters">
+  <input type="hidden" name="view" value="audit">
+  <label><span class="field-title">Who</span><input name="who" value="{{ filters.who }}" maxlength="255" autocomplete="off"></label>
+  <label><span class="field-title">Cluster</span><select name="cluster"><option value="">All</option>{% for name in clusters %}<option value="{{ name }}"{% if filters.cluster == name %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+  <label><span class="field-title">Search</span><input type="search" name="q" value="{{ filters.q }}" maxlength="200" autocomplete="off"></label>
+  <div class="form-buttons"><button type="submit" class="secondary-button">Filter</button></div>
+</form>
+<div class="table-scroll job-table-wrap">
+  <table class="node-table job-table audit-table">
+    <thead><tr><th>Time</th><th>Who</th><th>What</th><th>Where</th></tr></thead>
+    <tbody>
+    {% for event in events %}
+      <tr>
+        <td data-label="Time"><time datetime="{{ event.at.isoformat() }}">{{ event.shown_at }}</time></td>
+        <td data-label="Who">{{ event.who }}</td>
+        <td data-label="What">{% if event.job and event.job in recent_jobs %}<a href="/jobs#job-{{ event.job }}">{{ event.what }}</a>{% else %}{{ event.what }}{% endif %}{% if event.detail %} <details class="job-diagnostics audit-detail"><summary>Details</summary><pre>{{ event.detail | tojson(indent=2) }}</pre></details>{% endif %}</td>
+        <td data-label="Where">{{ event.where }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>Nothing recorded</strong><span>{% if filters.who or filters.cluster or filters.q %}No event matches the filter.{% else %}Sign-ins, changes and queued jobs will appear here.{% endif %}</span></div></div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if older %}<p class="table-note"><a href="/jobs?{{ {'view': 'audit', 'before': older, 'who': filters.who, 'cluster': filters.cluster, 'q': filters.q} | urlencode }}">Older events</a></p>{% endif %}
+{% else %}
 
 <section class="metric-grid activity-summary" aria-label="Job summary">
   <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h12M12 7l5 5-5 5"></path><circle cx="5" cy="12" r="2"></circle></svg></span><div><strong>{{ jobs.active_count }}</strong><span>Active</span><small>Queued or running</small></div></article>
@@ -23,12 +62,13 @@
 
 <div class="table-scroll job-table-wrap">
   <table class="node-table job-table">
-    <thead><tr><th>Operation</th><th>Cluster</th><th>State</th><th>Requested</th><th>Started</th><th>Finished</th><th>Outcome</th><th>Exit</th></tr></thead>
+    <thead><tr><th>Operation</th><th>Cluster</th><th>By</th><th>State</th><th>Requested</th><th>Started</th><th>Finished</th><th>Outcome</th><th>Exit</th></tr></thead>
     <tbody>
     {% for job in jobs.jobs %}
       <tr id="job-{{ job.id }}">
         <td data-label="Operation" title="Job {{ job.id }}">{% if job.link %}<a href="{{ job.link }}">{{ job.operation }}</a>{% else %}{{ job.operation }}{% endif %}</td>
         <td data-label="Cluster"><strong>{{ job.cluster }}</strong></td>
+        <td data-label="By">{{ job.by or '—' }}</td>
         <td data-label="State"><span class="status-badge status-badge-{{ job.tone }}">{{ job.state_label }}</span></td>
         <td data-label="Requested"><time datetime="{{ job.requested_iso }}" title="{{ job.requested_at }}">{{ job.requested }}</time></td>
         <td data-label="Started">{{ job.started }}</td>
@@ -44,7 +84,7 @@
           where the cluster's state is. A reader who may press nothing anywhere
           is still told the command.
         #}
-        <td colspan="8">
+        <td colspan="9">
           <div class="follow-up-line">
             <span><span class="status-dot status-warning" aria-hidden="true"></span>{{ job.follow_up }}</span>
             {% if not (management_writes and role == 'admin') and job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
@@ -54,7 +94,7 @@
       {% endif %}
       {% if job.note %}
       <tr class="job-follow-up job-note">
-        <td colspan="8"><div class="follow-up-line"><span><span class="status-dot status-info" aria-hidden="true"></span>{{ job.note }}</span></div></td>
+        <td colspan="9"><div class="follow-up-line"><span><span class="status-dot status-info" aria-hidden="true"></span>{{ job.note }}</span></div></td>
       </tr>
       {% endif %}
       {#
@@ -64,7 +104,7 @@
       #}
       {% if job.error_code or job.diagnostics or job.state in ('failed', 'blocked', 'unknown', 'partial') %}
       <tr class="job-follow-up job-failure">
-        <td colspan="8">
+        <td colspan="9">
           {% if not job.error_code %}<span class="status-dot status-{{ job.tone }}" aria-hidden="true"></span><span>Job {{ job.id }}</span>{% endif %}
           {% if job.error_code %}<span class="status-dot status-critical" aria-hidden="true"></span><span>Job {{ job.id }} · Reason:</span> <code>{{ job.error_code }}</code>{% if job.error_message %} <span class="job-error-message">— {{ job.error_message }}</span>{% endif %}{% endif %}
           {% if job.diagnostics %}<details class="job-diagnostics" data-keep="job-{{ job.id }}"><summary>Diagnostics</summary><pre>{{ job.diagnostics }}</pre></details>{% endif %}
@@ -72,9 +112,10 @@
       </tr>
       {% endif %}
     {% else %}
-      <tr><td colspan="8"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>No jobs yet</strong><span>New management requests will appear here.</span></div></td></tr>
+      <tr><td colspan="9"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>No jobs yet</strong><span>New management requests will appear here.</span></div></td></tr>
     {% endfor %}
     </tbody>
   </table>
 </div>
+{% endif %}
 {% endblock %}

@@ -2402,3 +2402,14 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .allow-dialog .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .allow-dialog .allow-reason { margin-top: 14px; }
 .allow-dialog .allow-reason input { flex: 1; min-width: 0; }
+
+/* Who took a server out, beside it on the Servers card (B275). */
+.server-set-by { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+
+/* Events → Audit (B275): the filters on one line, a row's detail behind a disclosure. */
+.audit-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 0 0 16px; }
+.audit-filters label { display: grid; gap: 4px; }
+.audit-filters input, .audit-filters select { min-width: 160px; }
+.audit-detail { display: inline-block; margin-left: 8px; color: var(--text-secondary); }
+.audit-detail summary { cursor: pointer; font-size: 12px; }
+.audit-detail pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }

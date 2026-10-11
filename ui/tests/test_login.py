@@ -164,6 +164,15 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.discard_cluster_change"),
             mock.patch("haprion_ui.db.change_publishes", return_value=[]),
             mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
+            #
+            # Events (B275): nobody queued anything, the record is empty, and
+            # no server state was ever asked for. A test about one of them
+            # patches it itself.
+            #
+            mock.patch("haprion_ui.db.requested_by", return_value={}),
+            mock.patch("haprion_ui.db.audit_events", return_value=[]),
+            mock.patch("haprion_ui.db.account_names", return_value=frozenset()),
+            mock.patch("haprion_ui.db.server_state_events", return_value=[]),
             # Every cluster read through since its last job (0068).
             mock.patch("haprion_ui.db.clusters_catching_up", return_value=[]),
             #

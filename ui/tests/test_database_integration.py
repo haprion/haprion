@@ -1022,6 +1022,63 @@ class ARealDatabase(unittest.TestCase):
         ):
             db.begin_cluster_pass(connection, "passa")
 
+    def test_the_web_reads_the_record_backwards_and_by_filter(self) -> None:
+        """B275: Audit's page, the job's queuer, a drain's setter, and the names that exist."""
+
+        from haprion_ui import auth
+
+        request = uuid4()
+        marker = f"audit-probe-{uuid4().hex[:8]}"
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            for actor, action, cluster, request_id, detail in (
+                (marker, "login", None, None, {"client_ip": "192.0.2.10"}),
+                (marker, "queue_job", "alpha", request, {"operation": "deploy", "job": 1}),
+                (
+                    marker,
+                    "queue_job",
+                    "alpha",
+                    None,
+                    {
+                        "operation": "server_state",
+                        "object": marker,
+                        "state": "drain",
+                        "servers": ["192.0.2.10:8080"],
+                    },
+                ),
+                ("worker", "job_finished", "alpha", request, {"job": 1}),
+            ):
+                db.record_audit_event(
+                    connection,
+                    actor=actor,
+                    action=action,
+                    cluster=cluster,
+                    request_id=request_id,
+                    detail=detail,
+                )
+            connection.commit()
+            mine = db.audit_events(connection, actor=marker)
+            in_alpha = db.audit_events(connection, actor=marker, cluster="alpha")
+            searched = db.audit_events(connection, search="192.0.2.10:8080")
+            page = db.audit_events(connection, actor=marker, limit=1)
+            older = db.audit_events(connection, actor=marker, before_id=page[0].id)
+            queued = db.requested_by(connection, [request, uuid4()])
+            drains = db.server_state_events(connection, cluster="alpha", object_name=marker)
+        self.assertEqual([event.action for event in mine], ["queue_job", "queue_job", "login"])
+        self.assertEqual(len(in_alpha), 2)
+        self.assertTrue(any(event.actor == marker for event in searched))
+        self.assertEqual([event.action for event in older], ["queue_job", "login"])
+        self.assertEqual(queued, {request: marker})
+        self.assertEqual([event.detail["state"] for event in drains], ["drain"])
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into app_user (username, password_hash, role) values (%s, %s, 'reader')",
+                (marker.upper(), auth.hash_password("a long enough password")),
+            )
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertIn(marker, db.account_names(connection))
+
     def test_worker_can_read_jobs_but_not_accounts(self) -> None:
         with (
             self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection,

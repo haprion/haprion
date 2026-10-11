@@ -51,6 +51,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [A basic log viewer, on purpose](#a-basic-log-viewer-on-purpose)
   - [Sending the traffic log elsewhere, and metrics](#sending-the-traffic-log-elsewhere-and-metrics)
 - [Jobs and status freshness](#jobs-and-status-freshness)
+  - [Events: jobs and the audit record](#events-jobs-and-the-audit-record)
   - [How often status is refreshed](#how-often-status-is-refreshed)
   - [The worker](#the-worker)
 - [Maintenance](#maintenance)
@@ -2366,6 +2367,21 @@ process, not per pool. dnsdist's counters are read on the node and are not part
 of HAProxy's exporter, so a dashboard reading the exporter does not see them.
 
 ## Jobs and status freshness
+
+### Events: jobs and the audit record
+
+*Events* has two views. **Jobs** lists the newest jobs, their outcome and diagnostics, and *By*:
+who queued each one, from the record. **Audit**, for an admin only, is the rest of the record,
+newest first and fifty at a time: sign-ins and failed attempts, account and role changes, password
+changes, the identity provider, feature switches, key exports, saved and discarded changes and
+drafts, and every queued job with a link to it while the job is still listed. Each row is one
+sentence, with the stored detail behind *Details*; filter by who, cluster or a word (a search reaches
+back 90 days). A failed sign-in under a name no account has shows as *unknown user* and never the
+name typed, which may have been a password. The record is append-only and kept: no role may change
+or delete a row, and retention leaves it alone.
+
+On an object's *Servers* card, a server in drain or maintenance says *Set by <name> · <time>*: the
+newest request that asked for the state it is in.
 
 ### How often status is refreshed
 

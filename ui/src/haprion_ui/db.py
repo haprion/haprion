@@ -1404,6 +1404,115 @@ def revoke_sessions_for_user(connection: Connection[Any], user_id: int) -> int:
         return cursor.rowcount
 
 
+@dataclass(frozen=True, slots=True)
+class AuditEvent:
+    """One row of the record, as *Audit* and the Servers card read it (B275)."""
+
+    id: int
+    at: datetime
+    actor: str | None
+    action: str
+    cluster: str | None
+    request_id: UUID | None
+    detail: dict[str, Any]
+
+
+#
+# What the worker writes about jobs it ran; their outcome is the Jobs view's,
+# so *Audit* leaves them out (B275).
+#
+JOB_EVENTS = ("job_finished", "job_requeued", "job_abandoned")
+#
+# How far back a free-text search reaches: `detail::text` cannot use an
+# index, and a search that read the whole record would slow every page that
+# shares the database (B275).
+#
+AUDIT_SEARCH_WINDOW_DAYS = 90
+
+
+def audit_events(
+    connection: Connection[Any],
+    *,
+    before_id: int | None = None,
+    limit: int = 50,
+    actor: str = "",
+    cluster: str = "",
+    search: str = "",
+    excluded: Sequence[str] = JOB_EVENTS,
+) -> list[AuditEvent]:
+    """The record, newest first, a page at a time backwards from `before_id` (B275)."""
+
+    with connection.cursor(row_factory=class_row(AuditEvent)) as cursor:
+        cursor.execute(
+            "select id, at, actor, action, cluster, request_id, detail "
+            "  from audit_event "
+            " where (%(before)s::bigint is null or id < %(before)s) "
+            "   and not action = any(%(excluded)s) "
+            "   and (%(actor)s = '' or actor = %(actor)s) "
+            "   and (%(cluster)s = '' or cluster = %(cluster)s) "
+            "   and (%(search)s = '' or ("
+            "        at > statement_timestamp() - make_interval(days => %(window)s) "
+            "        and (actor ilike %(like)s or action ilike %(like)s "
+            "             or detail::text ilike %(like)s))) "
+            " order by id desc "
+            " limit %(limit)s",
+            {
+                "before": before_id,
+                "excluded": list(excluded),
+                "actor": actor,
+                "cluster": cluster,
+                "search": search,
+                "like": _like_pattern(search),
+                "window": AUDIT_SEARCH_WINDOW_DAYS,
+                "limit": max(1, min(limit, 500)),
+            },
+        )
+        return cursor.fetchall()
+
+
+def requested_by(connection: Connection[Any], request_ids: Collection[UUID]) -> dict[UUID, str]:
+    """Who queued each of these jobs, from the `queue_job` row beside it (B275)."""
+
+    if not request_ids:
+        return {}
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select distinct on (request_id) request_id, actor "
+            "  from audit_event "
+            " where action = 'queue_job' and request_id = any(%(ids)s) and actor is not null "
+            " order by request_id, id",
+            {"ids": list(request_ids)},
+        )
+        return {row[0]: row[1] for row in cursor.fetchall()}
+
+
+def account_names(connection: Connection[Any]) -> frozenset[str]:
+    """Every account's name, lowercased: what tells a known name from a typed one (B275)."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select username_normalised from app_user")
+        return frozenset(str(row[0]) for row in cursor.fetchall())
+
+
+def server_state_events(
+    connection: Connection[Any], *, cluster: str, object_name: str, limit: int = 200
+) -> list[AuditEvent]:
+    """The newest drains, maintenances and readies queued for one object's servers (B275)."""
+
+    with connection.cursor(row_factory=class_row(AuditEvent)) as cursor:
+        cursor.execute(
+            "select id, at, actor, action, cluster, request_id, detail "
+            "  from audit_event "
+            " where cluster = %(cluster)s and action = 'queue_job' "
+            "   and detail->>'operation' = 'server_state' "
+            "   and detail->>'object' = %(object)s "
+            " order by id desc "
+            " limit %(limit)s",
+            {"cluster": cluster, "object": object_name, "limit": limit},
+        )
+        return cursor.fetchall()
+
+
 def record_audit_event(
     connection: Connection[Any],
     *,

@@ -63,6 +63,11 @@ class JobView:
     follow_up: str | None = None
     next_command: str | None = None
     #
+    # Who queued it (B275), from the `queue_job` row beside it; empty for a
+    # job nobody queued from the interface.
+    #
+    by: str = ""
+    #
     # Verbatim, never translated. A table mapping codes to friendlier sentences
     # would be a second place that has to stay in step with the contract - the
     # same drift `EXIT_MEANINGS` already documents one instance of - and the

@@ -2,6 +2,7 @@
 {% block title %}Dashboard — Haprion{% endblock %}
 {% block head_extra %}{% if live_seconds %}<meta name="haproxy-live" content="{{ live_seconds }}">{% endif %}{% endblock %}
 {% block content %}
+{% from "_network-change.html" import network_change %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <script defer src="{{ url_for('static', path='/dialogs.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
@@ -167,7 +168,7 @@
         <div class="publish-dialog-body">
           <h3>Publish &amp; deploy {{ cluster.cluster }}</h3>
           <ul class="publish-list">
-            {% for row in package.rows %}<li><a class="proxy-link" href="{{ row.link }}"><strong>{{ row.name }}</strong></a><span>{{ row.what }}</span></li>{% endfor %}
+            {% for row in package.rows %}<li><a class="proxy-link" href="{{ row.link }}"><strong>{{ row.name }}</strong></a><span>{{ row.what }}</span></li>{% for change in row.details %}<li class="publish-detail">{{ network_change(change, cluster.cluster) }}</li>{% endfor %}{% endfor %}
           </ul>
           <form method="post" action="/history/{{ cluster.cluster }}/publish" class="form-grid" data-keep="publish-{{ cluster.cluster }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

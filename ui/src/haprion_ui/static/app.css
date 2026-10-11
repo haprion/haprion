@@ -1708,6 +1708,11 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .publish-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 12px; padding: 8px 4px; border-bottom: 1px solid var(--line); }
 .publish-list li > a { min-width: 0; overflow-wrap: anywhere; }
 .publish-list li > span { flex: none; color: var(--text-secondary); }
+/* What a saved network description changes, under its row (B277). */
+.publish-list li.publish-detail { justify-content: flex-start; padding: 4px 4px 4px 20px; color: var(--text-secondary); }
+.publish-list li.publish-detail > span { flex: 0 1 auto; }
+.publish-detail-name { color: var(--text); }
+.pending-detail td { padding-left: 28px; color: var(--text-secondary); }
 .publish-dialog .form-grid { grid-template-columns: minmax(0, 1fr); padding: 0; }
 .publish-dialog .form-actions { flex-wrap: wrap; }
 .network-subhead {

@@ -127,6 +127,26 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertNotIn("<strong>console</strong>", text)
         self.assertIn(">Publish 2 changes</button>", text)
 
+    def test_a_network_change_says_what_it_touches(self) -> None:
+        """B277: a line per VIP, source and group the saved description changes."""
+
+        self.cluster_changes = {"network": saved("network", WIDER, cluster="alpha")}
+
+        text = self.page(self.editor())
+
+        self.assertIn('<span class="publish-detail-name">VIP main</span> <span>removed', text)
+        self.assertIn('<span class="publish-detail-name">VIP public</span> <span>added', text)
+        self.assertIn('<span class="publish-detail-name">Group office</span>', text)
+
+    def test_the_settings_row_says_it_reaches_every_object(self) -> None:
+        self.cluster_changes = {
+            "settings": saved("settings", "metrics: null\n", cluster="alpha", revision=4)
+        }
+
+        text = self.page(self.editor())
+
+        self.assertIn("applies to every object on the cluster", text)
+
     def test_nothing_saved_draws_no_list(self) -> None:
         self.assertNotIn("Pending changes", self.page(self.editor()))
 

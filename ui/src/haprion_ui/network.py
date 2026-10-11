@@ -271,6 +271,91 @@ def usage(views: Iterable[Any]) -> Usage:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class NetworkChange:
+    """One VIP, source or group a saved network description changes, and who uses it (B277).
+
+    The users are the published objects', counted with *Used by*'s own rule:
+    what changes is what they run on now. `refused` is a removal of something
+    an object names, which the generator refuses at publish.
+    """
+
+    kind: Literal["vip", "source", "group"]
+    name: str
+    what: str
+    users: tuple[str, ...]
+    #
+    # What the proxy listing is narrowed by to show the users: the VIP's
+    # name, the source's address, the group's name - as *Used by* links.
+    #
+    match: str
+    refused: bool = False
+
+    @property
+    def label(self) -> str:
+        return {"vip": "VIP", "source": "Source", "group": "Group"}[self.kind] + f" {self.name}"
+
+
+def _keyed(result: Mapping[str, Any], key: str) -> dict[str, Mapping[str, Any]]:
+    return {row["name"]: row for row in _rows(result, key) if isinstance(row.get("name"), str)}
+
+
+def changes(
+    published: Mapping[str, Any], saved: Mapping[str, Any], use: Usage
+) -> tuple[NetworkChange, ...]:
+    """What a saved network description changes against the published one, by name (B277).
+
+    Both in the reading's shape (`result_from_document` gives the saved one).
+    A VIP's own source is the VIP's change - it is edited in the VIP's row
+    and used by the VIP's objects.
+    """
+
+    found: list[NetworkChange] = []
+    before, after = _keyed(published, "vips"), _keyed(saved, "vips")
+    default_before, default_after = published.get("default_vip"), saved.get("default_vip")
+    for name in sorted(before.keys() | after.keys()):
+        users = use.vips.get(name, ())
+        if name not in after:
+            found.append(NetworkChange("vip", name, "removed", users, name, bool(users)))
+            continue
+        if name not in before:
+            found.append(NetworkChange("vip", name, "added", (), name))
+            continue
+        what = [
+            label
+            for field, label in (
+                ("address", "address changed"),
+                ("source", "source changed"),
+                ("tls", "TLS policy changed"),
+            )
+            if before[name].get(field) != after[name].get(field)
+        ]
+        if default_before != default_after and name == default_after:
+            what.append("made the default")
+        if what:
+            found.append(NetworkChange("vip", name, ", ".join(what), users, name))
+    before, after = _keyed(published, "sources"), _keyed(saved, "sources")
+    for name in sorted(before.keys() | after.keys()):
+        address = str((before.get(name) or after.get(name) or {}).get("address") or "")
+        users = use.sources.get(address, ()) if name in before else ()
+        if name not in after:
+            found.append(NetworkChange("source", name, "removed", users, address, bool(users)))
+        elif name not in before:
+            found.append(NetworkChange("source", name, "added", (), address))
+        elif before[name].get("address") != after[name].get("address"):
+            found.append(NetworkChange("source", name, "address changed", users, address))
+    before, after = _keyed(published, "groups"), _keyed(saved, "groups")
+    for name in sorted(before.keys() | after.keys()):
+        users = use.groups.get(name, ())
+        if name not in after:
+            found.append(NetworkChange("group", name, "removed", users, name, bool(users)))
+        elif name not in before:
+            found.append(NetworkChange("group", name, "added", (), name))
+        elif list(before[name].get("members") or ()) != list(after[name].get("members") or ()):
+            found.append(NetworkChange("group", name, "members changed", users, name))
+    return tuple(found)
+
+
 def _text(value: Any, fallback: str = "—") -> str:
     return value if isinstance(value, str) and value else fallback
 

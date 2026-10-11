@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}Versions — Haprion{% endblock %}
 {% block content %}
+{% from "_network-change.html" import network_change %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <script defer src="{{ url_for('static', path='/versions.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
@@ -34,6 +35,7 @@
       <div class="table-scroll"><table class="node-table pending-table"><thead><tr><th>Change</th><th>What</th><th>Saved by</th><th>Saved</th></tr></thead><tbody>
         {% for row in package.rows %}
         <tr{% if row.stale %} class="pending-stale"{% endif %} data-href="{{ row.link }}"><td data-label="Change"><a class="proxy-link" href="{{ row.link }}"><strong>{{ row.name }}</strong></a></td><td data-label="What">{% if row.stale %}<span class="status-badge status-badge-critical">Saved against an older version</span>{% else %}{{ row.what }}{% endif %}</td><td data-label="Saved by">{{ row.updated_by }}</td><td data-label="Saved"><time datetime="{{ row.updated_at.isoformat() }}" title="{{ row.updated_at | shown_at }}">{{ (row.updated_at | shown).strftime('%Y-%m-%d %H:%M') }}</time></td></tr>
+        {% for change in row.details %}<tr class="pending-detail"><td data-label="Change" colspan="4">{{ network_change(change, package.cluster) }}</td></tr>{% endfor %}
         {% endfor %}
       </tbody></table></div>
       {% if package.problem %}

@@ -1,0 +1,9 @@
+{#
+  One line under a saved network description (B277): what changes, and the
+  published objects that use it - one by name, more as a count that opens the
+  proxy listing narrowed to them, as *Used by* on Network does. A removal of
+  something an object names says that the publish will be refused.
+#}
+{% macro network_change(change, cluster) -%}
+<span class="publish-detail-name">{{ change.label }}</span> <span>{{ change.what }}{% if change.users %} · used by {% if change.users | length == 1 %}<a href="/proxies/{{ cluster }}/{{ change.users[0] }}">{{ change.users[0] }}</a>{% else %}<a href="/proxies?{{ {'cluster': cluster, change.kind: change.match} | urlencode }}">{{ change.users | length }} objects</a>{% endif %}{% endif %}{% if change.refused %} <span class="warning-text">(publish will be refused)</span>{% endif %}</span>
+{%- endmacro %}

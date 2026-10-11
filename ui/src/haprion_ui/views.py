@@ -9111,6 +9111,11 @@ class PendingRow:
     # refused until it is saved again over what is there now (B257).
     #
     stale: bool
+    #
+    # What a saved network description changes and who it reaches (B277):
+    # one line per VIP, source or group, under the row.
+    #
+    details: tuple[network.NetworkChange, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -9259,11 +9264,24 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
                 PendingRow(
                     kind=kind,
                     name=label,
-                    what="Changed",
+                    #
+                    # Every object's lines are the cluster's settings; said,
+                    # since the row names no object (B277).
+                    #
+                    what=(
+                        "Changed · applies to every object on the cluster"
+                        if kind == "settings"
+                        else "Changed"
+                    ),
                     updated_by=change.updated_by,
                     updated_at=change.updated_at,
                     link=link,
                     stale=heads.get(kind) == head and change.base_hash != head,
+                    details=(
+                        _network_changes(request, config, cluster, change.document, state)
+                        if kind == "network"
+                        else ()
+                    ),
                 )
             )
     payload: dict[str, Any] = {"expected_head": head or ""}
@@ -9306,6 +9324,26 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
         else ""
     )
     return Package(cluster=cluster, head=head, rows=tuple(rows), payload=payload, problem=problem)
+
+
+def _network_changes(
+    request: Request, config: Config, cluster: str, document: str, state: EditorState
+) -> tuple[network.NetworkChange, ...]:
+    """What the saved network description changes against the published one (B277).
+
+    Read against the cluster's own reading, which is the published
+    description, and its users from the published objects. Nothing when
+    either cannot be read: a line that guessed would be worse than none.
+    """
+
+    _, rows = read_source(request, config, NETWORK_SOURCE, cluster=cluster)
+    reading = next((row for row in rows if row.cluster == cluster), None)
+    if reading is None or reading.outcome != "done" or not isinstance(reading.result, Mapping):
+        return ()
+    saved = network.result_from_document(document, reading.result)
+    if saved is None:
+        return ()
+    return network.changes(reading.result, saved, network.usage(state.stored))
 
 
 def _backend_renames(

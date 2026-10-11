@@ -2703,6 +2703,9 @@ BLOCKS_WITH_EXCEPTIONS = """  mode: block
     - rule: 942100
       field: ARGS:token
     - rule: 942100
+      field: ARGS:r
+      paths: [/]
+    - rule: 942100
       paths: [/health]
       by: admin
       at: 2026-10-03T09:10:00Z
@@ -2863,6 +2866,18 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             (f"/anywhere?token={ATTACK}", 200),  # a field on every path
             (f"/health?a={ATTACK}", 200),  # the whole request on one path
             (f"/health/x?a={ATTACK}", 403),
+            #
+            # The root (26-10-11): the engine normalises `/` to `//`, and an
+            # exception compared with `/` let nothing through on the path
+            # most findings are on. Every spelling of the root, and no other.
+            #
+            (f"/?r={ATTACK}", 200),
+            (f"//?r={ATTACK}", 200),
+            (f"/./?r={ATTACK}", 200),
+            (f"/search/..?r={ATTACK}", 200),
+            (f"/search?r={ATTACK}", 403),
+            (f"/search/?r={ATTACK}", 403),
+            (f"/?q={ATTACK}", 403),  # another field on the root
         ):
             with self.subTest(target):
                 self.assertEqual(self.ask(target, name="blocks")[0], status)
@@ -3019,6 +3034,7 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
             "  exceptions:\n"
             "    - {rule: 942100, field: ARGS:q, paths: [/search, /find]}\n"
             "    - {rule: 941100, paths: [/contact]}\n"
+            "    - {rule: 941100, field: ARGS:q, paths: [/]}\n"
             "    - {rule: 942100, field: 'REQUEST_HEADERS:User-Agent'}\n"
             "    - {rule: 913100}"
         ).waf_files["coraza.yaml"]
@@ -3030,6 +3046,8 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
             't:none,t:urlDecodeUni,t:normalisePath,ctl:ruleRemoveTargetById=942100;ARGS:q"',
             'SecRule REQUEST_FILENAME "@streq /contact" "id:210002,phase:1,pass,nolog,'
             't:none,t:urlDecodeUni,t:normalisePath,ctl:ruleRemoveById=941100"',
+            'SecRule REQUEST_FILENAME "@rx ^//?$" "id:210003,phase:1,pass,nolog,'
+            't:none,t:urlDecodeUni,t:normalisePath,ctl:ruleRemoveTargetById=941100;ARGS:q"',
         ):
             self.assertLess(engine.index(line), rule_set)
         for line in (

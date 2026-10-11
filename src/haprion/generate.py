@@ -643,11 +643,25 @@ def _waf_exception_directives(exceptions: Sequence[WafException]) -> tuple[list[
             continue
         for path in exception.paths:
             before.append(
-                f'SecRule REQUEST_FILENAME "@streq {path}" "id:{number},phase:1,pass,nolog,'
-                f't:none,t:urlDecodeUni,t:normalisePath,{action}"'
+                f'SecRule REQUEST_FILENAME "{_waf_path_operator(path)}" "id:{number},phase:1,'
+                f'pass,nolog,t:none,t:urlDecodeUni,t:normalisePath,{action}"'
             )
             number += 1
     return before, after
+
+
+def _waf_path_operator(path: str) -> str:
+    """The comparison an exception's path makes, after the engine's normalising.
+
+    Exact for every path but the root. Coraza 3.7 normalises `/` to `//` (it
+    cleans the path and then puts the trailing slash back), so `@streq /` never
+    matched and an exception on the root let nothing through - measured
+    26-10-11 against the engine the nodes run. Only the root becomes `//`, so
+    both spellings are accepted for it: the exception still holds the day the
+    engine stops doing that, and still covers no other path.
+    """
+
+    return "@rx ^//?$" if path == "/" else f"@streq {path}"
 
 
 def _waf_files(guarded: Sequence[Proxy]) -> dict[str, str]:

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
+from haprion_ui import views
 from haprion_ui.network import NetworkChange, Usage, changes
 from haprion_ui.views import TEMPLATES
 
@@ -114,6 +117,79 @@ class TheLineUnderTheRow(unittest.TestCase):
         text = self.line(NetworkChange("vip", "mail", "removed", ("smtp",), "mail", True))
 
         self.assertIn("(publish will be refused)", text)
+
+
+OBJECT = """schema: 1
+name: {name}
+hostnames: [{name}.example.com]
+listen:
+  protocol: http
+  vip: {vip}
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    servers:
+      - host: 192.0.2.50
+        port: 8080
+"""
+
+
+class TheUsersAreThoseThePublishLeaves(unittest.TestCase):
+    """26-10-11: moving the object off a removed VIP in the same publish clears the warning."""
+
+    READING = {
+        "default_vip": "web",
+        "ownership_vip": "",
+        "vips": [
+            {"name": "web", "address": "192.0.2.10", "source": None, "tls": None},
+            {"name": "old", "address": "192.0.2.20", "source": None, "tls": None},
+        ],
+        "sources": [],
+        "groups": [],
+    }
+    SAVED_NETWORK = (
+        "vips:\n  web:\n    address: 192.0.2.10\n  new:\n    address: 192.0.2.30\n"
+        "default_vip: web\n"
+    )
+
+    def changes_with(self, saved_objects: list[Any]) -> dict[str, Any]:
+        reading = SimpleNamespace(cluster="alpha", outcome="done", result=self.READING)
+        state: Any = SimpleNamespace(
+            stored=[SimpleNamespace(name="admin", document=OBJECT.format(name="admin", vip="old"))]
+        )
+        with mock.patch.object(views, "read_source", return_value=((), [reading])):
+            found = views._network_changes(
+                mock.Mock(), mock.Mock(), "alpha", self.SAVED_NETWORK, state, saved_objects
+            )
+        return {change.label: change for change in found}
+
+    def test_an_object_still_on_the_removed_vip_is_named_and_refused(self) -> None:
+        removed = self.changes_with([])["VIP old"]
+
+        self.assertEqual(removed.users, ("admin",))
+        self.assertTrue(removed.refused)
+
+    def test_an_object_moved_off_it_in_the_same_publish_clears_it(self) -> None:
+        moved = SimpleNamespace(
+            object_id="admin",
+            yaml=OBJECT.format(name="admin", vip="new"),
+            deleted=False,
+            replaces=None,
+        )
+
+        result = self.changes_with([moved])
+
+        self.assertEqual(result["VIP old"].users, ())
+        self.assertFalse(result["VIP old"].refused)
+        self.assertEqual(result["VIP new"].what, "added")
+
+    def test_an_object_removed_in_the_same_publish_clears_it_too(self) -> None:
+        gone = SimpleNamespace(object_id="admin", yaml="", deleted=True, replaces=None)
+
+        self.assertFalse(self.changes_with([gone])["VIP old"].refused)
 
 
 if __name__ == "__main__":

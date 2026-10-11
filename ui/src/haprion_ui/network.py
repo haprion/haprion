@@ -278,9 +278,11 @@ def usage(views: Iterable[Any]) -> Usage:
 class NetworkChange:
     """One VIP, source or group a saved network description changes, and who uses it (B277).
 
-    The users are the published objects', counted with *Used by*'s own rule:
-    what changes is what they run on now. `refused` is a removal of something
-    an object names, which the generator refuses at publish.
+    The users are the objects as the publish leaves them - the published ones
+    with the saved objects of the same publish in their place - counted with
+    *Used by*'s own rule. `refused` is a removal of something one of them
+    still names, which the generator refuses at publish; an object moved off it
+    in the same publish no longer counts (26-10-11).
     """
 
     kind: Literal["vip", "source", "group"]

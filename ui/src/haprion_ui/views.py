@@ -62,6 +62,9 @@ from haprion.certificates import CERTIFICATE_OPENING
 from haprion.cli import changes_publish
 from haprion.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW, ConfigError
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
+from haprion.managed_network import load_document as load_network_document
+from haprion.managed_network import location as network_location
+from haprion.objects import objects_result
 from haprion.proxy_model import (
     DEFAULT_DNS_FALL,
     DEFAULT_DNS_INTERVAL,
@@ -9561,7 +9564,7 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
                     link=link,
                     stale=heads.get(kind) == head and change.base_hash != head,
                     details=(
-                        _network_changes(request, config, cluster, change.document, state)
+                        _network_changes(request, config, cluster, change.document, state, saved)
                         if kind == "network"
                         else ()
                     ),
@@ -9610,13 +9613,22 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
 
 
 def _network_changes(
-    request: Request, config: Config, cluster: str, document: str, state: EditorState
+    request: Request,
+    config: Config,
+    cluster: str,
+    document: str,
+    state: EditorState,
+    saved_objects: Sequence[Any],
 ) -> tuple[network.NetworkChange, ...]:
     """What the saved network description changes against the published one (B277).
 
     Read against the cluster's own reading, which is the published
-    description, and its users from the published objects. Nothing when
-    either cannot be read: a line that guessed would be worse than none.
+    description. Its users are the objects as this publish leaves them: the
+    published ones with the saved ones in their place, read by the engine's
+    own object listing against the saved description - so an object moved off
+    a removed VIP in the same publish is not said to block it (26-10-11).
+    Nothing when either cannot be read: a line that guessed would be worse
+    than none.
     """
 
     _, rows = read_source(request, config, NETWORK_SOURCE, cluster=cluster)
@@ -9626,7 +9638,30 @@ def _network_changes(
     saved = network.result_from_document(document, reading.result)
     if saved is None:
         return ()
-    return network.changes(reading.result, saved, network.usage(state.stored))
+    documents = {view.name: view.document for view in state.stored}
+    for row in saved_objects:
+        if row.replaces and row.replaces != row.object_id:
+            documents.pop(row.replaces, None)
+        if row.deleted:
+            documents.pop(row.object_id, None)
+        else:
+            documents[row.object_id] = row.yaml
+    ownership = reading.result.get("ownership_vip")
+    try:
+        parsed = load_network_document(
+            document.encode("utf-8"),
+            ownership_vip=str(ownership) if ownership else "",
+            location=network_location(),
+        )
+    except ConfigError:
+        return ()
+    listed: Any = objects_result(
+        {f"managed/proxies/{name}.yaml": text.encode("utf-8") for name, text in documents.items()},
+        None if not documents else "0" * 40,
+        network=parsed,
+    )["objects"]
+    after = [view for view in map(objects.object_view, listed) if view is not None]
+    return network.changes(reading.result, saved, network.usage(after))
 
 
 def _backend_renames(

@@ -2376,10 +2376,11 @@ Under the dashboard's four cards, *Needs attention* lists what is wrong and want
 every cluster, the worst first, each row linked to where it is fixed: a certificate that is running
 out, unreadable or not where it should be (the interface's own included); a cluster's latest job of
 an operation that failed, partly worked, was blocked or ended unknown - until a later run of the
-same operation works; a node that is down or not on the published version; a cluster whose status
+same operation works; a node that is down; a cluster whose status
 has not been read for two poll intervals; a WAF exception marked *Not working*; a node backup that
 is missing, old or failed. Nothing there, no box. What somebody chose - a drained server, a
-maintenance page, a block - is not on it: those are on the cluster's *Operations* line.
+maintenance page, a block, a publish not yet deployed - is not on it: those are on the cluster's
+card and *Operations* line, and on *Versions*.
 
 The same list answers a monitor, without a sign-in:
 

@@ -191,8 +191,14 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
     return items
 
 
-def from_dashboard(clusters: Iterable[Any], *, behind_label: str) -> list[Item]:
-    """Nodes that are down or behind, and clusters whose status reading has stopped."""
+def from_dashboard(clusters: Iterable[Any], *, drift_label: str) -> list[Item]:
+    """Nodes that are down, and clusters whose status reading has stopped.
+
+    A node merely behind the published version is not listed (26-10-11): a
+    publish waiting for its deploy is a choice, as a drain is, and the cluster
+    card and Versions already say it. A deploy that failed is listed as its
+    job; a node down while it ran, as the node.
+    """
 
     items: list[Item] = []
     for cluster in clusters:
@@ -212,17 +218,14 @@ def from_dashboard(clusters: Iterable[Any], *, behind_label: str) -> list[Item]:
             )
             continue
         #
-        # One line per node that is wrong, behind included: the node's own
-        # verdict names which node, where the cluster's would only say that
-        # one is. A node's time is the reading's, which says nothing about
-        # when it went wrong, so there is none.
+        # One line per node that is wrong: the node's own verdict names which
+        # node. A node's time is the reading's, which says nothing about when
+        # it went wrong, so there is none.
         #
-        flagged = False
         for node in cluster.nodes:
             severity = _severity(node.tone)
-            if severity is None:
+            if severity is None or node.label == drift_label:
                 continue
-            flagged = True
             items.append(
                 Item(
                     kind="node",
@@ -230,18 +233,6 @@ def from_dashboard(clusters: Iterable[Any], *, behind_label: str) -> list[Item]:
                     cluster=cluster.cluster,
                     subject=node.name,
                     message=f"{node.label}" + (f" · {node.detail}" if node.detail else ""),
-                    since=None,
-                    link="/",
-                )
-            )
-        if cluster.behind and not flagged:
-            items.append(
-                Item(
-                    kind="node",
-                    severity="warning",
-                    cluster=cluster.cluster,
-                    subject=cluster.cluster,
-                    message=behind_label.lower().replace("latest", "published"),
                     since=None,
                     link="/",
                 )

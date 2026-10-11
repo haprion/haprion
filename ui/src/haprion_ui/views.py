@@ -10872,7 +10872,7 @@ def _attention(request: Request, config: Config) -> attention.Attention:
                 _waf_not_working(request, config, connection, clusters),
                 describe=waf.where,
             )
-    items += attention.from_dashboard(board.clusters, behind_label=dashboard.BEHIND)
+    items += attention.from_dashboard(board.clusters, drift_label=dashboard.VERSION_DRIFT)
     items += attention.from_certificates(certificate_view.registry, certificate_view.clusters)
     if features.is_on(features.NODE_BACKUPS):
         backup_clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)

@@ -149,6 +149,13 @@ class DashboardView:
 #
 BEHIND = "Not on the latest version"
 
+#
+# A node on an older version than the one published: a publish waiting for
+# its deploy, which is somebody's choice. Needs attention leaves it out; the
+# cluster card and Versions say it and offer the deploy (26-10-11).
+#
+VERSION_DRIFT = "Version drift"
+
 
 def _vip_count(reading: Any) -> int:
     """How many VIPs the network helper listed for a cluster; 1 when it listed none."""
@@ -287,7 +294,7 @@ def _node_view(value: Any) -> NodeView:
     elif validation.get("valid") is False:
         label, tone, detail = "Invalid config", "warning", "Last configuration check failed"
     elif current is False:
-        label, tone, detail = "Version drift", "warning", "Node is not on the target release"
+        label, tone, detail = VERSION_DRIFT, "warning", "Node is not on the target release"
     else:
         label, tone, detail = "Online", "healthy", "Serving and reporting normally"
 

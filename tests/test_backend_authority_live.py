@@ -73,6 +73,7 @@ def tls_server(port: int, certificate: Path, key: Path, chain: Path) -> Threadin
     served = certificate.parent / f"{certificate.stem}-served.pem"
     served.write_text(certificate.read_text() + chain.read_text())
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(certfile=str(served), keyfile=str(key))
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.socket = context.wrap_socket(server.socket, server_side=True)

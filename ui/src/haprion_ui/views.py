@@ -1967,6 +1967,17 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "section": "proxies",
                 "object": detail,
+                #
+                # The exact names other objects answer under this one's
+                # subdomain (B278): theirs, wholly, and said here.
+                #
+                "answered_elsewhere": objects.answered_elsewhere(
+                    name,
+                    detail.stored.hostnames if detail.stored is not None else (),
+                    objects.cluster_object_views(
+                        next((row for row in object_rows if row.cluster == cluster), None)
+                    ),
+                ),
                 "draft": draft,
                 "advanced": advanced,
                 "object_fingerprint": editor_module.fingerprint(
@@ -2589,7 +2600,18 @@ def build_router(config: Config) -> APIRouter:
                         None,
                     )
                     owned = (
-                        (tuple(found.runtime_backends or ()), found.hostnames)
+                        (
+                            tuple(found.runtime_backends or ()),
+                            traffic_logs.owned_hosts(
+                                found.hostnames,
+                                (
+                                    name
+                                    for view in objects.cluster_object_views(object_row)
+                                    if view.name != found.name
+                                    for name in view.hostnames
+                                ),
+                            ),
+                        )
                         if found is not None
                         else ((), ())
                     )

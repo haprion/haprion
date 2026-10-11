@@ -12,6 +12,7 @@ only works with the names used below, that is a bug in the software, not in this
 ## Contents
 
 - [Configuration and deployment](#configuration-and-deployment)
+  - [A whole subdomain](#a-whole-subdomain)
   - [A pool's servers](#a-pools-servers)
   - [A pool over HTTPS](#a-pool-over-https)
   - [The client's address on a tcp pool](#the-clients-address-on-a-tcp-pool)
@@ -120,6 +121,17 @@ A converged deploy skips nodes already current. See the installation guide for
 200 characters - what the service is and who to ask. The object's page shows it in the *Stored
 object* card as *Description:*, and the search finds it. In YAML it is `description:` beside `name:`; nothing generated reads it,
 so a publish that changes only the description deploys the same HAProxy configuration.
+
+### A whole subdomain
+
+One hostname may be `*.apps.example.com`: every name one label under `apps.example.com`, as a
+wildcard certificate answers for them - `shop.apps.example.com`, not `apps.example.com` and not
+`a.b.apps.example.com`. One per object, beside exact names if wanted; two objects cannot claim the
+same one. A name another object claims exactly is that object's, wholly: its requests go there and
+meet only that object's rules, and the subdomain object's page lists it under *Answered elsewhere*.
+A name reserved in `manual/reservations.yaml` under the subdomain is refused at publish. Over https
+the certificate must name the subdomain itself (`*.apps.example.com` in its SAN); ACME issues one
+over DNS-01, NDES and an import as for any name.
 
 ### A pool's servers
 

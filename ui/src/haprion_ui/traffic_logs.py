@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from haprion.generate import backend_name
-from haprion.proxy_model import Proxy
+from haprion.proxy_model import Proxy, wildcard_expression, wildcard_matches
 from psycopg import Connection, sql
 from psycopg.rows import class_row
 
@@ -517,11 +517,37 @@ def _targets(directory: Path, clusters: tuple[str, ...]) -> tuple[list[tuple[str
 
 
 def owned_by(entry: Entry, owned: tuple[Sequence[str], Sequence[str]]) -> bool:
-    """Whether a record is one object's: one of its backends, or one of its names before any."""
+    """Whether a record is one object's: one of its backends, or one of its names before any.
+
+    A subdomain (B278) is one of its names for every single label under it,
+    less the names listed after it with a leading `!` - the exact names other
+    objects claim, which are theirs (`owned_hosts`).
+    """
 
     backends, hosts = owned
     host = entry.host.split(":", 1)[0].lower()
-    return entry.backend in backends or host in {name.lower() for name in hosts}
+    if entry.backend in backends:
+        return True
+    names = {name.lower() for name in hosts if not name.startswith(("!", "*."))}
+    excluded = {name[1:].lower() for name in hosts if name.startswith("!")}
+    patterns = [name.lower() for name in hosts if name.startswith("*.")]
+    return host in names or (
+        host not in excluded and any(wildcard_matches(pattern, host) for pattern in patterns)
+    )
+
+
+def owned_hosts(hostnames: Sequence[str], others: Iterable[str]) -> tuple[str, ...]:
+    """One object's names for the log filter: its own, and `!name` for each name it yields (B278)."""
+
+    patterns = [name for name in hostnames if name.startswith("*.")]
+    yielded = sorted(
+        {
+            name
+            for name in others
+            if not name.startswith("*.") and any(wildcard_matches(p, name) for p in patterns)
+        }
+    )
+    return (*hostnames, *(f"!{name}" for name in yielded))
 
 
 def read(
@@ -691,10 +717,21 @@ def read_database(
         conditions.append(_search_sql(expression, parameters))
     if owned is not None:
         backends, hosts = owned
+        names = [host.lower() for host in hosts if not host.startswith(("!", "*."))]
+        excluded = [host[1:].lower() for host in hosts if host.startswith("!")]
+        #
+        # A subdomain is one label then its suffix (B278), as the generator
+        # matches it, less the exact names other objects claim under it.
+        #
+        patterns = [wildcard_expression(host.lower()) for host in hosts if host.startswith("*.")]
         conditions.append(
-            sql.SQL("(backend = any(%s) or split_part(lower(host), ':', 1) = any(%s))")
+            sql.SQL(
+                "(backend = any(%s) or split_part(lower(host), ':', 1) = any(%s)"
+                " or (split_part(lower(host), ':', 1) ~ any(%s)"
+                " and not split_part(lower(host), ':', 1) = any(%s)))"
+            )
         )
-        parameters.extend((list(backends), [host.lower() for host in hosts]))
+        parameters.extend((list(backends), names, patterns, excluded))
     if waf == "hits":
         conditions.append(sql.SQL("rule <> ''"))
     elif waf == "none":

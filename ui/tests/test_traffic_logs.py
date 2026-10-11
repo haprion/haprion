@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from haprion.proxy_model import load_proxy
 
-from haprion_ui import metrics
+from haprion_ui import metrics, traffic_logs
 from haprion_ui.config import TrafficLogs
 from haprion_ui.db import ClusterObjects
 from haprion_ui.traffic_logs import (
@@ -980,3 +980,43 @@ class TheTrafficLogPage(LoginTestCase):
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/login")
+
+
+class ASubdomainOwnsItsLabelsButNotTheNamesItYields(unittest.TestCase):
+    """B278: the file-backed filter matches as the database filter does."""
+
+    def test_one_label_under_it_less_the_yielded_names(self) -> None:
+        owned = (
+            (),
+            traffic_logs.owned_hosts(
+                ("*.apps.example.com",), ("grafana.apps.example.com", "shop.example.com")
+            ),
+        )
+        self.assertEqual(owned[1], ("*.apps.example.com", "!grafana.apps.example.com"))
+
+        def entry(host: str) -> traffic_logs.Entry:
+            return traffic_logs.Entry(
+                cluster="alpha",
+                node="node-a",
+                at=datetime(2026, 10, 11, tzinfo=UTC),
+                request=1,
+                client="192.0.2.10",
+                method="GET",
+                host=host,
+                path="/",
+                frontend="f",
+                backend="f",
+                server="",
+                status=403,
+                request_time=0,
+                queue_time=0,
+                connect_time=0,
+                response_time=0,
+                total_time=0,
+                bytes=0,
+            )
+
+        self.assertTrue(traffic_logs.owned_by(entry("Shop.Apps.Example.com:80"), owned))
+        self.assertFalse(traffic_logs.owned_by(entry("grafana.apps.example.com"), owned))
+        self.assertFalse(traffic_logs.owned_by(entry("a.b.apps.example.com"), owned))
+        self.assertFalse(traffic_logs.owned_by(entry("apps.example.com"), owned))

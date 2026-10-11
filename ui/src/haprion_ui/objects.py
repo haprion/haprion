@@ -23,7 +23,14 @@ from haprion.generate import PORTS
 from haprion.object_manifest import ABSENT as ABSENT
 from haprion.object_manifest import CHANGED as CHANGED
 from haprion.object_manifest import CURRENT
-from haprion.proxy_model import OWN_PORT, SENDERS_ADDRESS, ModelError, read_document
+from haprion.proxy_model import (
+    OWN_PORT,
+    SENDERS_ADDRESS,
+    ModelError,
+    is_wildcard,
+    read_document,
+    wildcard_matches,
+)
 
 from haprion_ui.addresses import ObjectAddresses, from_entry
 from haprion_ui.cluster_identity import accent_index
@@ -821,3 +828,27 @@ def counted(
     managed = sum(len(objects) for objects in listed.values())
     foreign = sum(len(proxies) for proxies in unmanaged.values())
     return ProxyCounts(published=managed + foreign, managed=managed, unmanaged=foreign)
+
+
+def answered_elsewhere(
+    name: str, hostnames: Sequence[str], views: Iterable[ObjectView]
+) -> tuple[tuple[str, str], ...]:
+    """(hostname, object) for each exact name another object claims under this one's subdomain.
+
+    The generator takes those names out of this object's rules (B278), so the
+    page says which they are rather than leave a reader to find out.
+    """
+
+    patterns = [hostname for hostname in hostnames if is_wildcard(hostname)]
+    if not patterns:
+        return ()
+    return tuple(
+        sorted(
+            (hostname, view.name)
+            for view in views
+            if view.name != name
+            for hostname in view.hostnames
+            if not is_wildcard(hostname)
+            and any(wildcard_matches(pattern, hostname) for pattern in patterns)
+        )
+    )

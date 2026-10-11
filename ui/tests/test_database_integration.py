@@ -1188,6 +1188,34 @@ class ARealDatabase(unittest.TestCase):
                 connection, Path(temporary), ("alpha",), owned=((), ())
             )
         self.assertEqual({entry.host for entry in by_name.entries}, {"rule.example.com"})
+        #
+        # A subdomain object's (B278): one label under it, less the exact
+        # names another object claims there.
+        #
+        with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
+            for index, host in enumerate(
+                ("shop.apps.example.com:80", "grafana.apps.example.com", "a.b.apps.example.com")
+            ):
+                connection.execute(
+                    "insert into traffic_log (event_id, cluster, node, occurred_at, "
+                    "request_number, client, method, host, path, frontend, backend, server, "
+                    "status, request_time, queue_time, connect_time, response_time, "
+                    "total_time, bytes, rule) values (%s, 'alpha', 'node-a', %s, %s, "
+                    "'192.0.2.10', 'GET', %s, '/', 'f', 'f', '', 403, "
+                    "0, 0, 0, 0, 0, 0, '') on conflict do nothing",
+                    (bytes([index]) * 32, now, 100 + index, host),
+                )
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+        ):
+            subdomain = traffic_logs.read_database(
+                connection,
+                Path(temporary),
+                ("alpha",),
+                owned=((), ("*.apps.example.com", "!grafana.apps.example.com")),
+            )
+        self.assertEqual({entry.host for entry in subdomain.entries}, {"shop.apps.example.com:80"})
         self.assertTrue(by_backend.entries)
         self.assertTrue(all(entry.backend == "b" for entry in by_backend.entries))
         self.assertEqual(nothing.entries, ())

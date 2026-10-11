@@ -62,6 +62,9 @@ from haprion.proxy_model import (
     Waf,
     WafException,
     is_range,
+    is_wildcard,
+    wildcard_expression,
+    wildcard_matches,
 )
 
 #
@@ -1103,7 +1106,15 @@ def _refuse_reserved(
     """
 
     for _vip, proxy in placed:
-        taken = sorted(set(proxy.hostnames) & reservations.hostnames)
+        #
+        # A subdomain claims every reserved name under it too (B278).
+        #
+        taken = sorted(
+            name
+            for name in reservations.hostnames
+            if name in proxy.hostnames
+            or any(wildcard_matches(pattern, name) for pattern in proxy.hostnames)
+        )
         if taken:
             raise GeneratorError(
                 f"{proxy.name} claims a hostname reserved in manual/reservations.yaml: "
@@ -1656,9 +1667,15 @@ def _frontend_file(
             fallbacks.extend(_fallback(vip, protocol, unknown_host))
         body += envelope
         tls_names = _tls_group_names(members, protocol)
+        listening = [proxy for _, proxy, _ in members]
         for _, proxy, role in members:
             rules = _frontend_rules(
-                proxy, role, networks, tls_names=tls_names, trusted=bool(trusted_proxies)
+                proxy,
+                role,
+                networks,
+                tls_names=tls_names,
+                trusted=bool(trusted_proxies),
+                taken=_taken_names(proxy, listening),
             )
             body.extend(rules)
             _record(shared, proxy.name, listener=[*envelope, *tail], routing=rules)
@@ -2381,7 +2398,11 @@ def _message(proxy: Proxy, message: str) -> str:
     nothing that could already be escaped.
     """
 
-    filled = message.replace(URL_PLACEHOLDER, proxy.hostnames[0])
+    #
+    # An exact name when the object has one: a subdomain's `*` is no address.
+    #
+    shown = next((name for name in proxy.hostnames if not is_wildcard(name)), proxy.hostnames[0])
+    filled = message.replace(URL_PLACEHOLDER, shown)
     return filled.replace("$", "\\$")
 
 
@@ -2413,20 +2434,59 @@ def _maintenance_rule(proxy: Proxy, host: str) -> list[str]:
     ]
 
 
-def _host_acl(proxy: Proxy) -> list[str]:
+def _host_acl(proxy: Proxy, taken: Sequence[str] = ()) -> list[str]:
     """Which requests belong to this object at all.
 
     The Host header is lowercased and its port removed before comparison. A
     client is free to send `Shop.Example.com:80`, and a rule that only matched
     the spelling in the object would work until the day something sent the
     other one.
+
+    A subdomain (B278) is a regular expression for one label, and `taken` the
+    exact names other objects on the listener claim under it: they are their
+    objects', and this one's rules - access, blocking, the WAF - must not reach
+    them. Written as a second ACL the condition excludes (`_host_condition`),
+    so an exact name wins wherever it stands in the file.
     """
 
     acl = _acl_name(proxy.name, "host")
-    return [
-        f"    acl {acl} req.hdr(host),field(1,:),lower -m str {hostname}"
+    lines = [
+        f"    acl {acl} req.hdr(host),field(1,:),lower -m reg {wildcard_expression(hostname)}"
+        if is_wildcard(hostname)
+        else f"    acl {acl} req.hdr(host),field(1,:),lower -m str {hostname}"
         for hostname in proxy.hostnames
     ]
+    if taken:
+        other = _acl_name(proxy.name, "host-taken")
+        lines += [f"    acl {other} req.hdr(host),field(1,:),lower -m str {name}" for name in taken]
+    return lines
+
+
+def _host_condition(proxy: Proxy, taken: Sequence[str]) -> str:
+    """The condition every rule of the object starts with: its names, less the taken ones."""
+
+    host = _acl_name(proxy.name, "host")
+    return f"{host} !{_acl_name(proxy.name, 'host-taken')}" if taken else host
+
+
+def _taken_names(proxy: Proxy, members: Sequence[Proxy]) -> tuple[str, ...]:
+    """The exact names other objects on this listener claim under this one's subdomain (B278)."""
+
+    patterns = [hostname for hostname in proxy.hostnames if is_wildcard(hostname)]
+    if not patterns:
+        return ()
+    return tuple(
+        sorted(
+            {
+                hostname
+                for member in members
+                if member.name != proxy.name
+                for hostname in member.hostnames
+                if not is_wildcard(hostname)
+                and any(wildcard_matches(pattern, hostname) for pattern in patterns)
+            }
+        )
+    )
 
 
 def _path_acl(proxy: Proxy, route: Route, index: int) -> tuple[str, list[str]]:
@@ -2512,6 +2572,7 @@ def _frontend_rules(
     *,
     tls_names: Mapping[str, str] | None = None,
     trusted: bool = False,
+    taken: Sequence[str] = (),
 ) -> list[str]:
     """One object's whole contribution to the shared frontend.
 
@@ -2522,8 +2583,8 @@ def _frontend_rules(
     goes.
     """
 
-    host = _acl_name(proxy.name, "host")
-    lines = ["", f"    # {proxy.name}", *_host_acl(proxy)]
+    host = _host_condition(proxy, taken)
+    lines = ["", f"    # {proxy.name}", *_host_acl(proxy, taken)]
 
     lines.extend(_client_rules(proxy, host, trusted))
     allow = _allow_rules(proxy, networks or {}, host, trusted)
@@ -2590,10 +2651,18 @@ def _tls_sni_guard(proxy: Proxy, host_acl: str, tls_names: Mapping[str, str]) ->
     if proxy.listen.protocol != "https" or allowed is None:
         return []
     sni_acl = _acl_name(proxy.name, "tls-sni")
-    return [
-        f"    acl {sni_acl} ssl_fc_sni,lower -m str {allowed}",
-        f"    http-request deny deny_status 421 if {host_acl} !{sni_acl}",
+    names = allowed.split()
+    exact = [name for name in names if not is_wildcard(name)]
+    #
+    # A subdomain in the group is matched as the Host header is (B278).
+    #
+    lines = [f"    acl {sni_acl} ssl_fc_sni,lower -m str {' '.join(exact)}"] if exact else []
+    lines += [
+        f"    acl {sni_acl} ssl_fc_sni,lower -m reg {wildcard_expression(name)}"
+        for name in names
+        if is_wildcard(name)
     ]
+    return [*lines, f"    http-request deny deny_status 421 if {host_acl} !{sni_acl}"]
 
 
 def _destination(proxy: Proxy, route: Route) -> str:

@@ -137,6 +137,38 @@ HOSTNAME = re.compile(
 )
 
 #
+# A whole subdomain (B278): one star, as the first label, over at least two
+# labels - `*.apps.example.com`, never `*.com` or `a.*.example.com`. It stands
+# for exactly one label, as a wildcard certificate does, so the rule for the
+# proxy and the rule for its certificate are the same rule.
+#
+WILDCARD_HOSTNAME = re.compile(
+    r"^\*\.(?=.{1,251}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+    r"(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
+
+
+def is_wildcard(hostname: str) -> bool:
+    return hostname.startswith("*.")
+
+
+def wildcard_matches(pattern: str, hostname: str) -> bool:
+    """Whether a `*.suffix` name answers for one hostname: exactly one label before it."""
+
+    suffix = pattern[1:]
+    if not is_wildcard(pattern) or not hostname.endswith(suffix):
+        return False
+    label = hostname[: -len(suffix)]
+    return bool(label) and "." not in label
+
+
+def wildcard_expression(pattern: str) -> str:
+    """The regular expression a `*.suffix` name is matched with: one label, then the suffix."""
+
+    return "^[^.]+" + re.escape(pattern[1:]) + "$"
+
+
+#
 # A path prefix as a route matches on. Absolute, no query, no wildcards: the
 # matching rules are about segments, and a pattern language here would make the
 # frozen semantics ambiguous before the first golden file exists.
@@ -2298,10 +2330,18 @@ def _hostnames(value: Any, name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not value:
         raise ModelError(f"{name}.hostnames must list at least one hostname")
     for hostname in value:
-        if not isinstance(hostname, str) or not HOSTNAME.match(hostname):
+        if not isinstance(hostname, str) or not (
+            HOSTNAME.match(hostname) or WILDCARD_HOSTNAME.match(hostname)
+        ):
             raise ModelError(f"{name}.hostnames contains something that is not a hostname")
     if len(set(value)) != len(value):
         raise ModelError(f"{name}.hostnames lists the same hostname twice")
+    #
+    # One subdomain per object (B278): two would be two objects' worth of
+    # routing in one, and nothing an object does needs it.
+    #
+    if sum(is_wildcard(hostname) for hostname in value) > 1:
+        raise ModelError(f"{name}.hostnames may name one wildcard (*.example.com), not more")
     return tuple(value)
 
 

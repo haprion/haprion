@@ -1371,5 +1371,101 @@ class ATcpPoolMayBeToldTheClientsAddress(unittest.TestCase):
         self.assertIn("X-Forwarded-For", str(raised.exception))
 
 
+def subdomain(name: str, hostnames: str, protocol: str = "http", extra: str = "") -> bytes:
+    return f"""\
+schema: 1
+name: {name}
+hostnames: {hostnames}
+listen:
+  protocol: {protocol}
+{extra}routes:
+  - path: /
+    backend: {name}-pool
+backends:
+  {name}-pool:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 192.0.2.10
+        port: 8080
+""".encode()
+
+
+class ASubdomainIsOneObject(unittest.TestCase):
+    """B278: `*.apps.example.com` - one label, one wildcard per object, exact names win."""
+
+    def frontend(self, *documents: tuple[str, bytes], **arguments: Any) -> str:
+        return generate(
+            [load_proxy(name, document) for name, document in documents],
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+            **arguments,
+        ).configuration["1000-frontends.cfg"]
+
+    def test_the_name_is_a_one_label_expression(self) -> None:
+        text = self.frontend(("apps", subdomain("apps", '["*.apps.example.com"]')))
+
+        self.assertIn(r"lower -m reg ^[^.]+\.apps\.example\.com$", text)
+        self.assertNotIn("host-taken", text)
+
+    def test_an_exact_name_under_it_is_taken_out_of_every_rule(self) -> None:
+        text = self.frontend(
+            ("apps", subdomain("apps", '["*.apps.example.com"]')),
+            ("grafana", subdomain("grafana", "[grafana.apps.example.com]")),
+            ("shop", subdomain("shop", "[shop.example.com]")),
+        )
+
+        taken = [line for line in text.splitlines() if "host-taken" in line and " acl " in line]
+        self.assertEqual(len(taken), 1)
+        self.assertIn("-m str grafana.apps.example.com", taken[0])
+        routed = next(line for line in text.splitlines() if "use_backend apps-pool" in line)
+        self.assertRegex(routed, r"if \S+host !\S+host-taken$")
+
+    def test_what_the_model_refuses(self) -> None:
+        for hostnames in (
+            '["*.com"]',
+            '["a.*.example.com"]',
+            '["*.a.example.com", "*.b.example.com"]',
+        ):
+            with self.subTest(hostnames=hostnames), self.assertRaises(ModelError):
+                load_proxy("apps", subdomain("apps", hostnames))
+
+    def test_two_objects_with_the_same_subdomain_are_refused(self) -> None:
+        with self.assertRaises(GeneratorError):
+            self.frontend(
+                ("apps", subdomain("apps", '["*.apps.example.com"]')),
+                ("more", subdomain("more", '["*.apps.example.com"]')),
+            )
+
+    def test_a_reserved_name_under_it_is_refused(self) -> None:
+        with self.assertRaises(GeneratorError) as raised:
+            self.frontend(
+                ("apps", subdomain("apps", '["*.apps.example.com"]')),
+                reservations=Reservations(hostnames=frozenset({"legacy.apps.example.com"})),
+            )
+
+        self.assertIn("legacy.apps.example.com", str(raised.exception))
+
+    def test_its_certificate_must_name_the_subdomain(self) -> None:
+        https = subdomain(
+            "apps", '["*.apps.example.com"]', "https", "  certificate: apps-cert\n"
+        ).replace(
+            b"listen:\n  protocol: https\n  certificate",
+            b"listen:\n  protocol: https\n  certificate",
+        )
+        with self.assertRaises(GeneratorError):
+            self.frontend(
+                ("apps", https),
+                certificates=("apps-cert",),
+                certificate_sans={"apps-cert": ("shop.apps.example.com",)},
+            )
+        self.frontend(
+            ("apps", https),
+            certificates=("apps-cert",),
+            certificate_sans={"apps-cert": ("*.apps.example.com",)},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

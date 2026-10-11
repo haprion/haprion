@@ -3,16 +3,16 @@
 {% block content %}
 {#-
   Which objects use a VIP, a source or a group (26-10-10): one by name, more
-  as a count that folds out to every name, so the row stays one line until
-  somebody asks (chosen after the first release, where long names cut off
-  the third). Linked for an admin, who is the one the object page is for. A
-  dash where the objects could not be read.
+  as a count that opens the proxy listing narrowed to them (26-10-11), so the
+  row stays one line however many there are. The name is linked for an admin,
+  who is the one the object page is for; the listing is anybody's. A dash
+  where the objects could not be read.
 -#}
 {% macro object_name(name, cluster) -%}
 {% if role == 'admin' %}<a href="/proxies/{{ cluster }}/{{ name }}">{{ name }}</a>{% else %}{{ name }}{% endif %}
 {%- endmacro %}
-{% macro used_by(known, names, cluster) -%}
-{% if known is none %}<span class="table-empty">—</span>{% elif not names %}<span class="table-empty">not used</span>{% elif names | length == 1 %}{{ object_name(names[0], cluster) }}{% else %}<details class="used-by"><summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>{{ names | length }} objects</summary><div class="used-by-names">{% for name in names %}{{ object_name(name, cluster) }}{% if not loop.last %}, {% endif %}{% endfor %}</div></details>{% endif %}
+{% macro used_by(known, names, cluster, kind, value) -%}
+{% if known is none %}<span class="table-empty">—</span>{% elif not names %}<span class="table-empty">not used</span>{% elif names | length == 1 %}{{ object_name(names[0], cluster) }}{% else %}<a href="/proxies?{{ {'cluster': cluster, kind: value} | urlencode }}">{{ names | length }} objects</a>{% endif %}
 {%- endmacro %}
 {#
   The same watcher the dashboard and the listing use. Without it the spinner
@@ -74,7 +74,7 @@
           #}
           <td data-label="TLS version">{{ {'intermediate': 'TLS 1.2 and 1.3', 'modern': 'TLS 1.3 only', 'tls12only': 'TLS 1.2 only'}.get(vip.tls_policy) or '' }}{% if not vip.tls_policy %}<span class="table-empty">not set</span>{% endif %}</td>
           <td data-label="Default">{% if vip.is_default %}<span class="status-badge status-badge-info">default</span>{% endif %}</td>
-          <td data-label="Used by">{{ used_by(used, used.vips.get(vip.name, ()) if used else (), cluster.cluster) }}</td>
+          <td data-label="Used by">{{ used_by(used, used.vips.get(vip.name, ()) if used else (), cluster.cluster, 'vip', vip.name) }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -86,7 +86,7 @@
       <thead><tr><th>Name</th><th>IP address</th><th>Used by</th></tr></thead>
       <tbody>
         {% for source in cluster.sources %}
-        <tr><td data-label="Name"><code>{{ source.name }}</code></td><td data-label="IP address">{{ source.address }}</td><td data-label="Used by">{{ used_by(used, used.sources.get(source.address, ()) if used else (), cluster.cluster) }}</td></tr>
+        <tr><td data-label="Name"><code>{{ source.name }}</code></td><td data-label="IP address">{{ source.address }}</td><td data-label="Used by">{{ used_by(used, used.sources.get(source.address, ()) if used else (), cluster.cluster, 'source', source.address) }}</td></tr>
         {% else %}
         <tr><td colspan="3" class="table-empty">None. Connections out leave from whatever address the nodes' routing picks.</td></tr>
         {% endfor %}
@@ -99,7 +99,7 @@
       <thead><tr><th>Name</th><th>Members</th><th>Used by</th></tr></thead>
       <tbody>
         {% for group in cluster.groups %}
-        <tr><td data-label="Name"><code>{{ group.name }}</code></td><td data-label="Members">{% for member in group.members %}<code>{{ member }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td><td data-label="Used by">{{ used_by(used, used.groups.get(group.name, ()) if used else (), cluster.cluster) }}</td></tr>
+        <tr><td data-label="Name"><code>{{ group.name }}</code></td><td data-label="Members">{% for member in group.members %}<code>{{ member }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td><td data-label="Used by">{{ used_by(used, used.groups.get(group.name, ()) if used else (), cluster.cluster, 'group', group.name) }}</td></tr>
         {% else %}
         <tr><td colspan="3" class="table-empty">None. Every site here is reachable from anywhere that can route to its VIP.</td></tr>
         {% endfor %}
@@ -176,7 +176,7 @@
             #}
             <td><select name="vip_tls" aria-label="TLS version for VIP {{ vip.name }}">{% if not vip.tls_policy %}<option value="" selected disabled>Not set</option>{% endif %}<option value="tls12only"{% if vip.tls_policy == 'tls12only' %} selected{% endif %}>TLS 1.2 only</option><option value="intermediate"{% if vip.tls_policy == 'intermediate' %} selected{% endif %}>TLS 1.2 and 1.3</option><option value="modern"{% if vip.tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option></select></td>
             <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ loop.index0 }}"{% if vip.is_default %} checked{% endif %} aria-label="Make VIP {{ vip.name }} the default"></td>
-            <td class="editor-used">{{ used_by(used, used.vips.get(vip.name, ()) if used else (), cluster.cluster) }}</td>
+            <td class="editor-used">{{ used_by(used, used.vips.get(vip.name, ()) if used else (), cluster.cluster, 'vip', vip.name) }}</td>
             {#
               Removal is a tick and not a button of its own. This form is one
               publish: a row taken out is part of the same change as the rows
@@ -239,7 +239,7 @@
             <td colspan="2"><span class="locked-value">{{ source.name }}</span><span class="locked-hint">edited in its VIP row above</span></td>
             <td><span class="locked-value">{{ source.address }}</span></td>
             <td colspan="2"></td>
-            <td class="editor-used">{{ used_by(used, used.sources.get(source.address, ()) if used else (), cluster.cluster) }}</td>
+            <td class="editor-used">{{ used_by(used, used.sources.get(source.address, ()) if used else (), cluster.cluster, 'source', source.address) }}</td>
             {# No box: this row is removed by clearing its VIP's source, one table up. #}
             <td></td>
           </tr>
@@ -250,7 +250,7 @@
             <td></td>
             <td><input name="source_address" value="{{ source.address }}" maxlength="64" aria-label="Address for source {{ source.name }}"></td>
             <td colspan="2"></td>
-            <td class="editor-used">{{ used_by(used, used.sources.get(source.address, ()) if used else (), cluster.cluster) }}</td>
+            <td class="editor-used">{{ used_by(used, used.sources.get(source.address, ()) if used else (), cluster.cluster, 'source', source.address) }}</td>
             <td class="editor-choice editor-remove"><input type="checkbox" name="source_remove" value="{{ loop.index0 }}" aria-label="Remove source {{ source.name }}"></td>
           </tr>
           {% else %}
@@ -290,7 +290,7 @@
             <td><input name="group_name" value="{{ group.name }}" maxlength="40" aria-label="Group name"></td>
             <td colspan="4"><textarea name="group_members" rows="{{ [group.members | length, 2] | max }}" aria-label="Members of group {{ group.name }}">{% for member in group.members %}{{ member }}
 {% endfor %}</textarea></td>
-            <td class="editor-used">{{ used_by(used, used.groups.get(group.name, ()) if used else (), cluster.cluster) }}</td>
+            <td class="editor-used">{{ used_by(used, used.groups.get(group.name, ()) if used else (), cluster.cluster, 'group', group.name) }}</td>
             <td class="editor-choice editor-remove"><input type="checkbox" name="group_remove" value="{{ loop.index0 }}" aria-label="Remove group {{ group.name }}"></td>
           </tr>
           {% else %}

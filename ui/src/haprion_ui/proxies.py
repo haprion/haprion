@@ -286,14 +286,76 @@ def pages_asked(query: Mapping[str, str]) -> dict[str, int]:
     return asked
 
 
-def page_link(paging: Mapping[str, int], cluster: str, page: int) -> str:
+def page_link(
+    paging: Mapping[str, int],
+    cluster: str,
+    page: int,
+    used: UsedFilter | None = None,
+) -> str:
     """The listing with one cluster's table on another page and the others where they were."""
 
     chosen = {**paging, cluster: page}
     query = urlencode(
-        {f"{PAGE_PREFIX}{name}": number for name, number in sorted(chosen.items()) if number > 1}
+        {
+            **(used.query() if used else {}),
+            **{
+                f"{PAGE_PREFIX}{name}": number
+                for name, number in sorted(chosen.items())
+                if number > 1
+            },
+        }
     )
     return f"/proxies?{query}" if query else "/proxies"
+
+
+#
+# The objects using one VIP, source address or group (26-10-11), which is
+# where the network page's *Used by* count leads. A list of names in a table
+# cell stopped being readable long before a cluster has hundreds of objects;
+# this table already sorts and pages.
+#
+type UsedKind = Literal["vip", "source", "group"]
+USED_KINDS: dict[UsedKind, str] = {"vip": "VIP", "source": "source", "group": "group"}
+
+
+@dataclass(frozen=True, slots=True)
+class UsedFilter:
+    cluster: str
+    kind: UsedKind
+    value: str
+
+    @property
+    def label(self) -> str:
+        return USED_KINDS[self.kind]
+
+    def query(self) -> dict[str, str]:
+        return {"cluster": self.cluster, self.kind: self.value}
+
+    def names(self, usage: Any) -> frozenset[str]:
+        """The objects the network page counts, by the same rule (`network.usage`)."""
+
+        found: Mapping[str, tuple[str, ...]] = getattr(usage, f"{self.kind}s")
+        return frozenset(found.get(self.value, ()))
+
+
+def used_asked(query: Mapping[str, str], clusters: Iterable[str]) -> UsedFilter | None:
+    """The filter the address asks for, or None where it asks for none it may.
+
+    One kind at a time, on a cluster this listing shows. Anything else is the
+    whole listing, not an error: the link that sets it is the application's.
+    """
+
+    cluster = query.get("cluster", "")
+    if cluster not in tuple(clusters):
+        return None
+    asked = [kind for kind in USED_KINDS if query.get(kind)]
+    if len(asked) != 1:
+        return None
+    kind = asked[0]
+    value = query[kind]
+    if len(value) > 255:
+        return None
+    return UsedFilter(cluster, kind, value)
 
 
 TABLE = sorting.Table(

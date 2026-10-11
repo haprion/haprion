@@ -43,11 +43,16 @@
   // as a cluster name and a whole number, rather than the address passed on;
   // the order travels in the cookie the heading set.
   const PAGE = /^page-[a-z0-9][a-z0-9_-]{0,31}$/;
+  // And the objects using one VIP, source or group (26-10-11), or a refresh
+  // would swap the whole cluster's rows into a filtered table. The server
+  // checks the values; these are only the names it reads.
+  const USED = new Set(["cluster", "vip", "source", "group"]);
   const pages = () => {
     const kept = new URLSearchParams();
     for (const [key, value] of new URLSearchParams(window.location.search)) {
       const number = Number.parseInt(value, 10);
       if (PAGE.test(key) && Number.isInteger(number) && number > 0) kept.set(key, String(number));
+      if (USED.has(key) && value.length <= 255) kept.set(key, value);
     }
     const query = kept.toString();
     return query ? `?${query}` : "";

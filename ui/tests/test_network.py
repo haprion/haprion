@@ -520,20 +520,25 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         page = self.editable_page().text
 
         vips = page.split("Add a virtual address", 1)[0]
-        self.assertIn("</span>2 objects</summary>", vips, "two or more fold out from a count")
         self.assertIn(
-            '<a href="/proxies/edge-demo/public-web">public-web</a>, '
-            '<a href="/proxies/edge-demo/shop">shop</a>',
+            '<a href="/proxies?cluster=edge-demo&amp;vip=public">2 objects</a>',
             vips,
+            "two or more are a count leading to the listing narrowed to them",
         )
+        self.assertNotIn('<a href="/proxies/edge-demo/shop">', vips)
+        self.assertIn(
+            '<a href="/proxies?cluster=edge-demo&amp;source=192.0.2.25">2 objects</a>', page
+        )
+        self.assertIn('<a href="/proxies/service-demo/api">api</a>', page, "one by name")
         self.assertIn('<span class="table-empty">not used</span>', page)
 
     def test_a_reader_reads_the_names_without_links(self) -> None:
         self.account = replace(self.account, role="reader")
         page = self.editable_page().text
 
-        self.assertIn("public-web, shop", page)
-        self.assertNotIn('<a href="/proxies/edge-demo/shop">', page)
+        self.assertIn('<td data-label="Used by">api</td>', page)
+        self.assertNotIn('<a href="/proxies/service-demo/api">', page)
+        self.assertIn('<a href="/proxies?cluster=edge-demo&amp;vip=public">2 objects</a>', page)
 
     def test_objects_that_could_not_be_read_say_nothing(self) -> None:
         page = self.editable_page(objects=[]).text

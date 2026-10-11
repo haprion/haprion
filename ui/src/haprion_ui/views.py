@@ -858,6 +858,15 @@ def build_router(config: Config) -> APIRouter:
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
         #
+        # One cluster's objects using one VIP, source or group, from the
+        # network page's *Used by* (26-10-11). Only that cluster is read at all.
+        #
+        used = proxies.used_asked(request.query_params, clusters)
+        if used is not None:
+            overview = proxies.ProxyOverview(
+                clusters=tuple(view for view in overview.clusters if view.cluster == used.cluster)
+            )
+        #
         # The listing is built from published frontends, so an object that has
         # been committed but not deployed appears in none of them - which is
         # the object somebody is working on. Carried separately rather than
@@ -943,7 +952,8 @@ def build_router(config: Config) -> APIRouter:
         # the frontend really is the only thing there is to show.
         #
         unmanaged = {
-            view.cluster: objects.unmanaged_only(view.proxies) for view in overview.clusters
+            view.cluster: () if used else objects.unmanaged_only(view.proxies)
+            for view in overview.clusters
         }
         #
         # The passive health answer, per object, for the lamp in the listing.
@@ -1073,6 +1083,15 @@ def build_router(config: Config) -> APIRouter:
         # them, and every object on one address shares one - so the old count
         # disagreed with the list underneath it in both directions.
         #
+        #
+        # Narrowed last, so the lamps and badges above were worked out against
+        # every object, as they are on the whole listing.
+        #
+        if used is not None:
+            chosen = used.names(network.usage(stored[used.cluster]))
+            listed[used.cluster] = tuple(
+                listing for listing in listed[used.cluster] if listing.name in chosen
+            )
         counts = objects.counted(listed, unmanaged)
         return {
             "proxies": overview,
@@ -1084,8 +1103,12 @@ def build_router(config: Config) -> APIRouter:
             # A reader has no drafts to see: a draft is somebody's unfinished
             # edit, and the row exists so its author can find it again.
             #
-            "drafts": drafts if role == "admin" else {},
-            "publishing": publishing,
+            #
+            # Filtered, the table is what the objects say they use: a draft,
+            # a publish on its way and a removal have no such answer yet.
+            #
+            "drafts": drafts if role == "admin" and used is None else {},
+            "publishing": publishing if used is None else {},
             "behind": behind,
             "reconfigured": reconfigured,
             "unforwarded": {
@@ -1093,7 +1116,8 @@ def build_router(config: Config) -> APIRouter:
                 for view in overview.clusters
             },
             "failed": failed,
-            "removed": removed,
+            "removed": removed if used is None else {},
+            "used": used,
         }
 
     #
@@ -1148,7 +1172,9 @@ def build_router(config: Config) -> APIRouter:
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
                 "proxy_sort": sort,
-                "proxy_sorts": proxies.TABLE.links(sort),
+                "proxy_sorts": proxies.TABLE.links(
+                    sort, listing["used"].query() if listing["used"] else None
+                ),
                 "proxy_paging": proxies.pages_asked(request.query_params),
             },
         )
@@ -1203,6 +1229,7 @@ def build_router(config: Config) -> APIRouter:
                     order,
                     proxies.pages_asked(request.query_params),
                     listing["unforwarded"].get(view.cluster, ()),
+                    listing["used"],
                 )
             )
             for view in listing["proxies"].clusters

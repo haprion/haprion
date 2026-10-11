@@ -18,7 +18,7 @@
         away, where it has room.
       #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.stage == 'saved' %}{% if draft.deleted %}Removal · not published{% elif draft.replaces %}Renamed · not published{% elif stored %}Changed · not published{% else %}New · not published{% endif %}{% elif draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}{% endmacro %}
 
-{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}, unforwarded=()) %}
+{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}, unforwarded=(), used=none) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
 {#
   A draft of an object that is already stored keeps that object's row - its
@@ -163,6 +163,6 @@
 {% endif %}
 {% endfor %}
 {% if total > proxy_page_size %}
-      <tr class="proxy-pager"><td colspan="6">{% if page > 1 %}<a class="secondary-button" href="{{ paging | proxy_page_link(cluster, page - 1) }}">Previous</a>{% endif %}<span>{{ (page - 1) * proxy_page_size + 1 }}–{{ [page * proxy_page_size, total] | min }} of {{ total }}</span>{% if page < pages %}<a class="secondary-button" href="{{ paging | proxy_page_link(cluster, page + 1) }}">Next</a>{% endif %}</td></tr>
+      <tr class="proxy-pager"><td colspan="6">{% if page > 1 %}<a class="secondary-button" href="{{ paging | proxy_page_link(cluster, page - 1, used) }}">Previous</a>{% endif %}<span>{{ (page - 1) * proxy_page_size + 1 }}–{{ [page * proxy_page_size, total] | min }} of {{ total }}</span>{% if page < pages %}<a class="secondary-button" href="{{ paging | proxy_page_link(cluster, page + 1, used) }}">Next</a>{% endif %}</td></tr>
 {% endif %}
 {% endmacro %}

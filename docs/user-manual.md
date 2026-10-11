@@ -912,6 +912,9 @@ unless the rule still matches it after the first deploy that followed the except
 the finding stays, and it and the exception are marked *Not working*. An exception without
 its time (`at`), or deployed only from the command line, cannot be judged this way.
 
+Findings include the rule set's NOTICE rules - an empty `Accept` or `User-Agent` - which add
+to the score like the others.
+
 Each exception also **counts what it lets through**, as a firewall rule counts its hits: the
 exceptions list shows *Let through*, *Clients* and *Last seen* for the last seven days. The
 engine leaves no trace of a check it was told to skip, so the count comes from a counter the

@@ -2967,6 +2967,22 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         self.assertTrue(data.startswith("Matched Data: "), data)
         self.assertIn(" found within ARGS:q: ", data)
 
+    def test_a_notice_rule_is_logged_and_so_becomes_a_finding(self) -> None:
+        """26-10-11: at `warn` the engine scored 920310 and never logged it."""
+
+        marker = uuid.uuid4().hex
+        self.ask(f"/plain?m={marker}", name="blocks", headers={"Accept": "", "User-Agent": "probe"})
+        deadline = time.monotonic() + 2
+        logged: set[int] = set()
+        while time.monotonic() < deadline and 920310 not in logged:
+            logged = {
+                json.loads(line)["match"]["rule_id"]
+                for line in self.engine_log.read_text(errors="replace").splitlines()
+                if line.startswith('{"') and '"match"' in line and marker in line
+            }
+            time.sleep(0.05)
+        self.assertIn(920310, logged)
+
     def test_a_chained_rule_counts_through_its_chain(self) -> None:
         # 920310: an empty Accept header, from a client that is no browser.
         marker = uuid.uuid4().hex
@@ -3049,6 +3065,9 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
         self.skipTest("the engine is not running")
 
     def test_a_chained_rule_counts_through_its_chain(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_a_notice_rule_is_logged_and_so_becomes_a_finding(self) -> None:
         self.skipTest("the engine is not running")
 
     def test_open_lets_through_and_says_so_closed_refuses(self) -> None:

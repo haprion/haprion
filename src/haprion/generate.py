@@ -890,8 +890,15 @@ def _waf_files(
 
 def _waf_application(name: str, directives: Sequence[str]) -> str:
     """One application in `coraza.yaml`. The directives are a literal block:
-    nothing in them is YAML, and nothing in them comes from a person except
-    numbers the model has already held to their ranges."""
+    nothing in them is YAML, and what in them comes from a person - numbers,
+    and an exception's field and paths - the model has already held to its
+    ranges and characters.
+
+    `info`, not `warn`: the engine logs a match at its rule's severity, so at
+    `warn` the rule set's NOTICE rules scored without ever being logged, and
+    never became a finding (measured 26-10-11: an empty Accept header was on
+    the record and not in the log). Ordinary requests log nothing at either
+    level - measured on a hundred."""
 
     return "\n".join(
         [
@@ -900,7 +907,7 @@ def _waf_application(name: str, directives: Sequence[str]) -> str:
             *(f"      {line}" for line in directives),
             "    response_check: false",
             "    transaction_ttl_ms: 60000",
-            "    log_level: warn",
+            "    log_level: info",
             "    log_file: /dev/stdout",
             "    log_format: json",
         ]

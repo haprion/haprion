@@ -165,9 +165,9 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "oidc_enabled": lambda _detail: "Turned on sign-in with the identity provider",
     "feature_switched": _feature,
     "status_access_changed": lambda detail: (
-        "Changed who may ask the status endpoint"
+        "Changed the external monitoring addresses"
         if detail.get("networks")
-        else "Switched the status endpoint off"
+        else "Switched external monitoring off"
     ),
     "certificate_export": lambda detail: (
         f"Exported the key of {_text(detail, 'certificate', 'a certificate')}"

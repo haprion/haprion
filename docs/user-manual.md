@@ -51,7 +51,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [A basic log viewer, on purpose](#a-basic-log-viewer-on-purpose)
   - [Sending the traffic log elsewhere, and metrics](#sending-the-traffic-log-elsewhere-and-metrics)
 - [Jobs and status freshness](#jobs-and-status-freshness)
-  - [Needs attention, and the status endpoint](#needs-attention-and-the-status-endpoint)
+  - [Needs attention, and external monitoring](#needs-attention-and-external-monitoring)
   - [Events: jobs and the audit record](#events-jobs-and-the-audit-record)
   - [How often status is refreshed](#how-often-status-is-refreshed)
   - [The worker](#the-worker)
@@ -2370,7 +2370,7 @@ of HAProxy's exporter, so a dashboard reading the exporter does not see them.
 
 ## Jobs and status freshness
 
-### Needs attention, and the status endpoint
+### Needs attention, and external monitoring
 
 Under the dashboard's four cards, *Needs attention* lists what is wrong and wants somebody, across
 every cluster, the worst first, each row linked to where it is fixed: a certificate that is running
@@ -2394,7 +2394,7 @@ once any cluster's status reading is older than two poll intervals, which is how
 the manager itself has stopped reading. The second is Prometheus's text format:
 `haprion_attention_items{kind, severity}` for every kind and `haprion_status_age_seconds{cluster}`.
 
-Who may ask is a list on *Settings → Status endpoint*: addresses or networks, one per line. Every
+Who may ask is a list on *Settings → External monitoring*: addresses or networks, one per line. Every
 other address - and every address while the list is empty, which is the endpoint switched off - is
 answered 404. The address is the one nginx hands the interface, so with a reverse proxy in front it
 is the client the proxy names. A monitor that is answered 404 is not on the list.

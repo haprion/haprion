@@ -151,8 +151,8 @@
   Who may ask /status/attention.json and /status/metrics what needs doing
   (B274): Uptime Kuma, Prometheus. The list is the switch - empty is off.
 #}
-<section class="cluster-card settings-card" id="status-endpoint">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Status endpoint</h3><p>{% if status_access %}<code>/status/attention.json</code> and <code>/status/metrics</code> answer these addresses.{% else %}Off: no address may ask.{% endif %}</p></div></div></header>
+<section class="cluster-card settings-card" id="external-monitoring">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>External monitoring</h3><p>{% if status_access %}<code>/status/attention.json</code> and <code>/status/metrics</code> answer these addresses.{% else %}Off: no address may ask.{% endif %}</p></div></div></header>
   {% if status_access %}<div class="table-scroll"><table class="node-table settings-cluster-table">
     <thead><tr><th>Address</th><th>Added by</th><th>Added</th></tr></thead>
     <tbody>{% for entry in status_access %}<tr><td data-label="Address"><code>{{ entry.network }}</code></td><td data-label="Added by">{{ entry.added_by }}</td><td data-label="Added">{{ (entry.added_at | shown).strftime('%y-%m-%d %H:%M') }}</td></tr>{% endfor %}</tbody>

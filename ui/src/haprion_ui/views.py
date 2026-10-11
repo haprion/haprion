@@ -4259,7 +4259,7 @@ def build_router(config: Config) -> APIRouter:
                 detail={"networks": list(checked)},
             )
             connection.commit()
-        return RedirectResponse("/settings#status-endpoint", status_code=303)
+        return RedirectResponse("/settings#external-monitoring", status_code=303)
 
     @router.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request) -> Response:

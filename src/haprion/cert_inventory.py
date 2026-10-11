@@ -42,11 +42,14 @@ from haprion.certificates import (
     CERTIFICATE_OPENING,
     MAX_CERTIFICATE_BYTES,
     CertificateError,
+    authority_path,
+    bundle_fingerprint,
     certificate_path,
     leaf_block,
     leaf_fingerprint,
 )
 from haprion.config import (
+    AUTHORITY,
     DEFAULT_RECEIVER_FORMAT,
     Cluster,
     Receiver,
@@ -454,12 +457,20 @@ def measure_registered(
     if not entry.clusters:
         return "no material at its source yet"
     try:
-        fingerprint, facts = _measure(certificate_path(certificate_root, entry.certificate_id))
+        fingerprint, facts = _measure(_distributed(certificate_root, entry))
         return fingerprint, facts, "distribution"
     except FileNotFoundError:
         return "no material at its source yet"
     except (OSError, UnicodeDecodeError, CertificateError) as exc:
         return str(exc)
+
+
+def _distributed(certificate_root: Path, entry: RegisteredCertificate) -> Path:
+    """The cluster copy of a registered entry: an authority's in its own directory (B276)."""
+
+    if entry.source.kind == AUTHORITY:
+        return authority_path(certificate_root, entry.certificate_id)
+    return certificate_path(certificate_root, entry.certificate_id)
 
 
 def registry_result(
@@ -550,6 +561,23 @@ def registry_result(
                 renewal = renewal_record(request_root, entry.certificate_id)
                 if renewal is not None:
                     row["renewal"] = renewal
+            if entry.source.kind == AUTHORITY:
+                #
+                # A CA file is named by its subject rather than by host
+                # names, and may hold more than one certificate (B276).
+                #
+                row["subject"] = facts.subject
+                with contextlib.suppress(OSError, UnicodeDecodeError):
+                    bundle = (
+                        source_directory(entry, live=live, store=store) / FULLCHAIN
+                    ).read_text(encoding="ascii")
+                    row["certificate_count"] = bundle.count(CERTIFICATE_OPENING)
+                    #
+                    # What a node reports for its copy, so a reader can
+                    # compare the two without opening either file.
+                    #
+                    with contextlib.suppress(CertificateError):
+                        row["bundle_sha256"] = bundle_fingerprint(bundle)
             row.update(
                 readable=True,
                 fingerprint_sha256=fingerprint,
@@ -582,7 +610,7 @@ def registry_result(
         # status - it does not belong to this helper.
         #
         row["distribution"] = (
-            _published(certificate_path(certificate_root, entry.certificate_id), fingerprint)
+            _published(_distributed(certificate_root, entry), fingerprint)
             if entry.clusters
             else None
         )

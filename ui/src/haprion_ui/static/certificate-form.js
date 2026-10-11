@@ -76,6 +76,38 @@
     });
   };
 
+  //
+  // The import page's two kinds (B276), the same way: the other form, with
+  // the name carried. And a CA's source: the file is asked for only when
+  // one is uploaded - the NDES CA is read on the manager.
+  //
+  const carryImport = () => {
+    const form = document.querySelector("form[action='/certificates/import']");
+    if (!form) return;
+    form.querySelectorAll("input[data-kind-href]").forEach((choice) => {
+      choice.addEventListener("change", () => {
+        if (!choice.checked) return;
+        const target = new URL(choice.dataset.kindHref, window.location.href);
+        const name = String(new FormData(form).get("name") || "").trim();
+        if (name) target.searchParams.set("name", name);
+        window.location.assign(target.toString());
+      });
+    });
+    const sources = Array.from(form.querySelectorAll("input[data-authority-source]"));
+    const field = form.querySelector("[data-authority-file]");
+    const file = field && field.querySelector("input[type='file']");
+    if (!sources.length || !field || !file) return;
+    const apply = () => {
+      const chosen = sources.find((source) => source.checked);
+      const ndes = chosen !== undefined && chosen.value === "ndes";
+      field.hidden = ndes;
+      file.disabled = ndes || file.dataset.sealing === "off";
+    };
+    sources.forEach((source) => source.addEventListener("change", apply));
+    apply();
+  };
+
   window.addEventListener("DOMContentLoaded", wire);
   window.addEventListener("DOMContentLoaded", carryForm);
+  window.addEventListener("DOMContentLoaded", carryImport);
 })();

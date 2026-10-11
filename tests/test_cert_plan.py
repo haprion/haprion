@@ -324,5 +324,41 @@ class ResultFieldsTests(unittest.TestCase):
         )
 
 
+class TheClustersCaFilesCount(unittest.TestCase):
+    """B276: a node is current only when it carries the cluster's CA files too."""
+
+    TARGET = CertificateTarget(
+        certificates=(CertificateRef(id="example-net", fingerprint=WILDCARD),),
+        authorities=(CertificateRef(id="corp-root", fingerprint=ROTATED),),
+    )
+
+    def observed(self, authorities: tuple[tuple[str, str], ...] | None) -> NodeObservation:
+        return NodeObservation(
+            name="node-a",
+            status_ok=True,
+            certificates=(("example-net", WILDCARD),),
+            authorities=authorities,
+        )
+
+    def test_the_right_file_is_current(self) -> None:
+        self.assertIs(self.TARGET.is_current(self.observed((("corp-root", ROTATED),))), True)
+
+    def test_an_older_file_is_behind(self) -> None:
+        self.assertIs(self.TARGET.is_current(self.observed((("corp-root", UNRELATED),))), False)
+
+    def test_a_node_that_says_nothing_about_ca_files_is_unknown(self) -> None:
+        self.assertIsNone(self.TARGET.is_current(self.observed(None)))
+
+    def test_a_cluster_without_ca_files_does_not_ask(self) -> None:
+        self.assertIs(ONE.is_current(self.observed(None)), True)
+
+    def test_the_result_names_them_beside_the_certificates(self) -> None:
+        self.assertEqual(
+            self.TARGET.result_fields()["target_authorities"],
+            [{"id": "corp-root", "fingerprint_sha256": ROTATED}],
+        )
+        self.assertNotIn("target_authorities", ONE.result_fields())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -146,6 +146,70 @@ def certificate_path(root: Path, identifier: str) -> Path:
     return path
 
 
+#
+# Where a cluster's authorities live (B276): a directory of their own under
+# the distribution root on the manager and under the certificate directory on
+# a node. Of their own because a node reports every `*.pem` beside the
+# certificates as a certificate it serves, and a CA file is not one.
+#
+AUTHORITY_DIRECTORY = "ca"
+
+
+def authority_path(root: Path, identifier: str) -> Path:
+    """Where an authority's published file lives, held to the ID like a certificate's."""
+
+    return certificate_path(root / AUTHORITY_DIRECTORY, identifier)
+
+
+def bundle_fingerprint(pem: str) -> str:
+    """SHA-256 over every certificate block's DER bytes, in file order (B276).
+
+    An authority file is one or more CA certificates, and a second root added
+    behind the first is a change the nodes must be given - which the first
+    block's fingerprint would not show. Whitespace and anything between the
+    blocks do not count; the node computes the same over the same blocks.
+    """
+
+    digest = hashlib.sha256()
+    found = False
+    for match in CERTIFICATE_BLOCK.finditer(pem):
+        body = "".join(match.group(1).split())
+        try:
+            der = b64decode(body, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise CertificateError("a certificate block is not valid base64") from exc
+        if not der:
+            raise CertificateError("a certificate block is empty")
+        digest.update(der)
+        found = True
+    if not found:
+        raise CertificateError("the file contains no certificate")
+    return digest.hexdigest()
+
+
+def read_authority(root: Path, identifier: str) -> CertificateRef:
+    """One authority the cluster carries, as an ID and its bundle fingerprint."""
+
+    path = authority_path(root, identifier)
+    try:
+        if path.stat().st_size > MAX_CERTIFICATE_BYTES:
+            raise CertificateError(f"authority '{identifier}' is implausibly large")
+        pem = path.read_text(encoding="ascii", errors="strict")
+    except FileNotFoundError as exc:
+        raise CertificateError(
+            f"authority '{identifier}' goes to the cluster but is not present in the "
+            "distribution directory"
+        ) from exc
+    except OSError as exc:
+        raise CertificateError(f"authority '{identifier}' could not be read: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise CertificateError(f"authority '{identifier}' is not a PEM file") from exc
+    try:
+        return CertificateRef(id=identifier, fingerprint=bundle_fingerprint(pem))
+    except CertificateError as exc:
+        raise CertificateError(f"authority '{identifier}': {exc}") from exc
+
+
 def read_reference(root: Path, identifier: str) -> CertificateRef:
     """One referenced certificate, as an ID and the bytes it currently is."""
 
@@ -182,5 +246,6 @@ def target_for(cluster: Cluster, root: Path) -> CertificateTarget:
     return CertificateTarget(
         certificates=tuple(
             read_reference(root, identifier) for identifier in cluster.certificate_ids
-        )
+        ),
+        authorities=tuple(read_authority(root, identifier) for identifier in cluster.authority_ids),
     )

@@ -35,6 +35,7 @@ from haprion import advanced as advanced_config
 from haprion import geo, safe_yaml
 from haprion.config import (
     ABUSE_WINDOW,
+    CERTIFICATE_ID,
     DEFAULT_ABUSE_WINDOW,
     TLS_POLICY_NAMES,
     ConfigError,
@@ -427,7 +428,11 @@ STATUS_RANGE = re.compile(r"^[1-5][0-9]{2}(-[1-5][0-9]{2})?$")
 #
 PROBE = re.compile(r"^[A-Za-z0-9._:/+=@-]{1,64}$")
 MATCH_MODES = ("exact", "prefix")
-VERIFY_MODES = ("system", "none")
+#
+# `ca` (B276): verified against one of the cluster's own authorities, named
+# beside it, rather than against the node's trust store.
+#
+VERIFY_MODES = ("system", "none", "ca")
 
 #
 # How old a handshake to a pool may be. `tls_policy` holds what each one means;
@@ -650,6 +655,14 @@ class BackendTls:
     there was none - a pool used to negotiate down to whatever OpenSSL on the
     node happened to allow. `legacy` reaches TLS 1.1 and exists only here, on
     the side where the far end is a device somebody can name.
+    """
+
+    ca: str | None = None
+    """The authority a `ca` pool is verified against (B276), by its registry ID.
+
+    Required with `verify: ca` and refused with anything else. Whether the
+    cluster carries it is the generator's question: the model reads one
+    object and knows nothing about the cluster's registry.
     """
 
 
@@ -1509,9 +1522,19 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     backend_tls = None
     if tls is not None:
         tls_data = _mapping(tls, f"{location}.tls")
-        _only_keys(tls_data, {"verify", "policy"}, f"{location}.tls")
+        _only_keys(tls_data, {"verify", "policy", "ca"}, f"{location}.tls")
+        verify = _string(tls_data, "verify", f"{location}.tls", VERIFY_MODES)
+        authority = tls_data.get("ca")
+        if verify == "ca":
+            if not isinstance(authority, str) or not CERTIFICATE_ID.fullmatch(authority):
+                raise ModelError(
+                    f"{location}.tls.ca must name the CA certificate the pool is verified against"
+                )
+        elif authority is not None:
+            raise ModelError(f"{location}.tls.ca belongs to verify: ca only")
         backend_tls = BackendTls(
-            verify=_string(tls_data, "verify", f"{location}.tls", VERIFY_MODES),
+            verify=verify,
+            ca=authority if verify == "ca" else None,
             #
             # Absent is the default rather than an error, so every object
             # written before this field existed still loads and still means what

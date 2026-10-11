@@ -291,6 +291,60 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
             )
 
 
+class ImportingACaCertificate(unittest.TestCase):
+    """B276: a CA through `cert_import`, from an upload or from the NDES CA with no file."""
+
+    def test_the_ndes_ca_carries_no_box(self) -> None:
+        prepared = operations.prepare(
+            operation="cert_import",
+            cluster=None,
+            request_id=REQUEST,
+            payload={"id": "corp-root", "authority": "ndes", "clusters": ["alpha"]},
+        )
+
+        parameters = json.loads(prepared.request)["parameters"]
+        self.assertEqual(
+            parameters,
+            {
+                "certificate": "corp-root",
+                "clusters": ["alpha"],
+                "receivers": [],
+                "authority": "ndes",
+            },
+        )
+
+    def test_an_upload_carries_its_box_and_the_mark(self) -> None:
+        prepared = operations.prepare(
+            operation="cert_import",
+            cluster=None,
+            request_id=REQUEST,
+            payload={
+                "id": "corp-root",
+                "key_id": "0123456789abcdef",
+                "ciphertext": "AAAA",
+                "clusters": ["alpha"],
+                "receivers": [],
+                "authority": "upload",
+            },
+        )
+
+        parameters = json.loads(prepared.request)["parameters"]
+        self.assertEqual(parameters["authority"], "upload")
+        self.assertEqual(parameters["ciphertext"], "AAAA")
+
+    def test_what_a_ca_payload_may_not_carry(self) -> None:
+        for payload in (
+            {"id": "corp-root", "authority": "ndes", "clusters": ["alpha"], "ciphertext": "AA=="},
+            {"id": "corp-root", "authority": "ndes", "clusters": [], "receivers": ["lb-01"]},
+            {"id": "corp-root", "authority": "ndes", "clusters": []},
+            {"id": "corp-root", "authority": "elsewhere", "clusters": ["alpha"]},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="cert_import", cluster=None, request_id=REQUEST, payload=payload
+                )
+
+
 class DeletingCertificates(unittest.TestCase):
     def test_the_request_carries_the_ids_and_nothing_else(self) -> None:
         prepared = operations.prepare(

@@ -13,6 +13,7 @@ only works with the names used below, that is a bug in the software, not in this
 
 - [Configuration and deployment](#configuration-and-deployment)
   - [A pool's servers](#a-pools-servers)
+  - [A pool over HTTPS](#a-pool-over-https)
   - [Drain and maintenance](#drain-and-maintenance)
   - [Addresses, and what to call them](#addresses-and-what-to-call-them)
   - [DNS objects](#dns-objects)
@@ -140,6 +141,30 @@ it where wanted, in either order:
   is. A pool cannot be all standbys.
 
 The stored object spells both out (`weight: 50`, `backup: true`) under the server.
+
+### A pool over HTTPS
+
+*Backend TLS* says how the pool is reached:
+
+- **HTTPS, verify the certificate** checks it against the node's own trust store, the one the
+  operating system keeps (`ca-file @system-ca`): a certificate from a public CA.
+- **HTTPS, verify against a CA** checks it against a CA certificate imported under *Certificates*
+  and sent to the cluster ([Importing a certificate](#importing-a-certificate)):
+  a service whose certificate the organisation's own CA issued. The node's trust store is not
+  touched; the file is read by the pools that name it and by nothing else.
+- **HTTPS, do not verify** encrypts and checks nothing.
+
+Both verified choices need the servers named by hostname rather than address: the name is sent as
+SNI and the certificate is checked against it. A pool that names a CA its cluster does not carry is
+refused at publish, by name. In the stored object:
+
+```yaml
+backends:
+  app:
+    tls:
+      verify: ca
+      ca: corp-root
+```
 
 ### Drain and maintenance
 
@@ -1271,6 +1296,29 @@ certificate's renewal on the same key, or the certificate a CA returned for a re
 *Renew…* under the list, with the imported certificate's row ticked, takes exactly that - only the
 certificate; a file holding a key is refused there and pointed at the import page, where replacing
 the key is the stated intent. Enrollment from a Microsoft CA needs no file at all ([Preparing Microsoft AD CS / NDES for CSR enrollment](#preparing-microsoft-ad-cs--ndes-for-csr-enrollment)).
+
+**A CA certificate for the pools.** *Import certificate → CA certificate* takes a CA's
+certificate - or several: a root and its intermediates, or an old root beside its successor while
+servers move over - without a key, and the clusters whose pools may verify against it. *Upload*
+takes a file in the forms above, and a key in it is refused; *The NDES CA* takes the issuing CA the
+NDES profiles' certificates are signed by, the file the runtime policy names as `ndes.issuing_ca`,
+read by root on the manager. Every certificate in it must be a CA (`basicConstraints CA:TRUE`); a
+server certificate is refused (`not_authority`), and so is a file in which every certificate has
+expired. The registry holds it as `source.kind: authority`, the import store as `fullchain.pem`
+alone, and the clusters get it as `ca/<id>.pem` under the distribution directory. The nodes fetch
+it into `/etc/haproxy/certs/ca/` (the trigger's `ca-pull`), beside the certificates and not among
+them, and reload only when an installed pool names it. Its row reads *CA*, *Used by* lists its
+clusters, and the state says which nodes carry it. Imported again under the same name it replaces
+the file and keeps the clusters. A CA that a committed object or a draft names cannot be deleted or
+taken off that object's cluster. From the terminal:
+
+```bash
+sudo haprion-cert-import --id corp-root --authority corp-root.pem --cluster alpha
+sudo haprion-cert-import --id corp-root --ndes-ca --cluster alpha
+```
+
+A node whose package does not know `ca-pull` answers *unknown request*, and the rollout to it fails
+until the node package is updated.
 
 **Renew…** is one button for every source: ticked on a certbot certificate it runs the daily
 timer's `certbot renew --cert-name <lineage>` now with `--force-renewal` (`haprion-cert-renew

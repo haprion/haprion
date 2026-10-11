@@ -78,8 +78,9 @@ from haprion import cert_registry
 from haprion.cert_inventory import IMPORT_STORE, receiver_files
 from haprion.cert_publish import DEFAULT_LOCK_PATH, prune_receiver_directory, publish_lock
 from haprion.cert_publish import PublishError as LockError
-from haprion.certificates import certificate_path
+from haprion.certificates import authority_path, certificate_path
 from haprion.config import (
+    AUTHORITY,
     CERTIFICATE_ID,
     DEFAULT_RECEIVER_FORMAT,
     Cluster,
@@ -106,6 +107,11 @@ SUDO = "/usr/bin/sudo"
 # here and not an error.
 #
 NODE_VERB = "cert-remove"
+#
+# The same for an authority's copy (B276), which the node keeps in a
+# directory of its own and reports back in the same words.
+#
+AUTHORITY_NODE_VERB = "ca-remove"
 #
 # The node script (`install/node/haprion-cert-remove`) logs one line per
 # certificate it removed, in this form. A copy the node never had answers with
@@ -228,7 +234,10 @@ class Report:
 # (exit code, output) and never raise for a failed command.
 #
 LineageRemover = Callable[[Sequence[str]], tuple[int, str]]
-NodeRemover = Callable[[DeployIdentity, str, str], tuple[int, str]]
+#
+# (identity, management host, verb, certificate ID) -> (exit code, output).
+#
+NodeRemover = Callable[[DeployIdentity, str, str, str], tuple[int, str]]
 GuardsReader = Callable[[RuntimeConfig, Sequence[str]], "Guards"]
 
 
@@ -268,8 +277,16 @@ def read_guards(runtime: RuntimeConfig, certificate_ids: Sequence[str]) -> Guard
                 f"cannot read the committed objects of cluster {cluster_id!r}: {exc}",
             ) from exc
         for proxy in proxies:
-            certificate = proxy.listen.certificate
-            if certificate in wanted:
+            named = {proxy.listen.certificate}
+            #
+            # A pool verifying against an authority names it too (B276).
+            #
+            named.update(
+                backend.tls.ca
+                for backend in proxy.backends.values()
+                if backend.tls is not None and backend.tls.ca is not None
+            )
+            for certificate in sorted(name for name in named if name in wanted):
                 referenced.setdefault(certificate, []).append(f"{cluster_id}/{proxy.name}")
     return Guards(
         referenced={key: tuple(value) for key, value in referenced.items()},
@@ -375,9 +392,12 @@ def remove_material(
     registry = runtime.registry
     assert registry is not None  # noqa: S101
     layers: list[Layer] = []
-    if entry_clusters and policy.certificate_root is not None:
-        layers.append(_unlink(certificate_path(policy.certificate_root, certificate_id)))
     entry = registry.certificates.get(certificate_id)
+    if entry_clusters and policy.certificate_root is not None:
+        if entry is not None and entry.source.kind == AUTHORITY:
+            layers.append(_unlink(authority_path(policy.certificate_root, certificate_id)))
+        else:
+            layers.append(_unlink(certificate_path(policy.certificate_root, certificate_id)))
     for receiver_id in entry_receivers:
         receiver = registry.receivers.get(receiver_id)
         if receiver is None:
@@ -432,7 +452,7 @@ def remove_source(
         if code != 0:
             return Layer(f"lineage {lineage}", "failed", output[-500:] or f"certbot exit {code}")
         return Layer(f"lineage {lineage}", "removed")
-    if kind == "import":
+    if kind in ("import", AUTHORITY):
         if not CERTIFICATE_ID.fullmatch(certificate_id):
             return Layer("import store", "failed", "invalid certificate ID")
         directory = store / certificate_id
@@ -466,7 +486,9 @@ def remove_request_state(policy: PathPolicy, certificate_id: str) -> Layer | Non
     return Layer(name, "removed" if removed else "absent")
 
 
-def ask_node(identity: DeployIdentity, mgmt_host: str, certificate_id: str) -> tuple[int, str]:
+def ask_node(
+    identity: DeployIdentity, mgmt_host: str, verb: str, certificate_id: str
+) -> tuple[int, str]:
     """The same call `cert-deploy` makes, with a different verb."""
 
     from haprion.cli.deploy_helper import SSH, SSH_ENVIRONMENT, SSH_OPTIONS
@@ -478,7 +500,7 @@ def ask_node(identity: DeployIdentity, mgmt_host: str, certificate_id: str) -> t
             "-i",
             str(identity.key),
             f"{identity.user}@{mgmt_host}",
-            f"{NODE_VERB} {certificate_id}",
+            f"{verb} {certificate_id}",
         ],
         capture_output=True,
         text=True,
@@ -494,6 +516,8 @@ def remove_node_copies(
     certificate_id: str,
     identity: DeployIdentity | None,
     ask: NodeRemover,
+    *,
+    verb: str = NODE_VERB,
 ) -> tuple[NodeCopy, ...]:
     """Layer four, node by node. A refusal is a kept copy, reported and asked again next run."""
 
@@ -507,7 +531,7 @@ def remove_node_copies(
                     )
                 )
                 continue
-            code, output = ask(identity, node.mgmt_host, certificate_id)
+            code, output = ask(identity, node.mgmt_host, verb, certificate_id)
             if code == 0:
                 had_copy = NODE_REMOVED_LINE.format(certificate_id=certificate_id) in output
                 copies.append(
@@ -706,7 +730,11 @@ def _delete_locked(
 
         clusters = [runtime.clusters[c] for c in entry.clusters if c in runtime.clusters]
         nodes = remove_node_copies(
-            clusters, certificate_id, policy.cert_deploy_identity, node_remover
+            clusters,
+            certificate_id,
+            policy.cert_deploy_identity,
+            node_remover,
+            verb=AUTHORITY_NODE_VERB if entry.source.kind == AUTHORITY else NODE_VERB,
         )
         outcomes.append(_outcome(certificate_id, tuple(layers), nodes))
         #

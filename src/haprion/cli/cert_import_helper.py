@@ -15,6 +15,11 @@ Two shapes of upload, told apart by what the box holds:
   the same ID left in the store - a renewal on the manager's own key, or
   the certificate a CA returned for a CSR made here. No stored key, no
   import; the refusal says which way to take instead.
+
+And a CA certificate (B276), asked for by name with `authority`: `upload`
+opens the box as above and refuses a key in it; `ndes` carries no box at all
+and imports the file the runtime policy names as the NDES issuing CA, which
+only root reads by its path.
 """
 
 from __future__ import annotations
@@ -30,7 +35,10 @@ from haprion.cert_import import (
     ImportError_,
     assemble,
     assemble_for,
+    authority_blocks,
+    import_authority,
     import_certificate,
+    read_authority_file,
     read_bytes,
     stored_key,
 )
@@ -46,8 +54,18 @@ from haprion.helper_protocol import HelperProtocolError, config_error_code, writ
 OPERATION = cert_upload.OPERATION
 HELPER = cert_upload.HELPER
 PARAMETERS = frozenset(
-    {"certificate", "key_id", "ciphertext", "clusters", "receivers", "formats", "interface"}
+    {
+        "certificate",
+        "key_id",
+        "ciphertext",
+        "clusters",
+        "receivers",
+        "formats",
+        "interface",
+        "authority",
+    }
 )
+AUTHORITY_SOURCES = ("upload", "ndes")
 
 
 def _key_id(value: object) -> str:
@@ -95,15 +113,31 @@ def main(
     refuse = cert_job.Refuse(OPERATION, request, writer, errors)
     try:
         certificate_id = cert_job.certificate(request.parameters)
-        key_id = _key_id(request.parameters.get("key_id"))
-        encoded = request.parameters.get("ciphertext")
-        if not isinstance(encoded, str) or len(encoded) > cert_upload.MAX_CIPHERTEXT * 2:
-            raise HelperProtocolError("parameters.ciphertext must be base64", exit_code=65)
-        ciphertext = base64.b64decode(encoded, validate=True)
+        authority = request.parameters.get("authority")
+        if authority is not None and authority not in AUTHORITY_SOURCES:
+            raise HelperProtocolError(
+                "parameters.authority must be one of: " + ", ".join(AUTHORITY_SOURCES),
+                exit_code=65,
+            )
+        key_id = ""
+        ciphertext = b""
+        if authority == "ndes":
+            if "key_id" in request.parameters or "ciphertext" in request.parameters:
+                raise HelperProtocolError("the NDES CA is read on the manager; send no file")
+        else:
+            key_id = _key_id(request.parameters.get("key_id"))
+            encoded = request.parameters.get("ciphertext")
+            if not isinstance(encoded, str) or len(encoded) > cert_upload.MAX_CIPHERTEXT * 2:
+                raise HelperProtocolError("parameters.ciphertext must be base64", exit_code=65)
+            ciphertext = base64.b64decode(encoded, validate=True)
         clusters = cert_job.clusters(request.parameters)
         receivers = cert_job.receivers(request.parameters)
         formats = cert_job.formats(request.parameters, receivers)
         interface = cert_job.interface(request.parameters)
+        if authority is not None and (receivers or formats or interface):
+            raise HelperProtocolError(
+                "a CA certificate goes to clusters only: no receivers, not the interface"
+            )
     except (HelperProtocolError, binascii.Error, ValueError) as exc:
         return refuse("bad_input", str(exc), 65)
 
@@ -112,6 +146,27 @@ def main(
         runtime = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
+    if authority == "ndes":
+        if policy.ndes is None:
+            return refuse("dependency_unavailable", "runtime policy.ndes is not configured", 78)
+        try:
+            result = import_authority(
+                certificate_id=certificate_id,
+                blocks=read_authority_file(policy.ndes.issuing_ca),
+                clusters=clusters,
+                policy=policy,
+                runtime=runtime,
+                deployer=deployer if deployer is not None else default_deployer(errors),
+                live=live,
+                store=store,
+                lock_path=lock_path,
+                require_secure=require_secure,
+            )
+        except ImportError_ as exc:
+            return refuse(exc.code, str(exc), exc.exit_code, exc.details or None)
+        document, exit_code = result_envelope(result, request_id=request.request_id)
+        write_document(writer, document)
+        return exit_code
     #
     # The same pair that seals DNS profiles (B146): the installation's, named
     # under `acme.dns_profiles` because that is where it was first needed.
@@ -145,6 +200,22 @@ def main(
 
     try:
         certificates, keys = read_bytes(opened.data, password=opened.password)
+        if authority == "upload":
+            result = import_authority(
+                certificate_id=certificate_id,
+                blocks=authority_blocks(certificates, keys),
+                clusters=clusters,
+                policy=policy,
+                runtime=runtime,
+                deployer=deployer if deployer is not None else default_deployer(errors),
+                live=live,
+                store=store,
+                lock_path=lock_path,
+                require_secure=require_secure,
+            )
+            document, exit_code = result_envelope(result, request_id=request.request_id)
+            write_document(writer, document)
+            return exit_code
         if not keys:
             existing = stored_key(store, certificate_id)
             if existing is None:

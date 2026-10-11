@@ -63,9 +63,16 @@
     if (!tls || !policy) return;
 
     const label = policy.closest("label");
+    //
+    // The CA a pool is verified against (B276): only with that choice.
+    //
+    const authority = document.querySelector("select[name='backend_tls_ca']");
+    const authorityLabel = authority && authority.closest("label");
     const apply = () => {
       policy.disabled = !tls.value;
       if (label) label.hidden = !tls.value;
+      if (authority) authority.disabled = tls.value !== "ca";
+      if (authorityLabel) authorityLabel.hidden = tls.value !== "ca";
     };
     tls.addEventListener("change", apply);
     apply();

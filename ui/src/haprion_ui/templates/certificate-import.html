@@ -2,7 +2,8 @@
 {% from "_target-row.html" import target_row %}
 {% if form.interface %}{% set section = 'settings' %}{% endif %}
 {% block title %}{% if form.interface %}Import interface certificate{% else %}Import certificate{% endif %} — Haprion{% endblock %}
-{% block head_extra %}<script defer src="{{ url_for('static', path='/receiver-picker.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block head_extra %}<script defer src="{{ url_for('static', path='/receiver-picker.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/certificate-form.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% set authority = form.kind == 'authority' and not form.interface %}
 {% block content %}
 {#
   A certificate somebody already has (C9, B165). The same page as New
@@ -28,7 +29,7 @@
 <p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; this form can be sent once it has finished. Its row on the <a href="/certificates">certificate list</a> shows how it is going.</p>
 {% endif %}
 
-{% if not sealing_available %}
+{% if not sealing_available and not authority %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The installation's sealing key is not configured, so a file cannot be uploaded here.</strong> Import it on the manager with <code>haprion-cert-import</code>.</p>
 {% endif %}
 
@@ -36,9 +37,33 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
   {% if form.interface %}<input type="hidden" name="interface" value="1">{% endif %}
+  {% if authority %}<input type="hidden" name="kind" value="authority">{% endif %}
 
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
+    {#
+      What is imported (B276): a certificate with its key, or a CA
+      certificate the pools verify their servers against. Two radios that
+      open each other's form, as the kind does on New certificate, carrying
+      the name.
+    #}
+    {% if not form.interface %}<div class="method-choices certificate-kind" role="radiogroup" aria-label="What is imported">
+      <label class="check"><input type="radio" name="import_kind" value="certificate" data-kind-href="/certificates/import"{% if not authority %} checked{% endif %}> <span><span class="method-name">Certificate</span> <span class="optional">— with its key, served by the clusters</span></span></label>
+      <label class="check"><input type="radio" name="import_kind" value="authority" data-kind-href="/certificates/import?kind=authority"{% if authority %} checked{% endif %}> <span><span class="method-name">CA certificate</span> <span class="optional">— pools verify their servers against it</span></span></label>
+    </div>{% endif %}
+    {% if authority %}
+    <div class="form-grid">
+      <label>Name<input name="name" value="{{ form.name }}" maxlength="255" placeholder="corp-root-ca" autocomplete="off" spellcheck="false" required autofocus><small>What the CA is called here; a pool's <em>Verify against a CA</em> names it. A CA's name replaces its file.</small></label>
+      <div class="field">
+        <span class="field-title">Source</span>
+        <div class="method-choices" role="radiogroup" aria-label="Source">
+          <label class="check"><input type="radio" name="source" value="upload" data-authority-source{% if form.source != 'ndes' or not choices.ndes_profiles %} checked{% endif %}> <span><span class="method-name">Upload</span> <span class="optional">— PEM, DER or PKCS#7, without a key</span></span></label>
+          <label class="check"><input type="radio" name="source" value="ndes" data-authority-source{% if form.source == 'ndes' and choices.ndes_profiles %} checked{% endif %}{% if not choices.ndes_profiles %} disabled{% endif %}> <span><span class="method-name">The NDES CA</span> <span class="optional">— {% if choices.ndes_profiles %}the issuing CA NDES certificates are signed by{% else %}no NDES profile is in effect{% endif %}</span></span></label>
+        </div>
+      </div>
+      <label data-authority-file>File<input type="file" name="file" accept="{{ accept }}"{% if not sealing_available %} disabled data-sealing="off"{% endif %}><small>One or more CA certificates: a root and its intermediates, or an old root beside the new one. At most {{ max_kb }} kB.{% if form.filename %} Last chosen: <code>{{ form.filename }}</code> — choose it again.{% endif %}</small></label>
+    </div>
+    {% else %}
     {#
       The one sentence the person needs before choosing a file: what
       happens to a key in it. Said plainly, because B134 said the opposite
@@ -50,6 +75,7 @@
       <label>File<input type="file" name="file" accept="{{ accept }}" required{% if not sealing_available %} disabled{% endif %}><small>PEM (certificate, key and chain in any order), PFX/PKCS#12, DER (<code>.cer</code>/<code>.crt</code>) or PKCS#7 (<code>.p7b</code>). At most {{ max_kb }} kB.{% if form.filename %} Last chosen: <code>{{ form.filename }}</code> — choose it again.{% endif %}</small></label>
       <label>PFX password<input type="password" name="password" maxlength="256" autocomplete="off"><small>Only for a PKCS#12 that has one. Sealed with the file; never stored.</small></label>
     </div>
+    {% endif %}
   </section>
 
   {% if form.interface %}
@@ -57,6 +83,25 @@
     <div class="editor-actions editor-submit">
       <p class="table-note">Installed on this manager once imported.</p>
       <div class="form-buttons"><a class="secondary-button" href="/settings">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job or not sealing_available %} disabled{% endif %}>Import the certificate</button></div>
+    </div>
+  </section>
+  {% elif authority %}
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Clusters</h3><p>Whose pools may verify against it. At least one.</p></div></div></header>
+    <div class="form-grid certificate-target-stack">
+      <div class="field">
+        <div class="target-list">
+          {% for name in choices.clusters %}
+          {{ target_row('cluster', name, checked=name in form.clusters, effect='Nodes pull it') }}
+          {% else %}
+          <span class="warning-text">No cluster is configured.</span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="editor-actions editor-submit">
+      <p class="table-note">The CA's row shows it being imported, and the reason if the file is refused.</p>
+      <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Import the CA certificate</button></div>
     </div>
   </section>
   {% else %}

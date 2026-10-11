@@ -84,6 +84,7 @@ PREVIEW_CLUSTER = Cluster(
     validation_certs=Path("/preview"),
     default_certificate="example.com",
     certificate_ids=("example.com", "example.net", "wildcard-example-com"),
+    authority_ids=("example-root-ca",),
     trusted_proxy_cidrs=(),
     nodes=(Node(name="node-a", mgmt_host="node-a.example.com"),),
 )
@@ -164,6 +165,7 @@ DEFAULTS = {
     "health_fall": "",
     "backend_tls": "",
     "backend_tls_policy": "",
+    "backend_tls_ca": "",
     "listen_tls_policy": "",
     "max_connections": "",
     "slow_start": "",
@@ -531,6 +533,7 @@ HIDDEN_FOR = {
         "deny_ranges",
         "backend_tls",
         "backend_tls_policy",
+        "backend_tls_ca",
         "max_connections",
         "slow_start",
         "balance_key",
@@ -800,6 +803,8 @@ def build_document(form: dict[str, object]) -> str:
         backend["cookie"] = text("cookie")
     if text("backend_tls"):
         backend_tls_box: dict[str, str] = {"verify": text("backend_tls")}
+        if text("backend_tls") == "ca":
+            backend_tls_box["ca"] = text("backend_tls_ca")
         #
         # Written only when it is not the default, so turning the field on and
         # off again leaves the document it started from. A published object that
@@ -1195,6 +1200,7 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             vips=cluster.vips,
             default_vip=cluster.default_vip,
             certificates=cluster.certificate_ids,
+            authorities=cluster.authority_ids,
             resolvers=cluster.resolvers,
             networks=cluster.networks,
             sources=cluster.sources,
@@ -1268,6 +1274,7 @@ def choices(cluster: Cluster) -> dict[str, object]:
             cluster.vips[cluster.default_vip].address if cluster.default_vip in cluster.vips else ""
         ),
         "certificates": sorted(cluster.certificate_ids),
+        "authorities": sorted(cluster.authority_ids),
         "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
         "balances": BALANCE_CHOICES,
@@ -1690,6 +1697,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "health_fall": str(health.get("fall", "") or ""),
         "backend_tls": str(_sub(backend, "tls").get("verify", "") or ""),
         "backend_tls_policy": str(_sub(backend, "tls").get("policy", "") or ""),
+        "backend_tls_ca": str(_sub(backend, "tls").get("ca", "") or ""),
         "max_connections": str(backend.get("max_connections", "") or ""),
         "slow_start": str(backend.get("slow_start", "") or ""),
         "allow_from": tuple(groups),

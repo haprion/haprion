@@ -46,9 +46,17 @@ read -r -a parts <<< "$request"
 # B139; a manager that sends it to a node without this line is answered with
 # the "unknown request" below and reports the copy as kept.
 #
+#
+# The CA files a cluster's pools verify against (B276) go through the same two
+# helpers with `--authority`: they live in a directory of their own, and are
+# fetched from one.
+#
+FLAGS=()
 case "${parts[0]:-}" in
     cert-pull) HELPER="$PULL_HELPER" ;;
     cert-remove) HELPER="$REMOVE_HELPER" ;;
+    ca-pull) HELPER="$PULL_HELPER"; FLAGS=(--authority) ;;
+    ca-remove) HELPER="$REMOVE_HELPER"; FLAGS=(--authority) ;;
     *) fail "unknown request: ${parts[0]:-<empty>}" ;;
 esac
 
@@ -61,4 +69,4 @@ for id in "${ids[@]}"; do
     [[ "$id" =~ $ID_PATTERN ]] || fail "invalid certificate ID"
 done
 
-exec sudo -n "$HELPER" "${ids[@]}"
+exec sudo -n "$HELPER" "${FLAGS[@]}" "${ids[@]}"

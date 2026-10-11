@@ -315,5 +315,75 @@ class TheRowUpload(ImportPageTestCase):
         self.assertEqual(self.queued, [])
 
 
+class ACaCertificate(ImportPageTestCase):
+    """B276: the same page imports a CA file, without a key, to clusters only."""
+
+    def test_the_page_offers_the_kind_and_the_ca_form_has_no_receivers_or_password(self) -> None:
+        client = self.writing_client()
+        self.assertIn(
+            'data-kind-href="/certificates/import?kind=authority"',
+            client.get("/certificates/import").text,
+        )
+
+        page = client.get("/certificates/import?kind=authority&name=corp-root").text
+
+        self.assertIn('value="authority" data-kind-href', page)
+        self.assertIn('name="kind" value="authority"', page)
+        self.assertIn('value="corp-root"', page)
+        self.assertIn('name="cluster" value="alpha"', page)
+        self.assertNotIn('name="receiver"', page)
+        self.assertNotIn('name="password"', page)
+        self.assertIn("no NDES profile is in effect", page)
+        self.assertIn("Import the CA certificate", page)
+
+    def test_an_uploaded_ca_is_sealed_and_marked(self) -> None:
+        response = self.post(self.writing_client(), FAKE_CERT, name="corp-root", kind="authority")
+
+        self.assertEqual(response.status_code, 303, response.text)
+        payload = self.queued[0]["payload"]
+        self.assertEqual(payload["authority"], "upload")
+        self.assertEqual(payload["clusters"], ["alpha"])
+        opened = cert_upload.open_upload(
+            self.private, base64.b64decode(payload["ciphertext"]), certificate_id="corp-root"
+        )
+        self.assertEqual(opened.data, FAKE_CERT)
+
+    def test_what_the_ca_form_refuses(self) -> None:
+        client = self.writing_client()
+        cases: tuple[tuple[dict[str, Any], bytes, str], ...] = (
+            ({"cluster": []}, FAKE_CERT, "at least one cluster"),
+            ({}, FAKE_CERT + FAKE_KEY, "private key"),
+            ({"name": "example.com"}, FAKE_CERT, "already in use"),
+            ({"source": "ndes"}, FAKE_CERT, "No NDES profile"),
+        )
+        for fields, data, words in cases:
+            with self.subTest(words=words):
+                response = self.post(
+                    client,
+                    data,
+                    kind="authority",
+                    **{"name": "corp-root", **fields},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(words, response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_a_certificate_cannot_take_a_cas_name(self) -> None:
+        with mock.patch(
+            "haprion_ui.db.cluster_certificates",
+            return_value=[
+                with_registry(
+                    certificate_reading(),
+                    registered(fingerprint="a" * 64),
+                    registered("corp-root", kind="authority", fingerprint="d" * 64, sans=[]),
+                )
+            ],
+        ):
+            response = self.post(self.writing_client(), name="corp-root")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("is a CA certificate", response.text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -69,6 +69,7 @@ from haprion.certificates import (
     leaf_fingerprint,
 )
 from haprion.config import (
+    AUTHORITY,
     CERTIFICATE_ID,
     RECEIVER_FORMATS,
     ConfigError,
@@ -136,6 +137,7 @@ class ImportResult:
     publish: Report
     interface: bool = False
     exportable: bool = False
+    authority: bool = False
     #
     # D5: the entry that served the interface before this one, and what
     # became of it. Both fields are absent from the answer for every other
@@ -149,6 +151,8 @@ class ImportResult:
             extra["interface"] = True
         if self.exportable:
             extra["exportable"] = True
+        if self.authority:
+            extra["authority"] = True
         if self.retired is not None:
             extra["retired"] = dict(self.retired)
         return {
@@ -638,6 +642,12 @@ def _register_entry(
     if isinstance(existing, dict):
         kind = (existing.get("source") or {}).get("kind")
         if kind != "import":
+            if kind == AUTHORITY:
+                raise ImportError_(
+                    "not_import",
+                    f"{certificate_id!r} is a CA certificate; import a certificate under "
+                    "another ID.",
+                )
             raise ImportError_(
                 "not_import",
                 f"{certificate_id!r} is registered as {kind!r}; its material is not "
@@ -725,6 +735,11 @@ def import_certificate(
     # after the store, so the registry never names material that is not there.
     #
     existing = runtime.registry.certificates.get(certificate_id) if runtime.registry else None
+    if existing is not None and existing.source.kind == AUTHORITY:
+        raise ImportError_(
+            "not_import",
+            f"{certificate_id!r} is a CA certificate; import a certificate under another ID.",
+        )
     if existing is not None and existing.source.kind != "import":
         raise ImportError_(
             "not_import",
@@ -918,3 +933,220 @@ def assemble_for(certificates: Sequence[str], keys: Sequence[str], *, pending: b
                 "the downloaded request; to replace the key, import the pair.",
             ) from exc
         raise
+
+
+# - Authorities (B276) ------------------------------------------------------
+#
+# A CA certificate - or several: a root and its intermediates, or an old root
+# beside its successor - that a cluster's pools verify their servers against.
+# Imported like a certificate, from the same uploads, but there is no key:
+# a file with one is refused, since a CA's key on this manager would be a
+# secret nobody asked it to keep. Every certificate must say it is a CA.
+#
+
+
+def authority_blocks(certificates: Sequence[str], keys: Sequence[str]) -> tuple[str, ...]:
+    """The CA certificates in a file, refused unless every one of them is a CA."""
+
+    if keys:
+        raise ImportError_(
+            "bad_input",
+            "the file holds a private key; a CA certificate is imported without its key",
+        )
+    if not certificates:
+        raise ImportError_("bad_input", "no certificate was found")
+    for certificate in certificates:
+        text = _openssl(
+            ["x509", "-noout", "-ext", "basicConstraints"],
+            stdin=certificate,
+            what="read a CA certificate",
+        )
+        if "CA:TRUE" not in text.replace(" ", ""):
+            subject, _issuer = _names(certificate)
+            raise ImportError_(
+                "not_authority",
+                f"{subject or 'a certificate in the file'} is not a CA certificate "
+                "(basicConstraints CA:TRUE); a server certificate is imported with its key",
+            )
+    return tuple(dict.fromkeys(certificates))
+
+
+def write_authority_store(store: Path, certificate_id: str, blocks: Sequence[str]) -> bool:
+    """`<store>/<id>/fullchain.pem`, root-only, in one rename. True if replaced."""
+
+    if not CERTIFICATE_ID.fullmatch(certificate_id):
+        raise ImportError_("bad_input", f"invalid certificate ID: {certificate_id!r}")
+    store.mkdir(mode=0o700, parents=True, exist_ok=True)
+    final = store / certificate_id
+    staging = Path(tempfile.mkdtemp(prefix=f".{certificate_id}.", dir=store))
+    try:
+        os.chmod(staging, 0o700)
+        fd = os.open(staging / FULLCHAIN, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="ascii") as handle:
+            handle.write("".join(blocks))
+            handle.flush()
+            os.fsync(handle.fileno())
+        replaced = final.is_dir()
+        previous: Path | None = None
+        if replaced:
+            previous = store / f".{certificate_id}.replaced"
+            shutil.rmtree(previous, ignore_errors=True)
+            os.rename(final, previous)
+        os.rename(staging, final)
+        if previous is not None:
+            shutil.rmtree(previous, ignore_errors=True)
+        return replaced
+    except OSError as exc:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise ImportError_(
+            "dependency_unavailable", f"the import store could not be written: {exc}", exit_code=78
+        ) from exc
+
+
+def _register_authority(
+    path: Path,
+    certificate_id: str,
+    runtime: RuntimeConfig,
+    *,
+    clusters: Sequence[str],
+    require_secure: bool,
+    lock_path: Path,
+) -> None:
+    """The entry, kept clusters and new ones together, through the registry's one writer."""
+
+    try:
+        with cert_registry.locked(lock_path):
+            document = cert_registry.read_document(path)
+            certificates = dict(document.get("certificates") or {})
+            existing = certificates.get(certificate_id)
+            kept: list[str] = []
+            if isinstance(existing, dict):
+                kind = (existing.get("source") or {}).get("kind")
+                if kind != AUTHORITY:
+                    raise ImportError_(
+                        "not_import",
+                        f"{certificate_id!r} is registered as {kind!r}; a CA certificate needs "
+                        "an ID of its own.",
+                    )
+                kept = [str(item) for item in existing.get("clusters") or ()]
+            entry: dict[str, Any] = {"source": {"kind": AUTHORITY}}
+            every = kept + [c for c in clusters if c not in kept]
+            if every:
+                entry["clusters"] = every
+            certificates[certificate_id] = entry
+            cert_registry.write(
+                path,
+                document=document,
+                certificates=certificates,
+                runtime=runtime,
+                require_secure=require_secure,
+            )
+    except cert_registry.RegistryError as exc:
+        raise ImportError_(
+            exc.code,
+            f"the CA file is in the store but the registry did not take {certificate_id!r}: "
+            f"{exc} Fix the targets and import again.",
+            exit_code=exc.exit_code,
+        ) from exc
+
+
+def import_authority(
+    *,
+    certificate_id: str,
+    blocks: Sequence[str],
+    clusters: Sequence[str],
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    deployer: Deployer | None = None,
+    live: Path = LETSENCRYPT_LIVE,
+    store: Path = IMPORT_STORE,
+    lock_path: Path = DEFAULT_LOCK_PATH,
+    require_secure: bool = True,
+    now: datetime | None = None,
+) -> ImportResult:
+    """Check, write, register and publish one CA file, as `import_certificate` does a pair."""
+
+    if policy.certificate_registry is None:
+        raise ImportError_(
+            "dependency_unavailable",
+            "no certificate registry is configured. Add certificate_registry to the "
+            "runtime policy.",
+            exit_code=78,
+        )
+    if not CERTIFICATE_ID.fullmatch(certificate_id):
+        raise ImportError_("bad_input", f"invalid certificate ID: {certificate_id!r}")
+    if (live / certificate_id).exists():
+        raise ImportError_(
+            "already_exists",
+            f"certbot has a lineage named {certificate_id!r}; choose another ID.",
+        )
+    existing = runtime.registry.certificates.get(certificate_id) if runtime.registry else None
+    if existing is not None and existing.source.kind != AUTHORITY:
+        raise ImportError_(
+            "not_import",
+            f"{certificate_id!r} is registered as {existing.source.kind!r}; a CA certificate "
+            "needs an ID of its own.",
+        )
+    unknown_clusters = sorted(set(clusters) - set(runtime.clusters))
+    if unknown_clusters:
+        raise ImportError_("unknown_cluster", "unknown cluster(s): " + ", ".join(unknown_clusters))
+    moment = now or datetime.now(UTC)
+    try:
+        described = [describe(block) for block in blocks]
+        fingerprint = leaf_fingerprint(blocks[0])
+    except CertificateError as exc:
+        raise ImportError_("bad_input", f"a CA certificate could not be read: {exc}") from exc
+    if all(facts.not_after < moment for facts in described):
+        latest = max(facts.not_after for facts in described)
+        raise ImportError_(
+            "expired",
+            f"every certificate in the file has expired (the last "
+            f"{latest.isoformat(timespec='seconds')}); nothing was imported",
+        )
+    replaced = write_authority_store(store, certificate_id, blocks)
+    _register_authority(
+        policy.certificate_registry,
+        certificate_id,
+        runtime,
+        clusters=clusters,
+        require_secure=require_secure,
+        lock_path=lock_path,
+    )
+    try:
+        refreshed = load_runtime_config(policy, require_secure=require_secure)
+    except ConfigError as exc:
+        raise ImportError_("dependency_unavailable", str(exc), exit_code=exc.exit_code) from exc
+    report = publish(
+        refreshed,
+        policy,
+        only=[certificate_id],
+        live=live,
+        store=store,
+        lock_path=lock_path,
+        deployer=deployer,
+        now=now,
+    )
+    return ImportResult(
+        certificate_id,
+        described[0],
+        fingerprint,
+        len(blocks) - 1,
+        replaced,
+        report,
+        authority=True,
+    )
+
+
+def read_authority_file(path: Path) -> tuple[str, ...]:
+    """The CA certificates in a file on the manager, in any form an upload may take."""
+
+    try:
+        if path.stat().st_size > MAX_UPLOAD_BYTES:
+            raise ImportError_("bad_input", f"the CA file is implausibly large: {path}")
+        data = path.read_bytes()
+    except FileNotFoundError:
+        raise ImportError_("bad_input", f"the CA file does not exist: {path}") from None
+    except OSError as exc:
+        raise ImportError_("bad_input", f"the CA file could not be read: {exc}") from exc
+    certificates, keys = read_bytes(data)
+    return authority_blocks(certificates, keys)

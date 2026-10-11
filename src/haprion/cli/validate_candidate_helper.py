@@ -66,6 +66,7 @@ def main(
             candidate,
             run_root=run_root,
             certificate_ids=cluster.certificate_ids,
+            authority_ids=cluster.authority_ids,
             validation_certificate=certificate,
             request_id=request.request_id,
             validator=validator,

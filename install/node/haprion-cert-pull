@@ -62,6 +62,7 @@ done
 REMOTE_USER="$CERT_PULL_USER"
 SSH_KEY="$CERT_PULL_KEY"
 CERTS_DIR="/etc/haproxy/certs"
+HAPROXY_DIR="/etc/haproxy"
 
 #
 # Present from the moment the first file is replaced until HAProxy has been
@@ -75,6 +76,11 @@ CERTS_DIR="/etc/haproxy/certs"
 # read every file from disk, so there is nothing left to finish.
 #
 PENDING="/run/haprion-cert-pull.pending"
+#
+# The same marker for the CA files (B276), read by haprion-node-status the
+# same way.
+#
+CA_PENDING="/run/haprion-ca-pull.pending"
 
 ID_PATTERN='^[a-z0-9][a-z0-9._-]{0,254}$'
 
@@ -87,8 +93,20 @@ fail() {
     exit 1
 }
 
+#
+# `--authority` (B276): the IDs are CA files a cluster's pools verify against.
+# They come from `ca/` under the manager's distribution directory and go to
+# `ca/` under the certificate directory - beside the certificates, not among
+# them, so nothing that reads `*.pem` there takes one for a certificate.
+#
+AUTHORITY=0
+if [[ "${1:-}" == "--authority" ]]; then
+    AUTHORITY=1
+    shift
+fi
+
 (( $# > 0 )) || {
-    echo "Usage: haprion-cert-pull <certificate-id> [...]" >&2
+    echo "Usage: haprion-cert-pull [--authority] <certificate-id> [...]" >&2
     exit 64
 }
 
@@ -106,6 +124,128 @@ if ! flock -n 9; then
 fi
 
 umask 077
+
+reload_checked() {
+    haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d \
+        || fail "HAProxy validation failed; the certificates on disk were left as they are"
+    "$SERVER_STATE" reload || fail "HAProxy reload failed"
+}
+
+#
+# The CA files, start to end. Fetched and checked all before any is installed,
+# like the certificates; HAProxy reloads only when the installed configuration
+# names one that changed, since a CA file nothing names is never read.
+#
+pull_authorities() {
+    local ca_dir="${CERTS_DIR}/ca" pending="$CA_PENDING"
+    local work backup id candidate dest
+    [[ -d "$ca_dir" ]] || mkdir -m 700 "$ca_dir"
+    rm -f "${ca_dir}"/.haprion-cert-pull.*
+    work="$(mktemp -d -t haproxy-ca.XXXXXX)"
+    # shellcheck disable=SC2064 # the path is fixed now, on purpose
+    trap "rm -rf '${work}'" EXIT
+    backup="${work}/backup"
+    mkdir -p "$backup"
+    local -a changed=()
+
+    for id in "$@"; do
+        candidate="${work}/${id}.pem"
+        dest="${ca_dir}/${id}.pem"
+        log "Fetching CA ${id}..."
+        rsync -t --timeout=120 \
+            -e "ssh -i ${SSH_KEY} -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4" \
+            "${REMOTE_USER}@${MANAGER}:ca/${id}.pem" \
+            "$candidate" \
+            || fail "CA ${id} could not be fetched"
+        if grep -q "PRIVATE KEY" "$candidate"; then
+            fail "CA ${id} holds a private key; refused"
+        fi
+        openssl x509 -in "$candidate" -noout >/dev/null 2>&1 \
+            || fail "CA ${id} contains no valid certificate"
+        if [[ -f "$dest" ]] && cmp -s "$candidate" "$dest"; then
+            log "CA ${id} is unchanged."
+            continue
+        fi
+        changed+=("$id")
+    done
+
+    local -a loaded=("${HAPROXY_DIR}/haproxy.cfg")
+    local file
+    while IFS= read -r -d '' file; do
+        loaded+=("$file")
+    done < <(find "${HAPROXY_DIR}/conf.d" -type f -print0 2>/dev/null)
+    named() {
+        local wanted
+        for wanted in "$@"; do
+            grep -qsF -- "${ca_dir}/${wanted}.pem" "${loaded[@]}" && return 0
+        done
+        return 1
+    }
+
+    if (( ${#changed[@]} == 0 )); then
+        if [[ -e "$pending" ]]; then
+            log "An earlier run installed these CA files but never reloaded. Reloading now..."
+            reload_checked
+            rm -f "$pending"
+            log "CA deployment complete."
+            exit 0
+        fi
+        log "Nothing changed. No reload needed."
+        exit 0
+    fi
+
+    log "New CA files: ${changed[*]}"
+    local staged
+    if named "${changed[@]}"; then
+        printf '%s\n' "${changed[@]}" > "$pending"
+    fi
+    for id in "${changed[@]}"; do
+        dest="${ca_dir}/${id}.pem"
+        [[ -f "$dest" ]] && cp -a "$dest" "${backup}/${id}.pem"
+        staged="${ca_dir}/.haprion-cert-pull.${id}.pem"
+        install -o root -g root -m 600 "${work}/${id}.pem" "$staged"
+        mv -f "$staged" "$dest"
+    done
+
+    restore_authorities() {
+        for id in "${changed[@]}"; do
+            if [[ -f "${backup}/${id}.pem" ]]; then
+                staged="${ca_dir}/.haprion-cert-pull.${id}.pem"
+                install -o root -g root -m 600 "${backup}/${id}.pem" "$staged"
+                mv -f "$staged" "${ca_dir}/${id}.pem"
+            else
+                rm -f "${ca_dir}/${id}.pem"
+            fi
+        done
+        rm -f "$pending"
+    }
+
+    if ! named "${changed[@]}"; then
+        log "No installed configuration names them yet. No reload needed."
+        log "CA deployment complete."
+        exit 0
+    fi
+    log "Validating HAProxy with the new CA files..."
+    if ! haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d; then
+        log "ERROR: HAProxy validation failed. Restoring the previous CA files."
+        restore_authorities
+        exit 1
+    fi
+    log "Reloading HAProxy..."
+    if ! "$SERVER_STATE" reload; then
+        log "ERROR: HAProxy reload failed. Rolling back."
+        restore_authorities
+        "$SERVER_STATE" reload || true
+        exit 1
+    fi
+    rm -f "$pending"
+    log "CA deployment complete."
+    exit 0
+}
+
+if (( AUTHORITY )); then
+    pull_authorities "$@"
+fi
 
 #
 # A temporary file a killed run left behind. It sits beside the certificates
@@ -175,11 +315,6 @@ for id in "$@"; do
     CHANGED+=("$id")
 done
 
-reload_checked() {
-    haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d \
-        || fail "HAProxy validation failed; the certificates on disk were left as they are"
-    "$SERVER_STATE" reload || fail "HAProxy reload failed"
-}
 
 if (( ${#CHANGED[@]} == 0 )); then
     if [[ -e "$PENDING" ]]; then

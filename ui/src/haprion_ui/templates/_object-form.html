@@ -292,9 +292,17 @@
         <select name="backend_tls">
           <option value=""{% if not form.backend_tls %} selected{% endif %}>Plain HTTP</option>
           <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify the certificate</option>
+          <option value="ca"{% if form.backend_tls == 'ca' %} selected{% endif %}>HTTPS, verify against a CA</option>
           <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
         </select>
         <small>Verified backends need DNS names in Servers.</small>
+      </label>
+      <label data-backend-ca="1"{% if form.backend_tls != 'ca' %} hidden{% endif %}>CA
+        <select name="backend_tls_ca"{% if form.backend_tls != 'ca' %} disabled{% endif %}>
+          {% if form.backend_tls_ca and form.backend_tls_ca not in choices.authorities %}<option value="{{ form.backend_tls_ca }}" selected>{{ form.backend_tls_ca }}</option>{% endif %}
+          {% for authority in choices.authorities %}<option value="{{ authority }}"{% if form.backend_tls_ca == authority %} selected{% endif %}>{{ authority }}</option>{% endfor %}
+        </select>
+        {% if not choices.authorities %}<small>Import a CA certificate under Certificates first.</small>{% endif %}
       </label>
       <label class="tls-only" data-backend-tls="1"{% if not form.backend_tls %} hidden{% endif %}>Specific TLS for this backend only
         <select name="backend_tls_policy"{% if not form.backend_tls %} disabled{% endif %}>

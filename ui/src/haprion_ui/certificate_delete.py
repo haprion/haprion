@@ -51,9 +51,18 @@ def draft_references(
             proxy = load_proxy(draft.object_id, draft.yaml.encode("utf-8"))
         except (ModelError, ConfigError):
             continue
-        certificate = proxy.listen.certificate
-        if certificate in wanted:
-            found.setdefault(certificate, set()).add(f"{draft.cluster}/{draft.object_id}")
+        #
+        # A pool verified against a CA names it as surely as a listener
+        # names its certificate (B276).
+        #
+        named = {proxy.listen.certificate} | {
+            backend.tls.ca
+            for backend in proxy.backends.values()
+            if backend.tls is not None and backend.tls.ca is not None
+        }
+        for certificate in named:
+            if certificate in wanted:
+                found.setdefault(certificate, set()).add(f"{draft.cluster}/{draft.object_id}")
     return {key: tuple(sorted(rows)) for key, rows in found.items()}
 
 
@@ -138,6 +147,8 @@ def selection(
         lineage = (
             "The Certbot lineage is deleted; it will not renew again."
             if view.source_label == "Certbot"
+            else "The CA file is removed from the manager."
+            if view.source_kind == "authority"
             else "Its certificate and key are removed from the manager."
         )
         rows.append(

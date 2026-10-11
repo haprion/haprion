@@ -453,7 +453,7 @@ class WhatRetargetingAnswers(HelperFixture):
         policy["cert_deploy_identity"] = {"key": str(key)}
         self.policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
 
-        def node(identity: Any, host: str, certificate_id: str) -> tuple[int, str]:
+        def node(identity: Any, host: str, verb: str, certificate_id: str) -> tuple[int, str]:
             asked.append(host)
             return 0, f"Removed {certificate_id}."
 

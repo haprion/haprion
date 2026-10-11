@@ -66,6 +66,13 @@ PARAMETERS = frozenset({"allow_vip_unknown", "json"})
 # that runs as written.
 #
 REQUEST_VERB = "cert-pull"
+#
+# The same for the cluster's authorities (B276), the CA files its pools verify
+# against. A verb of its own because the node fetches them from their own
+# directory and installs them in one; a node without the verb refuses it, and
+# the run then reports that node as failed rather than as current.
+#
+AUTHORITY_VERB = "ca-pull"
 
 # EX_CONFIG: the installation is incomplete rather than the caller being wrong.
 EXIT_NO_CERTIFICATE_ROOT = 78
@@ -92,13 +99,30 @@ def trigger_node(
     must not depend on the caller having been honest.
     """
 
-    request = " ".join([REQUEST_VERB, *(ref.id for ref in target.certificates)])
-
-    return run_trigger(
-        [SSH, *SSH_OPTIONS, "-i", str(identity.key), f"{identity.user}@{node.mgmt_host}", request],
-        node.name,
-        writer,
-    )
+    requests = []
+    #
+    # The authorities first: they are what a pool's `ca-file` reads, and a
+    # certificate pull reloads HAProxy, which would read a missing one.
+    #
+    if target.authorities:
+        requests.append(" ".join([AUTHORITY_VERB, *(ref.id for ref in target.authorities)]))
+    requests.append(" ".join([REQUEST_VERB, *(ref.id for ref in target.certificates)]))
+    for request in requests:
+        code = run_trigger(
+            [
+                SSH,
+                *SSH_OPTIONS,
+                "-i",
+                str(identity.key),
+                f"{identity.user}@{node.mgmt_host}",
+                request,
+            ],
+            node.name,
+            writer,
+        )
+        if code != 0:
+            return code
+    return 0
 
 
 def main(

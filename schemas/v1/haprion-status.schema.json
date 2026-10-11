@@ -226,6 +226,19 @@
           "type": "array",
           "items": { "$ref": "common.schema.json#/$defs/carried_certificate" }
         },
+        "authorities": {
+          "description": "The CA files the node carries for its pools to verify against (B276), each by the SHA-256 over every certificate block in it. Absent from nodes installed before authorities existed.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "fingerprint_sha256"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            },
+            "additionalProperties": false
+          }
+        },
         "architecture": {
           "description": "The node's machine architecture, as the kernel names it (`x86_64`). Absent from nodes installed before it was reported.",
           "type": "string"

@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 
 from haprion import advanced as advanced_config
 from haprion import crs, dnsdist_config, geo, ipvs_config
+from haprion.certificates import AUTHORITY_DIRECTORY
 from haprion.check_policy import check_speaks_tls
 from haprion.cluster_settings import NOTHING as NO_SETTINGS
 from haprion.cluster_settings import ClusterSettings, LogTarget, Metrics
@@ -357,6 +358,7 @@ def generate(
     vips: Mapping[str, Vip],
     default_vip: str,
     certificates: Sequence[str] = (),
+    authorities: Sequence[str] = (),
     resolvers: str | None = None,
     networks: Mapping[str, Sequence[str]] | None = None,
     sources: Mapping[str, str] | None = None,
@@ -410,6 +412,7 @@ def generate(
             f"{names}"
         )
     _refuse_unknown_certificates(ordered, certificates)
+    _refuse_unknown_authorities(ordered, authorities)
     if certificate_sans is not None and not allow_certificate_mismatch:
         _refuse_uncovered_hostnames(ordered, certificate_sans)
     known_networks = dict(networks or {})
@@ -1164,6 +1167,28 @@ def _refuse_unknown_certificates(proxies: Sequence[Proxy], certificates: Sequenc
                 f"{proxy.name} asks for the certificate {wanted}, which this cluster does not "
                 f"distribute. Available: {known}"
             )
+
+
+def _refuse_unknown_authorities(proxies: Sequence[Proxy], authorities: Sequence[str]) -> None:
+    """A CA a pool verifies against is one the cluster's nodes carry (B276).
+
+    The same question `_refuse_unknown_certificates` asks of a listener, for
+    the same reason: HAProxy refuses to start on a `ca-file` that is not
+    there, and a name the registry does not send to this cluster is exactly
+    that file.
+    """
+
+    allowed = set(authorities)
+    for proxy in proxies:
+        for backend in proxy.backends.values():
+            wanted = backend.tls.ca if backend.tls is not None else None
+            if wanted is not None and wanted not in allowed:
+                known = ", ".join(sorted(allowed)) or "none"
+                raise GeneratorError(
+                    f"{proxy.name} verifies its servers against the CA {wanted}, which this "
+                    f"cluster does not carry. Add the CA to the cluster under Certificates. "
+                    f"Carried: {known}"
+                )
 
 
 def covers(san: str, hostname: str) -> bool:
@@ -3363,4 +3388,12 @@ def _server_tls(backend: Backend, server: Server) -> str:
     policy = BACKEND_POLICIES[backend.tls.policy]
     if backend.tls.verify == "none":
         return f" ssl verify none{policy}"
+    if backend.tls.verify == "ca":
+        #
+        # One of the cluster's own authorities (B276), from the directory the
+        # node keeps them in. The node's trust store is not touched, and `sni`
+        # is required for the reason it is with `@system-ca`.
+        #
+        authority = f"{NODE_CERTIFICATE_DIR}/{AUTHORITY_DIRECTORY}/{backend.tls.ca}.pem"
+        return f" ssl verify required ca-file {authority} sni str({server.host}){policy}"
     return f" ssl verify required ca-file @system-ca sni str({server.host}){policy}"

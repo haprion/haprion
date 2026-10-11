@@ -66,6 +66,7 @@ class DeleteFixture(Fixture):
         self.renewal.mkdir()
         self.certbot_calls: list[tuple[str, ...]] = []
         self.node_calls: list[tuple[str, str]] = []
+        self.node_verbs: list[str] = []
         self.node_answers: dict[str, tuple[int, str]] = {}
 
     def prepared(self, certificates: dict[str, dict[str, Any]]) -> Path:
@@ -101,9 +102,10 @@ class DeleteFixture(Fixture):
         conf.unlink(missing_ok=True)
         return 0, ""
 
-    def node(self, identity: Any, host: str, certificate_id: str) -> tuple[int, str]:
+    def node(self, identity: Any, host: str, verb: str, certificate_id: str) -> tuple[int, str]:
         """The node script's own lines: one for a copy removed, one for none there."""
 
+        self.node_verbs.append(verb)
         self.node_calls.append((host, certificate_id))
         if host in self.node_answers:
             return self.node_answers[host]
@@ -486,6 +488,28 @@ class TheGuardsReadTheCommittedObjects(DeleteFixture):
         # The fixture defaults each cluster to the first certificate naming it.
         #
         self.assertEqual(guards.defaults, {"keeper-alpha.example": ("alpha",)})
+
+    def test_a_pool_verifying_against_a_ca_names_it_too(self) -> None:
+        """B276: removing a CA a pool verifies against is refused like a served certificate."""
+
+        policy_path = self.prepared(
+            {"corp-root": {"source": {"kind": "authority"}, "clusters": ["alpha"]}}
+        )
+        policy = load_policy(policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+        shop = with_lines(
+            ("      - host: 192.0.2.10", "      - host: app.example.net"),
+            (
+                "    balance: roundrobin",
+                "    balance: roundrobin\n    tls:\n      verify: ca\n      ca: corp-root",
+            ),
+        )
+        commit(runtime.clusters["alpha"].config_path, {"managed/proxies/shop.yaml": shop})
+        commit(runtime.clusters["beta"].config_path, {"managed/proxies/.gitkeep": b""})
+
+        guards = read_guards(runtime, ["corp-root"])
+
+        self.assertEqual(guards.referenced, {"corp-root": ("alpha/shop",)})
 
 
 class TheHelper(DeleteFixture):

@@ -454,10 +454,6 @@ backends:
 """
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class HttpsIsRefusedWhereItCannotBeHonoured(unittest.TestCase):
     """What the layer refuses once TLS is in the picture."""
 
@@ -1273,3 +1269,52 @@ backends:
         self.assertIn("names the group monitoring", str(raised.exception))
         text = self.files(exempt="monitoring", networks={"monitoring": ("203.0.113.0/24",)})
         self.assertIn("acl mgd-shop-dynblock-exempt src 203.0.113.0/24", text["1001-shop.cfg"])
+
+
+class APoolVerifiesAgainstTheClustersOwnCa(unittest.TestCase):
+    """B276: `verify: ca` names one of the cluster's authorities, from its own directory."""
+
+    def rendered(self, document: bytes, authorities: tuple[str, ...]) -> str:
+        files = generate(
+            [load_proxy("shop", document)],
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+            authorities=authorities,
+        ).configuration
+        return files["1001-shop.cfg"]
+
+    def document(self) -> bytes:
+        return VERIFIED.replace(b"verify: system", b"verify: ca\n      ca: corp-root")
+
+    def test_the_server_line_reads_the_ca_file_and_still_sends_the_name(self) -> None:
+        text = self.rendered(self.document(), ("corp-root",))
+
+        self.assertIn(
+            "ssl verify required ca-file /etc/haproxy/certs/ca/corp-root.pem "
+            "sni str(pool-a.example.net)",
+            text,
+        )
+        self.assertNotIn("@system-ca", text)
+
+    def test_a_ca_the_cluster_does_not_carry_is_refused_by_name(self) -> None:
+        with self.assertRaises(GeneratorError) as raised:
+            self.rendered(self.document(), ("other-ca",))
+
+        self.assertIn("corp-root", str(raised.exception))
+        self.assertIn("does not carry", str(raised.exception))
+
+    def test_verify_ca_needs_a_ca_and_nothing_else_takes_one(self) -> None:
+        with self.assertRaises(ModelError):
+            load_proxy("shop", VERIFIED.replace(b"verify: system", b"verify: ca"))
+        with self.assertRaises(ModelError):
+            load_proxy(
+                "shop", VERIFIED.replace(b"verify: system", b"verify: system\n      ca: corp-root")
+            )
+
+    def test_a_ca_pool_named_by_address_is_refused_like_a_system_one(self) -> None:
+        with self.assertRaises(ModelError):
+            load_proxy("shop", self.document().replace(b"pool-a.example.net", b"192.0.2.10"))
+
+
+if __name__ == "__main__":
+    unittest.main()

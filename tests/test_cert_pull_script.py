@@ -105,7 +105,9 @@ exit 64
 """
 
 
-class CertPull(unittest.TestCase):
+class PullHarness(unittest.TestCase):
+    """The script in a scratch tree with its node commands stubbed; no tests of its own."""
+
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, True)
@@ -182,6 +184,8 @@ class CertPull(unittest.TestCase):
             return 0
         return self.record.read_text().splitlines().count("reload haproxy")
 
+
+class CertPull(PullHarness):
     def test_a_new_certificate_is_installed_and_reloaded_once(self) -> None:
         self.offer(self.new)
 
@@ -335,6 +339,113 @@ class TheNodeDoesNotReportWhatItDoesNotServe(unittest.TestCase):
     def test_a_marker_that_cannot_be_read_leaves_everything_out(self) -> None:
         self.pending.mkdir()
         self.assertEqual(self.ids(), [])
+
+
+def authority(directory: Path, name: str) -> bytes:
+    """A self-signed CA certificate and nothing else: what a CA file is (B276)."""
+
+    key = directory / f"{name}-ca.key"
+    cert = directory / f"{name}-ca.crt"
+    subprocess.run(
+        [
+            "/usr/bin/openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt",
+            "ec_paramgen_curve:prime256v1", "-nodes", "-keyout", str(key), "-out", str(cert),
+            "-days", "30", "-subj", f"/CN={name} Root", "-addext",
+            "basicConstraints=critical,CA:TRUE",
+        ],
+        check=True,
+        capture_output=True,
+    )  # fmt: skip
+    return cert.read_bytes()
+
+
+class CaPull(PullHarness):
+    """`--authority`: CA files under `ca/`, reloaded only when the configuration names one."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.etc = self.root / "etc"
+        (self.etc / "conf.d").mkdir(parents=True)
+        (self.etc / "haproxy.cfg").write_text("global\n")
+        self.ca_pending = self.root / "run" / "ca.pending"
+        self.script.write_text(
+            self.script.read_text(encoding="utf-8")
+            .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.etc}"')
+            .replace(
+                'CA_PENDING="/run/haprion-ca-pull.pending"', f'CA_PENDING="{self.ca_pending}"'
+            ),
+            encoding="utf-8",
+        )
+        (self.offered / "ca").mkdir()
+        self.first = authority(self.root, "first")
+        self.second = authority(self.root, "second")
+
+    def offer_ca(self, content: bytes) -> None:
+        (self.offered / "ca" / "corp-root.pem").write_bytes(content)
+
+    def run_ca(self) -> tuple[int, str]:
+        finished = subprocess.run(
+            ["/bin/bash", str(self.script), "--authority", "corp-root"],
+            capture_output=True,
+            text=True,
+            env={
+                "PATH": f"{self.bin}:/usr/bin:/bin",
+                "OFFERED": str(self.offered),
+                "RECORD": str(self.record),
+                "KILL_AT_CHECK": "/nonexistent",
+                "FAIL_CHECK": "/nonexistent",
+                "TMPDIR": str(self.root),
+            },
+            check=False,
+        )
+        return finished.returncode, finished.stdout + finished.stderr
+
+    def test_a_ca_nothing_names_is_installed_without_a_reload(self) -> None:
+        self.offer_ca(self.first)
+
+        code, output = self.run_ca()
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual((self.certs / "ca" / "corp-root.pem").read_bytes(), self.first)
+        self.assertFalse((self.certs / "corp-root.pem").exists())
+        self.assertEqual(self.reloads(), 0)
+        self.assertFalse(self.ca_pending.exists())
+
+    def test_a_ca_a_pool_names_is_checked_and_reloaded(self) -> None:
+        (self.certs / "ca").mkdir()
+        (self.certs / "ca" / "corp-root.pem").write_bytes(self.first)
+        (self.etc / "conf.d" / "1001-app.cfg").write_text(
+            f"server s1 a:443 ssl verify required ca-file {self.certs}/ca/corp-root.pem\n"
+        )
+        self.offer_ca(self.second)
+
+        code, output = self.run_ca()
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual((self.certs / "ca" / "corp-root.pem").read_bytes(), self.second)
+        self.assertIn("check", self.record.read_text().splitlines())
+        self.assertEqual(self.reloads(), 1)
+        self.assertFalse(self.ca_pending.exists())
+
+    def test_an_unchanged_ca_is_left_alone(self) -> None:
+        (self.certs / "ca").mkdir()
+        (self.certs / "ca" / "corp-root.pem").write_bytes(self.first)
+        self.offer_ca(self.first)
+
+        code, output = self.run_ca()
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("No reload needed", output)
+        self.assertEqual(self.reloads(), 0)
+
+    def test_a_file_with_a_key_is_refused(self) -> None:
+        self.offer_ca(self.first + self.new)
+
+        code, output = self.run_ca()
+
+        self.assertEqual(code, 1)
+        self.assertIn("private key", output)
+        self.assertFalse((self.certs / "ca" / "corp-root.pem").exists())
 
 
 if __name__ == "__main__":

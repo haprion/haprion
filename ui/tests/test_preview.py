@@ -1070,3 +1070,51 @@ class TheAdvancedConfigIsCarriedThrough(unittest.TestCase):
             form_from_document(yaml.safe_dump(stored))
 
         self.assertIn("advanced", str(refusal.exception))
+
+
+class APoolVerifiedAgainstACa(unittest.TestCase):
+    """B276: the form's third TLS choice, written as the engine reads it and read back."""
+
+    def test_the_choice_and_the_ca_reach_the_document_and_the_configuration(self) -> None:
+        result = preview(
+            form(
+                backend_tls="ca", backend_tls_ca="example-root-ca", servers="app.example.com:8443"
+            ),
+            PREVIEW_CLUSTER,
+        )
+
+        self.assertIsNone(result.problem)
+        self.assertIn("ca: example-root-ca", result.document)
+        configuration = "".join(result.files.values())
+        self.assertIn("ca-file /etc/haproxy/certs/ca/example-root-ca.pem", configuration)
+
+    def test_a_ca_the_cluster_does_not_carry_is_the_engines_refusal(self) -> None:
+        result = preview(
+            form(backend_tls="ca", backend_tls_ca="unknown-ca", servers="app.example.com:8443"),
+            PREVIEW_CLUSTER,
+        )
+
+        self.assertIn("does not carry", result.problem or "")
+
+    def test_the_document_reads_back_into_the_same_fields(self) -> None:
+        document = build_document(
+            form(backend_tls="ca", backend_tls_ca="example-root-ca", servers="app.example.com:8443")
+        )
+
+        fields = form_from_document(document)
+
+        self.assertEqual(
+            (fields["backend_tls"], fields["backend_tls_ca"]), ("ca", "example-root-ca")
+        )
+
+    def test_another_choice_writes_no_ca(self) -> None:
+        document = build_document(
+            form(
+                backend_tls="system",
+                backend_tls_ca="example-root-ca",
+                servers="app.example.com:8443",
+            )
+        )
+
+        self.assertNotIn("ca:", document)
+        self.assertIn("verify: system", document)

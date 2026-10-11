@@ -5,8 +5,9 @@
 | Script | What it does |
 |---|---|
 | `haprion-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
-| `haprion-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates |
-| `haprion-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
+| `haprion-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates (`cert-pull`, `cert-remove`, and `ca-pull`, `ca-remove` for CA files) |
+| `haprion-cert-pull` | fetches the requested certificates, validates them, installs, reloads; with `--authority`, CA files into `/etc/haproxy/certs/ca/`, reloaded only when the configuration names one |
+| `haprion-cert-remove` | removes certificates nothing installed names; with `--authority`, CA files |
 | `haprion-node-status` | reports version, health, carried certificates, pool members and keepalived state |
 | `haprion-health-probe` | tries a health check against named servers, from this node, and reports whether they answered |
 | `haprion-keepalived-state` | records the keepalived transition to a state file |

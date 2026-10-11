@@ -95,6 +95,12 @@ class NodeObservation:
     #
     ipvs_current: bool | None = True
     certificates: tuple[tuple[str, str], ...] | None = None
+    #
+    # The CA files the node carries for its pools (B276), as (id, bundle
+    # fingerprint) pairs. None when the node did not say - a node from
+    # before authorities existed.
+    #
+    authorities: tuple[tuple[str, str], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +221,12 @@ class CertificateTarget:
     """
 
     certificates: tuple[CertificateRef, ...]
+    #
+    # The CA files the cluster's pools verify against (B276). Their
+    # fingerprint is the whole bundle's, not the first certificate's: a root
+    # added behind the one already there is a change the node must get.
+    #
+    authorities: tuple[CertificateRef, ...] = ()
 
     def is_current(self, node: NodeObservation) -> bool | None:
         if node.certificates is None:
@@ -225,18 +237,28 @@ class CertificateTarget:
             # push - and the push would then be reported as verified.
             #
             return None
+        if self.authorities and node.authorities is None:
+            return None
         carried = dict(node.certificates)
-        return all(carried.get(ref.id) == ref.fingerprint for ref in self.certificates)
+        held = dict(node.authorities or ())
+        return all(carried.get(ref.id) == ref.fingerprint for ref in self.certificates) and all(
+            held.get(ref.id) == ref.fingerprint for ref in self.authorities
+        )
 
     def skip_reason(self, node: NodeObservation) -> str:
         return f"{node.name} already has the referenced certificates; nothing to do"
 
     def result_fields(self) -> dict[str, object]:
-        return {
+        fields: dict[str, object] = {
             "target_certificates": [
                 {"id": ref.id, "fingerprint_sha256": ref.fingerprint} for ref in self.certificates
             ]
         }
+        if self.authorities:
+            fields["target_authorities"] = [
+                {"id": ref.id, "fingerprint_sha256": ref.fingerprint} for ref in self.authorities
+            ]
+        return fields
 
 
 @dataclass(frozen=True, slots=True)

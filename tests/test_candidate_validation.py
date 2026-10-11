@@ -42,6 +42,35 @@ class CandidateValidationTests(unittest.TestCase):
             self.assertEqual((root / "certs/example.com.pem").read_bytes(), b"dummy PEM\n")
             self.assertEqual(os.stat(root / "haproxy.cfg").st_mode & 0o777, 0o600)
 
+    def test_a_clusters_ca_stands_in_as_the_validation_certificate_alone(self) -> None:
+        """B276: a pool's `ca-file` must exist for `haproxy -c`; the key never goes there."""
+
+        delimiter = "-" * 5
+        certificate = f"{delimiter}BEGIN CERTIFICATE{delimiter}\nQUJD\n{delimiter}END CERTIFICATE{delimiter}\n"
+        key = f"{delimiter}BEGIN PRIVATE KEY{delimiter}\nREVG\n{delimiter}END PRIVATE KEY{delimiter}\n"
+        candidate = parse_candidate(
+            {
+                "files": {
+                    "haproxy.cfg": "global\n",
+                    "conf.d/0074-site.cfg": "server s1 a:443 ssl verify required "
+                    "ca-file /etc/haproxy/certs/ca/corp-root.pem\n",
+                }
+            }
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "candidate"
+            materialize_candidate(
+                candidate,
+                root,
+                certificate_ids=("example.com",),
+                validation_certificate=(key + certificate).encode(),
+                authority_ids=("corp-root",),
+            )
+            self.assertIn(
+                b"/candidate/certs/ca/corp-root.pem", (root / "conf.d/0074-site.cfg").read_bytes()
+            )
+            self.assertEqual((root / "certs/ca/corp-root.pem").read_text(), certificate)
+
     def test_invalid_paths_content_and_shape_are_rejected(self) -> None:
         invalid: tuple[tuple[dict[str, JsonValue], str], ...] = (
             ({"files": {}}, "non-empty"),

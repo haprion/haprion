@@ -189,6 +189,7 @@ def managed_files(
         vips=network.vips,
         default_vip=network.default_vip,
         certificates=cluster.certificate_ids,
+        authorities=cluster.authority_ids,
         resolvers=cluster.resolvers,
         networks=network.networks,
         sources=network.sources,

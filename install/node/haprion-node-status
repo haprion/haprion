@@ -1331,6 +1331,62 @@ def leaf_fingerprint(text):
     return hashlib.sha256(der).hexdigest()
 
 
+def bundle_fingerprint(text):
+    """SHA-256 over every certificate block's DER bytes, in file order (B276).
+
+    The manager's definition of a CA file's identity, repeated here because
+    the two are compared: a root added behind the first changes it.
+    """
+
+    digest = hashlib.sha256()
+    found = False
+    for match in CERTIFICATE_BLOCK.finditer(text):
+        try:
+            der = base64.b64decode("".join(match.group(1).split()), validate=True)
+        except Exception:
+            return None
+        if not der:
+            return None
+        digest.update(der)
+        found = True
+    return digest.hexdigest() if found else None
+
+
+AUTHORITY_PENDING = Path("/run/haprion-ca-pull.pending")
+
+
+def read_authorities():
+    """The CA files this node carries for its pools (B276), by bundle fingerprint.
+
+    Like the certificates: one installed but not yet read by HAProxy is left
+    out, and so is one that cannot be read.
+    """
+
+    entries = []
+    pending = set()
+    if AUTHORITY_PENDING.exists():
+        try:
+            pending = set(AUTHORITY_PENDING.read_text(encoding="ascii").split())
+        except Exception:
+            return entries
+    try:
+        paths = sorted((CERTS_DIR / "ca").glob("*.pem"))
+    except Exception:
+        return entries
+    for path in paths:
+        try:
+            if not path.is_file() or path.stat().st_size > MAX_CERTIFICATE_BYTES:
+                continue
+            fingerprint = bundle_fingerprint(path.read_text(encoding="ascii", errors="strict"))
+        except (OSError, ValueError):
+            continue
+        identifier = path.name[: -len(".pem")]
+        if fingerprint is None or identifier in pending:
+            continue
+        entries.append({"id": identifier, "fingerprint_sha256": fingerprint})
+    return entries
+
+
 def certificate_valid(path):
     """Is it in its validity window right now? Measured, not assumed."""
 
@@ -1506,6 +1562,7 @@ result = {
     "frontends": frontends,
     "servers": servers,
     "certificates": certificates,
+    "authorities": read_authorities(),
     "installation": read_installation(),
     "architecture": os.uname().machine,
     "waf_engine": read_waf_engine(),

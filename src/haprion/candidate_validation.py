@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from haprion.certificates import AUTHORITY_DIRECTORY, leaf_block
 from haprion.config import ConfigError
 from haprion.helper_protocol import HelperProtocolError, JsonValue
 from haprion.release_layout import (
@@ -221,6 +222,7 @@ def materialize_candidate(
     *,
     certificate_ids: Sequence[str],
     validation_certificate: bytes,
+    authority_ids: Sequence[str] = (),
 ) -> None:
     root.mkdir(mode=0o700)
     for directory in (root / "conf.d", root / "maps", root / "certs"):
@@ -267,6 +269,26 @@ def materialize_candidate(
         )
         with os.fdopen(descriptor, "wb") as output:
             output.write(validation_certificate)
+
+    #
+    # The cluster's CA files (B276), each the validation certificate's own
+    # certificate block: `haproxy -c` loads a `ca-file` and refuses one that
+    # is missing, and a self-signed certificate is a CA to it like any other.
+    # The real files are not copied in, for the reason the certificates are
+    # not: the sandbox proves the configuration, not the material.
+    #
+    if authority_ids:
+        (root / "certs" / AUTHORITY_DIRECTORY).mkdir(mode=0o700)
+        stand_in = leaf_block(validation_certificate.decode("ascii")).encode("ascii")
+    for authority_id in authority_ids:
+        target = root / "certs" / AUTHORITY_DIRECTORY / f"{authority_id}.pem"
+        descriptor = os.open(
+            target,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(stand_in)
 
 
 def peer_arguments(configuration: Path) -> list[str]:
@@ -553,6 +575,7 @@ def validate_candidate(
     validation_certificate: bytes,
     request_id: str,
     validator: SandboxValidator = validate_in_sandbox,
+    authority_ids: Sequence[str] = (),
 ) -> ValidationResult:
     """Materialize the candidate somewhere private and run the sandbox on it.
 
@@ -568,5 +591,6 @@ def validate_candidate(
             candidate_root,
             certificate_ids=certificate_ids,
             validation_certificate=validation_certificate,
+            authority_ids=authority_ids,
         )
         return validator(candidate_root, request_id)

@@ -53,6 +53,11 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/certificate_target" }
         },
+        "target_authorities": {
+          "description": "The CA files the cluster's pools verify against (B276); absent when it has none.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/certificate_target" }
+        },
         "converged": { "type": "boolean" },
         "override_used": { "type": "boolean" },
         "initial_summary": {

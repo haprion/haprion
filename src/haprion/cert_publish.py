@@ -80,13 +80,17 @@ from haprion.cert_lock import DEFAULT_LOCK_PATH as DEFAULT_LOCK_PATH
 from haprion.cert_lock import LOCK_WAIT_SECONDS as LOCK_WAIT_SECONDS
 from haprion.cert_lock import hold
 from haprion.certificates import (
+    AUTHORITY_DIRECTORY,
+    CERTIFICATE_BLOCK,
     MAX_CERTIFICATE_BYTES,
     CertificateError,
+    authority_path,
     certificate_path,
     leaf_block,
     leaf_fingerprint,
 )
 from haprion.config import (
+    AUTHORITY,
     DEFAULT_RECEIVER_FORMAT,
     PathPolicy,
     Receiver,
@@ -156,6 +160,11 @@ class Target:
     #
     transport: str | None = None
     form: str = DEFAULT_RECEIVER_FORMAT
+    #
+    # A cluster's authority (B276): the CA file alone, in the directory the
+    # authorities have, under the certificate root.
+    #
+    authority: bool = False
 
     def files(self, certificate_id: str, material: Material) -> tuple[tuple[Path, bytes], ...]:
         """The files this target reads, with their contents.
@@ -169,6 +178,8 @@ class Target:
         built and compared by `publish_bundle` rather than by content.
         """
 
+        if self.kind == "cluster" and self.authority:
+            return ((authority_path(self.directory, certificate_id), material.fullchain),)
         if self.kind == "cluster":
             path = certificate_path(self.directory, certificate_id)
             return ((path, material.privkey + material.fullchain),)
@@ -294,6 +305,50 @@ def key_matches(fullchain: bytes, privkey: bytes) -> bool:
     return certificate_der == key_der
 
 
+def read_authority_material(
+    entry: RegisteredCertificate, *, store: Path = IMPORT_STORE, now: datetime | None = None
+) -> Material:
+    """An authority's CA file (B276): certificates only, at least one still good.
+
+    A file may carry an old root beside its successor while clients move over,
+    so one certificate running out is not a refusal; all of them being within
+    the margin is - a pool verified against nothing but expired roots fails
+    every handshake.
+    """
+
+    directory = source_directory(entry, live=LETSENCRYPT_LIVE, store=store)
+    bundle = _read_file(directory / FULLCHAIN, "the authority file")
+    try:
+        text = bundle.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise PublishError("invalid_certificate", f"{directory / FULLCHAIN}: not PEM") from exc
+    if "PRIVATE KEY" in text:
+        raise PublishError("invalid_certificate", "the authority file holds a private key")
+    try:
+        blocks = [leaf_block(match.group(0)) for match in CERTIFICATE_BLOCK.finditer(text)]
+        if not blocks:
+            raise PublishError("invalid_certificate", "the authority file holds no certificate")
+        described = [describe(block) for block in blocks]
+        fingerprint = leaf_fingerprint(text)
+    except CertificateError as exc:
+        raise PublishError("invalid_certificate", f"{directory / FULLCHAIN}: {exc}") from exc
+    moment = now or datetime.now(UTC)
+    latest = max(facts.not_after for facts in described)
+    if latest - moment < MIN_REMAINING:
+        raise PublishError(
+            "certificate_expiring",
+            f"every certificate in the authority file expires by {latest.strftime('%Y-%m-%d')}, "
+            f"less than {MIN_REMAINING.days} days away; not published",
+        )
+    return Material(
+        certificate_id=entry.certificate_id,
+        fullchain="".join(blocks).encode("ascii"),
+        privkey=b"",
+        facts=described[0],
+        fingerprint=fingerprint,
+    )
+
+
 def read_material(
     entry: RegisteredCertificate,
     *,
@@ -303,6 +358,8 @@ def read_material(
 ) -> Material:
     """The certificate's bytes, checked the way both old publishers checked them."""
 
+    if entry.source.kind == AUTHORITY:
+        return read_authority_material(entry, store=store, now=now)
     directory = source_directory(entry, live=live, store=store)
     fullchain = _read_file(directory / FULLCHAIN, "the certificate chain")
     privkey = _read_file(directory / PRIVKEY, "the private key")
@@ -373,6 +430,37 @@ def cluster_target(certificate_root: Path, cluster_id: str) -> Target:
         uid=ROOT_UID,
         gid=metadata.st_gid,
         mode=CLUSTER_MODE,
+    )
+
+
+def authority_target(certificate_root: Path, cluster_id: str) -> Target:
+    """A cluster's authorities directory, made beside the certificates if it is not there.
+
+    Owned and moded like the certificate root it sits in, so the pull account
+    that may read one may read the other, and nobody else may do either.
+    """
+
+    base = cluster_target(certificate_root, cluster_id)
+    directory = certificate_root / AUTHORITY_DIRECTORY
+    if not directory.exists():
+        try:
+            parent = certificate_root.lstat()
+            directory.mkdir(mode=0o700)
+            os.chmod(directory, stat.S_IMODE(parent.st_mode) & 0o750)
+            os.chown(directory, parent.st_uid, parent.st_gid)
+        except OSError as exc:
+            raise PublishError("write_failed", f"{directory} could not be created: {exc}") from exc
+    metadata = directory.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise PublishError("target_missing", f"{directory} is not a directory")
+    return Target(
+        kind="cluster",
+        name=cluster_id,
+        directory=certificate_root,
+        uid=ROOT_UID,
+        gid=base.gid,
+        mode=CLUSTER_MODE,
+        authority=True,
     )
 
 
@@ -505,6 +593,9 @@ def targets_for(
                 "dependency_unavailable",
                 "no certificate root is configured. Add certificate_root to the runtime policy.",
             )
+        if entry.source.kind == AUTHORITY:
+            targets.append(authority_target(policy.certificate_root, cluster_id))
+            continue
         targets.append(cluster_target(policy.certificate_root, cluster_id))
     for receiver_id in entry.receivers:
         targets.append(
@@ -952,7 +1043,7 @@ def publish(
             ) from exc
         for entry in entries:
             source = source_directory(entry, live=live, store=store)
-            if entry.source.kind == "import" and not source.is_dir():
+            if entry.source.kind in ("import", AUTHORITY) and not source.is_dir():
                 results.append(
                     CertificateResult(
                         entry.certificate_id,

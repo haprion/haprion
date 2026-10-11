@@ -27,7 +27,9 @@ from haprion.cert_import import (
     OPERATION,
     ImportError_,
     ImportResult,
+    import_authority,
     import_certificate,
+    read_authority_file,
     read_material,
     stored_key,
 )
@@ -49,6 +51,8 @@ USAGE = (
     "  haprion-cert-import --id <id> --pkcs12 <file> [--password-file <path>]\n"
     "                      [--cluster <id>]... [--receiver <id>]...\n"
     "                      [--format <id>=<form>]... [--interface] [--json]\n"
+    "  haprion-cert-import --id <id> (--authority <file> | --ndes-ca)\n"
+    "                      [--cluster <id>]... [--json]\n"
     "\n"
     "Imports a certificate issued elsewhere: writes it to the import store,\n"
     "registers it, publishes it to the named targets and rolls out the named\n"
@@ -71,6 +75,10 @@ USAGE = (
     "  --interface           This manager's own interface certificate: no targets,\n"
     "                        installed with haprion-tls. Takes the mark from the\n"
     "                        one that had it, which is deleted once this one serves.\n"
+    "  --authority <file>    A CA certificate - or several, a root and its\n"
+    "                        intermediates - without a key, for the clusters' pools to\n"
+    "                        verify their servers against (tls verify: ca).\n"
+    "  --ndes-ca             The same, from the NDES issuing CA the runtime policy names.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 
@@ -88,6 +96,8 @@ class Arguments:
         self.formats: list[str] = []
         self.json_mode = False
         self.interface = False
+        self.authority: Path | None = None
+        self.ndes_ca = False
 
 
 def _parse(argv: list[str], writer: TextIO) -> Arguments:
@@ -106,6 +116,7 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
         "--chain": "chain",
         "--pkcs12": "pkcs12",
         "--password-file": "password_file",
+        "--authority": "authority",
     }
     while index < len(argv):
         argument = argv[index]
@@ -130,9 +141,35 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
         elif argument == "--interface":
             parsed.interface = True
             index += 1
+        elif argument == "--ndes-ca":
+            parsed.ndes_ca = True
+            index += 1
         else:
             writer.write(USAGE)
             raise SystemExit(EXIT_USAGE)
+    if parsed.authority is not None or parsed.ndes_ca:
+        #
+        # A CA file goes to clusters and nowhere else, and carries nothing
+        # but itself (B276).
+        #
+        others = (
+            parsed.certificate,
+            parsed.key,
+            parsed.chain,
+            parsed.pkcs12,
+            parsed.password_file,
+        )
+        if (
+            parsed.certificate_id is None
+            or (parsed.authority is not None and parsed.ndes_ca)
+            or any(item is not None for item in others)
+            or parsed.receivers
+            or parsed.formats
+            or parsed.interface
+        ):
+            writer.write(USAGE)
+            raise SystemExit(EXIT_USAGE)
+        return parsed
     if parsed.certificate_id is None or (parsed.pkcs12 is None and parsed.certificate is None):
         writer.write(USAGE)
         raise SystemExit(EXIT_USAGE)
@@ -140,6 +177,20 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
 
 
 def _summary(result: ImportResult, writer: TextIO) -> None:
+    if result.authority:
+        verb = "replaced" if result.replaced else "imported"
+        writer.write(
+            f"{verb} CA {result.certificate_id} ({result.facts.subject}), "
+            f"{result.chain_length + 1} certificate(s), first valid until "
+            f"{result.facts.not_after.isoformat(timespec='seconds')}\n"
+        )
+        for entry in result.publish.certificates:
+            targets = ", ".join(f"{t.kind} {t.name}" for t in entry.targets)
+            writer.write(f"published: {entry.status} ({targets})\n")
+        for deployment in result.publish.deployments:
+            state = "ok" if deployment.exit_code == 0 else f"exit {deployment.exit_code}"
+            writer.write(f"deploy {deployment.cluster}: {state}\n")
+        return
     names = ", ".join(result.facts.sans) or (result.facts.common_name or "?")
     verb = "replaced" if result.replaced else "imported"
     writer.write(
@@ -244,8 +295,40 @@ def main(
             exc.exit_code,
         )
 
+    assert arguments.certificate_id is not None  # noqa: S101 - _parse required it
+    if arguments.authority is not None or arguments.ndes_ca:
+        try:
+            if arguments.ndes_ca:
+                if policy.ndes is None:
+                    return refuse(
+                        "dependency_unavailable", "runtime policy.ndes is not configured", 78
+                    )
+                source = policy.ndes.issuing_ca
+            else:
+                assert arguments.authority is not None  # noqa: S101 - the branch says so
+                source = arguments.authority
+            result = import_authority(
+                certificate_id=arguments.certificate_id,
+                blocks=read_authority_file(source),
+                clusters=arguments.clusters,
+                policy=policy,
+                runtime=runtime,
+                deployer=deployer or default_deployer(errors),
+                live=live,
+                store=store,
+                lock_path=lock_path,
+                require_secure=require_secure,
+            )
+        except ImportError_ as exc:
+            return refuse(exc.code, str(exc), exc.exit_code)
+        document, exit_code = result_envelope(result, request_id=request_id)
+        if arguments.json_mode:
+            writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+        else:
+            _summary(result, writer)
+        return exit_code
+
     try:
-        assert arguments.certificate_id is not None  # noqa: S101 - _parse required it
         material = read_material(
             certificate=arguments.certificate,
             key=arguments.key,

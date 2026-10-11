@@ -46,8 +46,18 @@ fail() {
     exit 1
 }
 
+#
+# `--authority` (B276): the IDs are CA files, kept under `ca/` beside the
+# certificates. Refused the same way while the installed configuration names
+# one, and reported in the same words, which the manager reads.
+#
+if [[ "${1:-}" == "--authority" ]]; then
+    CERTS_DIR="${CERTS_DIR}/ca"
+    shift
+fi
+
 (( $# > 0 )) || {
-    echo "Usage: haprion-cert-remove <certificate-id> [...]" >&2
+    echo "Usage: haprion-cert-remove [--authority] <certificate-id> [...]" >&2
     exit 64
 }
 

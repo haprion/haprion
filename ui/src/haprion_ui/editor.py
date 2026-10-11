@@ -82,6 +82,10 @@ class EditorCluster:
     # says so instead of validating against a cluster it half knows.
     #
     complete: bool
+    #
+    # The CA certificates a pool on this cluster may be verified against (B276).
+    #
+    authority_ids: tuple[str, ...] = ()
 
 
 def editor_cluster(
@@ -114,6 +118,7 @@ def editor_cluster(
         certificate_ids=tuple(sorted(view.identifier for view in usable)),
         certificate_sans={view.identifier: tuple(view.sans) for view in usable},
         complete=bool(vips) and network is not None and not network.stale,
+        authority_ids=tuple(sorted(certificates.authorities)) if certificates else (),
     )
 
 
@@ -128,6 +133,7 @@ def choices(cluster: EditorCluster) -> dict[str, object]:
             cluster.vips[cluster.default_vip].address if cluster.default_vip in cluster.vips else ""
         ),
         "certificates": list(cluster.certificate_ids),
+        "authorities": list(cluster.authority_ids),
         "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
         "balances": BALANCE_CHOICES,
@@ -156,6 +162,7 @@ def _validation_cluster(cluster: EditorCluster) -> Cluster:
         validation_certs=Path("/editor"),
         default_certificate=cluster.certificate_ids[0] if cluster.certificate_ids else "",
         certificate_ids=cluster.certificate_ids,
+        authority_ids=cluster.authority_ids,
         nodes=(),
         resolvers=VALIDATION_RESOLVERS,
         unknown_host=VALIDATION_UNKNOWN_HOST,
@@ -212,6 +219,7 @@ def check(
             vips=cluster.vips,
             default_vip=cluster.default_vip,
             certificates=cluster.certificate_ids,
+            authorities=cluster.authority_ids,
             resolvers=VALIDATION_RESOLVERS,
             networks=cluster.networks,
             sources=cluster.sources,
@@ -333,6 +341,7 @@ class ObjectForm(BaseModel):
     """
 
     backend_tls_policy: Annotated[str, StringConstraints(max_length=16)] = ""
+    backend_tls_ca: Annotated[str, StringConstraints(max_length=255)] = ""
     """How old a handshake to this backend may be. Empty means the default.
 
     Empty rather than the name itself, so a form that has never been touched

@@ -160,5 +160,41 @@ class TheTriggerDispatchesTheVerb(ScriptFixture):
         self.assertFalse(self.record.exists())
 
 
+class CaFilesOnTheNode(ScriptFixture):
+    """B276: `ca-remove` and `ca-pull` reach the same helpers with `--authority`."""
+
+    def test_a_ca_no_pool_names_is_removed_from_its_own_directory(self) -> None:
+        (self.certs / "ca").mkdir()
+        (self.certs / "ca" / "corp-root.pem").write_text("ca\n", encoding="utf-8")
+        self.carried("corp-root")
+
+        code, output = self.run_trigger("ca-remove corp-root")
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("Removed corp-root.", output)
+        self.assertFalse((self.certs / "ca" / "corp-root.pem").exists())
+        self.assertTrue((self.certs / "corp-root.pem").exists())
+
+    def test_a_ca_a_pool_names_is_refused(self) -> None:
+        (self.certs / "ca").mkdir()
+        (self.certs / "ca" / "corp-root.pem").write_text("ca\n", encoding="utf-8")
+        (self.haproxy / "conf.d" / "1001-app.cfg").write_text(
+            f"server s1 a:443 ssl verify required ca-file {self.certs}/ca/corp-root.pem\n",
+            encoding="utf-8",
+        )
+
+        code, output = self.run_trigger("ca-remove corp-root")
+
+        self.assertEqual(code, 1)
+        self.assertIn("still named", output)
+        self.assertTrue((self.certs / "ca" / "corp-root.pem").exists())
+
+    def test_ca_pull_reaches_the_pull_helper_with_the_flag(self) -> None:
+        code, output = self.run_trigger("ca-pull corp-root")
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.record.read_text().strip(), f"{self.pull} --authority corp-root")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3187,7 +3187,19 @@ def build_router(config: Config) -> APIRouter:
                 config,
                 replace(certificate_import_form.EMPTY_FORM, name=name, interface=True),
             )
-        return _certificate_import_page(request, config, certificate_import_form.EMPTY_FORM)
+        #
+        # The name a switch between the two kinds carried over (B276).
+        #
+        carried = request.query_params.get("name", "")[:255]
+        if request.query_params.get("kind") == "authority":
+            return _certificate_import_page(
+                request,
+                config,
+                replace(certificate_import_form.EMPTY_FORM, name=carried, kind="authority"),
+            )
+        return _certificate_import_page(
+            request, config, replace(certificate_import_form.EMPTY_FORM, name=carried)
+        )
 
     @router.post("/certificates/import", response_class=HTMLResponse)
     async def import_certificate_submit(
@@ -3198,6 +3210,8 @@ def build_router(config: Config) -> APIRouter:
         receiver: Sequence[str] = Form(default=()),
         format: Sequence[str] = Form(default=()),
         interface: str = Form(default="", max_length=1),
+        kind: str = Form(default="certificate", max_length=16),
+        source: str = Form(default="upload", max_length=16),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
         file: UploadFile | None = UPLOADED_FILE,
@@ -3219,6 +3233,8 @@ def build_router(config: Config) -> APIRouter:
             filename=filename,
             data=data,
             interface=interface == "1",
+            kind=kind,
+            source=source,
         )
         session = current_session(request)
         if session is None:
@@ -3236,14 +3252,6 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
 
         public_key = _dns_public_key()
-        if public_key is None:
-            return _certificate_import_page(
-                request,
-                config,
-                form,
-                problem="The installation's sealing key is not configured, so a file cannot "
-                "be uploaded. Import it with haprion-cert-import on the manager.",
-            )
         choices = _certificate_choices(request, config)
         try:
             payload = certificate_import_form.payload_from_form(
@@ -3637,6 +3645,13 @@ def build_router(config: Config) -> APIRouter:
                 entry.identifier
                 for entry in overview.registry.certificates
                 if entry.source_kind == "import" and not entry.placeholder
+            )
+            if overview.registry
+            else (),
+            authorities=tuple(
+                entry.identifier
+                for entry in overview.registry.certificates
+                if entry.source_kind == "authority"
             )
             if overview.registry
             else (),

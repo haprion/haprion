@@ -464,11 +464,42 @@ def _certificate_operation(
         # it looks inside; a job the payload cannot name is refused here.
         #
         _only(
-            payload, "id", "key_id", "ciphertext", "clusters", "receivers", "formats", "interface"
+            payload,
+            "id",
+            "key_id",
+            "ciphertext",
+            "clusters",
+            "receivers",
+            "formats",
+            "interface",
+            "authority",
         )
         certificate_id = payload.get("id")
         if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
             raise BadPayload("id must be a certificate ID")
+        #
+        # A CA certificate (B276): clusters only, and from the NDES CA with no
+        # file at all - root reads the file the runtime policy names.
+        #
+        authority = payload.get("authority")
+        if authority is not None:
+            if authority not in ("upload", "ndes"):
+                raise BadPayload("authority must be upload or ndes")
+            if payload.get("receivers") or payload.get("formats") or payload.get("interface"):
+                raise BadPayload("a CA certificate goes to clusters only")
+            clusters, _receivers = _targets(payload, interface=False)
+            if authority == "ndes":
+                if "key_id" in payload or "ciphertext" in payload:
+                    raise BadPayload("the NDES CA carries no file")
+                return Prepared(
+                    argv=(cert_upload.SUDO, *SUDO_FLAGS, cert_upload.HELPER),
+                    request=cert_upload.build_request(
+                        str(request_id),
+                        certificate_id=certificate_id,
+                        clusters=clusters,
+                        authority="ndes",
+                    ),
+                )
         key_id = payload.get("key_id")
         if not isinstance(key_id, str) or not KEY_ID.fullmatch(key_id):
             raise BadPayload("key_id must be a key ID")
@@ -495,6 +526,7 @@ def _certificate_operation(
                 receivers=receivers,
                 formats=formats,
                 interface=interface,
+                authority=authority if isinstance(authority, str) else None,
             ),
         )
 

@@ -148,26 +148,34 @@ def build_request(
     request_id: str,
     *,
     certificate_id: str,
-    key_id: str,
-    ciphertext: bytes,
+    key_id: str | None = None,
+    ciphertext: bytes | None = None,
     clusters: tuple[str, ...] = (),
     receivers: tuple[str, ...] = (),
     formats: Mapping[str, str] | None = None,
     interface: bool = False,
+    authority: str | None = None,
 ) -> str:
-    """The bounded request the worker sends. Null cluster, by contract."""
+    """The bounded request the worker sends. Null cluster, by contract.
 
-    parameters: dict[str, Any] = {
-        "certificate": certificate_id,
-        "key_id": key_id,
-        "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
-        "clusters": list(clusters),
-        "receivers": list(receivers),
-    }
+    `authority` (B276) asks for a CA certificate: `upload` with the box as
+    usual, `ndes` with no box at all.
+    """
+
+    parameters: dict[str, Any] = {"certificate": certificate_id}
+    if authority != "ndes":
+        if key_id is None or ciphertext is None:
+            raise UploadError("an upload carries its key ID and its box")
+        parameters["key_id"] = key_id
+        parameters["ciphertext"] = base64.b64encode(ciphertext).decode("ascii")
+    parameters["clusters"] = list(clusters)
+    parameters["receivers"] = list(receivers)
     if formats:
         parameters["formats"] = dict(formats)
     if interface:
         parameters["interface"] = True
+    if authority is not None:
+        parameters["authority"] = authority
     return json.dumps(
         {
             "schema_version": 1,

@@ -72,6 +72,12 @@ class CertificateClusterView:
     referenced_count: int
     available_count: int
     certificates: tuple[CertificateView, ...]
+    #
+    # The CA certificates the registry sends this cluster (B276), by ID: what
+    # a pool may be verified against. Read from the registry block, since the
+    # cluster listing names only what a listener can serve.
+    #
+    authorities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -518,6 +524,8 @@ def _source_label(kind: str, source: Mapping[str, Any]) -> str:
 
     if kind == "acme":
         return "Certbot"
+    if kind == "authority":
+        return "CA"
     if isinstance(source.get("ndes_profile"), str):
         return "NDES"
     return "Imported"
@@ -636,6 +644,7 @@ def _cluster_view(
     stale_after: timedelta,
     targets: Mapping[str, tuple[TargetView, ...]] | None = None,
     carriage: NodeCarriage | None = None,
+    authorities: tuple[str, ...] = (),
 ) -> CertificateClusterView:
     result = _mapping(reading.result)
     entries = result.get("certificates")
@@ -663,6 +672,7 @@ def _cluster_view(
         referenced_count=sum(entry.referenced for entry in certificates),
         available_count=sum(not entry.referenced for entry in certificates),
         certificates=certificates,
+        authorities=authorities,
     )
 
 
@@ -778,10 +788,19 @@ def _carriage(readings: Iterable[Any]) -> dict[str, NodeCarriage]:
             # Published - the maintainer saw it on the page. The rig's status
             # fixture had the same wrong shape, which is why the rig agreed.
             #
-            entries = _mapping(_mapping(value).get("status")).get("certificates")
+            status = _mapping(_mapping(value).get("status"))
+            entries = status.get("certificates")
             if not isinstance(entries, list):
                 continue
             reporting += 1
+            #
+            # A node's CA files (B276) by the same ID space and in the same
+            # shape: the registry gives every entry one ID, so a CA row's
+            # state reads them exactly as a certificate's reads its own.
+            #
+            authorities = status.get("authorities")
+            if isinstance(authorities, list):
+                entries = [*entries, *authorities]
             for item in entries:
                 entry = _mapping(item)
                 identifier = _text(entry.get("id"), "")
@@ -1055,6 +1074,12 @@ def _registry_certificate(
         text = pending_request.get("csr_pem")
         csr_pem = text if isinstance(text, str) and text else None
     fingerprint = _text(entry.get("fingerprint_sha256"), "")
+    if kind == "authority":
+        #
+        # A node reports a CA file by every certificate in it (B276), so the
+        # row is compared by the same.
+        #
+        fingerprint = _text(entry.get("bundle_sha256"), "")
     targets = _target_views(entry)
 
     if readable:
@@ -1289,6 +1314,16 @@ def build_certificate_overview(
     registry = _registry_view(readings, status_readings, now=now)
     carriage = _carriage(status_readings)
     targets = registry.targets if registry is not None else None
+
+    def authorities(cluster: str) -> tuple[str, ...]:
+        return tuple(
+            entry.identifier
+            for entry in (registry.certificates if registry is not None else ())
+            if entry.source_kind == "authority"
+            and entry.readable
+            and any(t.kind == "cluster" and t.name == cluster for t in entry.targets)
+        )
+
     rows = {reading.cluster: reading for reading in readings}
     clusters: list[CertificateClusterView] = []
     for cluster in tuple(configured_clusters):
@@ -1303,6 +1338,7 @@ def build_certificate_overview(
                 stale_after=stale_after,
                 targets=targets,
                 carriage=carriage.get(cluster),
+                authorities=authorities(cluster),
             )
         )
     for cluster in sorted(rows):
@@ -1314,6 +1350,7 @@ def build_certificate_overview(
                 stale_after=stale_after,
                 targets=targets,
                 carriage=carriage.get(cluster),
+                authorities=authorities(cluster),
             )
         )
 

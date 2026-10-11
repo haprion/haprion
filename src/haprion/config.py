@@ -345,6 +345,11 @@ class Cluster:
     abuse_protection: AbuseProtection | None
     nodes: tuple[Node, ...]
     traffic_logging: bool = False
+    #
+    # The CA files the cluster's nodes carry for its pools to verify against
+    # (B276). Only from the registry; empty without one.
+    #
+    authority_ids: tuple[str, ...] = ()
 
     def network(self) -> Network:
         """This cluster's network description, from the repository if it has one.
@@ -385,7 +390,14 @@ class Cluster:
 # goes to which already-trusted receiver is what the interface may change,
 # through a helper that accepts only registered targets.
 #
-SOURCE_KINDS = frozenset({"acme", "import"})
+# An `authority` (B276) is a CA certificate - one or more, no key - that
+# clusters verify their pools against. It is registered, imported and
+# published like a certificate, but it is never served: it lands beside the
+# certificates on a node, in a directory of its own, and is named by a pool's
+# `ca-file` rather than by a listener. It goes to clusters only.
+#
+SOURCE_KINDS = frozenset({"acme", "import", "authority"})
+AUTHORITY = "authority"
 RECEIVER_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
 #
@@ -527,12 +539,24 @@ class Registry:
     certificates: Mapping[str, RegisteredCertificate]
 
     def for_cluster(self, cluster_id: str) -> tuple[str, ...]:
-        """The certificate IDs that name this cluster, in registry order."""
+        """The certificate IDs that name this cluster, in registry order.
+
+        Certificates a listener can serve; an authority is not one (B276).
+        """
 
         return tuple(
             entry.certificate_id
             for entry in self.certificates.values()
-            if cluster_id in entry.clusters
+            if cluster_id in entry.clusters and entry.source.kind != AUTHORITY
+        )
+
+    def authorities_for(self, cluster_id: str) -> tuple[str, ...]:
+        """The authority IDs that name this cluster, in registry order (B276)."""
+
+        return tuple(
+            entry.certificate_id
+            for entry in self.certificates.values()
+            if cluster_id in entry.clusters and entry.source.kind == AUTHORITY
         )
 
 
@@ -1252,6 +1276,11 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
                 f"{location} is exportable and cannot name clusters or receivers or serve "
                 "the interface"
             )
+        if kind == AUTHORITY and (named or interface or exportable):
+            raise ConfigError(
+                f"{location} is an authority and goes to clusters only: no receivers, "
+                "not the interface, not exportable"
+            )
         if interface:
             taken = [e.certificate_id for e in certificates.values() if e.interface]
             if taken:
@@ -1565,6 +1594,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             trusted_proxy_cidrs=tuple(cidrs),
             nodes=tuple(nodes),
             traffic_logging=traffic_logging,
+            authority_ids=registry.authorities_for(cluster_id) if registry is not None else (),
         )
     if registry is not None:
         #

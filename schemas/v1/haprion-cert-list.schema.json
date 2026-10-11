@@ -43,7 +43,7 @@
                   "type": "object",
                   "required": ["kind", "lineage"],
                   "properties": {
-                    "kind": { "enum": ["acme", "import"] },
+                    "kind": { "enum": ["acme", "import", "authority"] },
                     "lineage": { "type": ["string", "null"], "maxLength": 255 },
                     "dns_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
                     "ndes_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" }
@@ -124,7 +124,7 @@
           "type": "object",
           "required": ["kind", "lineage"],
           "properties": {
-            "kind": { "enum": ["acme", "import"] },
+            "kind": { "enum": ["acme", "import", "authority"] },
             "lineage": { "type": ["string", "null"], "maxLength": 255 },
             "dns_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
             "ndes_profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" }

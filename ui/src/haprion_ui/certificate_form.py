@@ -148,6 +148,11 @@ class IssueChoices:
     manager: str | None = None
     interface_id: str | None = None
     taken: tuple[str, ...] = ()
+    #
+    # The CA certificates the registry holds (B276): an import of a CA file
+    # may replace one of these, and nothing else.
+    #
+    authorities: tuple[str, ...] = ()
 
 
 def interface_id_for(manager: str, taken: Iterable[str]) -> str:

@@ -165,6 +165,11 @@ class NodeStatus:
     # older status script, or a runtime socket it could not read.
     #
     peers: tuple[tuple[str, bool], ...] | None = None
+    #
+    # The CA files the node carries for its pools (B276), as (id, bundle
+    # fingerprint). None on a node whose status script predates them.
+    #
+    authorities: tuple[tuple[str, str], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +201,7 @@ class ClusterStatus:
                     addresses_current=node.addresses_current,
                     ipvs_current=node.ipvs_current,
                     certificates=node.certificates,
+                    authorities=node.authorities,
                 )
                 for node in self.nodes
             ),
@@ -219,15 +225,18 @@ def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _certificates(status: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
+def _certificates(
+    status: Mapping[str, Any], key: str = "certificates"
+) -> tuple[tuple[str, str], ...] | None:
     """What the node says it carries, or None when it did not say.
 
     Entries without both an id and a fingerprint are dropped rather than
     guessed at: a half-described certificate cannot be compared, and treating it
-    as present would let a node look current on bytes nobody checked.
+    as present would let a node look current on bytes nobody checked. The
+    authorities (B276) are read the same way, from their own key.
     """
 
-    entries = status.get("certificates")
+    entries = status.get(key)
     if not isinstance(entries, list):
         return None
 
@@ -460,6 +469,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         ipvs_current=ipvs_current(status),
         ipvs_included=ipvs_included(status),
         certificates=_certificates(status),
+        authorities=_certificates(status, "authorities"),
         servers=_servers(status),
         frontends=_frontends(status),
         peers=_peers(status),

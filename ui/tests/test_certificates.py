@@ -13,7 +13,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from haprion_ui.certificates import (
     CertificateOverview,
@@ -919,3 +919,34 @@ class TheStateIsReadFromTheContractsShape(unittest.TestCase):
 
         self.assertEqual(registry_of(view).certificates[0].state_label, "On all 2 nodes")
         self.assertEqual(view.clusters[0].certificates[0].state_label, "On all 2 nodes")
+
+
+class ACaCertificateIsARowOfItsOwn(unittest.TestCase):
+    """B276: a CA reads as one, is judged by every certificate in it, and is offered to pools."""
+
+    def entry(self) -> dict[str, object]:
+        row = registered("corp-root", kind="authority", fingerprint="d" * 64, sans=[])
+        row["bundle_sha256"] = "e" * 64
+        return row
+
+    def test_the_source_says_ca_and_the_nodes_are_compared_by_the_whole_file(self) -> None:
+        node_entry = node(("example.com", "c" * 64))
+        node_status = node_entry["status"]
+        self.assertIsInstance(node_status, dict)
+        cast(dict[str, object], node_status)["authorities"] = [
+            {"id": "corp-root", "fingerprint_sha256": "e" * 64}
+        ]
+
+        view = overview(
+            with_registry(reading(), registered(fingerprint="c" * 64), self.entry()),
+            status=(status(node_entry),),
+        )
+        row = next(r for r in registry_of(view).certificates if r.identifier == "corp-root")
+
+        self.assertEqual(row.source_label, "CA")
+        self.assertEqual(row.state_label, "On the node")
+
+    def test_the_cluster_offers_it_to_its_pools(self) -> None:
+        view = overview(with_registry(reading(), registered(fingerprint="c" * 64), self.entry()))
+
+        self.assertEqual(view.clusters[0].authorities, ("corp-root",))

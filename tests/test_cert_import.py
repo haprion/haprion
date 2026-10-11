@@ -489,5 +489,123 @@ class TheCommand(ImportFixture):
         self.assertIn("key_mismatch", err)
 
 
+class AnAuthorityIsImportedWithoutAKey(ImportFixture):
+    """A CA file for the pools to verify against (B276): certificates only, clusters only."""
+
+    def blocks(self, *paths: Path) -> tuple[str, ...]:
+        data = "".join(path.read_text() for path in paths).encode()
+        certificates, keys = cert_import.read_bytes(data)
+        return cert_import.authority_blocks(certificates, keys)
+
+    def run_authority(self, certificate_id: str, blocks: tuple[str, ...], **targets: Any) -> Any:
+        policy = load_policy(self.policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+        return cert_import.import_authority(
+            certificate_id=certificate_id,
+            blocks=blocks,
+            clusters=targets.get("clusters", ()),
+            policy=policy,
+            runtime=runtime,
+            deployer=self.deploy,
+            live=self.live,
+            store=self.store,
+            lock_path=self.lock,
+            require_secure=False,
+        )
+
+    def test_a_root_and_its_intermediate_land_in_the_clusters_ca_directory(self) -> None:
+        result = self.run_authority(
+            "corp-root", self.blocks(self.pki.root, self.pki.intermediate), clusters=["alpha"]
+        )
+
+        self.assertTrue(result.authority)
+        self.assertEqual(result.chain_length, 1)
+        self.assertEqual(
+            self.registered()["corp-root"], {"source": {"kind": "authority"}, "clusters": ["alpha"]}
+        )
+        published = (self.dist / "ca" / "corp-root.pem").read_text()
+        self.assertEqual(published.count("BEGIN CERTIFICATE"), 2)
+        self.assertNotIn("PRIVATE KEY", published)
+        self.assertEqual(self.deployed, ["alpha"])
+        self.assertFalse((self.store / "corp-root" / PRIVKEY).exists())
+
+    def test_the_cluster_reads_it_as_an_authority_and_not_as_a_certificate(self) -> None:
+        self.run_authority("corp-root", self.blocks(self.pki.root), clusters=["alpha"])
+
+        policy = load_policy(self.policy_path, require_secure=False)
+        cluster = load_runtime_config(policy, require_secure=False).cluster("alpha")
+        self.assertEqual(cluster.authority_ids, ("corp-root",))
+        self.assertNotIn("corp-root", cluster.certificate_ids)
+
+    def test_a_key_in_the_file_is_refused(self) -> None:
+        data = (self.pki.root.read_text() + self.pki.root_key.read_text()).encode()
+        certificates, keys = cert_import.read_bytes(data)
+
+        with self.assertRaises(ImportError_) as caught:
+            cert_import.authority_blocks(certificates, keys)
+        self.assertIn("private key", str(caught.exception))
+
+    def test_a_server_certificate_is_not_a_ca(self) -> None:
+        with self.assertRaises(ImportError_) as caught:
+            self.blocks(self.pki.leaf)
+        self.assertEqual(caught.exception.code, "not_authority")
+
+    def test_a_certificate_cannot_be_imported_over_a_ca(self) -> None:
+        self.run_authority("corp-root", self.blocks(self.pki.root), clusters=["alpha"])
+
+        with self.assertRaises(ImportError_) as caught:
+            self.run_import("corp-root", self.material(), clusters=["alpha"])
+        self.assertEqual(caught.exception.code, "not_import")
+
+    def test_a_ca_cannot_be_imported_over_a_certificate(self) -> None:
+        self.run_import("shop.example", self.material(), clusters=["alpha"])
+
+        with self.assertRaises(ImportError_) as caught:
+            self.run_authority("shop.example", self.blocks(self.pki.root), clusters=["alpha"])
+        self.assertEqual(caught.exception.code, "not_import")
+
+    def test_a_second_import_replaces_the_file_and_keeps_the_clusters(self) -> None:
+        self.run_authority("corp-root", self.blocks(self.pki.root), clusters=["alpha"])
+        result = self.run_authority(
+            "corp-root", self.blocks(self.pki.root, self.pki.intermediate), clusters=["beta"]
+        )
+
+        self.assertTrue(result.replaced)
+        self.assertEqual(self.registered()["corp-root"]["clusters"], ["alpha", "beta"])
+        published = (self.dist / "ca" / "corp-root.pem").read_text()
+        self.assertEqual(published.count("BEGIN CERTIFICATE"), 2)
+
+    def test_the_command_takes_a_file_and_says_what_it_imported(self) -> None:
+        output, errors = io.StringIO(), io.StringIO()
+        code = command.main(
+            ["--id", "corp-root", "--authority", str(self.pki.root), "--cluster", "alpha"],
+            policy_path=self.policy_path,
+            output_stream=output,
+            error_stream=errors,
+            require_secure=False,
+            require_root=False,
+            deployer=self.deploy,
+            live=self.live,
+            store=self.store,
+            lock_path=self.lock,
+        )
+
+        self.assertEqual(code, 0, errors.getvalue())
+        self.assertIn("imported CA corp-root", output.getvalue())
+
+    def test_the_command_refuses_a_key_or_a_receiver_beside_a_ca(self) -> None:
+        for extra in (["--key", str(self.pki.root_key)], ["--receiver", "lb-01"]):
+            output = io.StringIO()
+            code = command.main(
+                ["--id", "corp-root", "--authority", str(self.pki.root), *extra],
+                policy_path=self.policy_path,
+                output_stream=output,
+                error_stream=io.StringIO(),
+                require_secure=False,
+                require_root=False,
+            )
+            self.assertEqual(code, 64, extra)
+
+
 if __name__ == "__main__":
     unittest.main()

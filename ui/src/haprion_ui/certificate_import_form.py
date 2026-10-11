@@ -51,6 +51,10 @@ class ImportForm:
     data: bytes = b""
     interface: bool = False
     """For the manager's own interface certificate (B188): no targets, published to nginx."""
+    kind: str = "certificate"
+    """`certificate`, or `authority` for a CA certificate the pools verify against (B276)."""
+    source: str = "upload"
+    """For a CA: `upload`, or `ndes` for the NDES issuing CA the manager already has."""
 
     def format_of(self, receiver_id: str) -> str:
         """What the page should show selected for a receiver when drawn again."""
@@ -77,6 +81,8 @@ def normalise(form: ImportForm) -> ImportForm:
         filename=form.filename,
         data=form.data,
         interface=form.interface,
+        kind="authority" if form.kind == "authority" else "certificate",
+        source="ndes" if form.source == "ndes" else "upload",
     )
 
 
@@ -103,10 +109,16 @@ def check_file(data: bytes, *, key_allowed: bool = True) -> None:
         )
 
 
+SEALING_MISSING = (
+    "The installation's sealing key is not configured, so a file cannot be uploaded. "
+    "Import it with haprion-cert-import on the manager."
+)
+
+
 def payload_from_form(
     form: ImportForm,
     choices: IssueChoices,
-    public_key: DnsProfilePublicKey,
+    public_key: DnsProfilePublicKey | None,
     *,
     replaceable: Iterable[str] = (),
 ) -> dict[str, Any]:
@@ -124,8 +136,17 @@ def payload_from_form(
             "The name may hold lower-case letters, digits, dots and dashes, and must "
             "start with a letter or digit."
         )
+    if form.kind == "authority" and not form.interface:
+        return _authority_payload(form, choices, public_key)
+    if public_key is None:
+        raise FormProblem(SEALING_MISSING)
     if form.interface:
         return _interface_payload(form, choices, public_key)
+    if form.name in choices.authorities:
+        raise FormProblem(
+            f"{form.name} is a CA certificate. Choose another name, or import a CA file "
+            "under it to replace it."
+        )
     if form.name in choices.registered and form.name not in set(replaceable):
         raise FormProblem(
             f"{form.name} is already registered and its material is not imported; "
@@ -181,6 +202,40 @@ def _interface_payload(
         public_key, certificate_id=form.name, data=form.data, password=form.password
     )
     payload["interface"] = True
+    return payload
+
+
+def _authority_payload(
+    form: ImportForm, choices: IssueChoices, public_key: DnsProfilePublicKey | None
+) -> dict[str, Any]:
+    """A CA certificate for the clusters' pools to verify against (B276).
+
+    Clusters only: a CA file is never served, so a receiver has no use for
+    it. From an uploaded file without a key, or from the NDES issuing CA the
+    manager already holds, which only root reads and which travels nowhere.
+    """
+
+    if form.name in choices.registered and form.name not in choices.authorities:
+        raise FormProblem(f"{form.name} is already in use. Choose another name.")
+    if form.receivers:
+        raise FormProblem("A CA certificate goes to clusters only.")
+    if not form.clusters:
+        raise FormProblem("Choose at least one cluster.")
+    if _unknown(form.clusters, choices.clusters):
+        raise FormProblem("One of the chosen clusters is not a cluster this manager has.")
+    if form.source == "ndes":
+        if not choices.ndes_profiles:
+            raise FormProblem("No NDES profile is in effect, so there is no NDES CA to use.")
+        return {"id": form.name, "authority": "ndes", "clusters": list(form.clusters)}
+    if public_key is None:
+        raise FormProblem(SEALING_MISSING)
+    check_file(form.data)
+    if KEY_MARK in form.data:
+        raise FormProblem("This file holds a private key. A CA certificate is imported without it.")
+    payload = sealed_payload(
+        public_key, certificate_id=form.name, data=form.data, clusters=form.clusters
+    )
+    payload["authority"] = "upload"
     return payload
 
 

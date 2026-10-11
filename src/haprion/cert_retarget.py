@@ -55,6 +55,8 @@ from typing import Any
 
 from haprion import cert_pending, cert_registry
 from haprion.cert_delete import (
+    AUTHORITY_NODE_VERB,
+    NODE_VERB,
     DeleteError,
     Guards,
     Layer,
@@ -74,8 +76,9 @@ from haprion.cert_publish import (
     publish_lock,
     roll_out,
 )
-from haprion.certificates import certificate_path
+from haprion.certificates import authority_path, certificate_path
 from haprion.config import (
+    AUTHORITY,
     DEFAULT_RECEIVER_FORMAT,
     ConfigError,
     PathPolicy,
@@ -579,11 +582,22 @@ def _remove(
         # deletion removes it, and so does this (review 2026-09-17, finding 5).
         #
         remaining_clusters = tuple(c for c in before_clusters if c not in change.clusters)
+        entry = runtime.registry.certificates.get(certificate_id) if runtime.registry else None
+        authority = entry is not None and entry.source.kind == AUTHORITY
         if dropped_clusters and not remaining_clusters and policy.certificate_root is not None:
-            layers += (_unlink(certificate_path(policy.certificate_root, certificate_id)),)
+            copy = (
+                authority_path(policy.certificate_root, certificate_id)
+                if authority
+                else certificate_path(policy.certificate_root, certificate_id)
+            )
+            layers += (_unlink(copy),)
         clusters = [runtime.clusters[c] for c in dropped_clusters if c in runtime.clusters]
         nodes = remove_node_copies(
-            clusters, certificate_id, policy.cert_deploy_identity, node_remover
+            clusters,
+            certificate_id,
+            policy.cert_deploy_identity,
+            node_remover,
+            verb=AUTHORITY_NODE_VERB if authority else NODE_VERB,
         )
         complete = all(layer.state != "failed" for layer in layers) and all(
             copy.state in {"removed", "absent"} for copy in nodes

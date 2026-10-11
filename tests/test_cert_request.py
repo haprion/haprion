@@ -415,7 +415,7 @@ class TheRoundTrip(RequestFixture):
             store=self.store,
             lock_path=self.lock,
             lineage_remover=lambda arguments: (0, ""),
-            node_remover=lambda identity, host, certificate_id: (0, ""),
+            node_remover=lambda identity, host, verb, certificate_id: (0, ""),
             guards_reader=lambda runtime, ids: cert_delete.Guards(),
         )
         outcome = next(c for c in report.outcomes if c.certificate_id == "shop.example.net")

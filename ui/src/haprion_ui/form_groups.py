@@ -206,6 +206,8 @@ def _connections(form: Mapping[str, Any]) -> str:
     tls = {"system": "HTTPS, verified", "none": "HTTPS, not verified"}.get(
         _text(form, "backend_tls"), "Plain HTTP"
     )
+    if _text(form, "backend_tls") == "ca":
+        tls = f"HTTPS, verified against {_text(form, 'backend_tls_ca') or 'a CA'}"
     policy = BACKEND_POLICIES.get(_text(form, "backend_tls_policy"), "")
     source = _text(form, "source")
     cookie = _text(form, "cookie")
@@ -338,6 +340,7 @@ GROUPS: Mapping[str, FormGroup] = {
             "source",
             "backend_tls",
             "backend_tls_policy",
+            "backend_tls_ca",
             "cookie",
             "max_connections",
             "slow_start",

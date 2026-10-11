@@ -2393,13 +2393,137 @@ item with `kind`, `severity`, `cluster`, `subject`, `message`, `since` and `link
 once any cluster's status reading is older than two poll intervals, which is how a monitor sees that
 the manager itself has stopped reading. The second is Prometheus's text format:
 `haprion_attention_items{kind, severity}` for every kind and `haprion_status_age_seconds{cluster}`.
-Uptime Kuma asks the first with *HTTP(s) - Json Query* and `counts.critical = 0`; Prometheus scrapes
-the second and alerts on `haprion_attention_items{severity="critical"} > 0`.
 
 Who may ask is a list on *Settings → Status endpoint*: addresses or networks, one per line. Every
 other address - and every address while the list is empty, which is the endpoint switched off - is
 answered 404. The address is the one nginx hands the interface, so with a reverse proxy in front it
-is the client the proxy names.
+is the client the proxy names. A monitor that is answered 404 is not on the list.
+
+Any monitor that can make an HTTPS request will do; three ways follow. In each, *healthy* means
+nothing red on the dashboard and every cluster read recently. Warnings - a certificate with less
+than thirty days left, a backup overdue - are better a second, quieter check than a page at night.
+
+#### What the answers look like
+
+With nothing to do:
+
+```json
+{"generated_at":"2026-10-11T20:00:00Z","fresh":true,"counts":{"critical":0,"warning":0},"items":[]}
+```
+
+With a certificate running out and a failed node backup:
+
+```json
+{
+  "generated_at": "2026-10-11T20:24:09Z",
+  "fresh": true,
+  "counts": {"critical": 2, "warning": 0},
+  "items": [
+    {"kind": "certificate", "severity": "critical", "cluster": null, "subject": "shop.example.com",
+     "message": "expires in 4 days", "since": null, "link": "/certificates?view=registry"},
+    {"kind": "backup", "severity": "critical", "cluster": "beta", "subject": "beta",
+     "message": "node backup · Last run failed", "since": null, "link": "/backups"}
+  ]
+}
+```
+
+And the metrics, shortened:
+
+```
+haprion_attention_items{kind="backup",severity="critical"} 1
+haprion_attention_items{kind="certificate",severity="critical"} 1
+haprion_attention_items{kind="certificate",severity="warning"} 0
+haprion_attention_items{kind="job",severity="critical"} 0
+haprion_status_age_seconds{cluster="alpha"} 12
+haprion_status_age_seconds{cluster="beta"} 14
+```
+
+`kind` is one of `backup`, `certificate`, `job`, `node`, `reading` and `waf`, and every pair is
+present even at 0, so an alert expression never meets a missing series.
+
+#### Uptime Kuma
+
+A monitor of type **HTTP(s) - Json Query**:
+
+| Field | Value |
+|---|---|
+| URL | `https://<manager>/status/attention.json` |
+| Heartbeat interval | `60` |
+| Json Query | `counts.critical = 0 and fresh = true` |
+| Expected value | `true` (condition `==` where the version asks for one) |
+| Method | `GET`, no body, no headers |
+
+It is up while the expression is true and goes down within one interval of anything turning red,
+or of the manager no longer reading the clusters. For the quieter second monitor:
+`counts.critical = 0 and counts.warning = 0 and fresh = true`.
+
+Uptime Kuma runs on Node.js, which trusts its own list of public CAs rather than the operating
+system's. If the manager's certificate is issued by your own CA, the monitor says *unable to verify
+the first certificate*. Either give Uptime Kuma the root - its PEM file, named in the environment
+variable `NODE_EXTRA_CA_CERTS`, then a restart - or tick *Ignore TLS/SSL errors* on this monitor,
+which stops it checking who answered.
+
+#### Prometheus
+
+```yaml
+scrape_configs:
+  - job_name: haprion
+    scheme: https
+    metrics_path: /status/metrics
+    scrape_interval: 60s
+    tls_config:
+      ca_file: /etc/prometheus/your-root-ca.pem
+    static_configs:
+      - targets: ["<manager>:443"]
+```
+
+```yaml
+groups:
+  - name: haprion
+    rules:
+      - alert: HaprionNeedsAttention
+        expr: sum(haprion_attention_items{severity="critical"}) > 0
+        for: 2m
+        annotations:
+          summary: "Haprion: {{ $value }} critical item(s) on the dashboard"
+      - alert: HaprionWarnings
+        expr: sum(haprion_attention_items{severity="warning"}) > 0
+        for: 1h
+      - alert: HaprionStatusStale
+        expr: max(haprion_status_age_seconds) > 300
+        for: 5m
+      - alert: HaprionEndpointDown
+        expr: up{job="haprion"} == 0
+        for: 5m
+```
+
+`haprion_status_age_seconds` is the seconds since each cluster was last read; at the default
+poll interval of 20 seconds it stays well under a minute.
+
+#### Anything else: a script
+
+For a monitor that runs a command and reads its exit code - Nagios, Icinga, Zabbix, Checkmk, or
+cron with mail:
+
+```sh
+#!/bin/sh
+# 0 OK, 1 warning, 2 critical, 3 unknown - the Nagios convention.
+MANAGER=manager.example.com
+CA=/etc/ssl/your-root-ca.pem
+answer=$(curl -fsS --max-time 10 --cacert "$CA" \
+         "https://$MANAGER/status/attention.json") || { echo "UNKNOWN: no answer"; exit 3; }
+critical=$(printf '%s' "$answer" | jq -r '.counts.critical')
+warning=$(printf '%s' "$answer" | jq -r '.counts.warning')
+fresh=$(printf '%s' "$answer" | jq -r '.fresh')
+items=$(printf '%s' "$answer" | jq -r '[.items[] | "\(.subject): \(.message)"] | join("; ")')
+[ "$fresh" = true ] || { echo "CRITICAL: the manager has stopped reading its clusters"; exit 2; }
+[ "$critical" -eq 0 ] || { echo "CRITICAL: $items"; exit 2; }
+[ "$warning" -eq 0 ] || { echo "WARNING: $items"; exit 1; }
+echo "OK: nothing needs attention"; exit 0
+```
+
+The message carries each item's subject and sentence, so the alert says what is wrong without
+opening the dashboard.
 
 ### Events: jobs and the audit record
 

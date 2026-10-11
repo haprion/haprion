@@ -1467,5 +1467,74 @@ class ASubdomainIsOneObject(unittest.TestCase):
         )
 
 
+class AVipMayServeHttp3(unittest.TestCase):
+    """B280: a QUIC bind beside the TCP one, `alt-svc` on every answer, UDP held to itself."""
+
+    def frontend(self, *documents: tuple[str, bytes], vip: Vip) -> str:
+        return generate(
+            [load_proxy(name, document) for name, document in documents],
+            vips={"main": vip},
+            default_vip="main",
+            certificates=("site",),
+        ).configuration["1000-frontends.cfg"]
+
+    def https(self) -> bytes:
+        return subdomain("shop", "[shop.example.com]", "https", "  certificate: site\n")
+
+    def test_the_quic_bind_shares_the_certificates_and_the_policy(self) -> None:
+        text = self.frontend(
+            ("shop", self.https()),
+            vip=Vip(name="main", address="192.0.2.20", tls_policy="modern", http3=True),
+        )
+        tcp = next(line for line in text.splitlines() if "bind 192.0.2.20:443" in line)
+        quic = next(line for line in text.splitlines() if "bind quic4@192.0.2.20:443" in line)
+
+        self.assertIn("alpn h3 ", quic)
+        self.assertEqual(
+            quic.split(" ssl ")[1].replace("alpn h3", "")[: len("crt-list")],
+            tcp.split(" ssl ")[1][: len("crt-list")],
+        )
+        self.assertIn("ssl-min-ver TLSv1.3", quic)
+        self.assertIn('http-after-response set-header alt-svc "h3=\\":443\\"; ma=86400"', text)
+
+    def test_an_ipv6_vip_is_quic6(self) -> None:
+        text = self.frontend(
+            ("shop", self.https()), vip=Vip(name="main", address="2001:db8::20", http3=True)
+        )
+
+        self.assertIn("bind quic6@2001:db8::20:443", text)
+
+    def test_a_vip_without_it_has_neither(self) -> None:
+        text = self.frontend(("shop", self.https()), vip=Vip(name="main", address="192.0.2.20"))
+
+        self.assertNotIn("quic", text)
+        self.assertNotIn("alt-svc", text)
+
+    def test_a_dns_object_on_udp_443_of_the_same_address_is_refused(self) -> None:
+        dns = b"""\
+schema: 1
+name: resolver
+listen:
+  protocol: dns
+  port: 443
+backend: pool
+backends:
+  pool:
+    balance: firstAvailable
+    health:
+      type: disabled
+    servers:
+      - host: 192.0.2.53
+        port: 53
+"""
+        with self.assertRaises(GeneratorError) as raised:
+            self.frontend(
+                ("shop", self.https()),
+                ("resolver", dns),
+                vip=Vip(name="main", address="192.0.2.20", http3=True),
+            )
+        self.assertIn("UDP port 443", str(raised.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -271,6 +271,14 @@ class Vip:
     nobody asked for.
     """
 
+    http3: bool = False
+    """Also serve https over QUIC on this address (B280), and say so in `alt-svc`.
+
+    The VIP's and not an object's, because the UDP listener is the address's
+    and every object on it shares it. QUIC carries TLS 1.3 alone, so a policy
+    that stops at 1.2 is refused beside it.
+    """
+
 
 @dataclass(frozen=True, slots=True)
 class UnknownHost:
@@ -711,13 +719,22 @@ def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str,
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ConfigError(f"{where} is not a usable VIP name")
         entry = _mapping(value, where)
-        _only_keys(entry, {"address", "source", "tls"}, where)
+        _only_keys(entry, {"address", "source", "tls", "http3"}, where)
         source = entry.get("source")
+        http3 = entry.get("http3", False)
+        if type(http3) is not bool:
+            raise ConfigError(f"{where}.http3 must be true or false")
+        policy = _tls_policy(entry.get("tls"), f"{where}.tls")
+        if http3 and policy == "tls12only":
+            raise ConfigError(
+                f"{where}: HTTP/3 needs TLS 1.3, and this VIP's TLS version is TLS 1.2 only"
+            )
         vips[name] = Vip(
             name=name,
             address=_address(entry.get("address"), f"{where}.address"),
             source=None if source is None else _address(source, f"{where}.source"),
-            tls_policy=_tls_policy(entry.get("tls"), f"{where}.tls"),
+            tls_policy=policy,
+            http3=http3,
         )
 
     addresses = [entry.address for entry in vips.values()]

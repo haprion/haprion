@@ -65,6 +65,7 @@ def network(case: Path) -> tuple[dict[str, Vip], str]:
             address=entry["address"],
             source=entry.get("source"),
             tls_policy=entry.get("tls"),
+            http3=entry.get("http3", False),
         )
         for name, entry in document["vips"].items()
     }

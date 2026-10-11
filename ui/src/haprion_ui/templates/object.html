@@ -44,7 +44,7 @@
 {% endif %}
 <article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><div><h3>Stored object</h3><p>{% if object.stored %}<code>managed/proxies/{{ object.name }}.yaml</code> at {{ object.short_commit }}{% if stored_advanced %} · with advanced config{% endif %}{% else %}Read from the cluster repository{% endif %}</p>{% if object.stored and object.stored.description %}<p class="object-description">Description: {{ object.stored.description }}</p>{% endif %}{% if answered_elsewhere %}<p class="object-description">Answered elsewhere: {% for hostname, owner in answered_elsewhere %}{{ hostname }} (<a href="/proxies/{{ object.cluster }}/{{ owner }}">{{ owner }}</a>){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}</div></div>
+    <div class="cluster-identity"><div><h3>Stored object</h3><p>{% if object.stored %}<code>managed/proxies/{{ object.name }}.yaml</code> at {{ object.short_commit }}{% if stored_advanced %} · with advanced config{% endif %}{% else %}Read from the cluster repository{% endif %}</p>{% if object.stored and object.stored.description %}<p class="object-description">Description: {{ object.stored.description }}</p>{% endif %}{% if http3_vip %}<p class="object-description">HTTP/3 on VIP {{ http3_vip }}</p>{% endif %}{% if answered_elsewhere %}<p class="object-description">Answered elsewhere: {% for hostname, owner in answered_elsewhere %}{{ hostname }} (<a href="/proxies/{{ object.cluster }}/{{ owner }}">{{ owner }}</a>){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}</div></div>
     {#
       The link is drawn only where the editor exists. In read-only mode the
       route answers 404 rather than 403, so a button that led there would

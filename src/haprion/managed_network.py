@@ -73,6 +73,7 @@ def dump_document(network: Network) -> bytes:
                 # at would be the one that changed.
                 #
                 **({"tls": vip.tls_policy} if vip.tls_policy else {}),
+                **({"http3": True} if vip.http3 else {}),
             }
             for name, vip in sorted(network.vips.items())
         },

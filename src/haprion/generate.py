@@ -430,6 +430,7 @@ def generate(
     # as HAProxy does, on UDP and TCP both.
     #
     _refuse_reserved(everything, reservations, ports)
+    _refuse_udp_conflicts(everything, ports)
     _refuse_shared_listeners(everything, ports)
     if settings.metrics is not None:
         _refuse_metrics_port(settings.metrics, everything, reservations, ports)
@@ -1622,13 +1623,15 @@ def _frontend_file(
         # decides. A release manifest fingerprints them per object, so the list
         # must not pick up a sibling's routing on the way past.
         #
+        listing = _listing_name(identity, listings, members, protocol)
         envelope = [
             "",
             f"frontend {_frontend_name(vip, protocol)}",
             f"    guid {frontend_guid(identity)}",
             f"    bind {vip.address}:{ports[protocol]}"
-            f"{_tls(members, protocol, _listing_name(identity, listings, members, protocol))}"
+            f"{_tls(members, protocol, listing)}"
             f" guid-prefix {listener_guid_prefix(identity)}",
+            *_quic(vip, protocol, ports, identity, listing),
             "    mode http",
             "    option httplog",
             *(
@@ -1989,6 +1992,57 @@ def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str, listing: str)
     vip = members[0][0]
     policy = "" if vip.tls_policy is None else TLS_POLICIES[vip.tls_policy]
     return f" ssl crt-list ../{CRT_LIST_TARGET}/{listing} alpn {ALPN}{policy}"
+
+
+#
+# How long a client may remember that this address speaks HTTP/3 (B280). A
+# day: long enough to matter, short enough that switching it off is not a
+# week of clients trying QUIC first - and a client that cannot reach UDP
+# falls back to TCP on its own either way.
+#
+ALT_SVC_MAX_AGE = 86400
+
+
+def _quic(
+    vip: Vip, protocol: str, ports: Mapping[str, int], identity: str, listing: str
+) -> list[str]:
+    """The same listener over QUIC, and the header that tells clients it is there (B280).
+
+    The same certificates and the same TLS policy as the TCP bind beside it;
+    QUIC carries TLS 1.3 alone, which the network's loader holds the policy
+    to. `alt-svc` is set with `http-after-response` so it reaches every
+    answer, the ones HAProxy writes itself included - the maintenance page,
+    the answer for an unknown name, a redirect - which `http-response` does
+    not (measured on 3.4.6).
+    """
+
+    if protocol != "https" or not vip.http3:
+        return []
+    family = "quic6" if ":" in vip.address else "quic4"
+    policy = "" if vip.tls_policy is None else TLS_POLICIES[vip.tls_policy]
+    port = ports[protocol]
+    return [
+        f"    bind {family}@{vip.address}:{port} ssl crt-list ../{CRT_LIST_TARGET}/{listing}"
+        f" alpn h3{policy} guid-prefix {listener_guid_prefix(identity + '-quic')}",
+        f'    http-after-response set-header alt-svc "h3=\\":{port}\\"; ma={ALT_SVC_MAX_AGE}"',
+    ]
+
+
+def _refuse_udp_conflicts(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]) -> None:
+    """HTTP/3's UDP port is the https port, and a dns or syslog object may hold it (B280)."""
+
+    port = ports.get("https")
+    quic = {vip.address for vip, proxy in placed if vip.http3 and proxy.listen.protocol == "https"}
+    for vip, proxy in placed:
+        if (
+            proxy.listen.protocol in ("dns", "syslog")
+            and vip.address in quic
+            and proxy.listen.port == port
+        ):
+            raise GeneratorError(
+                f"{proxy.name} takes UDP port {port} on {vip.address}, which HTTP/3 on VIP "
+                f"{vip.name} serves on; move one of them"
+            )
 
 
 def _allow_rules(

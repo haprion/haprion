@@ -69,6 +69,19 @@ class EachKindOfChange(unittest.TestCase):
         self.assertEqual(result["Source egress-2"].match, "192.0.2.30")
         self.assertTrue(result["Group office"].refused)
 
+    def test_http3_turned_on_is_said_and_absent_is_off(self) -> None:
+        document = saved(vips=[{**PUBLISHED["vips"][0], "http3": True}, PUBLISHED["vips"][1]])
+
+        self.assertEqual(found(document)["VIP web"].what, "HTTP/3 turned on")
+        self.assertEqual(
+            changes(
+                saved(vips=[{**PUBLISHED["vips"][0], "http3": False}, PUBLISHED["vips"][1]]),
+                PUBLISHED,
+                USE,
+            ),
+            (),
+        )
+
     def test_a_source_moved_and_a_group_widened(self) -> None:
         document = saved(
             sources=[{"name": "egress-2", "address": "192.0.2.31"}],

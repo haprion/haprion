@@ -314,6 +314,23 @@ class TheRowsBecomeTheDocument(unittest.TestCase):
         fields.update(overrides)
         return NetworkForm(**fields)  # type: ignore[arg-type]
 
+    def test_a_ticked_http3_box_is_written_on_its_row_only(self) -> None:
+        """B280: by row number, like a removal; an unticked box posts nothing."""
+
+        document = json.loads(
+            document_from_form(
+                self.form(
+                    vip_names=("public", "mail"),
+                    vip_addresses=("192.0.2.20", "192.0.2.21"),
+                    vip_sources=("", ""),
+                    http3_vip_rows=frozenset({0}),
+                )
+            )
+        )
+
+        self.assertIs(document["vips"]["public"]["http3"], True)
+        self.assertNotIn("http3", document["vips"]["mail"])
+
     def test_the_filled_in_rows_become_the_document(self) -> None:
         document = json.loads(document_from_form(self.form()))
 

@@ -70,3 +70,33 @@ class ATlsPolicySurvivesTheRoundTrip(unittest.TestCase):
         written = self.canonical("vips:\n  public:\n    address: 192.0.2.20\ndefault_vip: public\n")
 
         self.assertNotIn("tls", written)
+
+
+class Http3IsTheVipsChoice(unittest.TestCase):
+    """B280: `http3: true` on a VIP, written back, and refused beside TLS 1.2 only."""
+
+    def load(self, text: str) -> object:
+        return load_document(
+            text.encode(), ownership_vip="192.0.2.20", location="managed/network.yaml"
+        )
+
+    def test_it_is_read_and_written_back_only_where_on(self) -> None:
+        network = self.load(
+            "vips:\n  web:\n    address: 192.0.2.20\n    http3: true\n"
+            "  mail:\n    address: 192.0.2.21\ndefault_vip: web\n"
+        )
+        written = dump_document(network).decode()  # type: ignore[arg-type]
+
+        self.assertIn("http3: true", written)
+        self.assertEqual(written.count("http3"), 1)
+
+    def test_it_needs_tls_1_3(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            self.load(
+                "vips:\n  web:\n    address: 192.0.2.20\n    tls: tls12only\n    http3: true\n"
+            )
+        self.assertIn("TLS 1.3", str(raised.exception))
+
+    def test_it_is_true_or_false(self) -> None:
+        with self.assertRaises(ConfigError):
+            self.load("vips:\n  web:\n    address: 192.0.2.20\n    http3: yes please\n")

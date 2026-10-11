@@ -57,6 +57,9 @@ class VipView:
     somebody's behalf could loosen a cluster nobody had looked at.
     """
 
+    http3: bool = False
+    """Whether https on this address is served over QUIC too (B280)."""
+
 
 @dataclass(frozen=True, slots=True)
 class SourceView:
@@ -327,8 +330,10 @@ def changes(
                 ("address", "address changed"),
                 ("source", "source changed"),
                 ("tls", "TLS policy changed"),
+                ("http3", "HTTP/3 turned " + ("on" if after[name].get("http3") else "off")),
             )
             if before[name].get(field) != after[name].get(field)
+            and (field != "http3" or bool(before[name].get(field)) != bool(after[name].get(field)))
         ]
         if default_before != default_after and name == default_after:
             what.append("made the default")
@@ -382,6 +387,7 @@ def _vips(result: Mapping[str, Any], default_vip: str) -> tuple[VipView, ...]:
             # page showed a policy nobody had chosen.
             #
             tls_policy=row.get("tls") if isinstance(row.get("tls"), str) else None,
+            http3=row.get("http3") is True,
         )
         for row in _rows(result, "vips")
     )
@@ -542,7 +548,13 @@ def result_from_document(document: str, reading: Mapping[str, Any]) -> dict[str,
         **reading,
         "default_vip": parsed.default_vip,
         "vips": [
-            {"name": vip.name, "address": vip.address, "source": vip.source, "tls": vip.tls_policy}
+            {
+                "name": vip.name,
+                "address": vip.address,
+                "source": vip.source,
+                "tls": vip.tls_policy,
+                "http3": vip.http3,
+            }
             for vip in sorted(parsed.vips.values(), key=lambda entry: entry.name)
         ],
         "sources": [
@@ -645,6 +657,11 @@ class NetworkForm:
     # default-VIP radio counts on.
     #
     removed_vip_rows: frozenset[int] = frozenset()
+    #
+    # The VIP rows whose HTTP/3 box is ticked (B280), by row number like a
+    # removal: an unticked box posts nothing.
+    #
+    http3_vip_rows: frozenset[int] = frozenset()
     removed_source_rows: frozenset[int] = frozenset()
     removed_group_rows: frozenset[int] = frozenset()
 
@@ -716,7 +733,7 @@ def _members(raw: str) -> list[str]:
     return [member.strip() for member in raw.replace(",", "\n").splitlines() if member.strip()]
 
 
-def _vip_entry(form: NetworkForm, row: int, address: str) -> dict[str, str]:
+def _vip_entry(form: NetworkForm, row: int, address: str) -> dict[str, str | bool]:
     """One VIP as the helper reads it: the address, and only what was chosen.
 
     An empty cell writes no key at all rather than a key with an empty value.
@@ -724,11 +741,13 @@ def _vip_entry(form: NetworkForm, row: int, address: str) -> dict[str, str]:
     a cluster whose `core/` decides is the case that should need no words.
     """
 
-    entry = {"address": address}
+    entry: dict[str, str | bool] = {"address": address}
     if source := _cell(form.vip_sources, row):
         entry["source"] = source
     if policy := _cell(form.vip_tls, row):
         entry["tls"] = policy
+    if row in form.http3_vip_rows:
+        entry["http3"] = True
     return entry
 
 

@@ -1971,6 +1971,21 @@ def build_router(config: Config) -> APIRouter:
                 # The exact names other objects answer under this one's
                 # subdomain (B278): theirs, wholly, and said here.
                 #
+                #
+                # HTTP/3 is the VIP's (B280); an https object served on one that
+                # has it says so, since nothing in the object does.
+                #
+                "http3_vip": next(
+                    (
+                        item.name
+                        for item in (described.vips if described else ())
+                        if item.http3
+                        and item.name == detail.vip
+                        and written is not None
+                        and written.protocol == "https"
+                    ),
+                    None,
+                ),
                 "answered_elsewhere": objects.answered_elsewhere(
                     name,
                     detail.stored.hostnames if detail.stored is not None else (),
@@ -7517,6 +7532,7 @@ def build_router(config: Config) -> APIRouter:
         vip_address: Sequence[str] = Form(default=()),
         vip_source: Sequence[str] = Form(default=()),
         vip_tls: Sequence[str] = Form(default=()),
+        vip_http3: Sequence[str] = Form(default=()),
         default_vip_row: str = Form(default="", max_length=8),
         source_name: Sequence[str] = Form(default=()),
         source_address: Sequence[str] = Form(default=()),
@@ -7679,6 +7695,7 @@ def build_router(config: Config) -> APIRouter:
                         group_names=tuple(group_name),
                         group_members=tuple(group_members),
                         removed_vip_rows=network.row_numbers(vip_remove),
+                        http3_vip_rows=network.row_numbers(vip_http3),
                         removed_source_rows=network.row_numbers(source_remove),
                         removed_group_rows=network.row_numbers(group_remove),
                     )

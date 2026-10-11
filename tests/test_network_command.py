@@ -105,6 +105,7 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
                     "address": "198.51.100.20",
                     "source": "198.51.100.25",
                     "tls": None,
+                    "http3": False,
                 }
             ],
         )
@@ -145,7 +146,16 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
 
         self.assertEqual(result["origin"], "cluster_file")
         self.assertEqual(
-            result["vips"], [{"name": "main", "address": "192.0.2.20", "source": None, "tls": None}]
+            result["vips"],
+            [
+                {
+                    "name": "main",
+                    "address": "192.0.2.20",
+                    "source": None,
+                    "tls": None,
+                    "http3": False,
+                }
+            ],
         )
 
     def test_the_ownership_address_is_reported_beside_the_tables_not_inside_them(self) -> None:

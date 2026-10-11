@@ -61,6 +61,7 @@ def network_result(cluster: Cluster) -> dict[str, Any]:
                 "address": vip.address,
                 "source": vip.source,
                 "tls": vip.tls_policy,
+                "http3": vip.http3,
             }
             for vip in sorted(network.vips.values(), key=lambda entry: entry.name)
         ],

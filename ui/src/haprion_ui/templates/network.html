@@ -55,7 +55,7 @@
 
     <h4 class="network-subhead">Virtual addresses</h4>
     <div class="table-scroll"><table class="node-table network-table">
-      <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>TLS version</th><th>Default</th><th>Used by</th></tr></thead>
+      <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>TLS version</th><th>HTTP/3</th><th>Default</th><th>Used by</th></tr></thead>
       <tbody>
         {% for vip in cluster.vips %}
         <tr>
@@ -67,6 +67,7 @@
             looking at one value and not at two descriptions of it.
           #}
           <td data-label="TLS version">{{ {'intermediate': 'TLS 1.2 and 1.3', 'modern': 'TLS 1.3 only', 'tls12only': 'TLS 1.2 only'}.get(vip.tls_policy) or '' }}{% if not vip.tls_policy %}<span class="table-empty">not set</span>{% endif %}</td>
+          <td data-label="HTTP/3">{% if vip.http3 %}on{% else %}<span class="table-empty">off</span>{% endif %}</td>
           <td data-label="Default">{% if vip.is_default %}<span class="status-badge status-badge-info">default</span>{% endif %}</td>
           <td data-label="Used by">{{ used_by(used, used.vips.get(vip.name, ()) if used else (), cluster.cluster, 'vip', vip.name) }}</td>
         </tr>
@@ -137,7 +138,7 @@
           address lands under the VIP's default source, which is the same kind
           of value.
         #}
-        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
+        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-http3"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
         {#
           "TLS version" rather than "Oldest TLS": the column was named after
           the floor, which is what the setting *is* and not what somebody is
@@ -152,7 +153,7 @@
           several sites answer on one of these through SNI, and they share the
           line.
         #}
-        <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>TLS version</th><th class="editor-choice">Default</th><th>Used by</th><th class="editor-choice">Remove</th></tr></thead>
+        <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>TLS version</th><th class="editor-choice">HTTP/3</th><th class="editor-choice">Default</th><th>Used by</th><th class="editor-choice">Remove</th></tr></thead>
         <tbody>
           {% for vip in cluster.vips %}
           <tr>
@@ -169,6 +170,7 @@
               answer this list offers is one that says which versions.
             #}
             <td><select name="vip_tls" aria-label="TLS version for VIP {{ vip.name }}">{% if not vip.tls_policy %}<option value="" selected disabled>Not set</option>{% endif %}<option value="tls12only"{% if vip.tls_policy == 'tls12only' %} selected{% endif %}>TLS 1.2 only</option><option value="intermediate"{% if vip.tls_policy == 'intermediate' %} selected{% endif %}>TLS 1.2 and 1.3</option><option value="modern"{% if vip.tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option></select></td>
+            <td class="editor-choice"><input type="checkbox" name="vip_http3" value="{{ loop.index0 }}"{% if vip.http3 %} checked{% endif %} aria-label="HTTP/3 on VIP {{ vip.name }}"></td>
             <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ loop.index0 }}"{% if vip.is_default %} checked{% endif %} aria-label="Make VIP {{ vip.name }} the default"></td>
             <td class="editor-used">{{ used_by(used, used.vips.get(vip.name, ()) if used else (), cluster.cluster, 'vip', vip.name) }}</td>
             {#
@@ -199,7 +201,7 @@
              cell too, and a colgroup that named five columns gave it the
              narrow one meant for a radio button - so the option it was
              showing was cut off mid-word. #}
-          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
+          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-http3"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
           <tbody>
             {% for spare in range(2) %}
             <tr>
@@ -207,6 +209,7 @@
               <td><input name="vip_address" value="" maxlength="64" placeholder="IP address" aria-label="New VIP address"></td>
               <td><input name="vip_source" value="" maxlength="64" placeholder="source IP, optional" aria-label="New VIP default source"></td>
               <td><select name="vip_tls" aria-label="TLS version for the new VIP"><option value="" selected disabled>Not set</option><option value="tls12only">TLS 1.2 only</option><option value="intermediate">TLS 1.2 and 1.3</option><option value="modern">TLS 1.3 only</option></select></td>
+              <td class="editor-choice"><input type="checkbox" name="vip_http3" value="{{ cluster.vips | length + loop.index0 }}" aria-label="HTTP/3 on the new VIP"></td>
               <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ cluster.vips | length + loop.index0 }}" aria-label="Make the new VIP the default"></td>
               <td></td>
               <td class="editor-choice editor-remove"></td>
@@ -219,8 +222,8 @@
 
       <h4 class="network-subhead">Source addresses</h4>
       <div class="table-scroll"><table class="node-table network-table editor-table">
-        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
-        <thead><tr><th>Name</th><th></th><th>IP address</th><th colspan="2"></th><th>Used by</th><th class="editor-choice">Remove</th></tr></thead>
+        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-http3"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
+        <thead><tr><th>Name</th><th></th><th>IP address</th><th colspan="3"></th><th>Used by</th><th class="editor-choice">Remove</th></tr></thead>
         <tbody>
           {#
             The addresses a VIP carries are shown here and not editable here.
@@ -232,7 +235,7 @@
           <tr class="editor-locked">
             <td colspan="2"><span class="locked-value">{{ source.name }}</span><span class="locked-hint">edited in its VIP row above</span></td>
             <td><span class="locked-value">{{ source.address }}</span></td>
-            <td colspan="2"></td>
+            <td colspan="3"></td>
             <td class="editor-used">{{ used_by(used, used.sources.get(source.address, ()) if used else (), cluster.cluster, 'source', source.address) }}</td>
             {# No box: this row is removed by clearing its VIP's source, one table up. #}
             <td></td>
@@ -243,13 +246,13 @@
             <td><input name="source_name" value="{{ source.name }}" maxlength="40" aria-label="Source name"></td>
             <td></td>
             <td><input name="source_address" value="{{ source.address }}" maxlength="64" aria-label="Address for source {{ source.name }}"></td>
-            <td colspan="2"></td>
+            <td colspan="3"></td>
             <td class="editor-used">{{ used_by(used, used.sources.get(source.address, ()) if used else (), cluster.cluster, 'source', source.address) }}</td>
             <td class="editor-choice editor-remove"><input type="checkbox" name="source_remove" value="{{ loop.index0 }}" aria-label="Remove source {{ source.name }}"></td>
           </tr>
           {% else %}
           {% if not cluster.paired_sources %}
-          <tr><td colspan="7" class="table-empty">None. Connections out leave from whatever address the nodes' routing picks.</td></tr>
+          <tr><td colspan="8" class="table-empty">None. Connections out leave from whatever address the nodes' routing picks.</td></tr>
           {% endif %}
           {% endfor %}
         </tbody>
@@ -257,14 +260,14 @@
       <details class="editor-add">
         <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>Add a source address</summary>
         <div class="table-scroll"><table class="node-table network-table editor-table">
-          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
+          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-http3"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
           <tbody>
             {% for spare in range(2) %}
             <tr>
               <td><input name="source_name" value="" maxlength="40" placeholder="new source name" aria-label="New source name"></td>
               <td></td>
               <td><input name="source_address" value="" maxlength="64" placeholder="IP address" aria-label="New source address"></td>
-              <td colspan="2"></td>
+              <td colspan="3"></td>
               <td></td>
               <td class="editor-choice editor-remove"></td>
             </tr>
@@ -276,31 +279,31 @@
 
       <h4 class="network-subhead">Reachable-from groups</h4>
       <div class="table-scroll"><table class="node-table network-table network-table-groups editor-table">
-        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
-        <thead><tr><th>Name</th><th colspan="4">Members</th><th>Used by</th><th class="editor-choice">Remove</th></tr></thead>
+        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-http3"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
+        <thead><tr><th>Name</th><th colspan="5">Members</th><th>Used by</th><th class="editor-choice">Remove</th></tr></thead>
         <tbody>
           {% for group in cluster.groups %}
           <tr>
             <td><input name="group_name" value="{{ group.name }}" maxlength="40" aria-label="Group name"></td>
-            <td colspan="4"><textarea name="group_members" rows="{{ [group.members | length, 2] | max }}" aria-label="Members of group {{ group.name }}">{% for member in group.members %}{{ member }}
+            <td colspan="5"><textarea name="group_members" rows="{{ [group.members | length, 2] | max }}" aria-label="Members of group {{ group.name }}">{% for member in group.members %}{{ member }}
 {% endfor %}</textarea></td>
             <td class="editor-used">{{ used_by(used, used.groups.get(group.name, ()) if used else (), cluster.cluster, 'group', group.name) }}</td>
             <td class="editor-choice editor-remove"><input type="checkbox" name="group_remove" value="{{ loop.index0 }}" aria-label="Remove group {{ group.name }}"></td>
           </tr>
           {% else %}
-          <tr><td colspan="7" class="table-empty">None. Every site here is reachable from anywhere.</td></tr>
+          <tr><td colspan="8" class="table-empty">None. Every site here is reachable from anywhere.</td></tr>
           {% endfor %}
         </tbody>
       </table></div>
       <details class="editor-add">
         <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>Add a reachable-from group</summary>
         <div class="table-scroll"><table class="node-table network-table network-table-groups editor-table">
-          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
+          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-http3"><col class="col-default"><col class="col-used"><col class="col-remove"></colgroup>
           <tbody>
             {% for spare in range(2) %}
             <tr>
               <td><input name="group_name" value="" maxlength="40" placeholder="new group name" aria-label="New group name"></td>
-              <td colspan="4"><textarea name="group_members" rows="2" placeholder="198.51.100.0/24" aria-label="Members of the new group"></textarea></td>
+              <td colspan="5"><textarea name="group_members" rows="2" placeholder="198.51.100.0/24" aria-label="Members of the new group"></textarea></td>
               <td></td>
               <td class="editor-choice editor-remove"></td>
             </tr>

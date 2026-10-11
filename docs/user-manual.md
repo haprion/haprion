@@ -18,6 +18,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [The client's address on a tcp pool](#the-clients-address-on-a-tcp-pool)
   - [Drain and maintenance](#drain-and-maintenance)
   - [Addresses, and what to call them](#addresses-and-what-to-call-them)
+  - [HTTP/3](#http3)
   - [DNS objects](#dns-objects)
   - [Syslog objects](#syslog-objects)
 - [Accounts and signing in](#accounts-and-signing-in)
@@ -263,6 +264,23 @@ address or group shows what it touches before it is saved. A VIP counts the obje
 a source address the objects that leave from it (its VIP's or one named), and a group the objects
 that name it as a source anywhere: who may reach them, who is refused, an access rule or dynamic
 blocking's exempt. *not used* is a value nothing names; a dash means the objects could not be read.
+
+### HTTP/3
+
+*Network*, a VIP's row in edit mode: *HTTP/3* serves the https sites on that address over QUIC
+as well, on UDP at the https port, with the same certificates and TLS version. Every answer over
+TCP then carries `alt-svc: h3=":443"; ma=86400`: a browser that can reach UDP moves to HTTP/3 and
+remembers it for a day, and one that cannot goes on over TCP without a sign of trouble. It is the
+VIP's and not an object's, since the UDP listener is the address's and every site on it shares it;
+an https object's page says *HTTP/3 on VIP …*. Access rules, blocking and the WAF act on the
+request, so they apply over HTTP/3 as over TCP.
+
+QUIC carries TLS 1.3 alone, so a VIP whose TLS version is *TLS 1.2 only* refuses it, and a dns or
+syslog object that takes the same UDP port on the same address is refused at publish. Outside the
+interface, UDP to the https port has to be open to the VIP in the nodes' firewall and, for clients
+outside, forwarded by the outer firewall; until it is, nothing breaks - clients try QUIC, get no
+answer, and stay on TCP. A connection over QUIC is cut by a failover as a TCP one is, and the client
+connects again.
 
 ### DNS objects
 

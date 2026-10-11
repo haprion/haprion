@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -265,6 +266,8 @@ class Finding:
     last_seen: Any
     in_draft: bool
     allow_href: str
+    ineffective: bool = False
+    """Covered by a published exception, and still matched after it reached the nodes."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,27 +312,122 @@ def _allow_href(cluster: str, name: str, row: Any) -> str:
     return "/waf/allow?" + urlencode(query)
 
 
+#
+# How long after the deploy that carried an exception a match still counts as
+# the time before it. The match's time is the node's clock and the deploy's the
+# manager's; an exception that does not work keeps matching, so a minute costs
+# nothing in what is found.
+#
+IN_FORCE_MARGIN = timedelta(minutes=1)
+
+
+def exception_moment(exception: ObjectException) -> datetime | None:
+    """When the exception was made, from its `at`; None where it carries none."""
+
+    try:
+        moment = datetime.fromisoformat(exception.at)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def _covering(row: Any, published: Iterable[ObjectException]) -> list[ObjectException]:
+    """The published exceptions that let this finding through wherever it was found.
+
+    Only where every path it was found on is known: the reading names the first
+    few, and an exception on those may not be one on the rest.
+    """
+
+    complete = row.path_count <= len(row.paths)
+    return [
+        e
+        for e in published
+        if e.covers(row.rule_id, row.field, row.paths) and (complete or not e.paths)
+    ]
+
+
+def exception_moments(
+    rows: Iterable[Any], stored: Mapping[tuple[str, str], str]
+) -> dict[str, set[datetime]]:
+    """Per cluster, when each published exception covering a finding was made.
+
+    What the page asks the jobs about: the first deploy after each moment is
+    when that exception reached the nodes.
+    """
+
+    moments: dict[str, set[datetime]] = {}
+    for row in rows:
+        published = object_exceptions(stored.get((row.cluster, row.object), "")) or ()
+        for exception in _covering(row, published):
+            moment = exception_moment(exception)
+            if moment is not None:
+                moments.setdefault(row.cluster, set()).add(moment)
+    return moments
+
+
+def _ineffective(
+    row: Any,
+    covering: Iterable[ObjectException],
+    reached: Mapping[tuple[str, datetime], datetime],
+) -> list[ObjectException]:
+    """The covering exceptions the nodes had, yet the rule matched after them (26-10-11).
+
+    Found when an exception on `/` let nothing through: the page hid every
+    match it covered, so the one that did not work was the one nobody could see.
+    """
+
+    late = []
+    for exception in covering:
+        moment = exception_moment(exception)
+        arrived = reached.get((row.cluster, moment)) if moment is not None else None
+        if arrived is not None and row.last_seen > arrived + IN_FORCE_MARGIN:
+            late.append(exception)
+    return late
+
+
+def ineffective_exceptions(
+    rows: Iterable[Any],
+    stored: Mapping[tuple[str, str], str],
+    reached: Mapping[tuple[str, datetime], datetime],
+) -> set[tuple[str, str, ObjectException]]:
+    """Each object's published exceptions a finding shows are not taking effect."""
+
+    found = set()
+    for row in rows:
+        published = object_exceptions(stored.get((row.cluster, row.object), "")) or ()
+        for exception in _ineffective(row, _covering(row, published), reached):
+            found.add((row.cluster, row.object, exception))
+    return found
+
+
 def build_findings(
     rows: Iterable[Any],
     verdicts: Mapping[tuple[str, str], tuple[int, int]],
     stored: Mapping[tuple[str, str], str],
     drafted: Mapping[tuple[str, str], str],
     rules: Mapping[int, Any],
+    reached: Mapping[tuple[str, datetime], datetime] | None = None,
 ) -> list[ObjectFindings]:
     """The Findings view: per object, its rules, without what a published exception covers.
 
     A finding the published object already lets through is left out - what
-    remains is what still needs a decision. One the draft lets through but the
-    nodes do not yet stays, saying so, until the draft is published. An object
-    whose engine is off, or that has no WAF any more, is left out: an exception
-    would change nothing there. Its counts are kept, and come back with the engine.
+    remains is what still needs a decision - unless it matched after that
+    exception reached the nodes (`reached`: per cluster and moment the
+    exception was made, when the first deploy after it finished): then the
+    exception is not working, and the finding stays, saying so. One the draft
+    lets through but the nodes do not yet stays, saying so, until the draft is
+    published. An object whose engine is off, or that has no WAF any more, is
+    left out: an exception would change nothing there. Its counts are kept,
+    and come back with the engine.
     """
 
     grouped: dict[tuple[str, str], list[Finding]] = {}
     for row in rows:
         key = (row.cluster, row.object)
         published = object_exceptions(stored.get(key, "")) or ()
-        if any(e.covers(row.rule_id, row.field, row.paths) for e in published):
+        covering = _covering(row, published)
+        ineffective = bool(_ineffective(row, covering, reached or {}))
+        if covering and not ineffective:
             continue
         draft = drafted.get(key)
         pending = object_exceptions(draft) or () if draft is not None else ()
@@ -354,6 +452,7 @@ def build_findings(
                 last_seen=row.last_seen,
                 in_draft=any(e.covers(row.rule_id, row.field, row.paths) for e in pending),
                 allow_href=_allow_href(row.cluster, row.object, row),
+                ineffective=ineffective,
             )
         )
     cards = []
@@ -395,15 +494,23 @@ class ExceptionRow:
     """Made in the draft and not yet published."""
     index: int = -1
     """Its place in the form's own list, which the editor's Remove names; -1 elsewhere."""
+    ineffective: bool = False
+    """Its rule still matched what it covers after it reached the nodes."""
 
 
 def build_exceptions(
     stored: Mapping[tuple[str, str], str],
     drafted: Mapping[tuple[str, str], str],
     rules: Mapping[int, Any],
+    ineffective: Iterable[tuple[str, str, ObjectException]] = (),
 ) -> list[ExceptionRow]:
-    """Every exception the objects carry: the draft's where there is one, marked when unpublished."""
+    """Every exception the objects carry: the draft's where there is one, marked when unpublished.
 
+    Marked too where its rule still matched after it reached the nodes
+    (`ineffective_exceptions`): the row the person removes or changes it from.
+    """
+
+    failing = set(ineffective)
     rows = []
     for key in sorted(set(stored) | set(drafted)):
         published = object_exceptions(stored.get(key, "")) or ()
@@ -423,6 +530,7 @@ def build_exceptions(
                     else f"Rule {exception.rule}",
                     severity=rule.severity if rule is not None else "",
                     in_draft=exception not in published,
+                    ineffective=(key[0], key[1], exception) in failing,
                 )
             )
     return rows

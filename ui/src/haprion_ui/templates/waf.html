@@ -45,7 +45,7 @@
         <td><span class="finding-count">{{ finding.requests }}</span></td>
         <td><span class="finding-count">{{ finding.clients }}</span></td>
         <td><span class="users-date">{{ finding.last_seen | shown_at }}</span></td>
-        <td>{% if finding.in_draft %}<span class="finding-draft">In draft</span>{% elif can_write %}<a class="secondary-button" href="{{ finding.allow_href }}&amp;matched={{ finding.matched | urlencode }}" data-waf-allow>Allow…</a>{% endif %}</td>
+        <td>{% if finding.ineffective %}<span class="status-badge status-badge-warning">Not working</span>{% elif finding.in_draft %}<span class="finding-draft">In draft</span>{% elif can_write %}<a class="secondary-button" href="{{ finding.allow_href }}&amp;matched={{ finding.matched | urlencode }}" data-waf-allow>Allow…</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -67,7 +67,7 @@
         <td title="{{ where(row.exception, row.name) }}">{{ where(row.exception, row.name) }}</td>
         <td{% if row.exception.reason %} title="{{ row.exception.reason }}">{{ row.exception.reason }}{% else %}><span class="table-empty">—</span>{% endif %}</td>
         <td><span class="users-date">{% if row.exception.by %}{{ row.exception.by }}{% endif %}{% if row.exception.by and row.exception.at %} · {% endif %}{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">In draft</span>{% endif %}</td>
-        <td>{% if can_write %}<form method="post" action="/waf/exceptions/remove" class="inline-form">
+        <td>{% if row.ineffective %}<span class="status-badge status-badge-warning">Not working</span> {% endif %}{% if can_write %}<form method="post" action="/waf/exceptions/remove" class="inline-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="cluster" value="{{ row.cluster }}"><input type="hidden" name="object" value="{{ row.name }}">
           <input type="hidden" name="rule" value="{{ row.exception.rule }}"><input type="hidden" name="field" value="{{ row.exception.field }}">

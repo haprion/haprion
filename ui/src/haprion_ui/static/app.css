@@ -2342,7 +2342,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .finding-table th:nth-child(4), .finding-table td:nth-child(4) { width: 82px; text-align: right; }
 .finding-table th:nth-child(5), .finding-table td:nth-child(5) { width: 66px; text-align: right; }
 .finding-table th:nth-child(6), .finding-table td:nth-child(6) { width: 150px; }
-.finding-table th:nth-child(7), .finding-table td:nth-child(7) { width: 104px; text-align: right; }
+.finding-table th:nth-child(7), .finding-table td:nth-child(7) { width: 124px; text-align: right; }
 .finding-table th, .finding-table td { padding-left: 10px; padding-right: 10px; }
 .finding-table td, .exception-table td { padding-top: 7px; padding-bottom: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .finding-what { display: flex; align-items: center; gap: 9px; min-width: 0; }
@@ -2356,9 +2356,11 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .exception-table th:nth-child(1), .exception-table td:nth-child(1) { width: 190px; }
 .exception-table th:nth-child(2), .exception-table td:nth-child(2) { width: auto; }
 .exception-table th:nth-child(3), .exception-table td:nth-child(3) { width: 180px; }
-.exception-table th:nth-child(4), .exception-table td:nth-child(4) { width: 210px; }
+.exception-table th:nth-child(4), .exception-table td:nth-child(4) { width: 150px; }
 .exception-table th:nth-child(5), .exception-table td:nth-child(5) { width: 230px; }
-.exception-table th:nth-child(6), .exception-table td:nth-child(6) { width: 100px; text-align: right; }
+/* Room for "Not working" beside Remove (26-10-11). */
+.exception-table .inline-form { display: inline; }
+.exception-table th:nth-child(6), .exception-table td:nth-child(6) { width: 200px; text-align: right; }
 /* One line: the node table's cell `strong` is a block, which put the cluster under the name. */
 .exception-table td strong { display: inline; }
 .exception-cluster { margin-left: 6px; color: var(--muted); font-size: 12px; }

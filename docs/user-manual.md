@@ -907,8 +907,12 @@ without `paths` on every path; without either, on the whole object. The rules
 that decide and report rather than detect (CRS 949xxx, 959xxx, 980xxx) cannot be
 excepted - that would turn the engine off. *Allow* takes an optional *Reason*, which the
 exceptions list on *WAF logs* shows in a column of its own: why the traffic is let through
-outlives the findings that led to it. A field name with characters other
-than letters, digits and `_ . - [ ]` cannot be named; except the path instead.
+outlives the findings that led to it. A finding an exception covers leaves *Findings*,
+unless the rule still matches it after the first deploy that followed the exception: then
+the finding stays, and it and the exception are marked *Not working*. An exception without
+its time (`at`), or deployed only from the command line, cannot be judged this way. A field
+name with characters other than letters, digits and `_ . - [ ]` cannot be named; except the
+path instead.
 `exceptions` came with engine API 13 and replaced engine API 12's
 `exclude_rules`, which is refused with a message saying so. `large_bodies`, the
 refusal of a body the engine could not read and access rules read on the decoded

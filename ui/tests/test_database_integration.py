@@ -4078,6 +4078,72 @@ class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class WhenAnExceptionReachedTheNodes(unittest.TestCase):
+    """The first finished deploy after an exception was made (26-10-11), read as web."""
+
+    def connect(self, role_variable: str) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def job(
+        self, operation: str, cluster: str, created: str, state: str = "done", **payload: Any
+    ) -> None:
+        with (
+            self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key, state, created_at, "
+                "started_at, finished_at) values (%(operation)s, %(cluster)s, %(payload)s, %(key)s, "
+                "%(state)s, %(created)s, %(created)s, %(created)s::timestamptz + interval '4 seconds') "
+                "returning id",
+                {
+                    "operation": operation,
+                    "cluster": cluster,
+                    "payload": json.dumps(payload),
+                    "key": uuid4(),
+                    "state": state,
+                    "created": created,
+                },
+            )
+            job = _first(cursor)
+            connection.commit()
+        self.addCleanup(self.forget, job)
+
+    def forget(self, job: Any) -> None:
+        with (
+            self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute("delete from job where id = %s", (job,))
+            connection.commit()
+
+    def test_a_deploy_or_a_publish_and_deploy_after_it_and_on_its_cluster(self) -> None:
+        self.job("deploy", "ex-a", "2026-10-02 13:00Z")  # before
+        self.job("changes_publish", "ex-a", "2026-10-02 14:01Z")  # a publish alone
+        self.job("deploy", "ex-a", "2026-10-02 14:02Z", state="failed")
+        self.job("deploy", "ex-b", "2026-10-02 14:03Z")  # another cluster
+        self.job("changes_publish", "ex-a", "2026-10-02 14:04Z", deploy=True)
+        self.job("deploy", "ex-a", "2026-10-02 14:06Z")
+        made = datetime(2026, 10, 2, 14, 0, tzinfo=UTC)
+        later = datetime(2026, 10, 2, 14, 5, tzinfo=UTC)
+        unanswered = datetime(2026, 10, 2, 15, 0, tzinfo=UTC)
+
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            found = db.first_deploys_after(
+                connection, cluster="ex-a", moments=[made, later, unanswered]
+            )
+            self.assertEqual(db.first_deploys_after(connection, cluster="ex-a", moments=[]), {})
+
+        self.assertEqual(
+            found,
+            {
+                made: datetime(2026, 10, 2, 14, 4, 4, tzinfo=UTC),
+                later: datetime(2026, 10, 2, 14, 6, 4, tzinfo=UTC),
+            },
+        )
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheSearchIndex(unittest.TestCase):
     """B222: the poller writes the rows, the web searches them, through the trigram index."""
 

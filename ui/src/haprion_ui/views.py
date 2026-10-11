@@ -10462,10 +10462,25 @@ def _waf_overview(request: Request, config: Config, chosen: Sequence[str]) -> Wa
         rows = db.waf_findings(connection, clusters=chosen, since=since)
         verdicts = db.waf_verdicts(connection, clusters=chosen, since=since)
         request_count = db.waf_request_count(connection, clusters=chosen, since=since)
+        #
+        # When each published exception that covers a finding reached the
+        # nodes: the first deploy after it was made (26-10-11). Matches after
+        # that mean the exception is not working, which the page says rather
+        # than hides.
+        #
+        reached = {
+            (cluster, moment): done
+            for cluster, moments in waf.exception_moments(rows, stored).items()
+            for moment, done in db.first_deploys_after(
+                connection, cluster=cluster, moments=sorted(moments)
+            ).items()
+        }
     return WafOverview(
         days=days,
-        findings=waf.build_findings(rows, verdicts, stored, drafted, rules),
-        exceptions=waf.build_exceptions(stored, drafted, rules),
+        findings=waf.build_findings(rows, verdicts, stored, drafted, rules, reached),
+        exceptions=waf.build_exceptions(
+            stored, drafted, rules, waf.ineffective_exceptions(rows, stored, reached)
+        ),
         request_count=request_count,
     )
 

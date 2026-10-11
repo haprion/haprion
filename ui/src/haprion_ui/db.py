@@ -4272,6 +4272,32 @@ def waf_findings(
         return cursor.fetchall()
 
 
+def first_deploys_after(
+    connection: Connection[Any], *, cluster: str, moments: Sequence[datetime]
+) -> dict[datetime, datetime]:
+    """For each moment, when the cluster's first deploy created after it finished.
+
+    A deploy, or a *Publish & deploy* (B257); `done` only, which is a deploy
+    whose every node took the release and reloaded the WAF engine. Asked by the
+    WAF page for when a published exception reached the nodes (26-10-11); a
+    moment no deploy has followed yet is left out.
+    """
+
+    if not moments:
+        return {}
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select moment, ("
+            "  select min(finished_at) from job "
+            "   where cluster = %(cluster)s and created_at >= moment and state = 'done' "
+            "     and (operation = 'deploy' "
+            "          or (operation = 'changes_publish' and payload->>'deploy' = 'true'))"
+            ") from unnest(%(moments)s::timestamptz[]) as asked(moment)",
+            {"cluster": cluster, "moments": list(moments)},
+        )
+        return {moment: done for moment, done in cursor.fetchall() if done is not None}
+
+
 def waf_verdicts(
     connection: Connection[Any], *, clusters: Sequence[str], since: datetime
 ) -> dict[tuple[str, str], tuple[int, int]]:

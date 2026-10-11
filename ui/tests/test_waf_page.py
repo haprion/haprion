@@ -107,6 +107,73 @@ class WhatIsShownAsAFinding(unittest.TestCase):
         )
 
 
+class AnExceptionThatDoesNotWork(unittest.TestCase):
+    """Matches it covers after it reached the nodes are shown, not hidden (26-10-11).
+
+    An exception on `/` let nothing through, and the page hid every match it
+    covered - so the one exception that did not work was the one nobody saw.
+    """
+
+    MADE = datetime(2026, 10, 2, 14, 0, tzinfo=UTC)
+    DEPLOYED = datetime(2026, 10, 2, 14, 5, tzinfo=UTC)
+    STORED = LOGGING + (
+        "  exceptions: [{rule: 942100, field: 'ARGS:q', paths: [/search], "
+        "at: '2026-10-02T14:00:00Z', reason: sync}]\n"
+    )
+
+    def build(
+        self, *rows: WafFinding, stored: str = STORED, reached: Any = None
+    ) -> tuple[list[waf.ObjectFindings], list[waf.ExceptionRow]]:
+        documents = {("alpha", "shop"): stored}
+        if reached is None:
+            reached = {("alpha", self.MADE): self.DEPLOYED}
+        findings = waf.build_findings(rows, {}, documents, {}, CATALOG, reached)
+        exceptions = waf.build_exceptions(
+            documents, {}, CATALOG, waf.ineffective_exceptions(rows, documents, reached)
+        )
+        return findings, exceptions
+
+    def test_a_match_after_the_deploy_is_shown_on_both_tabs(self) -> None:
+        [card], [exception] = self.build(finding())
+        self.assertTrue(card.findings[0].ineffective)
+        self.assertTrue(exception.ineffective)
+        self.assertEqual(exception.exception.reason, "sync")
+
+    def test_what_the_page_asks_the_jobs_about(self) -> None:
+        self.assertEqual(
+            waf.exception_moments([finding()], {("alpha", "shop"): self.STORED}),
+            {"alpha": {self.MADE}},
+        )
+
+    def test_before_it_reached_the_nodes_a_match_is_no_sign(self) -> None:
+        for rows, reached in (
+            ((finding(last_seen=self.DEPLOYED),), None),  # during the deploy's margin
+            ((finding(last_seen=datetime(2026, 10, 2, 14, 5, 59, tzinfo=UTC)),), None),
+            ((finding(),), {}),  # published, no deploy since
+        ):
+            with self.subTest(rows=rows, reached=reached):
+                findings, [exception] = self.build(*rows, reached=reached)
+                self.assertEqual(findings, [])
+                self.assertFalse(exception.ineffective)
+
+    def test_an_exception_without_its_time_cannot_be_judged(self) -> None:
+        stored = LOGGING + "  exceptions: [{rule: 942100, field: 'ARGS:q', paths: [/search]}]\n"
+        findings, [exception] = self.build(finding(), stored=stored)
+        self.assertEqual(findings, [])
+        self.assertFalse(exception.ineffective)
+
+    def test_a_finding_on_more_paths_than_are_named_is_not_covered(self) -> None:
+        # The reading names the first few paths; an exception on those is not one on the rest.
+        [card], [exception] = self.build(finding(path_count=4))
+        self.assertFalse(card.findings[0].ineffective)
+        self.assertFalse(exception.ineffective)
+        # One on every path still covers it.
+        stored = self.STORED.replace(", paths: [/search]", "")
+        findings, _ = self.build(finding(path_count=4), stored=stored)
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0].findings[0].ineffective)
+
+
 class ChangingTheObject(unittest.TestCase):
     def test_an_exception_is_added_once_and_removed_by_its_scope(self) -> None:
         exception = waf.exception_for(
@@ -197,6 +264,23 @@ class ThePage(EditorTestCase):
         self.assertIn("Findings <b>1</b>", text)
         self.assertIn("Exceptions <b>0</b>", text)
         self.assertIn("Requests <b>1297</b>", text)
+
+    def test_an_exception_that_does_not_work_is_said_on_both_tabs(self) -> None:
+        stored = AnExceptionThatDoesNotWork.STORED
+        moment, deployed = AnExceptionThatDoesNotWork.MADE, AnExceptionThatDoesNotWork.DEPLOYED
+        with (
+            mock.patch("haprion_ui.db.cluster_objects", return_value=objects(stored)),
+            mock.patch(
+                "haprion_ui.db.first_deploys_after", return_value={moment: deployed}
+            ) as asked,
+        ):
+            client = self.editor()
+            findings = client.get("/waf").text
+            exceptions = client.get("/waf?view=exceptions").text
+        self.assertEqual(asked.call_args.kwargs, {"cluster": "alpha", "moments": [moment]})
+        self.assertIn('status-badge-warning">Not working<', findings)
+        self.assertNotIn("/waf/allow?cluster=alpha&amp;object=shop&amp;rule=942100", findings)
+        self.assertIn('status-badge-warning">Not working<', exceptions)
 
     def test_allow_offers_the_narrowest_choice_first(self) -> None:
         text = (

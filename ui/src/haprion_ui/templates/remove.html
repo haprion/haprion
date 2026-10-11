@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Remove {{ name }} — Haprion{% endblock %}
 {% block content %}
 {#
@@ -12,7 +13,7 @@
   with it, and the nodes keep serving the old release until somebody deploys.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Remove {{ name }}</h1><p class="page-lede">From {{ cluster }}. Nothing is written until you confirm.</p></div>
+  <div class="heading-title">{{ back_button('/proxies/' ~ cluster ~ '/' ~ name, name) }}<h1>Remove {{ name }}</h1><p class="page-lede">From {{ cluster }}. Nothing is written until you confirm.</p></div>
 </section>
 
 <div class="refusal-card">

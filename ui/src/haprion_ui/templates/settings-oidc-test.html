@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Test sign-in — Haprion{% endblock %}
 {% block content %}
 {#
@@ -6,7 +7,7 @@
   role those give here, and the claims as they came. No session was made.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Test sign-in</h1><p class="page-lede"><a href="/settings/oidc">OIDC configuration</a></p></div>
+  <div class="heading-title">{{ back_button('/settings/oidc', 'OIDC configuration') }}<h1>Test sign-in</h1></div>
 </section>
 
 {% set allowed = granted and not refused %}

@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Logs & metrics — {{ cluster }} — Haprion{% endblock %}
 {% block content %}
 {#
@@ -8,7 +9,7 @@
   IP address: a name that fails to resolve at a reload would fail the deploy.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Logs &amp; metrics — {{ cluster }}</h1><p class="page-lede"><a href="/settings#logs-metrics">Settings</a></p></div>
+  <div class="heading-title">{{ back_button('/settings#logs-metrics', 'Settings') }}<h1>Logs &amp; metrics — {{ cluster }}</h1></div>
 </section>
 
 {% if problem %}

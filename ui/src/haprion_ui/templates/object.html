@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}{{ object.name }} — Haprion{% endblock %}
 {#- Kept current once per poll while the object blocks (B271): the card says what the nodes hold now. -#}
 {% block head_extra %}{% if live_seconds %}<meta name="haproxy-live" content="{{ live_seconds }}">{% endif %}{% endblock %}
@@ -8,9 +9,8 @@
 {% if servers or blocked %}<script defer src="{{ url_for('static', path='/servers.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>{% endif %}
 <section class="page-heading">
   <div class="heading-title">
-    <p class="page-breadcrumb"><a href="/proxies">Proxies</a> · {{ object.cluster }}</p>
-    <h1>{{ object.name }}</h1>
-    <p class="page-lede">{{ object.detail }}</p>
+    {{ back_button('/proxies', 'Proxies') }}<h1>{{ object.name }}</h1>
+    <p class="page-lede">{{ object.cluster }} · {{ object.detail }}</p>
   </div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>

@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Delete certificates — Haprion{% endblock %}
 {% block content %}
 {#
@@ -9,7 +10,7 @@
   object, a cluster's default or last certificate) arrive on the job's rows.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Delete certificates</h1><p class="page-lede">Nothing is deleted until you confirm. One job removes each certificate from the registry, the published copies, Certbot and the nodes.</p></div>
+  <div class="heading-title">{{ back_button('/certificates?view=registry', 'Certificates') }}<h1>Delete certificates</h1><p class="page-lede">Nothing is deleted until you confirm. One job removes each certificate from the registry, the published copies, Certbot and the nodes.</p></div>
 </section>
 
 {% if problem %}

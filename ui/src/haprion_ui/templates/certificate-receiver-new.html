@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Register a receiver — Haprion{% endblock %}
 {% block head_extra %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
@@ -10,7 +11,7 @@
   its public half is pasted (B157).
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Register a receiver</h1><p class="page-lede">A host outside the clusters that will fetch certificates from this manager. One job builds its account, directory and lock.</p></div>
+  <div class="heading-title">{{ back_button('/certificates/receivers', 'Receivers') }}<h1>Register a receiver</h1><p class="page-lede">A host outside the clusters that will fetch certificates from this manager. One job builds its account, directory and lock.</p></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 

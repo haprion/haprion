@@ -328,6 +328,13 @@ def _empty_cluster(cluster: str, *, configured: bool) -> ClusterView:
     )
 
 
+#
+# How long after a reload a node's counters may still be on their way to the
+# other nodes before that is a warning (B270).
+#
+PEERS_SETTLE_SECONDS = 120
+
+
 def _with_shared_counters(
     nodes: tuple[NodeView, ...], node_values: list[Any]
 ) -> tuple[NodeView, ...]:
@@ -347,6 +354,20 @@ def _with_shared_counters(
         if isinstance(value, Mapping) and value.get("status_ok") is True
     }
     if not any(isinstance(peers, list) and peers for peers in reported.values()):
+        return nodes
+    #
+    # A publish reloads the nodes one after the other, and each one's peers
+    # connect again only once both run the new configuration: the reading
+    # right after a deploy named both nodes as not reaching each other, and
+    # they were connected a minute later (26-10-11). Said only once every
+    # node has run long enough for that to be over.
+    #
+    uptimes = [
+        _mapping(_mapping(value.get("status")).get("runtime")).get("uptime_sec")
+        for value in node_values
+        if isinstance(value, Mapping) and value.get("status_ok") is True
+    ]
+    if any(isinstance(uptime, int) and uptime < PEERS_SETTLE_SECONDS for uptime in uptimes):
         return nodes
     detail: dict[str, str] = {}
     for name, peers in reported.items():

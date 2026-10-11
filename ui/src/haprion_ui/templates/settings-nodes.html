@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Nodes — {{ cluster }} — Haprion{% endblock %}
 {% block content %}
 {#
@@ -10,7 +11,7 @@
   archives it and is confirmed with its ID.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Nodes — {{ cluster }}</h1><p class="page-lede"><a href="/settings#nodes">Settings</a></p></div>
+  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Nodes — {{ cluster }}</h1></div>
 </section>
 
 {% if problem %}

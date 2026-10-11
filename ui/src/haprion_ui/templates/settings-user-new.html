@@ -1,9 +1,10 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Add user — Haprion{% endblock %}
 {% block content %}
 {# The CLI's `add`. Password fields are always drawn empty. #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Add user</h1><p class="page-lede"><a href="/settings">Settings</a></p></div>
+  <div class="heading-title">{{ back_button('/settings#users', 'Settings') }}<h1>Add user</h1></div>
 </section>
 
 {% if problem %}

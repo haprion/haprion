@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% from "_target-row.html" import target_row %}
 {% if form.interface %}{% set section = 'settings' %}{% endif %}
 {% block title %}{% if form.interface %}Interface certificate{% else %}New certificate{% endif %} — Haprion{% endblock %}
@@ -15,7 +16,7 @@
   whose purpose is to be filled in should not lose what was filled in.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>{% if form.interface %}Interface certificate{% else %}New certificate{% endif %}</h1></div>
+  <div class="heading-title">{{ back_button('/settings' if form.interface else '/certificates?view=registry', 'Settings' if form.interface else 'Certificates') }}<h1>{% if form.interface %}Interface certificate{% else %}New certificate{% endif %}</h1></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 

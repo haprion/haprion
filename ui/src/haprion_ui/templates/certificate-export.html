@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}{% if row %}Export {{ row.identifier }}{% else %}Export certificate{% endif %} — Haprion{% endblock %}
 {% block content %}
 {#
@@ -7,7 +8,7 @@
   confirmation, and the key's route writes the audit row.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>{% if row %}Export {{ row.identifier }}{% else %}Export certificate{% endif %}</h1>{% if row %}<p class="page-lede">{{ row.source_label }} · {% if row.sans %}{{ row.sans | join(', ') }}{% else %}{{ row.identifier }}{% endif %} · expires {{ row.expires }}</p>{% endif %}</div>
+  <div class="heading-title">{{ back_button(back, 'Settings' if back.startswith('/settings') else 'Certificates') }}<h1>{% if row %}Export {{ row.identifier }}{% else %}Export certificate{% endif %}</h1>{% if row %}<p class="page-lede">{{ row.source_label }} · {% if row.sans %}{{ row.sans | join(', ') }}{% else %}{{ row.identifier }}{% endif %} · expires {{ row.expires }}</p>{% endif %}</div>
 </section>
 
 {% if problem %}

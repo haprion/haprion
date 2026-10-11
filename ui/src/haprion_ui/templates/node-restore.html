@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Restore {{ restore.node }} — Haprion{% endblock %}
 {#
   Kept current while a job is queued or running, as /jobs is: redrawn in place
@@ -9,7 +10,7 @@
 {% block content %}
 {% set plan = restore.plan %}{% set facts = restore.target_facts %}
 <section class="page-heading">
-  <div class="heading-title"><h1>Restore {{ restore.node }}</h1><p class="page-lede">{{ restore.cluster }} · archive <code>{{ restore.archive }}</code> · onto {{ restore.target }} · run <code>{{ restore.run }}</code></p></div>
+  <div class="heading-title">{{ back_button('/backups', 'Node backups') }}<h1>Restore {{ restore.node }}</h1><p class="page-lede">{{ restore.cluster }} · archive <code>{{ restore.archive }}</code> · onto {{ restore.target }} · run <code>{{ restore.run }}</code></p></div>
   <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-{{ {'test': 'info', 'overwrite': 'critical'}.get(restore.mode, 'warning') }}"></span>{{ {'test': 'Test restore', 'overwrite': 'Overwrite the node'}.get(restore.mode, 'Restore as the node') }}</span></div>
 </section>
 

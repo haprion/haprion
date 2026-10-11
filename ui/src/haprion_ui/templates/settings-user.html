@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}{{ account.username }} — Haprion{% endblock %}
 {% block content %}
 {#
@@ -8,7 +9,7 @@
   always drawn empty.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>{{ account.username }}</h1><p class="page-lede"><a href="/settings">Settings</a></p></div>
+  <div class="heading-title">{{ back_button('/settings#users', 'Settings') }}<h1>{{ account.username }}</h1></div>
 </section>
 
 {% if done %}

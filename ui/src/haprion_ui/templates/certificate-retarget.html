@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% from "_target-row.html" import target_row %}
 {% block title %}{{ selection.label if selection else 'Certificate targets' }} — Haprion{% endblock %}
 {% block content %}
@@ -10,7 +11,7 @@
 #}
 {% set adding = selection is not none and selection.action == 'add' %}
 <section class="page-heading">
-  <div class="heading-title"><h1>{{ selection.label if selection else 'Certificate targets' }}</h1><p class="page-lede">{% if adding %}Nothing changes until you confirm. One job registers each certificate for the targets you choose, publishes it there, and rolls each new cluster out.{% elif selection %}Nothing changes until you confirm. One job takes each certificate off the targets you choose and removes the copy that target held.{% endif %}</p></div>
+  <div class="heading-title">{{ back_button('/certificates?view=registry', 'Certificates') }}<h1>{{ selection.label if selection else 'Certificate targets' }}</h1><p class="page-lede">{% if adding %}Nothing changes until you confirm. One job registers each certificate for the targets you choose, publishes it there, and rolls each new cluster out.{% elif selection %}Nothing changes until you confirm. One job takes each certificate off the targets you choose and removes the copy that target held.{% endif %}</p></div>
 </section>
 
 {% if problem %}

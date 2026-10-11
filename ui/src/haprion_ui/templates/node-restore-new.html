@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Restore a node — Haprion{% endblock %}
 {% block content %}
 {#
@@ -7,7 +8,7 @@
   run and its one-time key; the run's own page takes it from there.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Restore {{ node }}</h1><p class="page-lede">From the archive taken {{ archive.taken }}. Nothing is written until the target has been previewed and you have confirmed.</p></div>
+  <div class="heading-title">{{ back_button('/backups', 'Node backups') }}<h1>Restore {{ node }}</h1><p class="page-lede">From the archive taken {{ archive.taken }}. Nothing is written until the target has been previewed and you have confirmed.</p></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 

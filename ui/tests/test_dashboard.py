@@ -202,7 +202,7 @@ class HealthDerivation(unittest.TestCase):
             )
         ).clusters[0]
 
-    def sharing(self, *peers: Any) -> Any:
+    def sharing(self, *peers: Any, uptime: int | None = None) -> Any:
         """The single-owner reading with each node's `peers` replaced (B270)."""
 
         status = reading("done-single-owner.json")
@@ -210,6 +210,11 @@ class HealthDerivation(unittest.TestCase):
         nodes = [dict(node) for node in result["nodes"]]
         for node, reported in zip(nodes, peers, strict=True):
             node["status"] = {**node["status"], "peers": reported}
+            if uptime is not None:
+                node["status"]["runtime"] = {
+                    **node["status"].get("runtime", {}),
+                    "uptime_sec": uptime,
+                }
         result["nodes"] = nodes
         return self.dashboard(
             ClusterStatus(
@@ -237,6 +242,13 @@ class HealthDerivation(unittest.TestCase):
         )
         self.assertIn("not reaching b", cluster.nodes[0].detail)
         self.assertEqual(cluster.nodes[1].label, "Online")
+
+    def test_right_after_a_reload_the_peers_are_given_time_to_connect(self) -> None:
+        settling = self.sharing([self.peer("b", False)], [self.peer("a", False)], uptime=30)
+        settled = self.sharing([self.peer("b", False)], [self.peer("a", False)], uptime=600)
+
+        self.assertEqual([node.label for node in settling.nodes], ["Online", "Online"])
+        self.assertEqual(settled.nodes[0].label, "Counters not shared")
 
     def test_a_node_in_no_peer_line_is_named_where_the_others_share(self) -> None:
         cluster = self.sharing([], [self.peer("a", False)])

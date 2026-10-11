@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}Create cluster — Haprion{% endblock %}
 {% block content %}
 {#
@@ -9,7 +10,7 @@
   status and takes all of it back if either does not answer as itself.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Create cluster</h1><p class="page-lede">{% if creation %}<a href="/settings#nodes">Settings</a>{% else %}Run 04-node-prepare on both new nodes first, then paste the two blocks it prints.{% endif %}</p></div>
+  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Create cluster</h1>{% if not creation %}<p class="page-lede">Run 04-node-prepare on both new nodes first, then paste the two blocks it prints.</p>{% endif %}</div>
 </section>
 
 {% if problem %}

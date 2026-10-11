@@ -1,0 +1,5 @@
+{#
+  The way back to the page this one belongs under, on every sub-page and in
+  the same place (26-10-11): left of the heading, naming where it goes.
+#}
+{% macro back_button(href, label) %}<a class="back-button" href="{{ href }}"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 5-5 5 5 5"></path></svg><span>{{ label }}</span></a>{% endmacro %}

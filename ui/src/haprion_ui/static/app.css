@@ -853,15 +853,16 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 /* A one-line page lede sits beside the heading so the metric row keeps its height. */
 .heading-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
 .heading-title .page-lede { margin: 0; }
+/* The way back from a sub-page (26-10-11): a framed button left of the heading, as the disclosure toggle is framed. */
+.back-button { display: inline-flex; align-items: center; gap: 4px; align-self: center; padding: 3px 9px 3px 5px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text-secondary); font-size: 12px; font-weight: 620; text-decoration: none; }
+.back-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.back-button:hover { border-color: var(--line-strong); color: var(--text-strong); }
 .page-lede { max-width: 720px; margin: 3px 0 0; color: var(--muted); font-size: 12px; }
 /*
  * The path back, on a page reached from a row rather than from the navigation.
  * It carries the cluster because a proxy name is only unique within one, and a
  * reader who arrived from a link has no other way to see which cluster this is.
  */
-.page-breadcrumb { margin: 0 0 2px; color: var(--muted); font-size: 11.5px; }
-.page-breadcrumb a { color: var(--muted-strong); text-decoration: none; }
-.page-breadcrumb a:hover { color: var(--text); text-decoration: underline; }
 /*
  * Only the name is a link, and only for an admin - the detail page shows
  * certificates and backend addresses that the overview deliberately does not.

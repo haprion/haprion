@@ -1,15 +1,16 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}{% if name %}{{ name }}{% else %}New object{% endif %} — Haprion{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div>
+  <div class="heading-title">
     {#
       `name` again, not `existing`: an object that has only ever been drafted
       is still the object being edited, and the page called it "A new object"
       while it sat on that object's own address.
     #}
-    <h1>{% if name %}Editing {{ name }}{% else %}A new object on {{ cluster }}{% endif %}</h1>
-    <p>Saved changes go out with the next publish; a draft stays here until it is saved. Publishing does not deploy.</p>
+    {{ back_button('/proxies/' ~ cluster ~ '/' ~ name if name else '/proxies', name if name else 'Proxies') }}<h1>{% if name %}Editing {{ name }}{% else %}A new object on {{ cluster }}{% endif %}</h1>
+    <p class="page-lede">Saved changes go out with the next publish; a draft stays here until it is saved. Publishing does not deploy.</p>
   </div>
   <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-info"></span>{{ cluster }}</span></div>
 </section>

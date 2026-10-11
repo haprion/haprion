@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}{% if existing %}Replace profile{% else %}New NDES profile{% endif %} — Haprion{% endblock %}
 {% block content %}
 {#
@@ -9,7 +10,7 @@
   empty - a value echoed into a response is a value in a cache.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New NDES profile{% endif %}</h1><p class="page-lede">{% if existing %}The new challenge is sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous one stays in effect until it finishes.{% else %}The challenge is sealed against the installation's key before it is stored, and only the enrollment helper can open it.{% endif %}</p></div>
+  <div class="heading-title">{{ back_button('/ndes-profiles', 'NDES providers') }}<h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New NDES profile{% endif %}</h1><p class="page-lede">{% if existing %}The new challenge is sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous one stays in effect until it finishes.{% else %}The challenge is sealed against the installation's key before it is stored, and only the enrollment helper can open it.{% endif %}</p></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 

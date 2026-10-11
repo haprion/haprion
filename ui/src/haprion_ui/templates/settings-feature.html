@@ -1,9 +1,10 @@
 {% extends "layout.html" %}
+{% from "_back.html" import back_button %}
 {% block title %}{{ feature.title }} — Haprion{% endblock %}
 {% block content %}
 {# The question before a feature is turned off, when off does more than hide it (B193). #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Turn off {{ feature.title | lower }}</h1><p class="page-lede"><a href="/settings#features">Settings</a></p></div>
+  <div class="heading-title">{{ back_button('/settings#features', 'Settings') }}<h1>Turn off {{ feature.title | lower }}</h1></div>
 </section>
 
 <form method="post" action="/settings/features/{{ feature.name }}" class="preview-form">

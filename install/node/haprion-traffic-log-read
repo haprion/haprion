@@ -102,7 +102,13 @@ def serve(raw: str, root: Path, output: BinaryIO, *, today: date | None = None) 
             return 0
 
         os.lseek(descriptor, offset, os.SEEK_SET)
-        data = os.read(descriptor, MAX_SEND + MAX_RECORD + 1)
+        #
+        # No further than the size the header states. rsyslog appends while
+        # this reads, and a response reaching past its own size is one the
+        # collector refuses - which a node writing 25 000 lines a second made
+        # happen (26-10-12). What was appended is the next request's.
+        #
+        data = os.read(descriptor, min(MAX_SEND + MAX_RECORD + 1, size - offset))
         skipped = 0
         if offset and data and not data.startswith(b"{"):
             boundary = data.find(b"\n")

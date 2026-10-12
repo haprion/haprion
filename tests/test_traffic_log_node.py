@@ -103,6 +103,34 @@ class TrafficLogNodeReaderTests(unittest.TestCase):
         (self.root / "traffic-2026-09-08.jsonl").symlink_to(target)
         self.assertEqual(self.call("2026-09-08 0"), (65, None, b""))
 
+    def test_a_file_that_grows_while_it_is_read_is_answered_to_its_measured_size(self) -> None:
+        #
+        # rsyslog appends between the size and the read. The answer must stop
+        # at the size it states, or the collector rightly refuses it - which
+        # it did on internal at 25 000 requests a second (26-10-12).
+        #
+        first = b'{"request":1}\n{"request":2}\n'
+        self.write("2026-09-08", first)
+        path = self.root / "traffic-2026-09-08.jsonl"
+        measured = HELPER.os.fstat
+
+        def growing(descriptor: int) -> Any:
+            result = measured(descriptor)
+            with path.open("ab") as appended:
+                appended.write(b'{"request":3}\n')
+            return result
+
+        with unittest.mock.patch.object(HELPER.os, "fstat", side_effect=growing):
+            code, header, payload = self.call("2026-09-08 0")
+
+        self.assertEqual(code, 0)
+        assert header is not None
+        self.assertEqual(header["size"], len(first))
+        self.assertEqual(payload, first)
+        self.assertTrue(header["eof"])
+        code, header, payload = self.call(f"2026-09-08 {len(first)}")
+        self.assertEqual(payload, b'{"request":3}\n')
+
     def test_incomplete_final_record_is_not_sent(self) -> None:
         self.write("2026-09-08", b"{}\nunfinished")
         code, header, payload = self.call("2026-09-08 0")

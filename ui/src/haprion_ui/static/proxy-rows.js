@@ -21,6 +21,34 @@
       window.open(row.dataset.href, "_blank", "noopener");
       return;
     }
+    if (row.closest(AUDIT)) {
+      unfold(row.dataset.href, true).catch(() => window.location.assign(row.dataset.href));
+      return;
+    }
     window.location.assign(row.dataset.href);
+  });
+
+  //
+  // An audit row does not leave the page: it unfolds its detail under itself
+  // (26-10-11), and a navigation for that threw the reader back to the top of
+  // a long record (26-10-12). The same address is fetched and only the table
+  // swapped in, as Certificates does for its registry rows; the address still
+  // says which row is open, so back closes it again. Anything unexpected - a
+  // session that expired into the login form - falls back to the navigation.
+  //
+  const AUDIT = ".audit-table";
+  const unfold = async (href, push) => {
+    const answer = await fetch(href, { credentials: "same-origin", headers: { Accept: "text/html" } });
+    if (!answer.ok || answer.redirected) throw new Error(String(answer.status));
+    const parsed = new DOMParser().parseFromString(await answer.text(), "text/html");
+    const fresh = parsed.querySelector(AUDIT);
+    const here = document.querySelector(AUDIT);
+    if (!fresh || !here) throw new Error("shape");
+    here.replaceWith(fresh);
+    if (push) history.pushState({ audit: true }, "", href);
+  };
+  window.addEventListener("popstate", () => {
+    if (!document.querySelector(AUDIT)) return;
+    unfold(window.location.href, false).catch(() => window.location.reload());
   });
 })();

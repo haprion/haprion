@@ -167,9 +167,9 @@ The stored object spells both out (`weight: 50`, `backup: true`) under the serve
 - **HTTPS, verify against a CA** checks it against a CA certificate imported under *Certificates*
   and sent to the cluster ([Importing a certificate](#importing-a-certificate)):
   a service whose certificate the organisation's own CA issued. The node's trust store is not
-  touched; the file is read by the pools that name it and by nothing else - and by the form's
-  server test, which trusts that file as the node's check does. Before the CA has reached the
-  nodes the test says so rather than reporting the servers down.
+  touched; the file is read by the pools that name it and by nothing else. The form's server test
+  trusts the same CA as the node's check does: the manager sends its copy with the test, since the
+  test runs on the node without access to the node's certificate directory.
 - **HTTPS, do not verify** encrypts and checks nothing.
 
 Both verified choices need the servers named by hostname rather than address: the name is sent as

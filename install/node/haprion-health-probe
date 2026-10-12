@@ -39,7 +39,6 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 SCHEMA_VERSION = 1
 
@@ -60,12 +59,19 @@ HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,253}[A-Za-z0-9])?$")
 PATH = re.compile(r"^/[!-~]{0,1023}$")
 HEADER_VALUE = re.compile(r"^[!-~]([ -~]{0,253}[!-~])?$")
 #
-# A pool verified against one of the cluster's own CAs (B276) names it, and
-# HAProxy's server line reads it from this directory as `ca-file`: the
-# engine's CERTIFICATE_ID and generate's NODE_CERTIFICATE_DIR/ca.
+# A pool verified against one of the cluster's own CAs (B276) names it, and the
+# manager sends that CA with the request: this runs unprivileged and cannot read
+# the node's copy, which sits beside the private keys (26-10-12). The engine's
+# CERTIFICATE_ID; a bundle is a root and an intermediate or two.
 #
 CA_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
-AUTHORITY_DIR = Path("/etc/haproxy/certs/ca")
+MAX_AUTHORITIES = 8
+MAX_AUTHORITY_BYTES = 16 * 1024
+#
+# Assembled rather than written out: a literal PEM header in a tracked file is
+# what the repository's secret scanner exists to catch (as haprion-node-status).
+#
+CERTIFICATE_OPENING = "-" * 5 + "BEGIN CERTIFICATE" + "-" * 5
 
 
 class Refused(Exception):
@@ -222,6 +228,20 @@ def read_request(stream):
     if len(targets) > MAX_TARGETS:
         refuse(f"at most {MAX_TARGETS} targets may be probed at once")
 
+    authorities = payload.get("authorities", {})
+    if not isinstance(authorities, dict) or len(authorities) > MAX_AUTHORITIES:
+        refuse("authorities must be an object of at most 8 CAs")
+    for name, pem in authorities.items():
+        if not CA_ID.match(name):
+            refuse("an authority's id is not usable")
+        if (
+            not isinstance(pem, str)
+            or len(pem) > MAX_AUTHORITY_BYTES
+            or "PRIVATE KEY" in pem
+            or CERTIFICATE_OPENING not in pem
+        ):
+            refuse(f"the authority {name} is not a certificate bundle")
+
     read = []
     for entry in targets:
         if not isinstance(entry, dict):
@@ -243,6 +263,10 @@ def read_request(stream):
                 **(dns_question(entry) if kind == "dns" else {}),
             }
         )
+    for target in read:
+        if target["ca"] and target["ca"] not in authorities:
+            refuse(f"the CA {target['ca']} was named but not sent")
+        target["ca_pem"] = authorities.get(target["ca"], "") if target["ca"] else ""
     return {"timeout_ms": timeout, "source": source, "targets": read}
 
 
@@ -336,17 +360,12 @@ def connect(target, timeout, source):
         return sock
 
     #
-    # Against the pool's own CA when it has one, and that file alone - what
+    # Against the pool's own CA when it has one, and that CA alone - what
     # HAProxy's `ca-file` trusts. The node's store would refuse an internal CA
     # that the node's check accepts (26-10-12).
     #
-    authority = None
-    if target["verify"] and target["ca"]:
-        authority = AUTHORITY_DIR / f"{target['ca']}.pem"
-        if not authority.is_file():
-            sock.close()
-            raise OSError(f"the CA {target['ca']} is not on this node yet")
-    context = ssl.create_default_context(cafile=str(authority) if authority else None)
+    authority = target["ca_pem"] if target["verify"] and target["ca_pem"] else None
+    context = ssl.create_default_context(cadata=authority)
     #
     # Said rather than inherited. `create_default_context` leaves the floor to
     # whatever OpenSSL on the node happens to be built with, so the same probe

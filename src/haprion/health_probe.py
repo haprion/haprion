@@ -85,7 +85,10 @@ class Target:
     """
 
     ca: str = ""
-    """The CA the pool is verified against (B276); empty for the node's own trust."""
+    """The CA the pool is verified against (B276); empty for the node's own trust.
+
+    The id only: the CA itself travels once per request, in `authorities`.
+    """
 
     query_name: str = ""
     query_type: str = ""
@@ -146,24 +149,36 @@ class NodeAnswer:
 
 
 def build_request(
-    targets: Sequence[Target], *, source: str = "", timeout_ms: int = DEFAULT_TIMEOUT_MS
+    targets: Sequence[Target],
+    *,
+    source: str = "",
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    authorities: Mapping[str, str] | None = None,
 ) -> str:
-    """The JSON one node is handed. Refuses here what the node would refuse."""
+    """The JSON one node is handed. Refuses here what the node would refuse.
+
+    `authorities` are the CAs the targets name, by id, as PEM (B276): sent with
+    the request rather than read on the node, whose certificate directory holds
+    private keys the unprivileged probe account must not reach (26-10-12).
+    """
 
     if not targets:
         raise ValueError("a probe needs at least one target")
     if len(targets) > MAX_TARGETS:
         raise ValueError(f"at most {MAX_TARGETS} targets may be probed at once")
-    return json.dumps(
-        {
-            "schema_version": SCHEMA_VERSION,
-            "source": source,
-            "timeout_ms": timeout_ms,
-            "targets": [target.request() for target in targets],
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    named = {target.ca for target in targets if target.ca}
+    sent = dict(authorities or {})
+    if named - set(sent):
+        raise ValueError(f"the CA {sorted(named - set(sent))[0]} is named but not sent")
+    payload: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "source": source,
+        "timeout_ms": timeout_ms,
+        "targets": [target.request() for target in targets],
+    }
+    if named:
+        payload["authorities"] = {key: sent[key] for key in sorted(named)}
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
 def ask_node(
@@ -259,6 +274,7 @@ def probe(
     source: str = "",
     timeout_ms: int = DEFAULT_TIMEOUT_MS,
     ask: object = None,
+    authorities: Mapping[str, str] | None = None,
 ) -> tuple[NodeAnswer, ...]:
     """Every node's answer, in configured order.
 
@@ -267,7 +283,7 @@ def probe(
     answer somebody is looking for often enough to be worth the second call.
     """
 
-    request = build_request(targets, source=source, timeout_ms=timeout_ms)
+    request = build_request(targets, source=source, timeout_ms=timeout_ms, authorities=authorities)
     caller = ask if ask is not None else ask_node
 
     def one(node: Node) -> NodeAnswer:

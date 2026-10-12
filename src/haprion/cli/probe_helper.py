@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import BinaryIO, TextIO
 
 from haprion import dnsdist_config
+from haprion.certificates import CERTIFICATE_OPENING, authority_path
 from haprion.config import (
     CERTIFICATE_ID,
     DEFAULT_POLICY_PATH,
@@ -209,6 +210,53 @@ def _targets(
     return targets, source, timeout
 
 
+#
+# A CA bundle is a root and an intermediate or two; this is far beyond that and
+# keeps the request under the node's limit with every target naming one.
+#
+MAX_AUTHORITY_BYTES = 16 * 1024
+
+
+def _authorities(certificate_root: Path | None, targets: list[Target]) -> dict[str, str]:
+    """The CAs the targets name, read where the nodes fetch them from (B276).
+
+    The node's probe runs unprivileged and cannot read the node's copy beside
+    its private keys, so the manager's copy - the same bytes - is sent along
+    (26-10-12). A CA that is not published here is refused: a pool that names
+    it could not be published either.
+    """
+
+    named = sorted({target.ca for target in targets if target.ca})
+    if not named:
+        return {}
+    if certificate_root is None:
+        raise HelperProtocolError(
+            "a target names a CA but no certificate_root is configured",
+            exit_code=EXIT_BAD_INPUT,
+        )
+    found: dict[str, str] = {}
+    for identifier in named:
+        path = authority_path(certificate_root, identifier)
+        try:
+            with path.open("rb") as handle:
+                raw = handle.read(MAX_AUTHORITY_BYTES + 1)
+        except OSError:
+            raise HelperProtocolError(
+                f"the CA {identifier} is not published on this manager", exit_code=EXIT_BAD_INPUT
+            ) from None
+        text = raw.decode("ascii", errors="replace")
+        if (
+            len(raw) > MAX_AUTHORITY_BYTES
+            or "PRIVATE KEY" in text
+            or CERTIFICATE_OPENING not in text
+        ):
+            raise HelperProtocolError(
+                f"the CA {identifier} is not a certificate bundle", exit_code=EXIT_BAD_INPUT
+            )
+        found[identifier] = text
+    return found
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -272,6 +320,12 @@ def main(
             exit_code=exc.exit_code,
         )
 
+    try:
+        authorities = _authorities(policy.certificate_root, targets)
+    except HelperProtocolError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+
     identity = policy.probe_identity
     if identity is None and ask is None:
         message = (
@@ -302,6 +356,7 @@ def main(
         source=source,
         timeout_ms=timeout_ms,
         ask=ask,
+        authorities=authorities,
     )
     #
     # `done` whenever the nodes answered, whatever they said about the pool. A

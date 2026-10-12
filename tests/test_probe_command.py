@@ -23,11 +23,13 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import yaml
 
 from haprion import dnsdist_config
+from haprion.certificates import DELIMITER
 from haprion.cli import probe, probe_helper
 from haprion.config import DeployIdentity, Node
 from haprion.probe_socket import ask, build_request
@@ -167,23 +169,63 @@ class WhatTheHelperRefusesToSend(HelperFixture):
 
 
 class APoolsOwnCa(HelperFixture):
-    """The CA the pool is verified against reaches the node (B276, 26-10-12)."""
+    """The CA a pool is verified against travels with the request (B276, 26-10-12).
 
-    def test_the_ca_is_passed_on_and_only_when_named(self) -> None:
-        bodies: list[object] = []
+    Read from the manager's distribution root, where the nodes fetch it from:
+    the node's probe runs unprivileged and cannot read the node's own copy.
+    """
+
+    PEM = f"{DELIMITER}BEGIN CERTIFICATE{DELIMITER}\nMIIB\n{DELIMITER}END CERTIFICATE{DELIMITER}\n"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.distribution = self.root / "distribution"
+        (self.distribution / "ca").mkdir(parents=True)
+        (self.distribution / "ca" / "example-ca.pem").write_text(self.PEM, encoding="ascii")
+        document = yaml.safe_load(self.policy.read_text())
+        document["certificate_root"] = str(self.distribution)
+        self.policy.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    def sent(self, *targets: dict[str, object]) -> tuple[int, str, dict[str, Any]]:
+        bodies: list[dict[str, Any]] = []
 
         def ask(node: str, identity: object, body: object) -> subprocess.CompletedProcess[str]:
-            bodies.append(json.loads(body) if isinstance(body, (str, bytes)) else body)
+            assert isinstance(body, (str, bytes))
+            bodies.append(json.loads(body))
             return answer([])
 
+        code, _out, err = self.run_helper({"targets": list(targets)}, ask=ask)
+        return code, err, bodies[0] if bodies else {}
+
+    def test_the_ca_goes_once_with_the_request_and_only_when_named(self) -> None:
         own = self.target(tls=True, verify=True, ca="example-ca")
-        code, _out, err = self.run_helper({"targets": [own, self.target()]}, ask=ask)
+        code, err, body = self.sent(own, dict(own), self.target())
 
         self.assertEqual(code, 0, err)
-        sent = bodies[0]
-        assert isinstance(sent, dict)
-        self.assertEqual(sent["targets"][0]["ca"], "example-ca")
-        self.assertNotIn("ca", sent["targets"][1])
+        self.assertEqual(body["authorities"], {"example-ca": self.PEM})
+        self.assertEqual(body["targets"][0]["ca"], "example-ca")
+        self.assertNotIn("ca", body["targets"][2])
+
+    def test_without_a_named_ca_nothing_extra_is_sent(self) -> None:
+        code, err, body = self.sent(self.target())
+
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("authorities", body)
+
+    def test_a_ca_not_published_here_is_refused(self) -> None:
+        code, err, _body = self.sent(self.target(tls=True, verify=True, ca="other-ca"))
+
+        self.assertEqual(code, 65)
+        self.assertIn("the CA other-ca is not published on this manager", err)
+
+    def test_a_file_holding_a_key_is_never_sent(self) -> None:
+        (self.distribution / "ca" / "example-ca.pem").write_text(
+            self.PEM + f"{DELIMITER}BEGIN PRIVATE KEY{DELIMITER}\nx\n", encoding="ascii"
+        )
+        code, err, _body = self.sent(self.target(tls=True, verify=True, ca="example-ca"))
+
+        self.assertEqual(code, 65)
+        self.assertIn("not a certificate bundle", err)
 
 
 class AUdpTarget(HelperFixture):

@@ -356,8 +356,7 @@
         <button class="secondary-button deploy-button" type="submit" form="deploy-{{ loop.index0 }}">Deploy {{ cluster.cluster }}</button>
         {% else %}
         <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this save writes.</p>
-        {% if saved %}<button class="secondary-button" type="submit" name="network_action" value="discard" formnovalidate>Discard the changes</button>{% endif %}
-        <button class="secondary-button" type="submit" name="network_action" value="save">Save</button>
+        <div class="form-buttons">{% if saved %}<button class="secondary-button" type="submit" name="network_action" value="discard" formnovalidate>Discard the changes</button>{% endif %}<button class="secondary-button" type="submit" name="network_action" value="save">Save</button></div>
         {% endif %}
       </div>
     </form>

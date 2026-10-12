@@ -400,6 +400,34 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(len([day for day, _ in calls if day == NOW.date()]), 1)
         self.assertEqual(len(calls), 2)
 
+    def test_runs_in_a_row_behind_are_counted_and_end_when_caught_up(self) -> None:
+        line = b'{"schema":1}\n'
+
+        def behind(_target: NodeTarget, _wanted: date, offset: int) -> Response:
+            return Response(offset + len(line) + 100, offset, len(line), False, False, 0, line)
+
+        def meta() -> Any:
+            return json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
+
+        for expected in (1, 2, 3):
+            collect_node(self.config, self.target, now=NOW, fetch=behind, budget=0)
+            self.assertEqual(meta()["behind_runs"], expected)
+
+        def unreachable(_target: NodeTarget, _wanted: date, _offset: int) -> Response:
+            raise SSHError("node-a did not answer")
+
+        with self.assertRaises(SSHError):
+            collect_node(self.config, self.target, now=NOW, fetch=unreachable)
+        self.assertEqual(meta()["behind_runs"], 3, "a failed run says nothing about catching up")
+
+        collect_node(
+            self.config,
+            self.target,
+            now=NOW,
+            fetch=lambda _target, wanted, offset: self.response(wanted, offset, b""),
+        )
+        self.assertEqual(meta()["behind_runs"], 0)
+
     def test_a_response_that_brings_nothing_ends_the_loop(self) -> None:
         calls: list[tuple[date, int]] = []
 

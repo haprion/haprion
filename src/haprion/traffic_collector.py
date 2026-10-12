@@ -503,13 +503,22 @@ def _meta_path(config: CollectorConfig, target: NodeTarget) -> Path:
     return config.mirror / f"{target.cluster}--{target.node}.meta.json"
 
 
-def _previous_success(path: Path) -> str | None:
+def _previous(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_bytes())
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
-    success = value.get("last_success") if isinstance(value, dict) else None
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _previous_success(path: Path) -> str | None:
+    success = _previous(path).get("last_success")
     return success if isinstance(success, str) else None
+
+
+def _behind_runs(path: Path) -> int:
+    runs = _previous(path).get("behind_runs")
+    return runs if isinstance(runs, int) and not isinstance(runs, bool) and runs >= 0 else 0
 
 
 def _write_meta(
@@ -525,6 +534,18 @@ def _write_meta(
 ) -> None:
     path = _meta_path(config, target)
     previous = _previous_success(path)
+    #
+    # How many successful runs in a row ended with today still incomplete
+    # (26-10-12). A burst is caught up in a run or two; a node that stays
+    # behind run after run is what the attention list names, rather than
+    # every self-healing minute of catching up.
+    #
+    if not success:
+        behind = _behind_runs(path)
+    elif current_complete is False:
+        behind = _behind_runs(path) + 1
+    else:
+        behind = 0
     stamp = attempted.isoformat()
     content = json.dumps(
         {
@@ -538,6 +559,7 @@ def _write_meta(
             "current_complete": current_complete,
             "remaining_bytes": remaining_bytes,
             "pending_days": pending_days,
+            "behind_runs": behind,
         },
         separators=(",", ":"),
         sort_keys=True,

@@ -3264,9 +3264,10 @@ after another, stop being comfortable:
   switched off adds five seconds to every pass (the SSH connect timeout); one that connects and
   then never answers adds up to sixty (the status read's own limit). Either delays every
   cluster's reading, not only its own.
-- The traffic-log collector runs once a minute and fetches node by node - about a second for four
-  nodes, so a healthy fleet of a couple of hundred still fits. A node that does not answer costs it
-  ten to thirty seconds, so five or six at once make a run outlast its minute.
+- The traffic-log collector runs once a minute and fetches up to eight nodes at once - about a
+  second for four current nodes. A node with a backlog is fetched for up to thirty seconds before
+  the run imports what it has, and a node that does not answer holds one of the eight for ten to
+  thirty seconds; a run that outlasts its minute delays the next, which never overlaps it.
 - The worker runs one job at a time for the whole installation: a deploy or backup on one cluster
   queues every other cluster's jobs behind it.
 
@@ -4900,9 +4901,10 @@ record has a deterministic identity. The interface reads indexed database rows o
 `[traffic_logs]` is enabled in `ui.toml`; the mirror metadata still reports collection freshness.
 Successful contact does not mean the log is caught up: the log warning shows whether today's
 file is incomplete, the bytes remaining at the last read and older days still pending. Each
-run reads at most one 8 MiB block from today and one from an older day per node, each within
-the existing 30-second SSH timeout. Both make progress even while today's file grows; the
-transfer cap per response remains unchanged. The remaining byte count is an observation,
+run reads today in 8 MiB blocks until it is current, then the older days oldest first, for up
+to thirty seconds per node, each block within the 30-second SSH timeout. Every run reads at
+least one block of today and one of the oldest open day, so both make progress even while
+today's file grows; the transfer cap per response is unchanged. The remaining byte count is an observation,
 not a prediction of how much new traffic arrived afterwards.
 With the database configured the collector keeps the day files in staging and one metadata file
 per node in the mirror directory, and does not join the days into one log file per node: nothing

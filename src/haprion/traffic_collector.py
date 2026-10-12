@@ -54,6 +54,15 @@ SSH_TIMEOUT_SECONDS = 30
 # independent reads before this expires; only after the grace may EOF make the
 # closed day immutable locally.
 CLOSED_DAY_GRACE = timedelta(minutes=5)
+#
+# How long one run keeps fetching a node before it stops and imports what it
+# has (26-10-12). One MAX_SEND response per run and day held a node to 8 MiB a
+# minute - some 440 requests a second for good - and a ten-minute burst on a
+# test cluster then took an hour to reach the page. The timer fires a minute
+# after a run starts and never while one is running; half of that is for
+# fetching, the rest for the import that follows.
+#
+FETCH_BUDGET_SECONDS = 30.0
 ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 DATABASE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -421,6 +430,27 @@ def _update_day(
     return response.eof, response.size - _safe_size(path)
 
 
+def _catch_up(
+    config: CollectorConfig, target: NodeTarget, wanted: date, fetch: Fetch, deadline: float
+) -> tuple[bool, int]:
+    """Fetch one day until it is complete, the deadline passes or a response brings nothing.
+
+    The first fetch is made whatever the clock says, so a run always advances.
+    A response that does not grow the part - a reset, a rebuilt day, a node
+    that sent nothing - ends the loop rather than asking again at once; the
+    next run starts from where the part stands.
+    """
+
+    path = _part(config, target, wanted)
+    complete, remaining = _update_day(config, target, wanted, fetch)
+    while not complete and time.monotonic() < deadline:
+        before = _safe_size(path)
+        complete, remaining = _update_day(config, target, wanted, fetch)
+        if _safe_size(path) <= before:
+            break
+    return complete, remaining
+
+
 def _assemble(config: CollectorConfig, target: NodeTarget, days: tuple[date, ...]) -> None:
     destination = config.mirror / f"{target.cluster}--{target.node}.jsonl"
     #
@@ -528,7 +558,9 @@ def collect_node(
     now: datetime,
     fetch: Fetch,
     window: int = RETENTION_DAYS,
+    budget: float = FETCH_BUDGET_SECONDS,
 ) -> None:
+    deadline = time.monotonic() + budget
     utc_now = now.astimezone(UTC)
     today = utc_now.date()
     days = tuple(today - timedelta(days=offset) for offset in reversed(range(window)))
@@ -553,26 +585,29 @@ def collect_node(
                         checkpoint.unlink()
 
     try:
-        current_complete, remaining_bytes = _update_day(config, target, today, fetch)
-        # Bootstrap/catch-up progresses one closed day per run, while current
-        # traffic is always fetched first. A large backlog therefore cannot
-        # starve the last minute before an incident.
-        # One block for today and one for older data, even while today grows:
-        # at most two MAX_SEND responses and two bounded SSH calls per node.
-        # Neither backlog can starve the other.
+        #
+        # Today first, until it is current or the budget is spent; then the
+        # older days, oldest first, with what is left. Current traffic is
+        # always fetched first, so a large backlog cannot starve the last
+        # minute before an incident; and every run makes at least one fetch
+        # for today and one for the oldest open day, so a today that keeps
+        # growing faster than it is read cannot starve the backlog either.
+        #
+        current_complete, remaining_bytes = _catch_up(config, target, today, fetch, deadline)
         for wanted in days[:-1]:
             marker = config.staging / f"{prefix}{wanted.isoformat()}.done"
             if marker.exists() or marker.is_symlink():
                 _regular(marker, maximum=1)
                 continue
-            complete, _ = _update_day(config, target, wanted, fetch)
+            complete, _ = _catch_up(config, target, wanted, fetch, deadline)
             yesterday_still_open = (
                 wanted == today - timedelta(days=1)
                 and utc_now - datetime.combine(today, datetime.min.time(), UTC) < CLOSED_DAY_GRACE
             )
             if complete and not yesterday_still_open:
                 _replace(marker, b"", 0o600)
-            break
+            if not complete or time.monotonic() >= deadline:
+                break
         #
         # The joined file is for a reader of files. With the database as the
         # reader (schema 2) nothing reads it: the interface asks PostgreSQL and

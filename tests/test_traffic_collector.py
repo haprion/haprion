@@ -333,7 +333,7 @@ class TrafficCollectorTests(unittest.TestCase):
 
         for pass_number in range(2):
             calls.clear()
-            collect_node(self.config, self.target, now=NOW, fetch=fetch)
+            collect_node(self.config, self.target, now=NOW, fetch=fetch, budget=0)
             self.assertEqual(len(calls), 2)
             self.assertEqual(calls[0], (NOW.date(), pass_number * len(line)))
             self.assertLess(calls[1][0], NOW.date())
@@ -353,6 +353,75 @@ class TrafficCollectorTests(unittest.TestCase):
         meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
         self.assertTrue(meta["current_complete"])
         self.assertEqual(meta["remaining_bytes"], 0)
+
+    def chunked(self, sizes: dict[date, int], calls: list[tuple[date, int]]) -> Any:
+        """A node holding `sizes[day]` bytes per day, sent eight at a time."""
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            calls.append((wanted, offset))
+            total = sizes.get(wanted, 0)
+            payload = b"1234567\n"[: max(0, min(8, total - offset))]
+            return Response(
+                total, offset, len(payload), offset + len(payload) >= total, False, 0, payload
+            )
+
+        return fetch
+
+    def test_a_burst_is_caught_up_within_one_run_not_one_block_a_minute(self) -> None:
+        #
+        # One block per run held a node to 8 MiB a minute: a ten-minute burst
+        # on internal took an hour to reach the page (26-10-12).
+        #
+        calls: list[tuple[date, int]] = []
+        yesterday = NOW.date() - date.resolution
+        fetch = self.chunked({NOW.date(): 80, yesterday: 40}, calls)
+
+        collect_node(self.config, self.target, now=NOW, fetch=fetch)
+
+        today = [offset for day, offset in calls if day == NOW.date()]
+        self.assertEqual(today, list(range(0, 80, 8)), "today first, block after block")
+        self.assertEqual(calls[0], (NOW.date(), 0))
+        self.assertEqual(
+            [offset for day, offset in calls if day == yesterday], list(range(0, 40, 8))
+        )
+        self.assertEqual((self.staging / f"alpha--node-a--{NOW.date()}.jsonl").stat().st_size, 80)
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_text())
+        self.assertTrue(meta["current_complete"])
+        self.assertEqual(meta["remaining_bytes"], 0)
+
+    def test_a_spent_budget_still_fetches_today_and_the_oldest_open_day_once(self) -> None:
+        calls: list[tuple[date, int]] = []
+        yesterday = NOW.date() - date.resolution
+        fetch = self.chunked({NOW.date(): 80, yesterday: 40}, calls)
+
+        collect_node(self.config, self.target, now=NOW, fetch=fetch, budget=0)
+
+        self.assertEqual(calls[0], (NOW.date(), 0))
+        self.assertEqual(len([day for day, _ in calls if day == NOW.date()]), 1)
+        self.assertEqual(len(calls), 2)
+
+    def test_a_response_that_brings_nothing_ends_the_loop(self) -> None:
+        calls: list[tuple[date, int]] = []
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            calls.append((wanted, offset))
+            return Response(offset + 100, offset, 0, False, False, 0, b"")
+
+        collect_node(self.config, self.target, now=NOW, fetch=fetch)
+
+        self.assertLessEqual(len([day for day, _ in calls if day == NOW.date()]), 2)
+
+    def test_a_completed_older_day_hands_the_budget_to_the_next(self) -> None:
+        calls: list[tuple[date, int]] = []
+        days = [NOW.date() - n * date.resolution for n in (1, 2, 3)]
+        fetch = self.chunked({days[0]: 16, days[1]: 16, days[2]: 16}, calls)
+
+        collect_node(self.config, self.target, now=NOW, fetch=fetch)
+
+        fetched = {day for day, _ in calls}
+        self.assertTrue(set(days[1:]) <= fetched, "two closed days in one run")
+        for day in days[1:]:
+            self.assertTrue((self.staging / f"alpha--node-a--{day}.done").exists())
 
     def test_yesterday_is_read_again_until_the_midnight_grace_has_passed(self) -> None:
         yesterday = NOW.date() - date.resolution

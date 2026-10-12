@@ -108,7 +108,7 @@ OPERATIONS: dict[str, Command | Gap | NotASetting] = {
     "revert": Command("haprion-revert"),
     "network_publish": Command("haprion-network apply"),
     "backup_run": Command("haprion-state-backup"),
-    "backup_schedule": Gap("P7", "haprion-state-backup --schedule"),
+    "backup_schedule": Command("haprion-backup-schedule"),
 }
 
 
@@ -180,15 +180,16 @@ class EveryWriteHasItsCommand(unittest.TestCase):
 
         self.assertIn("/settings/something-new", routes - set(PARITY))
 
-    def test_what_fas_23_has_left(self) -> None:
+    def test_fas_23_left_no_gap(self) -> None:
+        """Every write the interface makes now has its command; a new one must name its own."""
+
         gaps = sorted(
             (entry.step, path)
             for path, entry in (*PARITY.items(), *OPERATIONS.items())
             if isinstance(entry, Gap)
         )
-        steps = {step for step, _ in gaps}
 
-        self.assertTrue(steps <= {f"P{number}" for number in range(1, 11)}, steps)
+        self.assertEqual(gaps, [])
 
 
 if __name__ == "__main__":

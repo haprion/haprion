@@ -46,7 +46,8 @@
         "day_of_month": { "type": ["integer", "null"], "minimum": 1, "maximum": 28 },
         "retention": { "type": "integer", "minimum": 1, "maximum": 365 },
         "enabled": { "type": "boolean" },
-        "schedule": { "$ref": "haprion-list-backups.schema.json#/$defs/backup_schedule" }
+        "schedule": { "$ref": "haprion-list-backups.schema.json#/$defs/backup_schedule" },
+        "changed": { "description": "haprion-backup-schedule only: whether the schedule was (or, with --check, would be) written.", "type": "boolean" }
       },
       "additionalProperties": false
     }

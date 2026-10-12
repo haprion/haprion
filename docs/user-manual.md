@@ -2042,7 +2042,15 @@ immediately. Schedules may run every day, on chosen weekdays, or on one day of t
 ```bash
 sudo haprion-state-backup -c alpha
 haprion-list-backups -c alpha
+sudo haprion-backup-schedule -c alpha --time 03:30 --weekly Mon,Thu --retention 14
 ```
+
+`haprion-backup-schedule` asks the same root service the page's *Save* does, and only when the
+timer or the retention differs from what is asked - so the same command twice changes nothing.
+Without `--weekly` or `--monthly <day>` it runs every day; `--disable` keeps the schedule and
+stops the timer; `--check` says whether it would change; `--json` prints the service's envelope
+with `changed`. *Node backups* under Features is the interface's switch; the command works either
+way.
 
 Archives are root-only and belong to a specific node. For backup identities, storage and
 timers, see [Runtime policy](#runtime-policy).

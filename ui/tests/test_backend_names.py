@@ -62,21 +62,21 @@ def publish_job(payload: dict[str, Any]) -> Job:
 
 class WhoseABackendIs(unittest.TestCase):
     def test_a_pool_named_by_itself_is_found_through_its_object(self) -> None:
-        owners = health.backend_owners([View("monitor-server_admin-web", ("admin-web_80",))])
+        owners = health.backend_owners([View("lb-01_admin-web", ("admin-web_80",))])
         lamps = health.object_healths(
             nodes(("admin-web_80", "s1", "UP")),
             cluster="alpha",
-            objects={"monitor-server_admin-web": (True, False)},
+            objects={"lb-01_admin-web": (True, False)},
             owners=owners,
         )
 
-        self.assertEqual(lamps["monitor-server_admin-web"].tone, "healthy")
+        self.assertEqual(lamps["lb-01_admin-web"].tone, "healthy")
 
     def test_without_the_objects_account_a_bare_pool_is_nobodys(self) -> None:
         """Nothing is guessed from the name: it is the pool's, not the object's."""
 
         served = health.served_objects(
-            nodes(("admin-web_80", "s1", "UP")), cluster="alpha", names=["monitor-server_admin-web"]
+            nodes(("admin-web_80", "s1", "UP")), cluster="alpha", names=["lb-01_admin-web"]
         )
 
         self.assertEqual(served, frozenset())

@@ -248,8 +248,8 @@ class CommentTests(unittest.TestCase):
         from haprion_ui.history import shown_comment
 
         self.assertEqual(
-            shown_comment("Update proxy objects: Publish monitor-server_admin-web"),
-            "Publish monitor-server_admin-web",
+            shown_comment("Update proxy objects: Publish lb-01_admin-web"),
+            "Publish lb-01_admin-web",
         )
         self.assertEqual(shown_comment("Update network description: tls -1.3"), "tls -1.3")
         self.assertEqual(

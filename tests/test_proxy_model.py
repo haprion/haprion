@@ -1690,7 +1690,7 @@ class WhyANameWasRefused(unittest.TestCase):
     def test_an_underscore_is_a_name_and_not_a_refusal(self) -> None:
         """Let in by B72, and proved against a real HAProxy before it was."""
 
-        self.assertIsNotNone(NAME.match("monitor-server-admin_web"))
+        self.assertIsNotNone(NAME.match("lb-01-admin_web"))
         self.assertIsNotNone(NAME.match("admin_web"))
         self.assertIsNone(NAME.match("_leading"))
 

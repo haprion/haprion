@@ -57,13 +57,13 @@ def layer(*proxies: Proxy) -> dict[str, str]:
 
 class APoolIsNamedByItself(unittest.TestCase):
     def test_the_pool_is_the_backend_and_every_reference_says_so(self) -> None:
-        proxy = site("monitor-server_admin-web", "admin-web_80")
+        proxy = site("lb-01_admin-web", "admin-web_80")
         files = layer(proxy)
 
         self.assertEqual(backend_name(proxy, "admin-web_80"), "admin-web_80")
-        self.assertIn("\nbackend admin-web_80\n", files["1001-monitor-server_admin-web.cfg"])
+        self.assertIn("\nbackend admin-web_80\n", files["1001-lb-01_admin-web.cfg"])
         self.assertIn("use_backend admin-web_80 if", files["1000-frontends.cfg"])
-        self.assertNotIn("mgd-monitor-server_admin-web-admin-web_80", "".join(files.values()))
+        self.assertNotIn("mgd-lb-01_admin-web-admin-web_80", "".join(files.values()))
 
     def test_a_redirect_keeps_its_object_in_front(self) -> None:
         proxy = site("ftp-server_admin-web", "ftp-server", redirect="/old")

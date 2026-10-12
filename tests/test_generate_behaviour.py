@@ -1808,7 +1808,7 @@ class AnUpgradedConnectionLivesOnTheTunnelTimeout(unittest.TestCase):
 
 UNDERSCORED = """
 schema: 1
-name: monitor-server-admin_web
+name: lb-01-admin_web
 hostnames: [admin.example.com]
 listen:
   protocol: http
@@ -1839,7 +1839,7 @@ class AnUnderscoreInAName(unittest.TestCase):
     """
 
     def test_the_generated_configuration_is_accepted(self) -> None:
-        proxy = load_proxy("monitor-server-admin_web", UNDERSCORED.encode())
+        proxy = load_proxy("lb-01-admin_web", UNDERSCORED.encode())
         layer = generate(
             [proxy],
             vips={"main": Vip(name="main", address="127.0.0.1")},
@@ -1865,7 +1865,7 @@ class AnUnderscoreInAName(unittest.TestCase):
     def test_the_name_reaches_the_generated_proxy_names_intact(self) -> None:
         """An underscore silently rewritten would make two objects collide."""
 
-        proxy = load_proxy("monitor-server-admin_web", UNDERSCORED.encode())
+        proxy = load_proxy("lb-01-admin_web", UNDERSCORED.encode())
         layer = generate(
             [proxy],
             vips={"main": Vip(name="main", address="127.0.0.1")},
@@ -1875,7 +1875,7 @@ class AnUnderscoreInAName(unittest.TestCase):
         )
         written = "\n".join(layer.configuration.values())
 
-        self.assertIn("monitor-server-admin_web", written)
+        self.assertIn("lb-01-admin_web", written)
         self.assertIn("admin_web", written)
 
 

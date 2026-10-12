@@ -169,7 +169,8 @@ The stored object spells both out (`weight: 50`, `backup: true`) under the serve
   a service whose certificate the organisation's own CA issued. The node's trust store is not
   touched; the file is read by the pools that name it and by nothing else. The form's server test
   trusts the same CA as the node's check does: the manager sends its copy with the test, since the
-  test runs on the node without access to the node's certificate directory.
+  test runs on the node without access to the node's certificate directory. On the command line,
+  `haprion-probe ... --tls --verify --ca <id>` does the same.
 - **HTTPS, do not verify** encrypts and checks nothing.
 
 Both verified choices need the servers named by hostname rather than address: the name is sent as
@@ -2277,8 +2278,8 @@ about a second after it came back.
 Each receiver's queue shows on the node: `haprion-status` prints `Log forward:` per node, the
 cluster's page under **Settings → Logs & metrics** has a **Delivery** table - each receiver as each
 node sends to it, its queue and its state - and **Needs attention** lists a receiver whose queue has
-not emptied for three minutes or holds 10 000 lines or more, and as critical one that dropped lines
-in the last hour ([Needs attention, and external monitoring](#needs-attention-and-external-monitoring)).
+neither emptied nor shrunk for three minutes or holds 10 000 lines or more, and as critical one that
+dropped lines in the last hour ([Needs attention, and external monitoring](#needs-attention-and-external-monitoring)).
 The exporter's counters are complete either way.
 
 When the node's rsyslog cannot connect, it says why, and the node passes that on: *Connection
@@ -2406,7 +2407,7 @@ has not been read for two poll intervals; a WAF exception marked *Not working*; 
 is missing, old or failed; a node whose traffic log collection failed, has not succeeded for five
 minutes or is still behind after five runs or with older days waiting (catching up after a burst
 is left to the log page's own warning); a receiver of the traffic log whose queue on the node
-has not emptied for three minutes or holds 10 000 lines or more, with the reason the node's rsyslog
+has neither emptied nor shrunk for three minutes or holds 10 000 lines or more, with the reason the node's rsyslog
 gave when it has one, or - critical - that dropped lines in the last hour. Nothing there, no
 box. What somebody chose - a drained server, a
 maintenance page, a block, a publish not yet deployed - is not on it: those are on the cluster's

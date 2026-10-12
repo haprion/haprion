@@ -204,5 +204,27 @@ class TheNodeSaysWhyAReceiverIsNotReached(ReaderCase):
         self.assertNotIn("last_error", self.read(now=NOW)["receivers"][0])
 
 
+class OnlyRsyslogWritesTheReason(ReaderCase):
+    """Any account can log as `rsyslogd`; only journald can name the unit (review 26-10-12 F2)."""
+
+    def test_the_journal_is_read_for_the_unit_and_not_only_the_identifier(self) -> None:
+        asked: list[list[str]] = []
+
+        class Ran:
+            stdout = ""
+
+        def run(command: list[str], **_: Any) -> Ran:
+            asked.append(command)
+            return Ran()
+
+        namespace = self.read.__globals__
+        namespace["subprocess"] = type(
+            "Subprocess", (), {"run": staticmethod(run), "SubprocessError": Exception}
+        )
+        namespace["read_rsyslog_journal"]()
+
+        self.assertIn("_SYSTEMD_UNIT=rsyslog.service", asked[0])
+
+
 if __name__ == "__main__":
     unittest.main()

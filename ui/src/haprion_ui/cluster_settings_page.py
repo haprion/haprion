@@ -311,9 +311,12 @@ def delivery(result: Mapping[str, Any] | None, *, now: datetime) -> list[Deliver
     Dropped lines are critical; a queue that has not emptied for
     attention.FORWARD_WAITING, or one that is long, is behind. The reason is the
     node's own (`last_error`, from rsyslog's journal), shown whatever the state.
+    A node not read is a row only beside a node that forwards: a cluster that
+    sends its log nowhere has no deliveries to show (review 26-10-12 F4).
     """
 
     rows: list[DeliveryRow] = []
+    unread: list[DeliveryRow] = []
     nodes = result.get("nodes") if isinstance(result, Mapping) else None
     for entry in nodes if isinstance(nodes, list) else ():
         if not isinstance(entry, Mapping):
@@ -321,7 +324,7 @@ def delivery(result: Mapping[str, Any] | None, *, now: datetime) -> list[Deliver
         name = str(entry.get("name", ""))
         status = entry.get("status")
         if not entry.get("status_ok") or not isinstance(status, Mapping):
-            rows.append(DeliveryRow(name, "", "", "Not read", "unknown"))
+            unread.append(DeliveryRow(name, "", "", "Not read", "unknown"))
             continue
         forwarding = status.get("log_forwarding")
         receivers = forwarding.get("receivers") if isinstance(forwarding, Mapping) else None
@@ -338,7 +341,10 @@ def delivery(result: Mapping[str, Any] | None, *, now: datetime) -> list[Deliver
                 with contextlib.suppress(TypeError, ValueError):
                     since = datetime.fromisoformat(str(waiting[target]))
             if isinstance(dropped, int) and dropped > 0:
-                state, tone = f"{_count(dropped)} dropped in the last hour", "critical"
+                state, tone = (
+                    f"{log_forwarding.count(dropped)} dropped in the last hour",
+                    "critical",
+                )
             elif since is not None and now - since >= FORWARD_WAITING:
                 state, tone = "Not delivered", "warning"
             elif isinstance(queued, int) and queued >= log_forwarding.QUEUE_WARNING:
@@ -353,15 +359,13 @@ def delivery(result: Mapping[str, Any] | None, *, now: datetime) -> list[Deliver
                 DeliveryRow(
                     node=name,
                     receiver=target,
-                    queued=_count(queued) if isinstance(queued, int) else "—",
+                    queued=log_forwarding.count(queued) if isinstance(queued, int) else "—",
                     state=state,
                     tone=tone,
                     since=since if tone != "healthy" else None,
                     reason=reason,
                 )
             )
-    return sorted(rows, key=lambda row: (row.receiver, row.node))
-
-
-def _count(value: int) -> str:
-    return f"{value:,}".replace(",", " ")
+    if not rows:
+        return []
+    return sorted(rows + unread, key=lambda row: (row.receiver, row.node))

@@ -1699,6 +1699,15 @@ def _with_cpu_shares(result: Mapping[str, Any], previous: Any) -> Mapping[str, A
     return {**result, "nodes": shared}
 
 
+def _forward_receivers(node: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    status = node.get("status")
+    forwarding = status.get("log_forwarding") if isinstance(status, Mapping) else None
+    receivers = forwarding.get("receivers") if isinstance(forwarding, Mapping) else None
+    if not isinstance(receivers, list):
+        return []
+    return [receiver for receiver in receivers if isinstance(receiver, Mapping)]
+
+
 def _with_forward_waiting(
     result: Mapping[str, Any], previous: Any, now: datetime
 ) -> Mapping[str, Any]:
@@ -1710,34 +1719,44 @@ def _with_forward_waiting(
     reading to reading as `forward_waiting_since`, beside the node's status,
     as the CPU share is; a receiver whose queue is empty, or a node without a
     recent previous reading, starts again from now.
+
+    So does a queue shorter than at the previous reading: lines left it, so the
+    receiver is reached. One far away always has a few lines on their way, and
+    a clock that waited for an empty queue would call it unreached (review
+    26-10-12 F3). One out of reach keeps or grows its queue.
     """
 
     nodes = result.get("nodes")
     if not isinstance(nodes, list):
         return result
     before: dict[str, Mapping[str, Any]] = {}
+    queued_before: dict[str, dict[str, Any]] = {}
     if isinstance(previous, Mapping) and isinstance(previous.get("nodes"), list):
         for node in previous["nodes"]:
-            if isinstance(node, Mapping) and isinstance(node.get("forward_waiting_since"), Mapping):
+            if not isinstance(node, Mapping):
+                continue
+            if isinstance(node.get("forward_waiting_since"), Mapping):
                 before[str(node.get("name"))] = node["forward_waiting_since"]
+            queued_before[str(node.get("name"))] = {
+                str(receiver.get("name")): receiver.get("queued")
+                for receiver in _forward_receivers(node)
+            }
     carried: list[Any] = []
     for node in nodes:
         if not isinstance(node, Mapping):
             carried.append(node)
             continue
-        status = node.get("status")
-        forwarding = status.get("log_forwarding") if isinstance(status, Mapping) else None
-        receivers = forwarding.get("receivers") if isinstance(forwarding, Mapping) else None
         earlier = before.get(str(node.get("name")), {})
+        sizes = queued_before.get(str(node.get("name")), {})
         waiting: dict[str, str] = {}
-        for receiver in receivers if isinstance(receivers, list) else ():
-            if not isinstance(receiver, Mapping):
-                continue
+        for receiver in _forward_receivers(node):
             queued = receiver.get("queued")
             if isinstance(queued, int) and not isinstance(queued, bool) and queued > 0:
                 name = str(receiver.get("name"))
                 kept = earlier.get(name)
-                waiting[name] = kept if isinstance(kept, str) else now.isoformat()
+                size = sizes.get(name)
+                shrank = isinstance(size, int) and not isinstance(size, bool) and queued < size
+                waiting[name] = kept if isinstance(kept, str) and not shrank else now.isoformat()
         carried.append({**node, "forward_waiting_since": waiting})
     return {**result, "nodes": carried}
 

@@ -305,18 +305,37 @@ class TheDeliveryTable(SettingsClusterTestCase):
             (row.state, row.tone, row.reason), ("Delivering", "warning", "Connection refused")
         )
 
-    def test_a_node_not_read_says_so_and_one_forwarding_nowhere_is_left_out(self) -> None:
+    def test_a_node_not_read_says_so_beside_one_that_forwards(self) -> None:
+        forwarding = {"receivers": [{"name": "loki", "queued": 0, "dropped_last_hour": 0}]}
         rows = cluster_settings_page.delivery(
             {
                 "nodes": [
                     {"name": "node-a", "status_ok": False},
-                    {"name": "node-b", "status_ok": True, "status": {}},
+                    {"name": "node-b", "status_ok": True, "status": {"log_forwarding": forwarding}},
                 ]
             },
             now=NOW,
         )
 
-        self.assertEqual([(row.node, row.state) for row in rows], [("node-a", "Not read")])
+        self.assertEqual(
+            [(row.node, row.state) for row in rows],
+            [("node-a", "Not read"), ("node-b", "Delivering")],
+        )
+
+    def test_a_cluster_forwarding_nowhere_has_no_table(self) -> None:
+        """Not even for a node not read (review 26-10-12 F4)."""
+
+        rows = cluster_settings_page.delivery(
+            {
+                "nodes": [
+                    {"name": "node-a", "status_ok": False},
+                    {"name": "node-b", "status_ok": True, "status": {"log_forwarding": None}},
+                ]
+            },
+            now=NOW,
+        )
+
+        self.assertEqual(rows, [])
 
     def test_the_page_shows_the_demo_receiver_that_is_not_reached(self) -> None:
         with mock.patch("haprion_ui.db.cluster_statuses", return_value=list(demo.status_rows())):

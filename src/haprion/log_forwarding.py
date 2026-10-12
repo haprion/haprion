@@ -43,7 +43,9 @@ def _receivers(forwarding: object) -> list[Mapping[str, Any]]:
     return [item for item in receivers if isinstance(item, Mapping)]
 
 
-def _count(value: int) -> str:
+def count(value: int) -> str:
+    """Thousands set apart by a space, as the status line and the Delivery table write them."""
+
     return f"{value:,}".replace(",", " ")
 
 
@@ -77,7 +79,7 @@ def problems(forwarding: object) -> list[Problem]:
                 Problem(
                     "critical",
                     name,
-                    f"traffic log to {name}: {_count(dropped)} lines dropped in the last hour",
+                    f"traffic log to {name}: {count(dropped)} lines dropped in the last hour",
                 )
             )
         queued = receiver.get("queued")
@@ -87,7 +89,7 @@ def problems(forwarding: object) -> list[Problem]:
                 Problem(
                     "warning",
                     name,
-                    f"traffic log to {name}: {_count(queued)} lines queued"
+                    f"traffic log to {name}: {count(queued)} lines queued"
                     + (f" ({reason})" if reason else ""),
                 )
             )
@@ -115,10 +117,10 @@ def status_line(forwarding: object) -> str | None:
         queued = receiver.get("queued")
         dropped = receiver.get("dropped_last_hour")
         part = f"{receiver.get('name')} " + (
-            "queue unknown" if not isinstance(queued, int) else f"{_count(queued)} queued"
+            "queue unknown" if not isinstance(queued, int) else f"{count(queued)} queued"
         )
         if isinstance(dropped, int) and dropped > 0:
-            part += f", {_count(dropped)} DROPPED in the last hour"
+            part += f", {count(dropped)} DROPPED in the last hour"
         reason = unreached(receiver)
         if reason:
             part += f", not reached: {reason}"

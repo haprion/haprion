@@ -334,6 +334,48 @@ class ThePersonsUdpCheck(unittest.TestCase):
         )
 
 
+class ThePersonsPoolCa(unittest.TestCase):
+    """`haprion-probe --ca`: the command trusts a pool's own CA as the form does (B276)."""
+
+    def sent(self, argv: list[str]) -> list[dict[str, object]]:
+        with mock.patch.object(probe, "run_probe_helper") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            with mock.patch.object(sys, "stderr", io.StringIO()):
+                probe.main(argv, writer=io.StringIO())
+        targets: list[dict[str, object]] = run.call_args.args[2]
+        return targets
+
+    def test_the_named_ca_goes_with_every_target(self) -> None:
+        targets = self.sent(
+            [
+                "-c",
+                "alpha",
+                "-t",
+                "app1.example.com:443,app2.example.com:443",
+                "--tls",
+                "--verify",
+                "--ca",
+                "example-ca",
+            ]
+        )
+
+        self.assertEqual([t["ca"] for t in targets], ["example-ca", "example-ca"])
+
+    def test_without_it_no_ca_is_named(self) -> None:
+        targets = self.sent(["-c", "alpha", "-t", "app.example.com:443", "--tls", "--verify"])
+
+        self.assertNotIn("ca", targets[0])
+
+    def test_a_ca_without_verification_is_a_usage_error(self) -> None:
+        for extra in (["--tls"], ["--verify"], []):
+            with (
+                self.subTest(extra=extra),
+                self.assertRaises(SystemExit),
+                mock.patch.object(sys, "stdout", io.StringIO()),
+            ):
+                probe._parse(["-c", "alpha", "-t", "app.example.com:443", *extra, "--ca", "x"])
+
+
 class ADnsTarget(HelperFixture):
     """B253: a dns check's question is held to the model, and a name is looked up here."""
 

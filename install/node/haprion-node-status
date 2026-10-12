@@ -616,13 +616,19 @@ MAX_JOURNAL_LINES = 4000
 
 
 def read_rsyslog_journal():
-    """rsyslog's own lines of the last half hour, oldest first: [(epoch seconds, message)]."""
+    """rsyslog's own lines of the last half hour, oldest first: [(epoch seconds, message)].
+
+    The identifier alone is whatever the sender wrote, and any local account can
+    write `logger -t rsyslogd ...`. The unit is set by journald from the sender's
+    cgroup, so a line a person wrote does not become a receiver's reason.
+    """
 
     try:
         result = subprocess.run(  # noqa: S603 - fixed arguments
             [
                 "/usr/bin/journalctl",
                 "--identifier=rsyslogd",
+                "_SYSTEMD_UNIT=rsyslog.service",
                 f"--since={FORWARD_ERROR_WINDOW}",
                 f"--lines={MAX_JOURNAL_LINES}",
                 "--output=json",

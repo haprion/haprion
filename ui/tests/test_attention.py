@@ -222,7 +222,9 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
 
     NOW = datetime(2026, 10, 12, 10, 30, tzinfo=UTC)
 
-    def reading(self, queued: int, since: datetime | None, reason: str = "") -> Any:
+    def reading(
+        self, queued: int, since: datetime | None, reason: str = "", before: int | None = None
+    ) -> Any:
         from haprion_ui.db import _with_forward_waiting
 
         receiver: dict[str, Any] = {"name": "graylog", "queued": queued, "dropped_last_hour": 0}
@@ -233,11 +235,19 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
             "status_ok": True,
             "status": {"log_forwarding": {"stats_age_sec": 20, "receivers": [receiver]}},
         }
-        previous = (
-            {"nodes": [{"name": "node-a", "forward_waiting_since": {"graylog": since.isoformat()}}]}
-            if since is not None
-            else None
-        )
+        previous: Any = None
+        if since is not None:
+            earlier: dict[str, Any] = {
+                "name": "node-a",
+                "forward_waiting_since": {"graylog": since.isoformat()},
+            }
+            if before is not None:
+                earlier["status"] = {
+                    "log_forwarding": {
+                        "receivers": [{"name": "graylog", "queued": before, "dropped_last_hour": 0}]
+                    }
+                }
+            previous = {"nodes": [earlier]}
         return _with_forward_waiting({"nodes": [node]}, previous, self.NOW)
 
     def items(self, result: Any) -> list[Any]:
@@ -255,6 +265,18 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
             {"graylog": earlier.isoformat()},
         )
         self.assertEqual(self.reading(0, earlier)["nodes"][0]["forward_waiting_since"], {})
+
+    def test_a_queue_that_shrank_is_a_receiver_reached(self) -> None:
+        """A far receiver always has lines on their way (review 26-10-12 F3)."""
+
+        earlier = self.NOW - timedelta(minutes=7)
+
+        def since(queued: int, before: int) -> Any:
+            return self.reading(queued, earlier, before=before)["nodes"][0]["forward_waiting_since"]
+
+        self.assertEqual(since(3, 5), {"graylog": self.NOW.isoformat()})
+        self.assertEqual(since(3, 3), {"graylog": earlier.isoformat()})
+        self.assertEqual(since(4, 3), {"graylog": earlier.isoformat()})
 
     def test_three_minutes_without_emptying_is_listed(self) -> None:
         self.assertEqual(self.items(self.reading(3, self.NOW - timedelta(minutes=2))), [])

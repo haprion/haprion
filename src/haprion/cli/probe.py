@@ -34,13 +34,14 @@ ALLOWED_MIN_VERSIONS = frozenset(BACKEND_MIN_VERSION.values())
 USAGE = (
     "Usage:\n"
     "  haprion-probe -c <cluster> -t <host:port>[,<host:port>...] "
-    "[--http <path>] [--host <name>] [--tls [--verify] [--min-version <version>]] "
+    "[--http <path>] [--host <name>] [--tls [--verify [--ca <id>]] [--min-version <version>]] "
     "[--source <address>] [--json]\n"
     "  haprion-probe -c <cluster> -t <address:port>[,...] --udp [--json]\n"
     "\n"
     "Examples:\n"
     "  haprion-probe -c alpha -t 198.51.100.10:8080\n"
     "  haprion-probe -c alpha -t 198.51.100.10:8443 --tls --http /healthz --json\n"
+    "  haprion-probe -c alpha -t app.example.com:443 --tls --verify --ca example-ca\n"
     "  haprion-probe -c alpha -t 198.51.100.20:514 --udp\n"
 )
 
@@ -82,6 +83,7 @@ def _targets(
     tls: bool,
     verify: bool,
     min_version: str,
+    ca: str = "",
     udp: bool = False,
 ) -> list[dict[str, Any]]:
     targets = []
@@ -106,6 +108,7 @@ def _targets(
                 "min_version": min_version,
                 "path": path or "/",
                 "host_header": host,
+                **({"ca": ca} if ca else {}),
             }
         )
     if not targets:
@@ -121,6 +124,7 @@ def _parse(argv: list[str]) -> dict[str, Any]:
         "host": "",
         "tls": False,
         "verify": False,
+        "ca": "",
         "min_version": DEFAULT_MIN_VERSION,
         "source": "",
         "udp": False,
@@ -151,6 +155,15 @@ def _parse(argv: list[str]) -> dict[str, Any]:
             options["verify"] = True
             index += 1
         #
+        # A pool verified against a CA imported under Certificates (B276). The
+        # helper reads the manager's copy and sends it with the request, as it
+        # does for the form's test; without it the node checks against its own
+        # trust store and calls a healthy pool down.
+        #
+        elif argument == "--ca" and index + 1 < len(argv):
+            options["ca"] = argv[index + 1]
+            index += 2
+        #
         # keepalived's check on a syslog pool (Fas 19b B5): a datagram, and a
         # refusal back or none. Nothing else of a check applies to it.
         #
@@ -177,6 +190,8 @@ def _parse(argv: list[str]) -> dict[str, Any]:
     if not options["cluster"] or not options["targets"]:
         usage(USAGE)
     if options["udp"] and (options["path"] or options["host"] or options["tls"]):
+        usage(USAGE)
+    if options["ca"] and not (options["tls"] and options["verify"]):
         usage(USAGE)
     return options
 
@@ -230,6 +245,7 @@ def main(argv: list[str] | None = None, *, writer: TextIO | None = None) -> int:
             tls=options["tls"],
             verify=options["verify"],
             min_version=options["min_version"],
+            ca=options["ca"],
             udp=options["udp"],
         ),
         source=options["source"],

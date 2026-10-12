@@ -1358,6 +1358,16 @@ reruns step 7 before releasing the interface that queues it.
 **Nothing here can be undone.** A deleted lineage has to be issued again, and a deleted import has
 to be imported again. The confirmation page says so, and the job's rows say what went.
 
+**From the terminal**, `haprion-cert-delete` sends the same request to the same helper, as root,
+and prints its rows (`--json`: the helper's envelope). A certificate already gone, refused as
+`not_registered`, counts as deleted: the command exits 0 when every certificate is removed or was
+already gone, so running it again is harmless. It does not read the interface's drafts; publish or
+discard a draft that names the certificate first.
+
+```bash
+sudo haprion-cert-delete old.example.com stale.example.net --json
+```
+
 #### Publishing to another target, and withdrawing from one
 
 The same boxes carry two more buttons, *Publish to…* and *Remove from…*, for the two questions
@@ -1389,6 +1399,16 @@ has, or when a draft in that cluster names it (the web's check, as for a deletio
 another cluster does not hold it. A refused certificate stops nothing else in the batch; the
 job's outcome follows the rows the way a deletion's does, and a node that kept its copy makes the
 row `incomplete` — the registry has changed, and running the removal again asks the node again.
+
+**From the terminal**, `haprion-cert-target` sends the same delta to the same helper, as root. A
+certificate already as asked is `unchanged`, so the command can be run again; `--format` says how a
+receiver added here is written, and `--no-deploy` publishes without rolling the clusters out. Like
+`haprion-cert-delete`, it does not read the interface's drafts.
+
+```bash
+sudo haprion-cert-target add shop.example.com api.example.com --cluster beta
+sudo haprion-cert-target remove shop.example.com --cluster alpha --json
+```
 
 ### Importing a certificate
 

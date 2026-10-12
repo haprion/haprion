@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-network-apply.schema.json",
+  "title": "haprion-network apply JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "network_apply" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/network_apply_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/network_apply_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "network_apply_result": {
+      "type": "object",
+      "required": ["changed", "check", "versions", "deployment_required"],
+      "properties": {
+        "changed": { "type": "boolean" },
+        "check": { "type": "boolean" },
+        "versions": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["version", "hash", "changed"],
+            "properties": {
+              "version": { "type": ["integer", "null"], "minimum": 0 },
+              "hash": { "type": ["string", "null"] },
+              "changed": { "type": ["boolean", "null"] }
+            },
+            "additionalProperties": true
+          }
+        },
+        "deployment_required": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -91,6 +91,7 @@
         "cluster": { "type": "string", "maxLength": 63 },
         "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "origin": { "enum": ["repository", "cluster_file"] },
+        "document": { "type": ["string", "null"], "maxLength": 65536 },
         "ownership_vip": { "$ref": "#/$defs/address" },
         "default_vip": { "$ref": "#/$defs/name" },
         "default_vip_object_count": { "type": "integer", "minimum": 0 },

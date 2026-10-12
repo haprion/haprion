@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from haprion.config import Cluster
+from haprion.managed_network import location
 from haprion.managed_publish import PROXY_PREFIX, managed_proxies
 from haprion.repo_snapshot import read_tree_files, resolve_head
 
@@ -34,12 +35,22 @@ def network_result(cluster: Cluster) -> dict[str, Any]:
     # observation is refused by the publishing helper instead of replacing a
     # newer network description it has not shown the operator.
     _branch, head = resolve_head(cluster.config_path)
-    files = read_tree_files(cluster.config_path, head, (PROXY_PREFIX,))
+    files = read_tree_files(cluster.config_path, head, (PROXY_PREFIX, location()))
     default_vip_object_count = sum(proxy.listen.vip is None for proxy in managed_proxies(files))
     return {
         "cluster": cluster.cluster_id,
         "head": head,
         "origin": "repository" if network.from_repository else "cluster_file",
+        #
+        # The description exactly as committed, for `haprion-network apply` to
+        # compare a file with and show what would change (Fas 23); None where
+        # the tables are derived and there is no document to change.
+        #
+        "document": (
+            files[location()].decode("utf-8", errors="replace")
+            if network.from_repository and location() in files
+            else None
+        ),
         "ownership_vip": cluster.vip,
         "default_vip": network.default_vip,
         "default_vip_object_count": default_vip_object_count,

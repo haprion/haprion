@@ -1,9 +1,10 @@
-"""``haprion-network`` - where a cluster's traffic arrives and leaves, read-only.
+"""``haprion-network`` - where a cluster's traffic arrives and leaves.
 
 The addresses an object can be served on, the addresses it can leave from, and
-the groups it can be restricted to. Read-only here on purpose: these tables are
-changed by publishing to the cluster repository, the same way a proxy object is,
-so that one path carries the lock, the history and the revert.
+the groups it can be restricted to. These tables are changed by publishing to
+the cluster repository, the same way a proxy object is, so that one path
+carries the lock, the history and the revert: `apply` publishes a file through
+that path (`network_apply`, Fas 23).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
+from haprion.cli import network_apply
 from haprion.cli.caller import usage
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
@@ -22,7 +24,12 @@ OPERATION = "network"
 HELPER = "/opt/haprion/current/bin/haprion-network-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
-USAGE = "Usage:\n  haprion-network -c <cluster> [--json]\n"
+USAGE = (
+    "Usage:\n"
+    "  haprion-network -c <cluster> [--json]\n"
+    "  haprion-network apply -c <cluster> <file> [--check] [-m <comment>]\n"
+    "                        [--allow-certificate-mismatch] [--json]\n"
+)
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
 
@@ -142,10 +149,19 @@ def main(
     stream_out: TextIO | None = None,
     stream_err: TextIO | None = None,
     run_helper: RunHelper = run_network_helper,
+    run_publish: Callable[[str], subprocess.CompletedProcess[str]] | None = None,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
+    if argv and argv[0] == "apply":
+        return network_apply.main(
+            argv[1:],
+            run_helper=run_helper,
+            stream_out=writer,
+            stream_err=errors,
+            **({} if run_publish is None else {"run_publish": run_publish}),
+        )
     cluster_id, json_mode = _parse(argv)
     completed = run_helper(cluster_id, new_request_id())
 

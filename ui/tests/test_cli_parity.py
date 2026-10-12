@@ -106,7 +106,7 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
 OPERATIONS: dict[str, Command | Gap | NotASetting] = {
     "deploy": Command("haprion-deploy"),
     "revert": Command("haprion-revert"),
-    "network_publish": Gap("P3", "haprion-network apply"),
+    "network_publish": Command("haprion-network apply"),
     "backup_run": Command("haprion-state-backup"),
     "backup_schedule": Gap("P7", "haprion-state-backup --schedule"),
 }

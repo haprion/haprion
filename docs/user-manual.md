@@ -3472,6 +3472,18 @@ the same revert, and without the web identities gaining any access to the engine
 the interface can rewrite is not a control. `managed/network.yaml` is refused outright if it names
 it.
 
+From the terminal, `haprion-network apply` publishes a file as the description, the way *Network*
+saves it: compared with what is committed (`haprion-network -c alpha --json` carries it as
+`document`), published as one version where it differs and not at all where it does not, against
+the version it read. `--check` shows the difference; a cluster answering from `clusters.yaml` has
+no description to change and is refused:
+
+```bash
+sudo haprion-network apply -c alpha network.yaml --check
+sudo haprion-network apply -c alpha network.yaml -m "Add the office network"
+haprion-deploy -c alpha
+```
+
 **Adding a VIP here does half the job by default.** The other half is keepalived on the nodes: no
 node carries the address until it is in the `virtual_ipaddress` block, and until then no traffic
 reaches the frontend however correct the generated configuration is. The same applies to a source

@@ -415,6 +415,24 @@ def check_objects_apply_semantics(document: dict[str, object], path: Path) -> No
         raise AssertionError(f"{path}: a deploy is owed only for a version published")
 
 
+def check_network_apply_semantics(document: dict[str, object], path: Path) -> None:
+    """One document, so at most one version, and a deploy owed only for one published."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done apply says what it did")
+        return
+    assert isinstance(result, dict)
+    if result["check"] and result["versions"]:
+        raise AssertionError(f"{path}: --check publishes nothing")
+    published = any(version["changed"] for version in result["versions"])
+    if result["deployment_required"] != published:
+        raise AssertionError(f"{path}: a deploy is owed exactly when a version was published")
+    if published and not result["changed"]:
+        raise AssertionError(f"{path}: a published version is a change")
+
+
 def check_changes_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1076,6 +1094,7 @@ SEMANTIC_CHECKS = {
     "cluster_settings": check_cluster_settings_semantics,
     "changes_publish": check_changes_publish_semantics,
     "objects_apply": check_objects_apply_semantics,
+    "network_apply": check_network_apply_semantics,
     "readings": check_readings_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
@@ -1135,6 +1154,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         first = next(iter(result["reads"].values()))
         first["envelope"] = None
         first["exit_code"] = 0
+    elif operation == "network_apply":
+        result["deployment_required"] = not result["deployment_required"]
     elif operation == "objects_apply":
         result["unchanged"].append(result["added"][0] if result["added"] else "shop")
         result["added"].append(result["unchanged"][-1])

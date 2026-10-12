@@ -21,38 +21,29 @@ deploy: `haprion-deploy -c <cluster>` takes it to the nodes.
 from __future__ import annotations
 
 import argparse
-import difflib
-import json
-import re
-import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
 from haprion.cli import changes_publish
+from haprion.cli.apply_common import (
+    EXIT_NOT_FOUND,
+    Refused,
+    RunHelper,
+    RunPublish,
+    answer_of,
+    diff,
+    envelope,
+)
 from haprion.cli.cluster_settings import run_publish_helper
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
 from haprion.proxy_model import MAX_MODEL_BYTES, NAME, NAME_RULE, ModelError, load_proxy
 
 OPERATION = "objects_apply"
-EXIT_REFUSED = 65
-EXIT_NOT_FOUND = 66
-EXIT_UNAVAILABLE = 68
 SUFFIXES = (".yaml", ".yml")
-CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-
-type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
-type RunPublish = Callable[[str], subprocess.CompletedProcess[str]]
-
-
-class Refused(Exception):
-    def __init__(self, code: str, message: str, exit_code: int = EXIT_REFUSED) -> None:
-        super().__init__(message)
-        self.code = code
-        self.exit_code = exit_code
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,21 +131,13 @@ def read_files(targets: Sequence[str]) -> dict[str, str]:
     return documents
 
 
-def stored(document: Mapping[str, Any]) -> tuple[str | None, dict[str, str]]:
-    """The head and each stored object's document, from an objects helper answer."""
+def stored(result: Mapping[str, Any]) -> tuple[str | None, dict[str, str]]:
+    """The head and each stored object's document, from an objects helper result."""
 
-    if document.get("operation") != "objects":
-        raise Refused(
-            "unavailable", "the objects helper returned an invalid result", EXIT_UNAVAILABLE
-        )
-    error = document.get("error")
-    if isinstance(error, Mapping):
-        raise Refused(str(error.get("code")), str(error.get("message")), EXIT_UNAVAILABLE)
-    result = document.get("result")
-    entries = result.get("objects") if isinstance(result, Mapping) else None
+    entries = result.get("objects")
     if not isinstance(entries, list):
-        raise Refused("unavailable", "the objects helper returned no object list", EXIT_UNAVAILABLE)
-    commit = result.get("commit") if isinstance(result, Mapping) else None
+        raise Refused("unavailable", "the objects helper returned no object list", 68)
+    commit = result.get("commit")
     return (
         commit if isinstance(commit, str) else None,
         {
@@ -162,17 +145,6 @@ def stored(document: Mapping[str, Any]) -> tuple[str | None, dict[str, str]]:
             for entry in entries
             if isinstance(entry, Mapping) and isinstance(entry.get("name"), str)
         },
-    )
-
-
-def _diff(name: str, before: str, after: str) -> str:
-    return "".join(
-        difflib.unified_diff(
-            before.splitlines(keepends=True),
-            after.splitlines(keepends=True),
-            fromfile=f"{name} (stored)",
-            tofile=f"{name} (file)",
-        )
     )
 
 
@@ -193,7 +165,7 @@ def plan_apply(wanted: Mapping[str, str], current: Mapping[str, str], *, prune: 
         removed=removed,
         unchanged=unchanged,
         documents=documents,
-        diffs={name: _diff(name, current[name], wanted[name]) for name in changed},
+        diffs={name: diff(name, current[name], wanted[name]) for name in changed},
     )
 
 
@@ -255,48 +227,19 @@ def publish(
             objects={name: plan.documents[name] for name in batch},
             allow_certificate_mismatch=allow_certificate_mismatch,
         )
-        completed = run_publish(request)
         try:
-            answer = json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
+            result = answer_of(run_publish(request), changes_publish.OPERATION)
+        except Refused as refused:
+            if not answers:
+                raise
             raise Refused(
-                "unavailable",
-                completed.stderr.strip() or "the publish helper returned no result",
-                completed.returncode or EXIT_UNAVAILABLE,
-            ) from exc
-        error = answer.get("error") if isinstance(answer, Mapping) else None
-        result = answer.get("result") if isinstance(answer, Mapping) else None
-        if isinstance(error, Mapping) or not isinstance(result, Mapping):
-            message = (str(error.get("message")) if isinstance(error, Mapping) else "no result") + (
-                f"; {len(answers)} earlier batch(es) published" if answers else ""
-            )
-            raise Refused(
-                str(error.get("code")) if isinstance(error, Mapping) else "unavailable",
-                message,
-                completed.returncode or EXIT_UNAVAILABLE,
-            )
+                refused.code,
+                f"{refused}; {len(answers)} earlier batch(es) published",
+                refused.exit_code,
+            ) from refused
         answers.append(dict(result))
         head = str(result.get("hash") or head)
     return answers
-
-
-def _envelope(cluster: str, outcome: str, result: Any, error: Refused | None) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "ok": error is None,
-        "outcome": outcome,
-        "operation": OPERATION,
-        "cluster": cluster,
-        "request_id": new_request_id(),
-        "result": result,
-        "warnings": [],
-        "error": None
-        if error is None
-        else {
-            "code": error.code if CODE.fullmatch(error.code) else "refused",
-            "message": (str(error) or error.code)[:2048],
-        },
-    }
 
 
 def _summary(plan: Plan, *, check: bool, versions: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -347,16 +290,7 @@ def main(
     cluster = str(args.cluster)
     try:
         wanted = read_files(args.targets) if command == "apply" else {}
-        completed = run_helper(cluster, new_request_id())
-        try:
-            answer = json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
-            raise Refused(
-                "unavailable",
-                completed.stderr.strip() or "the objects helper returned no result",
-                completed.returncode or EXIT_UNAVAILABLE,
-            ) from exc
-        head, current = stored(answer)
+        head, current = stored(answer_of(run_helper(cluster, new_request_id()), "objects"))
         plan = (
             plan_apply(wanted, current, prune=args.prune)
             if command == "apply"
@@ -376,13 +310,13 @@ def main(
             )
     except Refused as refused:
         if args.json:
-            write_document(writer, _envelope(cluster, "failed", None, refused))
+            write_document(writer, envelope(OPERATION, cluster, "failed", None, refused))
         else:
             errors.write(f"ERROR: {refused}\n")
         return refused.exit_code
     summary = _summary(plan, check=args.check, versions=versions)
     if args.json:
-        write_document(writer, _envelope(cluster, "done", summary, None))
+        write_document(writer, envelope(OPERATION, cluster, "done", summary, None))
     else:
         _render(cluster, plan, summary, writer)
     return 0

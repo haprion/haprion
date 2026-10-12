@@ -66,8 +66,11 @@ def switch(
     actor: str,
     via: str,
     readings: Readings,
-) -> bool:
-    """Flip `name` to `want`; False when it already was. Refusals raise `SwitchRefused`."""
+) -> tuple[db.Job, ...] | None:
+    """Flip `name` to `want`, and the schedule jobs that queued; None when it already was.
+
+    Refusals raise `SwitchRefused`.
+    """
 
     current = db.feature_switches(connection).get(name)
     if name not in features.BY_NAME or current is None:
@@ -78,7 +81,7 @@ def switch(
             "and this installation lists more."
         )
     if current.enabled == want:
-        return False
+        return None
     #
     # A WAF the interface no longer shows still filters traffic (B231).
     #
@@ -117,7 +120,7 @@ def switch(
     if not db.set_feature_switch(
         connection, name=name, enabled=want, remembered=remembered, actor=actor
     ):
-        return False
+        return None
     try:
         queued = [
             db.queue_job(
@@ -148,4 +151,4 @@ def switch(
             request_id=job.request_id,
             detail={"operation": job.operation, "job": job.id},
         )
-    return True
+    return tuple(queued)

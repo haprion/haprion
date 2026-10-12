@@ -15,13 +15,15 @@ import argparse
 import json
 import os
 import sys
+import time
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import psycopg
 
-from haprion_ui import backups, config, db, feature_switch, settings_apply
+from haprion_ui import backups, config, db, feature_switch, job_wait, settings_apply
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 EXIT_REFUSED = 65
@@ -59,8 +61,9 @@ def _read_secret(args: argparse.Namespace) -> str | None:
     return line
 
 
-def command_apply(args: argparse.Namespace) -> int:
+def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = time.sleep) -> int:
     outcome = settings_apply.Outcome()
+    queued: list[db.Job] = []
     try:
         wanted = settings_apply.read_file(Path(args.file))
         piped = _read_secret(args)
@@ -79,6 +82,7 @@ def command_apply(args: argparse.Namespace) -> int:
                     wanted.features,
                     actor=actor,
                     readings=_readings(connection, settings),
+                    queued=queued,
                 )
             if args.check:
                 #
@@ -100,11 +104,26 @@ def command_apply(args: argparse.Namespace) -> int:
                 connection.rollback()
             else:
                 connection.commit()
+                #
+                # Node backups on starts the schedules it stopped as jobs. A
+                # schedule set right after this (`haprion-backup-schedule`)
+                # must not be overwritten by one of them running later, so
+                # the command ends when they have run.
+                #
+                for job in queued:
+                    _state, problem = job_wait.finished(
+                        connection, job.id, wait=args.wait, sleep=sleep
+                    )
+                    if problem:
+                        raise settings_apply.ApplyError(
+                            f"backup schedule for {job.cluster}: {problem}"
+                        )
     except (settings_apply.ApplyError, config.ConfigError) as exc:
         if args.json:
             print(json.dumps(settings_apply.envelope(None, str(exc))))
-            return EXIT_REFUSED
-        raise AdminError(str(exc)) from exc
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
     result = settings_apply.summary(outcome, check=args.check)
     if args.json:
         print(json.dumps(settings_apply.envelope(result, None)))
@@ -179,6 +198,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--replace-oidc-secret",
         action="store_true",
         help="seal and store the client secret even though issuer and client are unchanged",
+    )
+    apply.add_argument(
+        "--wait",
+        type=float,
+        default=job_wait.WAIT_SECONDS,
+        help="seconds to wait for each backup schedule job a switch queues",
     )
     apply.add_argument(
         "--oidc-secret-stdin",

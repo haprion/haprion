@@ -42,6 +42,8 @@ from haprion_ui import account_apply, auth, db, users
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
 
+EXIT_REFUSED = 65
+
 # The floor is shared with the web's own password change; see auth.
 MINIMUM_PASSWORD_LENGTH = auth.MINIMUM_PASSWORD_LENGTH
 
@@ -441,10 +443,15 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
                 account_apply.write(connection, the_plan, actor=actor_name())
                 connection.commit()
     except account_apply.ApplyError as exc:
+        #
+        # 65 with or without --json: the file was refused, which is not a
+        # usage error (64) however the answer is printed.
+        #
         if args.json:
             print(json.dumps(account_apply.envelope(None, str(exc))))
-            return 65
-        raise AdminError(str(exc)) from exc
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
     result = account_apply.summary(the_plan, check=args.check)
     if args.json:
         print(json.dumps(account_apply.envelope(result, None)))

@@ -211,20 +211,26 @@ def apply_features(
     *,
     actor: str,
     readings: feature_switch.Readings,
+    queued: list[db.Job] | None = None,
 ) -> dict[str, bool]:
     """Each switch the file names, flipped where it differs, refused as the page refuses.
 
     Written in the caller's transaction, so `--check` runs the same refusals
-    and rolls back rather than guessing which of them would apply.
+    and rolls back rather than guessing which of them would apply. The backup
+    schedule jobs a switch queued are added to `queued`, for the caller to
+    wait for once it has committed.
     """
 
     flipped: dict[str, bool] = {}
     for name, want in sorted(wanted.items()):
         try:
-            if feature_switch.switch(
+            jobs = feature_switch.switch(
                 connection, name=name, want=want, actor=actor, via="cli", readings=readings
-            ):
+            )
+            if jobs is not None:
                 flipped[name] = want
+                if queued is not None:
+                    queued.extend(jobs)
         except feature_switch.UnknownFeature as exc:
             raise ApplyError(f"no feature {name} in this database") from exc
         except features.SwitchRefused as exc:

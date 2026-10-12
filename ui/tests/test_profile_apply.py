@@ -47,6 +47,14 @@ class TheFile(unittest.TestCase):
             ),
             ("dns_profiles:\n  - {id: a, provider: x}\n  - {id: A, provider: x}\n", "twice"),
             ("dns_profiles:\n  - {id: a, provider: 7}\n", "must be text"),
+            (
+                "dns_profiles:\n  - {id: a, provider: x, fields: {algorithm: null}}\n",
+                "fields.algorithm must be text",
+            ),
+            (
+                "dns_profiles:\n  - {id: a, provider: x, fields: {port: true}}\n",
+                "fields.port must be text",
+            ),
         ):
             with self.subTest(said), self.assertRaises(ApplyError) as raised:
                 profile_apply.read_file(self.write(text))

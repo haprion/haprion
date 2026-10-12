@@ -7055,6 +7055,56 @@ class TheSettingsFromAFile(unittest.TestCase):
         self.assertIn("0600", answer["error"]["message"])
         self.assertIsNone(self.provider().issuer)
 
+    def test_node_backups_on_waits_for_the_schedules_it_starts_again(self) -> None:
+        schedule: dict[str, Any] = {
+            "time": "03:30",
+            "frequency": "daily",
+            "weekdays": [],
+            "day_of_month": None,
+            "retention": 14,
+        }
+        with self.connect() as connection:
+            connection.execute(
+                "update feature_switch set enabled = false, remembered = %s "
+                " where name = 'node_backups'",
+                (Jsonb({"schedules": {"alpha": schedule}}),),
+            )
+            connection.commit()
+        waited: list[str] = []
+
+        def worker(_seconds: float) -> None:
+            with self.connect() as connection:
+                waited.extend(
+                    row[0]
+                    for row in connection.execute(
+                        "update job set state = 'done', outcome = 'done', exit_code = 0, "
+                        "       finished_at = now() "
+                        " where state = 'pending' and operation = 'backup_schedule' "
+                        "returning cluster"
+                    ).fetchall()
+                )
+                connection.commit()
+
+        args = self.tool.build_parser().parse_args(
+            ["apply", self.write("features:\n  node_backups: true\n"), "--json"]
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.tool.command_apply(args, sleep=worker)
+
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertEqual(waited, ["alpha"])
+        with self.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "select count(*) from job where operation = 'backup_schedule' "
+                    "   and state = 'pending'"
+                ).fetchone(),
+                (0,),
+            )
+            connection.execute("delete from job where operation = 'backup_schedule'")
+            connection.commit()
+
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheProfilesFromAFile(unittest.TestCase):

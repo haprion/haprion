@@ -48,13 +48,13 @@ from haprion import ndes_profiles
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.dns_profiles import ProfileError
 
-from haprion_ui import config, db, dns_profile_form, ndes_profile_form
+from haprion_ui import config, db, dns_profile_form, job_wait, ndes_profile_form
 from haprion_ui.admin import AdminError, actor_name, connect, load_environment
 
 OPERATION = "profiles_apply"
 MAX_FILE_BYTES = 256 * 1024
 MAX_PROFILES = 64
-WAIT_SECONDS = 120.0
+WAIT_SECONDS = job_wait.WAIT_SECONDS
 EXIT_REFUSED = 65
 
 
@@ -123,6 +123,22 @@ def _text(value: object, where: str) -> str:
     return value
 
 
+def _field_text(value: object, where: str) -> str:
+    """One field as the form would have posted it: text, a number, or a list of lines.
+
+    Anything else is refused rather than turned into its Python spelling: a
+    YAML `null` must not be sealed as the word `None`, nor `true` as `True`.
+    """
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return "\n".join(value)
+    raise ApplyError(f"{where} must be text, a number or a list of text")
+
+
 def read_file(path: Path) -> dict[str, list[Wanted]]:
     """The listed profiles by section; a section the file leaves out is absent."""
 
@@ -169,7 +185,7 @@ def read_file(path: Path) -> dict[str, list[Wanted]]:
                 if not isinstance(given, Mapping):
                     raise ApplyError(f"{where}: fields maps a field to its value")
                 values = {
-                    str(name): "\n".join(value) if isinstance(value, list) else str(value)
+                    str(name): _field_text(value, f"{where} fields.{name}")
                     for name, value in given.items()
                 }
                 provider_id = _text(entry.get("provider"), f"{where} provider")
@@ -333,35 +349,6 @@ def _queue(connection: Any, change: Change, *, actor: str) -> db.Job:
     return job
 
 
-def _finished(
-    connection: Any, job_id: int, *, wait: float, sleep: Callable[[float], None]
-) -> tuple[str, str]:
-    """The job's final state and, when it did not apply, why."""
-
-    deadline = time.monotonic() + wait
-    while True:
-        state = db.job_state(connection, job_id) or "unknown"
-        connection.commit()
-        if state not in ("pending", "running"):
-            break
-        if time.monotonic() >= deadline:
-            return (
-                state,
-                f"job {job_id} is still {state} after {wait:.0f} s; is the worker running?",
-            )
-        sleep(0.5)
-    if state == "done":
-        return state, ""
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "select coalesce(result->'error'->>'message', stderr_excerpt, '') from job "
-            " where id = %(id)s",
-            {"id": job_id},
-        )
-        row = cursor.fetchone()
-    return state, f"job {job_id} ended {state}: {row[0] if row else ''}".rstrip(": ")
-
-
 def summary(the_plan: Plan, *, check: bool, applied: Sequence[dict[str, Any]]) -> dict[str, Any]:
     return {
         "changed": bool(the_plan.changes),
@@ -410,7 +397,9 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
                 for change in the_plan.changes:
                     job = _queue(connection, change, actor=actor)
                     connection.commit()
-                    state, problem = _finished(connection, job.id, wait=args.wait, sleep=sleep)
+                    state, problem = job_wait.finished(
+                        connection, job.id, wait=args.wait, sleep=sleep
+                    )
                     applied.append(
                         {
                             "kind": change.kind.name,
@@ -427,7 +416,8 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
             return EXIT_REFUSED
         for entry in applied:
             print(f"{entry['kind']} {entry['profile']}: job {entry['job']} {entry['state']}")
-        raise AdminError(str(exc)) from exc
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
     result = summary(the_plan, check=args.check, applied=applied)
     if args.json:
         print(json.dumps(envelope(result, None)))
@@ -455,11 +445,13 @@ def command_remove(args: argparse.Namespace, *, sleep: Callable[[float], None] =
                 connection, Change(kind, row.id, "remove", row.revision), actor=actor_name()
             )
             connection.commit()
-            state, problem = _finished(connection, job.id, wait=args.wait, sleep=sleep)
+            state, problem = job_wait.finished(connection, job.id, wait=args.wait, sleep=sleep)
         except ApplyError as exc:
-            raise AdminError(str(exc)) from exc
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return EXIT_REFUSED
     if problem:
-        raise AdminError(f"{kind.section} {row.id}: {problem}")
+        print(f"ERROR: {kind.section} {row.id}: {problem}", file=sys.stderr)
+        return EXIT_REFUSED
     print(f"removed {kind.name} profile {row.id} (job {job.id})")
     return 0
 

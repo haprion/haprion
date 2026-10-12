@@ -2053,7 +2053,8 @@ timer or the retention differs from what is asked - so the same command twice ch
 Without `--weekly` or `--monthly <day>` it runs every day; `--disable` keeps the schedule and
 stops the timer; `--check` says whether it would change; `--json` prints the service's envelope
 with `changed`. *Node backups* under Features is the interface's switch; the command works either
-way.
+way, but turning the switch on starts again the schedules it stopped, so set a schedule after the
+switch is on.
 
 Archives are root-only and belong to a specific node. For backup identities, storage and
 timers, see [Runtime policy](#runtime-policy).
@@ -2893,11 +2894,13 @@ example:
   register: objects
   changed_when: (objects.stdout | from_json).result.changed
 
-- name: Roll out what was published
+- name: Roll out what is published
   ansible.builtin.command:
     argv: [haprion-deploy, -c, alpha, --json]
   become: true
-  when: (objects.stdout | from_json).result.deployment_required
+  register: deploy
+  changed_when: >-
+    'updated' in ((deploy.stdout | from_json).result.nodes | map(attribute='outcome'))
 
 - name: Accounts
   ansible.builtin.command:
@@ -2923,7 +2926,11 @@ example:
   changed_when: (schedule.stdout | from_json).result.changed
 ```
 
-The files with passwords and credentials are written by the tool with mode `0600`, owned by root.
+The deploy runs every time rather than only after a publish: a node that is already current is
+left alone, and a deploy that failed on an earlier run is then finished on the next. The settings
+come before the backup schedule: turning *Node backups* on starts the schedules it stopped, and
+`haprion-settings` ends when they have run, so a schedule set after it is the one that stays. The
+files with passwords and credentials are written by the tool with mode `0600`, owned by root.
 
 ## Maintenance
 

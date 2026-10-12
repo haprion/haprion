@@ -1173,6 +1173,7 @@ SEMANTIC_CHECKS = {
     "changes_publish": check_changes_publish_semantics,
     "objects_apply": check_objects_apply_semantics,
     "network_apply": check_network_apply_semantics,
+    "cluster_settings_apply": check_network_apply_semantics,
     "user_apply": check_user_apply_semantics,
     "settings_apply": check_settings_apply_semantics,
     "profiles_apply": check_profiles_apply_semantics,
@@ -1240,7 +1241,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["changed"] = not result["changed"]
     elif operation == "reset_history":
         result["published"] = not result["published"]
-    elif operation == "network_apply":
+    elif operation in ("network_apply", "cluster_settings_apply"):
         result["deployment_required"] = not result["deployment_required"]
     elif operation == "objects_apply":
         result["unchanged"].append(result["added"][0] if result["added"] else "shop")

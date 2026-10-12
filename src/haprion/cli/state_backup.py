@@ -1,4 +1,11 @@
-"""``haprion-state-backup`` - fetch complete DR state from configured nodes."""
+"""``haprion-state-backup`` - fetch complete DR state from configured nodes.
+
+    haprion-state-backup [-c <cluster>]
+    haprion-state-backup -c <cluster> --json
+
+`--json` prints the envelope the interface's *Run backup now* job records
+(`schemas/v1/haprion-backup-run`), for one cluster.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +17,7 @@ from typing import TextIO
 
 from haprion.backup_retention import RetentionError
 from haprion.backup_retention import read as read_retention
+from haprion.cli import backup_job_helper
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     Cluster,
@@ -18,20 +26,26 @@ from haprion.config import (
     load_policy,
     load_runtime_config,
 )
+from haprion.envelope import failure, new_request_id
+from haprion.helper_protocol import write_document
 from haprion.state_backup import BackupResult, BackupRunError, run
 
 EXIT_USAGE = 64
 EXIT_NOT_ROOT = 77
-USAGE = "Usage: haprion-state-backup [-c <cluster>]\n"
+USAGE = "Usage: haprion-state-backup [-c <cluster>] | -c <cluster> --json\n"
 
 type Runner = Callable[[str, Cluster, DeployIdentity | None, Path | None, int], BackupResult]
 
 
-def _parse(argv: list[str]) -> str | None:
-    if not argv:
-        return None
-    if len(argv) == 2 and argv[0] in {"-c", "--cluster"} and argv[1]:
-        return argv[1]
+def _parse(argv: list[str]) -> tuple[str | None, bool]:
+    """(the cluster, or None for every one; --json, which needs one)."""
+
+    json_mode = "--json" in argv
+    rest = [item for item in argv if item != "--json"]
+    if not rest and not json_mode:
+        return None, False
+    if len(rest) == 2 and rest[0] in {"-c", "--cluster"} and rest[1]:
+        return rest[1], json_mode
     raise ValueError("invalid arguments")
 
 
@@ -58,7 +72,7 @@ def main(
     writer = output_stream or sys.stdout
     errors = error_stream or sys.stderr
     try:
-        selected = _parse(argv)
+        selected, json_mode = _parse(argv)
     except ValueError:
         errors.write(USAGE)
         return EXIT_USAGE
@@ -93,8 +107,26 @@ def main(
             )
         except (BackupRunError, RetentionError) as exc:
             errors.write(f"ERROR: {cluster_id}: {exc}\n")
+            if json_mode:
+                write_document(
+                    writer,
+                    failure(
+                        operation=backup_job_helper.RUN,
+                        cluster=cluster_id,
+                        request_id=new_request_id(),
+                        code="backup_failed",
+                        message=str(exc),
+                        exit_code=1,
+                    ),
+                )
             failed = True
             continue
+        if json_mode:
+            document, code = backup_job_helper.run_document(
+                result, cluster=cluster_id, request_id=new_request_id()
+            )
+            write_document(writer, document)
+            return code
         _write(result, writer)
         failed = failed or result.outcome != "done"
     return 1 if failed else 0

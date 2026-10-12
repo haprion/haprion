@@ -6,7 +6,10 @@ so the terminal and the browser make the same version (Fas 15, B209, B257):
 
     haprion-cluster-settings -c <cluster> [--json]
     haprion-cluster-settings -c <cluster> --set <file> -m <comment>
+    haprion-cluster-settings apply -c <cluster> <file> [--check] [-m <comment>] [--json]
 
+`apply` is the form automation uses (`cluster_settings_apply`): it compares
+first, says `changed`, and publishes nothing when the file is what is stored.
 A change is published, not deployed: `haprion-deploy -c <cluster>` takes it
 to the nodes, as after any other publish.
 """
@@ -35,6 +38,7 @@ USAGE = (
     "Usage:\n"
     "  haprion-cluster-settings -c <cluster> [--json]\n"
     "  haprion-cluster-settings -c <cluster> --set <file> -m <comment>\n"
+    "  haprion-cluster-settings apply -c <cluster> <file> [--check] [-m <comment>] [--json]\n"
 )
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
@@ -216,6 +220,16 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
+    if argv and argv[0] == "apply":
+        from haprion.cli import cluster_settings_apply
+
+        return cluster_settings_apply.main(
+            argv[1:],
+            run_helper=run_helper,
+            run_publish=run_publish,
+            stream_out=writer,
+            stream_err=errors,
+        )
     cluster, json_mode, path, comment = _parse(argv)
     if path is not None and comment is not None:
         return _set(

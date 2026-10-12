@@ -19,7 +19,7 @@ from typing import Any, TextIO
 
 from haprion import ui_interface
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haprion.cert_issue import Certbot, IssueError, IssueResult, issue, run_certbot
+from haprion.cert_issue import Certbot, IssueError, IssueResult, issue, renew, run_certbot
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haprion.cli import cert_job
 from haprion.cli.cert_publish import EXIT_NOT_ROOT, default_deployer
@@ -28,6 +28,7 @@ from haprion.envelope import Message, envelope, failure, new_request_id
 from haprion.helper_protocol import HelperProtocolError
 
 OPERATION = "cert_issue"
+RENEW = "renew"
 EXIT_USAGE = 64
 
 USAGE = (
@@ -36,6 +37,7 @@ USAGE = (
     "                     [--dns-profile <id>] [--cluster <id>]...\n"
     "                     [--receiver <id>]... [--format <id>=<form>]...\n"
     "                     [--interface | --exportable] [--json]\n"
+    "  haprion-cert-issue --domain <certificate id> --renew [--json]\n"
     "\n"
     "Obtains a certificate from the ACME account this host already has, adds it\n"
     "to the certificate registry, publishes it to the named targets and rolls\n"
@@ -106,6 +108,13 @@ def _parse(
             index += 2
         elif argument == "--json":
             json_mode = True
+            index += 1
+        elif argument == "--renew":
+            #
+            # What *Renew* on the certificates page queues for a certbot row:
+            # the whole round again, now, for a lineage the registry holds.
+            #
+            method = RENEW
             index += 1
         elif argument == "--interface":
             interface = True
@@ -267,6 +276,28 @@ def main(
             exc.exit_code,
         )
 
+    if method == RENEW:
+        if dns_profile or clusters or receivers or format_flags or interface or exportable:
+            return refuse(
+                "bad_input", "a renewal names the certificate and nothing else", EXIT_USAGE
+            )
+        try:
+            renewed = renew(
+                certificate_id=domain,
+                policy=policy,
+                runtime=runtime,
+                certbot=certbot or run_certbot,
+                deployer=deployer or default_deployer(errors),
+                installer=installer or ui_interface.install,
+                live=live,
+                store=store,
+                lock_path=lock_path,
+                require_secure=require_secure,
+            )
+        except IssueError as exc:
+            return refuse(exc.code, str(exc), exc.exit_code, exc.details)
+        return _answer(renewed, request_id, json_mode=json_mode, writer=writer, errors=errors)
+
     try:
         result = issue(
             domain=domain,
@@ -291,8 +322,13 @@ def main(
     except IssueError as exc:
         return refuse(exc.code, str(exc), exc.exit_code, exc.details)
 
-    document, exit_code = result_envelope(result, request_id=request_id)
+    return _answer(result, request_id, json_mode=json_mode, writer=writer, errors=errors)
 
+
+def _answer(
+    result: IssueResult, request_id: str, *, json_mode: bool, writer: TextIO, errors: TextIO
+) -> int:
+    document, exit_code = result_envelope(result, request_id=request_id)
     if json_mode:
         writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
     else:

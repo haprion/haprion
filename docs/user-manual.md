@@ -2434,6 +2434,13 @@ sudo haprion-cluster-settings -c alpha --set cluster.yaml -m "Send the traffic l
 haprion-deploy -c alpha
 ```
 
+For automation, `apply` compares first and publishes only where the file differs from what is
+stored; `--check` says whether it would, and `--json` answers with `changed`:
+
+```bash
+sudo haprion-cluster-settings apply -c alpha cluster.yaml --check --json
+```
+
 **The log** is the same structured record the node's own file gets ([Mirroring node traffic logs](#mirroring-node-traffic-logs)),
 with `node`, the host name of the node that wrote it. HAProxy writes one line per request to
 the node's syslog socket, and the node's rsyslog writes it to the day file and sends it to each
@@ -2858,15 +2865,15 @@ refusals, and their writes are audited and versioned the same way.
 |---|---|
 | *Proxies*: new, edit, remove, advanced config, WAF exceptions | `haprion-objects apply`, `haprion-objects remove` |
 | *Network* | `haprion-network apply` |
-| A cluster's *Logs & metrics* | `haprion-cluster-settings --set` |
+| A cluster's *Logs & metrics* | `haprion-cluster-settings apply` |
 | *Versions*: deploy, revert | `haprion-deploy`, `haprion-revert` |
 | Drain, maintenance, unblock | `haprion-server-state` |
 | *Settings → Nodes*: nodes and clusters | `haprion-node`, `haprion-cluster` |
-| *Certificates*: issue, import, request, NDES, renew, publish | `haprion-cert-issue`, `-import`, `-request`, `-scep`, `-renew`, `-publish`, `-deploy` |
+| *Certificates*: issue, renew, import, request, NDES, publish | `haprion-cert-issue` (`--renew`), `-import`, `-request`, `-scep`, `-publish`, `-deploy` |
 | *Certificates*: publish to, remove from, delete | `haprion-cert-target`, `haprion-cert-delete` |
 | *Certificates*: DNS providers and NDES profiles | `haprion-profiles` |
 | External certificate receivers | `haprion-cert-receiver` |
-| *Node backups*: schedule, run, restore | `haprion-backup-schedule`, `haprion-state-backup`, `haprion-node-restore` |
+| *Node backups*: schedule, run, restore | `haprion-backup-schedule`, `haprion-state-backup -c <cluster> --json`, `haprion-node-restore` |
 | *Settings → Users* | `haprion-user` |
 | *External monitoring*, *Features*, OIDC | `haprion-settings` |
 | The interface's own certificate | `haprion-tls` |
@@ -2881,7 +2888,7 @@ What they share:
 - **`--json`** prints one envelope (`docs/CONTRACT.md`, `schemas/v1/`), with `changed` where the
   command decides it. The exit code is 0 for done and the envelope's own code otherwise.
 - **Publishing is not deploying.** `haprion-objects apply`, `haprion-network apply` and
-  `haprion-cluster-settings --set` publish a new version; `haprion-deploy` rolls it out, as
+  `haprion-cluster-settings apply` publish a new version; `haprion-deploy` rolls it out, as
   *Publish & deploy* does in two steps.
 - **With sudo, on the manager.** `haprion-user`, `haprion-settings` and `haprion-profiles` write
   the interface's database as root; the others hand their request to a root helper, and run as

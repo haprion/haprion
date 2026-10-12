@@ -431,28 +431,45 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
 
 
 def command_remove(args: argparse.Namespace, *, sleep: Callable[[float], None] = time.sleep) -> int:
-    """One profile removed, as the page's *Remove*; one already gone is no change."""
+    """One profile removed, as the page's *Remove*; one already gone is no change.
+
+    `--json` answers as `apply` does (`profiles_apply`), with the one removal.
+    """
 
     kind = DNS if args.kind == "dns" else NDES
+
+    def refused(message: str) -> int:
+        if args.json:
+            print(json.dumps(envelope(None, message)))
+        else:
+            print(f"ERROR: {message}", file=sys.stderr)
+        return EXIT_REFUSED
+
     with connect(load_environment()) as connection:
         row = next((row for row in kind.listed(connection) if row.id == args.profile), None)
         connection.commit()
         if row is None:
-            print(f"no {kind.name} profile {args.profile}; nothing to change")
+            if args.json:
+                print(json.dumps(envelope(summary(Plan((), ()), check=False, applied=[]), None)))
+            else:
+                print(f"no {kind.name} profile {args.profile}; nothing to change")
             return 0
+        change = Change(kind, row.id, "remove", row.revision)
         try:
-            job = _queue(
-                connection, Change(kind, row.id, "remove", row.revision), actor=actor_name()
-            )
+            job = _queue(connection, change, actor=actor_name())
             connection.commit()
             state, problem = job_wait.finished(connection, job.id, wait=args.wait, sleep=sleep)
         except ApplyError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return EXIT_REFUSED
+            return refused(str(exc))
     if problem:
-        print(f"ERROR: {kind.section} {row.id}: {problem}", file=sys.stderr)
-        return EXIT_REFUSED
-    print(f"removed {kind.name} profile {row.id} (job {job.id})")
+        return refused(f"{kind.section} {row.id}: {problem}")
+    if args.json:
+        applied = [{"kind": kind.name, "profile": row.id, "job": job.id, "state": state}]
+        print(
+            json.dumps(envelope(summary(Plan((change,), ()), check=False, applied=applied), None))
+        )
+    else:
+        print(f"removed {kind.name} profile {row.id} (job {job.id})")
     return 0
 
 
@@ -511,6 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument(
         "--wait", type=float, default=WAIT_SECONDS, help="seconds to wait for the job"
     )
+    remove.add_argument("--json", action="store_true")
     listing = subcommands.add_parser("list", help="the stored profiles; never a credential")
     listing.add_argument("--json", action="store_true")
     return parser

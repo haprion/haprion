@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "cluster_settings_apply",
+  "cluster": "alpha",
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": null,
+  "warnings": [],
+  "error": {"code": "settings_invalid", "message": "settings.yaml: managed/cluster.yaml: metrics.port must be a port number"}
+}

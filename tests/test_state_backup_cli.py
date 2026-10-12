@@ -139,3 +139,53 @@ class StateBackupCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StateBackupJsonTests(unittest.TestCase):
+    """`--json` (Fas 23): the envelope the interface's backup job records, for one cluster."""
+
+    def run_json(self, argv: list[str], result: BackupResult) -> tuple[int, str]:
+        class Policy:
+            backup_identity = DeployIdentity("svc-backup", Path("/root/key"))
+            backup_root = Path("/srv/backups")
+
+        class Runtime:
+            clusters: dict[str, Any] = {"alpha": object()}
+
+            @staticmethod
+            def cluster(_cluster_id: str) -> Any:
+                return object()
+
+        output = io.StringIO()
+        with (
+            mock.patch.object(state_backup, "load_policy", return_value=Policy()),
+            mock.patch.object(state_backup, "load_runtime_config", return_value=Runtime()),
+            mock.patch.object(state_backup, "read_retention", return_value=14),
+        ):
+            code = state_backup.main(
+                argv,
+                output_stream=output,
+                error_stream=io.StringIO(),
+                require_root=False,
+                runner=lambda *_args: result,
+            )
+        return code, output.getvalue()
+
+    def test_one_cluster_answers_in_the_backup_run_contract(self) -> None:
+        from tests.contract_schema import assert_contract
+
+        done = BackupResult(
+            "alpha",
+            "2026-09-21_05-00-00",
+            (NodeResult("node-a", "done", "2026-09-21_05-00-00", 4096, None),),
+        )
+
+        code, out = self.run_json(["-c", "alpha", "--json"], done)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(assert_contract("haprion-backup-run", out)["outcome"], "done")
+
+    def test_json_needs_one_cluster(self) -> None:
+        done = BackupResult("alpha", "x", ())
+        code, _ = self.run_json(["--json"], done)
+        self.assertEqual(code, 64)

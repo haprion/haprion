@@ -7250,12 +7250,16 @@ ndes_profiles:
         self.apply(self.write(self.FILE))
 
         code, answer = self.apply(self.write("ndes_profiles: []\n"), "--prune")
-        args = self.tool.build_parser().parse_args(["remove", "dns", "cf-main"])
-        with contextlib.redirect_stdout(io.StringIO()):
+        args = self.tool.build_parser().parse_args(["remove", "dns", "cf-main", "--json"])
+        first, second = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(first):
             removed = self.tool.command_remove(args, sleep=self.work)
+        with contextlib.redirect_stdout(second):
             again = self.tool.command_remove(args, sleep=self.work)
 
         self.assertEqual((code, removed, again), (0, 0, 0))
+        self.assertTrue(json.loads(first.getvalue())["result"]["changed"])
+        self.assertFalse(json.loads(second.getvalue())["result"]["changed"])
         self.assertEqual(answer["result"]["changes"][0]["action"], "remove")
         self.assertEqual(self.stored(), [])
 

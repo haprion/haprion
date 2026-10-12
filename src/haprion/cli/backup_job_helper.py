@@ -60,6 +60,39 @@ def build_schedule_request(
     return _document(SCHEDULE, cluster, request_id, {**schedule.as_dict(), "enabled": enabled})
 
 
+def run_document(
+    report: state_backup.BackupResult, *, cluster: str, request_id: str
+) -> tuple[dict[str, object], int]:
+    """One backup run as its envelope and exit code: the helper's, and `haprion-state-backup --json`'s."""
+
+    failed = tuple(node for node in report.nodes if node.outcome != "done")
+    error = (
+        Message(code="backup_failed", message="No node produced a valid state archive")
+        if report.outcome == "failed"
+        else None
+    )
+    warnings = tuple(
+        Message(
+            code=node.error or "backup_failed",
+            message="The node did not produce a valid state archive",
+            node=node.name,
+        )
+        for node in failed
+    )
+    return (
+        envelope(
+            operation=RUN,
+            outcome=report.outcome,
+            cluster=cluster,
+            request_id=request_id,
+            result=report.as_dict(),
+            warnings=warnings if report.outcome == "partial" else (),
+            error=error,
+        ),
+        0 if report.outcome in {"done", "partial"} else 1,
+    )
+
+
 def _raw(stream: BinaryIO) -> tuple[bytes, str]:
     raw = stream.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
@@ -209,32 +242,11 @@ def main(
             message=str(exc),
             exit_code=1,
         )
-    failed = tuple(node for node in report.nodes if node.outcome != "done")
-    if report.outcome == "failed":
-        error = Message(code="backup_failed", message="No node produced a valid state archive")
-    else:
-        error = None
-    warnings = tuple(
-        Message(
-            code=node.error or "backup_failed",
-            message="The node did not produce a valid state archive",
-            node=node.name,
-        )
-        for node in failed
+    document, exit_code = run_document(
+        report, cluster=request.cluster, request_id=request.request_id
     )
-    write_document(
-        writer,
-        envelope(
-            operation=operation,
-            outcome=report.outcome,
-            cluster=request.cluster,
-            request_id=request.request_id,
-            result=report.as_dict(),
-            warnings=warnings if report.outcome == "partial" else (),
-            error=error,
-        ),
-    )
-    return 0 if report.outcome in {"done", "partial"} else 1
+    write_document(writer, document)
+    return exit_code
 
 
 if __name__ == "__main__":

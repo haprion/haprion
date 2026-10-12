@@ -1441,6 +1441,14 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  */
 .form-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 14px 20px 0; }
 .form-checks .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
+/* A box among the fields of a grid (the pool's PROXY protocol, 26-10-12):
+ * `.form-grid label` stacks its contents and gives an input a field's padding,
+ * which put the box centred above its own name. Row again, flush with the
+ * fields' left edge, the note under the box. */
+.form-grid > .form-checks { flex-direction: column; align-items: flex-start; gap: 6px; padding: 0; }
+.form-grid > .form-checks .check { flex-direction: row; }
+.form-grid > .form-checks .check input { flex: none; padding: 0; }
+.preview-form .form-grid > .form-checks .warning-text { margin: 0; }
 /* A checkbox that needs a sentence under it rather than beside it. The row
    stacks instead of running along, so the note belongs to the box above it and
    not to whatever the flex row wrapped next. */

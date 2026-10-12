@@ -254,3 +254,45 @@ class WithoutARegistryThePageIsWhatItWas(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ACaRowShowsItsFingerprint(LoginTestCase):
+    """B284: the fingerprint is how a CA's import is checked against its source."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        authority = registered("corp-root", kind="authority", fingerprint="d" * 64, sans=[])
+        #
+        # A CA is compared by its whole file, every certificate in it (B276).
+        #
+        authority["bundle_sha256"] = "e" * 64
+        rows = mock.patch(
+            "haprion_ui.db.cluster_certificates",
+            return_value=[
+                with_registry(certificate_reading(), registered(fingerprint="a" * 64), authority)
+            ],
+        )
+        rows.start()
+        self.addCleanup(rows.stop)
+        statuses = mock.patch(
+            "haprion_ui.db.cluster_statuses",
+            return_value=[status_reading(node(("example.com", "a" * 64)))],
+        )
+        statuses.start()
+        self.addCleanup(statuses.stop)
+
+    def page(self, query: str) -> str:
+        client = self.client(replace(configuration(), clusters=("alpha",)))
+        self.sign_in(client)
+        response = client.get(f"/certificates{query}")
+        self.assertEqual(response.status_code, 200)
+        return str(response.text)
+
+    def test_an_opened_ca_row_shows_it_and_a_certificate_row_does_not(self) -> None:
+        opened = self.page("?view=registry&open=corp-root")
+        other = self.page("?view=registry&open=example.com")
+
+        detail = opened.split('class="registry-detail"', 1)[1].split("</tr>", 1)[0]
+        self.assertIn("SHA-256", detail)
+        self.assertIn("e" * 64, detail)
+        self.assertNotIn("certificate-fingerprint", other)

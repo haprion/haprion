@@ -618,6 +618,9 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
   /* :nth-child(n) to outweigh the reading tables' `.node-table td:nth-child(k)` widths. */
   .log-target-table td:nth-child(n), .delivery-table td:nth-child(n) { width: 100%; grid-column: 1 / -1; }
 }
+.certificate-fingerprint { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+/* Two of the detail grid's columns: 64 hex digits on one line at 1280 px. */
+@media (min-width: 681px) { .registry-detail-grid > .registry-detail-wide { grid-column: span 2; } }
 .users-table td:first-child strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The provider sign-in goes through, beside the buttons that change it (B197). */
 .users-sso { margin-right: 4px; color: var(--text-secondary); font-size: 12px; }

@@ -18,23 +18,33 @@ from haprion.golden import (
     DNS_FILES,
     GOLDEN,
     IPVS_FILES,
+    RSYSLOG_FILES,
     cases,
     produced,
     produced_dns,
     produced_ipvs,
+    produced_rsyslog,
 )
 
 
 def main() -> int:
     for case in cases(GOLDEN):
-        files = {**produced(case), **produced_dns(case), **produced_ipvs(case)}
+        files = {
+            **produced(case),
+            **produced_dns(case),
+            **produced_ipvs(case),
+            **produced_rsyslog(case),
+        }
         for name, content in sorted(files.items()):
             path = case / name
             if not path.exists() or path.read_text() != content:
                 print(f"writing {path.relative_to(GOLDEN.parent.parent)}")
             path.write_text(content)
         for path in sorted(
-            [*case.glob("*.cfg"), *(case / name for name in (*DNS_FILES, *IPVS_FILES))]
+            [
+                *case.glob("*.cfg"),
+                *(case / name for name in (*DNS_FILES, *IPVS_FILES, *RSYSLOG_FILES)),
+            ]
         ):
             if not path.exists():
                 continue

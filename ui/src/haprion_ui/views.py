@@ -4742,7 +4742,7 @@ def build_router(config: Config) -> APIRouter:
         target_name: Sequence[str] = Form(default=()),
         target_address: Sequence[str] = Form(default=()),
         target_port: Sequence[str] = Form(default=()),
-        target_buffer: Sequence[str] = Form(default=()),
+        target_disk: Sequence[str] = Form(default=()),
         target_tls: Sequence[str] = Form(default=()),
         metrics_on: str = Form(default="", max_length=4),
         metrics_port: str = Form(default="", max_length=8),
@@ -4810,7 +4810,7 @@ def build_router(config: Config) -> APIRouter:
                     name=field(target_name, index),
                     address=field(target_address, index),
                     port=field(target_port, index),
-                    buffer_kib=field(target_buffer, index),
+                    disk_mib=field(target_disk, index),
                     tls=field(target_tls, index) == "yes",
                 )
                 for index in range(cluster_settings_page.MAX_TARGETS)

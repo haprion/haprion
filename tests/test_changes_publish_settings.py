@@ -40,7 +40,7 @@ CANONICAL = """log_targets:
   graylog:
     address: 192.0.2.20
     port: 6514
-    buffer_kib: 4096
+    disk_mib: 1024
     tls: false
 metrics:
   port: 8405
@@ -96,8 +96,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
             files = git(self.repo, "ls-files")
             self.assertIn("managed/generated/1000-cluster.cfg", files)
             self.assertIn(
-                "ring mgd-log-graylog",
-                (self.repo / "managed/generated/1000-cluster.cfg").read_text(),
+                'target="192.0.2.20"', (self.repo / "managed/rsyslog/forward.conf").read_text()
             )
             head = git(self.repo, "rev-parse", "HEAD")
             self.assertEqual(request_id_of(self.repo, head), REQUEST_ID)
@@ -229,7 +228,7 @@ class TheTerminalCommand(SettingsPublishFixture):
                         "name": "loki",
                         "address": "2001:db8::30",
                         "port": 6514,
-                        "buffer_kib": 1024,
+                        "disk_mib": 1024,
                         "tls": True,
                     }
                 ],
@@ -245,7 +244,7 @@ class TheTerminalCommand(SettingsPublishFixture):
         code = command.main(["-c", "alpha"], stream_out=out, run_helper=lambda *_: self.reading())
         self.assertEqual(code, 0)
         self.assertIn("[2001:db8::30]:6514", out.getvalue())
-        self.assertIn("1024 KiB", out.getvalue())
+        self.assertIn("1024 MiB", out.getvalue())
         self.assertIn("METRICS\n-------\noff", out.getvalue())
 
     def test_set_publishes_through_the_helper_against_the_head_it_read(self) -> None:

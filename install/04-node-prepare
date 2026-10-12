@@ -346,6 +346,54 @@ DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q ipvsadm >/
     || die "ipvsadm: the package could not be installed"
 log "  ok       $(/usr/sbin/ipvsadm --version 2>/dev/null | head -n 1)"
 
+step "Forwarding the traffic log"
+
+#
+# The cluster's external receivers are sent to by rsyslog, with a queue on disk
+# for each (B286). The deploy writes them to forward.conf in the directory
+# below and takes it away when the release sends nowhere; this rule includes it
+# when it is there. It sorts before 48-haprion-traffic.conf, which writes the
+# day file and stops the line, and before Ubuntu's 49-haproxy.conf. The file
+# lives under /etc/rsyslog.d because rsyslogd's AppArmor profile lets it read
+# nothing under /etc/haproxy (measured 26-10-12).
+#
+# impstats writes each receiver's queue once a minute for haprion-node-status
+# (B289), counted per minute, so what was dropped can be summed over the last
+# hour. rsyslog-gnutls, for receivers over TLS, is the package's dependency.
+#
+RSYSLOG_FORWARD_DIR="/etc/rsyslog.d/haprion"
+RSYSLOG_FORWARD_RULE="/etc/rsyslog.d/47-haprion-forward.conf"
+RSYSLOG_STATS="${TRAFFIC_LOG_ROOT}/rsyslog-stats.json"
+RSYSLOG_STATS_ROTATE="/etc/logrotate.d/haprion-rsyslog-stats"
+ensure_dir "$RSYSLOG_FORWARD_DIR" root:root 755
+rule_before="$(sha256sum "$RSYSLOG_FORWARD_RULE" 2>/dev/null || true)"
+install_file "$RSYSLOG_FORWARD_RULE" root:root 644 "# Installed by install/04-node-prepare.
+module(load=\"impstats\" interval=\"60\" format=\"json\" resetCounters=\"on\" log.syslog=\"off\"
+       log.file=\"${RSYSLOG_STATS}\")
+include(file=\"${RSYSLOG_FORWARD_DIR}/forward.conf\" mode=\"optional\")"
+#
+# A minute's statistics are a few kilobytes; a day and the one before it is
+# all the status ever reads.
+#
+install_file "$RSYSLOG_STATS_ROTATE" root:root 644 "# Installed by install/04-node-prepare.
+${RSYSLOG_STATS} {
+    daily
+    rotate 1
+    maxsize 20M
+    missingok
+    notifempty
+    copytruncate
+    su ${RSYSLOG_WRITER} ${LOGS_GROUP}
+}"
+if [[ "$rule_before" != "$(sha256sum "$RSYSLOG_FORWARD_RULE")" ]]; then
+    rsyslogd -N1 >/dev/null 2>&1 || {
+        rm -f "$RSYSLOG_FORWARD_RULE"
+        die "rsyslog refused ${RSYSLOG_FORWARD_RULE}; removed it (rsyslogd -N1 says why)"
+    }
+    systemctl restart rsyslog.service || die "rsyslog could not be restarted"
+    log "  restarted rsyslog"
+fi
+
 step "Node scripts"
 #
 # The node package owns them (B266, D4): dpkg put them in ${SBIN}, and this

@@ -13,7 +13,7 @@ from __future__ import annotations
 import unittest
 
 from haprion.cluster_settings import (
-    DEFAULT_BUFFER_KIB,
+    DEFAULT_DISK_MIB,
     LOCATION,
     NOTHING,
     ClusterSettings,
@@ -25,8 +25,6 @@ from haprion.cluster_settings import (
 from haprion.config import ConfigError
 from haprion.generate import (
     CLUSTER_FILE,
-    EXTERNAL_LOG_FORMAT,
-    EXTERNAL_LOG_PROFILE,
     HTTP_TRAFFIC_LOG_FORMAT,
     TRAFFIC_LOG_PROFILE,
     GeneratedLayer,
@@ -60,7 +58,7 @@ class TheDocument(unittest.TestCase):
         self.assertEqual(
             settings,
             ClusterSettings(
-                log_targets=(LogTarget("graylog", "192.0.2.20", 6514, DEFAULT_BUFFER_KIB, False),),
+                log_targets=(LogTarget("graylog", "192.0.2.20", 6514, DEFAULT_DISK_MIB, False),),
                 metrics=Metrics(8405, ("192.0.2.0/24",)),
             ),
         )
@@ -83,6 +81,9 @@ class TheDocument(unittest.TestCase):
             b"log_targets: {Graylog: {address: 192.0.2.20, port: 6514}}",
             b"log_targets: {g: {address: 192.0.2.20, port: 0}}",
             b"log_targets: {g: {address: 192.0.2.20, port: 6514, buffer_kib: 32}}",
+            b"log_targets: {g: {address: 192.0.2.20, port: 6514, disk_mib: 32}}",
+            b"log_targets: {g: {address: 192.0.2.20, port: 6514, disk_mib: 70000}}",
+            b"log_targets: {g: {address: 192.0.2.20, port: 6514, disk_mib: '1g'}}",
             b"log_targets: {g: {address: 192.0.2.20, port: 6514, tls: 'yes'}}",
             b"log_targets: {g: {address: 192.0.2.20, port: 6514, colour: red}}",
             b"log_targets: {a: {address: 192.0.2.20, port: 6514}, b: {address: 192.0.2.20, port: 6514}}",
@@ -110,27 +111,48 @@ class TheGeneratedLayer(unittest.TestCase):
             objects(GOLDEN / case), reservations=load_reservations(reservations), **options
         )
 
-    def test_an_external_record_names_its_node_and_the_local_one_is_unchanged(self) -> None:
+    def test_one_line_serves_the_day_file_and_every_receiver(self) -> None:
+        #
+        # B286, B287: HAProxy writes one record, with its node, to the syslog
+        # socket; rsyslog writes it to the day file and forwards it. No ring.
+        #
         settings = load_document(GRAYLOG)
         options = arguments(GOLDEN / "minimal")
         options["settings"] = settings
-        both = generate(objects(GOLDEN / "minimal"), traffic_logging=True, **options)
-        alone = generate(
+        for traffic_logging in (True, False):
+            with self.subTest(traffic_logging=traffic_logging):
+                layer = generate(
+                    objects(GOLDEN / "minimal"), traffic_logging=traffic_logging, **options
+                )
+                frontends = layer.configuration["1000-frontends.cfg"]
+                self.assertEqual(frontends.count("log-profile "), 1)
+                self.assertIn(f"format local profile {TRAFFIC_LOG_PROFILE} local2", frontends)
+                self.assertNotIn("log ring@", frontends)
+                self.assertNotIn("\nring ", layer.configuration.get(CLUSTER_FILE, ""))
+                forward = layer.rsyslog_files["forward.conf"]
+                self.assertIn('target="192.0.2.20"', forward)
+                self.assertIn('queue.timeoutEnqueue="0"', forward)
+                self.assertEqual("    stop\n" in forward, not traffic_logging)
+        self.assertIn("%(node)H", HTTP_TRAFFIC_LOG_FORMAT)
+
+    def test_without_receivers_nothing_is_forwarded(self) -> None:
+        layer = generate(
             objects(GOLDEN / "minimal"), traffic_logging=True, **arguments(GOLDEN / "minimal")
         )
-        frontends = both.configuration["1000-frontends.cfg"]
-
-        self.assertIn(f"log-profile {TRAFFIC_LOG_PROFILE}\n", frontends)
-        self.assertIn(f"log-profile {EXTERNAL_LOG_PROFILE}\n", frontends)
-        self.assertIn(f"format local profile {TRAFFIC_LOG_PROFILE} local2", frontends)
+        self.assertEqual(layer.rsyslog_files, {})
         self.assertIn(
-            f"log ring@mgd-log-graylog len 2048 format rfc5424 profile {EXTERNAL_LOG_PROFILE}",
-            frontends,
+            f"format local profile {TRAFFIC_LOG_PROFILE} local2",
+            layer.configuration["1000-frontends.cfg"],
         )
-        self.assertIn("%(node)H", EXTERNAL_LOG_FORMAT)
-        self.assertNotIn("%(node)H", HTTP_TRAFFIC_LOG_FORMAT)
-        # Without targets, the local stream is written exactly as before.
-        self.assertNotIn(EXTERNAL_LOG_PROFILE, alone.configuration["1000-frontends.cfg"])
+
+    def test_the_old_memory_buffer_is_read_and_no_longer_written(self) -> None:
+        settings = load_document(
+            b"log_targets: {g: {address: 192.0.2.20, port: 6514, buffer_kib: 4096}}"
+        )
+        self.assertEqual(settings.log_targets[0].disk_mib, DEFAULT_DISK_MIB)
+        written = dump_document(settings)
+        self.assertNotIn(b"buffer_kib", written)
+        self.assertIn(b"disk_mib: 1024", written)
 
     def test_nothing_set_writes_no_cluster_file(self) -> None:
         self.assertNotIn(CLUSTER_FILE, self.generate("minimal", NOTHING).configuration)

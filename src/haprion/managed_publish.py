@@ -58,6 +58,11 @@ WAF_PREFIX = "managed/waf/"
 # `dns/`; absent when no object is dns, which is what stops dnsdist there.
 #
 DNS_PREFIX = "managed/dns/"
+#
+# rsyslog's forwarding to the external receivers (B286). The node's `rsyslog/`;
+# absent when the traffic log is sent nowhere, which removes it there.
+#
+RSYSLOG_PREFIX = "managed/rsyslog/"
 PLACEHOLDER = ".gitkeep"
 
 
@@ -154,6 +159,7 @@ def managed_files(
                 MAPS_PREFIX,
                 WAF_PREFIX,
                 DNS_PREFIX,
+                RSYSLOG_PREFIX,
             )
         ):
             del result[path]
@@ -239,6 +245,12 @@ def managed_files(
         {
             f"{DNS_PREFIX}{name}": content.encode("utf-8")
             for name, content in generated.dns_files.items()
+        }
+    )
+    result.update(
+        {
+            f"{RSYSLOG_PREFIX}{name}": content.encode("utf-8")
+            for name, content in generated.rsyslog_files.items()
         }
     )
     result.update(

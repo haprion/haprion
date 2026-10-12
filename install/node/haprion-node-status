@@ -10,6 +10,7 @@ import re
 import socket
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -575,14 +576,90 @@ def read_ipvs():
 
 
 #
-# What the dashboard shows as a node's CPU and memory (B239). Counters, not a
-# percentage: CPU use is a rate, and a rate needs two readings. The poller
-# keeps the previous one and works out the share between them, so nothing here
-# waits to measure. Memory is what the kernel says a new process could have
-# without swapping - `available` in `free`, not `free`, which leaves out the
-# cache the kernel gives back on demand. Each part is `null` when it cannot be
-# read, so an unreadable figure is never shown as zero.
+# rsyslog's forwarding to the cluster's external receivers (B286, B289): the
+# file the deploy put in place names them, and impstats writes their queues
+# once a minute, each line `<ctime>: {json}`. Counters are per minute
+# (resetCounters on), so what was dropped is summed over the last hour; a
+# queue's size is a gauge, its part in memory and its part on disk added up.
+# A receiver that is away shows as a queue that grows - rsyslog's own
+# `suspended` stays 0 while omfwd retries (measured 26-10-12).
 #
+RSYSLOG_FORWARD = Path("/etc/rsyslog.d/haprion/forward.conf")
+RSYSLOG_STATS = Path("/var/log/haprion/rsyslog-stats.json")
+FORWARD_ACTION = re.compile(r'^\s*name="haprion-([a-z][a-z0-9-]{0,23})"\s*$', re.MULTILINE)
+STATS_LINE = re.compile(r"^([A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d\d:\d\d:\d\d \d{4}): (\{.*\})$")
+FORWARD_WINDOW_SECONDS = 3600
+MAX_STATS_READ = 2 * 1024 * 1024
+
+
+def _stats_tail():
+    with RSYSLOG_STATS.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - MAX_STATS_READ))
+        data = handle.read(MAX_STATS_READ)
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    return lines[1:] if size > MAX_STATS_READ else lines
+
+
+def read_log_forwarding(now=None):
+    """Each external receiver's queue on this node; null when it forwards nowhere."""
+
+    try:
+        names = FORWARD_ACTION.findall(RSYSLOG_FORWARD.read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError):
+        names = []
+    if not names:
+        return None
+    moment = time.time() if now is None else now
+    queued = {name: None for name in names}
+    dropped = dict.fromkeys(names, 0)
+    newest = None
+    try:
+        lines = _stats_tail()
+    except OSError:
+        lines = []
+    readings = []
+    for line in lines:
+        match = STATS_LINE.match(line)
+        if not match:
+            continue
+        try:
+            stamp = time.mktime(time.strptime(" ".join(match.group(1).split()), "%a %b %d %H:%M:%S %Y"))
+            body = json.loads(match.group(2))
+        except (ValueError, OverflowError):
+            continue
+        if isinstance(body, dict):
+            readings.append((stamp, body))
+    if readings:
+        newest = max(stamp for stamp, _ in readings)
+    for stamp, body in readings:
+        label = body.get("name")
+        if not isinstance(label, str) or not label.startswith("haprion-"):
+            continue
+        base, _, part = label.partition(" ")
+        name = base[len("haprion-"):]
+        if name not in queued or part not in ("queue", "queue[DA]"):
+            continue
+        if moment - stamp <= FORWARD_WINDOW_SECONDS:
+            for key in ("discarded.full", "discarded.nf"):
+                value = body.get(key)
+                if isinstance(value, int) and value > 0:
+                    dropped[name] += value
+        size = body.get("size")
+        if stamp == newest and isinstance(size, int) and size >= 0:
+            queued[name] = (queued[name] or 0) + size
+    return {
+        "stats_age_sec": None if newest is None else max(0, int(moment - newest)),
+        "receivers": [
+            {"name": name, "queued": queued[name], "dropped_last_hour": dropped[name]}
+            for name in sorted(names)
+        ],
+    }
+
+
 def read_server_state_unapplied():
     """Kept states HAProxy does not hold, by server GUID: {} for none, None when unreadable."""
 
@@ -602,6 +679,15 @@ def read_server_state_unapplied():
     }
 
 
+#
+# What the dashboard shows as a node's CPU and memory (B239). Counters, not a
+# percentage: CPU use is a rate, and a rate needs two readings. The poller
+# keeps the previous one and works out the share between them, so nothing here
+# waits to measure. Memory is what the kernel says a new process could have
+# without swapping - `available` in `free`, not `free`, which leaves out the
+# cache the kernel gives back on demand. Each part is `null` when it cannot be
+# read, so an unreadable figure is never shown as zero.
+#
 def read_resources():
     cpu = None
     try:
@@ -1573,6 +1659,7 @@ result = {
     "peers": read_peers(),
     "blocked": read_blocked(),
     "packages": read_packages(),
+    "log_forwarding": read_log_forwarding(),
 }
 
 if args.json:

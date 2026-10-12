@@ -20,6 +20,8 @@ from haprion.release_layout import (
     DNS_TARGET,
     KEEPALIVED_ALLOWED_SUFFIX,
     KEEPALIVED_TARGET,
+    RSYSLOG_NAME,
+    RSYSLOG_TARGET,
     WAF_NAME,
     WAF_TARGET,
 )
@@ -154,6 +156,17 @@ def _allowed_path(raw: str) -> str:
     # dnsdist's one file (B249), and nothing else in its directory.
     #
     if len(path.parts) == 2 and path.parts[0] == DNS_TARGET and DNS_NAME.match(path.parts[1]):
+        return raw
+    #
+    # rsyslog's forwarding (B286), one file. Checked with `rsyslogd -N1` on the
+    # node, where it runs: the manager's rsyslogd is confined by AppArmor to
+    # its own directories and cannot read a candidate (measured 26-10-12).
+    #
+    if (
+        len(path.parts) == 2
+        and path.parts[0] == RSYSLOG_TARGET
+        and RSYSLOG_NAME.match(path.parts[1])
+    ):
         return raw
     raise HelperProtocolError("candidate contains a path outside its allowlist", exit_code=65)
 

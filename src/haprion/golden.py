@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from haprion import cluster_settings, ipvs_config, safe_yaml
+from haprion import cluster_settings, ipvs_config, rsyslog_forward, safe_yaml
 from haprion.config import AbuseProtection, UnknownHost, Vip
 from haprion.generate import generate
 from haprion.proxy_model import Proxy, load_proxy
@@ -97,6 +97,17 @@ IPVS_FILES = (ipvs_config.FILE,)
 
 def expected_ipvs(case: Path) -> dict[str, str]:
     return {name: (case / name).read_text() for name in IPVS_FILES if (case / name).exists()}
+
+
+#
+# rsyslog's forwarding to the external receivers (B286), apart for the same
+# reason: a case holds it only when its settings name a receiver.
+#
+RSYSLOG_FILES = (rsyslog_forward.FILE,)
+
+
+def expected_rsyslog(case: Path) -> dict[str, str]:
+    return {name: (case / name).read_text() for name in RSYSLOG_FILES if (case / name).exists()}
 
 
 #
@@ -181,6 +192,12 @@ def produced_dns(case: Path) -> dict[str, str]:
     """The dnsdist half of a case: empty unless it has a dns object."""
 
     return generate(objects(case), **arguments(case)).dns_files
+
+
+def produced_rsyslog(case: Path) -> dict[str, str]:
+    """The rsyslog half of a case: empty unless its settings name a receiver."""
+
+    return generate(objects(case), **arguments(case)).rsyslog_files
 
 
 def produced_ipvs(case: Path) -> dict[str, str]:

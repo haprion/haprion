@@ -27,12 +27,12 @@
           "maxItems": 4,
           "items": {
             "type": "object",
-            "required": ["name", "address", "port", "buffer_kib", "tls"],
+            "required": ["name", "address", "port", "disk_mib", "tls"],
             "properties": {
               "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,23}$" },
               "address": { "type": "string", "minLength": 2, "maxLength": 45 },
               "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-              "buffer_kib": { "type": "integer", "minimum": 64, "maximum": 65536 },
+              "disk_mib": { "type": "integer", "minimum": 64, "maximum": 65536 },
               "tls": { "type": "boolean" }
             },
             "additionalProperties": true

@@ -183,7 +183,7 @@ class SettingsClusterTestCase(QueueRouteTestCase):
             "target_name": ["graylog", ""],
             "target_address": ["192.0.2.60", ""],
             "target_port": ["6514", ""],
-            "target_buffer": ["", ""],
+            "target_disk": ["", ""],
             "target_tls": ["no", "no"],
             **fields,
         }

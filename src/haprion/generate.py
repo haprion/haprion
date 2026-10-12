@@ -36,7 +36,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from haprion import advanced as advanced_config
-from haprion import crs, dnsdist_config, geo, ipvs_config
+from haprion import crs, dnsdist_config, geo, ipvs_config, rsyslog_forward
 from haprion.certificates import AUTHORITY_DIRECTORY
 from haprion.check_policy import check_speaks_tls
 from haprion.cluster_settings import NOTHING as NO_SETTINGS
@@ -264,15 +264,14 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     '%(waf_id)[var(txn.coraza.id),bytes(0,96)]"'
 )
 #
-# The same record for an external receiver, and which node wrote it. The
-# syslog header cannot say: `log-send-hostname` is global and would put the
-# host name into `core/`'s own `log /dev/log` lines too, the form rsyslog's
-# local reader misparses (measured 2026-09-29). A field in the record says it
-# without touching anything else; the node's own file needs none, the
-# collector knows whom it fetched from.
+# Which node wrote the record, in the record (B287). One line per request now
+# serves the node's own file and every external receiver: rsyslog writes it
+# and forwards it (B286). The syslog header cannot carry the node:
+# `log-send-hostname` is global and would put the host name into `core/`'s own
+# `log /dev/log` lines too, the form rsyslog's local reader misparses (measured
+# 2026-09-29). The collector reads only its own fields and passes over this one.
 #
-EXTERNAL_LOG_PROFILE = f"{PREFIX}-traffic-json-external"
-EXTERNAL_LOG_FORMAT = HTTP_TRAFFIC_LOG_FORMAT.replace(
+HTTP_TRAFFIC_LOG_FORMAT = HTTP_TRAFFIC_LOG_FORMAT.replace(
     "%(schema)[int(1)] ", "%(schema)[int(1)] %(node)H ", 1
 )
 
@@ -313,6 +312,13 @@ class GeneratedLayer:
 
     Empty when no object is dns - and then the release carries no `dns/`,
     which is what stops dnsdist on the nodes.
+    """
+
+    rsyslog_files: dict[str, str] = field(default_factory=dict)
+    """`managed/rsyslog/`, and `rsyslog/` on the node: the external receivers (B286).
+
+    Empty when the cluster sends its traffic log nowhere - and then the release
+    carries no `rsyslog/`, which is what removes the forwarding from the nodes.
     """
 
     ipvs: str = ipvs_config.HEADER
@@ -484,7 +490,7 @@ def generate(
             PEERS_SECTION if peers else None,
         )
     }
-    if settings.log_targets or settings.metrics is not None or peers:
+    if settings.metrics is not None or peers:
         files[CLUSTER_FILE] = _cluster_file(settings, peers)
     guarded = [proxy for proxy in ordered if proxy.inspected is not None]
     if guarded:
@@ -517,6 +523,7 @@ def generate(
         map_files=_country_files(ordered, countries),
         waf_files=_waf_files(guarded, rule_definitions or {}),
         dns_files=dns.files,
+        rsyslog_files=rsyslog_forward.render(settings.log_targets, traffic_logging=traffic_logging),
         ipvs=ipvs.file,
     )
 
@@ -921,37 +928,14 @@ def _waf_application(name: str, directives: Sequence[str]) -> str:
     )
 
 
-def _ring_name(target: LogTarget) -> str:
-    return f"{PREFIX}-log-{target.name}"
-
-
 def _cluster_file(settings: ClusterSettings, peers: Sequence[str] = ()) -> str:
-    """The rings to external log receivers, and the metrics exporter.
+    """The metrics exporter and the peers section.
 
-    One ring per receiver and never two servers in one: every server in a ring
-    receives the same copy and the ring moves at the slowest one's pace, so a
-    receiver that stops reading would hold back the others (3.4.4 manual).
-    What does not fit in a ring while its receiver is away is dropped; the
-    traffic is not held up (measured 2026-09-29).
+    The external log receivers are not here: rsyslog on the node sends to them
+    with a queue on disk (B286), written beside this as `rsyslog/forward.conf`.
     """
 
     body: list[str] = []
-    for target in settings.log_targets:
-        address = f"[{target.address}]" if ":" in target.address else target.address
-        body.extend(
-            (
-                "",
-                f"ring {_ring_name(target)}",
-                f'    description "Traffic log to {target.name}"',
-                "    format rfc5424",
-                "    maxlen 2048",
-                f"    size {target.buffer_kib * 1024}",
-                "    timeout connect 5s",
-                "    timeout server 10s",
-                f"    server {target.name} {address}:{target.port} log-proto octet-count"
-                + (" ssl verify required ca-file @system-ca" if target.tls else ""),
-            )
-        )
     if settings.metrics is not None:
         body.extend(_metrics_frontend(settings.metrics))
     body.extend(peers)
@@ -1589,10 +1573,7 @@ def _frontend_file(
     # when traffic logging is on, and every external target either way.
     #
     structured = traffic_logging or bool(log_targets)
-    profiles = (
-        *(((TRAFFIC_LOG_PROFILE, HTTP_TRAFFIC_LOG_FORMAT),) if traffic_logging else ()),
-        *(((EXTERNAL_LOG_PROFILE, EXTERNAL_LOG_FORMAT),) if log_targets else ()),
-    )
+    profiles = ((TRAFFIC_LOG_PROFILE, HTTP_TRAFFIC_LOG_FORMAT),) if structured else ()
     for profile, record in profiles if groups else ():
         body.extend(
             (
@@ -1634,15 +1615,14 @@ def _frontend_file(
             *_quic(vip, protocol, ports, identity, listing),
             "    mode http",
             "    option httplog",
+            #
+            # One line, whether it is for the node's own file, the external
+            # receivers or both: rsyslog takes it from there (B286, B287).
+            #
             *(
                 (f"    log /dev/log len 2048 format local profile {TRAFFIC_LOG_PROFILE} local2",)
-                if traffic_logging
+                if structured
                 else ()
-            ),
-            *(
-                f"    log ring@{_ring_name(target)} len 2048 format rfc5424 "
-                f"profile {EXTERNAL_LOG_PROFILE} local2"
-                for target in log_targets
             ),
             *(
                 ("    http-request set-var(txn.traffic_host) req.hdr(host),cut_crlf,bytes(0,253)",)

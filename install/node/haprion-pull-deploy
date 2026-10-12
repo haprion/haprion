@@ -538,6 +538,89 @@ sync_dns_listener() {
     return 1
 }
 
+#
+# rsyslog, which sends the traffic log to the cluster's external receivers
+# with a queue on disk (B286). Prepared by 04-node-prepare: a fixed
+# 47-haprion-forward.conf includes the file below when it is there. A release
+# with `rsyslog/` puts it there and one without takes it away. The file is
+# copied rather than linked: rsyslogd's AppArmor profile lets it read
+# /etc/rsyslog.d and not the releases (measured 26-10-12). rsyslog reads its
+# configuration only when it starts, so a changed file is a restart - and
+# only a changed file; the queues are kept on disk across it.
+#
+RSYSLOGD="/usr/sbin/rsyslogd"
+RSYSLOG_UNIT="rsyslog.service"
+RSYSLOG_FORWARD_RULE="/etc/rsyslog.d/47-haprion-forward.conf"
+RSYSLOG_FORWARD_DIR="/etc/rsyslog.d/haprion"
+RSYSLOG_FORWARD="${RSYSLOG_FORWARD_DIR}/forward.conf"
+
+validate_rsyslog_candidate() {
+    local candidate="$1" check copy output status
+
+    [[ -e "${candidate}/rsyslog" ]] || return 0
+    if [[ ! -x "$RSYSLOGD" || ! -f "$RSYSLOG_FORWARD_RULE" || ! -d "$RSYSLOG_FORWARD_DIR" ]]; then
+        log "ERROR: the release sends the traffic log to receivers, but this node is not prepared for it."
+        log "ERROR: run 04-node-prepare (tools/install-node-package does), then deploy again."
+        return 1
+    fi
+    log "Validating candidate log forwarding..."
+    #
+    # On its own, where rsyslogd may read it. The whole system configuration
+    # is checked again when the file is put in place.
+    #
+    copy="${RSYSLOG_FORWARD_DIR}/.candidate-$$.conf"
+    check="${RSYSLOG_FORWARD_DIR}/.check-$$.conf"
+    install -m 644 "${candidate}/rsyslog/forward.conf" "$copy"
+    printf 'include(file="%s")\n' "$copy" > "$check"
+    status=0
+    output="$("$RSYSLOGD" -N1 -f "$check" 2>&1)" || status=$?
+    rm -f "$copy" "$check"
+    if (( status != 0 )); then
+        printf '%s\n' "$output"
+        log "ERROR: rsyslog rejected the candidate log forwarding. The existing config is left untouched."
+        return 1
+    fi
+    log "Candidate log forwarding OK."
+}
+
+sync_rsyslog_forward() {
+    local wanted="${CURRENT}/rsyslog/forward.conf" kept="${RSYSLOG_FORWARD}.rollback" output
+
+    if [[ -f "$wanted" ]]; then
+        cmp -s "$wanted" "$RSYSLOG_FORWARD" 2>/dev/null && return 0
+        log "Log forwarding: installing the receivers of this release."
+    else
+        [[ -e "$RSYSLOG_FORWARD" ]] || return 0
+        log "Log forwarding: the release sends the traffic log nowhere. Removing it."
+    fi
+    rm -f "$kept"
+    [[ -e "$RSYSLOG_FORWARD" ]] && cp -a "$RSYSLOG_FORWARD" "$kept"
+    if [[ -f "$wanted" ]]; then
+        install -m 644 "$wanted" "${RSYSLOG_FORWARD}.new"
+        mv -f "${RSYSLOG_FORWARD}.new" "$RSYSLOG_FORWARD"
+    else
+        rm -f "$RSYSLOG_FORWARD"
+    fi
+    #
+    # The whole configuration as rsyslog will read it, and the previous file
+    # back if it is refused or does not start: a node that logged nothing
+    # locally would be worse than one that forwards to the old receivers.
+    #
+    if ! output="$("$RSYSLOGD" -N1 2>&1)" || ! systemctl restart "$RSYSLOG_UNIT"; then
+        printf '%s\n' "$output"
+        log "ERROR: rsyslog did not take the new log forwarding. Putting the previous one back."
+        if [[ -e "$kept" ]]; then
+            mv -f "$kept" "$RSYSLOG_FORWARD"
+        else
+            rm -f "$RSYSLOG_FORWARD"
+        fi
+        systemctl restart "$RSYSLOG_UNIT" || log "ERROR: rsyslog could not be restarted with the previous file either."
+        return 1
+    fi
+    rm -f "$kept"
+    log "Log forwarding: rsyslog restarted."
+}
+
 OLD_RELEASE="$(readlink -f "$CURRENT")"
 #
 # The release HAProxy is running: `current`, unless an earlier run switched the
@@ -609,6 +692,7 @@ if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
         "$SERVER_STATE" reload
         rm -f "$PENDING"
         sync_keepalived
+        sync_rsyslog_forward
         log "Deploy complete."
         prune_releases
         exit 0
@@ -625,6 +709,7 @@ if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
     sync_waf_engine 0 || exit 1
     sync_dns_listener "$CURRENT" || exit 1
     sync_keepalived || exit 1
+    sync_rsyslog_forward || exit 1
     exit 0
 fi
 
@@ -664,6 +749,7 @@ log "Candidate configuration OK."
 
 validate_waf_candidate "$VALIDATE" || exit 1
 validate_dns_candidate "$VALIDATE" || exit 1
+validate_rsyslog_candidate "$VALIDATE" || exit 1
 validate_ipvs_candidate "$VALIDATE" || exit 1
 
 #
@@ -769,13 +855,21 @@ if "$SERVER_STATE" reload; then
     # failure, and it is a different failure from the ones above. HAProxy is
     # live and correct; what is missing is the address it was told to bind.
     #
-    if sync_keepalived; then
-        log "Deploy complete."
-        prune_releases
-    else
+    if ! sync_keepalived; then
         log "ERROR: the configuration is live, but keepalived's address list or IPVS file is not."
         exit 1
     fi
+    #
+    # After the reload, as keepalived: HAProxy is live and correct, and a
+    # forwarding rsyslog refused is a failure of its own, not one to roll the
+    # configuration back for.
+    #
+    if ! sync_rsyslog_forward; then
+        log "ERROR: the configuration is live, but the log forwarding is not."
+        exit 1
+    fi
+    log "Deploy complete."
+    prune_releases
 else
     log "ERROR: HAProxy reload failed. Rolling back to ${OLD_RELEASE}."
 

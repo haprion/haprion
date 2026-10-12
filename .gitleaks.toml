@@ -1,0 +1,20 @@
+# Gitleaks' own rules, with one documented exception.
+#
+# Each exception names a fixed string that is not a secret, says what it is and
+# why the rule meets it, and is as narrow as the string itself: anything else
+# on the same rule is still found. An exception is never added only to make
+# the scan pass.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+2026-10-12. rsyslog's TLS check for a log receiver: the chain against the
+system's trust store (src/haprion/rsyslog_forward.py, and the golden
+cluster-settings/forward.conf it is compared with). `generic-api-key` matches
+"auth" in the parameter name - every spelling rsyslog accepts has it - and the
+value's entropy. It is the name of a verification mode, not a credential.
+"""
+regexTarget = "line"
+regexes = ['''StreamDriverAuthMode="x509/certvalid"''']

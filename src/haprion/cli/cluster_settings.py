@@ -115,7 +115,7 @@ def _result(document: Mapping[str, Any], operation: str) -> Mapping[str, Any]:
 def _render(result: Mapping[str, Any], cluster: str, writer: TextIO) -> None:
     writer.write(f"Cluster: {cluster}\n\n")
     targets = result.get("log_targets")
-    writer.write(f"{'LOG TARGET':<20}{'ADDRESS':<44}{'BUFFER':<12}TLS\n")
+    writer.write(f"{'LOG TARGET':<20}{'ADDRESS':<44}{'DISK QUEUE':<12}TLS\n")
     writer.write(f"{'-' * 18:<20}{'-' * 42:<44}{'-' * 10:<12}---\n")
     if not isinstance(targets, list) or not targets:
         writer.write("none; the traffic log is not sent anywhere\n")
@@ -125,7 +125,7 @@ def _render(result: Mapping[str, Any], cluster: str, writer: TextIO) -> None:
             shown = f"[{address}]" if ":" in address else address
             writer.write(
                 f"{str(target.get('name', '')):<20}{shown + ':' + str(target.get('port', '')):<44}"
-                f"{str(target.get('buffer_kib', '')) + ' KiB':<12}"
+                f"{str(target.get('disk_mib', '')) + ' MiB':<12}"
                 f"{'yes' if target.get('tls') else 'no'}\n"
             )
     metrics = result.get("metrics")

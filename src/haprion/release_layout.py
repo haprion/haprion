@@ -130,6 +130,15 @@ DNS_LAYER = "managed/dns"
 DNS_TARGET = "dns"
 DNS_NAME = re.compile(r"^dnsdist\.conf$")
 
+#
+# rsyslog's forwarding to the external receivers (B286): not HAProxy
+# configuration either. One file, generated whole on every publish; the node's
+# deploy copies it to where rsyslog may read it.
+#
+RSYSLOG_LAYER = "managed/rsyslog"
+RSYSLOG_TARGET = "rsyslog"
+RSYSLOG_NAME = re.compile(r"^forward\.conf$")
+
 CRT_LIST_LAYER = "managed/crt-lists"
 CRT_LIST_TARGET = "crt-lists"
 CRT_LIST_ALLOWED_SUFFIX = ".list"
@@ -323,6 +332,14 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
             raise LayoutError(f"file not allowed in {DNS_LAYER}: {relative}")
         artifact[f"{DNS_TARGET}/{relative}"] = content
         origin[f"{DNS_TARGET}/{relative}"] = GENERATED_LAYER
+
+    for relative, content in _children(files, RSYSLOG_LAYER):
+        if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
+            continue
+        if not RSYSLOG_NAME.match(relative):
+            raise LayoutError(f"file not allowed in {RSYSLOG_LAYER}: {relative}")
+        artifact[f"{RSYSLOG_TARGET}/{relative}"] = content
+        origin[f"{RSYSLOG_TARGET}/{relative}"] = GENERATED_LAYER
 
     for prefix, layer in MAP_LAYERS:
         for relative, content in _children(files, prefix):

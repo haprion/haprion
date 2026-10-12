@@ -24,14 +24,14 @@
   <section class="cluster-card {{ accent | accent_class }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Traffic log</h3><p>Syslog, RFC 5424 over TCP</p></div></div></header>
     <div class="table-scroll"><table class="node-table editor-table log-target-table">
-      <thead><tr><th>Name</th><th>IP address</th><th>Port</th><th>Buffer (KiB)</th><th>TLS</th></tr></thead>
+      <thead><tr><th>Name</th><th>IP address</th><th>Port</th><th>Disk queue (MiB)</th><th>TLS</th></tr></thead>
       <tbody>
         {% for target in form.targets %}
         <tr>
           <td data-label="Name"><input name="target_name" value="{{ target.name }}" maxlength="24" pattern="[a-z][a-z0-9-]*" spellcheck="false" aria-label="Name of log target {{ loop.index }}"></td>
           <td data-label="IP address"><input name="target_address" value="{{ target.address }}" maxlength="45" spellcheck="false" aria-label="IP address of log target {{ loop.index }}"></td>
           <td data-label="Port"><input name="target_port" value="{{ target.port }}" inputmode="numeric" maxlength="5" aria-label="Port of log target {{ loop.index }}"></td>
-          <td data-label="Buffer (KiB)"><input name="target_buffer" value="{{ target.buffer_kib }}" inputmode="numeric" maxlength="5" placeholder="4096" aria-label="Buffer of log target {{ loop.index }}"></td>
+          <td data-label="Disk queue (MiB)"><input name="target_disk" value="{{ target.disk_mib }}" inputmode="numeric" maxlength="5" placeholder="1024" aria-label="Disk queue of log target {{ loop.index }}"></td>
           <td data-label="TLS"><select name="target_tls" aria-label="TLS for log target {{ loop.index }}"><option value="no"{% if not target.tls %} selected{% endif %}>No</option><option value="yes"{% if target.tls %} selected{% endif %}>Yes</option></select></td>
         </tr>
         {% endfor %}

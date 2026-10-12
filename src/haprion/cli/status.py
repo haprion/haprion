@@ -24,7 +24,7 @@ import sys
 from collections.abc import Callable
 from typing import Any, TextIO
 
-from haprion import haproxy_versions, node_resources
+from haprion import haproxy_versions, log_forwarding, node_resources
 from haprion.cli.caller import usage
 from haprion.cluster_status import StatusError, keepalived_state, parse_status
 from haprion.envelope import new_request_id
@@ -262,6 +262,9 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         ipvs = _ipvs_line(status)
         if ipvs is not None:
             writer.write(f"  Syslog IPVS:  {ipvs}\n")
+        forwarding = log_forwarding.status_line(status.get("log_forwarding"))
+        if forwarding is not None:
+            writer.write(f"  Log forward:  {forwarding}\n")
         writer.write("\n")
 
     writer.write(f"VIP state:      {summary.get('vip_state')}\n")

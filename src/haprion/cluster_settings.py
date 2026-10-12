@@ -27,19 +27,28 @@ LOCATION = "managed/cluster.yaml"
 MAX_BYTES = 16 * 1024
 
 #
-# A target's name becomes part of a ring's and a server's name in the
-# configuration, so it is held to what both accept.
+# A target's name becomes part of rsyslog's action and queue file names on the
+# nodes, so it is held to what both accept.
 #
 TARGET_NAME = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
 MAX_TARGETS = 4
 #
-# The ring is what a receiver's outage is survived with: HAProxy keeps sending
-# what fits in it and drops the rest, and the traffic itself is not affected
-# (measured 2026-09-29). 4 MiB holds a few thousand records.
+# rsyslog on the node sends to the receivers (B286), and a receiver that is
+# away or slower than the traffic is survived with a queue on the node's disk:
+# what fits is sent when the receiver reads again, what does not is counted and
+# dropped, and the node's own traffic log is not held up (measured 26-10-12).
+# About 800 bytes a record on disk, so 1 GiB holds some 1.3 million (B288).
 #
-DEFAULT_BUFFER_KIB = 4096
-MIN_BUFFER_KIB = 64
-MAX_BUFFER_KIB = 65536
+DEFAULT_DISK_MIB = 1024
+MIN_DISK_MIB = 64
+MAX_DISK_MIB = 65536
+#
+# The memory ring's size before B286. Still read, so a cluster.yaml written
+# then is not refused, and range-checked as it was; it no longer sizes
+# anything, and the next save writes `disk_mib` instead.
+#
+LEGACY_MIN_BUFFER_KIB = 64
+LEGACY_MAX_BUFFER_KIB = 65536
 MAX_SOURCES = 32
 
 
@@ -49,13 +58,12 @@ class LogTarget:
 
     name: str
     #
-    # An address and never a name. A ring's server is resolved when the
-    # configuration is read, `init-addr` or not, so a name that does not
-    # resolve at a reload fails the whole configuration (measured 2026-09-29).
+    # An address and never a name: what the nodes send to must not depend on
+    # their resolver at the moment rsyslog starts.
     #
     address: str
     port: int
-    buffer_kib: int = DEFAULT_BUFFER_KIB
+    disk_mib: int = DEFAULT_DISK_MIB
     tls: bool = False
 
 
@@ -139,12 +147,19 @@ def _target(name: Any, raw: Any) -> LogTarget:
             "lowercase letters, digits or hyphens"
         )
     entry = _mapping(raw, where)
-    _only(entry, {"address", "port", "buffer_kib", "tls"}, where)
-    buffer_kib = entry.get("buffer_kib", DEFAULT_BUFFER_KIB)
-    if type(buffer_kib) is not int or not MIN_BUFFER_KIB <= buffer_kib <= MAX_BUFFER_KIB:
+    _only(entry, {"address", "port", "disk_mib", "buffer_kib", "tls"}, where)
+    disk_mib = entry.get("disk_mib", DEFAULT_DISK_MIB)
+    if type(disk_mib) is not int or not MIN_DISK_MIB <= disk_mib <= MAX_DISK_MIB:
         raise ConfigError(
-            f"{where}.buffer_kib must be a whole number from {MIN_BUFFER_KIB} to {MAX_BUFFER_KIB}"
+            f"{where}.disk_mib must be a whole number from {MIN_DISK_MIB} to {MAX_DISK_MIB}"
         )
+    if "buffer_kib" in entry:
+        legacy = entry["buffer_kib"]
+        if type(legacy) is not int or not LEGACY_MIN_BUFFER_KIB <= legacy <= LEGACY_MAX_BUFFER_KIB:
+            raise ConfigError(
+                f"{where}.buffer_kib must be a whole number from {LEGACY_MIN_BUFFER_KIB} to "
+                f"{LEGACY_MAX_BUFFER_KIB}; it no longer sizes anything, use disk_mib"
+            )
     tls = entry.get("tls", False)
     if type(tls) is not bool:
         raise ConfigError(f"{where}.tls must be true or false")
@@ -152,7 +167,7 @@ def _target(name: Any, raw: Any) -> LogTarget:
         name=name,
         address=_address(entry.get("address"), f"{where}.address"),
         port=_port(entry.get("port"), f"{where}.port"),
-        buffer_kib=buffer_kib,
+        disk_mib=disk_mib,
         tls=tls,
     )
 
@@ -233,7 +248,7 @@ def dump_document(settings: ClusterSettings) -> bytes:
             target.name: {
                 "address": target.address,
                 "port": target.port,
-                "buffer_kib": target.buffer_kib,
+                "disk_mib": target.disk_mib,
                 "tls": target.tls,
             }
             for target in sorted(settings.log_targets, key=lambda target: target.name)
@@ -257,7 +272,7 @@ def document_result(settings: ClusterSettings) -> dict[str, object]:
                 "name": target.name,
                 "address": target.address,
                 "port": target.port,
-                "buffer_kib": target.buffer_kib,
+                "disk_mib": target.disk_mib,
                 "tls": target.tls,
             }
             for target in settings.log_targets

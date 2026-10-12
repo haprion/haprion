@@ -327,6 +327,29 @@
           },
           "additionalProperties": false
         },
+        "log_forwarding": {
+          "description": "rsyslog's forwarding of the traffic log to the cluster's external receivers (B286, B289): per receiver the lines queued in memory and on disk at the newest statistics minute (null without statistics) and the lines dropped in the last hour because its queue was full. stats_age_sec is the newest statistics minute's age. Null when the node forwards nowhere, absent from nodes installed before it was reported.",
+          "type": ["object", "null"],
+          "required": ["stats_age_sec", "receivers"],
+          "properties": {
+            "stats_age_sec": { "type": ["integer", "null"], "minimum": 0 },
+            "receivers": {
+              "type": "array",
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "required": ["name", "queued", "dropped_last_hour"],
+                "properties": {
+                  "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,23}$" },
+                  "queued": { "type": ["integer", "null"], "minimum": 0 },
+                  "dropped_last_hour": { "type": "integer", "minimum": 0 }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "packages": {
           "description": "Installed versions of the packages beside HAProxy's process, as dpkg reports them (26-10-09): HAProxy's own package, keepalived, dnsdist, the WAF engine and the OpenSSL library HAProxy links (libssl3t64, or libssl3). Null where a package is not installed; absent from a node reporting before it. Compared across a cluster's nodes in dpkg's order.",
           "type": "object",

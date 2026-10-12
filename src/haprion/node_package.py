@@ -95,7 +95,7 @@ FILES: dict[str, int] = {
     **{path: mode for path, (_, mode) in CONTENTS.items()},
     BUILD_FILE: 0o644,
 }
-DEPENDS = "python3, sudo, rsyslog, haproxy, ipvsadm"
+DEPENDS = "python3, sudo, rsyslog, rsyslog-gnutls, haproxy, ipvsadm"
 RECOMMENDS = "keepalived"
 #
 # Nothing to start and nothing to stop: the scripts run when the manager asks.

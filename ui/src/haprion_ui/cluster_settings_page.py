@@ -71,7 +71,7 @@ class TargetRow:
     name: str = ""
     address: str = ""
     port: str = ""
-    buffer_kib: str = ""
+    disk_mib: str = ""
     tls: bool = False
 
 
@@ -198,7 +198,7 @@ def form_from_result(result: Mapping[str, Any]) -> SettingsForm:
             name=str(target.get("name", "")),
             address=str(target.get("address", "")),
             port=str(target.get("port", "")),
-            buffer_kib=str(target.get("buffer_kib", "")),
+            disk_mib=str(target.get("disk_mib", "")),
             tls=target.get("tls") is True,
         )
         for target in result.get("log_targets") or []
@@ -246,8 +246,8 @@ def settings_from_form(form: SettingsForm) -> cluster_settings.ClusterSettings:
             "port": _number(row.port, f"The port of {name}"),
             "tls": row.tls,
         }
-        if row.buffer_kib.strip():
-            entry["buffer_kib"] = _number(row.buffer_kib, f"The buffer of {name}")
+        if row.disk_mib.strip():
+            entry["disk_mib"] = _number(row.disk_mib, f"The disk queue of {name}")
         targets[name] = entry
     document: dict[str, Any] = {}
     if targets:

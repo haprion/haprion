@@ -39,11 +39,13 @@ from haprion.golden import (
     expected,
     expected_dns,
     expected_ipvs,
+    expected_rsyslog,
     objects,
     produced,
     produced_dns,
     produced_ipvs,
     produced_lists,
+    produced_rsyslog,
 )
 from haprion.proxy_model import ModelError, Proxy, load_proxy
 from haprion.reservations import Reservations
@@ -204,6 +206,7 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
                 self.assertEqual(produced(case), expected(case))
                 self.assertEqual(produced_dns(case), expected_dns(case))
                 self.assertEqual(produced_ipvs(case), expected_ipvs(case))
+                self.assertEqual(produced_rsyslog(case), expected_rsyslog(case))
 
     def test_generating_twice_produces_the_same_bytes(self) -> None:
         for case in cases():

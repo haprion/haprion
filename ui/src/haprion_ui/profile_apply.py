@@ -49,7 +49,7 @@ from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_pub
 from haprion.dns_profiles import ProfileError
 
 from haprion_ui import config, db, dns_profile_form, job_wait, ndes_profile_form
-from haprion_ui.admin import AdminError, actor_name, connect, load_environment
+from haprion_ui.admin import AdminError, actor_name, connect, load_environment, refused
 
 OPERATION = "profiles_apply"
 MAX_FILE_BYTES = 256 * 1024
@@ -536,18 +536,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    contract = envelope if args.command in ("apply", "remove") else None
     if os.geteuid() != 0:
-        print("ERROR: run this with sudo", file=sys.stderr)
-        return 77
+        return refused(args, "run this with sudo", 77, contract)
     try:
         commands = {"apply": command_apply, "remove": command_remove, "list": command_list}
         return commands[args.command](args)
     except AdminError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 64
+        return refused(args, str(exc), 64, contract)
     except psycopg.Error as exc:
-        print(f"ERROR: database: {exc}", file=sys.stderr)
-        return 74
+        return refused(args, f"database: {exc}", 74, contract)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

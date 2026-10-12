@@ -77,9 +77,26 @@ def main(
         errors.write(USAGE)
         return EXIT_USAGE
 
+    def refuse(cluster: str | None, code: str, message: str, exit_code: int) -> int:
+        """Said on stderr, and with --json as the one document the contract promises."""
+
+        errors.write(f"ERROR: {message}\n")
+        if json_mode:
+            write_document(
+                writer,
+                failure(
+                    operation=backup_job_helper.RUN,
+                    cluster=cluster,
+                    request_id=new_request_id(),
+                    code=code,
+                    message=message,
+                    exit_code=exit_code,
+                ),
+            )
+        return exit_code
+
     if require_root and os.geteuid() != 0:
-        errors.write("ERROR: haprion-state-backup must run as root\n")
-        return EXIT_NOT_ROOT
+        return refuse(selected, "not_root", "haprion-state-backup must run as root", EXIT_NOT_ROOT)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -90,8 +107,7 @@ def main(
             else tuple(runtime.clusters.items())
         )
     except ConfigError as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return refuse(selected, "dependency_unavailable", str(exc), exc.exit_code)
 
     failed = False
     for cluster_id, cluster in clusters:
@@ -106,19 +122,7 @@ def main(
                 cluster_id, cluster, policy.backup_identity, policy.backup_root, retention
             )
         except (BackupRunError, RetentionError) as exc:
-            errors.write(f"ERROR: {cluster_id}: {exc}\n")
-            if json_mode:
-                write_document(
-                    writer,
-                    failure(
-                        operation=backup_job_helper.RUN,
-                        cluster=cluster_id,
-                        request_id=new_request_id(),
-                        code="backup_failed",
-                        message=str(exc),
-                        exit_code=1,
-                    ),
-                )
+            refuse(cluster_id, "backup_failed", f"{cluster_id}: {exc}", 1)
             failed = True
             continue
         if json_mode:

@@ -2869,7 +2869,8 @@ refusals, and their writes are audited and versioned the same way.
 | *Versions*: deploy, revert | `haprion-deploy`, `haprion-revert` |
 | Drain, maintenance, unblock | `haprion-server-state` |
 | *Settings → Nodes*: nodes and clusters | `haprion-node`, `haprion-cluster` |
-| *Certificates*: issue, renew, import, request, NDES, publish | `haprion-cert-issue` (`--renew`), `-import`, `-request`, `-scep`, `-publish`, `-deploy` |
+| *Certificates*: issue, import, request, NDES, publish | `haprion-cert-issue`, `-import`, `-request`, `-scep`, `-publish`, `-deploy` |
+| *Certificates*: renew | certbot's: `haprion-cert-issue --domain <id> --renew`; NDES: `haprion-cert-scep --id <id> …` |
 | *Certificates*: publish to, remove from, delete | `haprion-cert-target`, `haprion-cert-delete` |
 | *Certificates*: DNS providers and NDES profiles | `haprion-profiles` |
 | External certificate receivers | `haprion-cert-receiver` |

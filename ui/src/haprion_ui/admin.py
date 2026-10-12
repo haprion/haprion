@@ -593,8 +593,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def refused(args: argparse.Namespace, message: str, exit_code: int, envelope: Any = None) -> int:
+    """Said on stderr, and - for a command answering in a contract - as its one document.
+
+    `--json` promises a document on every path (Fas 23 review): a playbook
+    reading `stdout | from_json` must get the refusal, not an empty string.
+    """
+
+    print(f"ERROR: {message}", file=sys.stderr)
+    if envelope is not None and getattr(args, "json", False):
+        print(json.dumps(envelope(None, message)))
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    contract = account_apply.envelope if args.command == "apply" else None
     if os.geteuid() != 0:
         #
         # Refused here as well as by the database. Peer authentication would
@@ -602,17 +616,14 @@ def main(argv: list[str] | None = None) -> int:
         # role - which reads as a broken installation rather than as the answer
         # to "may I do this".
         #
-        print("ERROR: run this with sudo", file=sys.stderr)
-        return 77
+        return refused(args, "run this with sudo", 77, contract)
     try:
         environment = load_environment()
         return COMMANDS[args.command](environment, args)
     except AdminError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 64
+        return refused(args, str(exc), 64, contract)
     except psycopg.Error as exc:
-        print(f"ERROR: database: {exc}", file=sys.stderr)
-        return 74
+        return refused(args, f"database: {exc}", 74, contract)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

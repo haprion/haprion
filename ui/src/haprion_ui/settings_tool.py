@@ -24,7 +24,7 @@ from typing import Any
 import psycopg
 
 from haprion_ui import backups, config, db, feature_switch, job_wait, settings_apply
-from haprion_ui.admin import AdminError, actor_name, connect, load_environment
+from haprion_ui.admin import AdminError, actor_name, connect, load_environment, refused
 
 EXIT_REFUSED = 65
 
@@ -217,17 +217,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    contract = settings_apply.envelope if args.command in ("apply",) else None
     if os.geteuid() != 0:
-        print("ERROR: run this with sudo", file=sys.stderr)
-        return 77
+        return refused(args, "run this with sudo", 77, contract)
     try:
         return command_apply(args) if args.command == "apply" else command_show(args)
     except AdminError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 64
+        return refused(args, str(exc), 64, contract)
     except psycopg.Error as exc:
-        print(f"ERROR: database: {exc}", file=sys.stderr)
-        return 74
+        return refused(args, f"database: {exc}", 74, contract)
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

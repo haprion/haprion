@@ -26,10 +26,10 @@ import sys
 from collections.abc import Callable
 from typing import Any, TextIO
 
-from haprion.cert_retarget import HELPER
+from haprion.cert_retarget import HELPER, OPERATION
 from haprion.cli import cert_target_helper
 from haprion.cli.cluster_settings import _through
-from haprion.envelope import new_request_id
+from haprion.envelope import failure, new_request_id
 
 type RunHelper = Callable[[list[str], str], subprocess.CompletedProcess[str]]
 
@@ -114,7 +114,24 @@ def main(
     try:
         document = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        errors.write(completed.stderr or "ERROR: the certificate target helper gave no answer\n")
+        message = completed.stderr.strip() or "the certificate target helper gave no answer"
+        errors.write(f"ERROR: {message}\n" if not message.startswith("ERROR") else f"{message}\n")
+        if args.json:
+            writer.write(
+                json.dumps(
+                    failure(
+                        operation=OPERATION,
+                        cluster=None,
+                        request_id=new_request_id(),
+                        code="dependency_unavailable",
+                        message=message[:2048],
+                        exit_code=completed.returncode or EXIT_UNAVAILABLE,
+                    ),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n"
+            )
         return completed.returncode or EXIT_UNAVAILABLE
     if args.json:
         writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")

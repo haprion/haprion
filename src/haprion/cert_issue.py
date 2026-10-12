@@ -796,7 +796,7 @@ def renew(
         raise IssueError(
             "not_acme",
             f"certificate {certificate_id!r} is not certbot's ({entry.source.kind!r}); "
-            "renew it where its material comes from",
+            "renew it where its material comes from (an NDES certificate: haprion-cert-scep)",
         )
     lineage = entry.source.lineage or certificate_id
     conf = (renewal_directory or RENEWAL_DIRECTORY) / f"{lineage}.conf"

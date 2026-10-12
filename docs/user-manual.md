@@ -56,6 +56,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [Events: jobs, the nodes and the audit record](#events-jobs-the-nodes-and-the-audit-record)
   - [How often status is refreshed](#how-often-status-is-refreshed)
   - [The worker](#the-worker)
+- [Automation from the terminal](#automation-from-the-terminal)
 - [Maintenance](#maintenance)
   - [Keeping HAProxy current](#keeping-haproxy-current)
   - [Releasing a change](#releasing-a-change)
@@ -2833,6 +2834,96 @@ is cleared by the interface on its next read rather than by the worker as it fin
 matches on the publish's idempotency key, which carries the draft revision — so a draft edited after
 the publish was asked for has a different key and is left alone. A draft and a saved change of the
 same object are two rows (`stage`), each cleared by its own publish.
+
+## Automation from the terminal
+
+Everything the interface sets can also be set from a shell on the management host, so that a
+configuration tool can describe an installation and run again without changing it. The interface
+stays the first way in; the commands go through the same helpers, the same code and the same
+refusals, and their writes are audited and versioned the same way.
+
+| In the interface | From the terminal |
+|---|---|
+| *Proxies*: new, edit, remove, advanced config, WAF exceptions | `haprion-objects apply`, `haprion-objects remove` |
+| *Network* | `haprion-network apply` |
+| A cluster's *Logs & metrics* | `haprion-cluster-settings --set` |
+| *Versions*: deploy, revert | `haprion-deploy`, `haprion-revert` |
+| Drain, maintenance, unblock | `haprion-server-state` |
+| *Settings → Nodes*: nodes and clusters | `haprion-node`, `haprion-cluster` |
+| *Certificates*: issue, import, request, NDES, renew, publish | `haprion-cert-issue`, `-import`, `-request`, `-scep`, `-renew`, `-publish`, `-deploy` |
+| *Certificates*: publish to, remove from, delete | `haprion-cert-target`, `haprion-cert-delete` |
+| *Certificates*: DNS providers and NDES profiles | `haprion-profiles` |
+| External certificate receivers | `haprion-cert-receiver` |
+| *Node backups*: schedule, run, restore | `haprion-backup-schedule`, `haprion-state-backup`, `haprion-node-restore` |
+| *Settings → Users* | `haprion-user` |
+| *External monitoring*, *Features*, OIDC | `haprion-settings` |
+| The interface's own certificate | `haprion-tls` |
+
+What they share:
+
+- **A file says what should be.** `apply` reads a file (or, for objects, a directory of files) and
+  writes only what differs from what is stored, so the same file twice changes nothing. What the
+  file does not name is left alone; `--prune`, where a command has it, removes what it does not
+  name.
+- **`--check`** says what would change and changes nothing.
+- **`--json`** prints one envelope (`docs/CONTRACT.md`, `schemas/v1/`), with `changed` where the
+  command decides it. The exit code is 0 for done and the envelope's own code otherwise.
+- **Publishing is not deploying.** `haprion-objects apply`, `haprion-network apply` and
+  `haprion-cluster-settings --set` publish a new version; `haprion-deploy` rolls it out, as
+  *Publish & deploy* does in two steps.
+- **With sudo, on the manager.** `haprion-user`, `haprion-settings` and `haprion-profiles` write
+  the interface's database as root; the others hand their request to a root helper, and run as
+  root that helper runs directly and records the person sudo names.
+- **Secrets from a file only its owner may read, or from standard input**: never as an argument.
+  A file that carries a password, a client secret or credentials is refused unless its mode is
+  `0600`. A secret that is stored sealed cannot be compared, so it is replaced only when it must be
+  or when the command is asked to (`--replace-oidc-secret`, `--replace <id>`).
+
+What is not a setting has no command: a person's own password, sessions, drafts, previews and
+downloads of key material.
+
+A configuration tool runs these as commands and reads `changed` from the answer. With Ansible, for
+example:
+
+```yaml
+- name: Proxy objects
+  ansible.builtin.command:
+    argv: [haprion-objects, apply, -c, alpha, /srv/haprion/objects/alpha, --json]
+  become: true
+  register: objects
+  changed_when: (objects.stdout | from_json).result.changed
+
+- name: Roll out what was published
+  ansible.builtin.command:
+    argv: [haprion-deploy, -c, alpha, --json]
+  become: true
+  when: (objects.stdout | from_json).result.deployment_required
+
+- name: Accounts
+  ansible.builtin.command:
+    argv: [haprion-user, apply, /srv/haprion/accounts.yaml, --json]
+  become: true
+  register: accounts
+  changed_when: (accounts.stdout | from_json).result.changed
+
+- name: Sign-in, monitoring and features
+  ansible.builtin.command:
+    argv: [haprion-settings, apply, /srv/haprion/settings.yaml, --oidc-secret-stdin, --json]
+    stdin: "{{ oidc_client_secret }}"
+  become: true
+  register: settings
+  changed_when: (settings.stdout | from_json).result.changed
+  no_log: true
+
+- name: Node backups
+  ansible.builtin.command:
+    argv: [haprion-backup-schedule, -c, alpha, --time, "03:30", --weekly, "Mon,Thu", --json]
+  become: true
+  register: schedule
+  changed_when: (schedule.stdout | from_json).result.changed
+```
+
+The files with passwords and credentials are written by the tool with mode `0600`, owned by root.
 
 ## Maintenance
 

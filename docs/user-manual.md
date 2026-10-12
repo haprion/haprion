@@ -2198,6 +2198,14 @@ or Elasticsearch do well, and rebuilding them here would be a second, weaker cop
 An installation that needs them should send the logs to such a platform, and
 the nodes can do that themselves: see [Sending the traffic log elsewhere and metrics](#sending-the-traffic-log-elsewhere-and-metrics).
 
+**Under heavy traffic.** Every request is kept on its node and reaches the manager, but the page
+shows at most the newest 500 matches - during a flood, a few seconds' worth. A filter narrows those
+500; it does not summarise the rest. The collector also fetches a portion at a time, so after a
+burst the newest rows arrive late and the warning says *catching up* until they have. How many
+requests, which statuses and from where over time is the work of the
+[exporter](#sending-the-traffic-log-elsewhere-and-metrics) and a log platform: set them up before
+they are needed.
+
 ### Sending the traffic log elsewhere, and metrics
 
 Each cluster can send its traffic log to up to four external receivers,
@@ -2265,6 +2273,9 @@ reconnected once it answered again, and
 delivered the buffer and everything after it. A receiver that has been away
 longer than its buffer lasts has lost the difference, and nothing in the
 traffic shows it; watch the receiving side.
+The same holds for a burst: a receiver that reads slower than the nodes write loses what does not
+fit. At 25 000 requests a second, a 4 MiB buffer fills in under a second; the exporter's counters
+are complete either way.
 
 **The exporter** answers `GET /metrics` on the port given, on every IPv4
 address of both nodes - the configuration is shared by the pair, and scraping

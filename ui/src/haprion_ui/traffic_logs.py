@@ -68,6 +68,9 @@ class Entry:
     """The access rule the request met, as `name:log` or `name:deny`; empty if none."""
 
 
+LASTING_RUNS = 5
+
+
 @dataclass(frozen=True, slots=True)
 class Freshness:
     """When the manager last managed to talk to one node.
@@ -85,9 +88,23 @@ class Freshness:
     current_complete: bool | None = None
     remaining_bytes: int | None = None
     pending_days: int | None = None
+    #
+    # Successful runs in a row that ended with today incomplete (26-10-12).
+    # `None` from a collector older than the count.
+    #
+    behind_runs: int | None = None
 
     def catching_up(self) -> bool:
         return self.current_complete is False or bool(self.pending_days)
+
+    def lasting_backlog(self) -> bool:
+        """Behind for longer than a burst takes: older days waiting, or run after run.
+
+        A burst is caught up in a run or two (26-10-12); what is left after
+        LASTING_RUNS is a node the collector does not keep up with.
+        """
+
+        return bool(self.pending_days) or (self.behind_runs or 0) >= LASTING_RUNS
 
     def stale_seconds(self, *, now: datetime) -> float | None:
         if self.last_success is None:
@@ -407,6 +424,7 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
     complete = value.get("current_complete")
     remaining = value.get("remaining_bytes")
     pending = value.get("pending_days")
+    behind = value.get("behind_runs")
     return Freshness(
         cluster=cluster,
         node=node,
@@ -418,6 +436,7 @@ def _freshness(path: Path, cluster: str, node: str) -> Freshness:
         if type(remaining) is int and 0 <= remaining <= 2**63 - 1
         else None,
         pending_days=pending if type(pending) is int and 0 <= pending <= 90 else None,
+        behind_runs=behind if type(behind) is int and 0 <= behind <= 2**31 else None,
     )
 
 

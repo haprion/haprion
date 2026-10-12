@@ -1118,11 +1118,21 @@ class ARealDatabase(unittest.TestCase):
             db.set_status_access(connection, networks=("203.0.113.0/24",), actor="admin")
             connection.commit()
             second = [entry.network for entry in db.status_access(connection)]
+            #
+            # An address that stays keeps who added it (26-10-12); only the
+            # new one is the second saver's.
+            #
+            db.set_status_access(
+                connection, networks=("203.0.113.0/24", "192.0.2.20/32"), actor="operator"
+            )
+            connection.commit()
+            kept = {entry.network: entry.added_by for entry in db.status_access(connection)}
             db.set_status_access(connection, networks=(), actor="admin")
             connection.commit()
             emptied = db.status_access(connection)
         self.assertEqual(first, ["192.0.2.10/32", "198.51.100.0/24"])
         self.assertEqual(second, ["203.0.113.0/24"])
+        self.assertEqual(kept, {"203.0.113.0/24": "admin", "192.0.2.20/32": "operator"})
         self.assertEqual(emptied, [])
 
     def test_worker_can_read_jobs_but_not_accounts(self) -> None:

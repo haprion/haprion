@@ -135,6 +135,105 @@ class EachKindComesAndGoes(unittest.TestCase):
         self.assertTrue(built.fresh)
 
 
+class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
+    """26-10-12: the log page's warning on the list, less what heals itself."""
+
+    NOW = datetime(2026, 10, 12, 9, 0, tzinfo=UTC)
+
+    def freshness(self, **fields: Any) -> Any:
+        from haprion_ui.traffic_logs import Freshness
+
+        base: dict[str, Any] = {
+            "cluster": "alpha",
+            "node": "node-a",
+            "last_attempt": self.NOW,
+            "last_success": self.NOW,
+            "outcome": "ok",
+        }
+        return Freshness(**{**base, **fields})
+
+    def messages(self, *nodes: Any) -> list[str]:
+        return [item.message for item in attention.from_traffic_logs(nodes, now=self.NOW)]
+
+    def test_a_current_node_and_a_burst_being_caught_up_are_not_listed(self) -> None:
+        self.assertEqual(
+            self.messages(
+                self.freshness(),
+                self.freshness(node="node-b", current_complete=False, behind_runs=2),
+            ),
+            [],
+        )
+
+    def test_what_wants_somebody_is_listed(self) -> None:
+        old = self.NOW - timedelta(minutes=12)
+        self.assertEqual(
+            self.messages(
+                self.freshness(outcome="unreachable", last_success=old),
+                self.freshness(node="node-b", last_attempt=None, last_success=None),
+                self.freshness(node="node-c", last_attempt=old, last_success=old),
+                self.freshness(node="node-d", current_complete=False, behind_runs=5),
+                self.freshness(node="node-e", pending_days=2),
+            ),
+            [
+                "log collection failed (unreachable)",
+                "log collection has never reached the node",
+                "log collection last succeeded 12 min ago",
+                "log collection behind for 5 runs",
+                "log collection behind · 2 older day(s) waiting",
+            ],
+        )
+
+    def test_a_receiver_that_dropped_lines_is_critical(self) -> None:
+        row = SimpleNamespace(
+            cluster="alpha",
+            result={
+                "nodes": [
+                    {
+                        "name": "node-a",
+                        "status_ok": True,
+                        "status": {
+                            "log_forwarding": {
+                                "stats_age_sec": 40,
+                                "receivers": [
+                                    {"name": "graylog", "queued": 12, "dropped_last_hour": 0},
+                                    {"name": "loki", "queued": 20000, "dropped_last_hour": 7},
+                                ],
+                            }
+                        },
+                    },
+                    {"name": "node-b", "status_ok": True, "status": {"log_forwarding": None}},
+                ]
+            },
+        )
+
+        items = attention.from_log_forwarding([row])
+
+        self.assertEqual(
+            [(item.severity, item.subject, item.message) for item in items],
+            [
+                ("critical", "node-a", "traffic log to loki: 7 lines dropped in the last hour"),
+                ("warning", "node-a", "traffic log to loki: 20 000 lines queued"),
+            ],
+        )
+
+
+class EveryKindHasALabel(unittest.TestCase):
+    def test_the_dashboard_names_where_each_kind_goes(self) -> None:
+        #
+        # The box's link label is a lookup by kind in the template; a kind
+        # missing there renders an empty link rather than an error (26-10-12).
+        #
+        import re
+        from pathlib import Path
+
+        template = (Path(attention.__file__).parent / "templates" / "index.html").read_text()
+        found = re.search(r"\{\{ \{(.*?)\}\[item\.kind\] \}\}", template)
+        if found is None:
+            self.fail("the label lookup is no longer where the test reads it")
+        labelled = set(re.findall(r"'([a-z]+)': '", found.group(1)))
+        self.assertEqual(labelled, set(attention.KINDS))
+
+
 class TheTwoForms(unittest.TestCase):
     def built(self, ages: dict[str, int | None]) -> attention.Attention:
         item = attention.Item("job", "critical", "alpha", "job 1", "Deploy failed", NOW, "/jobs")
@@ -221,6 +320,27 @@ class TheSettingsCard(LoginTestCase):
         self.assertEqual(stored.call_args.kwargs["networks"], ("192.0.2.10/32",))
         self.assertEqual(refused.status_code, 400)
         self.assertIn("host bits", refused.text)
+        # Refused on the edit page, with what was typed (26-10-12).
+        self.assertIn("<h1>External monitoring</h1>", refused.text)
+        self.assertIn(">192.0.2.1/24</textarea>", refused.text)
+
+    def test_the_card_is_a_row_and_the_list_has_a_page_of_its_own(self) -> None:
+        client = self.client(replace(configuration(), management_writes=True))
+        self.sign_in(client)
+        entry = StatusAccess(
+            "192.0.2.10/32", "localadmin", datetime(2026, 10, 11, 19, 46, tzinfo=UTC)
+        )
+        with mock.patch("haprion_ui.db.status_access", return_value=[entry]):
+            card = client.get("/settings").text.split('id="external-monitoring"', 1)[1]
+            card = card.split("</section>", 1)[0]
+            page = client.get("/settings/status-access").text
+
+        self.assertIn('href="/settings/status-access">Edit</a>', card)
+        self.assertIn("<code>192.0.2.10/32</code>", card)
+        self.assertNotIn("<textarea", card)
+        self.assertIn('<td data-label="Added by">localadmin</td>', page)
+        self.assertIn(">192.0.2.10/32\n</textarea>", page)
+        self.assertIn('href="/settings#external-monitoring">Cancel</a>', page)
 
 
 class TheDashboardBox(LoginTestCase):

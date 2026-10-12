@@ -152,20 +152,17 @@
   (B274): Uptime Kuma, Prometheus. The list is the switch - empty is off.
 #}
 <section class="cluster-card settings-card" id="external-monitoring">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>External monitoring</h3><p>{% if status_access %}<code>/status/attention.json</code> and <code>/status/metrics</code> answer these addresses.{% else %}Off: no address may ask.{% endif %}</p></div></div></header>
-  {% if status_access %}<div class="table-scroll"><table class="node-table settings-cluster-table">
-    <thead><tr><th>Address</th><th>Added by</th><th>Added</th></tr></thead>
-    <tbody>{% for entry in status_access %}<tr><td data-label="Address"><code>{{ entry.network }}</code></td><td data-label="Added by">{{ entry.added_by }}</td><td data-label="Added">{{ (entry.added_at | shown).strftime('%y-%m-%d %H:%M') }}</td></tr>{% endfor %}</tbody>
-  </table></div>{% endif %}
-  <details class="editor-add">
-    <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>Edit</summary>
-    <form method="post" action="/settings/status-access" class="status-access-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="form-grid"><label><span class="field-title">Addresses <span class="optional">(optional)</span></span><textarea name="networks" rows="{{ [status_access | length + 1, 3] | max }}" placeholder="192.0.2.10">{% for entry in status_access %}{{ entry.network }}
-{% endfor %}</textarea><small>One address or network per line. Empty switches it off.</small></label></div>
-      <div class="editor-actions editor-submit"><div class="form-buttons"><button type="submit" class="secondary-button">Save</button></div></div>
-    </form>
-  </details>
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>External monitoring</h3><p><code>/status/attention.json</code> and <code>/status/metrics</code></p></div></div></header>
+  <div class="table-scroll"><table class="node-table settings-cluster-table">
+    <thead><tr><th>Status</th><th>Allowed from</th><th class="settings-actions"><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      <tr data-href="/settings/status-access">
+        <td data-label="Status">{% if status_access %}<span class="status-badge status-badge-healthy">Active</span>{% else %}<span class="status-badge">Off</span>{% endif %}</td>
+        <td data-label="Allowed from">{% if status_access %}{% for entry in status_access %}<code>{{ entry.network }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<span class="table-empty">No address may ask</span>{% endif %}</td>
+        <td data-label="" class="settings-actions"><a class="secondary-button settings-edit" href="/settings/status-access">Edit</a></td>
+      </tr>
+    </tbody>
+  </table></div>
 </section>
 {#
   What this installation offers (B193). Off hides a feature; node backups off

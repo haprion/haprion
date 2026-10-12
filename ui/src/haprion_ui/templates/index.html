@@ -52,7 +52,7 @@
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Needs attention</h3></div></div></header>
   <ul class="attention-list">
     {% for item in attention.items %}
-    {% set text %}<span class="status-dot status-{{ item.severity }}" aria-hidden="true"></span><span class="attention-text">{% if item.cluster %}<strong>{{ item.cluster }}</strong>: {% endif %}{% if item.subject and item.subject != item.cluster %}{{ item.subject }} · {% endif %}{{ item.message }}{% if item.since %} <time datetime="{{ item.since.isoformat() }}">{{ (item.since | shown).strftime('%y-%m-%d %H:%M') }}</time>{% endif %}</span><span class="attention-go">{{ {'certificate': 'Certificates', 'job': 'Events', 'node': 'Dashboard', 'reading': 'Dashboard', 'waf': 'WAF logs', 'backup': 'Node backups'}[item.kind] }}</span>{% endset %}
+    {% set text %}<span class="status-dot status-{{ item.severity }}" aria-hidden="true"></span><span class="attention-text">{% if item.cluster %}<strong>{{ item.cluster }}</strong>: {% endif %}{% if item.subject and item.subject != item.cluster %}{{ item.subject }} · {% endif %}{{ item.message }}{% if item.since %} <time datetime="{{ item.since.isoformat() }}">{{ (item.since | shown).strftime('%y-%m-%d %H:%M') }}</time>{% endif %}</span><span class="attention-go">{{ {'certificate': 'Certificates', 'job': 'Events', 'node': 'Dashboard', 'reading': 'Dashboard', 'waf': 'WAF logs', 'backup': 'Node backups', 'logs': 'Traffic logs', 'forwarding': 'Settings'}[item.kind] }}</span>{% endset %}
     <li>{% if role == 'admin' %}<a class="attention-row" href="{{ item.link }}">{{ text }}</a>{% else %}<div class="attention-row">{{ text }}</div>{% endif %}</li>
     {% endfor %}
   </ul>

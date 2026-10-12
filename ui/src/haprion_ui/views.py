@@ -4271,6 +4271,44 @@ def build_router(config: Config) -> APIRouter:
     # for it, and the ways to replace it - the certificate forms, in their
     # interface mode.
     #
+    @router.get("/settings/status-access", response_class=HTMLResponse)
+    def status_access_edit(request: Request) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        return _status_access_page(request, gate)
+
+    def _status_access_page(
+        request: Request,
+        gate: AuthenticatedSession,
+        *,
+        problem: str = "",
+        entered: str | None = None,
+        status_code: int = 200,
+    ) -> Response:
+        """The addresses that may ask /status/ (B274), on a page of its own (26-10-12)."""
+
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        with request.app.state.pool.connection() as connection:
+            entries = db.status_access(connection)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-status-access.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "settings",
+                "management_writes": config.management_writes,
+                "entries": entries,
+                "networks": entered
+                if entered is not None
+                else "".join(f"{entry.network}\n" for entry in entries),
+                "problem": problem,
+            },
+            status_code=status_code,
+        )
+
     @router.post("/settings/status-access")
     async def save_status_access(
         request: Request,
@@ -4288,7 +4326,9 @@ def build_router(config: Config) -> APIRouter:
         try:
             checked = attention.access_list(networks)
         except ValueError as problem:
-            return _settings_page(request, gate, problem=str(problem), status_code=400)
+            return _status_access_page(
+                request, gate, problem=str(problem), entered=networks, status_code=400
+            )
         with request.app.state.pool.connection() as connection:
             db.set_status_access(connection, networks=checked, actor=gate.username)
             db.record_audit_event(
@@ -10908,6 +10948,12 @@ def _attention(request: Request, config: Config) -> attention.Attention:
                 _waf_not_working(request, config, connection, clusters),
                 describe=waf.where,
             )
+    if config.traffic_logs.enabled:
+        items += attention.from_traffic_logs(
+            traffic_logs.read_freshness(config.traffic_logs.directory, tuple(clusters)).nodes,
+            now=now,
+        )
+    items += attention.from_log_forwarding(status_rows)
     items += attention.from_dashboard(board.clusters, drift_label=dashboard.VERSION_DRIFT)
     items += attention.from_certificates(certificate_view.registry, certificate_view.clusters)
     if features.is_on(features.NODE_BACKUPS):

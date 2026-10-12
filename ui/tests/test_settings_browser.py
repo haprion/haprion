@@ -129,6 +129,25 @@ class TheLogsAndMetricsForm(QueueRouteTestCase):
                     page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                 )
 
+    def test_a_settings_row_opens_its_page_wherever_it_is_clicked(self) -> None:
+        #
+        # The rows wore the pointer of a link and only their name and button
+        # went anywhere (26-10-12). External monitoring is such a row now too.
+        #
+        with self.signed_in(1280) as page:
+            for row, cell, address in (
+                ("#logs-metrics tr[data-href]", "td[data-label='Metrics']", "/settings/clusters/"),
+                (
+                    "#external-monitoring tr[data-href]",
+                    "td[data-label='Allowed from']",
+                    "/settings/status-access",
+                ),
+            ):
+                with self.subTest(row=row):
+                    page.goto(f"http://127.0.0.1:{self.port}/settings")
+                    page.locator(row).first.locator(cell).click()
+                    page.wait_for_url(f"**{address}*")
+
 
 if __name__ == "__main__":
     unittest.main()

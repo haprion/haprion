@@ -1606,13 +1606,24 @@ def status_access(connection: Connection[Any]) -> list[StatusAccess]:
 
 
 def set_status_access(connection: Connection[Any], *, networks: Sequence[str], actor: str) -> None:
-    """The list, replaced whole in the caller's transaction (B274)."""
+    """The list as given, in the caller's transaction (B274).
 
+    Only what changed is written: an address that stays keeps who added it and
+    when. Replacing the whole list gave every address the last saver's name
+    and time (26-10-12), which the edit page shows beside each one.
+    """
+
+    wanted = list(networks)
     with connection.cursor() as cursor:
-        cursor.execute("delete from status_access")
-        for network in networks:
+        cursor.execute(
+            "delete from status_access where network <> all(%(wanted)s::cidr[])",
+            {"wanted": wanted},
+        )
+        for network in wanted:
             cursor.execute(
-                "insert into status_access (network, added_by) values (%(network)s, %(actor)s)",
+                "insert into status_access (network, added_by) "
+                "select %(network)s::cidr, %(actor)s "
+                " where not exists (select 1 from status_access where network = %(network)s::cidr)",
                 {"network": network, "actor": actor},
             )
 

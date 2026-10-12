@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from haprion import log_forwarding
+
 from haprion_ui import jobs as jobs_module
 from haprion_ui.db import Job
 
@@ -37,6 +39,10 @@ SEVERITIES: tuple[Severity, ...] = ("critical", "warning")
 # nothing about a broken deploy.
 #
 UNSETTLED = frozenset({"failed", "partial", "blocked", "unknown"})
+#
+# What the log page counts as old: the collector runs every minute.
+#
+LOG_STALE_SECONDS = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +119,7 @@ class Attention:
         return "\n".join(lines) + "\n"
 
 
-KINDS = ("certificate", "job", "node", "reading", "waf", "backup")
+KINDS = ("certificate", "job", "node", "reading", "waf", "backup", "logs", "forwarding")
 
 #
 # Enough for a monitor or two and their networks; a list longer than this is
@@ -347,6 +353,77 @@ def from_waf(ineffective: Iterable[tuple[str, str, Any]], *, describe: Any) -> l
             ineffective, key=lambda found: (found[0], found[1], str(found[2]))
         )
     ]
+
+
+def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
+    """The log page's warning per node, less the minutes a burst takes to catch up (26-10-12).
+
+    A collection that failed, has not succeeded for five minutes or never
+    reached the node wants somebody. Catching up after a burst heals itself in
+    a run or two and is left to the log page; a node still behind after that is
+    listed, as one with older days waiting is.
+    """
+
+    items: list[Item] = []
+    for node in nodes:
+        stale = node.stale_seconds(now=now)
+        if node.latest_attempt_failed():
+            message = f"log collection failed ({node.outcome})"
+        elif stale is None:
+            message = "log collection has never reached the node"
+        elif stale > LOG_STALE_SECONDS:
+            message = f"log collection last succeeded {int(stale // 60)} min ago"
+        elif node.lasting_backlog():
+            message = "log collection behind" + (
+                f" · {node.pending_days} older day(s) waiting"
+                if node.pending_days
+                else f" for {node.behind_runs} runs"
+            )
+        else:
+            continue
+        items.append(
+            Item(
+                kind="logs",
+                severity="warning",
+                cluster=node.cluster,
+                subject=node.node,
+                message=message,
+                since=node.last_success,
+                link="/logs",
+            )
+        )
+    return items
+
+
+def from_log_forwarding(status_rows: Iterable[Any]) -> list[Item]:
+    """Each node's receivers whose queue is long or dropped lines (B289).
+
+    The reading of the figures is the engine's (`haprion.log_forwarding`), the
+    same the terminal's status command prints.
+    """
+
+    items: list[Item] = []
+    for row in status_rows:
+        result = row.result if isinstance(getattr(row, "result", None), Mapping) else {}
+        for entry in result.get("nodes") or ():
+            if not isinstance(entry, Mapping) or not entry.get("status_ok"):
+                continue
+            status = entry.get("status")
+            if not isinstance(status, Mapping):
+                continue
+            for problem in log_forwarding.problems(status.get("log_forwarding")):
+                items.append(
+                    Item(
+                        kind="forwarding",
+                        severity=problem.severity,
+                        cluster=row.cluster,
+                        subject=str(entry.get("name", "")),
+                        message=problem.message,
+                        since=None,
+                        link="/settings#logs-metrics",
+                    )
+                )
+    return items
 
 
 def build_attention(

@@ -480,6 +480,22 @@ def check_settings_apply_semantics(document: dict[str, object], path: Path) -> N
         raise AssertionError(f"{path}: changed is whether any setting was written")
 
 
+def check_profiles_apply_semantics(document: dict[str, object], path: Path) -> None:
+    """A job per change once applied, none under --check; changed is whether any change."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done apply says what it did")
+        return
+    assert isinstance(result, dict)
+    if result["changed"] != bool(result["changes"]):
+        raise AssertionError(f"{path}: changed is whether any profile changed")
+    expected = 0 if result["check"] else len(result["changes"])
+    if len(result["jobs"]) != expected:
+        raise AssertionError(f"{path}: one job per change, and none under --check")
+
+
 def check_changes_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1144,6 +1160,7 @@ SEMANTIC_CHECKS = {
     "network_apply": check_network_apply_semantics,
     "user_apply": check_user_apply_semantics,
     "settings_apply": check_settings_apply_semantics,
+    "profiles_apply": check_profiles_apply_semantics,
     "readings": check_readings_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
@@ -1203,7 +1220,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         first = next(iter(result["reads"].values()))
         first["envelope"] = None
         first["exit_code"] = 0
-    elif operation in ("user_apply", "settings_apply"):
+    elif operation in ("user_apply", "settings_apply", "profiles_apply"):
         result["changed"] = not result["changed"]
     elif operation == "network_apply":
         result["deployment_required"] = not result["deployment_required"]

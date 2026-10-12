@@ -7054,3 +7054,184 @@ class TheSettingsFromAFile(unittest.TestCase):
         self.assertEqual(code, 65)
         self.assertIn("0600", answer["error"]["message"])
         self.assertIsNone(self.provider().issuer)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheProfilesFromAFile(unittest.TestCase):
+    """`haprion-profiles` (Fas 23, B293): rows and jobs as the web writes them, for real.
+
+    The worker is played by the wait: each time the command waits for a job,
+    the pending one is finished as the worker would leave it - `done`, and for
+    a removal the row gone.
+    """
+
+    FILE = """dns_profiles:
+  - id: cf-main
+    provider: cloudflare
+    fields: {api_token: the token}
+ndes_profiles:
+  - id: corp-ca
+    endpoint: https://ndes.example.com/certsrv/mscep/mscep.dll
+    challenge: the challenge
+"""
+
+    def connect(self) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}")
+
+    def setUp(self) -> None:
+        from dataclasses import replace
+
+        from haprion.dns_profile_keys import write_key_pair
+
+        from haprion_ui import admin, profile_apply
+        from haprion_ui import config as ui_config
+        from tests.test_login import configuration
+
+        self.tool = profile_apply
+        keys = Path(tempfile.mkdtemp(prefix="profile-keys-"))
+        self.addCleanup(shutil.rmtree, keys, True)
+        write_key_pair(keys / "k.key", keys / "k.pub")
+        self.worker_result = "done"
+        self.reset()
+        for patch in (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(
+                profile_apply,
+                "load_environment",
+                return_value=admin.Environment(database="test", role="test"),
+            ),
+            mock.patch.object(profile_apply, "connect", side_effect=lambda _e: self.connect()),
+            mock.patch.object(
+                ui_config,
+                "load",
+                return_value=replace(configuration(), dns_profiles_public_key=keys / "k.pub"),
+            ),
+            mock.patch.dict(os.environ, {"SUDO_USER": "operator"}),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def tearDown(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        with self.connect() as connection:
+            connection.execute("delete from job where operation like '%%_profile_apply'")
+            connection.execute("truncate dns_provider_profile, ndes_provider_profile")
+            connection.execute("delete from audit_event where detail->>'via' = 'cli'")
+            connection.commit()
+
+    def work(self, _seconds: float) -> None:
+        with self.connect() as connection:
+            for operation, payload in connection.execute(
+                "select operation, payload from job where state = 'pending'"
+            ).fetchall():
+                if payload.get("remove") and self.worker_result == "done":
+                    table = operation.removesuffix("_apply").replace(
+                        "_profile", "_provider_profile"
+                    )
+                    connection.execute(
+                        f"delete from {table} where id = %s",  # noqa: S608 - our own names
+                        (payload["profile"],),
+                    )
+            connection.execute(
+                "update job set state = %s, outcome = %s, exit_code = 0, "
+                "       finished_at = now(), stderr_excerpt = 'the helper refused' "
+                " where state = 'pending'",
+                (self.worker_result, self.worker_result),
+            )
+            connection.commit()
+
+    def write(self, text: str, mode: int = 0o600) -> str:
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory)
+        path = Path(directory) / "profiles.yaml"
+        path.write_text(text)
+        path.chmod(mode)
+        return str(path)
+
+    def apply(self, path: str, *extra: str) -> tuple[int, dict[str, Any]]:
+        args = self.tool.build_parser().parse_args(["apply", path, "--json", *extra])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.tool.command_apply(args, sleep=self.work)
+        return code, json.loads(out.getvalue())
+
+    def stored(self) -> list[tuple[str, str, int]]:
+        with self.connect() as connection:
+            return [
+                (row[0], row[1], row[2])
+                for row in connection.execute(
+                    "select 'dns', id, revision from dns_provider_profile "
+                    "union all select 'ndes', id, revision from ndes_provider_profile order by 1, 2"
+                ).fetchall()
+            ]
+
+    def test_a_file_creates_and_the_same_file_again_changes_nothing(self) -> None:
+        path = self.write(self.FILE)
+
+        first = self.apply(path)
+        second = self.apply(path)
+
+        self.assertEqual((first[0], second[0]), (0, 0), (first, second))
+        self.assertEqual(
+            [(job["kind"], job["state"]) for job in first[1]["result"]["jobs"]],
+            [("dns", "done"), ("ndes", "done")],
+        )
+        self.assertFalse(second[1]["result"]["changed"])
+        self.assertEqual(second[1]["result"]["unchanged"], ["dns/cf-main", "ndes/corp-ca"])
+        self.assertEqual(self.stored(), [("dns", "cf-main", 1), ("ndes", "corp-ca", 1)])
+
+    def test_replace_and_a_moved_endpoint_store_a_new_revision(self) -> None:
+        path = self.write(self.FILE)
+        self.apply(path)
+        moved = self.write(self.FILE.replace("ndes.example.com", "ca.example.com"))
+
+        code, answer = self.apply(moved, "--replace", "cf-main")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [(c["profile"], c["action"]) for c in answer["result"]["changes"]],
+            [("cf-main", "replace"), ("corp-ca", "replace")],
+        )
+        self.assertEqual(self.stored(), [("dns", "cf-main", 2), ("ndes", "corp-ca", 2)])
+
+    def test_prune_and_remove_take_profiles_away_through_the_job(self) -> None:
+        self.apply(self.write(self.FILE))
+
+        code, answer = self.apply(self.write("ndes_profiles: []\n"), "--prune")
+        args = self.tool.build_parser().parse_args(["remove", "dns", "cf-main"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            removed = self.tool.command_remove(args, sleep=self.work)
+            again = self.tool.command_remove(args, sleep=self.work)
+
+        self.assertEqual((code, removed, again), (0, 0, 0))
+        self.assertEqual(answer["result"]["changes"][0]["action"], "remove")
+        self.assertEqual(self.stored(), [])
+
+    def test_a_job_that_does_not_apply_stops_the_run_and_says_why(self) -> None:
+        self.worker_result = "failed"
+
+        code, answer = self.apply(self.write(self.FILE))
+
+        self.assertEqual(code, 65)
+        self.assertIn("the helper refused", answer["error"]["message"])
+        with self.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "select count(*) from job where operation like '%%_profile_apply'"
+                ).fetchone(),
+                (1,),
+            )
+
+    def test_another_provider_and_credentials_others_may_read_are_refused(self) -> None:
+        self.apply(self.write(self.FILE))
+
+        moved = self.apply(
+            self.write(self.FILE.replace("provider: cloudflare", "provider: route53"))
+        )
+        loose = self.apply(self.write(self.FILE, mode=0o644))
+
+        self.assertIn("keeps its provider", moved[1]["error"]["message"])
+        self.assertIn("0600", loose[1]["error"]["message"])
+        self.assertEqual(self.stored(), [("dns", "cf-main", 1), ("ndes", "corp-ca", 1)])

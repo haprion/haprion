@@ -1,0 +1,10 @@
+#!/bin/bash
+#
+# DNS and NDES profiles for certificate issuance, from a file, for
+# automation. Installed by the haprion-ui package.
+#
+# A shim rather than a link into a release, as haprion-user is: it runs
+# whatever `current` points at, so an application rollback takes it back too.
+# Root only; it connects as the migration role.
+#
+exec /opt/haprion-ui/current/venv/bin/haprion-profiles "$@"

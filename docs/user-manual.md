@@ -1256,7 +1256,7 @@ machine write; the file's header says so.
 ### The life of a profile
 
 Profiles are made and retired at **Certificates → DNS providers** (`/dns-profiles`), by an
-administrator, and never from a file. A profile is one provider's credentials under a short ID the
+administrator, or with `haprion-profiles` on the manager (below). A profile is one provider's credentials under a short ID the
 operator chooses (`cloudflare-main`: lowercase letters, digits and hyphens, at most 32). The ID is
 the profile's name everywhere - the certificate form's choice list, the credentials file, and
 `--dns-profile` on the command line - so pick one that reads well typed from memory.
@@ -1288,6 +1288,35 @@ and the catalogue's propagation wait into the lineage's renewal configuration, a
 `haprion-cert-renew` restores what a plugin cannot persist. Removing a profile a lineage still
 renews through would break that renewal, which is why the registry and the renewal files are
 checked first.
+
+**From the terminal**, `haprion-profiles` does the same for DNS and NDES profiles, as root: each
+profile a file lists is sealed by the form's code against the same key, stored the way the page
+stores it, and applied by the same job. The values cannot be compared once sealed, so a stored
+profile is left as it is unless `--replace <id>` asks or, for NDES, the endpoint differs; the same
+file twice changes nothing. A DNS profile keeps its provider - another provider is another ID.
+`--prune` removes the stored profiles of a kind the file lists and does not name, and `remove`
+removes one; a removal is refused as on the page. Only one certificate job is queued at a time, so
+the command queues each change, waits for the worker to finish it (`--wait`, 120 seconds by
+default), and stops at the first that did not apply. The file carries credentials and is refused
+unless only its owner may read it (mode `0600`).
+
+```yaml
+dns_profiles:
+  - id: cloudflare-main
+    provider: cloudflare
+    fields: {api_token: "from the vault"}
+ndes_profiles:
+  - id: internal-ca
+    endpoint: https://ndes.example.com/certsrv/mscep/mscep.dll
+    challenge: "from the vault"
+```
+
+```bash
+sudo haprion-profiles apply profiles.yaml --check
+sudo haprion-profiles apply profiles.yaml --json
+sudo haprion-profiles remove dns cloudflare-old
+sudo haprion-profiles list --json
+```
 
 ### Deleting a certificate
 

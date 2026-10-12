@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-profiles-apply.schema.json",
+  "title": "haprion-profiles apply JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "profiles_apply" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/profiles_apply_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/profiles_apply_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "kind": { "enum": ["dns", "ndes"] },
+    "profile": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+    "profiles_apply_result": {
+      "type": "object",
+      "required": ["changed", "check", "changes", "jobs", "unchanged"],
+      "properties": {
+        "changed": { "type": "boolean" },
+        "check": { "type": "boolean" },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "profile", "action"],
+            "properties": {
+              "kind": { "$ref": "#/$defs/kind" },
+              "profile": { "$ref": "#/$defs/profile" },
+              "action": { "enum": ["create", "replace", "remove"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "jobs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "profile", "job", "state"],
+            "properties": {
+              "kind": { "$ref": "#/$defs/kind" },
+              "profile": { "$ref": "#/$defs/profile" },
+              "job": { "type": "integer", "minimum": 1 },
+              "state": { "enum": ["done", "partial", "failed", "blocked", "unknown", "pending", "running"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "unchanged": { "type": "array", "items": { "type": "string", "pattern": "^(dns|ndes)/[a-z0-9][a-z0-9-]{0,31}$" } }
+      },
+      "additionalProperties": true
+    }
+  }
+}

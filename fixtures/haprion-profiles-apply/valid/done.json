@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "profiles_apply",
+  "cluster": null,
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "changed": true,
+    "check": false,
+    "changes": [{"kind": "dns", "profile": "cf-main", "action": "create"}],
+    "jobs": [{"kind": "dns", "profile": "cf-main", "job": 41, "state": "done"}],
+    "unchanged": ["ndes/corp-ca"]
+  },
+  "warnings": [],
+  "error": null
+}

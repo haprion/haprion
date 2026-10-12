@@ -252,6 +252,10 @@ file back if rsyslog refuses it. The queues live in rsyslog's work directory (`/
 on Ubuntu) and need the room the cluster's `disk_mib` gives each receiver. A release that names
 receivers is refused on a node without the include, before anything is activated. A site that
 already loads `impstats` itself gets a refusal from `rsyslogd -N1` when `04-node-prepare` runs.
+`04-node-prepare` also has systemd hold HAProxy's log socket in its chroot
+(`haprion-haproxy-log.socket`, `net.unix.max_dgram_qlen` in `/etc/sysctl.d/60-haproxy.conf`), so a
+restart of rsyslog loses no lines; taking the socket over restarts rsyslog once
+([HAProxy and keepalived baseline](user-manual.md#haproxy-and-keepalived-baseline)).
 
 ## 6. Verify access
 

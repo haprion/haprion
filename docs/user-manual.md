@@ -2265,7 +2265,8 @@ on their resolver at the moment rsyslog starts.
 Each receiver has a **queue on the node's disk**, `disk_mib` large, and the queue is what an outage
 or a burst is survived with. While a receiver is away or reads slower than the traffic, rsyslog
 keeps the lines on disk and sends them when it reads again; the queue survives a restart of
-rsyslog or of the node. About 800 bytes a line, so 1 GiB holds some 1.3 million. What does not fit
+rsyslog or of the node. A deploy that changes the receivers restarts rsyslog, and the lines HAProxy
+writes meanwhile wait in its log socket ([HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline)). About 800 bytes a line, so 1 GiB holds some 1.3 million. What does not fit
 is dropped for that receiver alone and counted - neither the traffic nor the node's own day file
 waits for a full queue. Measured with rsyslog 8.2512 on one core: 25 000 lines a second forwarded
 and written to file at 9 % of the core; 100 000 lines queued while the receiver was away arrived
@@ -3994,6 +3995,29 @@ net.ipv4.ip_nonlocal_bind = 1
 Without it, HAProxy on the node that does *not* hold the address fails to start: it is asked to
 bind an address the kernel says is not there. With it, both nodes run continuously and the virtual
 address decides which one traffic reaches. `04-node-prepare` sets this and reports it.
+
+**HAProxy's log socket outlives rsyslog.** HAProxy runs chrooted in `/var/lib/haproxy`, so its
+`log /dev/log` is `/var/lib/haproxy/dev/log`, the socket Ubuntu's `/etc/rsyslog.d/49-haproxy.conf`
+has rsyslog listen on. Left to rsyslog, the socket goes away whenever rsyslog stops, and the lines
+HAProxy writes until it is back are lost - to the node's day file and to every receiver. So
+`04-node-prepare` has systemd hold it, as `syslog.socket` holds the system log's:
+
+```text
+# /etc/systemd/system/haprion-haproxy-log.socket
+[Socket]
+ListenDatagram=/var/lib/haproxy/dev/log
+SocketMode=0666
+ReceiveBuffer=16M
+Service=rsyslog.service
+
+# /etc/sysctl.d/60-haproxy.conf
+net.unix.max_dgram_qlen = 8192
+```
+
+rsyslog is handed the socket when it starts, and while it restarts the lines wait in it: the queue
+length is how many, enough for a restart at 25 000 requests a second. Like `syslog.socket`, it
+starts rsyslog when a line arrives and rsyslog is not running. Without `49-haproxy.conf`'s line the
+step warns and leaves the socket to rsyslog.
 
 **The unit must load `conf.d`, and must load it exactly once.**
 

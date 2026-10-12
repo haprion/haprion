@@ -513,27 +513,95 @@ step "HAProxy baseline"
 # bind it - otherwise HAProxy fails to start there, and the pair is a single node
 # with a spare that has never been proven to work.
 #
+LOG_SOCKET_QUEUE=8192
 sysctl_file="/etc/sysctl.d/60-haproxy.conf"
 sysctl_content="# Installed by install/04-node-prepare.
 #
 # Let HAProxy bind the virtual address on the node that does not currently own
 # it. Without this the standby node cannot start, and the failover it exists for
 # has never been exercised.
-net.ipv4.ip_nonlocal_bind = 1"
+net.ipv4.ip_nonlocal_bind = 1
+
+# How many lines HAProxy's log socket holds while rsyslog is not reading it:
+# through a restart of rsyslog (65 ms measured, ~1 600 lines at 25 000 a
+# second) and a burst. Read when a socket is created, so it is set before the
+# log socket below; the kernel's 512 dropped lines on every restart.
+net.unix.max_dgram_qlen = ${LOG_SOCKET_QUEUE}"
 
 install_file "$sysctl_file" root:root 644 "$sysctl_content"
-if [[ "$(sysctl -n net.ipv4.ip_nonlocal_bind)" != "1" ]]; then
-    sysctl -q -w net.ipv4.ip_nonlocal_bind=1
-    log "  applied  net.ipv4.ip_nonlocal_bind=1"
-else
-    log "  ok       net.ipv4.ip_nonlocal_bind=1"
-fi
+for setting in net.ipv4.ip_nonlocal_bind=1 "net.unix.max_dgram_qlen=${LOG_SOCKET_QUEUE}"; do
+    if [[ "$(sysctl -n "${setting%%=*}")" != "${setting#*=}" ]]; then
+        sysctl -q -w "$setting"
+        log "  applied  ${setting}"
+    else
+        log "  ok       ${setting}"
+    fi
+done
 
 if systemctl is-enabled haproxy >/dev/null 2>&1; then
     log "  ok       haproxy is enabled"
 else
     warn "haproxy is not enabled on this node. This project manages HAProxy;"
     warn "  it does not install it. Install and enable it before deploying."
+fi
+
+#
+# HAProxy runs chrooted in /var/lib/haproxy, so its `log /dev/log` is
+# /var/lib/haproxy/dev/log - a socket Ubuntu's 49-haproxy.conf has rsyslog
+# create, and remove again whenever rsyslog stops. Every restart of rsyslog,
+# which a deploy that changes the log receivers does, lost the lines HAProxy
+# wrote in between: 43 to 93 a restart, locally and at every receiver
+# (measured 26-10-12). Here systemd holds the socket, as syslog.socket holds
+# the system log's: rsyslog is handed it at start and the lines wait in it
+# while rsyslog is away. rsyslog takes a socket handed over for a path it is
+# told to listen on, by `$AddUnixListenSocket` as by `input()`, and leaves
+# the path alone when it stops (measured with rsyslog 8.2512 and systemd's
+# socket activation).
+#
+# systemd does not bind over a socket rsyslog made itself, so taking it over
+# stops rsyslog and syslog.socket first - otherwise the journal could start
+# rsyslog again in between - and starts both after the log socket. That is
+# only when the unit is new or changed or the socket is not held yet.
+#
+LOG_SOCKET_PATH="/var/lib/haproxy/dev/log"
+LOG_SOCKET_UNIT="haprion-haproxy-log.socket"
+LOG_SOCKET_FILE="/etc/systemd/system/${LOG_SOCKET_UNIT}"
+if ! grep -qsx "\$AddUnixListenSocket ${LOG_SOCKET_PATH}" /etc/rsyslog.d/49-haproxy.conf; then
+    warn "/etc/rsyslog.d/49-haproxy.conf does not have rsyslog listen on ${LOG_SOCKET_PATH}"
+    warn "  (it comes with Ubuntu's haproxy package); the log socket is left to rsyslog."
+else
+    unit_before="$(sha256sum "$LOG_SOCKET_FILE" 2>/dev/null || true)"
+    install_file "$LOG_SOCKET_FILE" root:root 644 "# Installed by install/04-node-prepare.
+[Unit]
+Description=HAProxy's log socket in its chroot, held across rsyslog restarts
+
+[Socket]
+ListenDatagram=${LOG_SOCKET_PATH}
+SocketMode=0666
+ReceiveBuffer=16M
+Service=rsyslog.service
+
+[Install]
+WantedBy=sockets.target"
+    systemctl daemon-reload
+    systemctl enable --quiet "$LOG_SOCKET_UNIT"
+    if [[ "$unit_before" != "$(sha256sum "$LOG_SOCKET_FILE")" ]] \
+        || ! systemctl is-active --quiet "$LOG_SOCKET_UNIT"; then
+        systemctl stop syslog.socket rsyslog.service "$LOG_SOCKET_UNIT"
+        rm -f "$LOG_SOCKET_PATH"
+        if ! systemctl start "$LOG_SOCKET_UNIT"; then
+            # Never leave the node without rsyslog: back to the socket it makes.
+            systemctl disable --quiet "$LOG_SOCKET_UNIT" || true
+            rm -f "$LOG_SOCKET_FILE"
+            systemctl daemon-reload
+            systemctl start syslog.socket rsyslog.service || true
+            die "${LOG_SOCKET_UNIT} could not be started; removed it, rsyslog runs as before"
+        fi
+        systemctl start syslog.socket rsyslog.service || die "rsyslog could not be started"
+        log "  applied  ${LOG_SOCKET_UNIT}; rsyslog restarted on it"
+    else
+        log "  ok       ${LOG_SOCKET_UNIT}"
+    fi
 fi
 
 step "Keepalived"

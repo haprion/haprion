@@ -1,10 +1,11 @@
-"""``haprion-objects`` - the stored proxy objects, read-only.
+"""``haprion-objects`` - the stored proxy objects, and setting them from files.
 
 Where `haprion-inventory` says what a node is serving, this says what the
 cluster's objects look like as written. The listing names them; `--show <name>`
 prints one document exactly as it is stored, so it can be piped, diffed or
 copied without going through a browser; `--advanced <name>` prints where each
 line of its advanced config goes, as the interface's *Check* does (Fas 17).
+`apply` and `remove` set them from the terminal (`objects_apply`, Fas 23).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
+from haprion.cli import objects_apply
 from haprion.cli.caller import usage
 from haprion.envelope import new_request_id
 from haprion.helper_protocol import write_document
@@ -26,7 +28,13 @@ SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
 EXIT_NOT_FOUND = 66
 EXIT_REFUSED = 65
-USAGE = "Usage:\n  haprion-objects -c <cluster> [--show <name> | --advanced <name> | --json]\n"
+USAGE = (
+    "Usage:\n"
+    "  haprion-objects -c <cluster> [--show <name> | --advanced <name> | --json]\n"
+    "  haprion-objects apply -c <cluster> <file|dir>... [--prune] [--check] [-m <comment>]\n"
+    "                        [--allow-certificate-mismatch] [--json]\n"
+    "  haprion-objects remove -c <cluster> <name>... [--check] [-m <comment>] [--json]\n"
+)
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
 
@@ -171,10 +179,20 @@ def main(
     stream_out: TextIO | None = None,
     stream_err: TextIO | None = None,
     run_helper: RunHelper = run_objects_helper,
+    run_publish: Callable[[str], subprocess.CompletedProcess[str]] | None = None,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
+    if argv and argv[0] in ("apply", "remove"):
+        return objects_apply.main(
+            argv[0],
+            argv[1:],
+            run_helper=run_helper,
+            stream_out=writer,
+            stream_err=errors,
+            **({} if run_publish is None else {"run_publish": run_publish}),
+        )
     cluster_id, json_mode, show, advanced = _parse(argv)
     completed = run_helper(cluster_id, new_request_id())
 

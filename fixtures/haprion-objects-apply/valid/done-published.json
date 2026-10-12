@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "objects_apply",
+  "cluster": "alpha",
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "changed": true,
+    "check": false,
+    "added": ["shop"],
+    "updated": ["api"],
+    "removed": [],
+    "unchanged": ["web"],
+    "versions": [{"version": 12, "hash": "dddddddddddddddddddddddddddddddddddddddd", "changed": true}],
+    "deployment_required": true
+  },
+  "warnings": [],
+  "error": null
+}

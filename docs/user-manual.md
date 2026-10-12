@@ -121,6 +121,24 @@ haprion-deploy -c alpha
 A converged deploy skips nodes already current. See the installation guide for
 [cluster and network configuration](#cluster-definitions).
 
+**Objects from files**, for automation. Each file is one object's document in the form the interface
+stores (`haprion-objects -c alpha --show <name>` prints one), named by the file: `shop.yaml` is the
+object `shop`. `apply` publishes what differs from what is stored as one version, against the version
+it read, and says what it did; the same files again change nothing. An object no file names is left
+alone unless `--prune` is given. `--check` shows the difference and publishes nothing; `--json`
+answers with `changed`, and deploying stays its own step:
+
+```bash
+sudo haprion-objects apply -c alpha objects/ --check
+sudo haprion-objects apply -c alpha objects/ -m "Add the shop"
+sudo haprion-objects remove -c alpha staging
+haprion-deploy -c alpha
+```
+
+More than 64 changed objects are published in batches of 64, each its own version. Every file is
+read by the model the publish uses before anything is asked of the manager, so a mistake is named by
+its file.
+
 **Say what an object is for.** *Description* in the form's *Frontend* part is one line of at most
 200 characters - what the service is and who to ask. The object's page shows it in the *Stored
 object* card as *Description:*, and the search finds it. In YAML it is `description:` beside `name:`; nothing generated reads it,

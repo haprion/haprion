@@ -393,6 +393,28 @@ def check_readings_semantics(document: dict[str, object], path: Path) -> None:
             raise AssertionError(f"{path}: the {name} reading is about another cluster")
 
 
+def check_objects_apply_semantics(document: dict[str, object], path: Path) -> None:
+    """What `haprion-objects apply` says it did must be one consistent answer (Fas 23)."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done apply says what it did")
+        return
+    assert isinstance(result, dict)
+    lists = ("added", "updated", "removed", "unchanged")
+    named = [name for key in lists for name in result[key]]
+    if len(named) != len(set(named)):
+        raise AssertionError(f"{path}: an object is in one list only")
+    acted = any(result[key] for key in ("added", "updated", "removed"))
+    if result["changed"] != acted:
+        raise AssertionError(f"{path}: changed is whether anything was added, updated or removed")
+    if result["check"] and result["versions"]:
+        raise AssertionError(f"{path}: --check publishes nothing")
+    if result["deployment_required"] and not result["versions"]:
+        raise AssertionError(f"{path}: a deploy is owed only for a version published")
+
+
 def check_changes_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1053,6 +1075,7 @@ SEMANTIC_CHECKS = {
     "revert": check_revert_semantics,
     "cluster_settings": check_cluster_settings_semantics,
     "changes_publish": check_changes_publish_semantics,
+    "objects_apply": check_objects_apply_semantics,
     "readings": check_readings_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
@@ -1112,6 +1135,9 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         first = next(iter(result["reads"].values()))
         first["envelope"] = None
         first["exit_code"] = 0
+    elif operation == "objects_apply":
+        result["unchanged"].append(result["added"][0] if result["added"] else "shop")
+        result["added"].append(result["unchanged"][-1])
     elif operation == "cluster_settings":
         if result["log_targets"]:
             result["log_targets"].append(deepcopy(result["log_targets"][0]))

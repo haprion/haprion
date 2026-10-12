@@ -46,12 +46,12 @@ class NotASetting:
 
 
 PARITY: dict[str, Command | Gap | NotASetting] = {
-    "/proxies/{cluster}/new": Gap("P2", "haprion-objects apply"),
-    "/proxies/{cluster}/{name}/edit": Gap("P2", "haprion-objects apply"),
-    "/proxies/{cluster}/{name}/advanced": Gap("P2", "haprion-objects apply"),
-    "/proxies/{cluster}/{name}/remove": Gap("P2", "haprion-objects remove"),
-    "/waf/allow": Gap("P2", "haprion-objects apply"),
-    "/waf/exceptions/remove": Gap("P2", "haprion-objects apply"),
+    "/proxies/{cluster}/new": Command("haprion-objects apply"),
+    "/proxies/{cluster}/{name}/edit": Command("haprion-objects apply"),
+    "/proxies/{cluster}/{name}/advanced": Command("haprion-objects apply"),
+    "/proxies/{cluster}/{name}/remove": Command("haprion-objects remove"),
+    "/waf/allow": Command("haprion-objects apply"),
+    "/waf/exceptions/remove": Command("haprion-objects apply"),
     "/proxies/{cluster}/{name}/lookup": NotASetting("looks a name up for the form"),
     "/proxies/{cluster}/{name}/servers": Command("haprion-server-state"),
     "/proxies/{cluster}/{name}/unblock": Command("haprion-server-state unblock"),

@@ -174,6 +174,9 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.audit_count", return_value=0),
             mock.patch("haprion_ui.db.account_names", return_value=frozenset()),
             mock.patch("haprion_ui.db.server_state_events", return_value=[]),
+            # Events → Nodes (26-10-12): nothing the nodes did yet.
+            mock.patch("haprion_ui.db.node_event_page", return_value=[]),
+            mock.patch("haprion_ui.db.node_event_count", return_value=0),
             # Nobody may ask /status/ (B274) unless a test says otherwise.
             mock.patch("haprion_ui.db.status_access", return_value=[]),
             # Every cluster read through since its last job (0068).

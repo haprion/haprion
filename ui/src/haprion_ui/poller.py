@@ -126,6 +126,13 @@ class Source:
     # own helper is sent inside the one readings call.
     #
     reading: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None
+    #
+    # A third write from the status reading: what changed since the last one
+    # (*Events → Nodes*, 26-10-12). Its own transaction and its own failure,
+    # as a sample is - a change not written is a line missing from a log, and
+    # never a reason for the reading to be one.
+    #
+    events: Callable[..., int] | None = None
 
 
 def _every_version(extra: Mapping[str, Any]) -> dict[str, Any]:
@@ -162,6 +169,7 @@ SOURCES: tuple[Source, ...] = (
         db.record_cluster_status,
         partial_ok=True,
         sample=db.record_metric_samples,
+        events=db.record_node_events,
     ),
     Source("inventory", run_inventory_helper, db.record_cluster_inventory),
     #
@@ -297,6 +305,33 @@ def _sample(pool: Any, source: Source, *, cluster: str, result: Mapping[str, Any
         logger.warning("cluster %s samples not written: %s", cluster, exc)
         return
     logger.debug("cluster %s: %d sample row(s)", cluster, written)
+
+
+def _events(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any]) -> None:
+    """Write what changed since the last reading, and never let that failure reach the poll.
+
+    Only from a reading the cluster answered. One the poller could not get
+    says nothing about the nodes, and comparing it would read as every node
+    having stopped answering at once.
+    """
+
+    result = reading.get("result")
+    if (
+        source.events is None
+        or reading.get("outcome") not in ("done", "partial", "failed")
+        or not isinstance(result, Mapping)
+        or not result
+    ):
+        return
+    try:
+        with pool.connection() as connection:
+            written = source.events(connection, cluster=cluster, result=result)
+            connection.commit()
+    except Exception as exc:  # noqa: BLE001 - an event is never worth a failed pass
+        logger.warning("cluster %s node events not written: %s", cluster, exc)
+        return
+    if written:
+        logger.info("cluster %s: %d node event(s)", cluster, written)
 
 
 def _index(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any]) -> None:
@@ -512,6 +547,7 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
             )
             connection.commit()
         _sample(pool, source, cluster=cluster, result=reading["result"])
+        _events(pool, source, cluster=cluster, reading=reading)
         _index(pool, source, cluster=cluster, reading=reading)
         if reading["outcome"] == "done":
             if source.operation == "status":

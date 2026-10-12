@@ -111,6 +111,7 @@ from haprion_ui import (
     metrics,
     ndes_profile_form,
     network,
+    node_events,
     node_restores,
     objects,
     oidc_web,
@@ -7533,6 +7534,8 @@ def build_router(config: Config) -> APIRouter:
         #
         if request.query_params.get("view") == "audit" and session.role == "admin":
             return _audit_page(request, session, token)
+        if request.query_params.get("view") == "nodes":
+            return _node_events_page(request, session, token)
         with request.app.state.pool.connection() as connection:
             listed = db.recent_jobs(connection)
             queued_by = db.requested_by(connection, [row.request_id for row in listed])
@@ -7680,6 +7683,112 @@ def build_router(config: Config) -> APIRouter:
         )
         if asked:
             AUDIT_TABLE.remember(response, sort, secure=config.session.cookie_secure)
+        return response
+
+    def _node_events_page(request: Request, session: AuthenticatedSession, token: str) -> Response:
+        """What the nodes did on their own, a page at a time as *Audit* pages (26-10-12)."""
+
+        query = request.query_params
+        cluster = query.get("cluster", "")[:32]
+        search = query.get("q", "")[:200]
+        selected_from = query.get("from", "")[:14]
+        selected_to = query.get("to", "")[:14]
+        size_raw = query.get("size", "")
+        size = int(size_raw) if size_raw in ("25", "50", "100") else AUDIT_PAGE
+        page_raw = query.get("page", "")
+        page = int(page_raw) if page_raw.isdigit() and 0 < int(page_raw) < 100000 else 1
+        now = datetime.now(UTC)
+        local_now = metrics.shown(now)
+        local_earliest = metrics.wall(
+            datetime.combine(
+                local_now.date() - timedelta(days=NODE_EVENT_KEEP_DAYS - 1), datetime.min.time()
+            )
+        )
+        outside = "Choose a date and time within the 90 days the log keeps."
+        time_error: str | None = None
+        try:
+            since = _log_time_filter(
+                selected_from, earliest=local_earliest.astimezone(UTC), latest=now, outside=outside
+            )
+            until = _log_time_filter(
+                selected_to,
+                earliest=local_earliest.astimezone(UTC),
+                latest=now,
+                end_of_minute=True,
+                outside=outside,
+            )
+            if since is not None and until is not None and since > until:
+                raise ValueError("From must be earlier than To.")
+        except ValueError as exc:
+            since = until = None
+            time_error = str(exc)
+        sort, asked = NODE_EVENT_TABLE.chosen(request)
+        with request.app.state.pool.connection() as connection:
+            total = db.node_event_count(
+                connection, cluster=cluster, search=search, since=since, until=until
+            )
+            pages = max(1, -(-total // size))
+            page = min(page, pages)
+            events = db.node_event_page(
+                connection,
+                order=sort.lstrip("-"),
+                descending=NODE_EVENT_TABLE.descending(sort),
+                offset=(page - 1) * size,
+                limit=size,
+                cluster=cluster,
+                search=search,
+                since=since,
+                until=until,
+            )
+        _, object_rows = read_source(request, config, OBJECTS_SOURCE)
+        owners = {
+            reading.cluster: health.backend_owners(objects.cluster_object_views(reading))
+            for reading in object_rows
+        }
+        kept = {
+            "view": "nodes",
+            "cluster": cluster,
+            "q": search,
+            "from": selected_from,
+            "to": selected_to,
+            "size": str(size),
+        }
+        response = TEMPLATES.TemplateResponse(
+            request,
+            "jobs.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "management_writes": config.management_writes,
+                "section": "jobs",
+                "view": "nodes",
+                "node_events": node_events.rows(events, owners),
+                "filters": {
+                    "cluster": cluster,
+                    "q": search,
+                    "from": selected_from,
+                    "to": selected_to,
+                },
+                "time_error": time_error,
+                "kept": kept,
+                "paging": {
+                    "page": page,
+                    "pages": pages,
+                    "size": size,
+                    "total": total,
+                    "first": (page - 1) * size + 1 if total else 0,
+                    "last": min(page * size, total),
+                },
+                "time_min": local_earliest.strftime("%y-%m-%d %H:%M"),
+                "time_max": local_now.strftime("%y-%m-%d %H:%M"),
+                "time_today": local_now.strftime("%y-%m-%d 00:00"),
+                "clusters": listed_clusters(request, config),
+                "node_sorts": NODE_EVENT_TABLE.links(sort, kept),
+            },
+        )
+        if asked:
+            NODE_EVENT_TABLE.remember(response, sort, secure=config.session.cookie_secure)
         return response
 
     @router.get("/login", response_class=HTMLResponse)
@@ -9456,6 +9565,22 @@ AUDIT_KEEP_DAYS = 730
 # database: the page holds one page of the record, and ordering only that
 # would be a lie about the rest. The keys are unused for the same reason.
 #
+#
+# How far back *Events → Nodes* reaches: haprion-retention's NODE_EVENT_KEEP_DAYS.
+#
+NODE_EVENT_KEEP_DAYS = 90
+
+NODE_EVENT_TABLE = sorting.Table(
+    columns=(
+        sorting.Column("time", lambda _row, _: None, descending_first=True),
+        sorting.Column("node", lambda _row, _: None),
+        sorting.Column("what", lambda _row, _: None),
+        sorting.Column("where", lambda _row, _: None),
+    ),
+    cookie="haprion_ui_node_event_sort",
+    path="/jobs",
+)
+
 AUDIT_TABLE = sorting.Table(
     columns=(
         sorting.Column("time", lambda _row, _: None, descending_first=True),

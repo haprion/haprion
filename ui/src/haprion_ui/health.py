@@ -180,6 +180,18 @@ def _members(status: Any) -> tuple[bool, list[dict[str, Any]]]:
     return True, [entry for entry in entries if isinstance(entry, dict)] + others
 
 
+def node_members(status: Any) -> tuple[bool, list[dict[str, Any]]]:
+    """One node's servers of every kind, as the lamp reads them; see `_members`."""
+
+    return _members(status)
+
+
+def is_member(row: Mapping[str, Any]) -> bool:
+    """Whether a server row is a member rather than a pool's own row."""
+
+    return _is_member(row)
+
+
 def _dns_members(status: Mapping[str, Any]) -> list[dict[str, Any]]:
     listener = status.get("dns_listener")
     counted = listener.get("counters") if isinstance(listener, Mapping) else None

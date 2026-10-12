@@ -53,7 +53,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [Sending the traffic log elsewhere, and metrics](#sending-the-traffic-log-elsewhere-and-metrics)
 - [Jobs and status freshness](#jobs-and-status-freshness)
   - [Needs attention, and external monitoring](#needs-attention-and-external-monitoring)
-  - [Events: jobs and the audit record](#events-jobs-and-the-audit-record)
+  - [Events: jobs, the nodes and the audit record](#events-jobs-the-nodes-and-the-audit-record)
   - [How often status is refreshed](#how-often-status-is-refreshed)
   - [The worker](#the-worker)
 - [Maintenance](#maintenance)
@@ -2582,10 +2582,22 @@ echo "OK: nothing needs attention"; exit 0
 The message carries each item's subject and sentence, so the alert says what is wrong without
 opening the dashboard.
 
-### Events: jobs and the audit record
+### Events: jobs, the nodes and the audit record
 
-*Events* has two views. **Jobs** lists the newest jobs, their outcome and diagnostics, and *By*:
-who queued each one, from the record. **Audit**, for an admin only, is the rest of the record,
+*Events* has three views. **Jobs** lists the newest jobs, their outcome and diagnostics, and *By*:
+who queued each one, from the record. **Nodes** is what the nodes did on their own: a server that
+went down or came back up, with the check's reason, the VIP moving from one node to the other, and a
+node that stopped answering or answers again. A server's row names its object and links to its
+servers. Both roles read it; it pages and filters by cluster, a word and time as *Audit* does, and
+the nightly retention removes rows older than 90 days. It is written by the poller, which compares
+each status reading with the one before: a server's change is dated by HAProxy's own count of how
+long ago it changed, so the time is right to the second, but a server that went down and came back
+between two readings leaves no row. Servers are read from the node holding the VIP, as the metrics
+are - the other node's check leaves from an address it does not have. A server in drain or
+maintenance keeps its last state until it is checked again, and the first reading of a new server
+or installation is a starting point rather than an event. A restart of HAProxy is not listed: a
+reload starts its uptime again too, so the two cannot be told apart, and a deploy is already under
+*Jobs*. **Audit**, for an admin only, is the rest of the record,
 newest first, fifty to a page by default: sign-ins and failed attempts, account and role changes, password
 changes, the identity provider, feature switches, key exports, saved and discarded changes and
 drafts, and every queued job with a link to it while the job is still listed. Each row is one

@@ -6596,3 +6596,110 @@ class AReloadThatKeepsTheCountersIsNoRestart(unittest.TestCase):
                 )
                 self.assertEqual(cursor.fetchone(), (False, 4))
             connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class WhatTheNodesDidIsWrittenByThePollerAndReadByTheWeb(unittest.TestCase):
+    """Migration 0071: *Events → Nodes* through the roles' own grants (26-10-12).
+
+    Three readings as the poller: a starting point that writes nothing, a
+    server going down twelve seconds before the second, and the VIP moving
+    with the standby gone silent. The web reads them back a page at a time.
+    """
+
+    CLUSTER = "eventful"
+
+    @staticmethod
+    def connect(role_variable: str) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    @staticmethod
+    def reading(holder: str, status: str, *, other_ok: bool = True) -> dict[str, Any]:
+        def entry(name: str) -> dict[str, Any]:
+            ok = name == holder or other_ok
+            return {
+                "name": name,
+                "status_ok": ok,
+                "status": {
+                    "vip": {"owner": name == holder},
+                    "servers": [
+                        {
+                            "backend": "shop",
+                            "server": "s1",
+                            "status": status if name == holder else "DOWN",
+                            "last_change_sec": 12,
+                            "check_status": "L4CON",
+                        }
+                    ],
+                }
+                if ok
+                else None,
+            }
+
+        return {"nodes": [entry("node-a"), entry("node-b")]}
+
+    def test_three_readings_and_a_page(self) -> None:
+        written = []
+        for result in (
+            self.reading("node-a", "UP"),
+            self.reading("node-a", "DOWN"),
+            self.reading("node-b", "DOWN", other_ok=False),
+        ):
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+                written.append(
+                    db.record_node_events(connection, cluster=self.CLUSTER, result=result)
+                )
+                connection.commit()
+
+        self.assertEqual(written, [0, 1, 2])
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertEqual(db.node_event_count(connection, cluster=self.CLUSTER), 3)
+            page = db.node_event_page(connection, cluster=self.CLUSTER, limit=2, order="what")
+            self.assertEqual(len(page), 2)
+            events = db.node_event_page(connection, cluster=self.CLUSTER, search="s1")
+            (down,) = events
+            self.assertEqual(
+                (down.event, down.node, down.subject), ("server_down", "node-a", "shop/s1")
+            )
+            self.assertEqual(down.detail, {"check_status": "L4CON"})
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "select event, node, detail from node_event "
+                    " where cluster = %s and event <> 'server_down' order by event",
+                    (self.CLUSTER,),
+                )
+                self.assertEqual(
+                    cursor.fetchall(),
+                    [("node_silent", "node-a", {}), ("vip_moved", "node-b", {"from": "node-a"})],
+                )
+        with (
+            self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                "select extract(epoch from (max(at) filter (where event = 'vip_moved') "
+                "                         - max(at) filter (where event = 'server_down')))"
+                "  from node_event where cluster = %s",
+                (self.CLUSTER,),
+            )
+            #
+            # Dated by HAProxy's own count, not by the reading.
+            #
+            self.assertGreaterEqual(float(_first(cursor)), 12)
+
+    def test_the_web_cannot_write_and_the_poller_cannot_read_the_events(self) -> None:
+        for role, statement in (
+            (
+                "HAPRION_UI_TEST_WEB_ROLE",
+                "insert into node_event (cluster, node, event, subject) values ('x', 'n', 'node_back', 'n')",
+            ),
+            ("HAPRION_UI_TEST_WEB_ROLE", "select value from node_event_state"),
+            ("HAPRION_UI_TEST_POLLER_ROLE", "select id from node_event"),
+            ("HAPRION_UI_TEST_POLLER_ROLE", "delete from node_event"),
+        ):
+            with (
+                self.subTest(role=role, statement=statement),
+                self.connect(role) as connection,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                connection.execute(statement)

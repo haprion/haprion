@@ -2441,6 +2441,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
    rather than the job table's nine shares or .node-table's fixed widths. */
 .log-filters.audit-filters { grid-template-columns: minmax(120px, .6fr) minmax(120px, .6fr) minmax(200px, 1.3fr) minmax(175px, .8fr) minmax(175px, .8fr) auto auto; }
 @media (max-width: 1000px) { .log-filters.audit-filters { grid-template-columns: 1fr 1fr; } }
+.log-filters.node-event-filters { grid-template-columns: minmax(120px, .6fr) minmax(200px, 1.3fr) minmax(175px, .8fr) minmax(175px, .8fr) auto auto; }
+@media (max-width: 1000px) { .log-filters.node-event-filters { grid-template-columns: 1fr 1fr; } }
 .audit-table { table-layout: fixed; }
 /* The time is never cut. Pixels, not ch or em: a fixed table takes its widths
    from the heading row, whose 11 px capitals made 17ch too narrow for the
@@ -2450,6 +2452,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .audit-table th:nth-child(2), .audit-table td:nth-child(2) { width: 170px; }
 .audit-table th:nth-child(3), .audit-table td:nth-child(3) { width: auto; }
 .audit-table th:nth-child(4), .audit-table td:nth-child(4) { width: 130px; }
+/* Events -> Nodes: Where carries the cluster and a server's object. */
+.node-event-table th:nth-child(4), .node-event-table td:nth-child(4) { width: 260px; }
 .audit-table td { padding-top: 7px; padding-bottom: 7px; overflow: hidden; text-overflow: ellipsis; }
 .audit-table time { font-variant-numeric: tabular-nums; }
 .audit-row { cursor: pointer; }

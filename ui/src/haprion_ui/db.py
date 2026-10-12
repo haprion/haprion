@@ -35,7 +35,7 @@ from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from haprion_ui import metrics, search_index, timing
+from haprion_ui import metrics, node_events, search_index, timing
 from haprion_ui.config import Database
 
 
@@ -1539,6 +1539,145 @@ def audit_count(
                 until=until,
                 excluded=excluded,
             ),
+        )
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
+
+
+def record_node_events(
+    connection: Connection[Any], *, cluster: str, result: Mapping[str, Any]
+) -> int:
+    """Compare one status reading with the state kept, and write what changed (*Events → Nodes*).
+
+    One transaction with the state it replaces, so two passes can never both
+    see the old state and both write the change. Returns how many events.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select kind, subject, value from node_event_state where cluster = %(cluster)s "
+            "   for update",
+            {"cluster": cluster},
+        )
+        previous = {(row[0], row[1]): row[2] for row in cursor.fetchall()}
+        changes, state, gone = node_events.compare(previous, node_events.observe(result))
+        if changes:
+            cursor.executemany(
+                "insert into node_event (at, cluster, node, event, subject, detail) "
+                "values (transaction_timestamp() - make_interval(secs => %(ago)s), "
+                "        %(cluster)s, %(node)s, %(event)s, %(subject)s, %(detail)s)",
+                [
+                    {
+                        "ago": change.seconds_ago or 0,
+                        "cluster": cluster,
+                        "node": change.node,
+                        "event": change.event,
+                        "subject": change.subject,
+                        "detail": Jsonb(dict(change.detail)),
+                    }
+                    for change in changes
+                ],
+            )
+        changed = [(key, value) for key, value in state.items() if previous.get(key) != value]
+        if changed:
+            cursor.executemany(
+                "insert into node_event_state (cluster, kind, subject, value) "
+                "values (%(cluster)s, %(kind)s, %(subject)s, %(value)s) "
+                "on conflict (cluster, kind, subject) do update set value = excluded.value",
+                [
+                    {"cluster": cluster, "kind": key[0], "subject": key[1], "value": value}
+                    for key, value in changed
+                ],
+            )
+        if gone:
+            cursor.execute(
+                "delete from node_event_state "
+                " where cluster = %(cluster)s and kind = 'server' and subject = any(%(gone)s)",
+                {"cluster": cluster, "gone": [key[1] for key in gone]},
+            )
+    return len(changes)
+
+
+@dataclass(frozen=True, slots=True)
+class NodeEvent:
+    id: int
+    at: datetime
+    cluster: str
+    node: str
+    event: str
+    subject: str
+    detail: dict[str, Any]
+
+
+_NODE_EVENT_WHERE = (
+    " where (%(cluster)s = '' or cluster = %(cluster)s) "
+    "   and (%(since)s::timestamptz is null or at >= %(since)s) "
+    "   and (%(until)s::timestamptz is null or at <= %(until)s) "
+    "   and (%(search)s = '' or node ilike %(like)s or subject ilike %(like)s) "
+)
+
+NODE_EVENT_ORDER_COLUMNS: Mapping[str, str] = {
+    "time": "at",
+    "node": "node",
+    "what": "event",
+    "where": "cluster",
+}
+
+
+def _node_event_filter(
+    *, cluster: str, search: str, since: datetime | None, until: datetime | None
+) -> dict[str, Any]:
+    return {
+        "cluster": cluster,
+        "since": since,
+        "until": until,
+        "search": search,
+        "like": _like_pattern(search),
+    }
+
+
+def node_event_page(
+    connection: Connection[Any],
+    *,
+    order: str = "time",
+    descending: bool = True,
+    offset: int = 0,
+    limit: int = 50,
+    cluster: str = "",
+    search: str = "",
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[NodeEvent]:
+    """One page of *Events → Nodes*, newest first, as *Audit* pages."""
+
+    with connection.cursor(row_factory=class_row(NodeEvent)) as cursor:
+        cursor.execute(
+            "select id, at, cluster, node, event, subject, detail "  # noqa: S608 - constant
+            "  from node_event "
+            + _NODE_EVENT_WHERE
+            + f" order by {NODE_EVENT_ORDER_COLUMNS.get(order, 'at')} "
+            f"{'desc' if descending else 'asc'}, id desc limit %(limit)s offset %(offset)s",
+            {
+                **_node_event_filter(cluster=cluster, search=search, since=since, until=until),
+                "limit": max(1, min(limit, 500)),
+                "offset": max(0, offset),
+            },
+        )
+        return cursor.fetchall()
+
+
+def node_event_count(
+    connection: Connection[Any],
+    *,
+    cluster: str = "",
+    search: str = "",
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> int:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select count(*) from node_event " + _NODE_EVENT_WHERE,  # noqa: S608 - constant
+            _node_event_filter(cluster=cluster, search=search, since=since, until=until),
         )
         row = cursor.fetchone()
         return int(row[0]) if row else 0

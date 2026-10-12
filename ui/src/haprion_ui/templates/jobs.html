@@ -13,22 +13,20 @@
 #}
 {% block head_extra %}{% if view == 'jobs' and jobs.active_count %}<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endblock %}
 {% block content %}
-{% if view == 'audit' %}<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/date-picker.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/page-size.js') }}?v={{ asset_token }}"></script>{% endif %}
+{% if view in ('audit', 'nodes') %}<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/date-picker.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/page-size.js') }}?v={{ asset_token }}"></script>{% endif %}
 <section class="page-heading">
-  <div class="heading-title"><h1>Events</h1><p class="page-lede">{% if view == 'audit' %}Who did what, and where.{% else %}The newest management requests and their recorded outcome.{% endif %}</p></div>
+  <div class="heading-title"><h1>Events</h1><p class="page-lede">{% if view == 'audit' %}Who did what, and where.{% elif view == 'nodes' %}What the nodes did on their own.{% else %}The newest management requests and their recorded outcome.{% endif %}</p></div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}</div>
 </section>
 {#
-  Two views, as Certificates has (B275): the jobs, and for an admin the rest
-  of the record. A reader has one view, and a switch offering one choice is
-  furniture.
+  The jobs, what the nodes did on their own (26-10-12), and for an admin the
+  rest of the record (B275).
 #}
-{% if role == 'admin' %}
 <div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges certificate-views" aria-label="Event views">
   <a href="/jobs"{% if view == 'jobs' %} class="is-current" aria-current="true"{% endif %}><span>Jobs</span><span class="segment-reserve" aria-hidden="true">Jobs</span></a>
-  <a href="/jobs?view=audit"{% if view == 'audit' %} class="is-current" aria-current="true"{% endif %}><span>Audit</span><span class="segment-reserve" aria-hidden="true">Audit</span></a>
+  <a href="/jobs?view=nodes"{% if view == 'nodes' %} class="is-current" aria-current="true"{% endif %}><span>Nodes</span><span class="segment-reserve" aria-hidden="true">Nodes</span></a>
+  {% if role == 'admin' %}<a href="/jobs?view=audit"{% if view == 'audit' %} class="is-current" aria-current="true"{% endif %}><span>Audit</span><span class="segment-reserve" aria-hidden="true">Audit</span></a>{% endif %}
 </nav></div>
-{% endif %}
 
 {% if view == 'audit' %}
 {#
@@ -71,6 +69,42 @@
 </div>
 {% if paging.total %}<nav class="log-pagination" aria-label="Audit pages">
   <label>Rows per page <select name="size" form="audit-filters" data-page-size>{% for choice in [25, 50, 100] %}<option value="{{ choice }}"{% if choice == paging.size %} selected{% endif %}>{{ choice }}</option>{% endfor %}</select></label>
+  <span>{{ paging.first }}–{{ paging.last }} of {{ paging.total }}</span>
+  <div>{% if paging.page > 1 %}<a class="secondary-button" href="/jobs?{{ dict(kept, page=paging.page - 1) | urlencode }}">Previous</a>{% else %}<button class="secondary-button" type="button" disabled>Previous</button>{% endif %}{% if paging.page < paging.pages %}<a class="secondary-button" href="/jobs?{{ dict(kept, page=paging.page + 1) | urlencode }}">Next</a>{% else %}<button class="secondary-button" type="button" disabled>Next</button>{% endif %}</div>
+</nav>{% endif %}
+{% elif view == 'nodes' %}
+{#
+  Audit's filter row, table and pages (26-10-12). A server's row names its
+  object, linked to its servers, where an object owns the pool now.
+#}
+<form class="log-filters node-event-filters" method="get" action="/jobs" id="node-event-filters">
+  <input type="hidden" name="view" value="nodes">
+  <label>Cluster<select name="cluster"><option value="">All clusters</option>{% for name in clusters %}<option value="{{ name }}"{% if filters.cluster == name %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+  <label>Search<input name="q" value="{{ filters.q }}" maxlength="200" autocomplete="off"></label>
+  {{ date_time_picker('from', 'From', filters['from'], time_today, time_min, time_max) }}
+  {{ date_time_picker('to', 'To', filters.to, time_max, time_min, time_max) }}
+  <button class="secondary-button" type="submit">Filter</button><a class="text-link" href="/jobs?view=nodes">Clear</a>
+</form>
+{% if time_error %}<p class="preview-notice form-problem" role="alert"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ time_error }}</strong></p>{% endif %}
+<div class="table-scroll">
+  <table class="node-table audit-table node-event-table">
+    <thead><tr>{{ sort.heading(node_sorts.time, 'Time') }}{{ sort.heading(node_sorts.node, 'Node') }}{{ sort.heading(node_sorts.what, 'What') }}{{ sort.heading(node_sorts.where, 'Where') }}</tr></thead>
+    <tbody>
+    {% for event in node_events %}
+      <tr>
+        <td data-label="Time"><time datetime="{{ event.at.isoformat() }}">{{ event.shown_at }}</time></td>
+        <td data-label="Node">{{ event.node }}</td>
+        <td data-label="What" title="{{ event.what }}">{{ event.what }}</td>
+        <td data-label="Where">{{ event.cluster }}{% if event.obj %} · <a href="/proxies/{{ event.cluster }}/{{ event.obj }}#servers">{{ event.obj }}</a>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>Nothing recorded</strong><span>{% if filters.cluster or filters.q or filters['from'] or filters.to %}No event matches the filter.{% else %}Servers going down or coming back, the VIP moving and nodes not answering will appear here.{% endif %}</span></div></div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if paging.total %}<nav class="log-pagination" aria-label="Node event pages">
+  <label>Rows per page <select name="size" form="node-event-filters" data-page-size>{% for choice in [25, 50, 100] %}<option value="{{ choice }}"{% if choice == paging.size %} selected{% endif %}>{{ choice }}</option>{% endfor %}</select></label>
   <span>{{ paging.first }}–{{ paging.last }} of {{ paging.total }}</span>
   <div>{% if paging.page > 1 %}<a class="secondary-button" href="/jobs?{{ dict(kept, page=paging.page - 1) | urlencode }}">Previous</a>{% else %}<button class="secondary-button" type="button" disabled>Previous</button>{% endif %}{% if paging.page < paging.pages %}<a class="secondary-button" href="/jobs?{{ dict(kept, page=paging.page + 1) | urlencode }}">Next</a>{% else %}<button class="secondary-button" type="button" disabled>Next</button>{% endif %}</div>
 </nav>{% endif %}

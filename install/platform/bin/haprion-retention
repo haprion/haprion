@@ -114,6 +114,12 @@ LOGIN_ATTEMPT_KEEP_DAYS=90
 # and only by age.
 #
 AUDIT_KEEP_DAYS=730
+#
+# What the nodes did on their own, *Events → Nodes* (26-10-12): a server down
+# or back up, the VIP moving. Long enough to follow an incident up weeks
+# later and see whether it comes back.
+#
+NODE_EVENT_KEEP_DAYS=90
 
 #
 # HAProxy's own counter column names, in the order the rest of the project
@@ -278,6 +284,10 @@ where_audit_old() {
     echo "at < statement_timestamp() - make_interval(days => ${AUDIT_KEEP_DAYS})"
 }
 
+where_node_event_old() {
+    echo "at < statement_timestamp() - make_interval(days => ${NODE_EVENT_KEEP_DAYS})"
+}
+
 #
 # One table at a time, with the same predicate for the count and the delete.
 #
@@ -303,6 +313,12 @@ account_history() {
     account_history_table app_session "$(where_session_ended)" "${SESSION_KEEP_DAYS} day(s) after they ended"
     account_history_table login_attempt "$(where_login_attempt_old)" "${LOGIN_ATTEMPT_KEEP_DAYS} day(s)"
     account_history_table audit_event "$(where_audit_old)" "${AUDIT_KEEP_DAYS} day(s)"
+    #
+    # A database from before 0071 has no such table; the next migration adds it.
+    #
+    if [[ "$(psql_as -c "select to_regclass('public.node_event') is not null")" == "t" ]]; then
+        account_history_table node_event "$(where_node_event_old)" "${NODE_EVENT_KEEP_DAYS} day(s)"
+    fi
 }
 
 #

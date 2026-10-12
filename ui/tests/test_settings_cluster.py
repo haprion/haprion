@@ -227,6 +227,45 @@ class ThePage(SettingsClusterTestCase):
         self.assertEqual(settings.peers.port, 10000)  # type: ignore[union-attr]
         self.assertIn("counters shared on 10000", cluster_settings_page.comment_for(settings))
 
+    def test_sources_not_logged_are_saved_and_read_back(self) -> None:
+        response = self.save(self.client_for(), not_logged_from="192.0.2.40\n\n198.51.100.0/28\n")
+
+        self.assertEqual(response.status_code, 303, response.text)
+        (change,) = self.saved_changes
+        settings = load_document(change["document"].encode())
+        self.assertEqual(settings.not_logged_from, ("192.0.2.40/32", "198.51.100.0/28"))
+        self.assertIn("not from 192.0.2.40/32", cluster_settings_page.comment_for(settings))
+        form = cluster_settings_page.form_from_result(
+            {"log_targets": [], "not_logged_from": list(settings.not_logged_from)}
+        )
+        self.assertEqual(form.not_logged_from, "192.0.2.40/32\n198.51.100.0/28")
+
+    def test_a_name_among_the_sources_not_logged_is_refused(self) -> None:
+        response = self.save(self.client_for(), not_logged_from="monitor.example.com")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(
+            "Not logged from: &#39;monitor.example.com&#39; is not an address or a network.",
+            response.text,
+        )
+        self.assertEqual(self.saved_changes, [])
+
+    def test_a_problem_is_named_in_the_forms_words_not_the_files(self) -> None:
+        for fields, said in (
+            (
+                {"metrics_on": "on", "metrics_port": "8405", "metrics_sources": "x"},
+                "Allowed sources: ",
+            ),
+            ({"target_port": ["70000", ""]}, "The port of graylog must be a port"),
+            ({"target_disk": ["32", ""]}, "The disk queue of graylog must be"),
+        ):
+            with self.subTest(fields):
+                response = self.save(self.client_for(), **fields)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(said, response.text)
+                self.assertNotIn("log_targets.", response.text)
+                self.assertNotIn("metrics.sources", response.text)
+
     def test_shared_counters_need_a_port(self) -> None:
         response = self.save(self.client_for(), peers_on="on", peers_port="")
 

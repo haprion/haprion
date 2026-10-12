@@ -128,6 +128,10 @@ def _render(result: Mapping[str, Any], cluster: str, writer: TextIO) -> None:
                 f"{str(target.get('disk_mib', '')) + ' MiB':<12}"
                 f"{'yes' if target.get('tls') else 'no'}\n"
             )
+    quiet = result.get("not_logged_from")
+    if isinstance(quiet, list) and quiet:
+        listed = ", ".join(str(source) for source in quiet)
+        writer.write(f"answered requests from {listed} are not logged\n")
     metrics = result.get("metrics")
     writer.write("\nMETRICS\n-------\n")
     if not isinstance(metrics, Mapping):

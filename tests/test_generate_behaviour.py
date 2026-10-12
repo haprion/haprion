@@ -995,6 +995,98 @@ class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
+class AMonitorsAnsweredRequestsAreNotLogged(unittest.TestCase):
+    """`not_logged_from` (B291), read from the records HAProxy writes.
+
+    A rule in a file says nothing about what HAProxy does with a status it
+    has not seen yet; the records do. The structured stream goes to a socket
+    of this test's own instead of `/dev/log`.
+    """
+
+    server: ThreadingHTTPServer
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+    sink: socket.socket
+    port: int
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        backend = free_port()
+        cls.server = echo_server("web", backend)
+        wait_for(backend)
+
+        cls.port = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        cls.sink = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        cls.sink.bind(str(root / "log.sock"))
+        cls.sink.settimeout(0.2)
+        document = (
+            GONE.format(web=backend)
+            .encode()
+            .replace(b"unavailable:\n  message: The shop is not answering.\n", b"")
+        )
+        layer = generate(
+            [load_proxy("gone", document)],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": cls.port},
+            traffic_logging=True,
+            settings=ClusterSettings(not_logged_from=("127.0.0.1/32",)),
+        )
+        arguments = write_release(root, layer)
+        frontends = root / "conf.d" / "1000-frontends.cfg"
+        frontends.write_text(
+            frontends.read_text().replace("log /dev/log ", f"log {root / 'log.sock'} ")
+        )
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        cls.server.shutdown()
+        cls.sink.close()
+        cls.directory.cleanup()
+
+    def ask(self, source: str, host: str) -> int:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5, source_address=(source, 0))
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", host)
+            connection.endheaders()
+            response = connection.getresponse()
+            response.read()
+            return int(response.status)
+        finally:
+            connection.close()
+
+    def records(self) -> list[tuple[str, int]]:
+        found = []
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                datagram = self.sink.recv(65536).decode()
+            except TimeoutError:
+                continue
+            record = json.loads(datagram[datagram.index("{") :])
+            found.append((str(record["client"]), int(record["status"])))
+        return found
+
+    def test_only_the_sources_answers_below_400_go_unlogged(self) -> None:
+        answers = [
+            self.ask("127.0.0.1", "gone.example.com"),
+            self.ask("127.0.0.1", "nobody.example.com"),
+            self.ask("127.0.0.2", "gone.example.com"),
+        ]
+
+        self.assertEqual(answers, [200, 503, 200])
+        self.assertEqual(sorted(self.records()), [("127.0.0.1", 503), ("127.0.0.2", 200)])
+
+
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
 class HeaderEditsReachTheTraffic(unittest.TestCase):
     """Read off a running proxy, because the file cannot prove interpretation.
 

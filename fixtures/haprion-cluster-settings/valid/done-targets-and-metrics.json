@@ -13,6 +13,7 @@
       {"name": "graylog", "address": "192.0.2.20", "port": 6514, "disk_mib": 1024, "tls": false},
       {"name": "loki", "address": "2001:db8::30", "port": 6514, "disk_mib": 2048, "tls": true}
     ],
+    "not_logged_from": ["192.0.2.40", "198.51.100.0/28"],
     "metrics": {"port": 8405, "sources": ["192.0.2.0/24"]},
     "peers": {"port": 10000}
   },

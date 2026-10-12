@@ -603,7 +603,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
   .log-target-table th:nth-child(1), .log-target-table td:nth-child(1) { width: 180px; }
   .log-target-table th:nth-child(2), .log-target-table td:nth-child(2) { width: auto; }
   .log-target-table th:nth-child(3), .log-target-table td:nth-child(3) { width: 96px; }
-  .log-target-table th:nth-child(4), .log-target-table td:nth-child(4) { width: 116px; }
+  .log-target-table th:nth-child(4), .log-target-table td:nth-child(4) { width: 144px; }
   .log-target-table th:nth-child(5), .log-target-table td:nth-child(5) { width: 104px; }
 }
 /* Each receiver as each node sends to it: the state, with its reason, takes the rest. */
@@ -1238,7 +1238,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 /* One column that never grows past the page: an implicit one is as wide as its widest content (400 px, 26-10-10). */
 .preview-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; margin-bottom: 18px; }
 /* Outside the form's grid, so its gap does not reach it (measured 0 px, 26-10-02). */
-.draft-card { margin-bottom: 18px; }
+.draft-card, .delivery-card { margin-bottom: 18px; }
 .preview-form .cluster-card { padding-bottom: 18px; }
 /* In a card list the list's gap spaces the cards; the form adds none of its own. */
 .cluster-list > .nodes-form { margin-bottom: 0; }

@@ -2242,6 +2242,8 @@ log_targets:
     port: 6514
     disk_mib: 1024           # optional; the queue on the node's disk, 64 to 65536 MiB
     tls: false               # optional
+not_logged_from:             # optional; a monitor's answered requests are not logged
+  - 192.0.2.40
 metrics:
   port: 8405
   sources:
@@ -2277,6 +2279,13 @@ against the node's system trust store (rsyslog's GnuTLS driver, `rsyslog-gnutls`
 
 A receiver is named by **address, never by host name**, so what the nodes send to does not depend
 on their resolver at the moment rsyslog starts.
+
+**Not logged from** leaves out a monitor that asks every service once a minute - thirty services
+make some 43 000 lines a day nobody reads, in the node's file, the *Traffic logs* view, the
+dashboard's response times and every receiver. A request from one of the addresses or networks
+listed, answered below 400, is written nowhere; one answered 400 or above is logged as any other,
+so a monitor that is refused or finds a service down still shows. Only the connection's own address
+counts, never a header a request carries. The exporter's counters include these requests either way.
 
 Each receiver has a **queue on the node's disk**, `disk_mib` large, and the queue is what an outage
 or a burst is survived with. While a receiver is away or reads slower than the traffic, rsyslog

@@ -15,6 +15,7 @@ and the exporter off means nothing listens (2026-09-29).
 from __future__ import annotations
 
 import contextlib
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -81,6 +82,7 @@ class TargetRow:
 @dataclass(frozen=True, slots=True)
 class SettingsForm:
     targets: tuple[TargetRow, ...]
+    not_logged_from: str = ""
     metrics_on: bool = False
     metrics_port: str = ""
     metrics_sources: str = ""
@@ -211,8 +213,10 @@ def form_from_result(result: Mapping[str, Any]) -> SettingsForm:
     metrics = result.get("metrics")
     sources = metrics.get("sources") if isinstance(metrics, Mapping) else None
     peers_port = _peers_port(result)
+    quiet = result.get("not_logged_from")
     return SettingsForm(
         targets=tuple(rows[:MAX_TARGETS]),
+        not_logged_from="\n".join(str(source) for source in quiet or []),
         metrics_on=isinstance(metrics, Mapping),
         metrics_port=str(metrics.get("port", "")) if isinstance(metrics, Mapping) else "",
         metrics_sources="\n".join(str(source) for source in sources or []),
@@ -255,6 +259,9 @@ def settings_from_form(form: SettingsForm) -> cluster_settings.ClusterSettings:
     document: dict[str, Any] = {}
     if targets:
         document["log_targets"] = targets
+    quiet = [line.strip() for line in form.not_logged_from.splitlines() if line.strip()]
+    if quiet:
+        document["not_logged_from"] = quiet
     if form.metrics_on:
         document["metrics"] = {
             "port": _number(form.metrics_port, "The metrics port"),
@@ -268,8 +275,30 @@ def settings_from_form(form: SettingsForm) -> cluster_settings.ClusterSettings:
         raise FormProblem(_sentence(str(exc))) from exc
 
 
+#
+# The parser names a field as the file spells it; the page says it in the
+# form's own words, so `not_logged_from` never reaches a person.
+#
+_FIELDS = (
+    (re.compile(r"^log_targets\.([a-z0-9-]+)\.address\b"), r"The IP address of \1"),
+    (re.compile(r"^log_targets\.([a-z0-9-]+)\.port\b"), r"The port of \1"),
+    (re.compile(r"^log_targets\.([a-z0-9-]+)\.disk_mib\b"), r"The disk queue of \1"),
+    (re.compile(r"^log_targets\.([a-z0-9-]+)\.tls\b"), r"TLS for \1"),
+    (re.compile(r"^metrics\.sources\b"), "Allowed sources"),
+    (re.compile(r"^metrics\.port\b"), "The metrics port"),
+    (re.compile(r"^peers\.port\b"), "The port for shared counters"),
+    (re.compile(r"^not_logged_from\b"), "Not logged from"),
+)
+_NOT_AN_ADDRESS = re.compile(r"^(.+?) is not an address or a network: (.+)$")
+
+
 def _sentence(message: str) -> str:
     text = message.removeprefix(f"{cluster_settings.LOCATION} ")
+    for field, words in _FIELDS:
+        text = field.sub(words, text, count=1)
+    wrong = _NOT_AN_ADDRESS.match(text)
+    if wrong:
+        text = f"{wrong.group(1)}: {wrong.group(2)} is not an address or a network"
     return text[:1].upper() + text[1:] + ("" if text.endswith(".") else ".")
 
 
@@ -281,6 +310,8 @@ def comment_for(settings: cluster_settings.ClusterSettings) -> str:
         if settings.log_targets
         else "no external logs"
     )
+    if settings.not_logged_from:
+        logs += ", not from " + ", ".join(settings.not_logged_from)
     metrics = (
         f"metrics on {settings.metrics.port}" if settings.metrics is not None else "metrics off"
     )

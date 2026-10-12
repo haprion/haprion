@@ -4793,6 +4793,7 @@ def build_router(config: Config) -> APIRouter:
         target_port: Sequence[str] = Form(default=()),
         target_disk: Sequence[str] = Form(default=()),
         target_tls: Sequence[str] = Form(default=()),
+        not_logged_from: str = Form(default="", max_length=2048),
         metrics_on: str = Form(default="", max_length=4),
         metrics_port: str = Form(default="", max_length=8),
         metrics_sources: str = Form(default="", max_length=2048),
@@ -4864,6 +4865,7 @@ def build_router(config: Config) -> APIRouter:
                 )
                 for index in range(cluster_settings_page.MAX_TARGETS)
             ),
+            not_logged_from=not_logged_from,
             metrics_on=metrics_on == "on",
             metrics_port=metrics_port,
             metrics_sources=metrics_sources,

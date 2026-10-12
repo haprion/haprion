@@ -95,6 +95,11 @@ class TheDocument(unittest.TestCase):
             b"metrics: {port: 8405, sources: [192.0.2.5/24]}",
             b"metrics: {port: 8405, sources: [192.0.2.0/24, 192.0.2.0/24]}",
             b"metrics: [8405]",
+            b"not_logged_from: 192.0.2.40",
+            b"not_logged_from: [monitor.example.com]",
+            b"not_logged_from: [192.0.2.40/24]",
+            b"not_logged_from: [192.0.2.40, 192.0.2.40/32]",
+            b"not_logged_from: [" + b", ".join(b"192.0.2.%d" % n for n in range(33)) + b"]",
             b"\xff",
         ):
             with self.subTest(document=document), self.assertRaises(ConfigError):
@@ -154,6 +159,29 @@ class TheGeneratedLayer(unittest.TestCase):
         written = dump_document(settings)
         self.assertNotIn(b"buffer_kib", written)
         self.assertIn(b"disk_mib: 1024", written)
+
+    def test_sources_not_logged_are_read_and_written_back(self) -> None:
+        settings = load_document(b"not_logged_from: [192.0.2.40, '2001:db8::/64']")
+
+        self.assertEqual(settings.not_logged_from, ("192.0.2.40/32", "2001:db8::/64"))
+        self.assertEqual(load_document(dump_document(settings)), settings)
+
+    def test_sources_not_logged_quiet_every_http_frontend_and_nothing_without(self) -> None:
+        quiet = self.generate(
+            "minimal", load_document(b"not_logged_from: [192.0.2.40]")
+        ).configuration["1000-frontends.cfg"]
+        plain = self.generate("minimal", NOTHING).configuration["1000-frontends.cfg"]
+
+        frontends = quiet.count("\nfrontend ")
+        self.assertGreater(frontends, 0)
+        self.assertEqual(quiet.count("    acl mgd-not-logged src 192.0.2.40/32\n"), frontends)
+        self.assertEqual(
+            quiet.count(
+                "    http-after-response set-log-level silent if mgd-not-logged { status lt 400 }\n"
+            ),
+            frontends,
+        )
+        self.assertNotIn("mgd-not-logged", plain)
 
     def test_nothing_set_writes_no_cluster_file(self) -> None:
         self.assertNotIn(CLUSTER_FILE, self.generate("minimal", NOTHING).configuration)

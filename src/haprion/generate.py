@@ -93,6 +93,7 @@ PREFIX = "mgd"
 # belongs to the cluster and not to any site on it.
 #
 TRUSTED_ACL = f"{PREFIX}-trusted-proxy"
+NOT_LOGGED_ACL = f"{PREFIX}-not-logged"
 
 
 #
@@ -488,6 +489,7 @@ def generate(
             traffic_logging,
             settings.log_targets,
             PEERS_SECTION if peers else None,
+            settings.not_logged_from,
         )
     }
     if settings.metrics is not None or peers:
@@ -1537,6 +1539,7 @@ def _frontend_file(
     traffic_logging: bool,
     log_targets: Sequence[LogTarget] = (),
     peers: str | None = None,
+    not_logged_from: Sequence[str] = (),
 ) -> str:
     """Where every request is decided: one frontend per address and protocol.
 
@@ -1638,6 +1641,7 @@ def _frontend_file(
             ),
             f"    timeout client {TIMEOUT_CLIENT}",
             *_forwarded_rules(protocol, trusted_proxies),
+            *_not_logged_rules(not_logged_from),
             *_abuse_rules(abuse_protection, bool(trusted_proxies), peers),
         ]
         #
@@ -1762,6 +1766,26 @@ def _tcp_frontend(
     if proxy.advanced is not None:
         lines.extend(advanced_config.block(proxy.name, proxy.advanced.placement.frontend))
     return lines
+
+
+def _not_logged_rules(sources: Sequence[str]) -> list[str]:
+    """A monitor's answered requests left out of every log stream (B291).
+
+    `http-after-response` runs for every answer, HAProxy's own included, so the
+    status it sees is the one the visitor got: a 403 from a rule or the WAF
+    engine, or a 503 with no server, is logged from these sources too. Measured
+    on 3.4.6, 26-10-12: from the source, 200 silent in both the classic and the
+    structured stream while 403 and 503 were written; from any other, all three.
+    By the connection's address and nothing else - a header would let anyone
+    quiet their own requests.
+    """
+
+    if not sources:
+        return []
+    return [
+        f"    acl {NOT_LOGGED_ACL} src {' '.join(sources)}",
+        f"    http-after-response set-log-level silent if {NOT_LOGGED_ACL} {{ status lt 400 }}",
+    ]
 
 
 def _forwarded_rules(protocol: str, trusted_proxies: Sequence[str]) -> list[str]:

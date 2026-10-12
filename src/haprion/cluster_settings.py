@@ -2,7 +2,7 @@
 
 `managed/cluster.yaml` holds what applies to a whole cluster rather than to an
 object or an address (Fas 15, B209): the external targets the traffic log is
-sent to, the Prometheus exporter, and the port the nodes share their stick
+sent to, the sources whose answered requests it leaves out, the Prometheus exporter, and the port the nodes share their stick
 tables over (B270). Application-owned, published through its
 own helper like `managed/network.yaml`, and this module is its one parser and
 serializer - the form, the helper and the generator all read it through here.
@@ -96,6 +96,13 @@ class ClusterSettings:
     log_targets: tuple[LogTarget, ...] = ()
     metrics: Metrics | None = None
     peers: Peers | None = None
+    #
+    # Sources whose answered requests are not logged (B291): a monitor asking
+    # every service once a minute. By the connection's address, never by
+    # anything the request says, so nobody can quiet themselves with a header;
+    # and an answer of 400 or more is logged whoever asked.
+    #
+    not_logged_from: tuple[str, ...] = ()
 
 
 NOTHING = ClusterSettings()
@@ -203,11 +210,25 @@ def _peers(raw: Any) -> Peers | None:
     return Peers(port=_port(entry.get("port"), f"{where}.port"))
 
 
+def _not_logged_from(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    where = f"{LOCATION} not_logged_from"
+    if not isinstance(raw, list):
+        raise ConfigError(f"{where} must list addresses or networks")
+    if len(raw) > MAX_SOURCES:
+        raise ConfigError(f"{where} lists more than {MAX_SOURCES}")
+    parsed = tuple(_source(value, where) for value in raw)
+    if len(set(parsed)) != len(parsed):
+        raise ConfigError(f"{where} lists the same network twice")
+    return parsed
+
+
 def load_mapping(raw: Any) -> ClusterSettings:
     """Apply the schema to already-decoded, untrusted YAML."""
 
     document = _mapping(raw, LOCATION)
-    _only(document, {"log_targets", "metrics", "peers"}, LOCATION)
+    _only(document, {"log_targets", "not_logged_from", "metrics", "peers"}, LOCATION)
     targets_raw = _mapping(document.get("log_targets"), f"{LOCATION} log_targets")
     if len(targets_raw) > MAX_TARGETS:
         raise ConfigError(f"{LOCATION} names more than {MAX_TARGETS} log targets")
@@ -222,7 +243,12 @@ def load_mapping(raw: Any) -> ClusterSettings:
     peers = _peers(document.get("peers"))
     if metrics is not None and peers is not None and metrics.port == peers.port:
         raise ConfigError(f"{LOCATION} names the same port for metrics and peers")
-    return ClusterSettings(log_targets=targets, metrics=metrics, peers=peers)
+    return ClusterSettings(
+        log_targets=targets,
+        metrics=metrics,
+        peers=peers,
+        not_logged_from=_not_logged_from(document.get("not_logged_from")),
+    )
 
 
 def load_document(document: bytes | None) -> ClusterSettings:
@@ -253,6 +279,8 @@ def dump_document(settings: ClusterSettings) -> bytes:
             }
             for target in sorted(settings.log_targets, key=lambda target: target.name)
         }
+    if settings.not_logged_from:
+        document["not_logged_from"] = list(settings.not_logged_from)
     if settings.metrics is not None:
         document["metrics"] = {
             "port": settings.metrics.port,
@@ -277,6 +305,7 @@ def document_result(settings: ClusterSettings) -> dict[str, object]:
             }
             for target in settings.log_targets
         ],
+        "not_logged_from": list(settings.not_logged_from),
         "metrics": (
             None
             if settings.metrics is None

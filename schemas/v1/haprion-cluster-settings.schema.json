@@ -17,7 +17,7 @@
   "$defs": {
     "cluster_settings_result": {
       "type": "object",
-      "required": ["cluster", "head", "stored", "log_targets", "metrics", "peers"],
+      "required": ["cluster", "head", "stored", "log_targets", "not_logged_from", "metrics", "peers"],
       "properties": {
         "cluster": { "type": "string", "minLength": 1, "maxLength": 64 },
         "head": { "$ref": "common.schema.json#/$defs/hash" },
@@ -38,6 +38,7 @@
             "additionalProperties": true
           }
         },
+        "not_logged_from": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 2, "maxLength": 49 } },
         "metrics": {
           "oneOf": [
             { "type": "null" },

@@ -683,3 +683,51 @@ class TheEditingPolicy(unittest.TestCase):
                 [visudo, "-cqf", handle.name], capture_output=True, check=False
             )  # noqa: S603
         self.assertEqual(checked.returncode, 0, checked.stderr)
+
+
+class TheJsonAnswers(unittest.TestCase):
+    """`--json` on `haprion-node` and `haprion-cluster` (Fas 23): the helper's envelope as it came."""
+
+    def answering(self, path: str, code: int) -> Any:
+        text = (BASE / "fixtures" / path).read_text()
+
+        def run(_request: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess([], code, text, "")
+
+        return run
+
+    def test_both_commands_print_the_envelope_and_keep_its_exit_code(self) -> None:
+        from haprion.cli import node as node_command
+
+        for main, argv, path, code, schema in (
+            (
+                node_command.main,
+                ["remove", "-c", "alpha", "node-b", "--json"],
+                "haprion-cluster-node/valid/removed.json",
+                0,
+                "haprion-cluster-node",
+            ),
+            (
+                node_command.main,
+                ["remove", "-c", "alpha", "--json", "node-a"],
+                "haprion-cluster-node/valid/blocked.json",
+                75,
+                "haprion-cluster-node",
+            ),
+            (
+                cluster_command.main,
+                ["remove", "-c", "gamma", "--json"],
+                "haprion-cluster-define/valid/removed.json",
+                0,
+                "haprion-cluster-define",
+            ),
+        ):
+            with self.subTest(path):
+                out = io.StringIO()
+
+                returned = main(
+                    argv, stdout=out, stderr=io.StringIO(), run=self.answering(path, code)
+                )
+
+                self.assertEqual(returned, code)
+                assert_contract(schema, out.getvalue())

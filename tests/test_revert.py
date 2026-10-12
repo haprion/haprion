@@ -642,3 +642,42 @@ class ContractTests(RevertFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JsonModeTests(RevertFixture):
+    """`haprion-revert --json` (Fas 23): one envelope on every path, held to the contract."""
+
+    def test_a_revert_prints_the_helpers_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+
+            code, output = self.run_caller(policy_path, "-c", "alpha", "2", "--json")
+
+            self.assertEqual(code, 0)
+            document = assert_contract("haprion-revert", output)
+            self.assertEqual(document["result"]["new_version"], 4)
+            self.assertEqual(output.count("\n"), 1)
+
+    def test_the_current_version_is_done_without_a_change(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+
+            code, output = self.run_caller(policy_path, "-c", "alpha", "3", "--json")
+
+            self.assertEqual(code, 0)
+            document = assert_contract("haprion-revert", output)
+            self.assertFalse(document["result"]["changed"])
+            self.assertEqual(self.requests, [])
+
+    def test_a_refusal_before_the_helper_is_an_envelope_too(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+
+            code, output = self.run_caller(policy_path, "-c", "alpha", "9", "--json")
+
+            document = assert_contract("haprion-revert", output)
+            self.assertEqual((code, document["outcome"]), (65, "failed"))
+            self.assertIn("does not exist", document["error"]["message"])

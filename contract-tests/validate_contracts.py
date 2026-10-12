@@ -496,6 +496,19 @@ def check_profiles_apply_semantics(document: dict[str, object], path: Path) -> N
         raise AssertionError(f"{path}: one job per change, and none under --check")
 
 
+def check_history_reset_semantics(document: dict[str, object], path: Path) -> None:
+    """A done reset published version 1; a partial is the one that did not."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] != "failed":
+            raise AssertionError(f"{path}: a reset that ran says what it kept")
+        return
+    assert isinstance(result, dict)
+    if result["published"] != (document["outcome"] == "done"):
+        raise AssertionError(f"{path}: done exactly when version 1 was published")
+
+
 def check_changes_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1161,6 +1174,7 @@ SEMANTIC_CHECKS = {
     "user_apply": check_user_apply_semantics,
     "settings_apply": check_settings_apply_semantics,
     "profiles_apply": check_profiles_apply_semantics,
+    "reset_history": check_history_reset_semantics,
     "readings": check_readings_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
@@ -1222,6 +1236,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         first["exit_code"] = 0
     elif operation in ("user_apply", "settings_apply", "profiles_apply"):
         result["changed"] = not result["changed"]
+    elif operation == "reset_history":
+        result["published"] = not result["published"]
     elif operation == "network_apply":
         result["deployment_required"] = not result["deployment_required"]
     elif operation == "objects_apply":

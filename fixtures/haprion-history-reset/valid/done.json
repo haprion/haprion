@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "reset_history",
+  "cluster": "alpha",
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "versions_discarded": 42,
+    "archived_history": "/srv/configs/alpha.git.reset-20260901-120000",
+    "archived_draft": "/srv/configs/alpha.reset-20260901-120000",
+    "published": true,
+    "next_command": "haprion-deploy -c alpha"
+  },
+  "warnings": [],
+  "error": null
+}

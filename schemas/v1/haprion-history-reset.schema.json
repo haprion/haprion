@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-history-reset.schema.json",
+  "title": "haprion-history-reset JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "reset_history" },
+        "outcome": { "enum": ["done", "partial", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/reset_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "enum": ["done", "partial"] } } }, "then": { "properties": { "result": { "$ref": "#/$defs/reset_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "reset_result": {
+      "description": "The history now starts at version 1 with the configuration kept; the old history and draft area are archived beside them. `published` is whether version 1 was published, which a `partial` says it was not.",
+      "type": "object",
+      "required": ["versions_discarded", "archived_history", "archived_draft", "published", "next_command"],
+      "properties": {
+        "versions_discarded": { "type": "integer", "minimum": 0 },
+        "archived_history": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "archived_draft": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "published": { "type": "boolean" },
+        "next_command": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

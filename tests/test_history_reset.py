@@ -8,6 +8,9 @@ was.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import subprocess
 import unittest
@@ -17,6 +20,7 @@ from typing import Any
 from unittest.mock import patch
 
 from haprion import git_command, history_reset
+from haprion.cli import history_reset as history_reset_command
 from haprion.git_command import GitError
 from haprion.history_reset import (
     ResetError,
@@ -25,6 +29,7 @@ from haprion.history_reset import (
     preview,
     reset_history,
 )
+from tests.contract_schema import assert_contract
 
 HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"
 
@@ -215,3 +220,73 @@ class FailureTests(ResetFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCommandForAutomation(ResetFixture):
+    """`--confirm` and `--json` (Fas 23): no questions, one envelope, held to the contract."""
+
+    def run_command(
+        self, draft: Path, *argv: str, published: int = 0
+    ) -> tuple[int, str, list[str]]:
+        sent: list[str] = []
+
+        def run_helper(_cluster: str, request: bytes) -> tuple[int, str, str]:
+            sent.append(request.decode())
+            answer = {
+                "versions_discarded": 3,
+                "archived_history": f"{draft}.git.reset-20260901-120000",
+                "archived_draft": f"{draft}.reset-20260901-120000",
+            }
+            return 0, json.dumps(answer), ""
+
+        out = io.StringIO()
+        code = history_reset_command.main(
+            ["-c", "alpha", *argv],
+            stream_in=io.StringIO(""),
+            stream_out=out,
+            run_helper=run_helper,
+            publish=lambda _cluster: published,
+            config_path=lambda _cluster: draft,
+        )
+        return code, out.getvalue(), sent
+
+    def test_the_phrase_on_the_command_line_asks_nothing(self) -> None:
+        with TemporaryDirectory() as raw:
+            draft = self.layout(Path(raw))
+
+            code, out, sent = self.run_command(draft, "--confirm", "please reset me", "--json")
+
+        self.assertEqual((code, len(sent)), (0, 1))
+        document = assert_contract("haprion-history-reset", out)
+        self.assertEqual(document["result"]["next_command"], "haprion-deploy -c alpha")
+
+    def test_a_wrong_phrase_is_refused_and_nothing_is_sent(self) -> None:
+        with TemporaryDirectory() as raw:
+            draft = self.layout(Path(raw))
+
+            code, out, sent = self.run_command(draft, "--confirm", "yes", "--json")
+
+        self.assertEqual((code, sent), (64, []))
+        self.assertEqual(assert_contract("haprion-history-reset", out)["outcome"], "failed")
+
+    def test_a_failed_publish_is_partial(self) -> None:
+        with TemporaryDirectory() as raw:
+            draft = self.layout(Path(raw))
+
+            code, out, _ = self.run_command(
+                draft, "--confirm", "please reset me", "--json", published=1
+            )
+
+        document = assert_contract("haprion-history-reset", out)
+        self.assertEqual((code, document["outcome"]), (1, "partial"))
+        self.assertFalse(document["result"]["published"])
+
+    def test_json_without_the_phrase_is_a_usage_error(self) -> None:
+        with TemporaryDirectory() as raw:
+            draft = self.layout(Path(raw))
+            with (
+                self.assertRaises(SystemExit),
+                contextlib.redirect_stderr(io.StringIO()),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.run_command(draft, "--json")

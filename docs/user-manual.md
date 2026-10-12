@@ -1806,7 +1806,9 @@ The block carries the node's name, its cluster, a suggested host name, its ed255
 public halves of its two fetch keys. Copying it from the node's console is the trust - the manager
 takes the host key from the block, never from the network - and the fingerprint the command and the
 page print is the one to compare with what step 4 printed. `--host` is the name the manager reaches
-the node at; the block's suggestion is the node's own `hostname -f` and may not be.
+the node at; the block's suggestion is the node's own `hostname -f` and may not be. With `--json` either
+command prints the helper's envelope instead (`schemas/v1/haprion-cluster-node`); `haprion-cluster`
+takes it too.
 
 After writing, the manager asks the node for its status as the status identity, with strict host
 key checking. The node reports its own host name and cluster, so an answer proves the host key, that

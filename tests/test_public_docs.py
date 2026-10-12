@@ -109,3 +109,31 @@ class PublicDocumentationHasNoProjectHistory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheContractListsEveryOperation(unittest.TestCase):
+    """Every operation a schema answers for has its row in `docs/CONTRACT.md`.
+
+    Thirteen were missing on 2026-10-12, seven of them for months: the table
+    is written by hand and nothing compared it with the schemas.
+    """
+
+    def test_every_schema_operation_has_a_row(self) -> None:
+        import json
+
+        listed = set(
+            re.findall(
+                r"^\| [^|]+ \| `([a-z_]+)` \|",
+                (ROOT / "docs" / "CONTRACT.md").read_text(encoding="utf-8"),
+                re.M,
+            )
+        )
+        answered: set[str] = set()
+        for path in (ROOT / "schemas" / "v1").glob("*.schema.json"):
+            for part in json.loads(path.read_text(encoding="utf-8")).get("allOf", []):
+                operation = part.get("properties", {}).get("operation", {}).get("const")
+                if isinstance(operation, str):
+                    answered.add(operation)
+
+        self.assertGreater(len(answered), 40)
+        self.assertEqual(sorted(answered - listed), [])

@@ -12,6 +12,11 @@ that would be written.
 
 What a revert is, since B10 step 5: a NEW version holding the chosen version's
 content. The history keeps every intermediate version, and nothing is rewritten.
+
+`--json` prints one envelope (`schemas/v1/haprion-revert`) instead of the
+preview and the summary: the helper's, or this half's own when it stops before
+asking - a refusal, or a version that is already current, which is `done`
+with `changed: false`.
 """
 
 from __future__ import annotations
@@ -26,20 +31,26 @@ from typing import TextIO
 
 from haprion.cli.caller import CallerError, usage
 from haprion.cli.caller import config_path as _config_path
+from haprion.envelope import envelope, failure
 from haprion.git_command import GitError
 from haprion.repo_health import describe_problem, is_repo_root, unsaved_changes
 from haprion.repo_snapshot import resolve_head
 from haprion.version_history import count_versions, version_commit, version_summary
 
 OPERATION = "revert_version"
+#
+# What the result envelope is called (`schemas/v1/haprion-revert`); the request
+# says `revert_version` to reach the helper.
+#
+REVERT_OPERATION = "revert"
 
 HELPER = "/opt/haprion/current/bin/haprion-revert-helper"
 SUDO = "/usr/bin/sudo"
 
 USAGE = (
     "Usage:\n"
-    "  haprion-revert -c <cluster>\n"
-    "  haprion-revert -c <cluster> VERSION\n"
+    "  haprion-revert -c <cluster> [--json]\n"
+    "  haprion-revert -c <cluster> VERSION [--json]\n"
     "\n"
     "Examples:\n"
     "  haprion-revert -c internal\n"
@@ -151,27 +162,67 @@ def main(
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
-    cluster_id, requested = _parse(argv)
+    json_mode = "--json" in argv
+    cluster_id, requested = _parse([item for item in argv if item != "--json"])
+    request_id = str(uuid.uuid4())
+
+    def emit(document: dict[str, object]) -> None:
+        writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+
+    def refuse(code: str, message: str, exit_code: int) -> int:
+        if json_mode:
+            emit(
+                failure(
+                    operation=REVERT_OPERATION,
+                    cluster=cluster_id,
+                    request_id=request_id,
+                    code=code,
+                    message=message,
+                    exit_code=exit_code,
+                )
+            )
+        else:
+            writer.write(f"{'' if code == 'not_a_repository' else 'ERROR: '}{message}\n")
+        return exit_code
 
     try:
         repo = config_path(cluster_id)
         if not is_repo_root(repo):
-            writer.write(f"{describe_problem(cluster_id, repo)}\n")
-            return 68
+            return refuse("not_a_repository", describe_problem(cluster_id, repo), 68)
 
         dirty = unsaved_changes(repo)
         if dirty:
-            writer.write(
-                f"ERROR: there are unsaved changes in {repo}.\n\n"
-                f"{dirty}\n\n"
-                "Publish or discard them before reverting.\n"
+            return refuse(
+                "unsaved_changes",
+                f"there are unsaved changes in {repo}.\n\n{dirty}\n\n"
+                "Publish or discard them before reverting.",
+                65,
             )
-            return 65
 
         total = count_versions(repo)
         version = _target_version(cluster_id, requested, total)
         if version == total:
-            writer.write(f"Version {version} is already current for cluster '{cluster_id}'.\n")
+            if json_mode:
+                emit(
+                    envelope(
+                        operation=REVERT_OPERATION,
+                        outcome="done",
+                        cluster=cluster_id,
+                        request_id=request_id,
+                        result={
+                            "changed": False,
+                            "from_version": total,
+                            "restored_version": version,
+                            "new_version": None,
+                            "hash": None,
+                            "published_at": None,
+                            "deployment_required": False,
+                            "next_command": None,
+                        },
+                    )
+                )
+            else:
+                writer.write(f"Version {version} is already current for cluster '{cluster_id}'.\n")
             return 0
 
         commit = version_commit(repo, version)
@@ -180,19 +231,19 @@ def main(
         _, head = resolve_head(repo)
         summary = version_summary(repo, version, commit)
     except (CallerError, GitError) as exc:
-        writer.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return refuse("bad_input" if exc.exit_code == 64 else "refused", str(exc), exc.exit_code)
 
-    writer.write(
-        "\nReverting the HAProxy configuration:\n\n"
-        f"  Cluster:   {cluster_id}\n"
-        f"  Version:   {summary.version}\n"
-        f"  Date:      {summary.date}\n"
-        f"  Comment:   {summary.comment}\n\n"
-    )
+    if not json_mode:
+        writer.write(
+            "\nReverting the HAProxy configuration:\n\n"
+            f"  Cluster:   {cluster_id}\n"
+            f"  Version:   {summary.version}\n"
+            f"  Date:      {summary.date}\n"
+            f"  Comment:   {summary.comment}\n\n"
+        )
 
     request = build_request(
-        cluster_id, str(uuid.uuid4()), version=version, expected_commit=commit, expected_head=head
+        cluster_id, request_id, version=version, expected_commit=commit, expected_head=head
     ).encode()
 
     code, out, err = run_helper(request)
@@ -209,8 +260,18 @@ def main(
         # it stands rather than replaced by a friendlier sentence that would say
         # less.
         #
+        if json_mode:
+            return refuse(
+                "helper_failed",
+                (err.strip() or f"the revert failed with exit code {code}.")[:2048],
+                code or 70,
+            )
         writer.write(err or f"ERROR: the revert failed with exit code {code}.\n")
         return code or 70
+
+    if json_mode:
+        emit(document)
+        return 0 if document.get("outcome") == "done" else code or 70
 
     if document.get("outcome") != "done":
         error = document.get("error") or {}

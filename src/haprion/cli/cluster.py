@@ -3,8 +3,11 @@
     haprion-cluster add -c <id> --display-name <name> --vip <address>
                         --node-path <path> --certificate <id>
                         --host <first node> --host <second node>
-                        [--prefix <length>] [--interface <name>] < blocks
-    haprion-cluster remove -c <id>
+                        [--prefix <length>] [--interface <name>] [--json] < blocks
+    haprion-cluster remove -c <id> [--json]
+
+`--json` prints the helper's envelope (`schemas/v1/haprion-cluster-define`)
+and leaves with its exit code.
 
 The blocks are what `04-node-prepare` printed on the two nodes, one after the
 other on stdin, in the order of the `--host` options. Both go through the same
@@ -25,7 +28,7 @@ import sys
 from typing import TextIO
 
 from haprion.cli import node_helper
-from haprion.cli.node import RunHelper, _answer, run_helper
+from haprion.cli.node import RunHelper, _answer, json_answer, run_helper
 from haprion.envelope import new_request_id
 from haprion.node_enrollment import BLOCK_PREFIX, MAX_BLOCK_BYTES
 
@@ -42,8 +45,10 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--host", action="append", required=True)
     create.add_argument("--prefix", type=int)
     create.add_argument("--interface")
+    create.add_argument("--json", action="store_true")
     remove = actions.add_parser("remove")
     remove.add_argument("-c", "--cluster", required=True)
+    remove.add_argument("--json", action="store_true")
     return parser
 
 
@@ -83,8 +88,11 @@ def main(
     else:
         request = node_helper.build_define_request(args.cluster, new_request_id(), action="remove")
 
+    completed = run(request)
+    if args.json:
+        return json_answer(completed, node_helper.DEFINE, writer, errors)
     try:
-        result = _answer(run(request), node_helper.DEFINE)
+        result = _answer(completed, node_helper.DEFINE)
     except ValueError as exc:
         errors.write(f"ERROR: {exc}\n")
         return 1

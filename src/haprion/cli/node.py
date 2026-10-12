@@ -1,9 +1,10 @@
 """``haprion-node`` - add a node to a cluster, or take one away (B211).
 
-    haprion-node add -c <cluster> --host <name> < block
-    haprion-node remove -c <cluster> <node>
+    haprion-node add -c <cluster> --host <name> [--json] < block
+    haprion-node remove -c <cluster> <node> [--json]
 
-The block is what `04-node-prepare` printed on the node. `--host` is the name
+`--json` prints the helper's envelope (`schemas/v1/haprion-cluster-node`) and
+leaves with its exit code. The block is what `04-node-prepare` printed on the node. `--host` is the name
 this management host reaches the node at; the block carries the node's own
 suggestion, which is shown and may be wrong. Both go through the same root
 helper the interface's Nodes card uses, so the terminal and the browser change
@@ -31,8 +32,8 @@ from haprion.node_enrollment import MAX_BLOCK_BYTES
 SUDO = "/usr/bin/sudo"
 USAGE = (
     "Usage:\n"
-    "  haprion-node add -c <cluster> --host <name> < block\n"
-    "  haprion-node remove -c <cluster> <node>\n"
+    "  haprion-node add -c <cluster> --host <name> [--json] < block\n"
+    "  haprion-node remove -c <cluster> <node> [--json]\n"
 )
 
 type RunHelper = Callable[[str], subprocess.CompletedProcess[str]]
@@ -62,15 +63,38 @@ def _parse(argv: list[str]) -> tuple[str, str, str]:
     usage(USAGE)
 
 
-def _answer(
+def document_of(
     completed: subprocess.CompletedProcess[str], operation: str = node_helper.OPERATION
-) -> Mapping[str, Any]:
+) -> dict[str, Any]:
+    """The helper's envelope, or why there is none."""
+
     try:
         document = json.loads(completed.stdout)
     except ValueError:
         raise ValueError(completed.stderr.strip() or "the helper gave no answer") from None
     if not isinstance(document, dict) or document.get("operation") != operation:
         raise ValueError("the helper returned an invalid result")
+    return document
+
+
+def json_answer(
+    completed: subprocess.CompletedProcess[str], operation: str, writer: TextIO, errors: TextIO
+) -> int:
+    """`--json`: the helper's envelope as it came, and its exit code."""
+
+    try:
+        document = document_of(completed, operation)
+    except ValueError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return completed.returncode or 1
+    writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+    return completed.returncode if document.get("ok") is not True else 0
+
+
+def _answer(
+    completed: subprocess.CompletedProcess[str], operation: str = node_helper.OPERATION
+) -> Mapping[str, Any]:
+    document = document_of(completed, operation)
     error = document.get("error")
     if isinstance(error, Mapping):
         raise ValueError(str(error.get("message")))
@@ -91,7 +115,8 @@ def main(
     arguments = sys.argv[1:] if argv is None else argv
     writer = stdout or sys.stdout
     errors = stderr or sys.stderr
-    action, cluster, value = _parse(arguments)
+    json_mode = "--json" in arguments
+    action, cluster, value = _parse([item for item in arguments if item != "--json"])
     if action == "add":
         block = (stdin or sys.stdin).read(MAX_BLOCK_BYTES + 1)
         request = node_helper.build_request(
@@ -100,8 +125,11 @@ def main(
     else:
         request = node_helper.build_request(cluster, new_request_id(), action="remove", node=value)
 
+    completed = run(request)
+    if json_mode:
+        return json_answer(completed, node_helper.OPERATION, writer, errors)
     try:
-        result = _answer(run(request))
+        result = _answer(completed)
     except ValueError as exc:
         errors.write(f"ERROR: {exc}\n")
         return 1

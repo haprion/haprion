@@ -5,7 +5,9 @@ The repository has complementary gates. No single scanner replaces the others.
 1. `tools/secret_scan.py` rejects generic secret material, non-documentation IP addresses, and
    environment-specific values from a mandatory private denylist.
 2. `tools/run-gitleaks` scans the worktree and, once commits exist, the complete Git history using
-   Gitleaks' credential patterns.
+   Gitleaks' credential patterns. `.gitleaks.toml` keeps Gitleaks' own rules and lists the fixed
+   strings that are not secrets, each with what it is and why a rule meets it, as narrow as the
+   string itself. The pre-commit scan reads the same file.
 3. `run-tests` verifies Shell scripts with ShellCheck, GitHub Actions syntax with actionlint and
    security posture with zizmor, Python lint/format with Ruff, and types with strict mypy.
 4. The same command measures branch coverage with a non-regression floor, runs unit and frozen

@@ -627,7 +627,9 @@ def read_log_forwarding(now=None):
         if not match:
             continue
         try:
-            stamp = time.mktime(time.strptime(" ".join(match.group(1).split()), "%a %b %d %H:%M:%S %Y"))
+            stamp = time.mktime(
+                time.strptime(" ".join(match.group(1).split()), "%a %b %d %H:%M:%S %Y")
+            )
             body = json.loads(match.group(2))
         except (ValueError, OverflowError):
             continue
@@ -640,7 +642,7 @@ def read_log_forwarding(now=None):
         if not isinstance(label, str) or not label.startswith("haprion-"):
             continue
         base, _, part = label.partition(" ")
-        name = base[len("haprion-"):]
+        name = base[len("haprion-") :]
         if name not in queued or part not in ("queue", "queue[DA]"):
             continue
         if moment - stamp <= FORWARD_WINDOW_SECONDS:

@@ -238,6 +238,21 @@ Add it after the first deploy has installed the file, one node at a time, with
 package enables it, and it restores and clears the IPVS table at boot and shutdown, which
 keepalived owns. The nodes need no `ip_forward`: the receivers never answer through them.
 
+**Forwarding the traffic log.** A cluster's external log receivers are sent to by the node's own
+rsyslog, with a queue on disk per receiver. `04-node-prepare` installs
+`/etc/rsyslog.d/47-haprion-forward.conf`, which loads rsyslog's `impstats` (each receiver's queue
+once a minute, to `/var/log/haprion/rsyslog-stats.json`, rotated daily by
+`/etc/logrotate.d/haprion-rsyslog-stats`) and includes `/etc/rsyslog.d/haprion/forward.conf` when
+it is there; the package depends on `rsyslog-gnutls` for receivers over TLS. The deploy puts that
+file in place from a release that names receivers and removes it from one that does not: it checks
+the candidate with `rsyslogd -N1` before anything is activated, copies it to `/etc/rsyslog.d/haprion/`
+- rsyslogd's AppArmor profile does not let it read the releases under `/etc/haproxy` - checks the
+whole configuration again, and restarts rsyslog only when the file changed, putting the previous
+file back if rsyslog refuses it. The queues live in rsyslog's work directory (`/var/spool/rsyslog`
+on Ubuntu) and need the room the cluster's `disk_mib` gives each receiver. A release that names
+receivers is refused on a node without the include, before anything is activated. A site that
+already loads `impstats` itself gets a refusal from `rsyslogd -N1` when `04-node-prepare` runs.
+
 ## 6. Verify access
 
 Open `https://<SERVER_NAME>` and sign in with the administrator account created during

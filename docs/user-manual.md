@@ -2200,8 +2200,9 @@ the nodes can do that themselves: see [Sending the traffic log elsewhere and met
 
 **Under heavy traffic.** Every request is kept on its node and reaches the manager, but the page
 shows at most the newest 500 matches - during a flood, a few seconds' worth. A filter narrows those
-500; it does not summarise the rest. The collector also fetches a portion at a time, so after a
-burst the newest rows arrive late and the warning says *catching up* until they have. How many
+500; it does not summarise the rest. After a burst the newest rows can arrive a minute or two
+late - the collector fetches for up to thirty seconds per node each minute - and the warning says
+*catching up* until they have. How many
 requests, which statuses and from where over time is the work of the
 [exporter](#sending-the-traffic-log-elsewhere-and-metrics) and a log platform: set them up before
 they are needed.
@@ -2213,9 +2214,9 @@ expose HAProxy's own Prometheus exporter and share its counters between its
 nodes. All three are settings of the cluster's
 HAProxy configuration, kept in `managed/cluster.yaml` in its repository and
 published as a version like any other change - a lock, a validated candidate,
-*Published by*, and a revert that takes them back. Nothing is installed on the
-nodes and nothing is relayed through the management host: after `haprion-deploy`
-the nodes send and listen themselves.
+*Published by*, and a revert that takes them back. Nothing is relayed through the
+management host: after `haprion-deploy` the nodes send and listen themselves - the
+receivers through the node's own rsyslog, which the deploy configures.
 
 ```yaml
 # managed/cluster.yaml
@@ -2223,7 +2224,7 @@ log_targets:
   graylog:
     address: 192.0.2.20      # an IP address, never a name
     port: 6514
-    buffer_kib: 4096         # optional; 64 to 65536
+    disk_mib: 1024           # optional; the queue on the node's disk, 64 to 65536 MiB
     tls: false               # optional
 metrics:
   port: 8405
@@ -2249,33 +2250,31 @@ haprion-deploy -c alpha
 ```
 
 **The log** is the same structured record the node's own file gets ([Mirroring node traffic logs](#mirroring-node-traffic-logs)),
-plus `node`, the host name of the node that wrote it, sent as syslog over TCP
-(RFC 5424, octet-counted) whether or not the local stream is on. The syslog
-header's host name field is `-`: HAProxy sets it only globally, and doing so
-would change the node's own classic log lines too. One transport reaches the common platforms through their usual
+with `node`, the host name of the node that wrote it. HAProxy writes one line per request to
+the node's syslog socket, and the node's rsyslog writes it to the day file and sends it to each
+receiver as syslog over TCP (RFC 5424, octet-counted), whether or not the local stream is on;
+the header carries the node's host name and the tag `haproxy-traffic`. One transport reaches the common platforms through their usual
 receivers: Graylog takes it directly, Loki through a syslog receiver such as
 Grafana Alloy's `loki.source.syslog`, Elasticsearch or OpenSearch through
-Logstash or Vector with a syslog input. `tls: true` verifies the receiver
-against the node's system trust store.
+Logstash or Vector with a syslog input. `tls: true` verifies the receiver's certificate chain
+against the node's system trust store (rsyslog's GnuTLS driver, `rsyslog-gnutls`), not its name.
 
-A receiver is named by **address, never by host name.** HAProxy resolves a log
-server when it reads the configuration, whatever the server's `init-addr`
-says, so a name that fails to resolve at a reload fails the whole
-configuration and the deploy with it. An address fails nothing.
+A receiver is named by **address, never by host name**, so what the nodes send to does not depend
+on their resolver at the moment rsyslog starts.
 
-Each receiver has a buffer of its own, and the buffer is what an outage is
-survived with. While a receiver is away, HAProxy keeps what fits and drops the
-rest; the traffic itself is not held up. Measured on 3.4.4: with a receiver
-that accepted and then stopped reading, nine thousand requests were served
-without an error and without a change in response time, HAProxy disconnected
-the receiver once its server timeout ran out (10 s in the generated ring),
-reconnected once it answered again, and
-delivered the buffer and everything after it. A receiver that has been away
-longer than its buffer lasts has lost the difference, and nothing in the
-traffic shows it; watch the receiving side.
-The same holds for a burst: a receiver that reads slower than the nodes write loses what does not
-fit. At 25 000 requests a second, a 4 MiB buffer fills in under a second; the exporter's counters
-are complete either way.
+Each receiver has a **queue on the node's disk**, `disk_mib` large, and the queue is what an outage
+or a burst is survived with. While a receiver is away or reads slower than the traffic, rsyslog
+keeps the lines on disk and sends them when it reads again; the queue survives a restart of
+rsyslog or of the node. About 800 bytes a line, so 1 GiB holds some 1.3 million. What does not fit
+is dropped for that receiver alone and counted - neither the traffic nor the node's own day file
+waits for a full queue. Measured with rsyslog 8.2512 on one core: 25 000 lines a second forwarded
+and written to file at 9 % of the core; 100 000 lines queued while the receiver was away arrived
+about a second after it came back.
+
+Each receiver's queue shows on the node: `haprion-status` prints `Log forward:` per node, and
+**Needs attention** lists a receiver whose queue holds 10 000 lines or more, and as critical one
+that dropped lines in the last hour ([Needs attention, and external monitoring](#needs-attention-and-external-monitoring)).
+The exporter's counters are complete either way.
 
 **The exporter** answers `GET /metrics` on the port given, on every IPv4
 address of both nodes - the configuration is shared by the pair, and scraping
@@ -2389,7 +2388,11 @@ out, unreadable or not where it should be (the interface's own included); a clus
 an operation that failed, partly worked, was blocked or ended unknown - until a later run of the
 same operation works; a node that is down; a cluster whose status
 has not been read for two poll intervals; a WAF exception marked *Not working*; a node backup that
-is missing, old or failed. Nothing there, no box. What somebody chose - a drained server, a
+is missing, old or failed; a node whose traffic log collection failed, has not succeeded for five
+minutes or is still behind after five runs or with older days waiting (catching up after a burst
+is left to the log page's own warning); a receiver of the traffic log whose queue on the node
+holds 10 000 lines or more, or - critical - that dropped lines in the last hour. Nothing there, no
+box. What somebody chose - a drained server, a
 maintenance page, a block, a publish not yet deployed - is not on it: those are on the cluster's
 card and *Operations* line, and on *Versions*.
 
@@ -2406,7 +2409,8 @@ once any cluster's status reading is older than two poll intervals, which is how
 the manager itself has stopped reading. The second is Prometheus's text format:
 `haprion_attention_items{kind, severity}` for every kind and `haprion_status_age_seconds{cluster}`.
 
-Who may ask is a list on *Settings → External monitoring*: addresses or networks, one per line. Every
+Who may ask is a list on *Settings → External monitoring* (*Edit* on its row): addresses or
+networks, one per line; an address that stays keeps who added it and when. Every
 other address - and every address while the list is empty, which is the endpoint switched off - is
 answered 404. The address is the one nginx hands the interface, so with a reverse proxy in front it
 is the client the proxy names. A monitor that is answered 404 is not on the list.
@@ -2450,7 +2454,7 @@ haprion_status_age_seconds{cluster="alpha"} 12
 haprion_status_age_seconds{cluster="beta"} 14
 ```
 
-`kind` is one of `backup`, `certificate`, `job`, `node`, `reading` and `waf`, and every pair is
+`kind` is one of `backup`, `certificate`, `forwarding`, `job`, `logs`, `node`, `reading` and `waf`, and every pair is
 present even at 0, so an alert expression never meets a missing series.
 
 #### Uptime Kuma

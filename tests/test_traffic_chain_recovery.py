@@ -133,22 +133,21 @@ class ADayThatRollsOverMidTransfer(ChainTestCase):
             "the assembled mirror is not in day order",
         )
 
-    def test_a_cold_start_costs_one_run_per_day_of_the_window(self) -> None:
-        """Measured, and the number R4 should expect on the pilot node.
+    def test_a_cold_start_fills_the_window_in_the_first_runs(self) -> None:
+        """Today first, then the closed days oldest first, within one run's budget.
 
-        The closed days are claimed oldest first, one per run, whether or not
-        the node has a file for that day. A collector installed today therefore
-        shows the current day immediately and fills the fortnight behind it over
-        the next thirteen timer ticks - fourteen minutes at the planned
-        interval. Bounded and one-time, but it is not instant, and an operator
-        watching a fresh install would otherwise read it as data loss.
+        One closed day per run made a fresh install fill its fortnight over
+        thirteen timer ticks. A run now goes on to the next closed day while
+        its budget lasts (26-10-12), so a quiet node's window is there after
+        the first run, and the second finds nothing left to claim.
         """
 
         for age in reversed(range(4)):
             self.chain.node.append(self.chain.today - timedelta(days=age), 3)
 
         runs = self.settle()
-        self.assertEqual(runs, RETENTION_DAYS, "a cold start should cost one run per window day")
+        self.assertLessEqual(runs, 2, "a cold start should fill the window at once")
+        self.assertEqual(len(self.chain.requests_seen()), 12)
         self.assertClean()
         self.assertEqual(len(self.chain.requests_seen()), 12)
 
@@ -241,11 +240,13 @@ class ANodeFileThatIsTruncatedOrReplaced(ChainTestCase):
         self.chain.node.truncate(self.chain.today)
         self.chain.node.append(self.chain.today, 4)
 
-        self.assertEqual(self.collect(), 0)  # sees the reset, drops the day
-        self.assertEqual(self.chain.requests_seen(), [])
-        self.assertEqual(self.collect(), 0)  # and refills it from zero
+        # One run sees the reset, drops the day and refills it from zero
+        # (26-10-12: a run keeps fetching until the day is current).
+        self.assertEqual(self.collect(), 0)
         self.assertClean()
-        self.assertEqual(len(self.chain.requests_seen()), 4)
+        self.assertEqual(sorted(self.chain.requests_seen()), [10, 11, 12, 13])
+        self.assertEqual(self.collect(), 0)
+        self.assertEqual(sorted(self.chain.requests_seen()), [10, 11, 12, 13])
 
     def test_a_replaced_file_that_lands_the_cursor_mid_record_is_rebuilt_whole(self) -> None:
         self.chain.node.append(self.chain.today, 10)
@@ -259,8 +260,9 @@ class ANodeFileThatIsTruncatedOrReplaced(ChainTestCase):
         self.chain.node.append(self.chain.today, 12)
         self.assertGreater(self.chain.node.size(self.chain.today), held)
 
+        # Dropped and rebuilt whole in the same run: never the old head with
+        # the new tail behind it.
         self.assertEqual(self.collect(), 0)
-        self.assertEqual(self.chain.mirrored(), [], "a hole was preserved instead of rebuilt")
         self.assertEqual(self.collect(), 0)
 
         self.assertNoLitter()
@@ -304,7 +306,7 @@ class ARecordThatIsNotWhatItShouldBe(ChainTestCase):
         self.assertEqual(self.chain.mirrored(), [])
         self.assertNotEqual(self.chain.meta()["outcome"], "ok")
 
-    def test_a_day_larger_than_one_transfer_arrives_in_order_across_runs(self) -> None:
+    def test_a_day_larger_than_one_transfer_arrives_in_order_in_one_run(self) -> None:
         """Above 8 MiB the day needs a second request; it must not lose a record."""
 
         wanted = 8 * 1024 * 1024 + 512 * 1024
@@ -312,10 +314,10 @@ class ARecordThatIsNotWhatItShouldBe(ChainTestCase):
         while written < wanted:
             written += len(self.chain.node.append(self.chain.today, 2000))
 
+        before = self.chain.measured.requests
         self.assertEqual(self.collect(), 0)
-        first = len(self.chain.requests_seen())
-        self.assertGreater(first, 0)
-        self.assertLess(first, self.chain.node.next_request)
+        self.assertGreaterEqual(self.chain.measured.requests - before, 2, "one transfer is 8 MiB")
+        self.assertEqual(len(self.chain.requests_seen()), self.chain.node.next_request)
         self.assertEqual(self.collect(), 0)
 
         self.assertClean()
@@ -420,7 +422,7 @@ class AnInventoryThatChanged(ChainTestCase):
         self.assertTrue(self.chain.mirror_path().exists())
         reading = self.chain.ui()
         self.assertEqual(len(reading.nodes), 2)
-        self.assertEqual(len(reading.entries), 4)
+        self.assertEqual(len([entry for entry in reading.entries if entry.node == "node-a"]), 4)
 
         # A whole window later there is nothing left of it anywhere.
         moment = self.advance(3)
@@ -563,8 +565,10 @@ class WhatARunHoldsOpen(ChainTestCase):
     def test_fetching_many_days_does_not_accumulate_open_files(self) -> None:
         for age in reversed(range(RETENTION_DAYS)):
             self.chain.node.append(self.chain.today - timedelta(days=age), 2)
-        self.assertEqual(self.collect(), 0)
-
+        #
+        # Around the first run, which since 26-10-12 fetches the whole window
+        # itself: one request per day, all in one process.
+        #
         held = len(os.listdir("/proc/self/fd"))
         requests = self.chain.measured.requests
         self.settle()

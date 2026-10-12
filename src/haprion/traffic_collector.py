@@ -436,9 +436,11 @@ def _catch_up(
     """Fetch one day until it is complete, the deadline passes or a response brings nothing.
 
     The first fetch is made whatever the clock says, so a run always advances.
-    A response that does not grow the part - a reset, a rebuilt day, a node
-    that sent nothing - ends the loop rather than asking again at once; the
-    next run starts from where the part stands.
+    A first fetch that drops the day - a node file truncated or replaced -
+    leaves an empty part, and the loop rebuilds it from zero in the same run.
+    A fetch inside the loop that leaves the part no larger - a reset there, a
+    node that sent nothing - ends it; the next run starts from where the part
+    stands.
     """
 
     path = _part(config, target, wanted)

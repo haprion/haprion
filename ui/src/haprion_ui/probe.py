@@ -199,6 +199,10 @@ def targets_from(checks: Sequence[EffectiveCheck]) -> list[dict[str, Any]]:
             "host_header": check.host_header or "",
             "min_version": check.min_version,
             #
+            # The pool's own CA (B276): the probe trusts the file HAProxy does.
+            #
+            **({"ca": check.authority} if check.authority else {}),
+            #
             # A dns check's question (B253); the probe helper looks a named
             # server up on the manager, as the publish does for dnsdist.
             #

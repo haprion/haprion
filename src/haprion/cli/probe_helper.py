@@ -31,6 +31,7 @@ from typing import BinaryIO, TextIO
 
 from haprion import dnsdist_config
 from haprion.config import (
+    CERTIFICATE_ID,
     DEFAULT_POLICY_PATH,
     ConfigError,
     DeployIdentity,
@@ -174,6 +175,11 @@ def _targets(
                 "a target's min_version is not a TLS version this may ask for",
                 exit_code=EXIT_BAD_INPUT,
             )
+        authority = entry.get("ca", "") or ""
+        if not isinstance(authority, str) or (authority and not CERTIFICATE_ID.match(authority)):
+            raise HelperProtocolError(
+                "a target's ca does not name a certificate", exit_code=EXIT_BAD_INPUT
+            )
         targets.append(
             Target(
                 host=host,
@@ -184,6 +190,7 @@ def _targets(
                 path=path,
                 host_header=header,
                 min_version=min_version,
+                ca=authority,
                 **(
                     _dns_question(entry, host, lookup or dnsdist_config.lookup)
                     if kind == "dns"

@@ -125,6 +125,20 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
 
         self.assertFalse(targets_from(checks())[0]["tls"])
 
+    def test_a_pool_verified_against_its_own_ca_sends_the_ca(self) -> None:
+        """Or the node's store is asked, and refuses what the node's check accepts (26-10-12)."""
+
+        named = "backend-a.example.net:8080\npool-b.example.net:8080"
+        own = targets_from(
+            checks(
+                health_type="https", backend_tls="ca", backend_tls_ca="example-ca", servers=named
+            )
+        )[0]
+        self.assertEqual((own["verify"], own["ca"]), (True, "example-ca"))
+
+        system = targets_from(checks(health_type="https", backend_tls="system", servers=named))[0]
+        self.assertNotIn("ca", system)
+
     def test_the_type_box_carries_the_protocol_too(self) -> None:
         """`https` is an http check over TLS, which is what the box says."""
 

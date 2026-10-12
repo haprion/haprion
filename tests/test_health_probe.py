@@ -785,3 +785,149 @@ class AFloorTheObjectChose(unittest.TestCase):
         self.assertEqual(code, 64)
         self.assertFalse(answer["ok"])
         self.assertIn("min_version", str(answer["error"]))
+
+
+def authority_and_leaf(directory: Path) -> tuple[Path, Path, Path]:
+    """A CA, and a certificate for 127.0.0.1 it issued: the pool's own CA (B276)."""
+
+    openssl = shutil.which("openssl")
+    assert openssl is not None
+    ca_key, ca = directory / "ca.key", directory / "ca.pem"
+    key, request, leaf = directory / "leaf.key", directory / "leaf.csr", directory / "leaf.pem"
+
+    def run(*argv: str) -> None:
+        sp.run([openssl, *argv], capture_output=True, check=True)
+
+    run(
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        str(ca_key),
+        "-out",
+        str(ca),
+        "-subj",
+        "/CN=Example Test CA",
+        "-days",
+        "1",
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+        "-addext",
+        "keyUsage=critical,keyCertSign",
+    )
+    run(
+        "req",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        str(key),
+        "-out",
+        str(request),
+        "-subj",
+        "/CN=127.0.0.1",
+    )
+    run(
+        "x509",
+        "-req",
+        "-in",
+        str(request),
+        "-CA",
+        str(ca),
+        "-CAkey",
+        str(ca_key),
+        "-CAcreateserial",
+        "-out",
+        str(leaf),
+        "-days",
+        "1",
+    )
+    return ca, leaf, key
+
+
+@unittest.skipUnless(shutil.which("openssl"), "openssl is not installed here")
+class APoolsOwnCaIsTheOneTrusted(unittest.TestCase):
+    """The probe trusts the pool's CA file, as HAProxy's `ca-file` does (26-10-12).
+
+    Against the node's own store a pool behind an internal CA read as
+    CERTIFICATE_VERIFY_FAILED while the node's check called it up. The script is
+    loaded as a module so its CA directory can be one of this test's own.
+    """
+
+    server: ThreadingHTTPServer
+    port: int
+    directory: tempfile.TemporaryDirectory[str]
+    authorities: Path
+    module: Any
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import importlib.machinery
+        import importlib.util
+
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        ca, leaf, key = authority_and_leaf(root)
+        cls.authorities = root / "ca"
+        cls.authorities.mkdir()
+        (cls.authorities / "example-ca.pem").write_bytes(ca.read_bytes())
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(leaf, key)
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.server.socket = context.wrap_socket(cls.server.socket, server_side=True)
+        cls.port = int(cls.server.server_address[1])
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        loader = importlib.machinery.SourceFileLoader("haprion_health_probe_ca", str(SCRIPT))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        assert spec is not None
+        cls.module = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.module)
+        cls.module.AUTHORITY_DIR = cls.authorities
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.directory.cleanup()
+
+    def result(self, **fields: object) -> dict[str, Any]:
+        import io
+
+        request = {"schema_version": 1, "targets": [target(port=self.port, tls=True, **fields)]}
+        out = io.StringIO()
+        self.module.main([], stdin=io.BytesIO(json.dumps(request).encode()), stdout=out)
+        answer: dict[str, Any] = json.loads(out.getvalue())["results"][0]
+        return answer
+
+    def test_the_pools_ca_verifies_the_server(self) -> None:
+        found = self.result(verify=True, ca="example-ca")
+
+        self.assertTrue(found["ok"], found)
+
+    def test_the_nodes_own_store_does_not_know_it(self) -> None:
+        found = self.result(verify=True)
+
+        self.assertFalse(found["ok"])
+        self.assertIn("CERTIFICATE_VERIFY_FAILED", found["error"])
+
+    def test_a_ca_not_yet_on_the_node_is_said_as_such(self) -> None:
+        found = self.result(verify=True, ca="other-ca")
+
+        self.assertFalse(found["ok"])
+        self.assertEqual(found["error"], "the CA other-ca is not on this node yet")
+
+    def test_a_ca_name_that_is_no_certificate_id_is_refused(self) -> None:
+        import io
+
+        request = {
+            "schema_version": 1,
+            "targets": [target(port=self.port, tls=True, verify=True, ca="../x")],
+        }
+        out = io.StringIO()
+        code = self.module.main([], stdin=io.BytesIO(json.dumps(request).encode()), stdout=out)
+
+        self.assertEqual(code, 64)
+        self.assertIn("ca is not usable", out.getvalue())

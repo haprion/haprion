@@ -110,6 +110,18 @@ class WhatTheConnectionIsHeldTo(unittest.TestCase):
 
         self.assertTrue(check(pool=VERIFIED_POOL, host="pool-a.example.net").verify)
 
+    def test_a_pool_verified_against_its_own_ca_names_it(self) -> None:
+        """The probe trusts the file HAProxy's `ca-file` does (B276, 26-10-12)."""
+
+        own = check(
+            pool="    tls:\n      verify: ca\n      ca: example-ca\n", host="pool-a.example.net"
+        )
+
+        self.assertTrue(own.verify)
+        self.assertEqual(own.authority, "example-ca")
+        self.assertIsNone(check(pool=VERIFIED_POOL, host="pool-a.example.net").authority)
+        self.assertIsNone(check(pool=TLS_POOL).authority)
+
     def test_the_floor_is_the_pools_own_and_not_the_readers(self) -> None:
         lax = check(pool="    tls:\n      verify: none\n      policy: legacy\n")
 

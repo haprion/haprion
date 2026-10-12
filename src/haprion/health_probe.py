@@ -84,6 +84,9 @@ class Target:
     when it is only unreachable from here.
     """
 
+    ca: str = ""
+    """The CA the pool is verified against (B276); empty for the node's own trust."""
+
     query_name: str = ""
     query_type: str = ""
     address: str = ""
@@ -105,6 +108,8 @@ class Target:
             "host_header": self.host_header,
             "min_version": self.min_version,
         }
+        if self.ca:
+            request["ca"] = self.ca
         if self.type == "dns":
             request.update(
                 query_name=self.query_name, query_type=self.query_type, address=self.address

@@ -155,9 +155,35 @@ class WhatTheHelperRefusesToSend(HelperFixture):
             self.refusal({"targets": [self.target(type="http", path="healthz")]}),
         )
 
+    def test_a_ca_that_names_no_certificate(self) -> None:
+        self.assertIn(
+            "ca does not name a certificate",
+            self.refusal({"targets": [self.target(tls=True, verify=True, ca="../x")]}),
+        )
+
     def test_more_targets_than_a_pool_has(self) -> None:
         many = [self.target(port=port) for port in range(1, 25)]
         self.assertIn("at most", self.refusal({"targets": many}))
+
+
+class APoolsOwnCa(HelperFixture):
+    """The CA the pool is verified against reaches the node (B276, 26-10-12)."""
+
+    def test_the_ca_is_passed_on_and_only_when_named(self) -> None:
+        bodies: list[object] = []
+
+        def ask(node: str, identity: object, body: object) -> subprocess.CompletedProcess[str]:
+            bodies.append(json.loads(body) if isinstance(body, (str, bytes)) else body)
+            return answer([])
+
+        own = self.target(tls=True, verify=True, ca="example-ca")
+        code, _out, err = self.run_helper({"targets": [own, self.target()]}, ask=ask)
+
+        self.assertEqual(code, 0, err)
+        sent = bodies[0]
+        assert isinstance(sent, dict)
+        self.assertEqual(sent["targets"][0]["ca"], "example-ca")
+        self.assertNotIn("ca", sent["targets"][1])
 
 
 class AUdpTarget(HelperFixture):

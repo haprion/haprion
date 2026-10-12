@@ -39,6 +39,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 SCHEMA_VERSION = 1
 
@@ -58,6 +59,13 @@ DEFAULT_TIMEOUT_MS = 2000
 HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,253}[A-Za-z0-9])?$")
 PATH = re.compile(r"^/[!-~]{0,1023}$")
 HEADER_VALUE = re.compile(r"^[!-~]([ -~]{0,253}[!-~])?$")
+#
+# A pool verified against one of the cluster's own CAs (B276) names it, and
+# HAProxy's server line reads it from this directory as `ca-file`: the
+# engine's CERTIFICATE_ID and generate's NODE_CERTIFICATE_DIR/ca.
+#
+CA_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
+AUTHORITY_DIR = Path("/etc/haproxy/certs/ca")
 
 
 class Refused(Exception):
@@ -231,6 +239,7 @@ def read_request(stream):
                 "path": text(entry, "path", PATH, required=False, default="/") or "/",
                 "host_header": text(entry, "host_header", HOST, required=False),
                 "min_version": min_version_of(entry),
+                "ca": text(entry, "ca", CA_ID, required=False),
                 **(dns_question(entry) if kind == "dns" else {}),
             }
         )
@@ -326,7 +335,18 @@ def connect(target, timeout, source):
     if not target["tls"]:
         return sock
 
-    context = ssl.create_default_context()
+    #
+    # Against the pool's own CA when it has one, and that file alone - what
+    # HAProxy's `ca-file` trusts. The node's store would refuse an internal CA
+    # that the node's check accepts (26-10-12).
+    #
+    authority = None
+    if target["verify"] and target["ca"]:
+        authority = AUTHORITY_DIR / f"{target['ca']}.pem"
+        if not authority.is_file():
+            sock.close()
+            raise OSError(f"the CA {target['ca']} is not on this node yet")
+    context = ssl.create_default_context(cafile=str(authority) if authority else None)
     #
     # Said rather than inherited. `create_default_context` leaves the floor to
     # whatever OpenSSL on the node happens to be built with, so the same probe

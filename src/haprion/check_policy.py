@@ -68,6 +68,15 @@ class EffectiveCheck:
     min_version: str
     """The oldest handshake the pool may be reached over, in HAProxy's words."""
 
+    authority: str | None = None
+    """The CA the pool is verified against (B276), `None` for the node's own trust.
+
+    HAProxy's check makes its handshake with the server line's `ca-file`, so a
+    probe standing in for it has to trust that file and nothing else: against
+    the node's own store a pool with an internal CA reads as broken where the
+    node's check calls it up (26-10-12).
+    """
+
     path: str | None = None
     host_header: str | None = None
     expect_status: str | None = None
@@ -130,6 +139,9 @@ def effective_check(backend: Backend, server: Server) -> EffectiveCheck:
             BACKEND_MIN_VERSION[backend.tls.policy]
             if backend.tls is not None
             else DEFAULT_MIN_VERSION
+        ),
+        authority=(
+            backend.tls.ca if backend.tls is not None and backend.tls.verify == "ca" else None
         ),
         path=health.path,
         host_header=health.host,

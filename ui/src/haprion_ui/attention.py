@@ -22,7 +22,7 @@ import ipaddress
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import log_forwarding
@@ -43,6 +43,11 @@ UNSETTLED = frozenset({"failed", "partial", "blocked", "unknown"})
 # What the log page counts as old: the collector runs every minute.
 #
 LOG_STALE_SECONDS = 300
+#
+# A receiver that keeps up empties its queue within seconds; rsyslog writes
+# the queue figures once a minute, so three minutes is a few readings in a row.
+#
+FORWARD_WAITING = timedelta(minutes=3)
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,11 +400,14 @@ def from_traffic_logs(nodes: Iterable[Any], *, now: datetime) -> list[Item]:
     return items
 
 
-def from_log_forwarding(status_rows: Iterable[Any]) -> list[Item]:
-    """Each node's receivers whose queue is long or dropped lines (B289).
+def from_log_forwarding(status_rows: Iterable[Any], *, now: datetime) -> list[Item]:
+    """Each node's receivers whose queue is long, not emptied, or dropped lines (B289).
 
     The reading of the figures is the engine's (`haprion.log_forwarding`), the
-    same the terminal's status command prints.
+    same the terminal's status command prints. A queue that has not been empty
+    for FORWARD_WAITING is the poller's to say (`forward_waiting_since`): on a
+    quiet cluster a receiver out of reach shows as a few lines that never leave,
+    long before the queue is long (26-10-12, external behind a closed firewall).
     """
 
     items: list[Item] = []
@@ -411,7 +419,9 @@ def from_log_forwarding(status_rows: Iterable[Any]) -> list[Item]:
             status = entry.get("status")
             if not isinstance(status, Mapping):
                 continue
-            for problem in log_forwarding.problems(status.get("log_forwarding")):
+            forwarding = status.get("log_forwarding")
+            found = log_forwarding.problems(forwarding)
+            for problem in found:
                 items.append(
                     Item(
                         kind="forwarding",
@@ -420,6 +430,37 @@ def from_log_forwarding(status_rows: Iterable[Any]) -> list[Item]:
                         subject=str(entry.get("name", "")),
                         message=problem.message,
                         since=None,
+                        link="/settings#logs-metrics",
+                    )
+                )
+            said = {problem.receiver for problem in found if problem.receiver}
+            waiting = entry.get("forward_waiting_since")
+            queued = {
+                str(receiver.get("name")): receiver.get("queued")
+                for receiver in (
+                    forwarding.get("receivers") if isinstance(forwarding, Mapping) else None
+                )
+                or ()
+                if isinstance(receiver, Mapping)
+            }
+            for name, stamp in sorted(waiting.items() if isinstance(waiting, Mapping) else ()):
+                try:
+                    since = datetime.fromisoformat(str(stamp))
+                except ValueError:
+                    continue
+                if name in said or now - since < FORWARD_WAITING:
+                    continue
+                lines = queued.get(name)
+                items.append(
+                    Item(
+                        kind="forwarding",
+                        severity="warning",
+                        cluster=row.cluster,
+                        subject=str(entry.get("name", "")),
+                        message=f"traffic log to {name}: "
+                        + (f"{lines} lines " if isinstance(lines, int) else "")
+                        + "not delivered",
+                        since=since,
                         link="/settings#logs-metrics",
                     )
                 )

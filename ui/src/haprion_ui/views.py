@@ -10953,7 +10953,7 @@ def _attention(request: Request, config: Config) -> attention.Attention:
             traffic_logs.read_freshness(config.traffic_logs.directory, tuple(clusters)).nodes,
             now=now,
         )
-    items += attention.from_log_forwarding(status_rows)
+    items += attention.from_log_forwarding(status_rows, now=now)
     items += attention.from_dashboard(board.clusters, drift_label=dashboard.VERSION_DRIFT)
     items += attention.from_certificates(certificate_view.registry, certificate_view.clusters)
     if features.is_on(features.NODE_BACKUPS):

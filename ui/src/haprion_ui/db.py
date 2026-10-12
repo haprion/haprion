@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -1699,6 +1699,49 @@ def _with_cpu_shares(result: Mapping[str, Any], previous: Any) -> Mapping[str, A
     return {**result, "nodes": shared}
 
 
+def _with_forward_waiting(
+    result: Mapping[str, Any], previous: Any, now: datetime
+) -> Mapping[str, Any]:
+    """Per node, since when each log receiver's queue has not been empty (26-10-12).
+
+    A receiver that keeps up empties its queue within seconds; one whose queue
+    is still not empty minutes later is not being reached - on a quiet cluster
+    long before the queue is long enough to say so by its size. Carried from
+    reading to reading as `forward_waiting_since`, beside the node's status,
+    as the CPU share is; a receiver whose queue is empty, or a node without a
+    recent previous reading, starts again from now.
+    """
+
+    nodes = result.get("nodes")
+    if not isinstance(nodes, list):
+        return result
+    before: dict[str, Mapping[str, Any]] = {}
+    if isinstance(previous, Mapping) and isinstance(previous.get("nodes"), list):
+        for node in previous["nodes"]:
+            if isinstance(node, Mapping) and isinstance(node.get("forward_waiting_since"), Mapping):
+                before[str(node.get("name"))] = node["forward_waiting_since"]
+    carried: list[Any] = []
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            carried.append(node)
+            continue
+        status = node.get("status")
+        forwarding = status.get("log_forwarding") if isinstance(status, Mapping) else None
+        receivers = forwarding.get("receivers") if isinstance(forwarding, Mapping) else None
+        earlier = before.get(str(node.get("name")), {})
+        waiting: dict[str, str] = {}
+        for receiver in receivers if isinstance(receivers, list) else ():
+            if not isinstance(receiver, Mapping):
+                continue
+            queued = receiver.get("queued")
+            if isinstance(queued, int) and not isinstance(queued, bool) and queued > 0:
+                name = str(receiver.get("name"))
+                kept = earlier.get(name)
+                waiting[name] = kept if isinstance(kept, str) else now.isoformat()
+        carried.append({**node, "forward_waiting_since": waiting})
+    return {**result, "nodes": carried}
+
+
 def record_cluster_status(
     connection: Connection[Any],
     *,
@@ -1732,7 +1775,9 @@ def record_cluster_status(
             {"cluster": cluster, "fresh": CPU_READING_MAX_GAP},
         )
         previous = cursor.fetchone()
-        result = _with_cpu_shares(result, previous[0] if previous and previous[1] else None)
+        recent = previous[0] if previous and previous[1] else None
+        result = _with_cpu_shares(result, recent)
+        result = _with_forward_waiting(result, recent, datetime.now(UTC))
         cursor.execute(
             "insert into cluster_status (cluster, outcome, result, warnings, error, poll_error) "
             "values (%(cluster)s, %(outcome)s, %(result)s, %(warnings)s, %(error)s, %(poll)s) "

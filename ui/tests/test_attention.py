@@ -206,7 +206,7 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
             },
         )
 
-        items = attention.from_log_forwarding([row])
+        items = attention.from_log_forwarding([row], now=self.NOW)
 
         self.assertEqual(
             [(item.severity, item.subject, item.message) for item in items],
@@ -214,6 +214,67 @@ class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):
                 ("critical", "node-a", "traffic log to loki: 7 lines dropped in the last hour"),
                 ("warning", "node-a", "traffic log to loki: 20 000 lines queued"),
             ],
+        )
+
+
+class AQueueThatIsNotEmptied(unittest.TestCase):
+    """26-10-12: on a quiet cluster a receiver out of reach is a few lines that never leave."""
+
+    NOW = datetime(2026, 10, 12, 10, 30, tzinfo=UTC)
+
+    def reading(self, queued: int, since: datetime | None) -> Any:
+        from haprion_ui.db import _with_forward_waiting
+
+        node = {
+            "name": "node-a",
+            "status_ok": True,
+            "status": {
+                "log_forwarding": {
+                    "stats_age_sec": 20,
+                    "receivers": [{"name": "log-server", "queued": queued, "dropped_last_hour": 0}],
+                }
+            },
+        }
+        previous = (
+            {
+                "nodes": [
+                    {"name": "node-a", "forward_waiting_since": {"log-server": since.isoformat()}}
+                ]
+            }
+            if since is not None
+            else None
+        )
+        return _with_forward_waiting({"nodes": [node]}, previous, self.NOW)
+
+    def items(self, result: Any) -> list[Any]:
+        row = SimpleNamespace(cluster="external", result=result)
+        return attention.from_log_forwarding([row], now=self.NOW)
+
+    def test_the_poller_carries_when_the_queue_last_was_empty(self) -> None:
+        first = self.reading(3, None)
+        self.assertEqual(
+            first["nodes"][0]["forward_waiting_since"], {"log-server": self.NOW.isoformat()}
+        )
+        earlier = self.NOW - timedelta(minutes=7)
+        self.assertEqual(
+            self.reading(3, earlier)["nodes"][0]["forward_waiting_since"],
+            {"log-server": earlier.isoformat()},
+        )
+        self.assertEqual(self.reading(0, earlier)["nodes"][0]["forward_waiting_since"], {})
+
+    def test_three_minutes_without_emptying_is_listed(self) -> None:
+        self.assertEqual(self.items(self.reading(3, self.NOW - timedelta(minutes=2))), [])
+        listed = self.items(self.reading(3, self.NOW - timedelta(minutes=7)))
+        self.assertEqual(
+            [(item.severity, item.subject, item.message) for item in listed],
+            [("warning", "node-a", "traffic log to log-server: 3 lines not delivered")],
+        )
+        self.assertEqual(listed[0].since, self.NOW - timedelta(minutes=7))
+
+    def test_a_long_queue_is_said_once(self) -> None:
+        listed = self.items(self.reading(20000, self.NOW - timedelta(minutes=30)))
+        self.assertEqual(
+            [item.message for item in listed], ["traffic log to log-server: 20 000 lines queued"]
         )
 
 

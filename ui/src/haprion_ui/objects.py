@@ -836,17 +836,35 @@ def answered_elsewhere(
     """(hostname, object) for each exact name another object claims under this one's subdomain.
 
     The generator takes those names out of this object's rules (B278), so the
-    page says which they are rather than leave a reader to find out.
+    page says which they are rather than leave a reader to find out. Only an
+    object on the same listener takes a name - the generator asks per VIP and
+    port - so one on another VIP is not listed: there the name is still this
+    object's (26-10-12, seen on internal). Where the engine did not say where
+    an object listens, it is not ruled out.
     """
 
     patterns = [hostname for hostname in hostnames if is_wildcard(hostname)]
     if not patterns:
         return ()
+    listed = tuple(views)
+    own = next((view for view in listed if view.name == name), None)
+
+    def shares_listener(view: ObjectView) -> bool:
+        if own is None:
+            return True
+        if (
+            own.addresses is not None
+            and view.addresses is not None
+            and own.addresses.vip_name != view.addresses.vip_name
+        ):
+            return False
+        return not own.ports or not view.ports or bool(set(own.ports) & set(view.ports))
+
     return tuple(
         sorted(
             (hostname, view.name)
-            for view in views
-            if view.name != name
+            for view in listed
+            if view.name != name and shares_listener(view)
             for hostname in view.hostnames
             if not is_wildcard(hostname)
             and any(wildcard_matches(pattern, hostname) for pattern in patterns)

@@ -9,8 +9,14 @@ from typing import Any, cast
 from haprion_ui.objects import ObjectView, answered_elsewhere
 
 
-def view(name: str, *hostnames: str) -> ObjectView:
-    return cast(ObjectView, SimpleNamespace(name=name, hostnames=hostnames))
+def view(
+    name: str, *hostnames: str, vip: str | None = None, ports: tuple[int, ...] = ()
+) -> ObjectView:
+    addresses = None if vip is None else SimpleNamespace(vip_name=vip)
+    return cast(
+        ObjectView,
+        SimpleNamespace(name=name, hostnames=hostnames, addresses=addresses, ports=ports),
+    )
 
 
 class TheNamesASubdomainYields(unittest.TestCase):
@@ -31,6 +37,24 @@ class TheNamesASubdomainYields(unittest.TestCase):
         self.assertEqual(
             answered_elsewhere("shop", ("shop.example.com",), [view("grafana", "x.example.com")]),
             (),
+        )
+
+    def test_an_object_on_another_listener_takes_no_name(self) -> None:
+        #
+        # As seen on a cluster (26-10-12): monitor lives on another VIP, so
+        # on the default VIP the subdomain object answers it, and the page
+        # must not say otherwise.
+        #
+        views: list[Any] = [
+            view("wildcard-probe", "*.apps.example.com", vip="vip-int", ports=(80, 443)),
+            view("grafana", "grafana.apps.example.com", vip="vip-int", ports=(80, 443)),
+            view("monitor", "monitor.apps.example.com", vip="vip-second", ports=(80, 443)),
+            view("dns", "ns.apps.example.com", vip="vip-int", ports=(53,)),
+        ]
+
+        self.assertEqual(
+            answered_elsewhere("wildcard-probe", ("*.apps.example.com",), views),
+            (("grafana.apps.example.com", "grafana"),),
         )
 
 

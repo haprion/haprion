@@ -433,6 +433,27 @@ def check_network_apply_semantics(document: dict[str, object], path: Path) -> No
         raise AssertionError(f"{path}: a published version is a change")
 
 
+def check_user_apply_semantics(document: dict[str, object], path: Path) -> None:
+    """Each account is in one list, and changed is whether any of them was written."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done apply says what it did")
+        return
+    assert isinstance(result, dict)
+    named = [
+        *result["created"],
+        *(entry["username"] for entry in result["updated"]),
+        *result["deleted"],
+        *result["unchanged"],
+    ]
+    if len({name.lower() for name in named}) != len(named):
+        raise AssertionError(f"{path}: an account is in one list only")
+    if result["changed"] != bool(result["created"] or result["updated"] or result["deleted"]):
+        raise AssertionError(f"{path}: changed is whether any account was written")
+
+
 def check_changes_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1095,6 +1116,7 @@ SEMANTIC_CHECKS = {
     "changes_publish": check_changes_publish_semantics,
     "objects_apply": check_objects_apply_semantics,
     "network_apply": check_network_apply_semantics,
+    "user_apply": check_user_apply_semantics,
     "readings": check_readings_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
@@ -1154,6 +1176,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         first = next(iter(result["reads"].values()))
         first["envelope"] = None
         first["exit_code"] = 0
+    elif operation == "user_apply":
+        result["changed"] = not result["changed"]
     elif operation == "network_apply":
         result["deployment_required"] = not result["deployment_required"]
     elif operation == "objects_apply":

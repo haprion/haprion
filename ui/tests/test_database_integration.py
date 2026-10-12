@@ -3885,8 +3885,8 @@ class OidcAccounts(unittest.TestCase):
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
-class TheAccountToolAgainstARealDatabase(unittest.TestCase):
-    """`haprion-user`'s verbs from 0041 (B196, B197), through `main`, on the real schema."""
+class AccountToolHarness(unittest.TestCase):
+    """The account tool against the real schema: as root, as the migration role."""
 
     HASH = OidcAccounts.HASH
 
@@ -3940,6 +3940,11 @@ class TheAccountToolAgainstARealDatabase(unittest.TestCase):
                 tuple(columns.values()),
             )
             connection.commit()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheAccountToolAgainstARealDatabase(AccountToolHarness):
+    """`haprion-user`'s verbs from 0041 (B196, B197), through `main`, on the real schema."""
 
     def test_init_admin_makes_a_break_glass_admin_once_with_the_typed_password(self) -> None:
         with mock.patch.object(self.admin, "read_new_password", return_value="long enough pw"):
@@ -6703,3 +6708,116 @@ class WhatTheNodesDidIsWrittenByThePollerAndReadByTheWeb(unittest.TestCase):
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),
             ):
                 connection.execute(statement)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheAccountsFromAFile(AccountToolHarness):
+    """`haprion-user apply`, `role` and `--password-stdin` (Fas 23, B293), on the real schema."""
+
+    def write(self, text: str, mode: int = 0o600) -> str:
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory)
+        path = Path(directory) / "accounts.yaml"
+        path.write_text(text)
+        path.chmod(mode)
+        return str(path)
+
+    FILE = """accounts:
+  - username: admin
+    role: admin
+    break_glass: true
+    password: first password
+  - username: viewer
+    role: reader
+    password: viewer password
+"""
+
+    def test_a_file_creates_and_the_same_file_again_changes_nothing(self) -> None:
+        path = self.write(self.FILE)
+
+        first = self.run_tool("apply", path, "--json")
+        second = self.run_tool("apply", path, "--json")
+
+        self.assertEqual((first[0], second[0]), (0, 0))
+        one, two = json.loads(first[1]), json.loads(second[1])
+        self.assertEqual(one["result"]["created"], ["admin", "viewer"])
+        self.assertEqual(
+            (two["result"]["changed"], two["result"]["unchanged"]), (False, ["admin", "viewer"])
+        )
+        role, _source, break_glass, password_hash = self.account("admin") or ()
+        self.assertEqual((role, break_glass), ("admin", True))
+        self.assertTrue(auth.verify_password(password_hash, "first password"))
+        with self.connect() as connection:
+            actions = [
+                row[0]
+                for row in connection.execute(
+                    "select action from audit_event where detail->>'via' = 'cli' order by id"
+                ).fetchall()
+            ]
+        self.assertEqual(actions, ["account_created", "account_created"])
+
+    def test_only_what_differs_is_written(self) -> None:
+        self.run_tool("apply", self.write(self.FILE))
+        changed = self.FILE.replace("role: reader", "role: admin").replace(
+            "first password", "second password"
+        )
+
+        code, output = self.run_tool("apply", self.write(changed), "--json")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(output)["result"]["updated"],
+            [
+                {"username": "admin", "fields": ["password"]},
+                {"username": "viewer", "fields": ["role"]},
+            ],
+        )
+        self.assertTrue(auth.verify_password((self.account("admin") or ())[3], "second password"))
+
+    def test_check_writes_nothing(self) -> None:
+        code, output = self.run_tool("apply", self.write(self.FILE), "--check")
+
+        self.assertEqual(code, 0)
+        self.assertIn("would create admin", output)
+        self.assertIsNone(self.account("admin"))
+
+    def test_a_file_others_may_read_is_refused_when_it_carries_passwords(self) -> None:
+        code, output = self.run_tool("apply", self.write(self.FILE, mode=0o644))
+
+        self.assertNotEqual(code, 0)
+        self.assertIn("0600", output)
+        self.assertIsNone(self.account("admin"))
+
+    def test_prune_removes_local_accounts_and_never_the_last_admin(self) -> None:
+        self.add("operator", role="admin")
+        self.add("sso-person", role="reader", source="oidc", password_hash=None)
+        path = self.write(self.FILE)
+
+        code, output = self.run_tool("apply", path, "--prune", "--json")
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(output)["result"]["deleted"], ["operator"])
+        self.assertIsNotNone(self.account("sso-person"))
+        only_reader = self.write(
+            "accounts:\n  - username: viewer\n    role: reader\n    password: viewer password\n"
+        )
+        code, output = self.run_tool("apply", only_reader, "--prune", "--json")
+        self.assertEqual(code, 65)
+        self.assertIn("last active admin", json.loads(output)["error"]["message"])
+        self.assertIsNotNone(self.account("admin"))
+
+    def test_role_and_a_piped_password(self) -> None:
+        self.add("admin", role="admin")
+        self.add("operator", role="admin")
+
+        code, _ = self.run_tool("role", "operator", "reader")
+        with mock.patch("sys.stdin", io.StringIO("piped password\n")):
+            reset, _ = self.run_tool("reset", "operator", "--password-stdin")
+
+        self.assertEqual((code, reset), (0, 0))
+        role, _source, _glass, password_hash = self.account("operator") or ()
+        self.assertEqual(role, "reader")
+        self.assertTrue(auth.verify_password(password_hash, "piped password"))
+        code, output = self.run_tool("role", "admin", "reader")
+        self.assertNotEqual(code, 0)
+        self.assertIn("last active admin", output)

@@ -440,7 +440,8 @@ sudo haprion-user add operator --role admin
 
 The password is typed at the terminal, twice, and there is deliberately no flag
 to pass it as an argument — that would put it in the shell history and the
-process list.
+process list. For automation, `--password-stdin` on `add` and `reset` reads it
+as one line from a pipe instead.
 
 An account name is at most 64 characters, with no line breaks, invisible
 characters or spaces at either end. It is what a version records as who
@@ -454,20 +455,48 @@ while sign-in goes through an OIDC provider (schema `0041`).
 
 | Command | What it does |
 |---|---|
-| `add <user> --role admin\|reader [--no-break-glass]` | create an account |
+| `add <user> --role admin\|reader [--no-break-glass] [--password-stdin]` | create an account |
 | `init-admin` | create `admin`, a break-glass admin, if there is no account at all |
 | `delete <user> --yes` | remove an account and its sessions for good; without `--yes` it only says what it would do |
 | `break-glass <user> [--off]` | mark a local account break-glass, or unmark it |
-| `reset <user>` | set a new password **and end every session that account has** |
+| `reset <user> [--password-stdin]` | set a new password **and end every session that account has** |
+| `role <user> admin\|reader` | give a local account another role |
 | `disable <user>` | block sign-in and end every session |
 | `enable <user>` | allow sign-in again |
 | `unlock <user>` | clear the sign-in throttle |
 | `revoke <user>` | end every session without changing the password |
-| `list` | accounts, roles, kind (`local`, `break-glass`, `sso`), and how many live sessions each has |
+| `list [--json]` | accounts, roles, kind (`local`, `break-glass`, `sso`), and how many live sessions each has |
+| `apply <file> [--prune] [--check] [--json]` | the accounts a file lists, written where they differ (below) |
 
 Reset and disable revoke sessions on purpose. An account that cannot sign in
 again while its existing cookie keeps working has not actually been taken back
 from whoever had it, which is usually why either command is being run.
+
+**Accounts from a file**, for automation. `apply` reads a list of accounts and writes only what
+differs from what is stored, through the same code and database guards as the Users page: the last
+active admin, and the break-glass admin provider sign-in needs, are refused here too, and nothing of
+a refused file is written. A password is compared with the stored one, not set again, so the same
+file twice changes nothing; a changed one ends that account's sessions, as `reset` does. The file
+carries passwords and is refused unless only its owner may read it (mode `0600`). An account the
+provider created takes only `disabled` from the file. One no entry names is left alone unless
+`--prune` is given, which removes local accounts only. A new account is not break-glass unless the
+file says so.
+
+```yaml
+accounts:
+  - username: admin
+    role: admin
+    break_glass: true
+    password: "from the vault"
+  - username: viewer
+    role: reader
+    disabled: false
+```
+
+```bash
+sudo haprion-user apply accounts.yaml --check
+sudo haprion-user apply accounts.yaml --json
+```
 
 Anyone signed in, reader or admin, can also change their own password from the
 account menu (**Change password**). It asks for the current password, and a

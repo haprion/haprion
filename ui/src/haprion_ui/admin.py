@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
 import sys
 from dataclasses import dataclass
@@ -36,7 +37,7 @@ from typing import Any
 
 import psycopg
 
-from haprion_ui import auth, users
+from haprion_ui import account_apply, auth, db, users
 
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haprion")
 ROLES = ("admin", "reader")
@@ -99,13 +100,30 @@ def connect(environment: Environment) -> psycopg.Connection[tuple[Any, ...]]:
     )
 
 
-def read_new_password() -> str:
+def read_piped_password() -> str:
+    """One line on standard input, for automation (Fas 23): `--password-stdin`.
+
+    Never an argument, for the reason `read_new_password` gives; a pipe from a
+    vault is what Ansible has, and the line's own end is not part of it.
+    """
+
+    line = sys.stdin.readline().removesuffix("\n").removesuffix("\r")
+    problem = account_apply.password_problem(line)
+    if problem:
+        raise AdminError(problem)
+    return line
+
+
+def read_new_password(*, piped: bool = False) -> str:
     """Ask twice, echo neither, and never accept one from the command line.
 
     A password given as an argument is in the shell history, in the process
-    list, and in whatever collects either. There is deliberately no flag for it.
+    list, and in whatever collects either. There is deliberately no flag for it;
+    `--password-stdin` reads one line from a pipe instead.
     """
 
+    if piped:
+        return read_piped_password()
     if not sys.stdin.isatty():
         raise AdminError("a password must be typed at a terminal, not piped in")
     first = getpass.getpass("New password: ")
@@ -190,7 +208,7 @@ def command_add(environment: Environment, args: argparse.Namespace) -> int:
     problem = users.name_problem(args.username)
     if problem is not None:
         raise AdminError(problem)
-    password = read_new_password()
+    password = read_new_password(piped=args.password_stdin)
     break_glass = not args.no_break_glass
     with connect(environment) as connection:
         if not _insert_local(
@@ -297,7 +315,7 @@ def command_reset(environment: Environment, args: argparse.Namespace) -> int:
             row = cursor.fetchone()
         if row is not None and row[0] != "local":
             raise AdminError(f"{args.username} signs in through the provider and has no password")
-        password = read_new_password()
+        password = read_new_password(piped=args.password_stdin)
         with connection.cursor() as cursor:
             cursor.execute(
                 "update app_user set password_hash = %(hash)s, "
@@ -379,7 +397,72 @@ def command_revoke(environment: Environment, args: argparse.Namespace) -> int:
     return 0
 
 
-def command_list(environment: Environment, _: argparse.Namespace) -> int:
+def command_role(environment: Environment, args: argparse.Namespace) -> int:
+    """Another role for a local account: what *Save* on the web's user page does."""
+
+    with connect(environment) as connection:
+        user_id = _user_id(connection, args.username)
+        with connection.cursor() as cursor:
+            cursor.execute("select role, source from app_user where id = %s", (user_id,))
+            row = cursor.fetchone()
+        if row is not None and row[1] != "local":
+            raise AdminError(f"{args.username} signs in through the provider, which sets its role")
+        if row is not None and row[0] == args.role:
+            print(f"{args.username} already has role {args.role}")
+            return 0
+        try:
+            db.set_role(connection, user_id=user_id, role=args.role)
+        except db.LastAdmin as exc:
+            raise AdminError("the last active admin cannot be demoted") from exc
+        _audit(
+            connection,
+            "role_changed",
+            args.username,
+            role=args.role,
+            previous=row[0] if row else None,
+        )
+        connection.commit()
+    print(f"{args.username} now has role {args.role}")
+    return 0
+
+
+def command_apply(environment: Environment, args: argparse.Namespace) -> int:
+    """The accounts a file lists, written where they differ (Fas 23); see `account_apply`."""
+
+    try:
+        wanted = account_apply.read_file(Path(args.file))
+        with connect(environment) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("select pg_advisory_xact_lock(hashtext('app_user_keep_an_admin'))")
+            the_plan = account_apply.plan(
+                wanted, account_apply.stored_accounts(connection), prune=args.prune
+            )
+            if not args.check and not the_plan.empty:
+                account_apply.write(connection, the_plan, actor=_actor())
+                connection.commit()
+    except account_apply.ApplyError as exc:
+        if args.json:
+            print(json.dumps(account_apply.envelope(None, str(exc))))
+            return 65
+        raise AdminError(str(exc)) from exc
+    result = account_apply.summary(the_plan, check=args.check)
+    if args.json:
+        print(json.dumps(account_apply.envelope(result, None)))
+        return 0
+    if the_plan.empty:
+        print(f"nothing to change ({len(the_plan.unchanged)} account(s) as listed)")
+        return 0
+    lead = "would" if args.check else "did"
+    for name in result["created"]:
+        print(f"{lead} create {name}")
+    for entry in result["updated"]:
+        print(f"{lead} change {entry['username']}: {', '.join(entry['fields'])}")
+    for name in result["deleted"]:
+        print(f"{lead} delete {name}")
+    return 0
+
+
+def command_list(environment: Environment, args: argparse.Namespace) -> int:
     with connect(environment) as connection, connection.cursor() as cursor:
         cursor.execute(
             "select u.username, u.role, u.disabled, u.source, u.break_glass, u.created_at::date, "
@@ -389,6 +472,28 @@ def command_list(environment: Environment, _: argparse.Namespace) -> int:
             "  from app_user u order by u.username_normalised"
         )
         rows = cursor.fetchall()
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "accounts": [
+                        {
+                            "username": username,
+                            "role": role,
+                            "kind": "sso"
+                            if source == "oidc"
+                            else "break-glass"
+                            if break_glass
+                            else "local",
+                            "disabled": disabled,
+                            "sessions": sessions,
+                        }
+                        for username, role, disabled, source, break_glass, _created, sessions in rows
+                    ]
+                }
+            )
+        )
+        return 0
     if not rows:
         print("no accounts. Create the first one with:")
         print("  sudo haprion-user add <username> --role admin")
@@ -412,6 +517,8 @@ COMMANDS = {
     "unlock": command_unlock,
     "revoke": command_revoke,
     "list": command_list,
+    "role": command_role,
+    "apply": command_apply,
 }
 
 
@@ -425,6 +532,9 @@ def build_parser() -> argparse.ArgumentParser:
     add = subcommands.add_parser("add", help="create an account")
     add.add_argument("username")
     add.add_argument("--role", choices=ROLES, required=True)
+    add.add_argument(
+        "--password-stdin", action="store_true", help="read the password from one line on stdin"
+    )
     add.add_argument(
         "--no-break-glass",
         action="store_true",
@@ -454,8 +564,25 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         sub = subcommands.add_parser(name, help=help_text)
         sub.add_argument("username")
+        if name == "reset":
+            sub.add_argument(
+                "--password-stdin",
+                action="store_true",
+                help="read the password from one line on stdin",
+            )
 
-    subcommands.add_parser("list", help="show accounts and live sessions")
+    listing = subcommands.add_parser("list", help="show accounts and live sessions")
+    listing.add_argument("--json", action="store_true")
+
+    role = subcommands.add_parser("role", help="give a local account another role")
+    role.add_argument("username")
+    role.add_argument("role", choices=ROLES)
+
+    apply = subcommands.add_parser("apply", help="the accounts a file lists, where they differ")
+    apply.add_argument("file")
+    apply.add_argument("--prune", action="store_true", help="delete local accounts not listed")
+    apply.add_argument("--check", action="store_true", help="say what would change; change nothing")
+    apply.add_argument("--json", action="store_true")
     return parser
 
 

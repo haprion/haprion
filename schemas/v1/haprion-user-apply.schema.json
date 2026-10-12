@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-user-apply.schema.json",
+  "title": "haprion-user apply JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "user_apply" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/user_apply_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/user_apply_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "names": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+    "user_apply_result": {
+      "type": "object",
+      "required": ["changed", "check", "created", "updated", "deleted", "unchanged"],
+      "properties": {
+        "changed": { "type": "boolean" },
+        "check": { "type": "boolean" },
+        "created": { "$ref": "#/$defs/names" },
+        "updated": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["username", "fields"],
+            "properties": {
+              "username": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "fields": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "enum": ["role", "password", "break_glass", "disabled"] }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "deleted": { "$ref": "#/$defs/names" },
+        "unchanged": { "$ref": "#/$defs/names" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

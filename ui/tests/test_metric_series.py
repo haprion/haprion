@@ -734,6 +734,20 @@ class TheScaleBesideTheLine(unittest.TestCase):
             [level.label for level in metrics.levels_for(6, height=64)], ["6", "3", "0"]
         )
 
+    def test_a_large_scale_is_written_short(self) -> None:
+        """`2M` beside a gridline, not `2000000` (26-10-12); the card's figures stay exact."""
+
+        self.assertEqual(
+            [level.label for level in metrics.levels_for(2_000_000, height=64)], ["2M", "1M", "0"]
+        )
+        self.assertEqual(
+            [level.label for level in metrics.levels_for(3_000, height=64)], ["3k", "1.5k", "0"]
+        )
+        self.assertEqual(
+            [level.label for level in metrics.levels_for(4_000_000_000, height=64)],
+            ["4G", "2G", "0"],
+        )
+
 
 class WhetherTheWindowSaysAnything(unittest.TestCase):
     def traffic(self, *samples: metrics.Sample) -> metrics.BackendTraffic:

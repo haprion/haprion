@@ -753,7 +753,7 @@ def levels_for(ceiling: int, *, height: float) -> tuple[Level, ...]:
     if ceiling <= 0:
         return ()
     return tuple(
-        Level(label=_plainly(ceiling * share), y=height * (1 - share), share=(1 - share) * 100)
+        Level(label=_scale_label(ceiling * share), y=height * (1 - share), share=(1 - share) * 100)
         for share in (1.0, 0.5, 0.0)
     )
 
@@ -762,6 +762,28 @@ def _plainly(value: float) -> str:
     """A number without a decimal point it does not need."""
 
     return f"{value:.0f}" if float(value).is_integer() else f"{value:.1f}"
+
+
+#
+# An axis label is a scale, read at a glance: `2M` beside a gridline, not
+# `2000000` (26-10-12). The figures beside the card stay exact; only the
+# scale is shortened.
+#
+SCALE_SUFFIXES: tuple[tuple[int, str], ...] = (
+    (1_000_000_000_000, "T"),
+    (1_000_000_000, "G"),
+    (1_000_000, "M"),
+    (1_000, "k"),
+)
+
+
+def _scale_label(value: float) -> str:
+    """An axis value with k, M, G or T once it reaches a thousand."""
+
+    for size, suffix in SCALE_SUFFIXES:
+        if value >= size:
+            return _plainly(round(value / size, 1)) + suffix
+    return _plainly(value)
 
 
 @dataclass(frozen=True, slots=True)

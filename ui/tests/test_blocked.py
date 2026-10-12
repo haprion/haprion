@@ -340,6 +340,17 @@ class TheObjectPageAndTheDashboard(DraftReading):
         self.assertIn("2 addresses blocked dynamically</span>", page.text)
         self.assertNotIn("public-web#blocked", page.text)
 
+    def test_a_readers_count_is_on_the_operations_line_not_in_the_header(self) -> None:
+        """The header's line ran its traffic figures under it at 1280 px (26-10-12)."""
+
+        page = self.writing_client(role="reader").get("/").text
+        card = page.split('class="cluster-header"', 1)[1].split("</article>", 1)[0]
+        header, rest = card.split("</header>", 1)
+
+        self.assertNotIn("blocked dynamically", header)
+        operations = rest.split('class="operations-line"', 1)[1].split("</footer>", 1)[0]
+        self.assertIn("2 addresses blocked dynamically</span>", operations)
+
 
 if __name__ == "__main__":
     unittest.main()

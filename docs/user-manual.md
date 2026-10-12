@@ -1801,6 +1801,7 @@ sudo /usr/share/haprion-node/install/04-node-prepare answers.env alpha
 # On the management host, the block on stdin:
 sudo haprion-node add -c alpha --host node-c.example.com < block
 sudo haprion-node remove -c alpha node-c
+sudo haprion-node host -c alpha node-c --host lb-03.example.com
 ```
 
 The block carries the node's name, its cluster, a suggested host name, its ed25519 host key and the
@@ -1810,6 +1811,16 @@ page print is the one to compare with what step 4 printed. `--host` is the name 
 the node at; the block's suggestion is the node's own `hostname -f` and may not be. With `--json` either
 command prints the helper's envelope instead (`schemas/v1/haprion-cluster-node`); `haprion-cluster`
 takes it too.
+
+**Changing a node's host.** A node that is renamed or given another address is the same machine,
+and is moved rather than rebuilt: *Change host* on its row under *Settings → Nodes*, or
+`haprion-node host`. The host keys pinned for the node move to the new name in root's
+`known_hosts` and the collector's, its line in `clusters.yaml` follows, and the manager asks the
+node at the new name. The answer must come with a key already pinned and name the node and its
+cluster; anything else puts every file back, and the node keeps its old host. Its fetch keys name
+the node, not the host, and do not change. A machine with another host key is another machine: that
+is a restore, or a removal and an addition. With counter sharing on (`peers`), the next publish and
+deploy carry the new address to the nodes.
 
 After writing, the manager asks the node for its status as the status identity, with strict host
 key checking. The node reports its own host name and cluster, so an answer proves the host key, that

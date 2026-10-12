@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cluster_node",
+  "cluster": "alpha",
+  "request_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "warnings": [],
+  "error": null,
+  "result": {
+    "action": "host_changed",
+    "cluster": "alpha",
+    "node": "node-c",
+    "host": "lb-03.example.com",
+    "files": [
+      "clusters.yaml",
+      "root's known_hosts"
+    ],
+    "host_key_fingerprint": "SHA256:Qm9vdHN0cmFwLWZpbmdlcnByaW50LWV4YW1wbGUtMDA",
+    "previous_host": "node-c.example.com"
+  }
+}

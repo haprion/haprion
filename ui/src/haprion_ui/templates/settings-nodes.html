@@ -7,7 +7,8 @@
   printed on the node; the root helper writes six files, asks the node for its
   status and puts everything back if it does not answer as itself. Removing
   takes the node's keys away; the node itself keeps running until it is shut
-  down. Both are confirmed with the node's name. Removing the whole cluster
+  down. Change host moves the node to another name or address, proven by the
+  host key it already has (B295). Both are confirmed with the node's name. Removing the whole cluster
   archives it and is confirmed with its ID.
 #}
 <section class="page-heading">
@@ -29,7 +30,7 @@
         <td data-label="Node"><strong>{{ node.name }}</strong></td>
         <td data-label="Host">{{ node.host }}</td>
         <td data-label="VIP">{% if node.owner %}Owner{% elif node.reachable %}Standby{% else %}Not reporting{% endif %}</td>
-        <td data-label="">{% if not running and not node.owner and nodes | length > 2 %}<form method="post" action="/settings/nodes/{{ cluster }}/remove" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="node" value="{{ node.name }}"><button type="submit" class="secondary-button">Remove</button></form>{% endif %}</td>
+        <td data-label=""><div class="row-actions">{% if not running %}<form method="post" action="/settings/nodes/{{ cluster }}/host" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="node" value="{{ node.name }}"><button type="submit" class="secondary-button">Change host</button></form>{% endif %}{% if not running and not node.owner and nodes | length > 2 %}<form method="post" action="/settings/nodes/{{ cluster }}/remove" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="node" value="{{ node.name }}"><button type="submit" class="secondary-button">Remove</button></form>{% endif %}</div></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -52,6 +53,24 @@
     </div>
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/settings/nodes/{{ cluster }}">Cancel</a><button type="submit" class="secondary-button danger-button">Remove cluster</button></div>
+    </div>
+  </section>
+</form>
+{% elif moving %}
+<form method="post" action="/settings/nodes/{{ cluster }}/host" class="preview-form nodes-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <input type="hidden" name="node" value="{{ moving }}">
+  <section class="cluster-card {{ accent | accent_class }}">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Change host — {{ moving }}</h3></div></div></header>
+    <ul class="removal-consequences">
+      <li>The same machine under a new name or address. The manager asks it there and keeps the old host unless it answers as {{ moving }} with the host key it already has.</li>
+    </ul>
+    <div class="form-grid">
+      <label><span class="field-title">Host</span><input name="host" value="{{ host }}" maxlength="253" spellcheck="false" required></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings/nodes/{{ cluster }}">Cancel</a><button type="submit" class="secondary-button deploy-button">Change host</button></div>
     </div>
   </section>
 </form>

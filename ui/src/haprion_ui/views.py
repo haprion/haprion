@@ -4860,6 +4860,7 @@ def build_router(config: Config) -> APIRouter:
         *,
         addition: cluster_nodes.Addition | None = None,
         removal: str = "",
+        moving: str = "",
         cluster_removal: bool = False,
         block: str = "",
         host: str = "",
@@ -4882,6 +4883,7 @@ def build_router(config: Config) -> APIRouter:
                 "running": jobs.in_flight(recent).get(cluster),
                 "addition": addition,
                 "removal": removal,
+                "moving": moving,
                 "cluster_removal": cluster_removal,
                 "cluster_removable": cluster_nodes.cluster_removable(listed, cluster) is None,
                 "block": block,
@@ -5079,6 +5081,64 @@ def build_router(config: Config) -> APIRouter:
             node,
             lambda problem: _nodes_page(
                 request, gate, cluster, removal=node, problem=problem, status_code=409
+            ),
+        )
+
+    @router.post("/settings/nodes/{cluster}/host", response_class=HTMLResponse)
+    def cluster_node_host(
+        request: Request,
+        cluster: str,
+        node: str = Form(default="", max_length=64),
+        host: str = Form(default="", max_length=253),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """The same node at another name (B295): ask for the host, then queue the change."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if cluster not in listed_clusters(request, config):
+            return PlainTextResponse("Not found", status_code=404)
+        rows = cluster_nodes.node_rows(_status_row(request, cluster))
+        if not any(row.name == node for row in rows):
+            return PlainTextResponse("Not found", status_code=404)
+        if not idempotency_key:
+            current = next(row.host for row in rows if row.name == node)
+            return _nodes_page(request, gate, cluster, moving=node, host=current)
+        try:
+            new_host = cluster_nodes.read_host_change(rows, node, host)
+            key = UUID(idempotency_key)
+        except cluster_nodes.FormProblem as problem:
+            return _nodes_page(
+                request,
+                gate,
+                cluster,
+                moving=node,
+                host=host,
+                problem=str(problem),
+                status_code=400,
+            )
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        return _queue_node_job(
+            request,
+            gate,
+            cluster,
+            {"action": "host", "node": node, "host": new_host},
+            key,
+            node,
+            lambda problem: _nodes_page(
+                request,
+                gate,
+                cluster,
+                moving=node,
+                host=host,
+                problem=problem,
+                status_code=409,
             ),
         )
 

@@ -49,7 +49,7 @@
       "0070",
       "0071"
     ],
-    "engine_api": 28,
+    "engine_api": 29,
     "node_api": 1,
     "poller_helpers": [
       "haprion-status-helper",

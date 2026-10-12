@@ -23,8 +23,16 @@ host's keys, and - because the node reports its own name and cluster - that
 the block described the node that answered. Anything short of that answer
 undoes the change.
 
+A node's host - the name the manager reaches it at - can change too (B295):
+the same machine, renamed or given another address. `change_host` moves its
+line in `clusters.yaml` and the host keys already pinned under the old name to
+the new one, in root's `known_hosts` and the collector's, and asks the node at
+the new name. The answer must come with a key already pinned and name the node
+and its cluster; a machine with another key is another machine, and the change
+is put back. The fetch keys name the node, not the host, and stay.
+
 Pure functions compute the new contents, so the rules are tested without root;
-`add` and `remove` are the only places that touch a file.
+`add`, `remove` and `change_host` are the only places that touch a file.
 """
 
 from __future__ import annotations
@@ -239,6 +247,28 @@ def known_hosts_without(text: bytes, host: str) -> bytes:
     return "".join(kept).encode()
 
 
+def host_keys(text: bytes, host: str) -> list[str]:
+    """The keys the file pins for `host`, in its order: `type base64` each."""
+
+    keys: list[str] = []
+    for line in text.decode().splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and not line.lstrip().startswith("#") and _names_host(fields[0], host):
+            key = f"{fields[1]} {fields[2]}"
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
+def known_hosts_moved(text: bytes, old: str, new: str, keys: list[str]) -> bytes:
+    """`old`'s lines gone, and `keys` pinned under `new` instead."""
+
+    body = known_hosts_without(known_hosts_without(text, old), new).decode()
+    if body and not body.endswith("\n"):
+        body += "\n"
+    return (body + "".join(hashed_host_line(new, key) + "\n" for key in keys)).encode()
+
+
 def known_hosts_with(text: bytes, host: str, key: str) -> bytes:
     body = known_hosts_without(text, host).decode()
     if body and not body.endswith("\n"):
@@ -278,6 +308,14 @@ def clusters_with(text: bytes, cluster: str, node: Node) -> bytes:
     return yaml.safe_dump(document, sort_keys=False).encode()
 
 
+def clusters_with_host(text: bytes, cluster: str, name: str, host: str) -> bytes:
+    document = safe_yaml.load(text)
+    for entry in document["clusters"][cluster]["nodes"]:
+        if entry["name"] == name:
+            entry["mgmt_host"] = host
+    return yaml.safe_dump(document, sort_keys=False).encode()
+
+
 def clusters_without(text: bytes, cluster: str, name: str) -> bytes:
     document = safe_yaml.load(text)
     nodes = document["clusters"][cluster]["nodes"]
@@ -292,6 +330,14 @@ def collector_with(text: bytes, cluster: str, node: Node) -> bytes:
         for entry in document["nodes"]
         if (entry["cluster"], entry["node"]) != (cluster, node.name)
     ] + [{"cluster": cluster, "node": node.name, "host": node.mgmt_host}]
+    return (json.dumps(document, indent=2) + "\n").encode()
+
+
+def collector_with_host(text: bytes, cluster: str, name: str, host: str) -> bytes:
+    document = json.loads(text)
+    for entry in document["nodes"]:
+        if (entry["cluster"], entry["node"]) == (cluster, name):
+            entry["host"] = host
     return (json.dumps(document, indent=2) + "\n").encode()
 
 
@@ -527,6 +573,74 @@ def plan_remove(
     return node, changes
 
 
+def plan_change_host(
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    *,
+    cluster: str,
+    name: str,
+    host: str,
+    locations: Locations,
+    require_secure: bool = True,
+) -> tuple[Node, Node, list[str], list[Change]]:
+    """The node as it is, as it will be, the keys that move, and the files that change."""
+
+    if cluster not in runtime.clusters:
+        raise EnrollmentError("cluster_unknown", f"there is no cluster {cluster!r}")
+    node = next((entry for entry in runtime.clusters[cluster].nodes if entry.name == name), None)
+    if node is None:
+        raise EnrollmentError("node_unknown", f"{name} is not a node of {cluster}")
+    if node.mgmt_host == host:
+        raise EnrollmentError("host_unchanged", f"{name} is already reached at {host}")
+    for other in runtime.clusters.values():
+        for existing in other.nodes:
+            if existing.mgmt_host == host:
+                raise EnrollmentError(
+                    "node_exists", f"{host} is already {existing.name} in {other.cluster_id}"
+                )
+    known = _read(locations.root_known_hosts)
+    keys = host_keys(known, node.mgmt_host)
+    if not keys:
+        raise EnrollmentError(
+            "host_key_unknown",
+            f"root's known_hosts pins no key for {node.mgmt_host}, so there is nothing to prove "
+            f"the machine at {host} is {name}; remove the node and add it again instead",
+        )
+    moved = Node(name=name, mgmt_host=host)
+    clusters_before = _read(policy.cluster_file)
+    clusters_after = clusters_with_host(clusters_before, cluster, name, host)
+    _candidate_runtime(policy, clusters_after, require_secure=require_secure)
+    changes = [
+        Change(policy.cluster_file, clusters_before, clusters_after, "clusters.yaml"),
+        Change(
+            locations.root_known_hosts,
+            known,
+            known_hosts_moved(known, node.mgmt_host, host, keys),
+            "root's known_hosts",
+        ),
+    ]
+    if locations.collector_config.exists():
+        collector = _read(locations.collector_config)
+        changes.append(
+            Change(
+                locations.collector_config,
+                collector,
+                collector_with_host(collector, cluster, name, host),
+                "the traffic collector's node list",
+            )
+        )
+        collector_known = _read(locations.collector_known_hosts)
+        changes.append(
+            Change(
+                locations.collector_known_hosts,
+                collector_known,
+                known_hosts_moved(collector_known, node.mgmt_host, host, keys),
+                "the traffic collector's known_hosts",
+            )
+        )
+    return node, moved, keys, changes
+
+
 # ---------------------------------------------------------- asking the node
 
 
@@ -578,6 +692,8 @@ class Outcome:
     files: tuple[str, ...]
     fingerprint: str | None = None
 
+    previous_host: str | None = None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "cluster": self.cluster,
@@ -585,6 +701,7 @@ class Outcome:
             "host": self.node.mgmt_host,
             "files": list(self.files),
             "host_key_fingerprint": self.fingerprint,
+            **({} if self.previous_host is None else {"previous_host": self.previous_host}),
         }
 
 
@@ -659,3 +776,51 @@ def remove(
     ):
         change_journal.apply(changes)
     return Outcome(node=node, cluster=cluster, files=tuple(change.what for change in changes))
+
+
+def change_host(
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    *,
+    cluster: str,
+    name: str,
+    host: str,
+    ask: AskNode,
+    locations: Locations | None = None,
+    require_secure: bool = True,
+) -> Outcome:
+    """Reach the same node at another name or address (B295), or change nothing.
+
+    Asked after the files are written, because the question is the proof: the
+    status connection checks the host key strictly against the file just
+    written, so only a machine holding a key already pinned for this node gets
+    as far as answering, and the answer must name the node and its cluster.
+    """
+
+    node, moved, keys, changes = plan_change_host(
+        policy,
+        runtime,
+        cluster=cluster,
+        name=name,
+        host=host,
+        locations=locations or Locations(),
+        require_secure=require_secure,
+    )
+    with change_journal.transaction(
+        Record("node host change", cluster, tuple(changes)), (locations or Locations()).journal
+    ):
+        change_journal.apply(changes)
+        problem = verify(moved, cluster, ask)
+        if problem is not None:
+            raise EnrollmentError(
+                "node_unverified",
+                f"{problem}. {name} is still reached at {node.mgmt_host}; nothing was changed.",
+                75,
+            )
+    return Outcome(
+        node=moved,
+        cluster=cluster,
+        files=tuple(change.what for change in changes),
+        fingerprint=fingerprint(keys[0]),
+        previous_host=node.mgmt_host,
+    )

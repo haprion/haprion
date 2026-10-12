@@ -16,16 +16,17 @@
   "additionalProperties": true,
   "$defs": {
     "node_result": {
-      "description": "One node added to or removed from one cluster: which files changed, and - after an addition - the host key's fingerprint the node answered with. `blocked` is a node that did not answer as itself (everything put back), the node holding the VIP, or a cluster already busy.",
+      "description": "One node added to or removed from one cluster, or moved to another host name (`host_changed`): which files changed, and - after an addition or a host change - the host key's fingerprint the node answered with. `blocked` is a node that did not answer as itself (everything put back), the node holding the VIP, or a cluster already busy.",
       "type": "object",
       "required": ["action", "cluster", "node", "host", "files", "host_key_fingerprint"],
       "properties": {
-        "action": { "enum": ["added", "removed"] },
+        "action": { "enum": ["added", "removed", "host_changed"] },
         "cluster": { "type": "string", "maxLength": 63 },
         "node": { "type": "string", "maxLength": 63 },
         "host": { "type": "string", "maxLength": 253 },
         "files": { "type": "array", "maxItems": 6, "items": { "type": "string", "maxLength": 128 } },
-        "host_key_fingerprint": { "oneOf": [{ "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$" }, { "type": "null" }] }
+        "host_key_fingerprint": { "oneOf": [{ "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$" }, { "type": "null" }] },
+        "previous_host": { "description": "After a host change: the name the node was reached at before.", "type": "string", "maxLength": 253 }
       },
       "additionalProperties": false
     }

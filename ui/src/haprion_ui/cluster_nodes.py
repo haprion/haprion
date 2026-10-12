@@ -125,6 +125,28 @@ def removable(rows: list[NodeRow], name: str) -> str | None:
     return None
 
 
+def read_host_change(rows: list[NodeRow], name: str, host: str) -> str:
+    """The new host, checked as the helper will check it, or why it cannot be (B295).
+
+    The helper is the authority - it asks the node at the new name - but a
+    typo, the host the node already has or another node's host is said here,
+    before a job is queued.
+    """
+
+    row = next((row for row in rows if row.name == name), None)
+    if row is None:
+        raise FormProblem(f"{name} is not a node of this cluster.")
+    try:
+        checked = node_enrollment.host_name(host.strip())
+    except node_enrollment.EnrollmentError:
+        raise FormProblem("Host — not a host name or an address.") from None
+    if checked == row.host:
+        raise FormProblem(f"{name} is already reached at {checked}.")
+    if any(other.host == checked for other in rows):
+        raise FormProblem(f"{checked} is another node's host.")
+    return checked
+
+
 # ------------------------------------------------------------ whole clusters
 
 

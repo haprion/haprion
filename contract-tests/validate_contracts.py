@@ -830,10 +830,12 @@ def check_cluster_node_semantics(document: dict[str, object], path: Path) -> Non
             raise AssertionError(f"{path}: a done cluster_node carries no result")
         return
     assert isinstance(result, dict)
-    # An addition is proven by the host key the node answered with; a removal
-    # asks the node nothing it could prove.
-    if result["action"] == "added" and result["host_key_fingerprint"] is None:
-        raise AssertionError(f"{path}: an added node names no host key")
+    # An addition and a host change are proven by the host key the node
+    # answered with; a removal asks the node nothing it could prove.
+    if result["action"] in ("added", "host_changed") and result["host_key_fingerprint"] is None:
+        raise AssertionError(f"{path}: an added or moved node names no host key")
+    if (result["action"] == "host_changed") != ("previous_host" in result):
+        raise AssertionError(f"{path}: previous_host belongs to a host change, and only to one")
     if result["action"] == "removed" and result["host_key_fingerprint"] is not None:
         raise AssertionError(f"{path}: a removed node carries a host key")
 
@@ -1283,7 +1285,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["clusters"] = result["clusters"] + [result["clusters"][0]]
     elif operation == "cluster_node":
         result["host_key_fingerprint"] = (
-            None if result["action"] == "added" else "SHA256:" + "A" * 43
+            None if result["action"] in ("added", "host_changed") else "SHA256:" + "A" * 43
         )
     elif operation == "cluster_define":
         result["archive"] = "beta-20260930-101500" if result["action"] == "added" else None

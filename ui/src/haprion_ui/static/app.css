@@ -728,6 +728,9 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .version-current { color: var(--muted); font-size: 11px; }
 .version-table form { margin: 0; }
 .version-actions { display: flex; align-items: center; gap: 8px; }
+.row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+/* Settings -> Nodes: two buttons on a row that may be removed, Change host and Remove. */
+.settings-node-table th:nth-child(4), .settings-node-table td:nth-child(4) { width: 230px; }
 /*
  * What one version changed (B220): a dialog on the Versions page, the same
  * section as a page of its own without script. Long lines wrap rather than

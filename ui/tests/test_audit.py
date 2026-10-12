@@ -35,7 +35,7 @@ WRITTEN = (
 # Keyword arguments named `action` that are not audit actions: a node's or a
 # receiver's add and remove, and a certificate overlay's target action.
 #
-NOT_AUDIT = {"add", "append", "remove", "publish", "store_true"}
+NOT_AUDIT = {"add", "append", "host", "remove", "publish", "store_true"}
 
 
 def event(action: str, actor: str | None = "admin", **detail: Any) -> AuditEvent:

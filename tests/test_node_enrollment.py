@@ -22,6 +22,7 @@ from haprion.cli import node_helper
 from haprion.config import Node, RuntimeConfig, load_policy, load_runtime_config
 from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, Locations, Outcome
 from haprion.status_collect import NodeResponse
+from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "77777777-7777-4777-8777-777777777777"
@@ -380,6 +381,103 @@ class RemovingANode(unittest.TestCase):
                 self.remove(site, name=name)
 
 
+class ChangingAHost(unittest.TestCase):
+    """The same node at another name (B295): the pinned key moves, or nothing does."""
+
+    def added(self, raw: str) -> Installation:
+        site = Installation(Path(raw))
+        site.add()
+        return site
+
+    def move(
+        self, site: Installation, host: str = "lb-03.example.com", ask: AskNode | None = None
+    ) -> Outcome:
+        return enrollment.change_host(
+            site.policy,
+            site.runtime(),
+            cluster="alpha",
+            name="node-c",
+            host=host,
+            ask=ask or answering(),
+            locations=site.locations,
+            require_secure=False,
+        )
+
+    def test_the_host_and_its_pinned_key_move_together(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = self.added(raw)
+            asked: list[Node] = []
+
+            def ask(node: Node) -> NodeResponse:
+                asked.append(node)
+                return answering()(node)
+
+            outcome = self.move(site, ask=ask)
+
+            self.assertEqual(asked, [Node(name="node-c", mgmt_host="lb-03.example.com")])
+            self.assertIn(
+                Node(name="node-c", mgmt_host="lb-03.example.com"),
+                site.runtime().cluster("alpha").nodes,
+            )
+            known = site.known_hosts.read_bytes()
+            self.assertEqual(enrollment.host_keys(known, "lb-03.example.com"), [HOST_KEY])
+            self.assertEqual(enrollment.host_keys(known, "node-c.example.com"), [])
+            self.assertEqual(enrollment.host_keys(known, "node-a.example.com"), [key(8)])
+            self.assertEqual(
+                enrollment.host_keys(site.collector_known.read_bytes(), "lb-03.example.com"),
+                [HOST_KEY],
+            )
+            self.assertIn(
+                {"cluster": "alpha", "node": "node-c", "host": "lb-03.example.com"},
+                json.loads(site.collector.read_text())["nodes"],
+            )
+            self.assertEqual(
+                (outcome.previous_host, outcome.fingerprint),
+                ("node-c.example.com", enrollment.fingerprint(HOST_KEY)),
+            )
+            self.assertEqual(len(outcome.files), 4)
+
+    def test_a_node_that_does_not_answer_there_keeps_its_old_host(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = self.added(raw)
+            before = site.snapshot()
+
+            with self.assertRaises(EnrollmentError) as caught:
+                self.move(site, ask=silent)
+
+            self.assertEqual(caught.exception.code, "node_unverified")
+            self.assertIn("still reached at node-c.example.com", str(caught.exception))
+            self.assertEqual(site.snapshot(), before)
+
+    def test_another_node_answering_there_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = self.added(raw)
+            before = site.snapshot()
+
+            with self.assertRaises(EnrollmentError):
+                self.move(site, ask=answering(node="node-a"))
+
+            self.assertEqual(site.snapshot(), before)
+
+    def test_what_is_refused_before_anything_is_written(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = self.added(raw)
+            before = site.snapshot()
+            for host, code in (
+                ("node-c.example.com", "host_unchanged"),
+                ("node-a.example.com", "node_exists"),
+            ):
+                with self.subTest(host), self.assertRaises(EnrollmentError) as caught:
+                    self.move(site, host=host)
+                self.assertEqual(caught.exception.code, code)
+            site.known_hosts.write_text("")
+            with self.assertRaises(EnrollmentError) as caught:
+                self.move(site)
+            self.assertEqual(caught.exception.code, "host_key_unknown")
+            site.known_hosts.write_bytes(before["known_hosts"])
+            self.assertEqual(site.snapshot(), before)
+
+
 class TheHelper(unittest.TestCase):
     """The request the worker and the terminal send, answered in an envelope."""
 
@@ -511,6 +609,27 @@ class TheHelper(unittest.TestCase):
             self.assertEqual(code, 65)
             assert document is not None
             self.assertIn("takes no host", str(document["error"]))
+
+    def test_a_host_change_answers_with_the_old_and_the_new_host(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Installation(Path(raw))
+            site.add()
+            request = node_helper.build_request(
+                "alpha", REQUEST_ID, action="host", node="node-c", host="lb-03.example.com"
+            )
+
+            code, document, err = self.run_helper(site, request)
+
+            self.assertEqual((code, err), (0, ""))
+            answer = assert_contract("haprion-cluster-node", json.dumps(document))
+            self.assertEqual(
+                (
+                    answer["result"]["action"],
+                    answer["result"]["host"],
+                    answer["result"]["previous_host"],
+                ),
+                ("host_changed", "lb-03.example.com", "node-c.example.com"),
+            )
 
 
 class TheCommand(unittest.TestCase):

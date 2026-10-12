@@ -3,7 +3,8 @@
 Two operations, one helper and one socket:
 
 * `cluster_node` names one cluster and adds a node from its enrollment block
-  and the host name the manager is to reach it at, or removes one by name;
+  and the host name the manager is to reach it at, removes one by name, or
+  moves one to another host name (`host`, B295);
 * `cluster_define` creates a cluster with its first two nodes, or removes one.
 
 What each means - the files, the repository, the proof that every node answers
@@ -83,6 +84,11 @@ PARAMETERS = {
     ),
 }
 ACTIONS = frozenset({"add", "remove"})
+NODE_ACTIONS = ACTIONS | {"host"}
+#
+# What the result calls each node action; the contract's `action`.
+#
+DONE = {"add": "added", "remove": "removed", "host": "host_changed"}
 #
 # Every change to the cluster file takes this as well as its cluster's own
 # lock: two changes to two different clusters would otherwise read the same
@@ -205,8 +211,24 @@ type Work = Callable[[PathPolicy, RuntimeConfig, AskNode], Any]
 def _node_work(request: HelperRequest, locations: Locations | None, require_secure: bool) -> Work:
     parameters = request.parameters
     action = _text(parameters, "action")
-    if action not in ACTIONS:
-        raise HelperProtocolError("parameters.action must be add or remove", exit_code=65)
+    if action not in NODE_ACTIONS:
+        raise HelperProtocolError("parameters.action must be add, remove or host", exit_code=65)
+    if action == "host":
+        _only(parameters, {"action", "node", "host"}, "a host change")
+        moved = _text(parameters, "node")
+        if not NAME.fullmatch(moved):
+            raise HelperProtocolError("parameters.node is not a node name", exit_code=65)
+        new_host = node_enrollment.host_name(_text(parameters, "host"))
+        return lambda policy, runtime, ask: node_enrollment.change_host(
+            policy,
+            runtime,
+            cluster=request.cluster,
+            name=moved,
+            host=new_host,
+            ask=ask,
+            locations=locations,
+            require_secure=require_secure,
+        )
     if action == "add":
         _only(parameters, {"action", "block", "host"}, "an addition")
         host = node_enrollment.host_name(_text(parameters, "host"))
@@ -428,7 +450,7 @@ def main(
     result = outcome.as_dict()
     if request.operation == OPERATION:
         result = {
-            "action": "added" if request.parameters["action"] == "add" else "removed",
+            "action": DONE[str(request.parameters["action"])],
             **result,
         }
     write_document(

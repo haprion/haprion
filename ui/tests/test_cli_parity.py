@@ -80,6 +80,7 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/settings/clusters/{cluster}": Command("haprion-cluster-settings --set"),
     "/settings/nodes/{cluster}/add": Command("haprion-node add"),
     "/settings/nodes/{cluster}/remove": Command("haprion-node remove"),
+    "/settings/nodes/{cluster}/host": Command("haprion-node host"),
     "/settings/nodes/{cluster}/remove-cluster": Command("haprion-cluster remove"),
     "/settings/new-cluster": Command("haprion-cluster add"),
     "/settings/new-user": Command("haprion-user apply"),

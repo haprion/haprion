@@ -193,6 +193,64 @@ class RemovingANode(NodesPage):
         self.assertIn("not a node", cluster_nodes.removable(rows, "z") or "")
 
 
+class ChangingAHost(NodesPage):
+    """The same node at another name (B295): asked for, then queued with nothing invented."""
+
+    def test_the_button_asks_for_the_host_with_the_current_one_filled_in(self) -> None:
+        client = self.client_for()
+        token = client.cookies[auth.SESSION_COOKIE]
+
+        asked = client.post(
+            "/settings/nodes/edge-demo/host",
+            data={auth.CSRF_FIELD: auth.csrf_token(token), "node": "edge-a"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(asked.status_code, 200)
+        self.assertIn("Change host — edge-a", asked.text)
+        self.assertIn('value="edge-a.demo.example"', asked.text)
+        self.assertEqual(self.queued, [])
+
+    def test_a_new_host_queues_the_node_and_the_host(self) -> None:
+        response = self.post_to(
+            self.client_for(),
+            "/settings/nodes/edge-demo/host",
+            node="edge-a",
+            host="LB-01.example.com",
+        )
+
+        self.assertEqual(response.status_code, 303, response.text)
+        (queued,) = self.queued
+        self.assertEqual((queued["operation"], queued["cluster"]), ("cluster_node", "edge-demo"))
+        self.assertEqual(
+            queued["payload"], {"action": "host", "node": "edge-a", "host": "lb-01.example.com"}
+        )
+
+    def test_what_the_page_refuses_queues_nothing(self) -> None:
+        for host, said in (
+            ("edge-a.demo.example", "already reached at"),
+            ("edge-b.demo.example", "another node"),
+            ("not a host", "not a host name"),
+        ):
+            with self.subTest(host):
+                response = self.post_to(
+                    self.client_for(), "/settings/nodes/edge-demo/host", node="edge-a", host=host
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(said, response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_a_node_the_cluster_does_not_have_is_not_found(self) -> None:
+        response = self.post_to(
+            self.client_for(), "/settings/nodes/edge-demo/host", node="edge-x", host="x.example.com"
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_the_row_offers_it(self) -> None:
+        page = self.client_for().get("/settings/nodes/edge-demo")
+        self.assertEqual(page.text.count(">Change host</button>"), 2)
+
+
 class TheListFollowsTheClusterFile(NodesPage):
     """Once the poller has read the cluster file, the pages draw its clusters (B206)."""
 

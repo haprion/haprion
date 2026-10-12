@@ -1070,10 +1070,10 @@ def prepare(
 
     if operation == "cluster_node":
         #
-        # One node of one cluster, added from its enrollment block or removed
-        # by name (B211). Shape only here; the block's meaning - the keys, the
-        # six files, the proof that the node answers as itself - is the
-        # helper's, as when the operator types `haprion-node`. Not through
+        # One node of one cluster, added from its enrollment block, removed
+        # by name (B211), or moved to another host name (B295). Shape only
+        # here; the block's meaning - the keys, the six files, the proof that
+        # the node answers as itself - is the helper's, as when the operator types `haprion-node`. Not through
         # sudo, for the receiver's reason: the helper writes root's
         # known_hosts and the pull accounts' keys, outside this unit's sandbox.
         #
@@ -1089,8 +1089,25 @@ def prepare(
                     cluster, str(request_id), action="remove", node=node
                 ),
             )
+        if action == "host":
+            #
+            # The same node at another name (B295): the node and the new
+            # host, nothing else. Whether the machine there holds the pinned
+            # key and answers as the node is the helper's to prove.
+            #
+            node, host = payload.get("node"), payload.get("host")
+            if set(payload) != {"action", "node", "host"} or not all(
+                isinstance(value, str) and value for value in (node, host)
+            ):
+                raise BadPayload("a host change names one node and its new host")
+            return Prepared(
+                argv=NODE_CLIENT,
+                request=node_helper.build_request(
+                    cluster, str(request_id), action="host", node=str(node), host=str(host)
+                ),
+            )
         if action != "add":
-            raise BadPayload("action must be add or remove")
+            raise BadPayload("action must be add, remove or host")
         block, host = payload.get("block"), payload.get("host")
         if "node" in payload:
             raise BadPayload("an addition names its node in the block")

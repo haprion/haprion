@@ -2,6 +2,7 @@
 
     haprion-node add -c <cluster> --host <name> [--json] < block
     haprion-node remove -c <cluster> <node> [--json]
+    haprion-node host -c <cluster> <node> --host <new name> [--json]
 
 `--json` prints the helper's envelope (`schemas/v1/haprion-cluster-node`) and
 leaves with its exit code. The block is what `04-node-prepare` printed on the node. `--host` is the name
@@ -10,6 +11,11 @@ suggestion, which is shown and may be wrong. Both go through the same root
 helper the interface's Nodes card uses, so the terminal and the browser change
 the same six files the same way - and a node that does not then answer as
 itself is taken back out.
+
+`host` reaches the same node at another name or address (B295): the host keys
+pinned for it move to the new name, and the node must answer there with one
+of them, as itself, or nothing is changed. Changing the machine is not this:
+that is a restore, or a removal and an addition.
 
 A new node has no certificates and no release until `haprion-cert-deploy -c <cluster>`
 and then `haprion-deploy -c <cluster>`.
@@ -34,6 +40,7 @@ USAGE = (
     "Usage:\n"
     "  haprion-node add -c <cluster> --host <name> [--json] < block\n"
     "  haprion-node remove -c <cluster> <node> [--json]\n"
+    "  haprion-node host -c <cluster> <node> --host <new name> [--json]\n"
 )
 
 type RunHelper = Callable[[str], subprocess.CompletedProcess[str]]
@@ -48,8 +55,8 @@ def run_helper(request: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _parse(argv: list[str]) -> tuple[str, str, str]:
-    """(action, cluster, host or node)."""
+def _parse(argv: list[str]) -> tuple[str, str, str, str | None]:
+    """(action, cluster, host or node, the new host for `host`)."""
 
     if (
         len(argv) == 5
@@ -57,9 +64,16 @@ def _parse(argv: list[str]) -> tuple[str, str, str]:
         and argv[1] in ("-c", "--cluster")
         and argv[3] == "--host"
     ):
-        return "add", argv[2], argv[4]
+        return "add", argv[2], argv[4], None
     if len(argv) == 4 and argv[0] == "remove" and argv[1] in ("-c", "--cluster"):
-        return "remove", argv[2], argv[3]
+        return "remove", argv[2], argv[3], None
+    if (
+        len(argv) == 6
+        and argv[0] == "host"
+        and argv[1] in ("-c", "--cluster")
+        and argv[4] == "--host"
+    ):
+        return "host", argv[2], argv[3], argv[5]
     usage(USAGE)
 
 
@@ -116,11 +130,15 @@ def main(
     writer = stdout or sys.stdout
     errors = stderr or sys.stderr
     json_mode = "--json" in arguments
-    action, cluster, value = _parse([item for item in arguments if item != "--json"])
+    action, cluster, value, new_host = _parse([item for item in arguments if item != "--json"])
     if action == "add":
         block = (stdin or sys.stdin).read(MAX_BLOCK_BYTES + 1)
         request = node_helper.build_request(
             cluster, new_request_id(), action="add", block=block, host=value
+        )
+    elif action == "host":
+        request = node_helper.build_request(
+            cluster, new_request_id(), action="host", node=value, host=new_host
         )
     else:
         request = node_helper.build_request(cluster, new_request_id(), action="remove", node=value)
@@ -134,6 +152,14 @@ def main(
         errors.write(f"ERROR: {exc}\n")
         return 1
 
+    if result.get("action") == "host_changed":
+        writer.write(
+            f"{result.get('node')} of {cluster} is now reached at {result.get('host')} "
+            f"(was {result.get('previous_host')}).\n"
+            f"Host key: {result.get('host_key_fingerprint')}\n"
+            f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
+        )
+        return 0
     if result.get("action") == "added":
         writer.write(
             f"Added {result.get('node')} ({result.get('host')}) to {cluster}.\n"

@@ -3190,7 +3190,7 @@ def _backend(
         lines += [
             f"    balance {_balance(backend)}",
             f"    timeout connect {TIMEOUT_CONNECT}",
-            f"    timeout server {TIMEOUT_SERVER}",
+            f"    timeout server {backend.server_timeout or TIMEOUT_SERVER}",
         ]
     if not raw and not by_hand:
         #

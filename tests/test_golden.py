@@ -741,6 +741,21 @@ class TheLimitAndTheRampAreWrittenPerServer(unittest.TestCase):
 
         self.assertIn(" slowstart 30s", backend)
 
+    def test_a_server_timeout_replaces_the_default_in_the_objects_backend(self) -> None:
+        document = MINIMAL.replace(
+            b"    balance: roundrobin", b"    balance: roundrobin\n    server_timeout: 5m"
+        )
+
+        backend = _generate([load_proxy("shop", document)])["1001-shop.cfg"]
+
+        self.assertIn("    timeout server 5m\n", backend)
+        self.assertNotIn("timeout server 50s", backend)
+
+    def test_without_one_the_server_waits_the_default(self) -> None:
+        backend = _generate([load_proxy("shop", MINIMAL)])["1001-shop.cfg"]
+
+        self.assertIn("    timeout server 50s\n", backend)
+
     def test_neither_appears_where_the_object_asked_for_neither(self) -> None:
         backend = _generate([load_proxy("shop", MINIMAL)])["1001-shop.cfg"]
 

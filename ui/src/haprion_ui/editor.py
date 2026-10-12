@@ -350,6 +350,7 @@ class ObjectForm(BaseModel):
     default" is belongs in one place, and that place is `tls_policy`.
     """
     max_connections: Annotated[str, StringConstraints(max_length=8)] = ""
+    server_timeout: Annotated[str, StringConstraints(max_length=8)] = ""
     slow_start: Annotated[str, StringConstraints(max_length=8)] = ""
     allow_from: list[Annotated[str, StringConstraints(max_length=64)]] = Field(default_factory=list)
     allow_ranges: Annotated[str, StringConstraints(max_length=2048)] = ""

@@ -213,6 +213,7 @@ def _connections(form: Mapping[str, Any]) -> str:
     cookie = _text(form, "cookie")
     limit = _text(form, "max_connections")
     ramp = _text(form, "slow_start")
+    timeout = _text(form, "server_timeout")
     return _joined(
         [
             tls,
@@ -221,6 +222,7 @@ def _connections(form: Mapping[str, Any]) -> str:
             f"cookie {cookie}" if cookie else "",
             f"{limit} per server" if limit else "",
             f"slow start {ramp}" if ramp else "",
+            f"server timeout {timeout}" if timeout else "",
             "client address by PROXY v2"
             if form.get("proxy_protocol") and _text(form, "protocol") == "tcp"
             else "",
@@ -347,6 +349,7 @@ GROUPS: Mapping[str, FormGroup] = {
             "proxy_protocol",
             "cookie",
             "max_connections",
+            "server_timeout",
             "slow_start",
         ),
         _connections,

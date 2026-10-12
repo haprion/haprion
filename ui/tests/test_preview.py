@@ -321,6 +321,17 @@ class BoundingWhatOneServerIsHanded(unittest.TestCase):
         self.assertIsNone(result.problem)
         self.assertIn(" slowstart 30s", result.files["1001-app.cfg"])
 
+    def test_a_server_timeout_reaches_the_backend(self) -> None:
+        result = preview(form(server_timeout="5m"), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertIn("    timeout server 5m\n", result.files["1001-app.cfg"])
+
+    def test_a_server_timeout_past_the_ceiling_is_refused(self) -> None:
+        result = preview(form(server_timeout="100m"), PREVIEW_CLUSTER)
+
+        self.assertIsNotNone(result.problem)
+
     def test_a_limit_that_is_not_a_number_is_named_before_the_engine_sees_it(self) -> None:
         result = preview(form(max_connections="fifty"), PREVIEW_CLUSTER)
 

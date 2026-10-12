@@ -1086,6 +1086,33 @@ class ProtectingOneServerFromMoreThanItCanServe(unittest.TestCase):
         self.assertIn("check interval", str(raised.exception))
 
 
+class WaitingLongerForASlowServer(unittest.TestCase):
+    """`server_timeout` is one pool's wait for silence, up to 99 minutes (B290)."""
+
+    def backend(self, line: str) -> bytes:
+        return with_lines(("  web:\n", f"  web:\n    {line}\n"))
+
+    def test_a_timeout_is_carried(self) -> None:
+        proxy = load_proxy("shop", self.backend("server_timeout: 5m"))
+
+        self.assertEqual(proxy.backends["web"].server_timeout, "5m")
+
+    def test_absent_is_the_generators_default(self) -> None:
+        self.assertIsNone(load_proxy("shop", MINIMAL).backends["web"].server_timeout)
+
+    def test_the_ceiling_is_accepted_in_any_unit(self) -> None:
+        for value in ("99m", "5940s"):
+            with self.subTest(value):
+                proxy = load_proxy("shop", self.backend(f"server_timeout: {value}"))
+                self.assertEqual(proxy.backends["web"].server_timeout, value)
+
+    def test_past_the_ceiling_or_not_a_duration_is_refused(self) -> None:
+        for value in ("100m", "5941s", "5m30s", "0s", "1h", "300"):
+            with self.subTest(value), self.assertRaises(ModelError) as raised:
+                load_proxy("shop", self.backend(f"server_timeout: {value}"))
+            self.assertIn("at most 99m", str(raised.exception))
+
+
 class EditingTheHeadersThatPassThrough(unittest.TestCase):
     """Three questions with answers, not a list of operations."""
 
@@ -1507,7 +1534,12 @@ class AResolverIsServedByDnsdist(unittest.TestCase):
         self.assertIn("must be addresses or host names", message)
 
     def test_pool_settings_dnsdist_has_no_line_for_are_refused(self) -> None:
-        for field in (b"cookie: s", b"max_connections: 10", b"tls: {verify: none}"):
+        for field in (
+            b"cookie: s",
+            b"max_connections: 10",
+            b"server_timeout: 5m",
+            b"tls: {verify: none}",
+        ):
             with self.subTest(field):
                 self.assertIn(
                     "means nothing for a dns object",
@@ -1645,7 +1677,12 @@ class SyslogIsForwardedByIpvs(unittest.TestCase):
         self.assertIn("firstAvailable", message)
 
     def test_pool_settings_ipvs_has_no_line_for_are_refused(self) -> None:
-        for field in (b"cookie: s", b"max_connections: 10", b"slow_start: 10s"):
+        for field in (
+            b"cookie: s",
+            b"max_connections: 10",
+            b"server_timeout: 5m",
+            b"slow_start: 10s",
+        ):
             with self.subTest(field):
                 self.assertIn(
                     "means nothing for a syslog object",

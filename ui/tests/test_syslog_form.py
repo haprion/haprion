@@ -99,6 +99,7 @@ class WritingASyslogObject(unittest.TestCase):
             "cookie": "SRV",
             "backend_tls": "system",
             "max_connections": "50",
+            "server_timeout": "5m",
             "slow_start": "30s",
             "health_rise": "2",
             "health_send": "PING",

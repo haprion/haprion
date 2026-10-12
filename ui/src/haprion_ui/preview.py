@@ -169,6 +169,7 @@ DEFAULTS = {
     "proxy_protocol": False,
     "listen_tls_policy": "",
     "max_connections": "",
+    "server_timeout": "",
     "slow_start": "",
     "allow_from": (),
     "allow_ranges": "",
@@ -537,6 +538,7 @@ HIDDEN_FOR = {
         "backend_tls_ca",
         "proxy_protocol",
         "max_connections",
+        "server_timeout",
         "slow_start",
         "balance_key",
         "health_port",
@@ -828,6 +830,8 @@ def build_document(form: dict[str, object]) -> str:
         if not limit.isdigit():
             raise ValueError("the connection limit must be a number")
         backend["max_connections"] = int(limit)
+    if text("server_timeout"):
+        backend["server_timeout"] = text("server_timeout")
     if text("slow_start"):
         backend["slow_start"] = text("slow_start")
     #
@@ -1708,6 +1712,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "backend_tls_ca": str(_sub(backend, "tls").get("ca", "") or ""),
         "proxy_protocol": backend.get("proxy_protocol") == "v2",
         "max_connections": str(backend.get("max_connections", "") or ""),
+        "server_timeout": str(backend.get("server_timeout", "") or ""),
         "slow_start": str(backend.get("slow_start", "") or ""),
         "allow_from": tuple(groups),
         "allow_ranges": "\n".join(ranges),

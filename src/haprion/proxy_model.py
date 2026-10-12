@@ -451,6 +451,14 @@ DURATION = re.compile(r"^[1-9][0-9]{0,4}(ms|s|m)$")
 # wait is bounded by `timeout queue`.
 #
 MAX_CONNECTIONS = (1, 65535)
+
+#
+# The longest a pool's servers may stay silent before HAProxy answers 504
+# (B290). A ceiling against a slip of the unit rather than a judgement: an
+# object that sets it is waiting for something it knows is slow. Unset is the
+# generator's own 50 s.
+#
+MAX_SERVER_TIMEOUT = "99m"
 STATUS_RANGE = re.compile(r"^[1-5][0-9]{2}(-[1-5][0-9]{2})?$")
 
 #
@@ -729,6 +737,17 @@ class Backend:
     header - a server that does not reads it as the first bytes of the stream
     and refuses every connection - and so must the health check, which is why
     the check sends it too.
+    """
+
+    server_timeout: str | None = None
+    """How long a server may stay silent before the visitor gets a 504 (B290).
+
+    Silence, not the length of the answer: a server streaming a download for
+    an hour is never cut, one that thinks for a minute before its first byte
+    is. None is the generator's default for every pool. Only the server side:
+    measured on 3.4.6, the frontend's client timeout does not run while the
+    visitor waits for a slow server, in http or tcp, so nothing shared with
+    the other objects on the VIP has to follow.
     """
 
     slow_start: str | None = None
@@ -1532,6 +1551,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
             "health",
             "tls",
             "max_connections",
+            "server_timeout",
             "slow_start",
             "proxy_protocol",
         },
@@ -1658,6 +1678,16 @@ def _backend(name: str, value: Any, location: str) -> Backend:
             f"{MAX_CONNECTIONS[0]} and {MAX_CONNECTIONS[1]} connections per server"
         )
 
+    server_timeout = data.get("server_timeout")
+    if server_timeout is not None and (
+        not isinstance(server_timeout, str)
+        or not DURATION.match(server_timeout)
+        or duration_ms(server_timeout) > duration_ms(MAX_SERVER_TIMEOUT)
+    ):
+        raise ModelError(
+            f"{location}.server_timeout must be a duration such as 5m, at most {MAX_SERVER_TIMEOUT}"
+        )
+
     slow_start = data.get("slow_start")
     if slow_start is not None:
         if not isinstance(slow_start, str) or not DURATION.match(slow_start):
@@ -1695,6 +1725,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
         health=health,
         tls=backend_tls,
         max_connections=max_connections,
+        server_timeout=server_timeout,
         slow_start=slow_start,
         proxy_protocol=proxy_protocol,
     )
@@ -2218,6 +2249,7 @@ def _refuse_non_syslog_pools(
             ("cookie", pool.cookie),
             ("tls", pool.tls),
             ("max_connections", pool.max_connections),
+            ("server_timeout", pool.server_timeout),
             ("slow_start", pool.slow_start),
         ):
             if value is not None:
@@ -2274,6 +2306,7 @@ def _refuse_non_dns_pools(backends: Mapping[str, Backend], name: str) -> None:
             ("cookie", pool.cookie),
             ("tls", pool.tls),
             ("max_connections", pool.max_connections),
+            ("server_timeout", pool.server_timeout),
             ("slow_start", pool.slow_start),
         ):
             if value is not None:

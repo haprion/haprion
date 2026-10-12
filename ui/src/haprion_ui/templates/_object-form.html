@@ -317,6 +317,7 @@
       </div>
       <label{{ when('protocol', 'http https') }}><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Empty means no persistence.</small></label>
       <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>The rest queue for 5 s.</small></label>
+      <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Server timeout <span class="optional">(optional)</span></span><input name="server_timeout" value="{{ form.server_timeout }}" size="10" placeholder="50s"><small>Up to 99m.</small></label>
       <label{{ when('protocol', 'http https tcp') }}><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; longer than the <span class="slow-start-interval" data-default="{{ check_interval }}">{{ form.health_interval or check_interval }}</span> check interval.</small></label>
       {% endif %}
     </div>

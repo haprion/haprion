@@ -16,6 +16,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [A pool's servers](#a-pools-servers)
   - [A pool over HTTPS](#a-pool-over-https)
   - [The client's address on a tcp pool](#the-clients-address-on-a-tcp-pool)
+  - [A slow server](#a-slow-server)
   - [Drain and maintenance](#drain-and-maintenance)
   - [Addresses, and what to call them](#addresses-and-what-to-call-them)
   - [HTTP/3](#http3)
@@ -193,6 +194,18 @@ pool's group, `proxy_protocol: v2` in the stored object, `send-proxy-v2` on ever
 The health check sends the header too (`check-send-proxy`), since a server that expects one closes a
 connection that opens without it. The servers must be set up to read the header first - a mail
 server, a database proxy, another HAProxy with `accept-proxy` - or every connection is refused.
+
+### A slow server
+
+HAProxy waits 50 seconds for a server to answer, and then gives the visitor a 504. The wait is
+for silence, not for the whole answer: a download that streams for an hour is never cut, a report
+that is computed for two minutes before its first byte is. *Server timeout* in the pool's group
+gives one object a longer wait, up to 99 minutes - `server_timeout: 5m` in the stored object,
+`timeout server` in the object's own backend. Empty is the 50 seconds. Nothing shared changes: the
+visitor's own timeout on the VIP does not run while the visitor is waiting for the server.
+
+A longer wait is also how long a server that has hung keeps its connections, so it belongs on the
+object that needs it rather than on all of them.
 
 ### Drain and maintenance
 
@@ -2838,6 +2851,10 @@ better done elsewhere. The details are in the section linked.
   CA directly: for an internal name, the Microsoft CA's own web enrollment signs an
   uploaded CSR. Every other device takes an
   [external certificate](#external-certificates) with its key.
+- **The VIP is not moved from the interface.** Patching a pair is restarting the standby,
+  then the node holding the VIP and letting it move, which needs nothing from the manager; a
+  button that stopped keepalived on a node would be the first management action able to move
+  traffic ([Keeping HAProxy current](#keeping-haproxy-current)).
 - **Certificate renewal is the CA client's**: certbot and the NDES run renew on their
   own timers, and the manager publishes what they renew
   ([Certificates](#certificates)).

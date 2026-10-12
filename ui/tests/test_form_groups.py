@@ -40,6 +40,11 @@ class TheClosedLineSaysWhatTheGroupHolds(unittest.TestCase):
 
         self.assertEqual(summary, "/old → https://example.net/new (301)")
 
+    def test_a_server_timeout_is_named_on_the_closed_line(self) -> None:
+        summary = form_groups(form(server_timeout="5m"))["connections"].summary
+
+        self.assertIn("server timeout 5m", summary)
+
     def test_empty_groups_say_so(self) -> None:
         states = form_groups(form())
 

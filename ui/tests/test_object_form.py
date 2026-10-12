@@ -83,6 +83,7 @@ class ReadingAnObjectBackIntoTheForm(unittest.TestCase):
             health_port="9000",
             backend_tls="system",
             max_connections="50",
+            server_timeout="5m",
             slow_start="30s",
             allow_from=("office",),
             allow_ranges="203.0.113.0/24",

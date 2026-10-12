@@ -132,6 +132,7 @@ class TheGeneratedLayer(unittest.TestCase):
                 forward = layer.rsyslog_files["forward.conf"]
                 self.assertIn('target="192.0.2.20"', forward)
                 self.assertIn('queue.timeoutEnqueue="0"', forward)
+                self.assertIn('queue.size="20000"', forward)
                 self.assertEqual("    stop\n" in forward, not traffic_logging)
         self.assertIn("%(node)H", HTTP_TRAFFIC_LOG_FORMAT)
 

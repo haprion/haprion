@@ -85,6 +85,18 @@ def _action(target: LogTarget) -> list[str]:
         #
         'queue.type="LinkedList"',
         f'queue.filename="{action_name(target)}"',
+        #
+        # Room in memory while the disk part catches up. rsyslog's default
+        # holds 1 000 lines and spills to disk at 900; with the node's one
+        # core busy serving traffic the disk part fell behind and the memory
+        # part dropped (1 048 lines at 25 000 a second on internal, 26-10-12;
+        # 800 when reproduced with rsyslog sharing a loaded core). Spilling
+        # from 2 000 into 20 000 dropped none in three runs of 375 000 to
+        # 500 000 lines on a loaded core, and held at most 2 247 in memory.
+        #
+        'queue.size="20000"',
+        'queue.highWatermark="2000"',
+        'queue.lowWatermark="1000"',
         f'queue.maxDiskSpace="{target.disk_mib}m"',
         'queue.saveOnShutdown="on"',
         #

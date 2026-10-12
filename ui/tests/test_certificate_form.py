@@ -397,7 +397,9 @@ class TheFormPage(CertificateFormRouteTestCase):
             clusters=("alpha", "beta"),
             dns_profiles_public_key=Path("/example/public.key"),
         )
-        ndes = replace(profile, id="certserver1", name="certserver1", provider_id="ndes", revision=1)
+        ndes = replace(
+            profile, id="certserver1", name="certserver1", provider_id="ndes", revision=1
+        )
         applied = queued(
             operation="dns_profile_apply",
             cluster=None,
@@ -441,7 +443,16 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
     def ndes_client(self, *, in_effect: bool = True) -> Any:
         now = datetime.now(UTC)
         profile = db.DnsProfile(
-            "certserver1", "certserver1", "ndes", 1, "0123456789abcdef", 1, now, "admin", now, "admin"
+            "certserver1",
+            "certserver1",
+            "ndes",
+            1,
+            "0123456789abcdef",
+            1,
+            now,
+            "admin",
+            now,
+            "admin",
         )
         jobs = (
             [
@@ -523,7 +534,9 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
         page = self.ndes_client().get("/certificates/new").text
         self.assertIn('<option value="certserver1" selected>certserver1</option>', page)
         self.assertNotIn("Choose a profile", page)
-        page = self.post(self.ndes_client(), method="ndes", ndes_profile="certserver1", cluster=[]).text
+        page = self.post(
+            self.ndes_client(), method="ndes", ndes_profile="certserver1", cluster=[]
+        ).text
         self.assertIn('<option value="certserver1" selected>certserver1</option>', page)
 
     def test_a_refused_ndes_form_is_redrawn_with_the_ndes_select_shown(self) -> None:
@@ -542,7 +555,9 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
     def test_ndes_needs_a_profile_in_effect_and_refuses_a_dns_profile(self) -> None:
         page = self.post(self.ndes_client(), method="ndes").text
         self.assertIn("Choose an NDES provider profile that is in effect", page)
-        page = self.post(self.ndes_client(in_effect=False), method="ndes", ndes_profile="certserver1").text
+        page = self.post(
+            self.ndes_client(in_effect=False), method="ndes", ndes_profile="certserver1"
+        ).text
         self.assertIn("enrollment over NDES is unavailable", page)
         page = self.post(self.ndes_client(), method="dns-01", ndes_profile="certserver1").text
         self.assertIn("belongs to NDES enrollment only", page)
@@ -656,7 +671,9 @@ class TheCsrMethod(unittest.TestCase):
 
     def test_a_profile_or_a_key_type_on_the_wrong_method(self) -> None:
         self.assertIn("provider profile", problem_of(form(method="csr", dns_profile="cf")))
-        self.assertIn("provider profile", problem_of(form(method="csr", ndes_profile="certserver1")))
+        self.assertIn(
+            "provider profile", problem_of(form(method="csr", ndes_profile="certserver1"))
+        )
         self.assertIn("signing request", problem_of(form(method="dns-01", key_type="rsa-2048")))
 
 

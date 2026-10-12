@@ -744,7 +744,9 @@ class TheCertificateRegistry(RegistryTestCase):
 
         registry = self.load(mutate_registry=add_profile).registry
         assert registry is not None
-        self.assertEqual(registry.certificates["lb-01.example.net"].source.ndes_profile, "certserver1")
+        self.assertEqual(
+            registry.certificates["lb-01.example.net"].source.ndes_profile, "certserver1"
+        )
         self.assertIsNone(registry.certificates["example.net"].source.ndes_profile)
 
         def put_profile_on_acme(data: dict[str, Any]) -> None:

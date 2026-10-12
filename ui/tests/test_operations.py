@@ -1032,7 +1032,12 @@ class EnrollingOverNdes(unittest.TestCase):
                 "clusters": ["alpha"],
             },
             {"id": "example.com", "profile": "certserver1", "domains": ["example.com"]},
-            {"id": "../x", "profile": "certserver1", "domains": ["example.com"], "clusters": ["alpha"]},
+            {
+                "id": "../x",
+                "profile": "certserver1",
+                "domains": ["example.com"],
+                "clusters": ["alpha"],
+            },
         ):
             with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
                 operations.prepare(

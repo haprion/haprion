@@ -622,7 +622,9 @@ class DeletingABundleFollowsTheLayout(DeleteFixture):
         )
         registry = self.root / "certificates.yaml"
         raw = yaml.safe_load(registry.read_text())
-        raw["certificates"]["certserver1.example"]["receivers"] = [{"id": "lb-01", "format": "pkcs12"}]
+        raw["certificates"]["certserver1.example"]["receivers"] = [
+            {"id": "lb-01", "format": "pkcs12"}
+        ]
         registry.write_text(yaml.safe_dump(raw), encoding="utf-8")
         registry.chmod(0o640)
         directory = self.receiver_dir / "certserver1.example"

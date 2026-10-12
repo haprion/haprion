@@ -148,7 +148,11 @@ class EnrollmentStates(unittest.TestCase):
             operation="cert_scep",
             cluster=None,
             state="running",
-            payload={"id": "web.example.com", "profile": "certserver1", "domains": ["web.example.com"]},
+            payload={
+                "id": "web.example.com",
+                "profile": "certserver1",
+                "domains": ["web.example.com"],
+            },
         )
         failed = queued(
             operation="cert_scep",

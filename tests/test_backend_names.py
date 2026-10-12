@@ -68,9 +68,12 @@ class APoolIsNamedByItself(unittest.TestCase):
     def test_a_redirect_keeps_its_object_in_front(self) -> None:
         proxy = site("ftp-server_admin-web", "ftp-server", redirect="/old")
 
-        self.assertEqual(runtime_backends(proxy), ["ftp-server", "ftp-server_admin-web-redirect-old"])
+        self.assertEqual(
+            runtime_backends(proxy), ["ftp-server", "ftp-server_admin-web-redirect-old"]
+        )
         self.assertIn(
-            "\nbackend ftp-server_admin-web-redirect-old\n", layer(proxy)["1001-ftp-server_admin-web.cfg"]
+            "\nbackend ftp-server_admin-web-redirect-old\n",
+            layer(proxy)["1001-ftp-server_admin-web.cfg"],
         )
 
     def test_the_generators_own_prefix_is_held_in_one_place(self) -> None:
@@ -118,7 +121,8 @@ class TheObjectsHelperSaysTheNames(unittest.TestCase):
         )
 
         self.assertEqual(
-            result["objects"][0]["runtime_backends"], ["ftp-server", "ftp-server_admin-web-redirect-old"]
+            result["objects"][0]["runtime_backends"],
+            ["ftp-server", "ftp-server_admin-web-redirect-old"],
         )
 
     def test_an_unreadable_object_says_nothing(self) -> None:

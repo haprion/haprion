@@ -165,7 +165,9 @@ class RemovingAnNdesProfile(NdesPages):
         self.assertEqual(client.get("/ndes-profiles/missing/remove").status_code, 404)
 
     def test_a_refused_removal_says_why_on_the_page(self) -> None:
-        self.rows = [profile_row(id="certserver1", provider_id="ndes", key_id=self.public_key.key_id)]
+        self.rows = [
+            profile_row(id="certserver1", provider_id="ndes", key_id=self.public_key.key_id)
+        ]
         refused = queued(
             id=41,
             operation="ndes_profile_apply",
@@ -180,7 +182,11 @@ class RemovingAnNdesProfile(NdesPages):
             },
         )
         applied = replace(
-            refused, id=40, state="done", payload={"profile": "certserver1", "revision": 1}, result=None
+            refused,
+            id=40,
+            state="done",
+            payload={"profile": "certserver1", "revision": 1},
+            result=None,
         )
         with mock.patch("haprion_ui.db.recent_jobs", return_value=[refused, applied]):
             client = self.writing_client()

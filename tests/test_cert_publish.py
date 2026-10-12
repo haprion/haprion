@@ -894,7 +894,9 @@ class Pkcs12Bundles(Fixture):
         super().setUp()
         issue(self.live / "certserver1.example", "certserver1.example")
         self.bundle = self.receiver_dir / "certserver1.example" / "certserver1.example.pfx"
-        self.password_file = self.receiver_dir / "certserver1.example" / "certserver1.example.password"
+        self.password_file = (
+            self.receiver_dir / "certserver1.example" / "certserver1.example.password"
+        )
 
     def configure(self) -> Path:
         return self.write_config(

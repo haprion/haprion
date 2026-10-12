@@ -251,7 +251,9 @@ class WhatIssuingAnswers(HelperFixture):
             [{"id": "certserver1.example.net", "format": "pkcs12"}],
         )
         self.assertTrue(
-            (self.receiver_path("certserver1.example.net") / "new.example" / "new.example.pfx").exists()
+            (
+                self.receiver_path("certserver1.example.net") / "new.example" / "new.example.pfx"
+            ).exists()
         )
 
     def test_the_terminal_flag_is_receiver_equals_format_and_nothing_else(self) -> None:

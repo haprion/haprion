@@ -454,6 +454,32 @@ def check_user_apply_semantics(document: dict[str, object], path: Path) -> None:
         raise AssertionError(f"{path}: changed is whether any account was written")
 
 
+def check_settings_apply_semantics(document: dict[str, object], path: Path) -> None:
+    """changed is whether a section wrote something; a replaced secret is a changed field."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done apply says what it did")
+        return
+    assert isinstance(result, dict)
+    access = result["status_access"]
+    if access is not None and not (access["added"] or access["removed"]):
+        raise AssertionError(f"{path}: an unchanged address list is null")
+    provider = result["oidc"]
+    if provider is not None and (provider["sealing"] == "replaced") != (
+        "client_secret" in provider["fields"]
+    ):
+        raise AssertionError(f"{path}: a replaced client secret is a changed field")
+    wrote = bool(
+        access
+        or result["features"]
+        or (provider and (provider["fields"] or provider["enabled"] is not None))
+    )
+    if result["changed"] != wrote:
+        raise AssertionError(f"{path}: changed is whether any setting was written")
+
+
 def check_changes_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -1117,6 +1143,7 @@ SEMANTIC_CHECKS = {
     "objects_apply": check_objects_apply_semantics,
     "network_apply": check_network_apply_semantics,
     "user_apply": check_user_apply_semantics,
+    "settings_apply": check_settings_apply_semantics,
     "readings": check_readings_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
@@ -1176,7 +1203,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         first = next(iter(result["reads"].values()))
         first["envelope"] = None
         first["exit_code"] = 0
-    elif operation == "user_apply":
+    elif operation in ("user_apply", "settings_apply"):
         result["changed"] = not result["changed"]
     elif operation == "network_apply":
         result["deployment_required"] = not result["deployment_required"]

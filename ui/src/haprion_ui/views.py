@@ -102,6 +102,7 @@ from haprion_ui import (
     db,
     demo,
     dns_profile_form,
+    feature_switch,
     features,
     health,
     held_servers,
@@ -4352,9 +4353,7 @@ def build_router(config: Config) -> APIRouter:
     def _locked(request: Request, name: str) -> bool:
         """Whether a switch cannot be on here: cluster colours past six clusters."""
 
-        return name == features.CLUSTER_COLOURS and not cluster_identity.fits(
-            listed_clusters(request, config)
-        )
+        return feature_switch.locked(name, listed_clusters(request, config))
 
     def _settings_page(
         request: Request,
@@ -4465,16 +4464,7 @@ def build_router(config: Config) -> APIRouter:
 
     def _restore_waiting(request: Request) -> bool:
         with request.app.state.pool.connection() as connection:
-            rows = [
-                job
-                for operation in node_restores.OPERATIONS
-                for job in db.operation_jobs(connection, operation, limit=100)
-            ]
-        runs = node_restores.recent_runs(rows, shown=metrics.shown, now=datetime.now(UTC))
-        waiting = {
-            node_restores.STAGE_LABELS[stage][0] for stage in ("working", "fingerprint", "confirm")
-        }
-        return any(run.label in waiting for listed in runs.values() for run in listed)
+            return feature_switch.restore_waiting(connection)
 
     @router.get("/settings/features/{name}", response_class=HTMLResponse)
     def feature_page(request: Request, name: str) -> Response:
@@ -4517,105 +4507,28 @@ def build_router(config: Config) -> APIRouter:
         if feature is None or enabled not in ("on", "off"):
             return PlainTextResponse("Not found", status_code=404)
         want = enabled == "on"
-
-        def refused(problem: str, status_code: int = 409) -> Response:
-            return _settings_page(request, gate, problem=problem, status_code=status_code)
-
+        readings = feature_switch.Readings(
+            clusters=lambda: listed_clusters(request, config),
+            backup_overview=lambda: _backup_overview(request),
+            objects=lambda: read_source(request, config, OBJECTS_SOURCE)[1],
+            restore_waiting=lambda: _restore_waiting(request),
+        )
         with request.app.state.pool.connection() as connection:
-            current = db.feature_switches(connection).get(name)
-        if current is None:
-            return PlainTextResponse("Not found", status_code=404)
-        if want and _locked(request, name):
-            return refused(
-                f"Cluster colours cover {cluster_identity.ACCENT_COUNT} clusters, "
-                "and this installation lists more."
-            )
-        if current.enabled == want:
-            return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
-        #
-        # A WAF the interface no longer shows still filters traffic (B231).
-        #
-        if name == features.WAF_ENGINE and not want:
-            using = waf.objects_using(read_source(request, config, OBJECTS_SOURCE)[1])
-            if using:
-                shown = ", ".join(using[:3]) + (
-                    f" and {len(using) - 3} more" if len(using) > 3 else ""
-                )
-                return refused(f"The WAF engine inspects {shown}. Turn it off there first.")
-
-        remembered: dict[str, Any] = {}
-        schedules: dict[str, dict[str, Any]] = {}
-        if name == features.NODE_BACKUPS and not want:
-            if _restore_waiting(request):
-                return refused("A node restore is running or waiting. Finish or discard it first.")
             try:
-                schedules = features.schedules_to_stop(_backup_overview(request))
-            except features.SwitchRefused as problem:
-                return refused(str(problem))
-            remembered = {"schedules": schedules}
-        elif name == features.NODE_BACKUPS:
-            schedules = features.remembered_schedules(current.remembered)
-        asked = [
-            (cluster, {**schedule, "enabled": want})
-            for cluster, schedule in sorted(schedules.items())
-        ]
-        try:
-            for cluster, payload in asked:
-                operations.prepare(
-                    operation="backup_schedule",
-                    cluster=cluster,
-                    request_id=uuid4(),
-                    payload=payload,
-                )
-        except operations.BadPayload:
-            return refused("A remembered backup schedule could not be written back.")
-
-        with request.app.state.pool.connection() as connection:
-            if not db.set_feature_switch(
-                connection,
-                name=name,
-                enabled=want,
-                remembered=remembered,
-                actor=gate.username,
-            ):
-                connection.rollback()
-                return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
-            try:
-                queued = [
-                    db.queue_job(
-                        connection,
-                        operation="backup_schedule",
-                        cluster=cluster,
-                        payload=payload,
-                        idempotency_key=uuid4(),
-                    )
-                    for cluster, payload in asked
-                ]
-            except db.ClusterBusy:
-                connection.rollback()
-                return refused(
-                    "A job is running on one of the clusters. Try again when it has finished."
-                )
-            db.record_audit_event(
-                connection,
-                actor=gate.username,
-                action="feature_switched",
-                detail={
-                    "feature": name,
-                    "enabled": want,
-                    "schedules": sorted(schedules),
-                    "via": "web",
-                },
-            )
-            for job in queued:
-                db.record_audit_event(
+                feature_switch.switch(
                     connection,
+                    name=name,
+                    want=want,
                     actor=gate.username,
-                    action="queue_job",
-                    cluster=job.cluster,
-                    request_id=job.request_id,
-                    detail={"operation": job.operation, "job": job.id},
+                    via="web",
+                    readings=readings,
                 )
+            except feature_switch.UnknownFeature:
+                connection.rollback()
+                return PlainTextResponse("Not found", status_code=404)
+            except features.SwitchRefused as problem:
+                connection.rollback()
+                return _settings_page(request, gate, problem=str(problem), status_code=409)
             connection.commit()
         return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
 

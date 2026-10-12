@@ -731,6 +731,53 @@ while it is on runs Verify first and saves as verified, or saves nothing.
 Each change is audited (`oidc_configured`, `oidc_verified`, `oidc_enabled`,
 `oidc_disabled`); the secret never is.
 
+**Settings from a file**, for automation: `haprion-settings` on the manager, as root, sets what
+*External monitoring*, *Features* and the OIDC configuration set, through the same code and the same
+refusals, audited with `via: cli`. Each of the three sections is optional, and one the file leaves
+out is left alone; only what differs from what is stored is written, so the same file twice changes
+nothing. `--check` says what would change and keeps nothing; `show --json` prints what is set, the
+client secret never.
+
+```yaml
+status_access: [192.0.2.10, 198.51.100.0/24]   # [] switches /status/ off
+features:
+  node_backups: true
+  advanced_config: false
+oidc:
+  issuer: https://idp.example.com/realms/main
+  client_id: haprion
+  client_secret: "from the vault"
+  auth_method: client_secret_basic
+  scopes: openid profile
+  username_claim: preferred_username
+  groups_claim: groups
+  admin_group: haprion-admins
+  reader_group: haprion-readers
+  auto_create: true
+  button_text: Sign in with SSO
+  prompt_login: false
+  logout_mode: app                 # app or provider
+  local_login: break_glass_only    # break_glass_only or all
+  enabled: true
+  interface_url: https://mgr.example.com
+```
+
+```bash
+sudo haprion-settings apply settings.yaml --check
+sudo haprion-settings apply settings.yaml --json
+sudo haprion-settings show --json
+```
+
+The provider's settings are what the configuration page saves; `enabled` is its *On* and *Off*,
+and turning it on runs Verify first, as the page does - with `interface_url`, the address people sign
+in at, for the redirect URI the page would take from the browser. Settings saved while sign-in is
+off stay saved when Verify then fails, and the command says why it did not turn on. The client
+secret cannot be compared with the stored one, which is sealed for the helper, so it is stored when
+none is, when the issuer or the client changes, or with `--replace-oidc-secret`; otherwise the
+stored one is kept and the answer says `"sealing": "kept"`. A file that carries it is refused unless
+only its owner may read it (mode `0600`); `--oidc-secret-stdin` reads it from one line on standard
+input instead.
+
 ## Features and advanced configuration
 
 Two capabilities can be turned off under **Settings → Features** (schema
@@ -753,7 +800,8 @@ installation opts in.
   while a cluster has a job running, while a restore is running or waiting,
   and for a cluster whose schedule the form cannot write back.
 
-`haprion-state-backup` and the restore commands on the manager work either way.
+`haprion-state-backup` and the restore commands on the manager work either way. `haprion-settings
+apply` flips the switches from a file, with the same refusals (*Settings from a file*, above).
 
 A third switch, **Cluster colours** (schema `0042`), is on from the start and
 hides nothing: it draws the rule down each cluster card's left edge, one of six
@@ -2501,7 +2549,8 @@ Who may ask is a list on *Settings → External monitoring* (*Edit* on its row):
 networks, one per line; an address that stays keeps who added it and when. Every
 other address - and every address while the list is empty, which is the endpoint switched off - is
 answered 404. The address is the one nginx hands the interface, so with a reverse proxy in front it
-is the client the proxy names. A monitor that is answered 404 is not on the list.
+is the client the proxy names. A monitor that is answered 404 is not on the list. `haprion-settings apply` sets the
+same list from a file (*Settings from a file*).
 
 Any monitor that can make an HTTPS request will do; three ways follow. In each, *healthy* means
 nothing red on the dashboard and every cluster read recently. Warnings - a certificate with less

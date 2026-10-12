@@ -141,7 +141,7 @@ TOOLS = (
     "tools/install-scep-client.py",
     "certbot/",
 )
-COMMANDS = ("backup", "drain", "retention", "rollback", "tls", "user", "web")
+COMMANDS = ("backup", "drain", "retention", "rollback", "settings", "tls", "user", "web")
 #
 # The archive is unpacked beside the releases and moved into place whole, so
 # an interrupted unpack never leaves a directory that looks like a release.

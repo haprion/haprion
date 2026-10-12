@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-settings-apply.schema.json",
+  "title": "haprion-settings apply JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "settings_apply" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/settings_apply_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/settings_apply_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "networks": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+    "settings_apply_result": {
+      "type": "object",
+      "required": ["changed", "check", "status_access", "features", "oidc"],
+      "properties": {
+        "changed": { "type": "boolean" },
+        "check": { "type": "boolean" },
+        "status_access": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["added", "removed"],
+              "properties": { "added": { "$ref": "#/$defs/networks" }, "removed": { "$ref": "#/$defs/networks" } },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "features": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+          "additionalProperties": { "type": "boolean" }
+        },
+        "oidc": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["fields", "enabled", "sealing"],
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "enum": ["issuer", "client_id", "client_secret", "auth_method", "scopes", "username_claim", "groups_claim", "admin_group", "reader_group", "auto_create", "button_text", "prompt_login", "logout_mode", "local_login", "ca_pem"]
+                  }
+                },
+                "enabled": { "type": ["boolean", "null"] },
+                "sealing": { "enum": ["kept", "replaced", null] }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

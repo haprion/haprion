@@ -6821,3 +6821,236 @@ class TheAccountsFromAFile(AccountToolHarness):
         code, output = self.run_tool("role", "admin", "reader")
         self.assertNotEqual(code, 0)
         self.assertIn("last active admin", output)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheSettingsFromAFile(unittest.TestCase):
+    """`haprion-settings apply` (Fas 23, B293): External monitoring, switches, OIDC, for real."""
+
+    PROVIDER = """oidc:
+  issuer: https://auth.example/application/o/app/
+  client_id: client
+  client_secret: the client secret
+  auth_method: client_secret_basic
+  scopes: openid profile
+  username_claim: preferred_username
+  groups_claim: groups
+  admin_group: haproxy-admins
+  reader_group: null
+  auto_create: true
+  button_text: Sign in with SSO
+  prompt_login: false
+  logout_mode: app
+  local_login: break_glass_only
+  enabled: true
+  interface_url: https://mgr.example.com
+"""
+
+    def connect(self) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}")
+
+    def setUp(self) -> None:
+        from dataclasses import replace
+
+        from haprion.dns_profile_keys import write_key_pair
+
+        from haprion_ui import admin, settings_apply, settings_tool
+        from haprion_ui import config as ui_config
+        from tests.test_login import configuration
+
+        self.tool = settings_tool
+        keys = Path(tempfile.mkdtemp(prefix="settings-keys-"))
+        self.addCleanup(shutil.rmtree, keys, True)
+        write_key_pair(keys / "k.key", keys / "k.pub")
+        self.verified: list[str] = []
+
+        def verify(provider: db.OidcProvider, redirect: str) -> tuple[bool, list[Any], str]:
+            self.verified.append(redirect)
+            return self.verify_answer, [], ""
+
+        self.verify_answer = True
+        self.reset()
+        with self.connect() as connection:
+            connection.execute(
+                "insert into app_user (username, password_hash, role, break_glass) "
+                "values ('admin', %s, 'admin', true)",
+                (OidcAccounts.HASH,),
+            )
+            connection.commit()
+        for patch in (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(
+                settings_tool,
+                "load_environment",
+                return_value=admin.Environment(database="test", role="test"),
+            ),
+            mock.patch.object(settings_tool, "connect", side_effect=lambda _e: self.connect()),
+            mock.patch.object(
+                ui_config,
+                "load",
+                return_value=replace(
+                    configuration(), clusters=("alpha", "beta"), oidc_public_key=keys / "k.pub"
+                ),
+            ),
+            mock.patch.object(settings_apply, "verify_with_helper", side_effect=verify),
+            mock.patch.object(db, "cluster_list", return_value=None),
+            mock.patch.dict(os.environ, {"SUDO_USER": "operator"}),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def tearDown(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("update oidc_provider set enabled = false")
+            cursor.execute(
+                "update oidc_provider set issuer = null, client_id = null, "
+                "client_secret_sealed = null, key_id = null, admin_group = null, "
+                "reader_group = null, verified_revision = null"
+            )
+            cursor.execute("update feature_switch set enabled = true, remembered = '{}'")
+            cursor.execute("truncate status_access, app_user cascade")
+            cursor.execute("delete from audit_event where detail->>'via' = 'cli'")
+            connection.commit()
+
+    def write(self, text: str, mode: int = 0o600) -> str:
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory)
+        path = Path(directory) / "settings.yaml"
+        path.write_text(text)
+        path.chmod(mode)
+        return str(path)
+
+    def run_tool(self, *argv: str) -> tuple[int, dict[str, Any]]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = self.tool.main(list(argv))
+        return code, json.loads(out.getvalue())
+
+    def provider(self) -> db.OidcProvider:
+        with self.connect() as connection:
+            row = db.oidc_provider(connection)
+        if row is None:
+            raise AssertionError("no provider row")
+        return row
+
+    def cli_audit(self) -> list[str]:
+        with self.connect() as connection:
+            return [
+                row[0]
+                for row in connection.execute(
+                    "select action from audit_event where detail->>'via' = 'cli' order by id"
+                ).fetchall()
+            ]
+
+    def test_addresses_and_switches_once_and_the_same_file_again_changes_nothing(self) -> None:
+        path = self.write(
+            "status_access: [192.0.2.10, 198.51.100.0/24]\nfeatures:\n  advanced_config: false\n"
+        )
+
+        first = self.run_tool("apply", path, "--json")
+        second = self.run_tool("apply", path, "--json")
+
+        self.assertEqual((first[0], second[0]), (0, 0))
+        self.assertEqual(
+            first[1]["result"]["status_access"]["added"], ["192.0.2.10/32", "198.51.100.0/24"]
+        )
+        self.assertEqual(first[1]["result"]["features"], {"advanced_config": False})
+        self.assertFalse(second[1]["result"]["changed"])
+        with self.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "select enabled, updated_by from feature_switch where name = 'advanced_config'"
+                ).fetchone(),
+                (False, "operator"),
+            )
+        self.assertEqual(self.cli_audit(), ["status_access_changed", "feature_switched"])
+
+    def test_check_runs_the_refusals_and_keeps_nothing(self) -> None:
+        path = self.write("status_access: [192.0.2.10]\nfeatures:\n  advanced_config: false\n")
+
+        code, answer = self.run_tool("apply", path, "--check", "--json")
+
+        self.assertEqual(code, 0)
+        self.assertTrue(answer["result"]["changed"])
+        with self.connect() as connection:
+            self.assertEqual(
+                connection.execute("select count(*) from status_access").fetchone(), (0,)
+            )
+            self.assertEqual(
+                connection.execute(
+                    "select enabled from feature_switch where name = 'advanced_config'"
+                ).fetchone(),
+                (True,),
+            )
+        self.assertEqual(self.cli_audit(), [])
+
+    def test_a_switch_is_refused_as_the_page_refuses_it(self) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "update feature_switch set enabled = false where name = 'cluster_colours'"
+            )
+            connection.commit()
+        many = tuple(f"c{number}" for number in range(7))
+        path = self.write("status_access: [192.0.2.10]\nfeatures:\n  cluster_colours: true\n")
+
+        with mock.patch.object(db, "cluster_list", return_value=many):
+            code, answer = self.run_tool("apply", path, "--json")
+
+        self.assertEqual(code, 65)
+        self.assertIn("Cluster colours cover", answer["error"]["message"])
+        with self.connect() as connection:
+            self.assertEqual(
+                connection.execute("select count(*) from status_access").fetchone(), (0,)
+            )
+
+    def test_sign_in_through_a_provider_is_set_verified_and_turned_on_once(self) -> None:
+        path = self.write(self.PROVIDER)
+
+        first = self.run_tool("apply", path, "--json")
+        second = self.run_tool("apply", path, "--json")
+
+        self.assertEqual((first[0], second[0]), (0, 0), (first, second))
+        self.assertEqual(first[1]["result"]["oidc"]["enabled"], True)
+        self.assertEqual(first[1]["result"]["oidc"]["sealing"], "replaced")
+        self.assertEqual(
+            second[1]["result"]["oidc"], {"fields": [], "enabled": None, "sealing": "kept"}
+        )
+        self.assertFalse(second[1]["result"]["changed"])
+        self.assertEqual(self.verified, ["https://mgr.example.com/login/oidc/callback"])
+        provider = self.provider()
+        self.assertTrue(provider.enabled and provider.verified)
+        self.assertEqual(self.cli_audit(), ["oidc_configured", "oidc_verified", "oidc_enabled"])
+
+    def test_a_secret_is_replaced_only_when_asked_and_verified_first_while_on(self) -> None:
+        path = self.write(self.PROVIDER)
+        self.run_tool("apply", path, "--json")
+        before = self.provider()
+
+        code, answer = self.run_tool("apply", path, "--json", "--replace-oidc-secret")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["result"]["oidc"]["fields"], ["client_secret"])
+        after = self.provider()
+        self.assertNotEqual(before.client_secret_sealed, after.client_secret_sealed)
+        self.assertTrue(after.enabled and after.verified)
+        self.assertEqual(len(self.verified), 2)
+
+    def test_a_provider_that_fails_verify_stays_off_with_its_settings_saved(self) -> None:
+        self.verify_answer = False
+
+        code, answer = self.run_tool("apply", self.write(self.PROVIDER), "--json")
+
+        self.assertEqual(code, 65)
+        self.assertIn("stays off", answer["error"]["message"])
+        provider = self.provider()
+        self.assertEqual((provider.enabled, provider.client_id), (False, "client"))
+
+    def test_a_secret_others_may_read_is_refused(self) -> None:
+        code, answer = self.run_tool("apply", self.write(self.PROVIDER, mode=0o644), "--json")
+
+        self.assertEqual(code, 65)
+        self.assertIn("0600", answer["error"]["message"])
+        self.assertIsNone(self.provider().issuer)

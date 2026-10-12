@@ -136,7 +136,7 @@ def read_new_password(*, piped: bool = False) -> str:
     return first
 
 
-def _actor() -> str:
+def actor_name() -> str:
     """Who to record. The invoking login, not `root`.
 
     `sudo` keeps the original name in the environment, and that is the useful
@@ -155,7 +155,7 @@ def _audit(
             "insert into audit_event (actor, action, detail) "
             "values (%(actor)s, %(action)s, %(detail)s)",
             {
-                "actor": _actor(),
+                "actor": actor_name(),
                 "action": action,
                 "detail": psycopg.types.json.Jsonb({"account": subject, **detail}),
             },
@@ -379,7 +379,7 @@ def command_unlock(environment: Environment, args: argparse.Namespace) -> int:
         with connection.cursor() as cursor:
             cursor.execute(
                 "insert into login_unlock (username_normalised, actor) values (lower(%s), %s)",
-                (args.username, _actor()),
+                (args.username, actor_name()),
             )
         _audit(connection, "throttle_cleared", args.username)
         connection.commit()
@@ -438,7 +438,7 @@ def command_apply(environment: Environment, args: argparse.Namespace) -> int:
                 wanted, account_apply.stored_accounts(connection), prune=args.prune
             )
             if not args.check and not the_plan.empty:
-                account_apply.write(connection, the_plan, actor=_actor())
+                account_apply.write(connection, the_plan, actor=actor_name())
                 connection.commit()
     except account_apply.ApplyError as exc:
         if args.json:

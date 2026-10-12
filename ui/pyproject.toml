@@ -41,6 +41,7 @@ dependencies = [
 #
 [project.scripts]
 haprion-user = "haprion_ui.admin:_entry"
+haprion-settings = "haprion_ui.settings_tool:_entry"
 haprion-poller = "haprion_ui.poller:_entry"
 haprion-worker = "haprion_ui.worker:_entry"
 

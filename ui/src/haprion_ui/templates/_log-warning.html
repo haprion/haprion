@@ -1,0 +1,44 @@
+{#
+  The log warning, drawn with the page and again on its own by /logs/warning,
+  which the page asks every 15 s (logs.js, 26-10-12). The slot is always
+  there, empty or not, so a warning can appear and go without a reload; it
+  takes no room of its own in the badges' row.
+#}
+<div class="log-warning-slot" data-log-warning="/logs/warning{% if selected_cluster %}?cluster={{ selected_cluster | urlencode }}{% endif %}">
+    {% if enabled and (reading.unavailable or freshness_warnings or not reading.nodes) %}
+    <details class="log-warning">
+      <summary><span class="status-dot status-warning"></span>Log warning</summary>
+      <div class="log-warning-popover">
+        <strong>Log collection needs attention</strong>
+        {% if reading.unavailable %}<p>One or more mirrors changed or could not be read. Reload to read the current files.</p>{% endif %}
+        {% for node, stale, attempted in freshness_warnings %}
+        <p><b>{{ node.cluster }} / {{ node.node }}</b><span>
+          {%- if stale is not none and node.latest_attempt_failed() -%}
+            last try {{ attempted | round | int }} s ago — failed ({{ node.outcome }}); last success
+            {%- if stale < 90 %} {{ stale | round | int }} s ago
+            {%- elif stale < 5400 %} {{ (stale / 60) | round | int }} min ago
+            {%- else %} {{ (stale / 3600) | round(1) }} h ago
+            {%- endif -%}
+          {%- elif stale is none -%}
+            never reached{% if node.outcome != 'unknown' %} — {{ node.outcome }}{% endif %}
+          {%- elif node.catching_up() -%}
+            collection succeeded; catching up — last success
+            {%- if stale < 90 %} {{ stale | round | int }} s ago
+            {%- elif stale < 5400 %} {{ (stale / 60) | round | int }} min ago
+            {%- else %} {{ (stale / 3600) | round(1) }} h ago
+            {%- endif -%}
+            {% if node.current_complete == false %} — today's log is incomplete{% if node.remaining_bytes is not none %} ({{ node.remaining_bytes }} bytes remaining at last read){% endif %}{% endif %}
+            {% if node.pending_days %} — {{ node.pending_days }} older day(s) pending{% endif %}
+          {%- elif stale < 5400 -%}
+            last mirrored {{ (stale / 60) | round | int }} min ago
+          {%- else -%}
+            last mirrored {{ (stale / 3600) | round(1) }} h ago
+          {%- endif -%}
+        </span></p>
+        {% else %}
+          {% if not reading.nodes %}<p><b>No node has been mirrored yet</b><span>The collector has not run, or no node has accepted its key.</span></p>{% endif %}
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+</div>

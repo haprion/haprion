@@ -145,8 +145,39 @@
     swap(href, true).catch(() => window.location.assign(href));
   };
 
+  //
+  // The warning keeps itself current (26-10-12). It was drawn once with the
+  // page, so a node catching up kept saying "9 s ago" and the same byte count
+  // for as long as the page was open. Every 15 s, while the tab is visible,
+  // the warning alone is asked for and swapped in: the table, a selection and
+  // the scroll position are left alone, and a warning somebody has opened
+  // stays open. A failed ask - offline, a session that expired - leaves the
+  // warning as it was, and the next tick tries again.
+  //
+  const WARNING = "[data-log-warning]";
+  const refreshWarning = async () => {
+    const here = document.querySelector(WARNING);
+    if (!here || document.hidden) return;
+    const answer = await fetch(here.dataset.logWarning, {
+      credentials: "same-origin",
+      headers: { Accept: "text/html" },
+    });
+    if (!answer.ok || answer.redirected) return;
+    const parsed = new DOMParser().parseFromString(await answer.text(), "text/html");
+    const fresh = parsed.querySelector(WARNING);
+    //
+    // A filter swapped the region in the meantime: that region's warning is
+    // newer than this answer, which was for the old one.
+    //
+    if (!fresh || document.querySelector(WARNING) !== here) return;
+    const details = fresh.querySelector("details");
+    if (details && here.querySelector("details[open]")) details.open = true;
+    here.replaceWith(fresh);
+  };
+
   const start = () => {
     wire(document);
+    window.setInterval(() => refreshWarning().catch(() => {}), 15000);
     document.addEventListener("submit", (event) => {
       const form = event.target.closest?.("[data-log-filters]");
       if (!form) return;

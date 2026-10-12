@@ -757,9 +757,19 @@ def read_database(
         cursor.execute(statement, parameters)
         entries = tuple(_resolved_server(row, server_addresses or {}) for row in cursor.fetchall())
 
-    targets, unavailable = _targets(directory, tuple(wanted))
+    return replace(read_freshness(directory, tuple(wanted)), entries=entries)
+
+
+def read_freshness(directory: Path, clusters: tuple[str, ...]) -> Reading:
+    """The collector's per-node freshness files alone, without a row of the log.
+
+    What the log page's warning says, read on its own so the page can ask
+    again every few seconds without querying the table (26-10-12).
+    """
+
+    targets, unavailable = _targets(directory, clusters)
     nodes = tuple(
         _freshness(directory / f"{cluster_id}--{node}{META_SUFFIX}", cluster_id, node)
         for cluster_id, node in targets
     )
-    return Reading(entries, nodes, 0, unavailable)
+    return Reading((), nodes, 0, unavailable)

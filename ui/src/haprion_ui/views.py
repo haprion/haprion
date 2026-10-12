@@ -277,6 +277,22 @@ TEMPLATES.env.filters["proxy_page_link"] = proxies.page_link
 TEMPLATES.env.globals["proxy_page_size"] = proxies.PAGE_SIZE
 
 
+def _freshness_warnings(reading: traffic_logs.Reading, now: datetime) -> tuple[Any, ...]:
+    """(node, seconds since success, seconds since attempt) for each node the log warning names."""
+
+    freshness = tuple(
+        (node, node.stale_seconds(now=now), node.attempt_seconds(now=now)) for node in reading.nodes
+    )
+    return tuple(
+        item
+        for item in freshness
+        if item[0].latest_attempt_failed()
+        or item[0].catching_up()
+        or item[1] is None
+        or item[1] > 300
+    )
+
+
 def _log_time_filter(
     value: str,
     *,
@@ -2554,6 +2570,37 @@ def build_router(config: Config) -> APIRouter:
         return _traffic_log_page(request, waf_page=False)
 
     #
+    # The log warning alone (26-10-12). It was drawn once with the page, so a
+    # node catching up said "9 s ago" and the same byte count for as long as
+    # the page stayed open. The page asks for this every few seconds and swaps
+    # it in; reading the collector's freshness files costs no query of the
+    # log, and the table, filters and scroll position are left alone.
+    #
+    @router.get("/logs/warning", response_class=HTMLResponse)
+    def traffic_log_warning(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        listed = listed_clusters(request, config)
+        selected = request.query_params.get("cluster", "")[:32]
+        if not config.traffic_logs.enabled or (selected and selected not in listed):
+            reading = traffic_logs.Reading((), (), 0, False)
+        else:
+            reading = traffic_logs.read_freshness(
+                config.traffic_logs.directory, (selected,) if selected else tuple(listed)
+            )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "_log-warning.html",
+            {
+                "enabled": config.traffic_logs.enabled,
+                "reading": reading,
+                "freshness_warnings": _freshness_warnings(reading, datetime.now(UTC)),
+                "selected_cluster": selected,
+            },
+        )
+
+    #
     # The same reading narrowed to the requests an access rule met (Fas 21,
     # B227): stored once, in the traffic log, and shown on a page of its own so
     # that what the rules see is not mixed into the ordinary traffic.
@@ -2723,18 +2770,7 @@ def build_router(config: Config) -> APIRouter:
             )
             if value
         }
-        freshness = tuple(
-            (node, node.stale_seconds(now=now), node.attempt_seconds(now=now))
-            for node in reading.nodes
-        )
-        freshness_warnings = tuple(
-            item
-            for item in freshness
-            if item[0].latest_attempt_failed()
-            or item[0].catching_up()
-            or item[1] is None
-            or item[1] > 300
-        )
+        freshness_warnings = _freshness_warnings(reading, now)
         #
         # The WAF page's Requests tab carries the same three figures as its
         # other two (mock round 7), over the same clusters and days.

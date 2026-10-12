@@ -159,6 +159,50 @@ class LogControlsInABrowser(unittest.TestCase):
         self.assertEqual(self.page.locator("[data-result]").inner_text(), "All rows")
         self.assertEqual(self.page.url, "https://example.test/logs")
 
+    def test_the_warning_catches_up_on_its_own_and_stays_open(self) -> None:
+        def warning(text: str) -> str:
+            return (
+                '<div class="log-warning-slot" data-log-warning="/logs/warning">'
+                f'<details class="log-warning"><summary>Log warning</summary><p data-said>{text}</p>'
+                "</details></div>"
+            )
+
+        page = f"""
+        <html><body><div data-log-region>{warning("455885161 bytes remaining")}
+          <table><tbody><tr data-row><td>a request</td></tr></tbody></table>
+        </div></body></html>
+        """
+        asked: list[str] = []
+
+        def answer(route: Any) -> None:
+            if route.request.url.endswith("/logs/warning"):
+                asked.append(route.request.url)
+                body = warning("430807573 bytes remaining")
+            else:
+                body = page
+            route.fulfill(status=200, content_type="text/html", body=body)
+
+        self.page.clock.install()
+        self.page.route("https://example.test/**", answer)
+        self.page.goto("https://example.test/logs")
+        self.page.add_script_tag(path=str(STATIC_DIRECTORY / "logs.js"))
+        self.page.locator("[data-row]").evaluate("node => { node.heldByTest = true; }")
+        self.page.click(".log-warning summary")
+
+        self.page.clock.run_for(14_000)
+        self.assertEqual(asked, [])
+        self.page.clock.run_for(2_000)
+        self.page.wait_for_function(
+            "document.querySelector('[data-said]').textContent.startsWith('430807573')"
+        )
+
+        self.assertEqual(len(asked), 1)
+        self.assertTrue(self.page.locator(".log-warning").evaluate("node => node.open"))
+        self.assertTrue(
+            self.page.locator("[data-row]").evaluate("node => node.heldByTest === true"),
+            "the table is not redrawn",
+        )
+
     def test_a_heading_replaces_only_the_log_region_and_updates_the_address(self) -> None:
         def markup(value: str) -> str:
             return f"""

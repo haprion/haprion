@@ -485,6 +485,49 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("1234 bytes remaining", page)
         self.assertIn("2 older day(s) pending", page)
 
+    def test_the_warning_is_drawn_alone_for_the_page_to_ask_again(self) -> None:
+        #
+        # The page asks /logs/warning every 15 s (26-10-12); it answers the
+        # same warning the page draws, from the freshness files.
+        #
+        (self.root / "alpha--node-a.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_attempt": NOW.isoformat(),
+                    "last_success": NOW.isoformat(),
+                    "outcome": "ok",
+                    "current_complete": False,
+                    "remaining_bytes": 4321,
+                }
+            )
+        )
+        warning = self.page(now=NOW, path="/logs/warning", query="?cluster=alpha")
+        listed = self.page(now=NOW, path="/logs")
+
+        self.assertIn('data-log-warning="/logs/warning?cluster=alpha"', warning)
+        self.assertIn("4321 bytes remaining", warning)
+        self.assertNotIn("<html", warning)
+        self.assertIn('data-log-warning="/logs/warning"', listed)
+        self.assertIn("4321 bytes remaining", listed)
+
+    def test_a_caught_up_node_leaves_the_slot_empty(self) -> None:
+        self.healthy_meta()
+
+        warning = self.page(path="/logs/warning")
+
+        self.assertIn("data-log-warning", warning)
+        self.assertNotIn("log-warning-popover", warning)
+
+    def test_the_warning_names_no_cluster_the_reader_may_not_list(self) -> None:
+        (self.root / "beta--node-b.meta.json").write_text(
+            json.dumps({"schema_version": 1, "outcome": "unreachable"})
+        )
+
+        warning = self.page(path="/logs/warning", query="?cluster=beta")
+
+        self.assertNotIn("node-b", warning)
+
     def test_backlog_keeps_the_age_of_a_previous_success_visible(self) -> None:
         for age, shown in (
             (timedelta(minutes=10), "10 min ago"),

@@ -9,42 +9,7 @@
   <div class="heading-title">{% if waf_page %}<h1>WAF logs</h1><p class="page-lede">Requests an access rule or the WAF engine logged or refused.</p>{% else %}<h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p>{% endif %}</div>
   <div class="heading-badges">
     {% if enabled and reading.entries %}<div class="log-export"><button class="secondary-button" type="button" data-log-export disabled>Export selected (.csv)</button><span data-log-selected-count>No rows selected</span></div>{% endif %}
-    {% if enabled and (reading.unavailable or freshness_warnings or not reading.nodes) %}
-    <details class="log-warning">
-      <summary><span class="status-dot status-warning"></span>Log warning</summary>
-      <div class="log-warning-popover">
-        <strong>Log collection needs attention</strong>
-        {% if reading.unavailable %}<p>One or more mirrors changed or could not be read. Reload to read the current files.</p>{% endif %}
-        {% for node, stale, attempted in freshness_warnings %}
-        <p><b>{{ node.cluster }} / {{ node.node }}</b><span>
-          {%- if stale is not none and node.latest_attempt_failed() -%}
-            last try {{ attempted | round | int }} s ago — failed ({{ node.outcome }}); last success
-            {%- if stale < 90 %} {{ stale | round | int }} s ago
-            {%- elif stale < 5400 %} {{ (stale / 60) | round | int }} min ago
-            {%- else %} {{ (stale / 3600) | round(1) }} h ago
-            {%- endif -%}
-          {%- elif stale is none -%}
-            never reached{% if node.outcome != 'unknown' %} — {{ node.outcome }}{% endif %}
-          {%- elif node.catching_up() -%}
-            collection succeeded; catching up — last success
-            {%- if stale < 90 %} {{ stale | round | int }} s ago
-            {%- elif stale < 5400 %} {{ (stale / 60) | round | int }} min ago
-            {%- else %} {{ (stale / 3600) | round(1) }} h ago
-            {%- endif -%}
-            {% if node.current_complete == false %} — today's log is incomplete{% if node.remaining_bytes is not none %} ({{ node.remaining_bytes }} bytes remaining at last read){% endif %}{% endif %}
-            {% if node.pending_days %} — {{ node.pending_days }} older day(s) pending{% endif %}
-          {%- elif stale < 5400 -%}
-            last mirrored {{ (stale / 60) | round | int }} min ago
-          {%- else -%}
-            last mirrored {{ (stale / 3600) | round(1) }} h ago
-          {%- endif -%}
-        </span></p>
-        {% else %}
-          {% if not reading.nodes %}<p><b>No node has been mirrored yet</b><span>The collector has not run, or no node has accepted its key.</span></p>{% endif %}
-        {% endfor %}
-      </div>
-    </details>
-    {% endif %}
+    {% include "_log-warning.html" %}
   </div>
 </section>
 

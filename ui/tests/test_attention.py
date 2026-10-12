@@ -222,25 +222,19 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
 
     NOW = datetime(2026, 10, 12, 10, 30, tzinfo=UTC)
 
-    def reading(self, queued: int, since: datetime | None) -> Any:
+    def reading(self, queued: int, since: datetime | None, reason: str = "") -> Any:
         from haprion_ui.db import _with_forward_waiting
 
+        receiver: dict[str, Any] = {"name": "graylog", "queued": queued, "dropped_last_hour": 0}
+        if reason:
+            receiver["last_error"] = {"reason": reason, "age_sec": 30}
         node = {
             "name": "node-a",
             "status_ok": True,
-            "status": {
-                "log_forwarding": {
-                    "stats_age_sec": 20,
-                    "receivers": [{"name": "log-server", "queued": queued, "dropped_last_hour": 0}],
-                }
-            },
+            "status": {"log_forwarding": {"stats_age_sec": 20, "receivers": [receiver]}},
         }
         previous = (
-            {
-                "nodes": [
-                    {"name": "node-a", "forward_waiting_since": {"log-server": since.isoformat()}}
-                ]
-            }
+            {"nodes": [{"name": "node-a", "forward_waiting_since": {"graylog": since.isoformat()}}]}
             if since is not None
             else None
         )
@@ -253,12 +247,12 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
     def test_the_poller_carries_when_the_queue_last_was_empty(self) -> None:
         first = self.reading(3, None)
         self.assertEqual(
-            first["nodes"][0]["forward_waiting_since"], {"log-server": self.NOW.isoformat()}
+            first["nodes"][0]["forward_waiting_since"], {"graylog": self.NOW.isoformat()}
         )
         earlier = self.NOW - timedelta(minutes=7)
         self.assertEqual(
             self.reading(3, earlier)["nodes"][0]["forward_waiting_since"],
-            {"log-server": earlier.isoformat()},
+            {"graylog": earlier.isoformat()},
         )
         self.assertEqual(self.reading(0, earlier)["nodes"][0]["forward_waiting_since"], {})
 
@@ -267,14 +261,28 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
         listed = self.items(self.reading(3, self.NOW - timedelta(minutes=7)))
         self.assertEqual(
             [(item.severity, item.subject, item.message) for item in listed],
-            [("warning", "node-a", "traffic log to log-server: 3 lines not delivered")],
+            [("warning", "node-a", "traffic log to graylog: 3 lines not delivered")],
         )
         self.assertEqual(listed[0].since, self.NOW - timedelta(minutes=7))
+
+    def test_the_row_says_why_and_leads_to_the_clusters_receivers(self) -> None:
+        listed = self.items(
+            self.reading(3, self.NOW - timedelta(minutes=7), reason="Connection timed out")
+        )
+        self.assertEqual(
+            [(item.message, item.link) for item in listed],
+            [
+                (
+                    "traffic log to graylog: 3 lines not delivered (Connection timed out)",
+                    "/settings/clusters/external#delivery",
+                )
+            ],
+        )
 
     def test_a_long_queue_is_said_once(self) -> None:
         listed = self.items(self.reading(20000, self.NOW - timedelta(minutes=30)))
         self.assertEqual(
-            [item.message for item in listed], ["traffic log to log-server: 20 000 lines queued"]
+            [item.message for item in listed], ["traffic log to graylog: 20 000 lines queued"]
         )
 
 

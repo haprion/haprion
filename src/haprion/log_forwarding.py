@@ -47,6 +47,20 @@ def _count(value: int) -> str:
     return f"{value:,}".replace(",", " ")
 
 
+def unreached(receiver: Mapping[str, Any]) -> str | None:
+    """Why the node's rsyslog last failed to reach this receiver, while that is news.
+
+    The node reads it from rsyslog's own journal lines (`Connection refused`,
+    `Connection timed out`) and leaves it out once the receiver resumed.
+    """
+
+    error = receiver.get("last_error")
+    if not isinstance(error, Mapping):
+        return None
+    reason = error.get("reason")
+    return reason if isinstance(reason, str) and reason else None
+
+
 def problems(forwarding: object) -> list[Problem]:
     """What is wrong with a node's forwarding, worst first; empty when nothing is."""
 
@@ -68,8 +82,14 @@ def problems(forwarding: object) -> list[Problem]:
             )
         queued = receiver.get("queued")
         if isinstance(queued, int) and queued >= QUEUE_WARNING:
+            reason = unreached(receiver)
             found.append(
-                Problem("warning", name, f"traffic log to {name}: {_count(queued)} lines queued")
+                Problem(
+                    "warning",
+                    name,
+                    f"traffic log to {name}: {_count(queued)} lines queued"
+                    + (f" ({reason})" if reason else ""),
+                )
             )
     if age is None or (isinstance(age, int) and age > STATS_STALE_SECONDS):
         found.append(
@@ -99,5 +119,8 @@ def status_line(forwarding: object) -> str | None:
         )
         if isinstance(dropped, int) and dropped > 0:
             part += f", {_count(dropped)} DROPPED in the last hour"
+        reason = unreached(receiver)
+        if reason:
+            part += f", not reached: {reason}"
         parts.append(part)
     return "; ".join(parts)

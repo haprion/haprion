@@ -14,14 +14,17 @@ and the exporter off means nothing listens (2026-09-29).
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
-from haprion import cluster_settings
+from haprion import cluster_settings, log_forwarding
 from haprion.config import ConfigError
 
+from haprion_ui.attention import FORWARD_WAITING
 from haprion_ui.cluster_identity import accent_index
 
 MAX_TARGETS = cluster_settings.MAX_TARGETS
@@ -287,3 +290,78 @@ def comment_for(settings: cluster_settings.ClusterSettings) -> str:
         else "counters not shared"
     )
     return f"Logs & metrics: {logs}; {metrics}; {counters}"
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryRow:
+    """One receiver as one node sends to it, on the cluster's page (26-10-12)."""
+
+    node: str
+    receiver: str
+    queued: str
+    state: str
+    tone: str
+    since: datetime | None = None
+    reason: str = ""
+
+
+def delivery(result: Mapping[str, Any] | None, *, now: datetime) -> list[DeliveryRow]:
+    """Each node's receivers, read as the attention list reads them.
+
+    Dropped lines are critical; a queue that has not emptied for
+    attention.FORWARD_WAITING, or one that is long, is behind. The reason is the
+    node's own (`last_error`, from rsyslog's journal), shown whatever the state.
+    """
+
+    rows: list[DeliveryRow] = []
+    nodes = result.get("nodes") if isinstance(result, Mapping) else None
+    for entry in nodes if isinstance(nodes, list) else ():
+        if not isinstance(entry, Mapping):
+            continue
+        name = str(entry.get("name", ""))
+        status = entry.get("status")
+        if not entry.get("status_ok") or not isinstance(status, Mapping):
+            rows.append(DeliveryRow(name, "", "", "Not read", "unknown"))
+            continue
+        forwarding = status.get("log_forwarding")
+        receivers = forwarding.get("receivers") if isinstance(forwarding, Mapping) else None
+        waiting = entry.get("forward_waiting_since")
+        for receiver in receivers if isinstance(receivers, list) else ():
+            if not isinstance(receiver, Mapping):
+                continue
+            target = str(receiver.get("name", ""))
+            queued = receiver.get("queued")
+            dropped = receiver.get("dropped_last_hour")
+            reason = log_forwarding.unreached(receiver) or ""
+            since = None
+            if isinstance(waiting, Mapping) and target in waiting:
+                with contextlib.suppress(TypeError, ValueError):
+                    since = datetime.fromisoformat(str(waiting[target]))
+            if isinstance(dropped, int) and dropped > 0:
+                state, tone = f"{_count(dropped)} dropped in the last hour", "critical"
+            elif since is not None and now - since >= FORWARD_WAITING:
+                state, tone = "Not delivered", "warning"
+            elif isinstance(queued, int) and queued >= log_forwarding.QUEUE_WARNING:
+                state, tone = "Behind", "warning"
+            elif not isinstance(queued, int):
+                state, tone = "Unknown", "unknown"
+            else:
+                state, tone = "Delivering", "healthy"
+            if reason and tone == "healthy":
+                tone = "warning"
+            rows.append(
+                DeliveryRow(
+                    node=name,
+                    receiver=target,
+                    queued=_count(queued) if isinstance(queued, int) else "—",
+                    state=state,
+                    tone=tone,
+                    since=since if tone != "healthy" else None,
+                    reason=reason,
+                )
+            )
+    return sorted(rows, key=lambda row: (row.receiver, row.node))
+
+
+def _count(value: int) -> str:
+    return f"{value:,}".replace(",", " ")

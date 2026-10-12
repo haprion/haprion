@@ -257,3 +257,73 @@ class ThePage(SettingsClusterTestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(self.queued, [])
+
+
+class TheDeliveryTable(SettingsClusterTestCase):
+    """Where the attention list's forwarding rows lead (26-10-12)."""
+
+    def rows(self, **receiver: Any) -> list[cluster_settings_page.DeliveryRow]:
+        waiting = receiver.pop("waiting", None)
+        node: dict[str, Any] = {
+            "name": "node-a",
+            "status_ok": True,
+            "status": {
+                "log_forwarding": {
+                    "stats_age_sec": 20,
+                    "receivers": [{"name": "loki", "dropped_last_hour": 0, **receiver}],
+                }
+            },
+        }
+        if waiting is not None:
+            node["forward_waiting_since"] = {"loki": (NOW - waiting).isoformat()}
+        return cluster_settings_page.delivery({"nodes": [node]}, now=NOW)
+
+    def test_each_state_reads_as_the_attention_list_reads_it(self) -> None:
+        from datetime import timedelta
+
+        cases: list[tuple[dict[str, Any], str, str]] = [
+            ({"queued": 0}, "Delivering", "healthy"),
+            ({"queued": 3, "waiting": timedelta(minutes=2)}, "Delivering", "healthy"),
+            ({"queued": 3, "waiting": timedelta(minutes=8)}, "Not delivered", "warning"),
+            ({"queued": 10_000}, "Behind", "warning"),
+            ({"queued": None}, "Unknown", "unknown"),
+            (
+                {"queued": 0, "dropped_last_hour": 1048},
+                "1 048 dropped in the last hour",
+                "critical",
+            ),
+        ]
+        for receiver, state, tone in cases:
+            with self.subTest(receiver=receiver):
+                (row,) = self.rows(**receiver)
+                self.assertEqual((row.state, row.tone), (state, tone))
+
+    def test_the_nodes_reason_is_shown_and_never_reads_as_healthy(self) -> None:
+        (row,) = self.rows(queued=1, last_error={"reason": "Connection refused", "age_sec": 5})
+
+        self.assertEqual(
+            (row.state, row.tone, row.reason), ("Delivering", "warning", "Connection refused")
+        )
+
+    def test_a_node_not_read_says_so_and_one_forwarding_nowhere_is_left_out(self) -> None:
+        rows = cluster_settings_page.delivery(
+            {
+                "nodes": [
+                    {"name": "node-a", "status_ok": False},
+                    {"name": "node-b", "status_ok": True, "status": {}},
+                ]
+            },
+            now=NOW,
+        )
+
+        self.assertEqual([(row.node, row.state) for row in rows], [("node-a", "Not read")])
+
+    def test_the_page_shows_the_demo_receiver_that_is_not_reached(self) -> None:
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=list(demo.status_rows())):
+            page = self.client_for().get("/settings/clusters/edge-demo").text
+
+        table = page.split('id="delivery"', 1)[1].split("</section>", 1)[0]
+        loki = next(row for row in table.split("<tr")[1:] if ">loki<" in row and ">edge-a<" in row)
+        self.assertIn("Not delivered since", loki)
+        self.assertIn("· Connection timed out", loki)
+        self.assertIn("status-warning", loki)

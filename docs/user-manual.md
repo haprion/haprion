@@ -2272,10 +2272,22 @@ waits for a full queue. Measured with rsyslog 8.2512 on one core: 25 000 lines a
 and written to file at 9 % of the core; 100 000 lines queued while the receiver was away arrived
 about a second after it came back.
 
-Each receiver's queue shows on the node: `haprion-status` prints `Log forward:` per node, and
-**Needs attention** lists a receiver whose queue holds 10 000 lines or more, and as critical one
-that dropped lines in the last hour ([Needs attention, and external monitoring](#needs-attention-and-external-monitoring)).
+Each receiver's queue shows on the node: `haprion-status` prints `Log forward:` per node, the
+cluster's page under **Settings → Logs & metrics** has a **Delivery** table - each receiver as each
+node sends to it, its queue and its state - and **Needs attention** lists a receiver whose queue has
+not emptied for three minutes or holds 10 000 lines or more, and as critical one that dropped lines
+in the last hour ([Needs attention, and external monitoring](#needs-attention-and-external-monitoring)).
 The exporter's counters are complete either way.
+
+When the node's rsyslog cannot connect, it says why, and the node passes that on: *Connection
+refused* or *Connection timed out* beside the queue, in the terminal as in the table and the
+attention row, until the receiver is reached again. What it usually means:
+
+| Reason | Usually |
+|---|---|
+| *Connection timed out* | a firewall between the node and the receiver drops the connection; or the address is wrong and nothing answers there |
+| *Connection refused* | the receiver's host answers but nothing listens on the port: the receiver is stopped, or the port or protocol is wrong (a TLS port given without TLS, or the other way round) |
+| none, and lines are not delivered | the connection is made but the receiver does not read: it is overloaded, or TLS is refused after connecting - its own log says which |
 
 **The exporter** answers `GET /metrics` on the port given, on every IPv4
 address of both nodes - the configuration is shared by the pair, and scraping
@@ -2392,7 +2404,8 @@ has not been read for two poll intervals; a WAF exception marked *Not working*; 
 is missing, old or failed; a node whose traffic log collection failed, has not succeeded for five
 minutes or is still behind after five runs or with older days waiting (catching up after a burst
 is left to the log page's own warning); a receiver of the traffic log whose queue on the node
-holds 10 000 lines or more, or - critical - that dropped lines in the last hour. Nothing there, no
+has not emptied for three minutes or holds 10 000 lines or more, with the reason the node's rsyslog
+gave when it has one, or - critical - that dropped lines in the last hour. Nothing there, no
 box. What somebody chose - a drained server, a
 maintenance page, a block, a publish not yet deployed - is not on it: those are on the cluster's
 card and *Operations* line, and on *Versions*.

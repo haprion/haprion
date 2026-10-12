@@ -29,6 +29,18 @@ answers file; its example includes `UV_BIN`, which names the uv the certbot step
 HAProxy nodes must already be prepared before the application can manage them. The
 [node preparation instructions](user-manual.md#part-2--the-nodes) are in the manual.
 
+**Disk on the nodes.** What grows on a node's root filesystem is the traffic log: fourteen days of
+day files under `/var/log/haprion` at about 800 bytes a request, and, per external receiver, a
+queue on disk under `/var/spool/rsyslog` of up to the cluster's `disk_mib` (1 GiB by default, at
+most four receivers). Free space for a node is therefore about
+
+```text
+requests a day × 800 bytes × 14  +  disk_mib of every receiver  +  margin for the system
+```
+
+At one million requests a day that is about 10 GiB of day files, plus 1 GiB a receiver. A full
+root filesystem stops journald and apt as well as the log, so leave the system its own margin.
+
 ## 1. Prepare the answers file
 
 From the source tree's `install/` directory:

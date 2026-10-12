@@ -4714,11 +4714,20 @@ def build_router(config: Config) -> APIRouter:
         problem: str = "",
         status_code: int = 200,
     ) -> Response:
+        #
+        # How each node's rsyslog is getting on with the receivers above,
+        # where the attention list's forwarding rows lead (26-10-12).
+        #
+        _, status_rows = read_source(request, config, STATUS_SOURCE)
+        status = next((row for row in status_rows if row.cluster == cluster), None)
         return TEMPLATES.TemplateResponse(
             request,
             "settings-cluster.html",
             {
                 **_users_context(request, session),
+                "delivery": cluster_settings_page.delivery(
+                    status.result if status is not None else None, now=datetime.now(UTC)
+                ),
                 "cluster": cluster,
                 "accent": cluster_identity.accent_index(cluster),
                 "head": head,

@@ -77,7 +77,11 @@
               {
                 "name": "loki",
                 "queued": null,
-                "dropped_last_hour": 0
+                "dropped_last_hour": 0,
+                "last_error": {
+                  "reason": "Connection refused",
+                  "age_sec": 40
+                }
               }
             ]
           }

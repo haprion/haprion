@@ -41,7 +41,11 @@ def line(seconds_ago: int, name: str, **counters: int) -> str:
     return f"{stamp}: " + json.dumps({"name": name, "origin": "core.queue", **counters})
 
 
-class TheNodeReadsItsForwardingQueues(unittest.TestCase):
+class ReaderCase(unittest.TestCase):
+    """The reader, extracted and run against a directory of this test's own."""
+
+    read: Any
+
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -66,6 +70,8 @@ class TheNodeReadsItsForwardingQueues(unittest.TestCase):
     def stats(self, *lines: str) -> None:
         (self.root / "var/log/haprion/rsyslog-stats.json").write_text("\n".join(lines) + "\n")
 
+
+class TheNodeReadsItsForwardingQueues(ReaderCase):
     def test_a_node_that_forwards_nowhere_says_nothing(self) -> None:
         self.assertIsNone(self.read(now=NOW))
 
@@ -116,6 +122,86 @@ class TheNodeReadsItsForwardingQueues(unittest.TestCase):
         names = [item["name"] for item in self.read(now=NOW)["receivers"]]
 
         self.assertEqual(names, ["elastic", "graylog"])
+
+
+#
+# forward.conf as rsyslog_forward renders it, one parameter a line, and
+# rsyslog's own lines as a node's journal held them (26-10-12).
+#
+FORWARD_WITH_PORTS = """\
+if ($programname == "haproxy-traffic" and $msg startswith " {") then {
+    action(type="omfwd"
+           name="haprion-graylog"
+           target="192.0.2.20"
+           port="1514"
+           protocol="tcp")
+    action(type="omfwd"
+           name="haprion-loki"
+           target="192.0.2.21"
+           port="6514"
+           protocol="tcp")
+}
+"""
+TIMED_OUT = (
+    "cannot connect to 192.0.2.20:1514 (took 133.34 seconds): Connection timed out "
+    "[v8.2512.0 try https://www.rsyslog.com/e/2027 ]"
+)
+RESUMED = (
+    "action 'haprion-graylog' resumed (module 'builtin:omfwd') "
+    "[v8.2512.0 try https://www.rsyslog.com/e/2359 ]"
+)
+STARTED = (
+    '[origin software="rsyslogd" swVersion="8.2512.0" x-pid="604501" '
+    'x-info="https://www.rsyslog.com"] start'
+)
+
+
+class TheNodeSaysWhyAReceiverIsNotReached(ReaderCase):
+    def errors(self, *journal: tuple[int, str]) -> dict[str, Any]:
+        self.forward(FORWARD_WITH_PORTS)
+        entries = [(NOW - seconds_ago, message) for seconds_ago, message in journal]
+        return {
+            item["name"]: item.get("last_error")
+            for item in self.read(now=NOW, journal=entries)["receivers"]
+        }
+
+    def test_the_newest_failure_names_the_reason_and_its_age(self) -> None:
+        refused = TIMED_OUT.replace(
+            "(took 133.34 seconds): Connection timed out", "(took 0.00 seconds): Connection refused"
+        )
+        found = self.errors((300, TIMED_OUT), (40, refused), (40, "rsyslogd: " + refused))
+
+        self.assertEqual(found["graylog"], {"reason": "Connection refused", "age_sec": 40})
+        self.assertIsNone(found["loki"])
+
+    def test_a_receiver_that_resumed_since_has_no_error(self) -> None:
+        self.assertIsNone(self.errors((300, TIMED_OUT), (100, RESUMED))["graylog"])
+
+    def test_a_failure_after_resuming_counts_again(self) -> None:
+        found = self.errors((300, RESUMED), (100, TIMED_OUT))
+
+        self.assertEqual(found["graylog"], {"reason": "Connection timed out", "age_sec": 100})
+
+    def test_a_restart_of_rsyslog_clears_what_the_old_one_said(self) -> None:
+        self.assertIsNone(self.errors((300, TIMED_OUT), (200, STARTED))["graylog"])
+
+    def test_a_failure_older_than_ten_minutes_is_not_news(self) -> None:
+        self.assertIsNone(self.errors((601, TIMED_OUT))["graylog"])
+        self.assertIsNotNone(self.errors((599, TIMED_OUT))["graylog"])
+
+    def test_another_address_or_port_is_another_receiver(self) -> None:
+        other = TIMED_OUT.replace("192.0.2.20:1514", "192.0.2.20:6514")
+
+        self.assertEqual(self.errors((60, other)), {"graylog": None, "loki": None})
+
+    def test_without_ports_in_the_file_the_journal_is_not_read(self) -> None:
+        self.forward()
+
+        def journal_read() -> list[tuple[float, str]]:
+            raise AssertionError("the journal was read")
+
+        self.read.__globals__["read_rsyslog_journal"] = journal_read
+        self.assertNotIn("last_error", self.read(now=NOW)["receivers"][0])
 
 
 if __name__ == "__main__":

@@ -328,7 +328,7 @@
           "additionalProperties": false
         },
         "log_forwarding": {
-          "description": "rsyslog's forwarding of the traffic log to the cluster's external receivers (B286, B289): per receiver the lines queued in memory and on disk at the newest statistics minute (null without statistics) and the lines dropped in the last hour because its queue was full. stats_age_sec is the newest statistics minute's age. Null when the node forwards nowhere, absent from nodes installed before it was reported.",
+          "description": "rsyslog's forwarding of the traffic log to the cluster's external receivers (B286, B289): per receiver the lines queued in memory and on disk at the newest statistics minute (null without statistics) and the lines dropped in the last hour because its queue was full. stats_age_sec is the newest statistics minute's age. last_error, when there is one, is why the node's rsyslog does not reach a receiver. Null when the node forwards nowhere, absent from nodes installed before it was reported.",
           "type": ["object", "null"],
           "required": ["stats_age_sec", "receivers"],
           "properties": {
@@ -342,7 +342,17 @@
                 "properties": {
                   "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,23}$" },
                   "queued": { "type": ["integer", "null"], "minimum": 0 },
-                  "dropped_last_hour": { "type": "integer", "minimum": 0 }
+                  "dropped_last_hour": { "type": "integer", "minimum": 0 },
+                  "last_error": {
+                    "description": "Why rsyslog last failed to reach the receiver, as its own journal line says (`Connection refused`, `Connection timed out`), and how many seconds ago; absent once it resumed, after rsyslog started again, after ten minutes, and from nodes that do not report it.",
+                    "type": "object",
+                    "required": ["reason", "age_sec"],
+                    "properties": {
+                      "reason": { "type": "string", "minLength": 1, "maxLength": 80 },
+                      "age_sec": { "type": "integer", "minimum": 0 }
+                    },
+                    "additionalProperties": false
+                  }
                 },
                 "additionalProperties": false
               }

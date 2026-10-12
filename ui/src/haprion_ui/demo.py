@@ -70,6 +70,8 @@ def _node(
     servers: list[dict[str, Any]] | None = None,
     packages: dict[str, str] | None = None,
     blocked: dict[str, Any] | None = None,
+    forwarding: dict[str, Any] | None = None,
+    waiting: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     # A node with 1 GiB; `memory` is the share in use (B239).
     total = 1_048_576
@@ -81,7 +83,11 @@ def _node(
     extra["packages"] = packages or PACKAGES
     if blocked is not None:
         extra["blocked"] = blocked
+    if forwarding is not None:
+        extra["log_forwarding"] = forwarding
+    outer: dict[str, Any] = {"forward_waiting_since": waiting} if waiting else {}
     return {
+        **outer,
         "name": name,
         "mgmt_host": f"{name}.demo.example",
         "reachable": True,
@@ -122,10 +128,28 @@ BLOCKED = {
 }
 
 
+def _forwarding(loki_queued: int, reason: str = "") -> dict[str, Any]:
+    """edge-demo's two receivers, as Settings names them (26-10-12)."""
+
+    loki: dict[str, Any] = {"name": "loki", "queued": loki_queued, "dropped_last_hour": 0}
+    if reason:
+        loki["last_error"] = {"reason": reason, "age_sec": 40}
+    return {
+        "stats_age_sec": 20,
+        "receivers": [{"name": "graylog", "queued": 0, "dropped_last_hour": 0}, loki],
+    }
+
+
 def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
     """Two representative healthy/degraded pairs for the dashboard."""
 
     observed = (now or datetime.now(UTC)) - timedelta(seconds=18)
+    #
+    # edge-a cannot reach loki: three lines waiting for eight minutes, and the
+    # reason rsyslog gave - the forwarding row on the dashboard and the
+    # cluster's Delivery table (26-10-12).
+    #
+    loki_waiting = {"loki": (observed - timedelta(minutes=8)).isoformat()}
     return (
         ClusterStatus(
             cluster="edge-demo",
@@ -142,6 +166,8 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
                         memory=38,
                         servers=_public_web((14, 12, 3)),
                         blocked=BLOCKED,
+                        forwarding=_forwarding(3, "Connection timed out"),
+                        waiting=loki_waiting,
                     ),
                     _node(
                         "edge-b",
@@ -152,6 +178,7 @@ def status_rows(now: datetime | None = None) -> tuple[ClusterStatus, ...]:
                         memory=36,
                         servers=_public_web((0, 0, 0)),
                         blocked=BLOCKED,
+                        forwarding=_forwarding(0),
                     ),
                 ],
                 "summary": {

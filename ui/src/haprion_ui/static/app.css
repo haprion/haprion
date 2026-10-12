@@ -486,6 +486,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .cluster-actions strong { color: var(--text-strong); font-size: 12px; }
 .cluster-actions span { overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .cluster-actions .status-dot { margin-right: 8px; vertical-align: 1px; }
+.delivery-table .status-dot { margin-right: 8px; vertical-align: 1px; }
 /* Dynamic blocking said on the heading's own line (B271). */
 .cluster-actions .operations-line { display: flex; min-width: 0; align-items: baseline; gap: 14px; }
 .cluster-actions .operations-line span { margin-top: 0; }
@@ -605,9 +606,17 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
   .log-target-table th:nth-child(4), .log-target-table td:nth-child(4) { width: 116px; }
   .log-target-table th:nth-child(5), .log-target-table td:nth-child(5) { width: 104px; }
 }
+/* Each receiver as each node sends to it: the state, with its reason, takes the rest. */
+@media (min-width: 681px) {
+  .delivery-table { table-layout: fixed; }
+  .delivery-table th:nth-child(1), .delivery-table td:nth-child(1) { width: 180px; }
+  .delivery-table th:nth-child(2), .delivery-table td:nth-child(2) { width: 180px; }
+  .delivery-table th:nth-child(3), .delivery-table td:nth-child(3) { width: 96px; }
+  .delivery-table th:nth-child(4), .delivery-table td:nth-child(4) { width: auto; }
+}
 @media (max-width: 680px) {
   /* :nth-child(n) to outweigh the reading tables' `.node-table td:nth-child(k)` widths. */
-  .log-target-table td:nth-child(n) { width: 100%; grid-column: 1 / -1; }
+  .log-target-table td:nth-child(n), .delivery-table td:nth-child(n) { width: 100%; grid-column: 1 / -1; }
 }
 .users-table td:first-child strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The provider sign-in goes through, beside the buttons that change it (B197). */

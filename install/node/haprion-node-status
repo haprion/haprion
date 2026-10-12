@@ -590,6 +590,106 @@ FORWARD_ACTION = re.compile(r'^\s*name="haprion-([a-z][a-z0-9-]{0,23})"\s*$', re
 STATS_LINE = re.compile(r"^([A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d\d:\d\d:\d\d \d{4}): (\{.*\})$")
 FORWARD_WINDOW_SECONDS = 3600
 MAX_STATS_READ = 2 * 1024 * 1024
+#
+# Why a receiver is not reached is in rsyslog's own lines in the journal, not in
+# its statistics: `cannot connect to <address>:<port> (took 0.00 seconds):
+# Connection refused` at once, `... (took 133.34 seconds): Connection timed out`
+# behind a firewall that drops, each line twice, and `action 'haprion-<name>'
+# resumed` when it gets through (rsyslog 8.2512 on a node, 26-10-12). The
+# newest failure counts until the receiver resumed or rsyslog started again;
+# one older than ten minutes is no longer news. A failed connect is retried
+# every ten seconds, or as long as the connect takes, so half an hour of
+# rsyslog's lines holds the answer.
+#
+FORWARD_ACTION_BLOCK = re.compile(r'action\(type="omfwd"(.*?)\)', re.DOTALL)
+FORWARD_PARAMETER = re.compile(r'([A-Za-z][\w.]*)="([^"]*)"')
+CONNECT_FAILED = re.compile(
+    r"^(?:rsyslogd: )?cannot connect to (\S+:\d+) \(took [\d.]+ seconds\): ([^\[\x00-\x1f]{1,80}?)\s*(?:\[|$)"
+)
+RECEIVER_RESUMED = re.compile(
+    r"^action 'haprion-([a-z][a-z0-9-]{0,23})' resumed \(module 'builtin:omfwd'\)"
+)
+RSYSLOG_STARTED = re.compile(r'^\[origin software="rsyslogd" .*\] start$')
+FORWARD_ERROR_WINDOW = "-30min"
+FORWARD_ERROR_FRESH_SECONDS = 600
+MAX_JOURNAL_LINES = 4000
+
+
+def read_rsyslog_journal():
+    """rsyslog's own lines of the last half hour, oldest first: [(epoch seconds, message)]."""
+
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed arguments
+            [
+                "/usr/bin/journalctl",
+                "--identifier=rsyslogd",
+                f"--since={FORWARD_ERROR_WINDOW}",
+                f"--lines={MAX_JOURNAL_LINES}",
+                "--output=json",
+                "--output-fields=MESSAGE",
+                "--no-pager",
+                "--quiet",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    lines = []
+    for raw in result.stdout.splitlines():
+        try:
+            entry = json.loads(raw)
+            stamp = int(entry["__REALTIME_TIMESTAMP"]) / 1_000_000
+            message = entry["MESSAGE"]
+        except (ValueError, KeyError, TypeError):
+            continue
+        if isinstance(message, str):
+            lines.append((stamp, message))
+    return lines
+
+
+def _forward_addresses(text):
+    """Each receiver's `<address>:<port>` as forward.conf names it."""
+
+    addresses = {}
+    for block in FORWARD_ACTION_BLOCK.findall(text):
+        parameters = dict(FORWARD_PARAMETER.findall(block))
+        name = parameters.get("name", "")
+        if name.startswith("haprion-") and parameters.get("target") and parameters.get("port"):
+            addresses[name[len("haprion-") :]] = f"{parameters['target']}:{parameters['port']}"
+    return addresses
+
+
+def _forward_errors(addresses, lines, moment):
+    """The newest failure per receiver that has not resumed since, while still fresh."""
+
+    failed = {}
+    cleared = {}
+    started = None
+    for stamp, message in lines:
+        if RSYSLOG_STARTED.match(message):
+            started = stamp
+            continue
+        resumed = RECEIVER_RESUMED.match(message)
+        if resumed:
+            cleared[resumed.group(1)] = stamp
+            continue
+        connect = CONNECT_FAILED.match(message)
+        if connect:
+            failed[connect.group(1)] = (stamp, connect.group(2).strip())
+    errors = {}
+    for name, address in addresses.items():
+        if address not in failed:
+            continue
+        stamp, reason = failed[address]
+        if stamp <= max(cleared.get(name, 0), started or 0):
+            continue
+        if moment - stamp > FORWARD_ERROR_FRESH_SECONDS:
+            continue
+        errors[name] = {"reason": reason, "age_sec": max(0, int(moment - stamp))}
+    return errors
 
 
 def _stats_tail():
@@ -602,15 +702,16 @@ def _stats_tail():
     return lines[1:] if size > MAX_STATS_READ else lines
 
 
-def read_log_forwarding(now=None):
+def read_log_forwarding(now=None, journal=None):
     """Each external receiver's queue on this node; null when it forwards nowhere."""
 
     try:
-        names = FORWARD_ACTION.findall(RSYSLOG_FORWARD.read_text())
+        text = RSYSLOG_FORWARD.read_text()
     except FileNotFoundError:
         return None
     except (OSError, UnicodeError):
-        names = []
+        text = ""
+    names = FORWARD_ACTION.findall(text)
     if not names:
         return None
     moment = time.time() if now is None else now
@@ -653,12 +754,21 @@ def read_log_forwarding(now=None):
         size = body.get("size")
         if stamp == newest and isinstance(size, int) and size >= 0:
             queued[name] = (queued[name] or 0) + size
+    addresses = _forward_addresses(text)
+    errors = (
+        _forward_errors(addresses, read_rsyslog_journal() if journal is None else journal, moment)
+        if addresses
+        else {}
+    )
+    receivers = []
+    for name in sorted(names):
+        receiver = {"name": name, "queued": queued[name], "dropped_last_hour": dropped[name]}
+        if name in errors:
+            receiver["last_error"] = errors[name]
+        receivers.append(receiver)
     return {
         "stats_age_sec": None if newest is None else max(0, int(moment - newest)),
-        "receivers": [
-            {"name": name, "queued": queued[name], "dropped_last_hour": dropped[name]}
-            for name in sorted(names)
-        ],
+        "receivers": receivers,
     }
 
 

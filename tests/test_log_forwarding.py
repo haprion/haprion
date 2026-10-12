@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import unittest
 
-from haprion.log_forwarding import QUEUE_WARNING, STATS_STALE_SECONDS, problems, status_line
+from haprion.log_forwarding import (
+    QUEUE_WARNING,
+    STATS_STALE_SECONDS,
+    problems,
+    status_line,
+    unreached,
+)
 
 
 def reading(age: int | None = 30, **receivers: tuple[int | None, int]) -> dict[str, object]:
@@ -38,6 +44,36 @@ class WhatIsWrong(unittest.TestCase):
                 found = problems(reading(age, graylog=(None, 0), loki=(None, 0)))
                 self.assertEqual(len(found), 1)
                 self.assertIn("no queue statistics", found[0].message)
+
+
+class WhyAReceiverIsNotReached(unittest.TestCase):
+    def unreached(self, queued: int) -> dict[str, object]:
+        found = reading(graylog=(queued, 0))
+        receivers = found["receivers"]
+        assert isinstance(receivers, list)
+        receivers[0]["last_error"] = {"reason": "Connection timed out", "age_sec": 40}
+        return found
+
+    def test_the_reason_goes_with_a_long_queue(self) -> None:
+        found = problems(self.unreached(QUEUE_WARNING))
+
+        self.assertEqual(
+            found[0].message, "traffic log to graylog: 10 000 lines queued (Connection timed out)"
+        )
+
+    def test_a_reason_alone_is_not_a_problem_here(self) -> None:
+        """A few lines that never leave are the poller's to time (forward_waiting_since)."""
+
+        self.assertEqual(problems(self.unreached(3)), [])
+
+    def test_the_terminal_says_it(self) -> None:
+        self.assertEqual(
+            status_line(self.unreached(3)), "graylog 3 queued, not reached: Connection timed out"
+        )
+
+    def test_a_node_that_does_not_report_it_reads_as_before(self) -> None:
+        self.assertIsNone(unreached({"name": "graylog", "queued": 3}))
+        self.assertIsNone(unreached({"name": "graylog", "last_error": {"reason": ""}}))
 
 
 class TheTerminalLine(unittest.TestCase):

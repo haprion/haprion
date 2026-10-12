@@ -16,6 +16,25 @@
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
 {% endif %}
 
+{% if delivery %}
+<section class="cluster-card {{ accent | accent_class }}" id="delivery">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Delivery</h3></div></div></header>
+  <div class="table-scroll"><table class="node-table delivery-table">
+    <thead><tr><th>Receiver</th><th>Node</th><th>Queued</th><th>State</th></tr></thead>
+    <tbody>
+      {% for row in delivery %}
+      <tr>
+        <td data-label="Receiver">{{ row.receiver or '—' }}</td>
+        <td data-label="Node">{{ row.node }}</td>
+        <td data-label="Queued">{{ row.queued or '—' }}</td>
+        <td data-label="State"><span class="status-dot status-{{ row.tone }}" aria-hidden="true"></span>{{ row.state }}{% if row.since %} since {{ (row.since | shown).strftime('%y-%m-%d %H:%M:%S') }}{% endif %}{% if row.reason %} · {{ row.reason }}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+
 <form method="post" action="/settings/clusters/{{ cluster }}" class="preview-form" autocomplete="off">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="expected_head" value="{{ head }}">

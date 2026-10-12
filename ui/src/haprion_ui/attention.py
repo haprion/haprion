@@ -430,11 +430,19 @@ def from_log_forwarding(status_rows: Iterable[Any], *, now: datetime) -> list[It
                         subject=str(entry.get("name", "")),
                         message=problem.message,
                         since=None,
-                        link="/settings#logs-metrics",
+                        link=f"/settings/clusters/{row.cluster}#delivery",
                     )
                 )
             said = {problem.receiver for problem in found if problem.receiver}
             waiting = entry.get("forward_waiting_since")
+            reasons = {
+                str(receiver.get("name")): log_forwarding.unreached(receiver)
+                for receiver in (
+                    forwarding.get("receivers") if isinstance(forwarding, Mapping) else None
+                )
+                or ()
+                if isinstance(receiver, Mapping)
+            }
             queued = {
                 str(receiver.get("name")): receiver.get("queued")
                 for receiver in (
@@ -459,9 +467,10 @@ def from_log_forwarding(status_rows: Iterable[Any], *, now: datetime) -> list[It
                         subject=str(entry.get("name", "")),
                         message=f"traffic log to {name}: "
                         + (f"{lines} lines " if isinstance(lines, int) else "")
-                        + "not delivered",
+                        + "not delivered"
+                        + (f" ({reasons[name]})" if reasons.get(name) else ""),
                         since=since,
-                        link="/settings#logs-metrics",
+                        link=f"/settings/clusters/{row.cluster}#delivery",
                     )
                 )
     return items

@@ -2424,7 +2424,9 @@ Under the dashboard's four cards, *Needs attention* lists what is wrong and want
 every cluster, the worst first, each row linked to where it is fixed: a certificate that is running
 out, unreadable or not where it should be (the interface's own included); a cluster's latest job of
 an operation that failed, partly worked, was blocked or ended unknown - until a later run of the
-same operation works; a node that is down; a cluster whose status
+same operation works; a node that is down; an object whose servers are not up, as its lamp on
+*Proxies* says it - critical when no node reaches any of them, a warning when some are down or down
+on one node only (an object without a health check has no lamp and is not listed); a cluster whose status
 has not been read for two poll intervals; a WAF exception marked *Not working*; a node backup that
 is missing, old or failed; a node whose traffic log collection failed, has not succeeded for five
 minutes or is still behind after five runs or with older days waiting (catching up after a burst
@@ -2493,7 +2495,7 @@ haprion_status_age_seconds{cluster="alpha"} 12
 haprion_status_age_seconds{cluster="beta"} 14
 ```
 
-`kind` is one of `backup`, `certificate`, `forwarding`, `job`, `logs`, `node`, `reading` and `waf`, and every pair is
+`kind` is one of `backup`, `certificate`, `forwarding`, `job`, `logs`, `node`, `reading`, `service` and `waf`, and every pair is
 present even at 0, so an alert expression never meets a missing series.
 
 #### Uptime Kuma

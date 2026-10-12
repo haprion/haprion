@@ -682,6 +682,13 @@ def object_healths(
     }
 
 
+#
+# The lamp of an object whose every server was taken out on purpose (B263): the
+# attention list tells it from a fault by this label.
+#
+HELD_LABEL = "Held"
+
+
 def _lamp(
     *,
     checked: bool | None,
@@ -697,7 +704,9 @@ def _lamp(
     #
     total = len(healthy)
     if held and total == 0:
-        return ObjectHealth("warning", "Held", "Every server is drained or in maintenance", 0, held)
+        return ObjectHealth(
+            "warning", HELD_LABEL, "Every server is drained or in maintenance", 0, held
+        )
     aside = f" · {held} drained or in maintenance" if held else ""
     #
     # An object with no health check gets an unlit lamp rather than a colour.

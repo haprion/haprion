@@ -60,6 +60,10 @@ class Item:
     since: datetime | None
     link: str
 
+    @property
+    def page(self) -> str:
+        return PAGES[self.kind]
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "kind": self.kind,
@@ -124,7 +128,23 @@ class Attention:
         return "\n".join(lines) + "\n"
 
 
-KINDS = ("certificate", "job", "node", "reading", "waf", "backup", "logs", "forwarding")
+#
+# Every kind, and the page its row goes to - one list, so a kind cannot be
+# raised that the dashboard has no word for (26-10-12: the template held its
+# own copy, and a new kind would have failed the page).
+#
+PAGES = {
+    "certificate": "Certificates",
+    "job": "Events",
+    "node": "Dashboard",
+    "reading": "Dashboard",
+    "service": "Proxies",
+    "waf": "WAF logs",
+    "backup": "Node backups",
+    "logs": "Traffic logs",
+    "forwarding": "Logs & metrics",
+}
+KINDS = tuple(PAGES)
 
 #
 # Enough for a monitor or two and their networks; a list longer than this is
@@ -246,6 +266,37 @@ def from_dashboard(clusters: Iterable[Any], *, drift_label: str) -> list[Item]:
                     message=f"{node.label}" + (f" · {node.detail}" if node.detail else ""),
                     since=None,
                     link="/",
+                )
+            )
+    return items
+
+
+def from_services(lamps: Mapping[str, Mapping[str, Any]], *, held_label: str) -> list[Item]:
+    """Objects whose servers are not up, as the *Proxies* lamp says it (26-10-12).
+
+    The lamp's own verdict and nothing else: red where no node reaches any of
+    the object's servers, amber where some are down or down on one node. What
+    the lamp leaves grey - no health check, nothing reported - is not a fault
+    anybody can act on here; a node that is down is its own row. A lamp held
+    amber only by servers drained or in maintenance is a choice and is left to
+    the *Operations* line, as B274 left every other one.
+    """
+
+    items: list[Item] = []
+    for cluster, objects in lamps.items():
+        for name, lamp in sorted(objects.items()):
+            severity = _severity(lamp.tone)
+            if severity is None or lamp.label == held_label:
+                continue
+            items.append(
+                Item(
+                    kind="service",
+                    severity=severity,
+                    cluster=cluster,
+                    subject=name,
+                    message=f"{lamp.label} · {lamp.detail}" if lamp.label else lamp.detail,
+                    since=None,
+                    link=f"/proxies/{cluster}/{name}#servers",
                 )
             )
     return items

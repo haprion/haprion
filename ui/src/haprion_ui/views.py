@@ -10932,6 +10932,37 @@ def _waf_not_working(
     return waf.ineffective_exceptions(rows, stored, reached)
 
 
+def _service_lamps(
+    request: Request, config: Config, clusters: Iterable[Any], status_rows: Sequence[Any]
+) -> dict[str, dict[str, health.ObjectHealth]]:
+    """Each object's *Proxies* lamp, for the clusters whose reading is current.
+
+    The same call the listing makes, on the same objects cache and status
+    reading. A cluster read too long ago is its own row already, and a lamp
+    from that reading would be a guess about now.
+    """
+
+    current = [
+        cluster.cluster
+        for cluster in clusters
+        if getattr(cluster, "configured", True) and not cluster.stale
+    ]
+    if not current:
+        return {}
+    _, object_rows = read_source(request, config, OBJECTS_SOURCE)
+    rows = {reading.cluster: reading for reading in object_rows}
+    lamps: dict[str, dict[str, health.ObjectHealth]] = {}
+    for cluster in current:
+        stored = objects.cluster_object_views(rows.get(cluster))
+        lamps[cluster] = health.object_healths(
+            status_rows,
+            cluster=cluster,
+            owners=health.backend_owners(stored),
+            objects={obj.name: (obj.health_checked, obj.sourced) for obj in stored},
+        )
+    return lamps
+
+
 def _attention(request: Request, config: Config) -> attention.Attention:
     """What needs doing, worked out from the pages' own builders (B274)."""
 
@@ -10966,6 +10997,10 @@ def _attention(request: Request, config: Config) -> attention.Attention:
         )
     items += attention.from_log_forwarding(status_rows, now=now)
     items += attention.from_dashboard(board.clusters, drift_label=dashboard.VERSION_DRIFT)
+    items += attention.from_services(
+        _service_lamps(request, config, board.clusters, status_rows),
+        held_label=health.HELD_LABEL,
+    )
     items += attention.from_certificates(certificate_view.registry, certificate_view.clusters)
     if features.is_on(features.NODE_BACKUPS):
         backup_clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)

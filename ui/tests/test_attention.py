@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion_ui import attention, auth
+from haprion_ui import attention, auth, health
 from haprion_ui.db import StatusAccess
 from tests.test_job_page import job
 from tests.test_login import LoginTestCase, configuration
@@ -309,20 +309,100 @@ class AQueueThatIsNotEmptied(unittest.TestCase):
 
 
 class EveryKindHasALabel(unittest.TestCase):
-    def test_the_dashboard_names_where_each_kind_goes(self) -> None:
+    def test_every_kind_names_the_page_its_row_goes_to(self) -> None:
         #
-        # The box's link label is a lookup by kind in the template; a kind
-        # missing there renders an empty link rather than an error (26-10-12).
+        # One list since 26-10-12: the template read its own copy, and a kind
+        # missing there would have failed the dashboard.
         #
-        import re
-        from pathlib import Path
+        self.assertEqual(set(attention.PAGES), set(attention.KINDS))
+        self.assertTrue(all(attention.PAGES.values()))
+        for kind in attention.KINDS:
+            item = attention.Item(kind, "warning", "alpha", "x", "y", None, "/")
+            self.assertEqual(item.page, attention.PAGES[kind])
 
-        template = (Path(attention.__file__).parent / "templates" / "index.html").read_text()
-        found = re.search(r"\{\{ \{(.*?)\}\[item\.kind\] \}\}", template)
-        if found is None:
-            self.fail("the label lookup is no longer where the test reads it")
-        labelled = set(re.findall(r"'([a-z]+)': '", found.group(1)))
-        self.assertEqual(labelled, set(attention.KINDS))
+
+class AServiceThatIsNotServed(unittest.TestCase):
+    """An object's *Proxies* lamp, lifted to the list (26-10-12)."""
+
+    def lamp(self, tone: str, label: str, detail: str) -> Any:
+        return health.ObjectHealth(tone, label, detail, 0, 2)
+
+    def test_red_and_amber_are_listed_and_lead_to_the_servers(self) -> None:
+        items = attention.from_services(
+            {
+                "alpha": {
+                    "shop": self.lamp("critical", "0/2 up", "No servers reachable"),
+                    "api": self.lamp("warning", "1/2 up", "1 of 2 servers not up everywhere"),
+                    "web": self.lamp("healthy", "2/2 up", "Every server is up"),
+                }
+            },
+            held_label=health.HELD_LABEL,
+        )
+
+        self.assertEqual(
+            [(item.kind, item.severity, item.subject, item.message, item.link) for item in items],
+            [
+                (
+                    "service",
+                    "warning",
+                    "api",
+                    "1/2 up · 1 of 2 servers not up everywhere",
+                    "/proxies/alpha/api#servers",
+                ),
+                (
+                    "service",
+                    "critical",
+                    "shop",
+                    "0/2 up · No servers reachable",
+                    "/proxies/alpha/shop#servers",
+                ),
+            ],
+        )
+
+    def test_a_choice_and_what_nobody_checks_are_not_listed(self) -> None:
+        items = attention.from_services(
+            {
+                "alpha": {
+                    "held": self.lamp(
+                        "warning", health.HELD_LABEL, "Every server is drained or in maintenance"
+                    ),
+                    "unchecked": self.lamp("unknown", "", "This object defines no health check"),
+                }
+            },
+            held_label=health.HELD_LABEL,
+        )
+
+        self.assertEqual(items, [])
+
+    def test_the_lamp_and_the_list_agree_on_a_reading(self) -> None:
+        reading = SimpleNamespace(
+            cluster="alpha",
+            observed_at=NOW,
+            result={
+                "nodes": [
+                    {
+                        "name": "node-a",
+                        "status": {
+                            "servers": [
+                                {"backend": "shop", "server": "s1", "status": "DOWN"},
+                                {"backend": "shop", "server": "s2", "status": "DOWN"},
+                                {"backend": "web", "server": "s1", "status": "UP"},
+                            ]
+                        },
+                    }
+                ]
+            },
+        )
+        lamps = health.object_healths(
+            [reading],
+            cluster="alpha",
+            objects={"shop": (True, False), "web": (True, False)},
+            owners={"shop": "shop", "web": "web"},
+        )
+
+        items = attention.from_services({"alpha": lamps}, held_label=health.HELD_LABEL)
+
+        self.assertEqual([(item.subject, item.severity) for item in items], [("shop", "critical")])
 
 
 class TheTwoForms(unittest.TestCase):

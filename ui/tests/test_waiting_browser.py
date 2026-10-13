@@ -36,7 +36,9 @@ def dashboard(drawn: int, *, busy: bool) -> str:
     )
 
 
-class TheSpinnerWaitsForTheReading(unittest.TestCase):
+class WaitingPage(unittest.TestCase):
+    """The dashboard in Chromium on a virtual clock; the cases are below."""
+
     playwright: ClassVar[Any]
     browser: ClassVar[Any]
 
@@ -89,6 +91,8 @@ class TheSpinnerWaitsForTheReading(unittest.TestCase):
     def drawn(self, tab: Any) -> str:
         return str(tab.locator("#drawn").text_content())
 
+
+class TheSpinnerWaitsForTheReading(WaitingPage):
     def test_a_finished_job_keeps_its_spinner_until_its_cluster_is_read_through(self) -> None:
         tab = self.open(
             [True, False],
@@ -139,6 +143,51 @@ class TheSpinnerWaitsForTheReading(unittest.TestCase):
         tab.wait_for_timeout(300)
 
         self.assertEqual((self.served["asked"], self.served["pages"]), (1, 1))
+
+
+class AHiddenTabComesBackCurrent(WaitingPage):
+    """Review 26-10-13, U1: hidden time used up the asks, and nothing restarted them."""
+
+    STILL_BUSY: ClassVar[list[dict[str, Any]]] = [{"busy": {"alpha": "deploy"}, "catching_up": []}]
+
+    def hide(self, tab: Any, hidden: bool) -> None:
+        tab.evaluate(
+            "hidden => {"
+            "  Object.defineProperty(document, 'hidden', {configurable: true, get: () => hidden});"
+            "  document.dispatchEvent(new Event('visibilitychange'));"
+            "}",
+            hidden,
+        )
+
+    def test_a_tab_hidden_for_five_minutes_asks_as_soon_as_it_is_seen(self) -> None:
+        tab = self.open([True], self.STILL_BUSY)
+        self.hide(tab, True)
+
+        tab.clock.run_for(310_000)
+        tab.wait_for_timeout(300)
+        self.assertEqual(self.served["asked"], 0, "a hidden tab asked")
+
+        with tab.expect_response(f"{ORIGIN}/clusters/busy"):
+            self.hide(tab, False)
+            tab.clock.run_for(10)
+        self.assertEqual(self.served["asked"], 1)
+
+        self.tick(tab)
+        self.assertEqual(self.served["asked"], 2, "the loop did not go on")
+
+    def test_a_job_that_outlasts_the_asks_is_asked_about_more_slowly(self) -> None:
+        tab = self.open([True], self.STILL_BUSY)
+        for _ in range(75):
+            self.tick(tab)
+        self.assertEqual(self.served["asked"], 75)
+
+        tab.clock.run_for(TICK * 2)
+        tab.wait_for_timeout(300)
+        self.assertEqual(self.served["asked"], 75, "not slower after the limit")
+
+        with tab.expect_response(f"{ORIGIN}/clusters/busy"):
+            tab.clock.run_for(30_000)
+        self.assertEqual(self.served["asked"], 76, "stopped at the limit")
 
 
 if __name__ == "__main__":

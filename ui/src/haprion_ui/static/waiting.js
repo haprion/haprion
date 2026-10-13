@@ -16,12 +16,14 @@
   const INTERVAL = 4000;
 
   //
-  // Bounded, because work that never finishes must not turn into a page that
-  // asks forever. Roughly five minutes, which covers a deploy; after that
-  // somebody still watching can reload, and a job that has not finished by then
-  // has a problem the jobs page describes better than this one.
+  // Roughly five minutes of asking at the interval, which covers a deploy.
+  // After that the page asks at the slower rate rather than stopping: a job
+  // still running is still worth seeing finish, and a page that stopped
+  // quietly looked current while it was not (review 26-10-13, U1). Only asks
+  // that were made count - a hidden tab asks nothing.
   //
   const LIMIT = 75;
+  const SLOW = 30000;
 
   const ROWS = "/proxies/rows";
   const BUSY = "/clusters/busy";
@@ -125,18 +127,28 @@
   };
 
   let asked = 0;
+  let timer = null;
+  let asking = false;
+
+  //
+  // One timer at a time, whoever asks for the next tick: the loop itself, the
+  // page arriving, or the tab coming back.
+  //
+  const later = (ms) => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(tick, ms);
+  };
 
   const tick = () => {
-    if (!pending() || asked >= LIMIT) return;
+    timer = null;
+    if (asking || !pending()) return;
+    //
+    // A hidden tab is nobody watching. Nothing is asked and nothing counted;
+    // the tab coming back asks at once (below).
+    //
+    if (document.hidden) return;
     asked += 1;
-    //
-    // A hidden tab is nobody watching. It is asked again when it comes back,
-    // rather than kept up to date for a reader who is not there.
-    //
-    if (document.hidden) {
-      window.setTimeout(tick, INTERVAL);
-      return;
-    }
+    asking = true;
     fetch(rows() ? ROWS + pages() : BUSY, {
       credentials: "same-origin",
       headers: { Accept: "application/json" },
@@ -182,9 +194,14 @@
         // tries again.
       })
       .finally(() => {
-        window.setTimeout(tick, INTERVAL);
+        asking = false;
+        later(asked >= LIMIT ? SLOW : INTERVAL);
       });
   };
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && pending()) later(0);
+  });
 
   //
   // A page drawn while a cluster was catching up - the answer to a job that
@@ -198,7 +215,7 @@
       .then((payload) => {
         const catching = payload && payload.catching_up ? payload.catching_up : [];
         watch(catching.length > 0);
-        if (catching.length > 0) window.setTimeout(tick, INTERVAL);
+        if (catching.length > 0) later(INTERVAL);
       })
       .catch(() => {
         // Nothing learnt is nothing to wait for; the page stays as drawn.
@@ -206,7 +223,7 @@
   };
 
   window.addEventListener("DOMContentLoaded", () => {
-    if (drawnPending()) window.setTimeout(tick, INTERVAL);
+    if (drawnPending()) later(INTERVAL);
     else if (!rows()) settle();
   });
 })();

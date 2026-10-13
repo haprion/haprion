@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "export",
+  "cluster": null,
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "directory": "/home/operator/haprion-export",
+    "clusters": ["alpha", "beta"],
+    "files": [
+      "accounts.yaml",
+      "clusters/alpha/backup-schedule.yaml",
+      "clusters/alpha/cluster-settings.yaml",
+      "clusters/alpha/network.yaml",
+      "clusters/alpha/objects/shop.yaml",
+      "clusters/beta/cluster-settings.yaml",
+      "clusters/beta/objects/api.yaml",
+      "profiles.yaml",
+      "settings.yaml"
+    ],
+    "skipped": [
+      {"path": "clusters/beta/network.yaml", "reason": "derived from the cluster file; nothing to apply"},
+      {"path": "clusters/beta/backup-schedule.yaml", "reason": "no schedule has been set"}
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

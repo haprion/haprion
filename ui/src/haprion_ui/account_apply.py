@@ -174,6 +174,26 @@ def stored_accounts(connection: Any) -> list[Stored]:
         return [Stored(*row) for row in cursor.fetchall()]
 
 
+def document(connection: Any) -> dict[str, Any]:
+    """The stored accounts as the file `read_file` takes: no passwords, which are never read back.
+
+    A provider's account carries no `break_glass`, which the file may not set
+    for it; applying this to the installation it came from changes nothing.
+    """
+
+    accounts: list[dict[str, Any]] = []
+    for row in stored_accounts(connection):
+        entry: dict[str, Any] = {
+            "username": row.username,
+            "role": row.role,
+            "disabled": row.disabled,
+        }
+        if row.source == "local":
+            entry["break_glass"] = row.break_glass
+        accounts.append(entry)
+    return {"accounts": accounts}
+
+
 def plan(wanted: Sequence[Wanted], current: Sequence[Stored], *, prune: bool) -> Plan:
     by_name = {account.username.lower(): account for account in current}
     created: list[Wanted] = []

@@ -496,6 +496,32 @@ def check_profiles_apply_semantics(document: dict[str, object], path: Path) -> N
         raise AssertionError(f"{path}: one job per change, and none under --check")
 
 
+def check_export_semantics(document: dict[str, object], path: Path) -> None:
+    """Each path once, written or skipped; every cluster path below a cluster exported."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done export says what it wrote")
+        return
+    assert isinstance(result, dict)
+    files = list(result["files"])
+    skipped = [entry["path"] for entry in result["skipped"]]
+    if len(set(files + skipped)) != len(files) + len(skipped):
+        raise AssertionError(f"{path}: a path is written or skipped, once")
+    for name in ("accounts.yaml", "settings.yaml", "profiles.yaml"):
+        if name not in files:
+            raise AssertionError(f"{path}: an export always holds {name}")
+    clusters = set(result["clusters"])
+    for listed in files + skipped:
+        parts = listed.split("/")
+        if parts[0] == "clusters" and (len(parts) < 3 or parts[1] not in clusters):
+            raise AssertionError(f"{path}: {listed} is below no cluster exported")
+    for cluster in clusters:
+        if f"clusters/{cluster}/cluster-settings.yaml" not in files:
+            raise AssertionError(f"{path}: every cluster exported has its settings")
+
+
 def check_history_reset_semantics(document: dict[str, object], path: Path) -> None:
     """A done reset published version 1; a partial is the one that did not."""
 
@@ -1177,6 +1203,7 @@ SEMANTIC_CHECKS = {
     "user_apply": check_user_apply_semantics,
     "settings_apply": check_settings_apply_semantics,
     "profiles_apply": check_profiles_apply_semantics,
+    "export": check_export_semantics,
     "reset_history": check_history_reset_semantics,
     "readings": check_readings_semantics,
     "deploy": check_reconcile_semantics,
@@ -1239,6 +1266,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         first["exit_code"] = 0
     elif operation in ("user_apply", "settings_apply", "profiles_apply"):
         result["changed"] = not result["changed"]
+    elif operation == "export":
+        result["skipped"].append({"path": result["files"][0], "reason": "written twice"})
     elif operation == "reset_history":
         result["published"] = not result["published"]
     elif operation in ("network_apply", "cluster_settings_apply"):

@@ -57,6 +57,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [How often status is refreshed](#how-often-status-is-refreshed)
   - [The worker](#the-worker)
 - [Automation from the terminal](#automation-from-the-terminal)
+  - [Automating with Ansible](#automating-with-ansible)
 - [Maintenance](#maintenance)
   - [Keeping HAProxy current](#keeping-haproxy-current)
   - [Releasing a change](#releasing-a-change)
@@ -2892,7 +2893,7 @@ What they share:
   `haprion-cluster-settings apply` publish a new version; `haprion-deploy` rolls it out, as
   *Publish & deploy* does in two steps.
 - **With sudo, on the manager.** `haprion-user`, `haprion-settings` and `haprion-profiles` write
-  the interface's database as root; the others hand their request to a root helper, and run as
+  the interface's database as root, and `haprion-export` reads it; the others hand their request to a root helper, and run as
   root that helper runs directly and records the person sudo names.
 - **Secrets from a file only its owner may read, or from standard input**: never as an argument.
   A file that carries a password, a client secret or credentials is refused unless its mode is
@@ -2902,54 +2903,197 @@ What they share:
 What is not a setting has no command: a person's own password, sessions, drafts, previews and
 downloads of key material.
 
-A configuration tool runs these as commands and reads `changed` from the answer. With Ansible, for
-example:
+`haprion-export` writes what is set now as the files these commands take, as a place to start;
+[Automating with Ansible](#automating-with-ansible) shows the whole of it as a playbook.
 
-```yaml
-- name: Proxy objects
-  ansible.builtin.command:
-    argv: [haprion-objects, apply, -c, alpha, /srv/haprion/objects/alpha, --json]
-  become: true
-  register: objects
-  changed_when: (objects.stdout | from_json).result.changed
+### Automating with Ansible
 
-- name: Roll out what is published
-  ansible.builtin.command:
-    argv: [haprion-deploy, -c, alpha, --json]
-  become: true
-  register: deploy
-  changed_when: >-
-    'updated' in ((deploy.stdout | from_json).result.nodes | map(attribute='outcome'))
+A playbook drives the commands above and reads `changed` from their answers. The interface remains
+the way in for a person; the playbook is how the same installation is described, rebuilt or kept
+from drifting.
 
-- name: Accounts
-  ansible.builtin.command:
-    argv: [haprion-user, apply, /srv/haprion/accounts.yaml, --json]
-  become: true
-  register: accounts
-  changed_when: (accounts.stdout | from_json).result.changed
+**Where it runs.** The commands live on the management host and run as root, so the play targets
+that host with `become: true`. Where sudo asks for the password twice - some PAM stacks do -
+`--ask-become-pass` waits for an answer that never comes; run `ansible-playbook` itself as root on
+the manager (`sudo ansible-playbook …`) and drop `become`.
 
-- name: Sign-in, monitoring and features
-  ansible.builtin.command:
-    argv: [haprion-settings, apply, /srv/haprion/settings.yaml, --oidc-secret-stdin, --json]
-    stdin: "{{ oidc_client_secret }}"
-  become: true
-  register: settings
-  changed_when: (settings.stdout | from_json).result.changed
-  no_log: true
+**Start from what is set.** On the manager:
 
-- name: Node backups
-  ansible.builtin.command:
-    argv: [haprion-backup-schedule, -c, alpha, --time, "03:30", --weekly, "Mon,Thu", --json]
-  become: true
-  register: schedule
-  changed_when: (schedule.stdout | from_json).result.changed
+```sh
+sudo haprion-export /home/operator/haprion
 ```
 
-The deploy runs every time rather than only after a publish: a node that is already current is
-left alone, and a deploy that failed on an earlier run is then finished on the next. The settings
-come before the backup schedule: turning *Node backups* on starts the schedules it stopped, and
-`haprion-settings` ends when they have run, so a schedule set after it is the one that stays. The
-files with passwords and credentials are written by the tool with mode `0600`, owned by root.
+The directory must be new or empty; it is written `0700`, its files `0600`, and handed to the
+person who ran sudo. `--cluster <id>` (repeatable) limits it to some clusters, `--json` answers in
+the contract (`haprion-export` in `docs/CONTRACT.md`).
+
+| File | Taken by |
+|---|---|
+| `accounts.yaml` | `haprion-user apply` |
+| `settings.yaml` | `haprion-settings apply` |
+| `profiles.yaml` | `haprion-profiles apply` |
+| `clusters/<id>/objects/<name>.yaml` | `haprion-objects apply -c <id> clusters/<id>/objects` |
+| `clusters/<id>/network.yaml` | `haprion-network apply -c <id>` |
+| `clusters/<id>/cluster-settings.yaml` | `haprion-cluster-settings apply -c <id>` |
+| `clusters/<id>/backup-schedule.yaml` | the flags of `haprion-backup-schedule -c <id>` |
+
+Applied to the installation it came from, every file changes nothing - that is the first thing to
+run. What the export cannot say it lists as `skipped`, with why: an object the generator refuses,
+a network that comes from the cluster definition (there is no document to apply), a backup
+schedule never set or set to a calendar the form cannot express.
+
+**What the export leaves out.** Nothing secret is read back, so none is written: no account
+passwords, no OIDC client secret, no DNS provider credentials (`fields`) or NDES challenge. Applied
+where they came from, the stored ones are kept. For a new installation, add them - from Ansible
+Vault, never in the files you keep in version control:
+
+- an account's `password` in `accounts.yaml`, which then must be mode `0600`;
+- the client secret on standard input with `--oidc-secret-stdin`, and `interface_url` in the `oidc`
+  section to turn sign-in on;
+- a DNS profile's `fields` and an NDES profile's `challenge` in `profiles.yaml`, mode `0600`.
+
+**The order.** Some steps depend on others:
+
+1. Profiles, before a certificate that is issued through one.
+2. Accounts, before the interface settings: sign-in through a provider is turned on only with an
+   active break-glass admin. With `--prune`, an account no entry names is removed - never one the
+   provider created, and never the last active admin.
+3. Interface settings, before the backup schedules: turning *Node backups* on starts the schedules
+   it stopped, and `haprion-settings` ends when they have run, so a schedule set after it stays.
+4. Per cluster: the network before the objects - an object on a VIP the cluster does not have is
+   refused - then *Logs & metrics*, then the deploy.
+5. The deploy, on every run. A node that is current is left alone, and a deploy that failed on an
+   earlier run is finished on the next.
+
+**Changed and failed.** Every command answers one envelope with `--json`. The exit code is 0 for
+done; anything else is a refusal or an error the envelope's `error` names, and the `command` module
+already fails the task on it. `changed` is the answer's own:
+
+```yaml
+changed_when: (result.stdout | from_json).result.changed
+```
+
+`haprion-deploy` reports per node; a node `updated` is the change.
+
+**Check mode.** Ansible skips `command` tasks under `--check`. Give each command its own `--check`
+instead, and let the task run:
+
+```yaml
+argv: "{{ [...] + (['--check'] if ansible_check_mode else []) }}"
+check_mode: false
+```
+
+`haprion-deploy` and `haprion-revert` have no `--check`; leave them out of a check run
+(`when: not ansible_check_mode`).
+
+**A playbook.** The export's layout under `haprion_files` on the manager, one cluster, the client
+secret from Vault. `--oidc-secret-stdin` is for a `settings.yaml` with an `oidc` section; without
+one, leave it and `stdin` out. A cluster whose backup schedule the export skipped has no
+`backup-schedule.yaml`; leave it out of the schedule's loop.
+
+```yaml
+- name: The HAProxy management host
+  hosts: manager
+  become: true
+  gather_facts: false
+  vars:
+    haprion_files: /srv/haprion
+    clusters: [alpha]
+    check: "{{ ['--check'] if ansible_check_mode else [] }}"
+  tasks:
+    - name: DNS and NDES profiles
+      ansible.builtin.command:
+        argv: "{{ ['haprion-profiles', 'apply', haprion_files ~ '/profiles.yaml', '--json'] + check }}"
+      register: profiles
+      changed_when: (profiles.stdout | from_json).result.changed
+      check_mode: false
+
+    - name: Accounts
+      ansible.builtin.command:
+        argv: "{{ ['haprion-user', 'apply', haprion_files ~ '/accounts.yaml', '--json'] + check }}"
+      register: accounts
+      changed_when: (accounts.stdout | from_json).result.changed
+      check_mode: false
+
+    - name: Sign-in, External monitoring and features
+      ansible.builtin.command:
+        argv: >-
+          {{ ['haprion-settings', 'apply', haprion_files ~ '/settings.yaml',
+              '--oidc-secret-stdin', '--json'] + check }}
+        stdin: "{{ vault_oidc_client_secret }}"
+      register: settings
+      changed_when: (settings.stdout | from_json).result.changed
+      check_mode: false
+      no_log: true
+
+    - name: Network
+      ansible.builtin.command:
+        argv: >-
+          {{ ['haprion-network', 'apply', '-c', item,
+              haprion_files ~ '/clusters/' ~ item ~ '/network.yaml', '--json'] + check }}
+      loop: "{{ clusters }}"
+      register: network
+      changed_when: (network.stdout | from_json).result.changed
+      check_mode: false
+
+    - name: Proxy objects
+      ansible.builtin.command:
+        argv: >-
+          {{ ['haprion-objects', 'apply', '-c', item,
+              haprion_files ~ '/clusters/' ~ item ~ '/objects', '--json'] + check }}
+      loop: "{{ clusters }}"
+      register: objects
+      changed_when: (objects.stdout | from_json).result.changed
+      check_mode: false
+
+    - name: Logs & metrics
+      ansible.builtin.command:
+        argv: >-
+          {{ ['haprion-cluster-settings', 'apply', '-c', item,
+              haprion_files ~ '/clusters/' ~ item ~ '/cluster-settings.yaml', '--json'] + check }}
+      loop: "{{ clusters }}"
+      register: cluster_settings
+      changed_when: (cluster_settings.stdout | from_json).result.changed
+      check_mode: false
+
+    - name: Read each backup schedule
+      ansible.builtin.slurp:
+        src: "{{ haprion_files }}/clusters/{{ item }}/backup-schedule.yaml"
+      loop: "{{ clusters }}"
+      register: schedules
+
+    - name: Node backups
+      ansible.builtin.command:
+        argv: >-
+          {{ ['haprion-backup-schedule', '-c', item.item, '--time', s.time,
+              '--retention', s.retention | string]
+             + (['--weekly', s.weekly] if s.weekly is defined else [])
+             + (['--monthly', s.monthly | string] if s.monthly is defined else [])
+             + ([] if s.enabled else ['--disable'])
+             + ['--json'] + check }}
+      vars:
+        s: "{{ item.content | b64decode | from_yaml }}"
+      loop: "{{ schedules.results }}"
+      register: schedule
+      changed_when: (schedule.stdout | from_json).result.changed
+      check_mode: false
+
+    - name: Roll out what is published
+      ansible.builtin.command:
+        argv: [haprion-deploy, -c, "{{ item }}", --json]
+      loop: "{{ clusters }}"
+      register: deploy
+      changed_when: >-
+        'updated' in ((deploy.stdout | from_json).result.nodes | map(attribute='outcome'))
+      when: not ansible_check_mode
+```
+
+**Certificates and nodes** are operations more than settings, and are run as needed rather than
+described: `haprion-cert-issue`, `-import`, `-request` and `-scep` make a certificate,
+`haprion-cert-target add|remove` and `haprion-cert-delete` are safe to repeat (a target already
+there, or a certificate already gone, is no change), and `haprion-node`, `haprion-cluster` and
+`haprion-node host` change what the manager reaches. Run the same way, with `--json` and
+`changed_when` on the answer.
 
 ## Maintenance
 

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "export",
+  "cluster": null,
+  "request_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "result": null,
+  "warnings": [],
+  "error": {"code": "refused", "message": "/home/operator/haprion-export is not empty; export into a new directory"}
+}

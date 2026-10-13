@@ -180,6 +180,31 @@ def read_file(path: Path) -> Wanted:
     return Wanted(status_access=access, features=switches, oidc=provider)
 
 
+def document(connection: Any) -> dict[str, Any]:
+    """What is set now as the file `read_file` takes; the client secret never.
+
+    The provider section only when an issuer is stored: a provider that was
+    never configured has nothing a file could say. Without the secret, the
+    file applies to the installation it came from - the stored secret is kept
+    - and a new installation needs it added (`--oidc-secret-stdin`), and
+    `interface_url` to turn sign-in on.
+    """
+
+    shown: dict[str, Any] = {
+        "status_access": [entry.network for entry in db.status_access(connection)],
+        "features": {
+            name: switch.enabled for name, switch in sorted(db.feature_switches(connection).items())
+        },
+    }
+    provider = db.oidc_provider(connection)
+    if provider is not None and provider.issuer is not None:
+        shown["oidc"] = {
+            **{key: getattr(provider, key) for key in (*OIDC_TEXT, *OIDC_FLAGS)},
+            "enabled": provider.enabled,
+        }
+    return shown
+
+
 # - External monitoring ---------------------------------------------------------
 
 

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-export.schema.json",
+  "title": "haprion-export JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "export" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/export_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/export_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*\\.yaml$" },
+    "export_result": {
+      "type": "object",
+      "required": ["directory", "clusters", "files", "skipped"],
+      "properties": {
+        "directory": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^/" },
+        "clusters": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+        "files": { "type": "array", "items": { "$ref": "#/$defs/path" } },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "reason"],
+            "properties": {
+              "path": { "$ref": "#/$defs/path" },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 4096 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

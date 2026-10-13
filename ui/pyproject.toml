@@ -43,6 +43,7 @@ dependencies = [
 haprion-user = "haprion_ui.admin:_entry"
 haprion-settings = "haprion_ui.settings_tool:_entry"
 haprion-profiles = "haprion_ui.profile_apply:_entry"
+haprion-export = "haprion_ui.export_tool:_entry"
 haprion-poller = "haprion_ui.poller:_entry"
 haprion-worker = "haprion_ui.worker:_entry"
 

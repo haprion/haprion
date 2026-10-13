@@ -145,6 +145,7 @@ TOOLS = (
 COMMANDS = (
     "backup",
     "drain",
+    "export",
     "profiles",
     "retention",
     "rollback",

@@ -205,6 +205,22 @@ def read_file(path: Path) -> dict[str, list[Wanted]]:
     return found
 
 
+def document(connection: Any) -> dict[str, Any]:
+    """The stored profiles as the file `read_file` takes, without a credential.
+
+    The values are sealed and never read back; applied to the installation it
+    came from, every profile is as stored. A new installation needs the
+    `fields` (DNS) or the `challenge` (NDES) added.
+    """
+
+    return {
+        DNS.section: [
+            {"id": row.id, "provider": row.provider_id} for row in DNS.listed(connection)
+        ],
+        NDES.section: [{"id": row.id, "endpoint": row.endpoint} for row in NDES.listed(connection)],
+    }
+
+
 def _seal(
     wanted: Wanted, public_key: DnsProfilePublicKey, *, revision: int, taken: Sequence[str]
 ) -> dns_profile_form.Sealed:

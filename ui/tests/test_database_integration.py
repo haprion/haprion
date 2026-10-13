@@ -7289,3 +7289,194 @@ ndes_profiles:
         self.assertIn("keeps its provider", moved[1]["error"]["message"])
         self.assertIn("0600", loose[1]["error"]["message"])
         self.assertEqual(self.stored(), [("dns", "cf-main", 1), ("ndes", "corp-ca", 1)])
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheExportAppliesUnchanged(unittest.TestCase):
+    """`haprion-export` (Fas 23, B293): its files, applied where they came from, change nothing.
+
+    The interface's three files against the real schema, through each apply
+    command's `main`; the clusters' files are held against their readers in
+    `test_export_tool`.
+    """
+
+    def connect(self) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}")
+
+    def setUp(self) -> None:
+        from dataclasses import replace
+
+        from haprion.dns_profile_keys import write_key_pair
+
+        from haprion_ui import (
+            admin,
+            export_tool,
+            profile_apply,
+            settings_apply,
+            settings_tool,
+        )
+        from haprion_ui import config as ui_config
+        from tests.test_login import configuration
+
+        self.admin, self.export_tool = admin, export_tool
+        self.settings_tool, self.profile_apply = settings_tool, profile_apply
+        self.directory = Path(tempfile.mkdtemp(prefix="export-"))
+        self.addCleanup(shutil.rmtree, self.directory, True)
+        keys = self.directory / "keys"
+        keys.mkdir()
+        write_key_pair(keys / "k.key", keys / "k.pub")
+        self.reset()
+        environment = admin.Environment(database="test", role="test")
+        patches: list[Any] = [
+            mock.patch.object(module, name, **how)
+            for module in (admin, settings_tool, profile_apply, export_tool)
+            for name, how in (
+                ("load_environment", {"return_value": environment}),
+                ("connect", {"side_effect": lambda _e: self.connect()}),
+            )
+        ]
+        patches += [
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(
+                ui_config,
+                "load",
+                return_value=replace(
+                    configuration(),
+                    clusters=("alpha",),
+                    oidc_public_key=keys / "k.pub",
+                    dns_profiles_public_key=keys / "k.pub",
+                ),
+            ),
+            mock.patch.object(settings_apply, "verify_with_helper", return_value=(True, [], "")),
+            mock.patch.object(db, "cluster_list", return_value=None),
+            mock.patch.dict(os.environ, {"SUDO_USER": "operator"}),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def tearDown(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("update oidc_provider set enabled = false")
+            cursor.execute(
+                "update oidc_provider set issuer = null, client_id = null, "
+                "client_secret_sealed = null, key_id = null, admin_group = null, "
+                "reader_group = null, verified_revision = null"
+            )
+            cursor.execute("update feature_switch set enabled = true, remembered = '{}'")
+            cursor.execute("truncate status_access, app_user cascade")
+            cursor.execute("delete from job where operation like '%%_profile_apply'")
+            cursor.execute("truncate dns_provider_profile, ndes_provider_profile")
+            cursor.execute("delete from audit_event where detail->>'via' = 'cli'")
+            connection.commit()
+
+    def write(self, name: str, text: str) -> str:
+        path = self.directory / name
+        path.write_text(text)
+        path.chmod(0o600)
+        return str(path)
+
+    def run_main(self, module: Any, *argv: str) -> dict[str, Any]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = module.main(list(argv))
+        answer: dict[str, Any] = json.loads(out.getvalue())
+        self.assertEqual(code, 0, answer)
+        return answer
+
+    def apply_profiles(self, path: str) -> dict[str, Any]:
+        args = self.profile_apply.build_parser().parse_args(["apply", path, "--json"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.profile_apply.command_apply(args, sleep=self.work)
+        answer: dict[str, Any] = json.loads(out.getvalue())
+        self.assertEqual(code, 0, answer)
+        return answer
+
+    def work(self, _seconds: float) -> None:
+        """The worker, as `TheProfilesFromAFile` plays it: every pending job done."""
+
+        with self.connect() as connection:
+            connection.execute(
+                "update job set state = 'done', outcome = 'done', exit_code = 0, "
+                "       finished_at = now() where state = 'pending'"
+            )
+            connection.commit()
+
+    @staticmethod
+    def read_engine(argv: Any) -> dict[str, Any]:
+        readings: dict[str, dict[str, Any]] = {
+            "haprion-objects": {"objects": []},
+            "haprion-network": {"origin": "cluster_file", "document": None},
+            "haprion-cluster-settings": {
+                "log_targets": [],
+                "not_logged_from": [],
+                "metrics": None,
+                "peers": None,
+            },
+            "haprion-list-backups": {"schedule": None},
+        }
+        return readings[argv[0]]
+
+    def test_accounts_settings_and_profiles_come_back_as_they_were_set(self) -> None:
+        self.run_main(
+            self.admin,
+            "apply",
+            self.write(
+                "accounts-in.yaml",
+                "accounts:\n"
+                "  - {username: admin, role: admin, break_glass: true, password: admin password}\n"
+                "  - {username: viewer, role: reader, disabled: true, password: viewer password}\n",
+            ),
+            "--json",
+        )
+        with self.connect() as connection:
+            connection.execute(
+                "insert into app_user (username, role, source) values ('sso-person', 'reader', 'oidc')"
+            )
+            connection.commit()
+        self.run_main(
+            self.settings_tool,
+            "apply",
+            self.write(
+                "settings-in.yaml",
+                TheSettingsFromAFile.PROVIDER
+                + "status_access: [192.0.2.10, 198.51.100.0/24]\n"
+                + "features:\n  advanced_config: false\n",
+            ),
+            "--json",
+        )
+        self.apply_profiles(self.write("profiles-in.yaml", TheProfilesFromAFile.FILE))
+        with self.connect() as connection:
+            sealed = connection.execute("select client_secret_sealed from oidc_provider").fetchone()
+
+        target = self.directory / "export"
+        args = self.export_tool.build_parser().parse_args([str(target), "--json"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.export_tool.command_export(args, read=self.read_engine)
+        self.assertEqual(code, 0, out.getvalue())
+
+        accounts = self.run_main(
+            self.admin, "apply", str(target / "accounts.yaml"), "--prune", "--json"
+        )
+        settings = self.run_main(
+            self.settings_tool, "apply", str(target / "settings.yaml"), "--json"
+        )
+        profiles = self.apply_profiles(str(target / "profiles.yaml"))
+
+        self.assertFalse(accounts["result"]["changed"], accounts)
+        self.assertFalse(settings["result"]["changed"], settings)
+        self.assertFalse(profiles["result"]["changed"], profiles)
+        with self.connect() as connection:
+            self.assertEqual(
+                connection.execute("select client_secret_sealed from oidc_provider").fetchone(),
+                sealed,
+            )
+        written = (target / "settings.yaml").read_text() + (target / "profiles.yaml").read_text()
+        for secret in ("the client secret", "the token", "the challenge"):
+            self.assertNotIn(secret, written)
+        self.assertNotIn("password", (target / "accounts.yaml").read_text())

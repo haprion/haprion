@@ -3331,6 +3331,12 @@ better done elsewhere. The details are in the section linked.
 - **Certificate renewal is the CA client's**: certbot and the NDES run renew on their
   own timers, and the manager publishes what they renew
   ([Certificates](#certificates)).
+- **The database dump and its restore check are not watched by the interface.** Backing up
+  the management host is the backup; the dump is for putting one table back. Whoever relies
+  on it lets their own monitoring follow `haprion-backup.service` and
+  `haprion-restore-check.service` ([Backups, and proving they restore](#backups-and-proving-they-restore)).
+  The partitions the nightly retention creates need no watching of their own: the traffic
+  log's run out first, after seven days, and its import then fails in *Needs attention*.
 
 
 ## Environment reference

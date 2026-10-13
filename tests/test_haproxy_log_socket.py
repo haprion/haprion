@@ -17,6 +17,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -30,6 +31,17 @@ UBUNTU_LINE = "$AddUnixListenSocket /var/lib/haproxy/dev/log"
 # and a node answered 25 000 requests a second (26-10-12).
 #
 RESTART_LINES = int(0.065 * 25_000)
+#
+# Moves the socket it is given to fd 3 and execs the receiver in its own
+# process, so LISTEN_PID is the PID the receiver runs as.
+#
+HANDOVER = (
+    "import os, sys\n"
+    "os.dup2(int(sys.argv[1]), 3)\n"
+    "os.environ['LISTEN_FDS'] = '1'\n"
+    "os.environ['LISTEN_PID'] = str(os.getpid())\n"
+    "os.execvp(sys.argv[2], sys.argv[2:])\n"
+)
 
 
 def unit_text() -> str:
@@ -109,16 +121,12 @@ class RsyslogKeepsAHandedSocket(unittest.TestCase):
         else:
             #
             # systemd's handover: the socket as fd 3, LISTEN_FDS=1, and
-            # LISTEN_PID the receiver's own - the shell's, which exec keeps.
+            # LISTEN_PID the receiver's own - the launcher's, which exec keeps.
+            # Python rather than /bin/sh: dash's `3<&N` takes one digit, and
+            # in a full suite the socket was fd 29 (review 26-10-13, T1).
             #
             self.process = subprocess.Popen(
-                [
-                    "/bin/sh",
-                    "-c",
-                    'exec 3<&"$0"; LISTEN_FDS=1 LISTEN_PID=$$ exec "$@"',
-                    str(held.fileno()),
-                    *command,
-                ],
+                [sys.executable, "-c", HANDOVER, str(held.fileno()), *command],
                 pass_fds=(held.fileno(),),
             )
         deadline = time.monotonic() + 10
@@ -163,8 +171,17 @@ class RsyslogKeepsAHandedSocket(unittest.TestCase):
         return count
 
     def test_lines_written_while_rsyslog_restarts_wait_in_the_held_socket(self) -> None:
+        #
+        # Descriptors held open first, as a full suite in one process has
+        # them: the socket then gets a two-digit number, which the handover
+        # once could not pass on (review 26-10-13, T1).
+        #
+        for _ in range(12):
+            spare = Path("/dev/null").open("rb")  # noqa: SIM115 - closed by cleanup
+            self.addCleanup(spare.close)
         held = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.addCleanup(held.close)
+        self.assertGreater(held.fileno(), 9)
         held.bind(str(self.path))
         inode = self.path.stat().st_ino
         self.start(held)

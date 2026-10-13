@@ -97,7 +97,8 @@ setup_check_server_name() {
 setup_check_ports() {
     local port holder
     for port in 80 443; do
-        holder="$(ss -Hltnp "sport = :${port}" 2>/dev/null | grep -o 'users:(("[^"]*"' | head -n 1 | cut -d'"' -f2)"
+        # Nothing listening is the usual answer, and grep then finds nothing.
+        holder="$(ss -Hltnp "sport = :${port}" 2>/dev/null | grep -o 'users:(("[^"]*"' | head -n 1 | cut -d'"' -f2 || true)"
         [[ -z "$holder" || "$holder" == nginx ]] && continue
         setup_problem "port ${port} is already in use by ${holder}" \
             "the web interface is served by nginx on ports 80 and 443" \

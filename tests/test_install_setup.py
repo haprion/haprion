@@ -30,6 +30,8 @@ INSTALL = Path(__file__).resolve().parents[1] / "install"
 LIB = INSTALL / "lib.sh"
 SETUP = INSTALL / "setup.sh"
 DRIVER = INSTALL / "haprion-setup"
+# What haprion-setup does before its checks; "$1" is setup.sh.
+STRICT = f'set -Eeuo pipefail; source "{LIB}"; source "$1"; '
 
 
 def bash(
@@ -348,10 +350,55 @@ class TheSetupReport(unittest.TestCase):
 
 
 class TheChecksBeforeAnythingChanges(unittest.TestCase):
+    """Each check run the way haprion-setup runs it: strict mode, after lib.sh.
+
+    Run without it at first, the port check passed here and stopped the setup on
+    the first real machine (26-10-13): nothing listening made grep fail under
+    pipefail.
+    """
+
+    def ports(self, listening: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            ss = Path(raw) / "ss"
+            ss.write_text(f"#!/bin/sh\nprintf '%s' '{listening}'\n")
+            ss.chmod(0o755)
+            return bash(
+                STRICT + 'PATH="$2:$PATH"; setup_check_ports; setup_report_problems',
+                str(SETUP),
+                raw,
+            )
+
+    def test_free_ports_pass(self) -> None:
+        done = self.ports("")
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+
+    def test_nginx_on_the_ports_passes(self) -> None:
+        done = self.ports('LISTEN 0 511 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=7,fd=6))\n')
+        self.assertEqual((done.returncode, done.stdout), (0, ""))
+
+    def test_another_listener_is_named(self) -> None:
+        done = self.ports('LISTEN 0 511 0.0.0.0:443 0.0.0.0:* users:(("apache2",pid=7,fd=4))\n')
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("port 80 is already in use by apache2", done.stdout)
+
+    def test_an_unsynchronised_clock_is_a_note_not_a_problem(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            stub = Path(raw) / "timedatectl"
+            stub.write_text("#!/bin/sh\necho no\n")
+            stub.chmod(0o755)
+            done = bash(
+                STRICT + 'PATH="$2:$PATH"; setup_check_clock; setup_report_problems; '
+                'printf "%s\\n" "${SETUP_NOTES[@]}"',
+                str(SETUP),
+                raw,
+            )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("the clock is not synchronised", done.stdout)
+
     def test_every_missing_command_is_named_with_its_package(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             done = bash(
-                'PATH="$2"; source "$1"; setup_check_commands; setup_report_problems',
+                STRICT + 'PATH="$2"; setup_check_commands; setup_report_problems',
                 str(SETUP),
                 raw,
             )
@@ -366,7 +413,7 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
             release.write("ID=fedora\nVERSION_CODENAME=\n")
             release.flush()
             done = bash(
-                'source "$1"; setup_check_distribution "$2"; setup_report_problems',
+                STRICT + 'setup_check_distribution "$2"; setup_report_problems',
                 str(SETUP),
                 release.name,
             )
@@ -382,7 +429,7 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
                 release.write(content)
                 release.flush()
                 done = bash(
-                    'source "$1"; setup_check_distribution "$2"; setup_report_problems',
+                    STRICT + 'setup_check_distribution "$2"; setup_report_problems',
                     str(SETUP),
                     release.name,
                 )
@@ -390,7 +437,7 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
 
     def test_a_name_that_does_not_resolve_is_named(self) -> None:
         done = bash(
-            'source "$1"; setup_check_server_name mgr.invalid; setup_report_problems', str(SETUP)
+            STRICT + "setup_check_server_name mgr.invalid; setup_report_problems", str(SETUP)
         )
         self.assertIn("the name mgr.invalid does not resolve", done.stdout)
         self.assertIn("SERVER_NAME=<name>", done.stdout)

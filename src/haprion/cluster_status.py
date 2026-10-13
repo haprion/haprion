@@ -160,6 +160,12 @@ class NodeStatus:
     ipvs_current: bool | None = True
     ipvs_included: bool | None = None
     #
+    # Whether rsyslog reads the log forwarding this release carries (review
+    # 26-10-13, A1). True on a node that does not report it - see
+    # `forwarding_current`.
+    #
+    forwarding_current: bool | None = True
+    #
     # The other nodes this one shares its stick tables with, by name, and
     # whether each is connected (B270). None when the node did not say - an
     # older status script, or a runtime socket it could not read.
@@ -200,6 +206,7 @@ class ClusterStatus:
                     release_hash=node.release_hash,
                     addresses_current=node.addresses_current,
                     ipvs_current=node.ipvs_current,
+                    forwarding_current=node.forwarding_current,
                     certificates=node.certificates,
                     authorities=node.authorities,
                 )
@@ -433,6 +440,38 @@ def ipvs_included(status: Mapping[str, Any]) -> bool | None:
     return included if isinstance(included, bool) else None
 
 
+def forwarding_current(status: Mapping[str, Any]) -> bool | None:
+    """Does rsyslog on the node read the log forwarding its release carries (A1)?
+
+    The deploy installs the file after the reload and restores the previous
+    one when rsyslog refuses it, which leaves the new release hash with the
+    old receivers. Unlike the address list, a release without the file asks
+    for none: the deploy removes it, so an installed file is then behind. A
+    node whose status predates the measurement says nothing and is not held to
+    it, as with the IPVS file - its bundle reports nothing a deploy could
+    change.
+    """
+
+    data = status.get("forward_file")
+    if not isinstance(data, Mapping):
+        return True
+    published = data.get("published")
+    installed = data.get("installed")
+    if published is False:
+        if installed is False:
+            return True
+        return False if installed is True else None
+    if published is not True:
+        return None
+    if installed is False:
+        return False
+    wanted = _text(data.get("published_sha256"))
+    carried = _text(data.get("installed_sha256"))
+    if wanted is None or carried is None:
+        return None
+    return wanted == carried
+
+
 def _count(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -468,6 +507,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         addresses_included=addresses_included(status),
         ipvs_current=ipvs_current(status),
         ipvs_included=ipvs_included(status),
+        forwarding_current=forwarding_current(status),
         certificates=_certificates(status),
         authorities=_certificates(status, "authorities"),
         servers=_servers(status),

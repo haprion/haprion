@@ -2485,7 +2485,10 @@ Each receiver has a **queue on the node's disk**, `disk_mib` large, and the queu
 or a burst is survived with. While a receiver is away or reads slower than the traffic, rsyslog
 keeps the lines on disk and sends them when it reads again; the queue survives a restart of
 rsyslog or of the node. A deploy that changes the receivers restarts rsyslog, and the lines HAProxy
-writes meanwhile wait in its log socket ([HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline)). About 800 bytes a line, so 1 GiB holds some 1.3 million. What does not fit
+writes meanwhile wait in its log socket ([HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline)).
+If rsyslog refuses the new receivers, the node puts the previous ones back and the deploy fails
+with the configuration already live; the node is then not current, as with a half-way address list
+below, and the next deploy finishes it. About 800 bytes a line, so 1 GiB holds some 1.3 million. What does not fit
 is dropped for that receiver alone and counted - neither the traffic nor the node's own day file
 waits for a full queue. Measured with rsyslog 8.2512 on one core: 25 000 lines a second forwarded
 and written to file at 9 % of the core; 100 000 lines queued while the receiver was away arrived
@@ -3943,8 +3946,9 @@ report the node as up to date and a second deploy would pass over the node that 
 work. `haprion-node-status` therefore reports three measurements about the list - the digest the
 release publishes, the digest the node installed, and whether `keepalived.conf` includes it - and
 both `haprion-status` and `haprion-deploy` call a node current only when every component the
-release owns is where it should be. Re-running the deploy after fixing the cause finishes the half
-that was left; the node script syncs the addresses even on a release it already runs.
+release owns is where it should be - the address list, the IPVS file and the log forwarding. Re-running
+the deploy after fixing the cause finishes the half that was left; the node script syncs them even on a
+release it already runs.
 
 The include is reported and never compared. Putting that line into `keepalived.conf` is a person's
 step, taken one node at a time (below), and a deploy that treated it as a target would try forever

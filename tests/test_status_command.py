@@ -85,9 +85,11 @@ def node_status(
     waf_engine: dict[str, object] | None = None,
     dns_listener: dict[str, object] | None = None,
     ipvs: dict[str, object] | None = None,
+    forward_file: dict[str, object] | None = None,
 ) -> str:
     return json.dumps(
         {
+            **({} if forward_file is None else {"forward_file": forward_file}),
             **({} if waf_engine is None else {"waf_engine": waf_engine}),
             **({} if dns_listener is None else {"dns_listener": dns_listener}),
             **({} if ipvs is None else {"ipvs": ipvs}),
@@ -409,6 +411,36 @@ class HelperReadingTests(HelperFixture):
                     ),
                     "node-b": node_status(
                         "node-b", owner=False, release_hash=TARGET_HASH, ipvs=stale
+                    ),
+                }
+            ),
+        )
+
+        self.assertEqual(code, 0)
+        result = json.loads(out)["result"]
+        self.assertEqual(result["summary"]["release_state"], "behind")
+        self.assertIs(result["nodes"][0]["current"], True)
+        self.assertIs(result["nodes"][1]["current"], False)
+
+    def test_a_node_with_the_release_but_the_old_log_forwarding_is_behind(self) -> None:
+        """Review 26-10-13, A1: rsyslog refused the new forwarding and kept the old."""
+
+        carried = {
+            "published": True,
+            "published_sha256": "a1" * 32,
+            "installed": True,
+            "installed_sha256": "a1" * 32,
+        }
+        kept = dict(carried, installed_sha256="b2" * 32)
+        code, out, _ = self.run_helper(
+            request(),
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a", owner=True, release_hash=TARGET_HASH, forward_file=carried
+                    ),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=TARGET_HASH, forward_file=kept
                     ),
                 }
             ),

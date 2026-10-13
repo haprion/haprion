@@ -594,6 +594,7 @@ def read_ipvs():
 # `suspended` stays 0 while omfwd retries (measured 26-10-12).
 #
 RSYSLOG_FORWARD = Path("/etc/rsyslog.d/haprion/forward.conf")
+PUBLISHED_FORWARD = Path("/etc/haproxy/current/rsyslog/forward.conf")
 RSYSLOG_STATS = Path("/var/log/haprion/rsyslog-stats.json")
 FORWARD_ACTION = re.compile(r'^\s*name="haprion-([a-z][a-z0-9-]{0,23})"\s*$', re.MULTILINE)
 STATS_LINE = re.compile(r"^([A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d\d:\d\d:\d\d \d{4}): (\{.*\})$")
@@ -1038,6 +1039,42 @@ def address_summary(addresses):
     if addresses["included"] is None:
         return "installed, include unknown"
     return "installed and in use"
+
+
+def read_forward_file():
+    """The release's log forwarding against the one rsyslog reads, as two measurements.
+
+    `haprion-pull-deploy` installs the forwarding after the reload and puts the
+    previous file back when rsyslog refuses it, so a node can run the new
+    release hash with the old receivers (review 26-10-13, A1). Unlike the
+    address list, a release without the file is an instruction: the deploy
+    removes the installed one, so absent on both sides is the current state.
+    """
+
+    published, published_digest = address_list(PUBLISHED_FORWARD)
+    installed, installed_digest = address_list(RSYSLOG_FORWARD)
+    return {
+        "published": published,
+        "published_sha256": published_digest,
+        "installed": installed,
+        "installed_sha256": installed_digest,
+    }
+
+
+def forward_file_summary(forward):
+    """The forwarding file in one line, for the person standing at the node."""
+
+    if forward["published"] is False:
+        if forward["installed"] is False:
+            return "none published by this release"
+        return "installed, but this release forwards nowhere" if forward["installed"] else "UNKNOWN"
+    if forward["published_sha256"] is None:
+        return "UNKNOWN"
+    if forward["installed_sha256"] is None:
+        return "published, not installed" if forward["installed"] is False else "UNKNOWN"
+    if forward["published_sha256"] != forward["installed_sha256"]:
+        return "installed file differs from the release"
+    return "installed"
 
 
 def runtime_info():
@@ -1787,6 +1824,7 @@ result = {
     "blocked": read_blocked(),
     "packages": read_packages(),
     "log_forwarding": read_log_forwarding(),
+    "forward_file": read_forward_file(),
 }
 
 if args.json:
@@ -1823,6 +1861,7 @@ else:
             f"  {pool['pool']}  queries={pool['queries']}"
             f"  refused={pool['refused']}  answered={pool['answered']}"
         )
+    print(f"Log forwarding:    {forward_file_summary(result['forward_file'])}")
     ipvs = result["ipvs"]
     print(f"Syslog IPVS:       {ipvs_summary(ipvs)}")
     for service in ipvs["services"] or []:

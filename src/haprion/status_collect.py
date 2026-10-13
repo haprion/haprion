@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from haprion import dnsdist_config
-from haprion.cluster_status import addresses_current, ipvs_current
+from haprion.cluster_status import addresses_current, forwarding_current, ipvs_current
 from haprion.config import DeployIdentity, Node
 from haprion.deploy_plan import NodeObservation, ReleaseTarget, VipState
 from haprion.digits import is_digits
@@ -518,6 +518,7 @@ def _node_result(
                 release_hash=observed if isinstance(observed, str) else None,
                 addresses_current=addresses_current(_mapping(entry["status"])),
                 ipvs_current=ipvs_current(_mapping(entry["status"])),
+                forwarding_current=forwarding_current(_mapping(entry["status"])),
             )
         )
 

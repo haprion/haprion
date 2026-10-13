@@ -37,6 +37,7 @@ def node(
     owner: bool | None = False,
     hash_: str | None = BEHIND,
     addresses: bool | None = True,
+    forwarding: bool | None = True,
 ) -> NodeObservation:
     """One node as the status read saw it.
 
@@ -52,6 +53,7 @@ def node(
         owns_vip=owner,
         release_hash=hash_,
         addresses_current=addresses,
+        forwarding_current=forwarding,
     )
 
 

@@ -424,6 +424,33 @@ class CurrentSkipTests(unittest.TestCase):
         self.assertIs(outcome, Outcome.DONE)
         self.assertEqual(code, 0)
 
+    def test_a_node_whose_rsyslog_kept_the_old_forwarding_is_not_current(self) -> None:
+        """Review 26-10-13, A1: rsyslog refused the new receivers after the reload.
+
+        The node runs the target hash and put the previous forwarding back, so
+        the hash alone passes it over and it forwards to the old receivers until
+        an unrelated release comes along.
+        """
+
+        state = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=TARGET, forwarding=False),
+            node("node-b", owner=False, hash_=TARGET),
+        )
+        repaired = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=TARGET),
+            node("node-b", owner=False, hash_=TARGET),
+        )
+
+        trace, outcome, code = drive(
+            [state, repaired], target=ReleaseTarget(version=8, hash=TARGET)
+        )
+
+        self.assertEqual(trace, ["skip:node-b", "deploy:node-a"])
+        self.assertIs(outcome, Outcome.DONE)
+        self.assertEqual(code, 0)
+
     def test_a_node_that_said_nothing_about_its_addresses_is_not_called_current(self) -> None:
         """Unknown is not the same as right, and it is not the same as wrong.
 

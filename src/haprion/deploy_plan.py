@@ -94,6 +94,10 @@ class NodeObservation:
     # does not report it: its bundle predates the file.
     #
     ipvs_current: bool | None = True
+    #
+    # The same for the log forwarding rsyslog reads (review 26-10-13, A1).
+    #
+    forwarding_current: bool | None = True
     certificates: tuple[tuple[str, str], ...] | None = None
     #
     # The CA files the node carries for its pools (B276), as (id, bundle
@@ -159,10 +163,10 @@ class Target(Protocol):
 class ReleaseTarget:
     """The published configuration release this deploy is for.
 
-    A release activates three things on a node, and they can end up in
+    A release activates four things on a node, and they can end up in
     different states. The node installs and reloads HAProxy first, then the
-    keepalived address list and the IPVS virtual servers (B256); when a later
-    step fails its file is
+    keepalived address list and the IPVS virtual servers (B256), then the log
+    forwarding rsyslog reads (A1); when a later step fails its file is
     restored while the new configuration stays live, so the node reports the
     new release hash and the old addresses. The hash alone would then call that
     node current and skip the very node that needs the repair - and the node
@@ -185,7 +189,7 @@ class ReleaseTarget:
             return None
         if node.release_hash != self.hash:
             return False
-        parts = (node.addresses_current, node.ipvs_current)
+        parts = (node.addresses_current, node.ipvs_current, node.forwarding_current)
         if False in parts:
             return False
         if None in parts:

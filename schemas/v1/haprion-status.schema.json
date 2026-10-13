@@ -421,6 +421,18 @@
           "propertyNames": { "pattern": "^srv:[a-z][a-z0-9_-]{0,39}\\.[0-9a-f]{16}$" },
           "additionalProperties": { "enum": ["drain", "maint"] }
         },
+        "forward_file": {
+          "description": "The log forwarding the release carries (current/rsyslog/forward.conf) against the one rsyslog reads (/etc/rsyslog.d/haprion/forward.conf), each present or not with its sha256; present null when it could not be looked at, sha256 null when present and unreadable (review 26-10-13, A1). A release without the file asks for none, so an installed file is then behind. Absent from nodes installed before it was reported, which are not held to it.",
+          "type": "object",
+          "required": ["published", "published_sha256", "installed", "installed_sha256"],
+          "properties": {
+            "published": { "type": ["boolean", "null"] },
+            "published_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+            "installed": { "type": ["boolean", "null"] },
+            "installed_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+          },
+          "additionalProperties": false
+        },
         "ipvs": {
           "description": "The syslog objects' IPVS virtual servers (B256): the file the release publishes, the one installed as /etc/keepalived/ipvs.conf, each present or not with its sha256, and whether keepalived.conf includes it at its top level - the address list's measurements. ipvsadm says whether the counting tool is installed; services are the kernel's virtual servers and receivers from ipvsadm -Ln --stats --exact, packets and bytes in, null when ipvsadm is missing or failed. A service the installed file names carries its object and pool, and lists every receiver the file gives it as s1, s2, ... in order: UP with its counters while the kernel holds it, DOWN without them once keepalived's check took it out. A service the file does not name has null names and the kernel's receivers. published_servers counts the published file's virtual servers (null when it is absent or unreadable, absent from nodes reporting before 26-10-08): with included false, any is syslog objects forwarded nowhere. Absent from nodes installed before it was reported, which are not held to the file.",
           "type": "object",

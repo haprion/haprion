@@ -12,7 +12,7 @@ import json
 import unittest
 from collections.abc import Iterator
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar, cast
 from unittest import mock
@@ -285,6 +285,25 @@ class UndeterminedEndings(WorkerTestCase):
 
         self.assertEqual(self.finished[0]["state"], "unknown")
 
+    def test_done_with_a_failed_process_is_unknown(self) -> None:
+        # Review 26-10-13, L2: the envelope was believed over the exit code.
+        for exit_code in (70, None):
+            with self.subTest(exit_code=exit_code):
+                job = claimed()
+                self.finished.clear()
+                with mock.patch.object(
+                    execution,
+                    "run",
+                    return_value=completed(stdout=answer(job), exit_code=exit_code),
+                ):
+                    worker.run_one_job(self.connection, job, worker=WORKER)
+
+                (finished,) = self.finished
+                self.assertEqual(finished["state"], "unknown")
+                self.assertEqual(finished["exit_code"], exit_code)
+                self.assertEqual(finished["result"]["error"]["code"], "exit_mismatch")
+                self.assertEqual(finished["result"]["answer"]["outcome"], "done")
+
     def test_an_envelope_for_another_job_is_never_accepted(self) -> None:
         for field, wrong in (
             ("schema_version", 2),
@@ -361,6 +380,41 @@ class ThingsThatNeverRan(WorkerTestCase):
 
         run.assert_not_called()
         self.assertEqual(self.finished[0]["state"], "blocked")
+
+
+class RequestsFromBeforeARestore(WorkerTestCase):
+    """Review 26-10-13, R1: a job from a restored backup is not a new request."""
+
+    def test_a_job_older_than_any_queue_is_not_run(self) -> None:
+        job = replace(
+            claimed(operation="server_state"),
+            created_at=datetime.now(UTC) - timedelta(seconds=worker.MAX_PENDING_SECONDS + 60),
+        )
+        with mock.patch.object(execution, "run") as never:
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        never.assert_not_called()
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "blocked")
+        self.assertEqual(finished["result"]["error"]["code"], "request_expired")
+
+    def test_a_job_recovery_requeued_is_judged_already(self) -> None:
+        job = replace(
+            claimed(),
+            attempts=2,
+            created_at=datetime.now(UTC) - timedelta(seconds=worker.MAX_PENDING_SECONDS + 60),
+        )
+        with mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.assertEqual(self.finished[0]["state"], "done")
+
+    def test_a_job_that_waited_in_an_ordinary_queue_runs(self) -> None:
+        job = replace(claimed(), created_at=datetime.now(UTC) - timedelta(minutes=45))
+        with mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.assertEqual(self.finished[0]["state"], "done")
 
 
 class LosingTheLease(WorkerTestCase):
@@ -693,6 +747,30 @@ class PublishAndDeploy(WorkerTestCase):
         self.assertEqual(
             json.loads(first[1][1])["request_id"], json.loads(second[1][1])["request_id"]
         )
+
+    def test_a_publish_done_with_a_failed_process_deploys_nothing(self) -> None:
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+        document = result_document(job)
+        document["result"] = {"version": 27, "changed": True}
+
+        calls = self.run_job(job, [completed(stdout=json.dumps(document), exit_code=70)])
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.finished[0]["state"], "unknown")
+
+    def test_a_deploy_done_with_a_failed_process_is_unknown(self) -> None:
+        job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))
+
+        def failed_after(request: dict[str, Any]) -> execution.Completed:
+            done = cast(execution.Completed, self.deployed()(request))
+            return completed(stdout=done.stdout, exit_code=70)
+
+        self.run_job(job, [self.published(job), failed_after])
+
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "unknown")
+        self.assertEqual(finished["result"]["error"]["code"], "exit_mismatch")
+        self.assertEqual(finished["result"]["publish"]["outcome"], "done")
 
     def test_a_deploy_answer_for_another_request_is_not_accepted(self) -> None:
         job = claimed(operation="changes_publish", payload=dict(self.PAYLOAD))

@@ -42,7 +42,7 @@ from haprion.cli.status import run_status_helper
 from haprion.envelope import new_request_id
 from haprion.version_history import MAX_LIST_LIMIT
 
-from haprion_ui import db, search_index, service
+from haprion_ui import answers, db, search_index, service
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
@@ -223,6 +223,7 @@ def poll_cluster(
     *,
     operation: str = "status",
     partial_ok: bool | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     """Ask one cluster, and turn every way that can go wrong into a row.
 
@@ -236,8 +237,9 @@ def poll_cluster(
     answer is bad news. Collapsing them would hide which one to go and fix.
     """
 
+    asked = request_id or new_request_id()
     try:
-        completed = run_helper(cluster, new_request_id())
+        completed = run_helper(cluster, asked)
     except Exception as exc:  # noqa: BLE001 - any failure to run the helper is one row
         return {
             "outcome": "unavailable",
@@ -246,7 +248,7 @@ def poll_cluster(
         }
 
     try:
-        envelope = json.loads(completed.stdout)
+        json.loads(completed.stdout)
     except (json.JSONDecodeError, TypeError):
         return {
             "outcome": "unavailable",
@@ -257,21 +259,33 @@ def poll_cluster(
             ),
         }
 
-    if not isinstance(envelope, dict) or envelope.get("operation") != operation:
-        return {
-            "outcome": "unavailable",
-            "result": {},
-            "poll_error": f"the helper returned JSON that is not a result envelope for {operation}",
-        }
-
-    outcome = envelope.get("outcome")
     accept_partial = operation == "status" if partial_ok is None else partial_ok
     expected_outcomes = ("done", "partial", "failed") if accept_partial else ("done", "failed")
-    if outcome not in expected_outcomes:
+    #
+    # The worker's check (review 26-10-13, K3): this cluster, this request,
+    # schema 1 and consistent fields, or the answer is not this reading's.
+    #
+    envelope = answers.accepted(
+        completed.stdout,
+        operation=operation,
+        cluster=cluster,
+        request_id=asked,
+        outcomes=expected_outcomes,
+    )
+    if envelope is None:
         return {
             "outcome": "unavailable",
             "result": {},
-            "poll_error": f"the helper reported an unknown outcome: {outcome!r}",
+            "poll_error": (
+                f"the helper did not answer this request with a valid {operation} envelope"
+            ),
+        }
+    outcome = envelope["outcome"]
+    if outcome == "done" and completed.returncode != 0:
+        return {
+            "outcome": "unavailable",
+            "result": {},
+            "poll_error": f"the helper answered done but exited {completed.returncode}",
         }
 
     return {
@@ -394,17 +408,23 @@ def read_cluster_list(
     than emptying every page because one read failed.
     """
 
+    asked = new_request_id()
     try:
-        completed = run(new_request_id())
-        envelope = json.loads(completed.stdout)
+        completed = run(asked)
     except Exception as exc:  # noqa: BLE001 - any failure is "not known this pass"
         logger.warning("the cluster list could not be read: %s", exc)
         return None
-    result = envelope.get("result") if isinstance(envelope, dict) else None
+    envelope = answers.accepted(
+        str(completed.stdout),
+        operation="cluster_list",
+        cluster=None,
+        request_id=asked,
+        outcomes=("done",),
+    )
+    result = envelope["result"] if envelope is not None else None
     if (
-        not isinstance(envelope, dict)
-        or envelope.get("operation") != "cluster_list"
-        or envelope.get("outcome") != "done"
+        envelope is None
+        or completed.returncode != 0
         or not isinstance(result, dict)
         or not isinstance(result.get("clusters"), list)
     ):
@@ -471,13 +491,14 @@ def _local_readings(
     cluster: str,
     sources: Sequence[Source],
     readings: ReadingsHelper = run_readings_helper,
-) -> dict[str, RunHelper]:
+) -> tuple[str, dict[str, RunHelper]]:
     """The manager-local readings of one cluster, from one helper call (N2).
 
     Each comes back as the `run` its source is polled with, answering with the
     envelope its own helper wrote, so the judging and the writing below are
     the same for it as for a reading of its own. When the one call fails, every
     reading in it answers with that failure, as each would have on its own.
+    Returned with the request ID, which the helper gives each reading inside.
     """
 
     reads = {
@@ -485,10 +506,20 @@ def _local_readings(
         for source in sources
         if source.reading is not None
     }
+    asked = new_request_id()
     try:
-        completed = readings(cluster, new_request_id(), reads)
-        answers = json.loads(completed.stdout)["result"]["reads"]
-        if not isinstance(answers, dict):
+        completed = readings(cluster, asked, reads)
+        outer = answers.accepted(
+            completed.stdout,
+            operation="readings",
+            cluster=cluster,
+            request_id=asked,
+            outcomes=("done",),
+        )
+        if outer is None or completed.returncode != 0:
+            raise TypeError("not a done readings envelope for this request")
+        given = outer["result"].get("reads")
+        if not isinstance(given, dict):
             raise TypeError("reads is not an object")
     except Exception as exc:  # noqa: BLE001 - one failure, reported on every reading it carried
         failure = exc
@@ -496,10 +527,10 @@ def _local_readings(
         def failed(_cluster: str, _request_id: str) -> Any:
             raise RuntimeError(f"the readings helper gave no answer: {failure}")
 
-        return dict.fromkeys(reads, failed)
+        return asked, dict.fromkeys(reads, failed)
 
     def answered(name: str) -> RunHelper:
-        found = answers.get(name)
+        found = given.get(name)
         answer: dict[str, Any] = found if isinstance(found, dict) else {}
         document = answer.get("envelope")
         stdout = json.dumps(document) if document is not None else ""
@@ -512,7 +543,7 @@ def _local_readings(
         )
         return lambda _cluster, _request_id: result
 
-    return {name: answered(name) for name in reads}
+    return asked, {name: answered(name) for name in reads}
 
 
 def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) -> int:
@@ -526,14 +557,20 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
     #
     _mark_pass(pool, db.begin_cluster_pass, cluster)
     local = [source for source in sources if source.run is None]
-    answered = _local_readings(pool, cluster, local) if local else {}
+    asked, answered = _local_readings(pool, cluster, local) if local else ("", {})
     for source in sources:
         if source.run is None:
             run = answered[source.operation]
+            request_id: str | None = asked
         else:
             run = functools.partial(source.run, **_extra(pool, cluster, source))
+            request_id = None
         reading = poll_cluster(
-            cluster, run, operation=source.operation, partial_ok=source.partial_ok
+            cluster,
+            run,
+            operation=source.operation,
+            partial_ok=source.partial_ok,
+            request_id=request_id,
         )
         with pool.connection() as connection:
             source.record(

@@ -29,28 +29,58 @@ def completed(stdout: str, *, returncode: int = 0, stderr: str = "") -> Any:
     )
 
 
+#
+# Every request the poller makes carries this ID, so an answer can echo it:
+# the poller only accepts its own request's envelope (review 26-10-13, K3).
+#
+REQUEST = "00000000-0000-4000-8000-000000000001"
+_FIXED_REQUEST = unittest.mock.patch.object(poller, "new_request_id", return_value=REQUEST)
+
+
+def setUpModule() -> None:
+    _FIXED_REQUEST.start()
+
+
+def tearDownModule() -> None:
+    _FIXED_REQUEST.stop()
+
+
+def document(
+    operation: str, outcome: str = "done", result: Any = None, **extra: Any
+) -> dict[str, Any]:
+    """A v1 envelope as a helper writes it, answering REQUEST."""
+
+    body: dict[str, Any] = {
+        "schema_version": 1,
+        "ok": outcome == "done",
+        "operation": operation,
+        "outcome": outcome,
+        "cluster": "alpha",
+        "request_id": REQUEST,
+        "result": result if outcome in {"done", "partial"} else None,
+        "warnings": (
+            [{"code": "synthetic_warning", "message": "synthetic warning"}]
+            if outcome == "partial"
+            else []
+        ),
+        "error": (
+            None
+            if outcome in {"done", "partial"}
+            else {"code": "synthetic_failure", "message": "synthetic failure"}
+        ),
+    }
+    body.update(extra)
+    return body
+
+
 def envelope(outcome: str = "done", **extra: Any) -> str:
-    document: dict[str, Any] = {
-        "schema_version": 1,
-        "operation": "status",
-        "outcome": outcome,
-        "cluster": "alpha",
-        "result": {"summary": {"release_state": "current"}},
-    }
-    document.update(extra)
-    return json.dumps(document)
+    return json.dumps(
+        document("status", outcome, {"summary": {"release_state": "current"}}, **extra)
+    )
 
 
-def inventory_envelope(outcome: str = "done", **extra: Any) -> str:
-    document: dict[str, Any] = {
-        "schema_version": 1,
-        "operation": "inventory",
-        "outcome": outcome,
-        "cluster": "alpha",
-        "result": {"proxies": []},
-    }
-    document.update(extra)
-    return json.dumps(document)
+def inventory_envelope(outcome: str = "done", operation: str = "inventory", **extra: Any) -> str:
+    return json.dumps(document(operation, outcome, {"proxies": []}, **extra))
 
 
 class GoodAnswers(unittest.TestCase):
@@ -72,9 +102,10 @@ class GoodAnswers(unittest.TestCase):
             self.assertIsNone(reading["poll_error"])
 
     def test_warnings_and_errors_are_carried_through_untouched(self) -> None:
-        payload = envelope("partial", warnings=[{"code": "vip_unknown"}], error=None)
+        warned = [{"code": "vip_unknown", "message": "the VIP owner is not known"}]
+        payload = envelope("partial", warnings=warned, error=None)
         reading = poller.poll_cluster("alpha", lambda *_: completed(payload))
-        self.assertEqual(reading["warnings"], [{"code": "vip_unknown"}])
+        self.assertEqual(reading["warnings"], warned)
 
     def test_inventory_accepts_only_its_own_done_or_failed_outcomes(self) -> None:
         reading = poller.poll_cluster(
@@ -108,7 +139,7 @@ class BadAnswers(unittest.TestCase):
     def test_json_that_is_not_an_envelope_is_refused(self) -> None:
         reading = poller.poll_cluster("alpha", lambda *_: completed('["a", "list"]'))
         self.assertEqual(reading["outcome"], "unavailable")
-        self.assertIn("not a result envelope", reading["poll_error"])
+        self.assertIn("valid status envelope", reading["poll_error"])
 
     def test_an_unknown_outcome_is_not_written_as_if_it_were_understood(self) -> None:
         #
@@ -118,7 +149,27 @@ class BadAnswers(unittest.TestCase):
         #
         reading = poller.poll_cluster("alpha", lambda *_: completed(envelope("splendid")))
         self.assertEqual(reading["outcome"], "unavailable")
-        self.assertIn("unknown outcome", reading["poll_error"])
+        self.assertIn("valid status envelope", reading["poll_error"])
+
+    def test_an_answer_to_another_request_is_not_this_reading(self) -> None:
+        # Review 26-10-13, K3: accepted on operation and outcome alone.
+        wrongs: tuple[tuple[str, object], ...] = (
+            ("cluster", "beta"),
+            ("request_id", "wrong"),
+            ("schema_version", 999),
+            ("ok", False),
+        )
+        for field, wrong in wrongs:
+            with self.subTest(field=field):
+                payload = json.dumps({**json.loads(envelope()), field: wrong})
+                reading = poller.poll_cluster("alpha", lambda *_, p=payload: completed(p))
+                self.assertEqual(reading["outcome"], "unavailable")
+                self.assertIsNotNone(reading["poll_error"])
+
+    def test_done_from_a_process_that_failed_is_not_done(self) -> None:
+        reading = poller.poll_cluster("alpha", lambda *_: completed(envelope(), returncode=70))
+        self.assertEqual(reading["outcome"], "unavailable")
+        self.assertIn("exited 70", reading["poll_error"])
 
     def test_an_enormous_stderr_is_truncated(self) -> None:
         reading = poller.poll_cluster(
@@ -155,17 +206,17 @@ class Passes(unittest.TestCase):
         def helper(cluster: str, _request: str) -> Any:
             if cluster == "beta":
                 raise OSError("unreachable")
-            return completed(envelope())
+            return completed(envelope(cluster=cluster))
 
         def inventory_helper(cluster: str, _request: str) -> Any:
             if cluster == "beta":
-                return completed(inventory_envelope("failed"))
-            return completed(inventory_envelope())
+                return completed(inventory_envelope("failed", cluster=cluster))
+            return completed(inventory_envelope(cluster=cluster))
 
         def list_helper(cluster: str, _request: str) -> Any:
             if cluster == "beta":
-                return completed(inventory_envelope("failed", operation="list"))
-            return completed(inventory_envelope(operation="list"))
+                return completed(inventory_envelope("failed", operation="list", cluster=cluster))
+            return completed(inventory_envelope(operation="list", cluster=cluster))
 
         from haprion_ui.config import Config, Database, Listen, Poller, Throttle
         from haprion_ui.config import Session as SessionPolicy
@@ -398,24 +449,13 @@ class TheClusterList(unittest.TestCase):
     """Which clusters exist is read from the cluster file on every pass (B206/B211)."""
 
     def answer(self, *ids: str, outcome: str = "done") -> Any:
+        listed = [{"id": name, "display_name": name.title(), "nodes": 2} for name in ids]
         return completed(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "operation": "cluster_list",
-                    "outcome": outcome,
-                    "cluster": None,
-                    "result": {
-                        "clusters": [
-                            {"id": name, "display_name": name.title(), "nodes": 2} for name in ids
-                        ]
-                    },
-                }
-            )
+            json.dumps(document("cluster_list", outcome, {"clusters": listed}, cluster=None))
         )
 
     def test_the_file_s_order_is_kept(self) -> None:
-        listed = poller.read_cluster_list(lambda _request: self.answer("beta", "alpha"))
+        listed = poller.read_cluster_list(lambda request: self.answer("beta", "alpha"))
         self.assertEqual(listed, ("beta", "alpha"))
 
     def test_anything_short_of_a_list_is_not_known_rather_than_empty(self) -> None:
@@ -533,9 +573,9 @@ class TheClusterList(unittest.TestCase):
             def commit(self) -> None:
                 return None
 
-        def helper(_cluster: str, _request: str) -> Any:
+        def helper(cluster: str, _request: str) -> Any:
             together.wait()
-            return completed(envelope())
+            return completed(envelope(cluster=cluster))
 
         source = poller.Source("status", helper, lambda _c, **_k: None)
         healthy = poller.poll_once(Pool(), None, (source,), clusters=clusters)  # type: ignore[arg-type]
@@ -642,28 +682,26 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
         def readings(cluster: str, _request_id: str, reads: Mapping[str, Any]) -> Any:
             asked.append((cluster, reads))
             answers = {
-                name: {
-                    "exit_code": 0,
-                    "envelope": {"operation": name, "outcome": "done", "result": {"n": name}},
-                    "stderr": "",
-                }
+                name: {"exit_code": 0, "envelope": document(name, result={"n": name}), "stderr": ""}
                 for name in reads
             }
             return subprocess.CompletedProcess(
-                [], 0, json.dumps({"result": {"reads": answers}}), ""
+                [], 0, json.dumps(document("readings", result={"reads": answers})), ""
             )
 
         with (
             unittest.mock.patch("haprion_ui.db.versions_without_diff", return_value=["a" * 40]),
             unittest.mock.patch("haprion_ui.db.objects_fingerprint", return_value=None),
         ):
-            runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
+            asked_id, runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
 
         ((cluster, reads),) = asked
         self.assertEqual(cluster, "alpha")
         self.assertEqual(reads["list"], {"limit": MAX_LIST_LIMIT, "diffs": ["a" * 40]})
         self.assertEqual(reads["objects"], {})
-        reading = poller.poll_cluster("alpha", runs["network"], operation="network")
+        reading = poller.poll_cluster(
+            "alpha", runs["network"], operation="network", request_id=asked_id
+        )
         self.assertEqual((reading["outcome"], reading["result"]), ("done", {"n": "network"}))
 
     def test_a_failed_call_is_a_poll_error_on_every_reading_it_carried(self) -> None:
@@ -674,10 +712,10 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
             unittest.mock.patch("haprion_ui.db.versions_without_diff", return_value=[]),
             unittest.mock.patch("haprion_ui.db.objects_fingerprint", return_value=None),
         ):
-            runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
+            asked_id, runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
 
         for name, run in runs.items():
-            reading = poller.poll_cluster("alpha", run, operation=name)
+            reading = poller.poll_cluster("alpha", run, operation=name, request_id=asked_id)
             self.assertEqual(reading["outcome"], "unavailable")
             self.assertIn("readings helper gave no answer", reading["poll_error"])
 
@@ -688,16 +726,18 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
                 for name in reads
             }
             return subprocess.CompletedProcess(
-                [], 0, json.dumps({"result": {"reads": answers}}), ""
+                [], 0, json.dumps(document("readings", result={"reads": answers})), ""
             )
 
         with (
             unittest.mock.patch("haprion_ui.db.versions_without_diff", return_value=[]),
             unittest.mock.patch("haprion_ui.db.objects_fingerprint", return_value=None),
         ):
-            runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
+            asked_id, runs = poller._local_readings(self.Pool(), "alpha", self.sources(), readings)
 
-        reading = poller.poll_cluster("alpha", runs["cert_list"], operation="cert_list")
+        reading = poller.poll_cluster(
+            "alpha", runs["cert_list"], operation="cert_list", request_id=asked_id
+        )
         self.assertIn("ERROR: no policy", reading["poll_error"])
 
 

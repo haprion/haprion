@@ -22,17 +22,17 @@ lock, or what the result says happened.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import socket
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid5
 
-from haprion_ui import db, diagnostics, execution, operations, recovery, service
+from haprion_ui import answers, db, diagnostics, execution, operations, recovery, service
 from haprion_ui.config import DEFAULT_CONFIG_PATH
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
@@ -61,6 +61,16 @@ IDLE_SECONDS = 30
 LEASE_SECONDS = 60
 
 #
+# How old a job may be when it is first taken. A database brought back from a
+# dump or the host from an image holds the jobs that were waiting at that
+# moment, and those ran then: a Drain since replaced by Ready would run again
+# as a new request (review 26-10-13, R1). Two hours is above the longest
+# queue that happens - one job per cluster, 900 s each, a certificate job
+# longer - and below the age of any backup worth restoring.
+#
+MAX_PENDING_SECONDS = 2 * 60 * 60
+
+#
 # The contract's cap on stored diagnostics, applied before the write rather than
 # discovered at the constraint.
 #
@@ -78,19 +88,6 @@ def worker_identity() -> str:
     return f"{socket.gethostname()}/{os.getpid()}"
 
 
-_REQUIRED_ENVELOPE_FIELDS = frozenset(
-    {
-        "schema_version",
-        "ok",
-        "outcome",
-        "operation",
-        "cluster",
-        "request_id",
-        "result",
-        "warnings",
-        "error",
-    }
-)
 _OPERATION_OUTCOMES = {
     "backup_run": frozenset({"done", "partial", "failed"}),
     "backup_schedule": frozenset({"done", "failed"}),
@@ -180,33 +177,6 @@ _OPERATION_OUTCOMES = {
 }
 
 
-class _InvalidEnvelope(ValueError):
-    """A helper answer is not one result the claimed job may accept."""
-
-
-def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise _InvalidEnvelope("duplicate field")
-        value[key] = item
-    return value
-
-
-def _finite_number(_value: str) -> None:
-    raise _InvalidEnvelope("non-finite number")
-
-
-def _message(value: Any) -> bool:
-    return (
-        isinstance(value, dict)
-        and isinstance(value.get("code"), str)
-        and bool(value["code"])
-        and isinstance(value.get("message"), str)
-        and bool(value["message"])
-    )
-
-
 def _envelope(
     stdout: str, job: db.ClaimedJob, *, operation: str | None = None, request_id: str | None = None
 ) -> dict[str, Any] | None:
@@ -215,54 +185,18 @@ def _envelope(
     The operation helpers own their operation-specific result schemas. The
     worker still owns the boundary that says whose answer this is: accepting a
     valid deploy result carrying another request ID would turn request binding
-    into decoration rather than fencing.
+    into decoration rather than fencing. The check itself is shared with the
+    poller (`answers`).
     """
 
-    try:
-        parsed = json.loads(
-            stdout,
-            object_pairs_hook=_unique_object,
-            parse_constant=_finite_number,
-        )
-    except (json.JSONDecodeError, TypeError, _InvalidEnvelope):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    envelope = cast(dict[str, Any], parsed)
-    if not _REQUIRED_ENVELOPE_FIELDS.issubset(envelope):
-        return None
-    if type(envelope["schema_version"]) is not int or envelope["schema_version"] != 1:
-        return None
     expected = operation or job.operation
-    if envelope["operation"] != expected:
-        return None
-    if envelope["cluster"] != job.cluster:
-        return None
-    if envelope["request_id"] != (request_id or str(job.request_id)):
-        return None
-
-    outcome = envelope["outcome"]
-    allowed = _OPERATION_OUTCOMES.get(expected, frozenset())
-    if not isinstance(outcome, str) or outcome not in allowed:
-        return None
-    if not isinstance(envelope["ok"], bool):
-        return None
-    warnings = envelope["warnings"]
-    if not isinstance(warnings, list) or not all(_message(item) for item in warnings):
-        return None
-
-    error = envelope["error"]
-    if outcome == "done":
-        valid_cross_fields = envelope["ok"] and error is None
-    elif outcome == "partial":
-        valid_cross_fields = not envelope["ok"] and bool(warnings) and error is None
-    else:
-        valid_cross_fields = not envelope["ok"] and _message(error)
-    if not valid_cross_fields:
-        return None
-    if outcome in {"done", "partial"} and not isinstance(envelope["result"], dict):
-        return None
-    return envelope
+    return answers.accepted(
+        stdout,
+        operation=expected,
+        cluster=job.cluster,
+        request_id=request_id or str(job.request_id),
+        outcomes=_OPERATION_OUTCOMES.get(expected, frozenset()),
+    )
 
 
 def _error_code(result: dict[str, Any] | None) -> str | None:
@@ -418,6 +352,38 @@ def _no_result() -> dict[str, Any]:
     }
 
 
+def _judged(
+    envelope: dict[str, Any], completed: execution.Completed
+) -> tuple[str, str, dict[str, Any]]:
+    """State, outcome and result of a run whose envelope was accepted.
+
+    `done` also needs the process to have exited 0. A helper that wrote a done
+    envelope and then failed, or a wrapper that failed after it, is not a
+    success the worker may record - and on Publish & deploy it would let the
+    deploy follow (review 26-10-13, L2). Nothing says what did take effect, so
+    the job is `unknown` with the envelope kept beside the code.
+    """
+
+    outcome = str(envelope.get("outcome", "unknown"))
+    if outcome == "done" and completed.exit_code != 0:
+        return (
+            "unknown",
+            "unknown",
+            {
+                "error": {
+                    "code": "exit_mismatch",
+                    "message": (
+                        f"the operation answered done but exited {completed.exit_code}"
+                        " and may not have finished"
+                    ),
+                },
+                "answer": envelope,
+            },
+        )
+    state = outcome if outcome in {"done", "partial", "failed", "blocked"} else "unknown"
+    return state, outcome, envelope
+
+
 def _sealed_profile(
     connection: Any, profile_id: str, *, ndes: bool = False
 ) -> operations.SealedProfileRow | None:
@@ -449,6 +415,35 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
     it next, and a write here would be the double write the fencing token exists
     to prevent.
     """
+
+    waited = (datetime.now(UTC) - job.created_at).total_seconds()
+    if job.attempts == 1 and waited > MAX_PENDING_SECONDS:
+        #
+        # Taken for the first time and older than any real queue: asked for
+        # before a restore, or while writes were off for hours. Nothing runs;
+        # a job requeued by recovery has been judged on evidence and is not
+        # held to this.
+        #
+        logger.error("job %s waited %d s and was not run", job.id, waited)
+        _finish(
+            connection,
+            job,
+            state="blocked",
+            outcome="blocked",
+            exit_code=None,
+            result={
+                "error": {
+                    "code": "request_expired",
+                    "message": (
+                        f"the request waited {int(waited // 60)} minutes and was not run;"
+                        " ask again if it still applies"
+                    ),
+                }
+            },
+            stderr_excerpt=None,
+            worker=worker,
+        )
+        return
 
     try:
         prepared = operations.prepare(
@@ -540,9 +535,7 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
         state = outcome = "unknown"
         result = _no_result() if not completed.stdout.strip() else _internal_error()
     else:
-        outcome = str(envelope.get("outcome", "unknown"))
-        state = outcome if outcome in {"done", "partial", "failed", "blocked"} else "unknown"
-        result = envelope
+        state, outcome, result = _judged(envelope, completed)
 
     exit_code = completed.exit_code
     stderr = completed.stderr
@@ -625,9 +618,7 @@ def _deploy_after(
         state = outcome = "unknown"
         answer: dict[str, Any] = {} if completed.ending == "timeout" else _internal_error()
     else:
-        outcome = str(envelope.get("outcome", "unknown"))
-        state = outcome if outcome in {"done", "partial", "failed", "blocked"} else "unknown"
-        answer = envelope
+        state, outcome, answer = _judged(envelope, completed)
     return state, outcome, {**answer, "publish": published}, completed.exit_code, completed.stderr
 
 

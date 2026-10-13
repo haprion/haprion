@@ -2023,6 +2023,19 @@ crash-consistent rather than transactionally clean, and restoring a single table
 out of a machine image is not something anyone does under pressure. The dump is
 what makes "put that one table back" an ordinary afternoon.
 
+#### After restoring the database or the host: waiting jobs and sessions
+
+A restored database holds the jobs that were waiting at the moment of the backup. Those ran at the
+time, and running them again would be a new request nobody made — a *Drain* replaced since by
+*Ready* would drain the server again. The worker therefore never runs a job that has waited more
+than two hours: it ends *blocked* with the code `request_expired`, and the job page says so. The
+longest real queue is far shorter. A job the worker had already started is judged as after any
+worker failure ([Jobs and status freshness](#jobs-and-status-freshness)), from what the cluster
+shows rather than from its age.
+
+The sessions come back as they were at the backup, including ones signed out or revoked since.
+After a restore, end them for every account: *Settings → Users*, the account, **End sessions**.
+
 #### After restoring the database on its own: replay the traffic log
 
 Restoring the whole host puts the database and the collector's staging back together, and nothing

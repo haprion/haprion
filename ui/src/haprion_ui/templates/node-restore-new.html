@@ -30,7 +30,7 @@
       <div class="field">
         <label class="field-title" for="restore-target">Address</label>
         <input id="restore-target" name="target" type="text" value="{{ form.target }}" required maxlength="15" autocomplete="off" spellcheck="false" placeholder="192.0.2.120" autofocus>
-        <small>Where this manager reaches the machine on SSH: an empty VM's IP,<br>or the node's own address to repair it.</small>
+        <small>Where this manager reaches the machine on SSH: an empty VM's IP, or the node's own address to repair it.</small>
       </div>
       <div class="field">
         <span class="field-title">Restore as</span>
@@ -39,8 +39,8 @@
           <label class="check"><input type="radio" name="mode" value="test"{% if form.mode == 'test' %} checked{% endif %}> <span><strong>A test</strong> — address, name and VIP rewritten to the test profile; keepalived stays masked.</span></label>
         </div>
       </div>
-      <div class="field">
-        <span class="field-title">Test profile <small>(test restore only)</small></span>
+      <div class="field restore-test-profile">
+        <span class="field-title">Test profile</span>
         <div class="restore-test-fields">
           <label><span>Host name</span><input name="test_hostname" type="text" value="{{ form.test_hostname }}" maxlength="63" autocomplete="off" spellcheck="false" placeholder="node-test"></label>
           <label><span>Address</span><input name="test_address" type="text" value="{{ form.test_address }}" maxlength="18" autocomplete="off" spellcheck="false" placeholder="192.0.2.29/24"></label>

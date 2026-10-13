@@ -2240,6 +2240,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .restore-start-actions { justify-content: flex-end; }
 .restore-rewrite-table td { white-space: normal; overflow-wrap: anywhere; }
 .restore-list { margin: 0; padding: 0 16px 16px 36px; }
+/* The test profile is asked for only when a test is chosen. */
+.restore-form-grid:not(:has(input[name="mode"][value="test"]:checked)) .restore-test-profile { display: none; }
 .restore-test-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; align-items: center; }
 .restore-test-fields label { display: contents; }
 .restore-test-fields span { color: var(--text-secondary); text-align: left; }

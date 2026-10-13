@@ -22,12 +22,14 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
+import importlib.metadata
 import io
 import ipaddress
 import json
 import logging
 import re
 import secrets
+import sys
 import zipfile
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -202,11 +204,25 @@ def asset_token(directory: Path = STATIC_DIRECTORY) -> str:
     return digest.hexdigest()[:12]
 
 
+def release_label(prefix: str | None = None) -> tuple[str, str]:
+    """The version beside the name in the header, and the release it runs from.
+
+    The release is the directory the environment lives in,
+    `/opt/haprion-ui/releases/<id>/venv`, reached through `current`; anywhere
+    else - a checkout, the tests - there is no release, and the version says it.
+    """
+
+    version = f"v{importlib.metadata.version('haprion-ui')}"
+    release = Path(prefix or sys.prefix).resolve().parent
+    return version, release.name if release.parent.name == "releases" else version
+
+
 #
 # Resolved once, at import. The files cannot change under a running release -
 # a release directory is read-only and a new one is a new process.
 #
 TEMPLATES.env.globals["asset_token"] = asset_token()
+TEMPLATES.env.globals["release_version"], TEMPLATES.env.globals["release_id"] = release_label()
 TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 #
 # HAProxy's check codes as sentences. A global rather than a field on the row:

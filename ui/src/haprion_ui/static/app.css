@@ -194,6 +194,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 }
 
 .brand strong, .login-brand strong { color: var(--text-strong); font-weight: 700; }
+.brand-version { margin-left: 4px; color: var(--muted); font-size: 12px; font-weight: 500; letter-spacing: 0; }
 
 /*
  * One star in two halves, coloured as Orion's two brightest: Betelgeuse and

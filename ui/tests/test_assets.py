@@ -8,11 +8,12 @@ release's assets a different URL from the previous release's.
 
 from __future__ import annotations
 
+import importlib.metadata
 import tempfile
 import unittest
 from pathlib import Path
 
-from haprion_ui.views import STATIC_DIRECTORY, asset_token
+from haprion_ui.views import STATIC_DIRECTORY, asset_token, release_label
 
 
 class AssetTokenTests(unittest.TestCase):
@@ -102,3 +103,30 @@ class ShapesTheIconRuleReaches(unittest.TestCase):
         self.assertIn("top: 97px", rule)
         self.assertIn("width: 100%", rule)
         self.assertIn("padding: 6px 0", rule)
+
+
+class ReleaseLabelTests(unittest.TestCase):
+    """The version beside the name in the header, and the release as its tooltip."""
+
+    def test_a_release_names_itself_through_current(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            venv = root / "releases" / "0.1.0-abcdef123456" / "venv"
+            venv.mkdir(parents=True)
+            (root / "current").symlink_to(root / "releases" / "0.1.0-abcdef123456")
+
+            version, release = release_label(str(root / "current" / "venv"))
+
+        self.assertEqual(version, f"v{importlib.metadata.version('haprion-ui')}")
+        self.assertEqual(release, "0.1.0-abcdef123456")
+
+    def test_outside_a_release_the_version_is_all_there_is(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            version, release = release_label(directory)
+
+        self.assertEqual(release, version)
+
+    def test_the_header_carries_it(self) -> None:
+        layout = (STATIC_DIRECTORY.parent / "templates" / "layout.html").read_text()
+
+        self.assertIn('class="brand-version" title="Release {{ release_id }}"', layout)

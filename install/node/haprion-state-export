@@ -166,6 +166,12 @@ copy_path /etc/apparmor.d/rsyslog.d/haprion-traffic
 copy_path /etc/systemd/system/haprion-traffic-log-prune.service
 copy_path /etc/systemd/system/haprion-traffic-log-prune.timer
 
+# The servers this node keeps drained or in maintenance (B263): put back by
+# haprion-server-state when HAProxy starts, so a node rebuilt without them
+# would send traffic to a server an operator took out. Absent until a state is
+# first kept.
+copy_path /var/lib/haprion/server-state.json
+
 # The mask is state. Reinstalling a package on a clean node must not silently
 # turn a service the appliance deliberately disabled back on.
 copy_path /etc/systemd/system/ipvsadm.service

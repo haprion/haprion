@@ -172,6 +172,7 @@ def build(
     *,
     files: dict[str, tuple[str, int]] | None = None,
     extra_paths: tuple[str, ...] = ("/etc/default/grub.d/99-local.cfg",),
+    meta: dict[str, str] | None = None,
 ) -> Path:
     stage = root / "stage"
     previous = os.umask(0o077)
@@ -187,8 +188,12 @@ def build(
             target = stage / f"rootfs{directory}"
             if target.is_dir():
                 target.chmod(0o700 if directory == "/root/.ssh" else 0o755)
-        meta = {**META, "meta/extra-paths.txt": "".join(f"{path}\n" for path in extra_paths)}
-        for name, text in meta.items():
+        written = {
+            **META,
+            "meta/extra-paths.txt": "".join(f"{path}\n" for path in extra_paths),
+            **(meta or {}),
+        }
+        for name, text in written.items():
             _write(stage / name, text, 0o644)
     finally:
         os.umask(previous)

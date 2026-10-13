@@ -326,6 +326,15 @@
             }
           }
         },
+        "waf_engine": {
+          "description": "The WAF engine package the run installs (B298): the node ran the engine and the target lacks it.",
+          "type": "object",
+          "required": ["version"],
+          "additionalProperties": false,
+          "properties": {
+            "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+$" }
+          }
+        },
         "renumbered": {
           "type": "array",
           "items": {

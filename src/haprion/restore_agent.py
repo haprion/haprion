@@ -102,6 +102,13 @@ NODE_CONF = "/etc/haprion/node.conf"
 #
 PACKAGE_FILE = "haprion-node.deb"
 PACKAGE_VERSION = re.compile(r"(\d+\.\d+\.\d+)\+git(\d{14})\.([0-9a-f]{12})")
+#
+# The WAF engine, carried when the node ran it (`haprion.waf_engine_package`;
+# a test holds the names together): the cluster's release may carry WAF
+# rules, which the node's pull-deploy refuses without the engine.
+#
+WAF_ENGINE_FILE = "haprion-coraza-spoa.deb"
+WAF_ENGINE_VERSION = re.compile(r"\d+\.\d+\.\d+-\d+")
 NODE_PREPARE = "/usr/share/haprion-node/install/04-node-prepare"
 CLUSTER_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
 #
@@ -770,12 +777,16 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
         if not NAME.fullmatch(str(record.get("name", ""))):
             raise Refused("the header names an unusable account or group")
     wanted = _package_path(header["run"])
+    engine_path = f"{STATE}/{header['run']}/{WAF_ENGINE_FILE}"
     carried: Item | None = None
+    engine: Item | None = None
     for item in items:
         if item.path == ROOT_KEYS or item.path == NETPLAN or item.path.startswith(f"{NETPLAN}/"):
             raise Refused(f"{item.path} is written by a later session, not by apply")
         if item.path == wanted and item.kind == "file":
             carried = item
+        elif item.path == engine_path and item.kind == "file":
+            engine = item
         elif item.path == STATE or item.path.startswith(f"{STATE}/"):
             raise Refused(f"{item.path} is this restore's own directory, not a file to place")
     described = header.get("node_package")
@@ -785,6 +796,16 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
         raise Refused("the node package's version is not usable")
     if hashlib.sha256(carried.data).hexdigest() != described.get("sha256"):
         raise Refused("the node package does not match the digest the manager sent")
+    waf = header.get("waf_engine")
+    if (waf is None) != (engine is None):
+        raise Refused("the WAF engine package and its description do not come together")
+    if waf is not None and engine is not None:
+        if not isinstance(waf, dict) or not WAF_ENGINE_VERSION.fullmatch(
+            str(waf.get("version", ""))
+        ):
+            raise Refused("the WAF engine package's version is not usable")
+        if hashlib.sha256(engine.data).hexdigest() != waf.get("sha256"):
+            raise Refused("the WAF engine package does not match the digest the manager sent")
     if not CLUSTER_ID.fullmatch(str(header.get("cluster", ""))):
         raise Refused("the cluster ID is not usable")
     if not isinstance(header.get("answers"), str) or "\0" in header["answers"]:
@@ -800,6 +821,31 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
         if any(item.path.startswith(APT_DIRECTORIES) for item in items):
             raise Refused("an overwrite writes no repository file")
     return carried
+
+
+def _waf_engine(host: Host, header: dict[str, Any], items: list[Item], report: Report) -> None:
+    """Install the WAF engine the node ran, when the manager sent it.
+
+    The manager sends it to a new VM always and to the node itself only when
+    the node lacks it (B183), so installing it never replaces a running
+    node's own. Before the node package, whose 04-node-prepare gives the
+    engine's service its drop-in.
+    """
+
+    waf = header.get("waf_engine")
+    if waf is None:
+        return
+    path = f"{STATE}/{header['run']}/{WAF_ENGINE_FILE}"
+    engine = next(item for item in items if item.path == path)
+    work = host.path(f"{STATE}/{header['run']}/waf-engine")
+    work.mkdir(parents=True, exist_ok=True, mode=0o700)
+    work.chmod(0o700)
+    deb = work / WAF_ENGINE_FILE
+    deb.write_bytes(engine.data)
+    deb.chmod(0o644)
+    with _services_held(host):
+        host.run(["apt-get", "install", "-y", "--no-install-recommends", *APT_WAIT, str(deb)])
+    report.step("waf-engine", version=waf["version"])
 
 
 def _node_package(
@@ -1279,6 +1325,7 @@ def _apply(
         # A running node's releases and `current` are its own (B183).
         _layout(host, header["run"], report)
     _services(host, header, report)
+    _waf_engine(host, header, items, report)
     _node_package(host, header, carried, items, report)
     return {"steps": report.steps, "warnings": report.warnings}
 

@@ -81,12 +81,15 @@ class TheTree(unittest.TestCase):
         wheel = wheel_with(self.root, ["haprion-status", "haprion-status-helper"])
         node = self.root / "haprion-node_0.1.0+git20261009120000.0123456789ab_all.deb"
         node.write_bytes(b"node package")
+        engine = self.root / "haprion-coraza-spoa_0.9.0-7_amd64.deb"
+        engine.write_bytes(b"engine package")
         tree = self.root / "tree"
 
         TOOL.assemble(
             tree,
             wheel=wheel,
             node_deb=node,
+            waf_engine_deb=engine,
             installer=b"#!/usr/bin/python3\n",
             sudoers=SUDOERS.read_bytes(),
             licence=b"licence text\n",
@@ -97,6 +100,9 @@ class TheTree(unittest.TestCase):
         payload = (lib / "PAYLOAD").read_text()
         self.assertIn(f"WHEEL={wheel.name}\n", payload)
         self.assertIn(f"NODE_PACKAGE={node.name}\n", payload)
+        self.assertIn(f"WAF_ENGINE_PACKAGE={engine.name}\n", payload)
+        self.assertEqual((lib / engine.name).read_bytes(), b"engine package")
+        self.assertIn("--waf-engine-package", (tree / "DEBIAN/postinst").read_text())
         self.assertEqual(
             (tree / "usr/bin/haprion-status").read_text(),
             '#!/bin/sh\nexec /opt/haprion/current/bin/haprion-status "$@"\n',
@@ -120,6 +126,7 @@ class TheTree(unittest.TestCase):
                 self.root / "tree",
                 wheel=wheel,
                 node_deb=node,
+                waf_engine_deb=node,
                 installer=b"",
                 sudoers=b"%sudo ALL=(root) NOPASSWD /broken\n",
                 licence=b"",

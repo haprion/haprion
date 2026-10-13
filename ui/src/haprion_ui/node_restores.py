@@ -240,6 +240,7 @@ class RestoreRun:
     warning_commands: tuple[str, ...] = ()
     # The manager's node package the preview found (B180): version and commit.
     node_package: Mapping[str, Any] | None = None
+    waf_engine: Mapping[str, Any] | None = None
     # Accounts and groups whose number on the VM differs from the archive's (B181).
     renumbered: tuple[str, ...] = ()
     # When the prepare job was queued, and when the hour to start the run ends (B182).
@@ -443,6 +444,9 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         jobs=tuple(RestoreJob(job.id, job.operation, job.state) for job in jobs),
         node_package=preview.get("node_package")
         if isinstance(preview.get("node_package"), dict)
+        else None,
+        waf_engine=preview.get("waf_engine")
+        if isinstance(preview.get("waf_engine"), dict)
         else None,
         renumbered=_strings(preview.get("renumbered")),
         prepared_at=prepared.created_at,

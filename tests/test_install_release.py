@@ -11,10 +11,12 @@ import zipfile
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
-from haprion import debian_package, node_package
+from haprion import debian_package, node_package, waf_engine_package
+from tests.test_waf_engine_package import deb as engine_deb
 
 INSTALLER_PATH = Path(__file__).resolve().parents[1] / "tools" / "install-release.py"
 NODE_PACKAGE_SOURCE = Path(node_package.__file__).read_text(encoding="utf-8")
+WAF_ENGINE_SOURCE = Path(waf_engine_package.__file__).read_text(encoding="utf-8")
 DEBIAN_PACKAGE_SOURCE = Path(debian_package.__file__).read_text(encoding="utf-8")
 EPOCH = 1_790_000_000
 COMMIT = "0123456789ab" + "0" * 28
@@ -36,6 +38,7 @@ class InstallReleaseTests(unittest.TestCase):
             )
             # The release verifies its node package with its own verifier.
             archive.writestr("haprion/node_package.py", NODE_PACKAGE_SOURCE)
+            archive.writestr("haprion/waf_engine_package.py", WAF_ENGINE_SOURCE)
             archive.writestr("haprion/debian_package.py", DEBIAN_PACKAGE_SOURCE)
             archive.writestr("haprion/cli/__init__.py", "")
             archive.writestr(
@@ -105,6 +108,64 @@ class InstallReleaseTests(unittest.TestCase):
             for path in sorted(release.rglob("*"), reverse=True):
                 path.chmod(0o700 if path.is_dir() else 0o600)
             release.chmod(0o700)
+
+    def test_the_waf_engine_package_travels_in_the_release_and_is_found_there(self) -> None:
+        """B298: a restored node that ran the engine gets the release's."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw).resolve()
+            wheel, digest = self.make_wheel(work)
+            engine = engine_deb(work)
+            engine_digest = hashlib.sha256(engine.read_bytes()).hexdigest()
+            release_id = install_release_module.install_release(
+                wheel=wheel,
+                expected_sha256=digest,
+                target=work / "target",
+                python=Path(sys.executable),
+                require_root=False,
+                waf_engine_package=engine,
+                waf_engine_package_sha256=engine_digest,
+            )
+            release = work / "target" / "releases" / release_id
+            metadata = json.loads((release / "INSTALLATION.json").read_text())
+            self.assertEqual(
+                metadata["waf_engine_package"],
+                {"file": "haprion-coraza-spoa.deb", "version": "0.9.0-7", "sha256": engine_digest},
+            )
+            found = waf_engine_package.release_package(release)
+            assert found is not None
+            self.assertEqual(found.sha256, engine_digest)
+            with self.assertRaisesRegex(
+                install_release_module.InstallError, "not changed in place"
+            ):
+                install_release_module.install_release(
+                    wheel=wheel,
+                    expected_sha256=digest,
+                    target=work / "target",
+                    python=Path(sys.executable),
+                    require_root=False,
+                )
+            for path in sorted(release.rglob("*"), reverse=True):
+                path.chmod(0o700 if path.is_dir() else 0o600)
+            release.chmod(0o700)
+
+    def test_a_waf_engine_package_that_is_not_one_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw).resolve()
+            wheel, digest = self.make_wheel(work)
+            wrong = engine_deb(work, name="something-else")
+            with self.assertRaisesRegex(
+                install_release_module.InstallError, "WAF engine package verification failed"
+            ):
+                install_release_module.install_release(
+                    wheel=wheel,
+                    expected_sha256=digest,
+                    target=work / "target",
+                    python=Path(sys.executable),
+                    require_root=False,
+                    waf_engine_package=wrong,
+                    waf_engine_package_sha256=hashlib.sha256(wrong.read_bytes()).hexdigest(),
+                )
 
     def test_a_node_package_that_does_not_verify_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

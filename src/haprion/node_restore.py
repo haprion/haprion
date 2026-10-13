@@ -58,6 +58,7 @@ from haprion import (
     restore_plan,
     restore_runs,
     state_backup,
+    waf_engine_package,
 )
 from haprion.backups import node_backups
 from haprion.cluster_status import StatusError, parse_status
@@ -514,6 +515,11 @@ class Checked:
     #
     package: node_package.ReleasePackage | None = None
     answers: str = ""
+    #
+    # The WAF engine package the run installs: the node ran the engine, and
+    # the target lacks it. None when nothing is to be installed.
+    #
+    waf_engine: waf_engine_package.ReleasePackage | None = None
 
 
 def _inspect_header(source: RestoreSource, mode: str, run: str) -> dict[str, Any]:
@@ -526,7 +532,7 @@ def _inspect_header(source: RestoreSource, mode: str, run: str) -> dict[str, Any
         # B183: what the node holds, so the preview can say what changes.
         header["hash"] = sorted(entry.path for entry in source.owned() if entry.kind == "file")
         header["list"] = [restore_plan.NETPLAN_DIR, *restore_plan.PRODUCT_DIRECTORIES]
-        header["packages"] = list(restore_plan.PRODUCT_PACKAGES)
+        header["packages"] = [*restore_plan.PRODUCT_PACKAGES, waf_engine_package.PACKAGE]
         # Root's keys hold this run's one-time key by now; the agent leaves that
         # line out of the file's digest, so a node nobody touched compares equal.
         header["run"] = run
@@ -675,6 +681,27 @@ def check(
             problems.append(
                 "this manager's CLI release carries no node package; install it with --node-package"
             )
+    #
+    # The WAF engine, when the node ran it: the cluster's release may carry
+    # WAF rules, which the node's pull-deploy refuses without the engine. It
+    # is in no repository, so it comes from this manager's release - onto a
+    # new VM always, onto the node itself only when the node lacks it (B183).
+    #
+    engine: waf_engine_package.ReleasePackage | None = None
+    if source.waf_engine_version and not (
+        request.mode == "overwrite"
+        and waf_engine_package.PACKAGE in inspected.get("product_installed", ())
+    ):
+        try:
+            engine = waf_engine_package.release_package()
+        except waf_engine_package.PackageError as exc:
+            problems.append(f"this manager's WAF engine package cannot be used: {exc}")
+        else:
+            if engine is None:
+                problems.append(
+                    "the node ran the WAF engine, and this manager's CLI release carries no WAF "
+                    "engine package; install the release with --waf-engine-package"
+                )
     derived = ""
     try:
         derived = restore_answers.derive(source, request.cluster, publish_root)
@@ -690,10 +717,11 @@ def check(
         },
         "plan": plan.summary(),
         "node_package": None if package is None else package.sha256,
+        "waf_engine": None if engine is None else engine.sha256,
         "answers": derived,
     }
     digest = hashlib.sha256(json.dumps(bound, sort_keys=True).encode()).hexdigest()
-    return Checked(source, plan, inspected, digest, tuple(problems), package, derived)
+    return Checked(source, plan, inspected, digest, tuple(problems), package, derived, engine)
 
 
 def preview(
@@ -828,6 +856,8 @@ def _preview(
             "version": checked.package.version,
             "commit": checked.package.commit,
         }
+    if checked.waf_engine is not None:
+        summary["waf_engine"] = {"version": checked.waf_engine.version}
     _write_json(directory / "preview.json", summary)
     return summary
 
@@ -1112,6 +1142,11 @@ def _run(
         "keep": list(plan.from_package),
         "cluster": request.cluster,
         "node_package": {"version": package.version, "sha256": package.sha256},
+        "waf_engine": (
+            None
+            if checked.waf_engine is None
+            else {"version": checked.waf_engine.version, "sha256": checked.waf_engine.sha256}
+        ),
         "answers": checked.answers,
         "traffic_log": plan.traffic_log,
         "groups": [{"name": g.name, "gid": g.gid} for g in plan.groups],
@@ -1147,10 +1182,24 @@ def _run(
             gid=0,
             data=package.path.read_bytes(),
         )
+        engine = (
+            ()
+            if checked.waf_engine is None
+            else (
+                PlannedFile(
+                    path=f"{restore_agent.STATE}/{run_id}/{restore_agent.WAF_ENGINE_FILE}",
+                    kind="file",
+                    mode=0o600,
+                    uid=0,
+                    gid=0,
+                    data=checked.waf_engine.path.read_bytes(),
+                ),
+            )
+        )
         applied = session.call(
             request.target,
             apply_header,
-            payload(checked.source, (*plan.files, carried)),
+            payload(checked.source, (*plan.files, carried, *engine)),
             progress=stream,
         )
         result["sessions"]["apply"] = {k: v for k, v in applied.items() if k != "ok"}

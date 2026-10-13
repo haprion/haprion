@@ -2147,10 +2147,11 @@ even when nothing on the management host ever runs again.
 host key fingerprint; the name and address the VM will have; every file written, and every archived
 file that is not - the VM's own in a directory it shares with the image, the archive's APT sources,
 and old `.replaced-` copies (kept on the node, 30 days - see
-[What a node keeps and for how long](#what-a-node-keeps-and-for-how-long)); the node package that will prepare the node; every account with its IDs
+[What a node keeps and for how long](#what-a-node-keeps-and-for-how-long)); the node package that will prepare the node, and the WAF engine package when the node ran it; every account with its IDs
 and groups; and, in test mode, every rewritten field with its old and new value. It stops on: this
 manager's CLI release carrying no node package, or one that does not verify (see
-[Part 3](#part-3--the-versioned-cli-release)); a `node.conf` in the archive that cannot be read back
+[Part 3](#part-3--the-versioned-cli-release)); for a node that ran the WAF engine and a target
+without it, the release carrying no engine package, or one that does not verify; a `node.conf` in the archive that cannot be read back
 into answers; a fingerprint that is not the one
 given (nothing is sent at all); an archive that is not of the chosen node; a target that is not
 Ubuntu 26.04 or Debian 13; `haproxy` or `keepalived` already installed (unless an earlier restore run left
@@ -2177,8 +2178,10 @@ written.
    file by file, not directory by directory: in `sudoers.d` and `sysctl.d` only the file
    `04-node-prepare` writes comes back, and `sshd_config` and its drop-ins stay the VM's own. An
    operator's own file there comes back when the node names it in `EXTRA_BACKUP_PATHS`. Then the
-   HAProxy release layout, the services, the hostname, and sshd is reloaded. Last, the node
-   package of the manager's own CLI release is installed on the VM and its `04-node-prepare` runs,
+   HAProxy release layout, the services, the hostname, and sshd is reloaded. When the archive shows
+   the node ran the WAF engine, the engine package the manager's own CLI release carries is installed
+   next: it is in no repository, and the node's deploy refuses a release with WAF rules without it.
+   Last, the node package of the manager's own CLI release is installed on the VM and its `04-node-prepare` runs,
    with an answers file read back out of the archive's `node.conf` (and the manager's publish
    root): the package puts the node scripts of the running release in place, not the archive's,
    and the step writes `node-installation.json`, the sudo
@@ -2227,7 +2230,8 @@ and the three steps are the same; over the node itself, what differs:
   the neighbour before anything changes. The copy stays 30 days (see
   [What a node keeps and for how long](#what-a-node-keeps-and-for-how-long));
 - the node's software is its own: no repository file is written, and only a product package the
-  node lacks is installed (`apt-get install --no-upgrade`, from the node's own sources). The node
+  node lacks is installed (`apt-get install --no-upgrade`, from the node's own sources) - the WAF
+  engine, which no source has, from this manager's release. The node
   package is not replaced - the node's own `04-node-prepare` runs, and a node without the package
   is refused before anything is written. The HAProxy releases and `current` are not touched;
 - what `/etc/haprion` and `/etc/systemd/system/haproxy.service.d` hold beyond the archive
@@ -4707,7 +4711,8 @@ A target that names none means `TLSv1.2`.
 **`haprion-server-state` keeps a drain through reloads and restarts.** A state set over HAProxy's
 runtime socket lasts only as long as the worker, and every deploy and certificate rollout starts a
 new one. So the node keeps the wanted state per server in `/var/lib/haprion/server-state.json`
-(`root`, `0600`), named by the server's GUID - derived from its address and port, so reordering a
+(`root`, `0600`) - carried in the node's state archive, so a node restored to a new VM keeps
+its drains, while a node restored over itself keeps its own, newer file - named by the server's GUID - derived from its address and port, so reordering a
 pool moves nothing and a server given a new address starts ready - and every reload on the node
 goes through `haprion-server-state reload`: it reads the worker's pid, reloads, waits for a
 worker with another pid, and sets the kept states on a connection whose `show info` proves which
@@ -4897,12 +4902,14 @@ development path.
 #### The `haprion-cli` package
 
 This is how the CLI is installed and updated. The package carries the wheel, the node package of
-the same commit, the release installer and the operators' sudo rules, and its `postinst` runs the
-installer described below. Run the complete repository gate first, then build it from the clean
-commit, with the `uv` the repository is locked with:
+the same commit, the WAF engine package, the release installer and the operators' sudo rules, and
+its `postinst` runs the installer described below. Run the complete repository gate first, then
+build it from the clean commit, with the `uv` the repository is locked with and the engine package
+built by `tools/build-coraza-package.py`:
 
 ```bash
-tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv
+tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv \
+    --waf-engine-package /path/to/protected/staging/haprion-coraza-spoa_0.9.0-7_amd64.deb
 sudo apt-get install /path/to/protected/staging/haprion-cli_0.1.0+git20261009120000.0123456789ab_all.deb
 ```
 

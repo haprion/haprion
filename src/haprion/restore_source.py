@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from haprion import waf_engine_package
 from haprion.backup_archive import MANIFEST, ArchiveError, ArchiveFacts, validate
 
 #
@@ -59,6 +60,7 @@ EXPORT_ROOTS = (
     "/etc/apparmor.d/rsyslog.d/haprion-traffic",
     "/etc/systemd/system/haprion-traffic-log-prune.service",
     "/etc/systemd/system/haprion-traffic-log-prune.timer",
+    "/var/lib/haprion/server-state.json",
     "/etc/systemd/system/ipvsadm.service",
     "/etc/cloud/cloud-init.disabled",
 )
@@ -124,6 +126,13 @@ class RestoreSource:
     #
     haproxy_version: str
     entries: tuple[Entry, ...] = field(repr=False)
+    #
+    # The WAF engine the node ran, from the same file: a node without it
+    # refuses the cluster's release when that release carries WAF rules, so a
+    # restore to a new VM installs the one this manager's release carries.
+    # Empty when the node did not run it.
+    #
+    waf_engine_version: str = ""
 
     @property
     def hostname(self) -> str:
@@ -355,6 +364,7 @@ def read(path: Path) -> RestoreSource:
             hashes,
             _service_accounts(_text(archive, "rootfs/etc/haprion/node.conf")),
         )
+        versions = _text(archive, "meta/package-versions.txt")
         return RestoreSource(
             archive=path,
             facts=facts,
@@ -363,8 +373,9 @@ def read(path: Path) -> RestoreSource:
             accounts=accounts,
             extra_paths=extra,
             roots=_roots(entries, accounts, extra),
-            haproxy_version=_version(_text(archive, "meta/package-versions.txt"), "haproxy"),
+            haproxy_version=_version(versions, "haproxy"),
             entries=entries,
+            waf_engine_version=_version(versions, waf_engine_package.PACKAGE),
         )
 
 

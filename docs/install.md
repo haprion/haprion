@@ -21,7 +21,8 @@ Haprion is installed from Debian packages built from one commit:
 | `haprion-cli` | the management host | the CLI engine, the node package of the same commit, the operators' commands and sudo rules |
 | `haprion-ui` | the management host, for the web interface | the interface's release for one distribution (Ubuntu 26.04 or Debian 13) and the platform steps |
 | `haprion-node` | each node | the node scripts and `04-node-prepare` |
-| `haprion-crs`, `haprion-coraza-spoa` | the management host and the nodes, for the WAF | the rule set and the engine |
+| `haprion-coraza-spoa` | the management host and the nodes, for the WAF | the engine; the CLI release also carries it, so a node restored to a new VM gets it back |
+| `haprion-crs` | the management host, for the WAF | the rule set; releases carry the rules to the nodes |
 
 Keep the source tree of the same commit for the manager steps in `install/`. The scripts use an
 answers file; its example includes `UV_BIN`, which names the uv the certbot step uses.
@@ -56,15 +57,17 @@ your installation. The file is described in [install/answers.example.env](../ins
 ## 2. Install the CLI engine
 
 Build from a clean, committed source tree that has passed the repository checks, into a
-protected directory outside the repository, with the `uv` the repository is locked with:
+protected directory outside the repository, with the `uv` the repository is locked with and the
+WAF engine package (`tools/build-coraza-package.py`), which the release carries for restored nodes:
 
 ```bash
-tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv
+tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv \
+    --waf-engine-package /path/to/protected/staging/haprion-coraza-spoa_<version>_amd64.deb
 sudo apt-get install /path/to/protected/staging/haprion-cli_<version>_all.deb
 ```
 
-The package's `postinst` verifies the wheel and the node package it carries against their
-digests, installs the release under `/opt/haprion/releases/` and switches `/opt/haprion/current`.
+The package's `postinst` verifies the wheel, the node package and the WAF engine package it carries
+against their digests, installs the release under `/opt/haprion/releases/` and switches `/opt/haprion/current`.
 The operator commands are in `/usr/bin`. A later version of the package is the whole update.
 What the installer does, and installing without the package, are in the manual's
 [Part 3](user-manual.md#part-3--the-versioned-cli-release).

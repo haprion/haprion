@@ -115,6 +115,12 @@ FROM_PACKAGE = frozenset(
 # product shares with the image are not among them (B178).
 #
 PRODUCT_DIRECTORIES = ("/etc/haprion", "/etc/systemd/system/haproxy.service.d")
+#
+# The servers the node keeps drained or in maintenance (B263). A new node gets
+# the archive's; a node restored over itself keeps its own, which is newer -
+# a drain set after the archive was taken must not be undone by a restore.
+#
+SERVER_STATE = "/var/lib/haprion/server-state.json"
 # 04-node-prepare's rollback copies: history of the old node, not its state.
 REPLACED = re.compile(r"\.replaced-\d{8}-\d{6}$")
 
@@ -465,6 +471,9 @@ def build(
             continue
         if entry.path == ROOT_KEYS:
             root_keys = _planned(entry)
+            continue
+        if mode == "overwrite" and entry.path == SERVER_STATE:
+            left_out.append(entry.path)
             continue
         if profile is not None and entry.path.startswith(HOST_KEY_PREFIX):
             # The test node keeps the host keys it was installed with - the ones

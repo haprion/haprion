@@ -31,6 +31,8 @@ DEFAULT_PYTHON = Path("/usr/bin/python3")
 DEFAULT_KEEP = 10
 # Beside INSTALLATION.json in the release; `haprion.node_package` finds it there.
 NODE_PACKAGE_NAME = "haprion-node.deb"
+# And the WAF engine's; `haprion.waf_engine_package` finds it there.
+WAF_ENGINE_PACKAGE_NAME = "haprion-coraza-spoa.deb"
 EXPECTED_PROJECT = "haprion"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -278,6 +280,53 @@ def _verify_node_package(
     return {"version": str(facts["version"]), "commit": str(facts["commit"]), "sha256": expected}
 
 
+def _verify_waf_engine_package(
+    python: Path, lib_dir: Path, package: Path, expected: str
+) -> dict[str, str]:
+    """Verify the WAF engine package with the release's own verifier; answer its version."""
+
+    code = (
+        "import json,sys;"
+        f"sys.path.insert(0,{str(lib_dir)!r});"
+        "from pathlib import Path;"
+        "from haprion.waf_engine_package import verify_package;"
+        "version,_=verify_package(Path(sys.argv[1]),sys.argv[2]);"
+        "print(json.dumps({'version':version}))"
+    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - validated interpreter, fixed code
+            [str(python), "-I", "-c", code, str(package), expected],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        facts = json.loads(completed.stdout)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip().splitlines()[-1:] or ["no detail"]
+        raise InstallError(f"WAF engine package verification failed: {detail[0]}") from exc
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        raise InstallError(f"WAF engine package verification failed: {exc}") from exc
+    return {"version": str(facts["version"]), "sha256": expected}
+
+
+def _checked_package(path: Path | None, sha256: str | None, label: str) -> Path | None:
+    """A package path and digest given together, the file a regular one with that digest."""
+
+    if (path is None) != (sha256 is None):
+        raise InstallError(f"a {label} needs both its path and its SHA-256")
+    if path is None:
+        return None
+    path = require_safe_absolute_path(path, label=f"{label} path")
+    if not path.is_file() or path.is_symlink():
+        raise InstallError(f"{label} must be a regular non-symlink file")
+    if not SHA256_PATTERN.fullmatch(sha256 or ""):
+        raise InstallError(f"{label} SHA-256 must be 64 lowercase hexadecimal characters")
+    if sha256_file(path) != sha256:
+        raise InstallError(f"{label} SHA-256 does not match the expected value")
+    return path
+
+
 def install_release(
     *,
     wheel: Path,
@@ -288,6 +337,8 @@ def install_release(
     keep: int = DEFAULT_KEEP,
     node_package: Path | None = None,
     node_package_sha256: str | None = None,
+    waf_engine_package: Path | None = None,
+    waf_engine_package_sha256: str | None = None,
 ) -> str:
     if require_root and os.geteuid() != 0:
         raise InstallError("installer must run as root")
@@ -308,16 +359,14 @@ def install_release(
     # it. Optional, so a wheel installed without one stays installable for
     # rollback; a release without one refuses to restore a node and says why.
     #
-    if (node_package is None) != (node_package_sha256 is None):
-        raise InstallError("a node package needs both its path and its SHA-256")
-    if node_package is not None:
-        node_package = require_safe_absolute_path(node_package, label="node package path")
-        if not node_package.is_file() or node_package.is_symlink():
-            raise InstallError("node package must be a regular non-symlink file")
-        if not SHA256_PATTERN.fullmatch(node_package_sha256 or ""):
-            raise InstallError("node package SHA-256 must be 64 lowercase hexadecimal characters")
-        if sha256_file(node_package) != node_package_sha256:
-            raise InstallError("node package SHA-256 does not match the expected value")
+    node_package = _checked_package(node_package, node_package_sha256, "node package")
+    #
+    # The WAF engine package, on the same terms: a node restored to a new VM
+    # gets it when its archive shows it ran the engine.
+    #
+    waf_engine_package = _checked_package(
+        waf_engine_package, waf_engine_package_sha256, "WAF engine package"
+    )
 
     runtime = inspect_runtime(python)
     project, version, scripts, _ = inspect_wheel(wheel)
@@ -342,13 +391,17 @@ def install_release(
             raise InstallError(f"existing release cannot be verified: {exc}") from exc
         if installed.get("wheel_sha256") != actual_sha256:
             raise InstallError("existing release ID has different installation metadata")
-        carried = (installed.get("node_package") or {}).get("sha256")
-        if carried != node_package_sha256:
-            raise InstallError(
-                "this release is already installed with "
-                + (f"node package {carried[:12]}" if carried else "no node package")
-                + "; a release is not changed in place"
-            )
+        for record, label, wanted in (
+            ("node_package", "node package", node_package_sha256),
+            ("waf_engine_package", "WAF engine package", waf_engine_package_sha256),
+        ):
+            carried = (installed.get(record) or {}).get("sha256")
+            if carried != wanted:
+                raise InstallError(
+                    "this release is already installed with "
+                    + (f"{label} {carried[:12]}" if carried else f"no {label}")
+                    + "; a release is not changed in place"
+                )
     else:
         staging = Path(tempfile.mkdtemp(prefix=f".{release_id}.", dir=releases))
         try:
@@ -362,6 +415,12 @@ def install_release(
                     python, lib_dir, node_package, node_package_sha256
                 )
                 shutil.copyfile(node_package, staging / NODE_PACKAGE_NAME)
+            engine_facts = None
+            if waf_engine_package is not None and waf_engine_package_sha256 is not None:
+                engine_facts = _verify_waf_engine_package(
+                    python, lib_dir, waf_engine_package, waf_engine_package_sha256
+                )
+                shutil.copyfile(waf_engine_package, staging / WAF_ENGINE_PACKAGE_NAME)
             installation = {
                 "project": project,
                 "version": version,
@@ -376,6 +435,11 @@ def install_release(
             }
             if package_facts is not None:
                 installation["node_package"] = {"file": NODE_PACKAGE_NAME, **package_facts}
+            if engine_facts is not None:
+                installation["waf_engine_package"] = {
+                    "file": WAF_ENGINE_PACKAGE_NAME,
+                    **engine_facts,
+                }
             (staging / "INSTALLATION.json").write_text(
                 json.dumps(installation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
@@ -445,6 +509,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="the node package built from the same commit (tools/node-package.py build)",
     )
     parser.add_argument("--node-package-sha256")
+    parser.add_argument(
+        "--waf-engine-package",
+        type=Path,
+        help="the WAF engine package (tools/build-coraza-package.py) for restored nodes",
+    )
+    parser.add_argument("--waf-engine-package-sha256")
     parser.add_argument("--target", type=Path, default=DEFAULT_TARGET)
     parser.add_argument("--python", type=Path, default=DEFAULT_PYTHON)
     parser.add_argument(
@@ -468,6 +538,8 @@ def main(argv: list[str] | None = None) -> int:
             keep=args.keep,
             node_package=args.node_package,
             node_package_sha256=args.node_package_sha256,
+            waf_engine_package=args.waf_engine_package,
+            waf_engine_package_sha256=args.waf_engine_package_sha256,
         )
     except InstallError as exc:
         print(f"install-release: ERROR: {exc}", file=sys.stderr)

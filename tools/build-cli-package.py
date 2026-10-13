@@ -41,7 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from haprion import node_package  # noqa: E402 - the path above comes first
+from haprion import node_package, waf_engine_package  # noqa: E402 - the path above comes first
 from haprion.debian_package import package, write  # noqa: E402
 
 PACKAGE = "haprion-cli"
@@ -65,6 +65,8 @@ if [ "$1" = configure ]; then
     /usr/bin/python3 /{LIB}/install-release.py \\
         --wheel "/{LIB}/$WHEEL" --sha256 "$WHEEL_SHA256" \\
         --node-package "/{LIB}/$NODE_PACKAGE" --node-package-sha256 "$NODE_PACKAGE_SHA256" \\
+        --waf-engine-package "/{LIB}/$WAF_ENGINE_PACKAGE" \\
+        --waf-engine-package-sha256 "$WAF_ENGINE_PACKAGE_SHA256" \\
         --target {TARGET}
 fi
 """
@@ -126,6 +128,7 @@ def assemble(
     *,
     wheel: Path,
     node_deb: Path,
+    waf_engine_deb: Path,
     installer: bytes,
     sudoers: bytes,
     licence: bytes,
@@ -135,10 +138,13 @@ def assemble(
 
     write(root, f"{LIB}/{wheel.name}", wheel.read_bytes(), 0o644)
     write(root, f"{LIB}/{node_deb.name}", node_deb.read_bytes(), 0o644)
+    write(root, f"{LIB}/{waf_engine_deb.name}", waf_engine_deb.read_bytes(), 0o644)
     write(root, f"{LIB}/install-release.py", installer, 0o755)
     payload = (
         f"WHEEL={wheel.name}\nWHEEL_SHA256={sha256(wheel)}\n"
         f"NODE_PACKAGE={node_deb.name}\nNODE_PACKAGE_SHA256={sha256(node_deb)}\n"
+        f"WAF_ENGINE_PACKAGE={waf_engine_deb.name}\n"
+        f"WAF_ENGINE_PACKAGE_SHA256={sha256(waf_engine_deb)}\n"
     )
     write(root, f"{LIB}/PAYLOAD", payload.encode(), 0o644)
     for name in operator_commands(wheel):
@@ -154,7 +160,11 @@ def assemble(
     write(
         root,
         "usr/share/doc/haprion-cli/BUILD",
-        f"commit: {commit}\nwheel_sha256: {sha256(wheel)}\nnode_package_sha256: {sha256(node_deb)}\n".encode(),
+        (
+            f"commit: {commit}\nwheel_sha256: {sha256(wheel)}\n"
+            f"node_package_sha256: {sha256(node_deb)}\n"
+            f"waf_engine_package_sha256: {sha256(waf_engine_deb)}\n"
+        ).encode(),
         0o644,
     )
     write(root, "DEBIAN/conffiles", f"/{SUDOERS}\n".encode(), 0o644)
@@ -193,7 +203,7 @@ def build_wheel(source: Path, commit: str, epoch: int, uv: Path, work: Path) -> 
     return wheels[0]
 
 
-def build(source: Path, output_dir: Path, uv: Path) -> Path:
+def build(source: Path, output_dir: Path, uv: Path, waf_engine_deb: Path) -> Path:
     source = source.resolve(strict=True)
     commit = node_package.source_commit(source)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -202,11 +212,18 @@ def build(source: Path, output_dir: Path, uv: Path) -> Path:
         work = Path(directory)
         wheel = build_wheel(source, commit, epoch, uv, work)
         node_deb, facts = node_package.build_package(source, work / "node")
+        #
+        # The WAF engine is built apart, from pinned upstream sources
+        # (tools/build-coraza-package.py); the release carries it for nodes
+        # restored to a new VM. Checked here so a wrong file never ships.
+        #
+        waf_engine_package.verify_package(waf_engine_deb)
         root = work / "root"
         assemble(
             root,
             wheel=wheel,
             node_deb=node_deb,
+            waf_engine_deb=waf_engine_deb,
             installer=_git(source, "show", f"{commit}:tools/install-release.py"),
             sudoers=_git(source, "show", f"{commit}:install/sudoers/haprion"),
             licence=_git(source, "show", f"{commit}:LICENSE"),
@@ -237,12 +254,24 @@ def main() -> int:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--uv", type=Path, default=shutil.which("uv"), help="the uv to build with")
+    parser.add_argument(
+        "--waf-engine-package",
+        type=Path,
+        required=True,
+        help="the haprion-coraza-spoa package (tools/build-coraza-package.py) restored nodes get",
+    )
     args = parser.parse_args()
     if args.uv is None:
         parser.error("no uv on PATH; pass --uv")
     try:
-        target = build(args.source, args.output_dir, args.uv)
-    except (BuildError, node_package.PackageError, ValueError, OSError) as exc:
+        target = build(args.source, args.output_dir, args.uv, args.waf_engine_package)
+    except (
+        BuildError,
+        node_package.PackageError,
+        waf_engine_package.PackageError,
+        ValueError,
+        OSError,
+    ) as exc:
         parser.exit(1, f"package build failed: {exc}\n")
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or b"").decode(errors="replace").strip().splitlines()[-3:]

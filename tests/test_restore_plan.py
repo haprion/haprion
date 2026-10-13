@@ -113,6 +113,20 @@ class ANewVm(Planning):
         self.assertIn("/etc/sudoers.d/svc-app", {file.path for file in plan.files})
         self.assertNotIn("/etc/sudoers.d/svc-app", plan.left_out)
 
+    def test_the_kept_server_states_come_to_a_new_vm_but_never_over_the_node(self) -> None:
+        """B298: a new node needs the archive's; the node itself has newer ones."""
+
+        files = dict(FILES)
+        files[restore_plan.SERVER_STATE] = ('{"servers": []}\n', 0o600)
+        source = self.source(files)
+        self.assertIn(
+            restore_plan.SERVER_STATE,
+            {file.path for file in restore_plan.build(source, "new_vm", TARGET).files},
+        )
+        over = restore_plan.build(source, "overwrite", TARGET)
+        self.assertNotIn(restore_plan.SERVER_STATE, {file.path for file in over.files})
+        self.assertNotIn(restore_plan.SERVER_STATE, over.summary()["changed"])
+
     def test_what_the_node_package_writes_is_not_taken_from_the_archive(self) -> None:
         """B178/B180: the running release's scripts, not the ones the node ran then."""
 

@@ -567,6 +567,72 @@ class Apply(AgentTest):
         self.assertIn("unsafe", result["error"])
 
 
+ENGINE = b"the release's WAF engine package"
+ENGINE_HEADER = dict(
+    APPLY_HEADER,
+    waf_engine={"version": "0.9.0-7", "sha256": hashlib.sha256(ENGINE).hexdigest()},
+)
+ENGINE_FILE: Member = (
+    f"/var/lib/haprion-restore/{RUN}/{restore_agent.WAF_ENGINE_FILE}",
+    "file",
+    0o600,
+    0,
+    0,
+    ENGINE,
+)
+
+
+class WafEngine(AgentTest):
+    """B298: the engine the node ran, installed before the node package prepares the node."""
+
+    def test_it_is_installed_before_the_node_is_prepared(self) -> None:
+        result = self.serve(ENGINE_HEADER, payload([*APPLY_FILES, ENGINE_FILE]))
+        self.assertTrue(result["ok"], result)
+        work = self.host.path(f"/var/lib/haprion-restore/{RUN}/waf-engine")
+        install = [
+            "apt-get",
+            "install",
+            "-y",
+            "--no-install-recommends",
+            *restore_agent.APT_WAIT,
+            str(work / restore_agent.WAF_ENGINE_FILE),
+        ]
+        self.assertEqual((work / restore_agent.WAF_ENGINE_FILE).read_bytes(), ENGINE)
+        prepare = next(argv for argv in self.host.commands if argv[0] == "bash")
+        self.assertLess(self.host.commands.index(install), self.host.commands.index(prepare))
+        self.assertIn("waf-engine", [step["step"] for step in result["steps"]])
+
+    def test_a_node_that_did_not_run_it_gets_nothing(self) -> None:
+        result = self.serve(APPLY_HEADER, payload(APPLY_FILES))
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(any("waf-engine" in " ".join(argv) for argv in self.host.commands))
+
+    def test_one_that_does_not_match_its_digest_stops_before_anything_is_written(self) -> None:
+        header = dict(ENGINE_HEADER, waf_engine={"version": "0.9.0-7", "sha256": "0" * 64})
+        result = self.serve(header, payload([*APPLY_FILES, ENGINE_FILE]))
+        self.assertFalse(result["ok"])
+        self.assertIn("WAF engine package does not match", result["error"])
+        self.assertEqual(self.host.commands, [])
+
+    def test_a_package_without_its_description_and_the_reverse_are_refused(self) -> None:
+        for header, files in (
+            (APPLY_HEADER, [*APPLY_FILES, ENGINE_FILE]),
+            (ENGINE_HEADER, APPLY_FILES),
+        ):
+            result = self.serve(header, payload(files))
+            self.assertFalse(result["ok"])
+            self.assertIn("do not come together", result["error"])
+            self.assertEqual(self.host.commands, [])
+
+    def test_the_names_are_the_release_s(self) -> None:
+        from haprion import waf_engine_package
+
+        self.assertEqual(restore_agent.WAF_ENGINE_FILE, waf_engine_package.RELEASE_PACKAGE)
+        self.assertEqual(
+            restore_agent.WAF_ENGINE_VERSION.pattern, waf_engine_package.VERSION.pattern
+        )
+
+
 class Network(AgentTest):
     NETPLAN: ClassVar[list[Member]] = [
         ("/etc/netplan/50-cloud-init.yaml", "file", 0o600, 0, 0, "network: {}\n")

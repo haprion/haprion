@@ -15,7 +15,14 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion import cluster_lock, node_package, node_restore, restore_plan, restore_source
+from haprion import (
+    cluster_lock,
+    node_package,
+    node_restore,
+    restore_plan,
+    restore_source,
+    waf_engine_package,
+)
 from haprion.cli import node_restore as cli
 from haprion.config import Node
 from haprion.node_restore import Clock, Request, RestoreError
@@ -78,6 +85,8 @@ def members(payload: bytes) -> list[str]:
 
 
 class RestoreTest(unittest.TestCase):
+    engine: waf_engine_package.ReleasePackage | None = None
+
     def setUp(self) -> None:
         work = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, work)
@@ -1015,3 +1024,95 @@ class Cli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+#
+# B298: the WAF engine is in no repository; a node that ran it gets the one
+# this manager's release carries, or the restore says why not.
+#
+ENGINE_VERSIONS = {"meta/package-versions.txt": "haproxy\t3.4.4-1\nhaprion-coraza-spoa\t0.9.0-7\n"}
+
+
+def _with_engine(test: RestoreTest) -> None:
+    archive = test.backups / "node-a" / f"{VERSION}.tar.gz"
+    work = Path(tempfile.mkdtemp())
+    test.addCleanup(shutil.rmtree, work)
+    shutil.move(build(work, meta=ENGINE_VERSIONS), archive)
+    carried = work / "haprion-coraza-spoa.deb"
+    carried.write_bytes(b"the release's WAF engine package")
+    test.engine = waf_engine_package.ReleasePackage(
+        path=carried, version="0.9.0-7", sha256=hashlib.sha256(carried.read_bytes()).hexdigest()
+    )
+    patch = mock.patch.object(
+        waf_engine_package,
+        "release_package",
+        side_effect=lambda: test.engine,
+    )
+    patch.start()
+    test.addCleanup(patch.stop)
+
+
+class WafEngineToANewVm(Run):
+    def setUp(self) -> None:
+        super().setUp()
+        _with_engine(self)
+
+    def test_the_preview_names_it_and_the_run_carries_it(self) -> None:
+        summary = self.preview(self.prepare())
+        self.assertEqual(summary["problems"], [])
+        self.assertEqual(summary["waf_engine"], {"version": "0.9.0-7"})
+
+        run = self.previewed()
+        self.carry_out(run)
+        header, carried = FakeSession.calls[1][1], FakeSession.calls[1][2]
+        if self.engine is None:
+            self.fail("no engine")
+        self.assertEqual(header["waf_engine"], {"version": "0.9.0-7", "sha256": self.engine.sha256})
+        self.assertIn(f"/var/lib/haprion-restore/{run}/haprion-coraza-spoa.deb", members(carried))
+
+    def test_a_release_without_it_stops_the_restore(self) -> None:
+        self.engine = None
+        summary = self.preview(self.prepare())
+        self.assertIn("carries no WAF engine package", " ".join(summary["problems"]))
+        self.assertNotIn("waf_engine", summary)
+
+    def test_one_that_fails_verification_stops_the_restore(self) -> None:
+        def broken() -> None:
+            raise waf_engine_package.PackageError(
+                "package SHA-256 does not match the expected value"
+            )
+
+        with mock.patch.object(waf_engine_package, "release_package", side_effect=broken):
+            summary = self.preview(self.prepare())
+        self.assertIn("WAF engine package cannot be used", " ".join(summary["problems"]))
+
+
+class WafEngineNotRun(Run):
+    def test_a_node_without_it_gets_none(self) -> None:
+        summary = self.preview(self.prepare())
+        self.assertNotIn("waf_engine", summary)
+        run = self.previewed()
+        self.carry_out(run)
+        self.assertIsNone(FakeSession.calls[1][1]["waf_engine"])
+
+
+class WafEngineOverTheNode(Overwrite):
+    """B183: the node's software is its own; only an engine it lacks is installed."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        _with_engine(self)
+
+    def test_a_node_that_has_it_keeps_its_own(self) -> None:
+        FakeSession.answers["inspect"]["product_installed"] = [
+            *restore_plan.PRODUCT_PACKAGES,
+            waf_engine_package.PACKAGE,
+        ]
+        summary = self.preview_overwrite(self.prepare_overwrite())
+        self.assertEqual(summary["problems"], [])
+        self.assertNotIn("waf_engine", summary)
+
+    def test_a_node_that_lost_it_gets_it(self) -> None:
+        summary = self.preview_overwrite(self.prepare_overwrite())
+        self.assertEqual(summary["waf_engine"], {"version": "0.9.0-7"})
+        self.assertIn(waf_engine_package.PACKAGE, FakeSession.calls[0][1]["packages"])

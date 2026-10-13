@@ -7474,3 +7474,37 @@ class TheExportAppliesUnchanged(unittest.TestCase):
         self.assertNotIn("password", exported)
         self.assertNotIn("sso-person", exported)
         self.assertIn("viewer", exported)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class AcknowledgedAttention(unittest.TestCase):
+    """0073 (B299): the web acknowledges a row once, reads it back and forgets it."""
+
+    def connect(self, role: str = "HAPRION_UI_TEST_WEB_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role]}")
+
+    def tearDown(self) -> None:
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
+            connection.execute("truncate attention_ack")
+            connection.commit()
+
+    def test_once_read_back_and_forgotten(self) -> None:
+        job = ("job", "alpha", "job 7")
+        node = ("node", "", "node-b")
+        with self.connect() as connection:
+            self.assertTrue(db.acknowledge_attention(connection, job, actor="operator"))
+            self.assertFalse(db.acknowledge_attention(connection, job, actor="other"))
+            self.assertTrue(db.acknowledge_attention(connection, node, actor="operator"))
+            self.assertEqual(db.attention_acks(connection), {job, node})
+            db.forget_attention_acks(connection, {node})
+            self.assertEqual(db.attention_acks(connection), {job})
+            connection.commit()
+            by = connection.execute("select acknowledged_by from attention_ack").fetchone()
+        self.assertEqual(by, ("operator",))
+
+    def test_the_web_cannot_rewrite_who_acknowledged(self) -> None:
+        with self.connect() as connection:
+            db.acknowledge_attention(connection, ("job", "alpha", "job 7"), actor="operator")
+            connection.commit()
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("update attention_ack set acknowledged_by = 'x'")

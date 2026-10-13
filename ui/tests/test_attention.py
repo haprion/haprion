@@ -537,3 +537,85 @@ class TheDashboardBox(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheAcknowledgement(LoginTestCase):
+    """B299: an admin leaves a row out until it has gone; a new failure is a new row."""
+
+    FAILED = replace(
+        job(state="failed", outcome="failed", operation="deploy"), id=7, created_at=NOW
+    )
+
+    def setUp(self) -> None:
+        super().setUp()
+        for patch in (
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[self.FAILED]),
+            mock.patch(
+                "haprion_ui.db.status_access",
+                return_value=[StatusAccess("192.0.2.0/24", "admin", NOW)],
+            ),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def counts(self) -> dict[str, int]:
+        answer = self.client().get(
+            "/status/attention.json", headers={"X-Forwarded-For": "192.0.2.10"}
+        )
+        counts: dict[str, int] = json.loads(answer.text)["counts"]
+        return counts
+
+    def signed_in(self) -> Any:
+        client = self.client(replace(configuration(), management_writes=True))
+        self.sign_in(client)
+        return client
+
+    def test_the_row_offers_it_and_an_acknowledged_row_is_left_out_everywhere(self) -> None:
+        page = self.signed_in().get("/")
+        self.assertIn('action="/attention/acknowledge"', page.text)
+        self.assertIn('name="subject" value="job 7"', page.text)
+        self.assertEqual(sum(self.counts().values()), 1)
+
+        self.acks = {("job", self.FAILED.cluster or "", "job 7")}
+
+        self.assertEqual(sum(self.counts().values()), 0)
+        self.assertNotIn('value="job 7"', self.signed_in().get("/").text)
+
+    def test_acknowledging_a_shown_row_is_stored_and_audited(self) -> None:
+        client = self.signed_in()
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        with mock.patch("haprion_ui.db.acknowledge_attention", return_value=True) as stored:
+            answer = client.post(
+                "/attention/acknowledge",
+                data={
+                    "csrf_token": token,
+                    "kind": "job",
+                    "cluster": self.FAILED.cluster or "",
+                    "subject": "job 7",
+                },
+                follow_redirects=False,
+            )
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(stored.call_args.args[1], ("job", self.FAILED.cluster or "", "job 7"))
+        self.assertIn("attention_acknowledged", self.audit)
+
+    def test_a_row_the_list_does_not_show_is_acknowledged_by_nothing(self) -> None:
+        client = self.signed_in()
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        with mock.patch("haprion_ui.db.acknowledge_attention") as stored:
+            client.post(
+                "/attention/acknowledge",
+                data={"csrf_token": token, "kind": "job", "cluster": "alpha", "subject": "job 99"},
+                follow_redirects=False,
+            )
+        stored.assert_not_called()
+
+    def test_an_acknowledgement_whose_row_has_gone_is_forgotten(self) -> None:
+        kept = ("job", "alpha", "job 7")
+        gone = ("node", "alpha", "node-b")
+        item = attention.Item("job", "critical", "alpha", "job 7", "Deploy failed", NOW, "/jobs")
+
+        shown, forgotten = attention.unacknowledged([item], {kept, gone})
+
+        self.assertEqual(shown, [])
+        self.assertEqual(forgotten, {gone})

@@ -45,7 +45,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\nstatus_access\ntraffic_log\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
+expected_tables=$'alembic_version\napp_session\napp_user\nattention_ack\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\nstatus_access\ntraffic_log\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -138,6 +138,8 @@ app_web	app_session	UPDATE	last_seen_at, revoked_at
 app_web	app_user	INSERT	break_glass, oidc_issuer, oidc_subject, password_hash, role, source, username
 app_web	app_user	SELECT	break_glass, created_at, disabled, id, oidc_issuer, oidc_subject, password_hash, role, source, updated_at, username, username_normalised
 app_web	app_user	UPDATE	break_glass, disabled, oidc_issuer, oidc_subject, password_hash, role
+app_web	attention_ack	INSERT	acknowledged_by, cluster, kind, subject
+app_web	attention_ack	SELECT	acknowledged_at, acknowledged_by, cluster, kind, subject
 app_web	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_web	audit_event	SELECT	action, actor, at, cluster, detail, id, request_id
 app_web	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings

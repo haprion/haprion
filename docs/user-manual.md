@@ -2618,6 +2618,12 @@ box. What somebody chose - a drained server, a
 maintenance page, a block, a publish not yet deployed - is not on it: those are on the cluster's
 card and *Operations* line, and on *Versions*.
 
+Some things are known and left as they are - a restore given up, a receiver down on purpose. An admin
+**acknowledges** such a row, and it is left out of the list and of what the monitor is told until it
+has gone: when what it says is put right, or a later run of a job's operation works. The same trouble
+coming back after that, or a job of the operation failing again, is a row again. Each
+acknowledgement is in *Audit* with who made it and what the row said (schema `0073`).
+
 The same list answers a monitor, without a sign-in:
 
 ```

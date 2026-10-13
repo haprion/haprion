@@ -4327,6 +4327,51 @@ def build_router(config: Config) -> APIRouter:
             status_code=status_code,
         )
 
+    @router.post("/attention/acknowledge")
+    async def acknowledge_attention(
+        request: Request,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        kind: Annotated[str, Form(max_length=32)],
+        subject: Annotated[str, Form(max_length=256)],
+        cluster: Annotated[str, Form(max_length=64)] = "",
+    ) -> Response:
+        """Leave one row of *Needs attention* out until it has gone (B299)."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        #
+        # Only a row the list shows now: a key made up, or one that has gone
+        # since the page was drawn, is acknowledged by nothing.
+        #
+        shown = next(
+            (
+                item
+                for item in _attention(request, config).items
+                if item.key == (kind, cluster, subject)
+            ),
+            None,
+        )
+        if shown is not None:
+            with request.app.state.pool.connection() as connection:
+                if db.acknowledge_attention(connection, shown.key, actor=gate.username):
+                    db.record_audit_event(
+                        connection,
+                        actor=gate.username,
+                        action="attention_acknowledged",
+                        detail={
+                            "kind": kind,
+                            "cluster": cluster or None,
+                            "subject": subject,
+                            "message": shown.message,
+                        },
+                    )
+                connection.commit()
+        return RedirectResponse("/", status_code=303)
+
     @router.post("/settings/status-access")
     async def save_status_access(
         request: Request,
@@ -11076,6 +11121,11 @@ def _attention(request: Request, config: Config) -> attention.Attention:
     }
     for cluster in clusters:
         status_age.setdefault(cluster, None)
+    with request.app.state.pool.connection() as connection:
+        items, gone = attention.unacknowledged(items, db.attention_acks(connection))
+        if gone:
+            db.forget_attention_acks(connection, gone)
+            connection.commit()
     return attention.build_attention(
         items,
         status_age=status_age,

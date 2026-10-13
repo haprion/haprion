@@ -127,6 +127,7 @@ class LoginTestCase(unittest.TestCase):
         # table reads as all on.
         #
         self.switches: dict[str, Any] = {}
+        self.acks: set[tuple[str, str, str]] = set()
         self.provider: Any = None
         self.id_tokens: dict[bytes, str | None] = {}
 
@@ -179,6 +180,8 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.node_event_count", return_value=0),
             # Nobody may ask /status/ (B274) unless a test says otherwise.
             mock.patch("haprion_ui.db.status_access", return_value=[]),
+            mock.patch("haprion_ui.db.attention_acks", side_effect=lambda _c: set(self.acks)),
+            mock.patch("haprion_ui.db.forget_attention_acks"),
             # Every cluster read through since its last job (0068).
             mock.patch("haprion_ui.db.clusters_catching_up", return_value=[]),
             #

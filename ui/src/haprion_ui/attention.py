@@ -64,6 +64,12 @@ class Item:
     def page(self) -> str:
         return PAGES[self.kind]
 
+    @property
+    def key(self) -> tuple[str, str, str]:
+        """What an acknowledgement names (B299): the row as the list shows it."""
+
+        return (self.kind, self.cluster or "", self.subject)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "kind": self.kind,
@@ -525,6 +531,21 @@ def from_log_forwarding(status_rows: Iterable[Any], *, now: datetime) -> list[It
                     )
                 )
     return items
+
+
+def unacknowledged(
+    items: Iterable[Item], acknowledged: set[tuple[str, str, str]]
+) -> tuple[list[Item], set[tuple[str, str, str]]]:
+    """The rows nobody has acknowledged, and the acknowledgements whose row has gone (B299).
+
+    An acknowledgement lasts as long as its row: when what the row says is put
+    right, or a later run of a job's operation works, the row goes, and so
+    does the acknowledgement - the same trouble coming back is a row again.
+    """
+
+    listed = list(items)
+    present = {item.key for item in listed}
+    return [item for item in listed if item.key not in acknowledged], acknowledged - present
 
 
 def build_attention(

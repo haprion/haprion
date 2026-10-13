@@ -164,6 +164,9 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "oidc_tested": lambda _detail: "Tried signing in with the identity provider",
     "oidc_enabled": lambda _detail: "Turned on sign-in with the identity provider",
     "feature_switched": _feature,
+    "attention_acknowledged": lambda detail: (
+        f"Acknowledged {_text(detail, 'subject', 'a row')}: {_text(detail, 'message', '')}"
+    ),
     "status_access_changed": lambda detail: (
         "Changed the external monitoring addresses"
         if detail.get("networks")

@@ -18,7 +18,6 @@ The rules that shape every handler below:
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import hashlib
 import hmac
@@ -38,11 +37,12 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from typing import Annotated, Any
 from urllib.parse import urlencode
 from uuid import UUID, uuid4, uuid5
 
+import anyio
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -81,6 +81,7 @@ from haprion.proxy_model import (
     ModelError,
     load_proxy,
 )
+from starlette.datastructures import FormData
 from starlette.templating import _TemplateResponse
 
 from haprion_ui import (
@@ -739,6 +740,24 @@ def hidden_by_a_switch(request: Request) -> None:
         features.read_in(db.feature_switches(connection))
     if features.hiding(path):
         raise HTTPException(status_code=404, detail="Not found")
+
+
+#
+# Every handler is a plain `def`, which FastAPI runs in its thread pool. They
+# all read the database - the session check alone does - with the synchronous
+# pool, and an `async def` doing that waited on the event loop: while it waited
+# for a connection, no other request of anybody's was answered (review
+# 26-10-13, K1). What is asynchronous in a request - its form, an upload - is
+# read from the thread through the loop instead.
+#
+async def _read_form(request: Request) -> FormData:
+    return await request.form()
+
+
+def _posted(request: Request) -> FormData:
+    """The request's form, read from a handler running in the thread pool."""
+
+    return anyio.from_thread.run(_read_form, request)
 
 
 def build_router(config: Config) -> APIRouter:
@@ -1447,7 +1466,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/proxies/{cluster}/{name}/servers")
-    async def proxy_servers(
+    def proxy_servers(
         request: Request,
         cluster: str,
         name: str,
@@ -1475,7 +1494,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         back = f"/proxies/{listed}/{name}"
-        posted = await request.form()
+        posted = _posted(request)
         #
         # One past the bound, so the helper's own limit refuses a request
         # over it rather than this quietly sending part of one.
@@ -1528,7 +1547,7 @@ def build_router(config: Config) -> APIRouter:
         return RedirectResponse(back, status_code=303)
 
     @router.post("/proxies/{cluster}/{name}/unblock")
-    async def proxy_unblock(
+    def proxy_unblock(
         request: Request,
         cluster: str,
         name: str,
@@ -1555,7 +1574,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         back = f"/proxies/{listed}/{name}"
-        posted = await request.form()
+        posted = _posted(request)
         #
         # One past the bound, so the helper's own limit refuses a request over
         # it rather than this quietly sending part of one.
@@ -2641,12 +2660,12 @@ def build_router(config: Config) -> APIRouter:
         return _waf_allow(request, config, None)
 
     @router.post("/waf/allow", response_class=HTMLResponse)
-    async def waf_allow(request: Request) -> Response:
-        return _waf_allow(request, config, await request.form())
+    def waf_allow(request: Request) -> Response:
+        return _waf_allow(request, config, _posted(request))
 
     @router.post("/waf/exceptions/remove", response_class=HTMLResponse)
-    async def waf_remove_exception(request: Request) -> Response:
-        return _waf_remove(request, config, await request.form())
+    def waf_remove_exception(request: Request) -> Response:
+        return _waf_remove(request, config, _posted(request))
 
     def _traffic_log_page(request: Request, *, waf_page: bool) -> Response:
         session = current_session(request)
@@ -3317,7 +3336,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/certificates/import", response_class=HTMLResponse)
-    async def import_certificate_submit(
+    def import_certificate_submit(
         request: Request,
         name: str = Form(default="", max_length=255),
         password: str = Form(default="", max_length=256),
@@ -3338,7 +3357,7 @@ def build_router(config: Config) -> APIRouter:
         is the box. The same four refusals `/certificates/new` makes first.
         """
 
-        data, filename = await _uploaded_bytes(file)
+        data, filename = _uploaded_bytes(file)
         form = certificate_import_form.ImportForm(
             name=name,
             password=password,
@@ -3382,7 +3401,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/certificates/{certificate_id}/upload")
-    async def upload_certificate(
+    def upload_certificate(
         request: Request,
         certificate_id: str,
         csrf_token: Annotated[str, Form(max_length=128)],
@@ -3396,7 +3415,7 @@ def build_router(config: Config) -> APIRouter:
         page, where replacing the key is the stated intent.
         """
 
-        data, _filename = await _uploaded_bytes(file)
+        data, _filename = _uploaded_bytes(file)
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
@@ -3453,7 +3472,7 @@ def build_router(config: Config) -> APIRouter:
             return _queue_import(request, session, key, payload, after="/settings")
         return _queue_import(request, session, key, payload, open_row=certificate_id)
 
-    async def _uploaded_bytes(file: UploadFile | None) -> tuple[bytes, str]:
+    def _uploaded_bytes(file: UploadFile | None) -> tuple[bytes, str]:
         """The file's bytes, read once and bounded one byte past the limit.
 
         One byte past, so the form can say "too large" rather than silently
@@ -3463,8 +3482,8 @@ def build_router(config: Config) -> APIRouter:
 
         if file is None:
             return b"", ""
-        data = await file.read(certificate_import_form.MAX_UPLOAD_BYTES + 1)
-        await file.close()
+        data = anyio.from_thread.run(file.read, certificate_import_form.MAX_UPLOAD_BYTES + 1)
+        anyio.from_thread.run(file.close)
         return data, file.filename or ""
 
     def _queue_import(
@@ -3564,7 +3583,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/certificates/{certificate_id}/resume")
-    async def resume_enrollment(
+    def resume_enrollment(
         request: Request,
         certificate_id: str,
         csrf_token: Annotated[str, Form(max_length=128)],
@@ -3629,7 +3648,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/certificates/{certificate_id}/publish")
-    async def publish_certificate(
+    def publish_certificate(
         request: Request,
         certificate_id: str,
         csrf_token: Annotated[str, Form(max_length=128)],
@@ -4329,7 +4348,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/attention/acknowledge")
-    async def acknowledge_attention(
+    def acknowledge_attention(
         request: Request,
         csrf_token: Annotated[str, Form(max_length=128)],
         kind: Annotated[str, Form(max_length=32)],
@@ -4374,7 +4393,7 @@ def build_router(config: Config) -> APIRouter:
         return RedirectResponse("/", status_code=303)
 
     @router.post("/settings/status-access")
-    async def save_status_access(
+    def save_status_access(
         request: Request,
         csrf_token: Annotated[str, Form(max_length=128)],
         networks: Annotated[str, Form(max_length=4096)] = "",
@@ -5621,13 +5640,13 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/settings/oidc", response_class=HTMLResponse)
-    async def change_oidc_settings(request: Request) -> Response:
+    def change_oidc_settings(request: Request) -> Response:
         """Save, Verify, and turn on or off. Each is audited; the secret never is."""
 
         gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        posted = await request.form()
+        posted = _posted(request)
         form = {key: value for key, value in posted.items() if isinstance(value, str)}
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, form.get(auth.CSRF_FIELD, "")):
@@ -6155,11 +6174,11 @@ def build_router(config: Config) -> APIRouter:
         return _dns_profile_form_page(request, gate, form, existing=None)
 
     @router.post("/dns-profiles/new", response_class=HTMLResponse)
-    async def dns_profile_new_submit(request: Request) -> Response:
+    def dns_profile_new_submit(request: Request) -> Response:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        return await _dns_profile_submit(request, gate, existing=None)
+        return _dns_profile_submit(request, gate, existing=None)
 
     @router.get("/dns-profiles/{profile_id}/replace", response_class=HTMLResponse)
     def dns_profile_replace_form(request: Request, profile_id: str) -> Response:
@@ -6176,7 +6195,7 @@ def build_router(config: Config) -> APIRouter:
         return _dns_profile_form_page(request, gate, form, existing=existing)
 
     @router.post("/dns-profiles/{profile_id}/replace", response_class=HTMLResponse)
-    async def dns_profile_replace_submit(request: Request, profile_id: str) -> Response:
+    def dns_profile_replace_submit(request: Request, profile_id: str) -> Response:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
@@ -6184,7 +6203,7 @@ def build_router(config: Config) -> APIRouter:
             existing = db.dns_profile(connection, profile_id)
         if existing is None:
             return PlainTextResponse("Not found", status_code=404)
-        return await _dns_profile_submit(request, gate, existing=existing)
+        return _dns_profile_submit(request, gate, existing=existing)
 
     @router.get("/dns-profiles/{profile_id}/remove", response_class=HTMLResponse)
     def dns_profile_remove_form(request: Request, profile_id: str) -> Response:
@@ -6213,7 +6232,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/dns-profiles/{profile_id}/remove")
-    async def dns_profile_remove_submit(
+    def dns_profile_remove_submit(
         request: Request,
         profile_id: str,
         csrf_token: Annotated[str, Form(max_length=128)],
@@ -6265,10 +6284,10 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
-        await _await_dns_profile_job(request, job.id)
+        _await_dns_profile_job(request, job.id)
         return RedirectResponse(f"/dns-profiles?removed={existing.id}", status_code=303)
 
-    async def _dns_profile_submit(
+    def _dns_profile_submit(
         request: Request, session: AuthenticatedSession, *, existing: db.DnsProfile | None
     ) -> Response:
         """Seal one submission, store it, queue its apply job - or re-draw.
@@ -6278,7 +6297,7 @@ def build_router(config: Config) -> APIRouter:
         depends on the provider chosen, and only the catalogue knows.
         """
 
-        posted = await request.form()
+        posted = _posted(request)
         text = {key: value for key, value in posted.items() if isinstance(value, str)}
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, text.get(auth.CSRF_FIELD, "")):
@@ -6400,10 +6419,10 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
-        await _await_dns_profile_job(request, job.id)
+        _await_dns_profile_job(request, job.id)
         return RedirectResponse("/dns-profiles", status_code=303)
 
-    async def _await_dns_profile_job(request: Request, job_id: int) -> None:
+    def _await_dns_profile_job(request: Request, job_id: int) -> None:
         """Give the worker a moment before the list is drawn.
 
         Applying a profile is one helper call and takes about a second when
@@ -6414,7 +6433,7 @@ def build_router(config: Config) -> APIRouter:
 
         deadline = monotonic() + DNS_PROFILE_APPLY_WAIT
         while monotonic() < deadline:
-            await asyncio.sleep(0.25)
+            sleep(0.25)
             with request.app.state.pool.connection() as connection:
                 state = db.job_state(connection, job_id)
             if state not in {"pending", "running"}:
@@ -6524,11 +6543,11 @@ def build_router(config: Config) -> APIRouter:
         return _ndes_profile_form_page(request, gate, ndes_profile_form.EMPTY_FORM, existing=None)
 
     @router.post("/ndes-profiles/new", response_class=HTMLResponse)
-    async def ndes_profile_new_submit(request: Request) -> Response:
+    def ndes_profile_new_submit(request: Request) -> Response:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        return await _ndes_profile_submit(request, gate, existing=None)
+        return _ndes_profile_submit(request, gate, existing=None)
 
     @router.get("/ndes-profiles/{profile_id}/replace", response_class=HTMLResponse)
     def ndes_profile_replace_form(request: Request, profile_id: str) -> Response:
@@ -6549,7 +6568,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/ndes-profiles/{profile_id}/replace", response_class=HTMLResponse)
-    async def ndes_profile_replace_submit(request: Request, profile_id: str) -> Response:
+    def ndes_profile_replace_submit(request: Request, profile_id: str) -> Response:
         gate = _dns_profiles_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
@@ -6557,9 +6576,9 @@ def build_router(config: Config) -> APIRouter:
             existing = db.ndes_profile(connection, profile_id)
         if existing is None:
             return PlainTextResponse("Not found", status_code=404)
-        return await _ndes_profile_submit(request, gate, existing=existing)
+        return _ndes_profile_submit(request, gate, existing=existing)
 
-    async def _ndes_profile_submit(
+    def _ndes_profile_submit(
         request: Request, session: AuthenticatedSession, *, existing: db.DnsProfile | None
     ) -> Response:
         """Seal one submission, store it, queue its apply job - or re-draw.
@@ -6569,7 +6588,7 @@ def build_router(config: Config) -> APIRouter:
         depends on the provider chosen, and only the catalogue knows.
         """
 
-        posted = await request.form()
+        posted = _posted(request)
         text = {key: value for key, value in posted.items() if isinstance(value, str)}
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, text.get(auth.CSRF_FIELD, "")):
@@ -6693,7 +6712,7 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
-        await _await_dns_profile_job(request, job.id)
+        _await_dns_profile_job(request, job.id)
         return RedirectResponse("/ndes-profiles", status_code=303)
 
     @router.get("/ndes-profiles/{profile_id}/remove", response_class=HTMLResponse)
@@ -6723,7 +6742,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/ndes-profiles/{profile_id}/remove")
-    async def ndes_profile_remove_submit(
+    def ndes_profile_remove_submit(
         request: Request,
         profile_id: str,
         csrf_token: Annotated[str, Form(max_length=128)],
@@ -6775,7 +6794,7 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
-        await _await_dns_profile_job(request, job.id)
+        _await_dns_profile_job(request, job.id)
         return RedirectResponse(f"/ndes-profiles?removed={existing.id}", status_code=303)
 
     @router.get("/backups", response_class=HTMLResponse)

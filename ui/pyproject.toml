@@ -22,6 +22,9 @@ dependencies = [
     "haprion",
     "psycopg[binary,pool]>=3.3,<4",
     "fastapi>=0.115,<1",
+    # A form or an upload read from a handler running in the thread pool,
+    # which is where every handler that touches the database runs.
+    "anyio>=4.5,<5",
     "uvicorn>=0.34,<1",
     "jinja2>=3.1,<4",
     #

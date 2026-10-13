@@ -30,6 +30,7 @@ from typing import Any
 
 from haprion import waf_engine_package
 from haprion.backup_archive import MANIFEST, ArchiveError, ArchiveFacts, validate
+from haprion.digits import is_digits
 
 #
 # Every literal `copy_path` argument in install/node/haprion-state-export, in
@@ -190,7 +191,7 @@ def _name(value: str, what: str) -> str:
 
 
 def _number(value: str, what: str) -> int:
-    if not value.isdigit() or len(value) > 10:
+    if not is_digits(value) or len(value) > 10:
         raise ArchiveError(f"the archive has an unusable {what}: {value!r}")
     return int(value)
 

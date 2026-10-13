@@ -40,6 +40,15 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+
+def _digits(text, limit=18):
+    """One to `limit` ASCII digits; `isdigit()` alone passes `²`, which `int()` refuses.
+
+    The engine's `haprion.digits.is_digits`, which a node script cannot import.
+    """
+    return 0 < len(text) <= limit and text.isascii() and text.isdigit()
+
+
 SCHEMA_VERSION = 1
 
 # A request is small. The cap stops a client from making this read forever.
@@ -437,7 +446,7 @@ def http_status(stream, target, timeout, deadline):
             break
         line += chunk
     parts = line.split(b"\r\n", 1)[0].split(b" ")
-    if len(parts) < 2 or not parts[1].isdigit():
+    if len(parts) < 2 or not _digits(parts[1]):
         return None
     return int(parts[1])
 

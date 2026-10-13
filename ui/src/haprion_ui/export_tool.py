@@ -40,6 +40,7 @@ import psycopg
 import yaml
 from haprion import backup_retention, backup_schedule, cluster_settings
 from haprion.config import ConfigError
+from haprion.digits import is_digits
 
 from haprion_ui import account_apply, config, profile_apply, settings_apply, settings_tool
 from haprion_ui.admin import AdminError, connect, load_environment, refused
@@ -198,7 +199,7 @@ def _owner() -> tuple[int, int] | None:
     """Whose the files become: the person behind sudo; root's own when there is none."""
 
     uid, gid = os.environ.get("SUDO_UID"), os.environ.get("SUDO_GID")
-    if uid is None or gid is None or not uid.isdigit() or not gid.isdigit():
+    if uid is None or gid is None or not is_digits(uid) or not is_digits(gid):
         return None
     return int(uid), int(gid)
 

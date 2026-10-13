@@ -30,6 +30,7 @@ from typing import TextIO
 from haprion.cli.caller import CallerError, usage
 from haprion.cli.caller import config_path as _config_path
 from haprion.cli.caller import field as _field
+from haprion.digits import is_digits
 from haprion.envelope import Message, envelope
 from haprion.git_command import GitError
 from haprion.helper_protocol import write_document
@@ -103,7 +104,7 @@ def _parse(argv: list[str]) -> tuple[str, bool, int | None]:
     if len(argv) not in (2, 3, 4) or argv[0] not in ("-c", "--cluster"):
         usage(USAGE)
     if len(argv) == 4:
-        if argv[2] != "--diff" or not argv[3].isdigit():
+        if argv[2] != "--diff" or not is_digits(argv[3]):
             usage(USAGE)
         return argv[1], False, int(argv[3])
     if len(argv) == 3 and argv[2] != "--json":

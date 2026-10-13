@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from haprion.cluster_status import ADMIN_STATES, ServerHealth, ipvs_unread
+from haprion.digits import is_digits
 
 #
 # HAProxy's own check codes, as sentences. The codes are the machine's language
@@ -128,7 +129,7 @@ class BackendHealth:
         guessing there would put somebody else's address beside a member.
         """
 
-        if not server.startswith("s") or not server[1:].isdigit():
+        if not server.startswith("s") or not is_digits(server[1:]):
             return ""
         index = int(server[1:]) - 1
         return self.addresses[index] if 0 <= index < len(self.addresses) else ""

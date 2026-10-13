@@ -71,6 +71,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+
+def _digits(text, limit=18):
+    """One to `limit` ASCII digits; `isdigit()` alone passes `²`, which `int()` refuses.
+
+    The engine's `haprion.digits.is_digits`, which a node script cannot import.
+    """
+    return 0 < len(text) <= limit and text.isascii() and text.isdigit()
+
+
 ADMIN_SOCKET = "/run/haproxy/manager.sock"
 STATE_FILE = Path("/var/lib/haprion/server-state.json")
 LOCK_FILE = "/run/lock/haprion-server-state.lock"
@@ -225,7 +234,7 @@ def admin_states(answer: str) -> dict[tuple[str, str], int]:
             continue
         row = dict(zip(columns, fields, strict=True))
         admin = row.get("srv_admin_state", "")
-        if "be_name" in row and "srv_name" in row and admin.isdigit():
+        if "be_name" in row and "srv_name" in row and _digits(admin):
             states[(row["be_name"], row["srv_name"])] = int(admin)
     return states
 

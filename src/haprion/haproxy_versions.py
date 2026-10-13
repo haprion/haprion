@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
+from haprion.digits import is_digits
+
 UPSTREAM = re.compile(r"\d+(?:\.\d+)*")
 
 __all__ = ["PACKAGES", "compare", "notes", "package_notes", "packages_behind", "upstream"]
@@ -97,7 +99,7 @@ def compare(left: str, right: str) -> int:
     def split(version: str) -> tuple[int, str, str]:
         epoch, _, rest = version.rpartition(":") if ":" in version else ("0", "", version)
         upstream_part, _, revision = rest.rpartition("-") if "-" in rest else (rest, "", "")
-        return (int(epoch) if epoch.isdigit() else 0), upstream_part, revision
+        return (int(epoch) if is_digits(epoch) else 0), upstream_part, revision
 
     epoch_left, upstream_left, revision_left = split(left)
     epoch_right, upstream_right, revision_right = split(right)

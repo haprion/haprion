@@ -226,6 +226,19 @@ class ThePage(LoginTestCase):
                 self.assertIn('href="/jobs?view=nodes" class="is-current"', page)
                 self.assertEqual('href="/jobs?view=audit"' in page, role == "admin")
 
+    def test_a_page_that_is_not_a_number_is_the_first_page(self) -> None:
+        # Review 26-10-13, K2.
+        client = self.client()
+        self.sign_in(client)
+        for asked in ("²", "-1", "", "9" * 5000):
+            with (
+                self.subTest(asked=asked[:8]),
+                mock.patch("haprion_ui.db.node_event_page", return_value=[]),
+                mock.patch("haprion_ui.db.node_event_count", return_value=120),
+            ):
+                answer = client.get("/jobs", params={"view": "nodes", "page": asked})
+                self.assertEqual(answer.status_code, 200)
+
     def test_pages_and_dates_are_asked_of_the_database(self) -> None:
         client = self.client()
         self.sign_in(client)

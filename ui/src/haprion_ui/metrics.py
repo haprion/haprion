@@ -25,6 +25,7 @@ from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from haprion.digits import is_digits
 from haprion.generate import (
     METRICS_FRONTEND,
     PREFIX,
@@ -1781,7 +1782,7 @@ def listening(frontend: str) -> Listening:
 
     name = frontend.removeprefix(GENERATED_PREFIX)
     vip, _, port = name.rpartition("-tcp-")
-    if vip and port.isdigit():
+    if vip and is_digits(port):
         return Listening(vip=vip, protocol="tcp", port=int(port))
     for protocol in LISTENER_PROTOCOLS:
         if name.endswith(f"-{protocol}"):

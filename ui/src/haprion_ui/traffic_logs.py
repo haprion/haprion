@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from haprion.digits import is_digits
 from haprion.generate import backend_name
 from haprion.proxy_model import Proxy, wildcard_expression, wildcard_matches
 from psycopg import Connection, sql
@@ -588,9 +589,9 @@ def read(
     wanted = (cluster,) if cluster else clusters
     if cluster and cluster not in clusters:
         return Reading((), (), 0, False)
-    status_code = int(status) if status.isdigit() and len(status) == 3 else None
+    status_code = int(status) if is_digits(status) and len(status) == 3 else None
     status_class = (
-        int(status[0]) if len(status) == 3 and status[1:] == "xx" and status[0].isdigit() else None
+        int(status[0]) if len(status) == 3 and status[1:] == "xx" and is_digits(status[0]) else None
     )
     if status and status_code is None and status_class is None:
         return Reading((), (), 0, False)
@@ -713,9 +714,9 @@ def read_database(
     wanted = (cluster,) if cluster else clusters
     if cluster and cluster not in clusters:
         return Reading((), (), 0, False)
-    status_code = int(status) if status.isdigit() and len(status) == 3 else None
+    status_code = int(status) if is_digits(status) and len(status) == 3 else None
     status_class = (
-        int(status[0]) if len(status) == 3 and status[1:] == "xx" and status[0].isdigit() else None
+        int(status[0]) if len(status) == 3 and status[1:] == "xx" and is_digits(status[0]) else None
     )
     if status and status_code is None and status_class is None:
         return Reading((), (), 0, False)

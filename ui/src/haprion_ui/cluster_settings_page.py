@@ -24,6 +24,7 @@ from urllib.parse import quote
 
 from haprion import cluster_settings, log_forwarding
 from haprion.config import ConfigError
+from haprion.digits import is_digits
 
 from haprion_ui.attention import FORWARD_WAITING
 from haprion_ui.cluster_identity import accent_index
@@ -227,7 +228,7 @@ def form_from_result(result: Mapping[str, Any]) -> SettingsForm:
 
 def _number(value: str, what: str) -> int:
     text = value.strip()
-    if not text.isdigit():
+    if not is_digits(text):
         raise FormProblem(f"{what} must be a number.")
     return int(text)
 

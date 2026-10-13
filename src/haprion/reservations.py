@@ -59,6 +59,7 @@ import yaml
 
 from haprion import safe_yaml
 from haprion.config import ConfigError, _address, _mapping, _only_keys
+from haprion.digits import is_digits
 from haprion.proxy_model import HOSTNAME
 
 #
@@ -291,7 +292,7 @@ def _split(entry: str, location: str) -> tuple[str | None, int]:
 
 
 def _text_port(value: str, location: str) -> int:
-    if not value.isdigit():
+    if not is_digits(value):
         raise ReservationError(f"{location} contains {value!r}, which is not a port number")
     return _port(int(value), location)
 

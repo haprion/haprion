@@ -27,6 +27,8 @@ import re
 from collections.abc import Mapping
 from datetime import date
 
+from haprion.digits import is_digits
+
 #
 # Where these came from, so the next reader does not have to guess how old they
 # are. Verified against the published guideline rather than copied from memory:
@@ -295,7 +297,7 @@ def stick_counters_problem(
                 needed = max(needed, int(slot) + 1)
     core = files.get("core/haproxy.cfg", b"").decode("utf-8", errors="replace")
     stated = _stated(core, re.escape(STICK_COUNTERS_KEYWORD))
-    have = int(stated) if stated is not None and stated.isdigit() else DEFAULT_STICK_COUNTERS
+    have = int(stated) if stated is not None and is_digits(stated) else DEFAULT_STICK_COUNTERS
     if needed <= have:
         if needed >= BLOCK_COUNTERS and not re.search(
             rf"^[ \t]*stats socket {re.escape(MANAGER_SOCKET)}[ \t].*\blevel admin\b",

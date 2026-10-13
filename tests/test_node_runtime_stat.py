@@ -22,6 +22,18 @@ from typing import Any
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 PARSING = re.compile(r"^MAX_STAT_ROWS = .*?(?=^def ask_runtime\()", re.DOTALL | re.MULTILINE)
+DIGITS = re.compile(r"^def _digits\(.*?(?=^\S)", re.DOTALL | re.MULTILINE)
+
+
+def digits(text: str) -> dict[str, Any]:
+    """The script's own `_digits`, which the extracted reading calls."""
+
+    found = DIGITS.search(text)
+    assert found, "the script no longer defines _digits"  # noqa: S101
+    namespace: dict[str, Any] = {}
+    exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
+    return {"_digits": namespace["_digits"]}
+
 
 #
 # A real header from HAProxy 3.4.4, cut to the columns this parser names plus
@@ -42,9 +54,10 @@ def row(**cell: str) -> str:
 
 class ReadingShowStat(unittest.TestCase):
     def setUp(self) -> None:
-        found = PARSING.search(SCRIPT.read_text())
+        text = SCRIPT.read_text()
+        found = PARSING.search(text)
         assert found, "the parsing is no longer where the test extracts it from"
-        namespace: dict[str, Any] = {"re": re}
+        namespace: dict[str, Any] = {"re": re, **digits(text)}
         exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
         self.parse = namespace["parse_stat"]
 
@@ -173,9 +186,10 @@ class ReadingAdminState(unittest.TestCase):
     """Drain and maintenance, which `show stat` loses for a server that is down (B263)."""
 
     def setUp(self) -> None:
-        found = PARSING.search(SCRIPT.read_text())
+        text = SCRIPT.read_text()
+        found = PARSING.search(text)
         assert found, "the parsing is no longer where the test extracts it from"
-        namespace: dict[str, Any] = {"re": re}
+        namespace: dict[str, Any] = {"re": re, **digits(text)}
         exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
         self.states = namespace["parse_servers_state"]
         self.merge = namespace["with_admin_state"]

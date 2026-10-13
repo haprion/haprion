@@ -30,6 +30,7 @@ from haprion.config import (
     worker_writable_paths,
 )
 from haprion.config import ConfigError as EngineConfigError
+from haprion.digits import is_digits
 from haprion.traffic_collector import CollectorError
 from haprion.traffic_collector import load_config as load_collector_config
 
@@ -125,7 +126,7 @@ def load_requirements(path: Path) -> Requirements:
     rollback_safe_from = required.get("rollback_safe_from")
     if rollback_safe_from is not None and (
         not isinstance(rollback_safe_from, str)
-        or not rollback_safe_from.isdigit()
+        or not is_digits(rollback_safe_from)
         or rollback_safe_from > database_head
     ):
         raise CompatibilityError("rollback_safe_from must be a revision no later than the head")
@@ -345,7 +346,7 @@ def check_service(report: Report, *, unit: str, release: Path) -> None:
         return
     pid_result = _command([SYSTEMCTL, "show", unit, "--property=MainPID", "--value"])
     pid = pid_result.stdout.strip()
-    if pid_result.returncode != 0 or not pid.isdigit() or pid == "0":
+    if pid_result.returncode != 0 or not is_digits(pid) or pid == "0":
         report.fail(unit, "has no main process")
         return
     try:

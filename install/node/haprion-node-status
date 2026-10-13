@@ -14,6 +14,15 @@ import time
 import urllib.request
 from pathlib import Path
 
+
+def _digits(text, limit=18):
+    """One to `limit` ASCII digits; `isdigit()` alone passes `²`, which `int()` refuses.
+
+    The engine's `haprion.digits.is_digits`, which a node script cannot import.
+    """
+    return 0 < len(text) <= limit and text.isascii() and text.isdigit()
+
+
 KEEPALIVED_CONFIG = Path("/etc/keepalived/keepalived.conf")
 KEEPALIVED_STATE = Path("/run/haproxy/keepalived.state")
 KEEPALIVED_ADDRESSES = Path("/etc/keepalived/addresses.conf")
@@ -379,7 +388,7 @@ def ipvs_endpoint(text):
     """`192.0.2.1:514` or `[2001:db8::1]:514`, as ipvsadm -n prints one."""
 
     host, _, port = text.rpartition(":")
-    if not host or not port.isdigit():
+    if not host or not _digits(port):
         return None
     return host.strip("[]"), int(port)
 
@@ -399,7 +408,7 @@ def parse_ipvs_stats(text):
     current = None
     for line in text.splitlines():
         fields = line.split()
-        readable = len(fields) == 7 and all(value.isdigit() for value in fields[2:])
+        readable = len(fields) == 7 and all(_digits(value, 20) for value in fields[2:])
         endpoint = ipvs_endpoint(fields[1]) if readable else None
         if endpoint is None:
             #
@@ -1059,10 +1068,10 @@ def runtime_info():
         return True, {
             "version": info.get("Version"),
             "uptime_sec": (
-                int(info["Uptime_sec"]) if info.get("Uptime_sec", "").isdigit() else None
+                int(info["Uptime_sec"]) if _digits(info.get("Uptime_sec", "")) else None
             ),
             "shared_counters": shared_counters(
-                int(info["Pid"]) if info.get("Pid", "").isdigit() else None,
+                int(info["Pid"]) if _digits(info.get("Pid", "")) else None,
                 running_release_file(),
             ),
         }
@@ -1203,7 +1212,7 @@ def parse_stat(text):
 
     def number(row, name):
         found = value(row, name)
-        return int(found) if found is not None and found.isdigit() else None
+        return int(found) if found is not None and _digits(found) else None
 
     def counters(row):
         return {name: number(row, name) for name in COUNTER_COLUMNS}
@@ -1277,7 +1286,7 @@ def parse_servers_state(text):
     found = {}
     rows = [line.split() for line in lines if not line.startswith("#")]
     for row in rows[: MAX_STAT_ROWS + 1]:
-        if len(row) != len(columns) or not row[admin].isdigit():
+        if len(row) != len(columns) or not _digits(row[admin]):
             continue
         flags = int(row[admin])
         found[(row[pool], row[member])] = {

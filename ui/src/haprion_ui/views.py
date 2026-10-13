@@ -63,6 +63,7 @@ from haprion.cert_export import Export, ExportError
 from haprion.certificates import CERTIFICATE_OPENING
 from haprion.cli import changes_publish
 from haprion.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW, ConfigError
+from haprion.digits import is_digits
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.managed_network import load_document as load_network_document
 from haprion.managed_network import location as network_location
@@ -2534,7 +2535,7 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         query = search_index.normalise(request.query_params.get("q", ""))
         asked = request.query_params.get("page", "1")
-        page = min(int(asked), MAX_SEARCH_PAGE) if asked.isdecimal() and int(asked) > 0 else 1
+        page = min(int(asked), MAX_SEARCH_PAGE) if is_digits(asked) and int(asked) > 0 else 1
         results = search_index.Results(query, (), 0, 1)
         if query and config.demo_fixture:
             #
@@ -4786,7 +4787,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Refused", status_code=403)
         if _settings_reading(request, cluster) is None:
             return PlainTextResponse("Not found", status_code=404)
-        revision = int(saved_revision) if saved_revision.isdigit() else None
+        revision = int(saved_revision) if is_digits(saved_revision) else None
         page = f"/settings/clusters/{cluster}"
         if settings_action == "discard":
             if revision is None:
@@ -7581,9 +7582,9 @@ def build_router(config: Config) -> APIRouter:
         size_raw = query.get("size", "")
         size = int(size_raw) if size_raw in ("25", "50", "100") else AUDIT_PAGE
         page_raw = query.get("page", "")
-        page = int(page_raw) if page_raw.isdigit() and 0 < int(page_raw) < 100000 else 1
+        page = int(page_raw) if is_digits(page_raw) and 0 < int(page_raw) < 100000 else 1
         opened_raw = query.get("open", "")
-        opened = int(opened_raw) if opened_raw.isdigit() else None
+        opened = int(opened_raw) if is_digits(opened_raw) else None
         now = datetime.now(UTC)
         local_now = metrics.shown(now)
         local_earliest = metrics.wall(
@@ -7692,7 +7693,7 @@ def build_router(config: Config) -> APIRouter:
         size_raw = query.get("size", "")
         size = int(size_raw) if size_raw in ("25", "50", "100") else AUDIT_PAGE
         page_raw = query.get("page", "")
-        page = int(page_raw) if page_raw.isdigit() and 0 < int(page_raw) < 100000 else 1
+        page = int(page_raw) if is_digits(page_raw) and 0 < int(page_raw) < 100000 else 1
         now = datetime.now(UTC)
         local_now = metrics.shown(now)
         local_earliest = metrics.wall(
@@ -8010,7 +8011,7 @@ def build_router(config: Config) -> APIRouter:
             # refuses it the way it refuses any other bad value.
             #
             payload["expected_version"] = (
-                int(expected_version) if expected_version.isdigit() else expected_version
+                int(expected_version) if is_digits(expected_version) else expected_version
             )
         elif operation == "backup_run":
             payload = {}
@@ -8026,15 +8027,15 @@ def build_router(config: Config) -> APIRouter:
                 "frequency": backup_frequency,
                 "weekdays": list(backup_weekday),
                 "day_of_month": int(backup_day_of_month)
-                if backup_day_of_month.isdigit()
+                if is_digits(backup_day_of_month)
                 else backup_day_of_month,
                 "retention": int(backup_retention)
-                if backup_retention.isdigit()
+                if is_digits(backup_retention)
                 else backup_retention,
                 "enabled": backup_enabled == "on",
             }
         elif operation == "revert":
-            if not version.isdigit():
+            if not is_digits(version):
                 return PlainTextResponse("A version is required", status_code=400)
             payload = {
                 "version": int(version),
@@ -8047,7 +8048,7 @@ def build_router(config: Config) -> APIRouter:
                 **({"expected_head": expected_head} if expected_head else {}),
             }
         elif operation == "network_publish":
-            revision = int(saved_revision) if saved_revision.isdigit() else None
+            revision = int(saved_revision) if is_digits(saved_revision) else None
             if network_action == "discard":
                 if revision is None:
                     return _refusal(
@@ -9128,7 +9129,7 @@ def _editor_submit(
     if session.role != "admin":
         return PlainTextResponse("Refused", status_code=403)
 
-    if form.drop_exception.isdigit():
+    if is_digits(form.drop_exception):
         form = form.model_copy(
             update={
                 "waf_exceptions": waf.without_form_exception(
@@ -9227,8 +9228,8 @@ def _editor_submit(
             back=_proxy_path(cluster, name, "edit"),
         )
 
-    draft_revision = int(form.expected_revision) if form.expected_revision.isdigit() else None
-    saved_revision = int(form.saved_revision) if form.saved_revision.isdigit() else None
+    draft_revision = int(form.expected_revision) if is_digits(form.expected_revision) else None
+    saved_revision = int(form.saved_revision) if is_digits(form.saved_revision) else None
     #
     # A new object has no draft to be a revision of, so the fields are ignored
     # here rather than trusted. They are hidden inputs, and a browser restores
@@ -10932,7 +10933,7 @@ def _advanced_submit(
     if editor_module.unchanged(document, base):
         return answer(replace(result, problem="Nothing changed."))
 
-    revision = int(expected_revision) if expected_revision.isdigit() else None
+    revision = int(expected_revision) if is_digits(expected_revision) else None
     with request.app.state.pool.connection() as connection:
         try:
             saved = db.save_change(
@@ -11307,7 +11308,7 @@ def _waf_allow(request: Request, config: Config, form: Any) -> Response:
     rule_text = str(values.get("rule", ""))[:6]
     field = str(values.get("field", ""))[:256]
     offered = [str(path)[:1024] for path in values.getlist("path")][:20]
-    if not _waf_target(request, config, cluster, name) or not rule_text.isdigit():
+    if not _waf_target(request, config, cluster, name) or not is_digits(rule_text):
         return PlainTextResponse("Not found", status_code=404)
     rule = int(rule_text)
     if field and not proxy_model.waf_field(field):
@@ -11404,7 +11405,7 @@ def _waf_remove(request: Request, config: Config, form: Any) -> Response:
     cluster = str(form.get("cluster", ""))[:32]
     name = str(form.get("object", ""))[:40]
     rule_text = str(form.get("rule", ""))[:6]
-    if not _waf_target(request, config, cluster, name) or not rule_text.isdigit():
+    if not _waf_target(request, config, cluster, name) or not is_digits(rule_text):
         return PlainTextResponse("Not found", status_code=404)
     field = str(form.get("field", ""))[:256]
     paths = [str(path)[:1024] for path in form.getlist("path")][:20]

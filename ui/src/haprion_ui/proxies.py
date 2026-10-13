@@ -13,6 +13,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlencode
 
+from haprion.digits import is_digits
+
 from haprion_ui import sorting
 from haprion_ui.addresses import order_key
 from haprion_ui.cluster_identity import accent_index
@@ -281,7 +283,7 @@ def pages_asked(query: Mapping[str, str]) -> dict[str, int]:
 
     asked = {}
     for key, value in query.items():
-        if key.startswith(PAGE_PREFIX) and value.isdecimal() and 0 < int(value) <= 100000:
+        if key.startswith(PAGE_PREFIX) and is_digits(value) and 0 < int(value) <= 100000:
             asked[key.removeprefix(PAGE_PREFIX)] = int(value)
     return asked
 

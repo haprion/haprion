@@ -21,6 +21,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from haprion.config import DEFAULT_ABUSE_WINDOW
+from haprion.digits import is_digits
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +76,7 @@ def _tls(form: Mapping[str, Any]) -> str:
     parts = ["Redirects HTTP" if form.get("redirect_http") else "No HTTP redirect"]
     if form.get("hsts"):
         age = _text(form, "hsts_max_age")
-        days = f" {int(age) // 86400} days" if age.isdigit() else ""
+        days = f" {int(age) // 86400} days" if is_digits(age) else ""
         parts.append(f"HSTS{days}{' with subdomains' if form.get('hsts_subdomains') else ''}")
     else:
         parts.append("no HSTS")

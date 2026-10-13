@@ -21,6 +21,7 @@ import sys
 from typing import Any, TextIO
 
 from haprion.cli.caller import usage
+from haprion.digits import is_digits
 from haprion.envelope import new_request_id
 from haprion.health_probe import DEFAULT_TIMEOUT_MS, UDP_WAIT_MS
 from haprion.probe_socket import build_request
@@ -92,7 +93,7 @@ def _targets(
         if not address:
             continue
         host_part, separator, port = address.rpartition(":")
-        if not separator or not port.isdigit():
+        if not separator or not is_digits(port):
             usage(USAGE)
         targets.append(
             {

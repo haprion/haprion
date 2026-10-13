@@ -42,6 +42,7 @@ from haprion import dnsdist_config
 from haprion.cluster_status import addresses_current, ipvs_current
 from haprion.config import DeployIdentity, Node
 from haprion.deploy_plan import NodeObservation, ReleaseTarget, VipState
+from haprion.digits import is_digits
 from haprion.envelope import Message, envelope
 from haprion.object_manifest import (
     CURRENT,
@@ -177,7 +178,7 @@ def read_target(publish_path: Path, node_path: str) -> ReleaseTarget | None:
     except OSError:
         return None
     version, commit = fields.get("version"), fields.get("hash")
-    if not version or not version.isdigit() or not commit:
+    if not version or not is_digits(version) or not commit:
         return None
     return ReleaseTarget(version=int(version), hash=commit)
 
@@ -419,7 +420,7 @@ def _normalised(status: Mapping[str, Any]) -> dict[str, Any]:
     release = copy.get("release")
     if isinstance(release, Mapping):
         version = release.get("version")
-        if isinstance(version, str) and version.isdigit():
+        if isinstance(version, str) and is_digits(version):
             copy["release"] = {**release, "version": int(version)}
     return copy
 

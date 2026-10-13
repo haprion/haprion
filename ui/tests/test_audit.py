@@ -194,6 +194,20 @@ class ThePage(LoginTestCase):
         self.assertIn("page=3", page)
         self.assertIn('<option value="25" selected>', page)
 
+    def test_a_page_or_row_that_is_not_a_number_is_the_first_page(self) -> None:
+        # Review 26-10-13, K2: `²` passed isdigit() and int() raised.
+        client = self.client()
+        self.sign_in(client)
+        for asked in ("²", "-1", "", "9" * 5000, "١٢"):
+            with (
+                self.subTest(asked=asked[:8]),
+                mock.patch("haprion_ui.db.audit_events", return_value=[]) as listed,
+                mock.patch("haprion_ui.db.audit_count", return_value=120),
+            ):
+                answer = client.get("/jobs", params={"view": "audit", "page": asked, "open": asked})
+                self.assertEqual(answer.status_code, 200)
+                self.assertEqual(listed.call_args.kwargs["offset"], 0)
+
     def test_a_time_outside_the_record_is_refused_in_words(self) -> None:
         client = self.client()
         self.sign_in(client)

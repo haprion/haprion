@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from haprion.config import ConfigError
+from haprion.digits import is_digits
 from haprion.managed_network import load_document
 from haprion.managed_network import location as network_location
 
@@ -677,7 +678,7 @@ def row_numbers(values: Iterable[str]) -> frozenset[int]:
     stay.
     """
 
-    return frozenset(int(value) for value in values if value.isdigit())
+    return frozenset(int(value) for value in values if is_digits(value))
 
 
 def _cell(values: tuple[str, ...], row: int) -> str:
@@ -771,7 +772,7 @@ def document_from_form(form: NetworkForm) -> str:
     if not vips:
         raise FormProblem("A cluster needs at least one VIP.")
 
-    if form.default_vip_row.isdigit() and int(form.default_vip_row) in form.removed_vip_rows:
+    if is_digits(form.default_vip_row) and int(form.default_vip_row) in form.removed_vip_rows:
         #
         # Said before the generic complaint below, because it is a different
         # mistake with a different fix: the row is gone on purpose, and what

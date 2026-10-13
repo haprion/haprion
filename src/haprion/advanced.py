@@ -38,6 +38,8 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from haprion.digits import is_digits
+
 #
 # Every section keyword HAProxy 3.4 knows (configuration.txt chapters 3-12,
 # and the binary's own strings). A line starting with one of these opens a
@@ -652,7 +654,7 @@ def _counter_problem(
     counter = COUNTER_ACTION.match(action)
     if counter:
         last = counter[1].split(",")[-1].strip()
-        slot_written = int(last) if last.isdigit() else None
+        slot_written = int(last) if is_digits(last) else None
         if slot_written == CLUSTER_SLOT:
             return "sc0 is the cluster's abuse brake; the text may read it but not change it"
         if slot_written == RATE_SLOT and rate_limit:
@@ -710,7 +712,7 @@ def _server_fact(tokens: Sequence[str]) -> tuple[str, str] | None:
         return None
     address = tokens[2]
     host, _, port = address.rpartition(":")
-    if not host or not port.isdigit():
+    if not host or not is_digits(port):
         return None
     return tokens[1], f"{host.strip('[]')}:{port}"
 

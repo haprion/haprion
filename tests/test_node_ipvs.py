@@ -28,12 +28,24 @@ from haprion.proxy_model import load_proxy
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "install" / "node" / "haprion-node-status"
 READING = re.compile(r"^KEEPALIVED_IPVS = .*?(?=^def read_ipvs\()", re.DOTALL | re.MULTILINE)
+DIGITS = re.compile(r"^def _digits\(.*?(?=^\S)", re.DOTALL | re.MULTILINE)
+
+
+def digits(text: str) -> dict[str, Any]:
+    """The script's own `_digits`, which the extracted reading calls."""
+
+    found = DIGITS.search(text)
+    assert found, "the script no longer defines _digits"  # noqa: S101
+    namespace: dict[str, Any] = {}
+    exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
+    return {"_digits": namespace["_digits"]}
 
 
 def reading() -> dict[str, Any]:
-    found = READING.search(SCRIPT.read_text())
+    text = SCRIPT.read_text()
+    found = READING.search(text)
     assert found, "the reading is no longer where the test extracts it from"  # noqa: S101
-    namespace: dict[str, Any] = {"re": re, "Path": Path, "ipaddress": ipaddress}
+    namespace: dict[str, Any] = {"re": re, "Path": Path, "ipaddress": ipaddress, **digits(text)}
     exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
     return namespace
 

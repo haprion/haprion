@@ -31,6 +31,7 @@ from typing import TextIO
 
 from haprion.cli.caller import CallerError, usage
 from haprion.cli.caller import config_path as _config_path
+from haprion.digits import is_digits
 from haprion.envelope import envelope, failure
 from haprion.git_command import GitError
 from haprion.repo_health import describe_problem, is_repo_root, unsaved_changes
@@ -90,7 +91,7 @@ def _target_version(cluster_id: str, requested: str | None, total: int) -> int:
             raise CallerError(f"there is no previous version for cluster '{cluster_id}'.")
         return total - 1
 
-    if not requested.isdigit() or requested.startswith("0"):
+    if not is_digits(requested) or requested.startswith("0"):
         raise CallerError(
             "the version must be a plain version number.\n\n"
             "Examples:\n"

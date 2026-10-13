@@ -26,6 +26,7 @@ from typing import Any
 from haprion import dnsdist_config, geo, resolve_socket
 from haprion.advanced import normalise as normalise_advanced
 from haprion.config import DEFAULT_ABUSE_WINDOW, AbuseProtection, Cluster, Node, UnknownHost, Vip
+from haprion.digits import is_digits
 from haprion.generate import GeneratorError, countries_named, generate
 from haprion.proxy_model import (
     BALANCE,
@@ -455,7 +456,7 @@ def _servers(raw: str) -> list[dict[str, object]]:
                 position += 1
             elif word == "weight" and "weight" not in server:
                 value = words[position + 1] if position + 1 < len(words) else ""
-                if not value.isdigit():
+                if not is_digits(value):
                     raise ValueError(
                         f"{entry!r}: weight needs a number after it, such as weight 50"
                     )
@@ -464,7 +465,7 @@ def _servers(raw: str) -> list[dict[str, object]]:
             else:
                 raise ValueError(f"{entry!r} is not a host and port, such as 198.51.100.10:8080")
         host, separator, port = address.rpartition(":")
-        if not separator or not port.isdigit():
+        if not separator or not is_digits(port):
             raise ValueError(f"{entry!r} is not a host and port, such as 198.51.100.10:8080")
         servers.append({"host": host, "port": int(port), **server})
     if not servers:
@@ -633,7 +634,7 @@ def _blocking_document(form: Mapping[str, object], protocol: str) -> dict[str, o
     if window and window != DEFAULT_ABUSE_WINDOW:
         block["window"] = window
     for key, name, label in written:
-        if not text(name).isdigit():
+        if not is_digits(text(name)):
             raise ValueError(f"{label} must be a number")
         block[key] = int(text(name))
     if not text("block_for"):
@@ -641,7 +642,7 @@ def _blocking_document(form: Mapping[str, object], protocol: str) -> dict[str, o
     block["block_for"] = text("block_for")
     if protocol != "tcp":
         status = text("block_status") or str(DEFAULT_BLOCK_STATUS)
-        if not status.isdigit():
+        if not is_digits(status):
             raise ValueError("Answer with must be a status code")
         if int(status) != DEFAULT_BLOCK_STATUS:
             block["status"] = int(status)
@@ -670,7 +671,7 @@ def build_document(form: dict[str, object]) -> str:
     listen: dict[str, object] = {"protocol": protocol}
     if protocol == "tcp":
         port = text("tcp_port")
-        if not port.isdigit():
+        if not is_digits(port):
             raise ValueError("a tcp object must name the port it is served on")
         listen["port"] = int(port)
     if protocol in OWN_PORTS:
@@ -679,7 +680,7 @@ def build_document(form: dict[str, object]) -> str:
         # requires the number, and the usual one is what an empty field means.
         #
         port = text("tcp_port") or str(OWN_PORTS[protocol])
-        if not port.isdigit():
+        if not is_digits(port):
             raise ValueError("the port must be a number")
         listen["port"] = int(port)
     if text("vip"):
@@ -700,7 +701,7 @@ def build_document(form: dict[str, object]) -> str:
             listen["redirect_http"] = True
         if flag("hsts"):
             max_age = text("hsts_max_age")
-            if not max_age.isdigit():
+            if not is_digits(max_age):
                 raise ValueError("the HSTS lifetime must be a number of seconds")
             listen["hsts"] = {
                 "max_age": int(max_age),
@@ -722,7 +723,7 @@ def build_document(form: dict[str, object]) -> str:
     #
     if kind in ("http", "tcp") and text("health_port"):
         port = text("health_port")
-        if not port.isdigit():
+        if not is_digits(port):
             raise ValueError("the health check port must be a number")
         health["port"] = int(port)
     if kind != "disabled":
@@ -744,7 +745,7 @@ def build_document(form: dict[str, object]) -> str:
             if key.endswith("interval"):
                 health[key] = asked
                 continue
-            if not asked.isdigit():
+            if not is_digits(asked):
                 raise ValueError(f"the health check {key} must be a number of checks")
             health[key] = int(asked)
     if kind != "disabled":
@@ -827,7 +828,7 @@ def build_document(form: dict[str, object]) -> str:
         backend["proxy_protocol"] = "v2"
     if text("max_connections"):
         limit = text("max_connections")
-        if not limit.isdigit():
+        if not is_digits(limit):
             raise ValueError("the connection limit must be a number")
         backend["max_connections"] = int(limit)
     if text("server_timeout"):
@@ -920,7 +921,7 @@ def build_document(form: dict[str, object]) -> str:
 
     if text("rate_limit"):
         limit = text("rate_limit")
-        if not limit.isdigit():
+        if not is_digits(limit):
             raise ValueError("the rate limit must be a number")
         rate: dict[str, object] = {}
         if text("rate_window"):
@@ -1051,7 +1052,7 @@ def waf_block(
         raise ValueError("the WAF exceptions could not be read") from None
     if not isinstance(listed, list):
         raise ValueError("the WAF exceptions could not be read")
-    if not paranoia.isdigit():
+    if not is_digits(paranoia):
         raise ValueError("the WAF strictness must be 1, 2, 3 or 4")
     block = canonical_waf(
         {
@@ -1120,7 +1121,7 @@ def _routes(
         return routes
     if not (path and location):
         raise ValueError("a redirect needs both a path and a location")
-    if not status.isdigit():
+    if not is_digits(status):
         raise ValueError("the redirect status must be a number")
     #
     # Named here, in the form's own words, rather than left to the engine. The

@@ -10,6 +10,8 @@ import ipaddress
 from dataclasses import replace
 from typing import Any
 
+from haprion.digits import is_digits
+
 from haprion_ui import sorting
 
 
@@ -27,7 +29,7 @@ def _address(value: str) -> tuple[Any, ...] | None:
         parsed = ipaddress.ip_address(host)
     except ValueError:
         head, _, tail = value.rpartition(":")
-        if head and tail.isdigit():
+        if head and is_digits(tail):
             host, port = head.strip("[]"), int(tail)
         try:
             parsed = ipaddress.ip_address(host)

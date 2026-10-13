@@ -14,6 +14,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from haprion.digits import is_digits
+
 ROOT = Path("/usr/share/haprion/crs")
 #
 # What the package holds, and what a release may carry (`release_layout`).
@@ -178,7 +180,7 @@ class Definition:
     def phase(self) -> int:
         for action in self.links[0].actions:
             name, _, value = action.partition(":")
-            if name == "phase" and value.strip().isdigit():
+            if name == "phase" and is_digits(value.strip()):
                 return int(value.strip())
         return 2
 
@@ -274,7 +276,7 @@ def definitions(rule_set: RuleSet) -> dict[int, Definition]:
             first = next((a for a in links[0].actions if a.startswith("id:")), "").removeprefix(
                 "id:"
             )
-            if first.isdigit():
+            if is_digits(first):
                 found.setdefault(int(first), Definition(id=int(first), links=tuple(links)))
             links = []
     return found

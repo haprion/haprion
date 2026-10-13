@@ -2918,8 +2918,10 @@ What they share:
   `haprion-cluster-settings apply` publish a new version; `haprion-deploy` rolls it out, as
   *Publish & deploy* does in two steps.
 - **With sudo, on the manager.** `haprion-user`, `haprion-settings` and `haprion-profiles` write
-  the interface's database as root, and `haprion-export` reads it; the others hand their request to a root helper, and run as
-  root that helper runs directly and records the person sudo names.
+  the interface's database as root, and `haprion-export` reads it; they need the platform
+  installed, and `haprion-profiles` also a running worker with writes on, since a profile takes
+  effect as a job. The others are the engine's: they hand their request to a root helper, and run
+  as root that helper runs directly and records the person sudo names.
 - **Secrets from a file only its owner may read, or from standard input**: never as an argument.
   A file that carries a password, a client secret or credentials is refused unless its mode is
   `0600`. A secret that is stored sealed cannot be compared, so it is replaced only when it must be

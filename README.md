@@ -12,9 +12,9 @@ the [user manual](docs/user-manual.md) is the reference for everything else.
 ## Project status
 
 The project has not reached 1.0 and is **not yet declared ready for production deployment**.
-Everything listed below is built and tested. What remains before 1.0 is making every setting the
-interface offers available from the command line as well, a full re-verification of an
-installation built from this repository, and documentation.
+Everything listed below is built and tested, and everything the interface sets is also a command.
+What remains before 1.0 is a full re-verification of an installation built from this repository,
+and documentation.
 
 ## What it does
 
@@ -56,8 +56,8 @@ installation built from this repository, and documentation.
   itself, with a preview before anything is written
 - the interface's own certificate, local accounts, feature switches, and sign-in through an
   OpenID Connect provider with a local break-glass account kept
-- every write is a job: an immutable queue, an atomic claim under a renewable lease, and a worker
-  that records how every job ended, including one whose worker died
+- every change to a cluster is a job: an immutable queue, an atomic claim under a renewable lease,
+  and a worker that records how every job ended, including one whose worker died
 - Debian packages from one commit: `haprion-cli` for the engine, `haprion-ui` for the web
   interface on Ubuntu 26.04 or Debian 13, `haprion-node` for the nodes, and the WAF engine and rule
   set; installing a newer package is the update
@@ -83,7 +83,9 @@ Coming from another load-balancer interface, a few choices here are deliberate a
   published; a deploy rolls out exactly the version the person saw, the nodes that do not hold
   the virtual address first and its owner last.
 - **The command line is the engine.** The web interface calls the same commands and has no
-  configuration path of its own, and every write is a job with a recorded outcome.
+  configuration path of its own for the clusters, and every change to one is a job with a
+  recorded outcome. Accounts, settings and drafts belong to the interface: they are written to its
+  database and audited there.
 - **Writing is off until it is turned on.** A new installation reads only; `management_writes`
   turns writing on, and turning it off again is a rollback.
 - **The screen never asks the nodes.** What the interface shows comes from a poller, so a page

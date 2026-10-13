@@ -14,9 +14,11 @@ for each step: why it works the way it does, every option, and what to do when s
 - **Nodes** with the `haprion-node` package installed. The manager never pushes to a node: it
   asks the node to fetch, and the node fetches what has been published for its cluster.
 
-The flow of every change is the same: **edit → save → publish → deploy**. Saving keeps your work;
-publishing turns everything saved into a numbered version; deploying brings the nodes to that
-version, one node at a time, the VIP holder last.
+A change to what the nodes serve - proxies, the network, a cluster's logging - goes **edit → save →
+publish → deploy**. Saving keeps your work; publishing turns everything saved into a numbered
+version; deploying brings the nodes to that version, one node at a time, the VIP holder last.
+The rest takes effect at once: users and settings, and what is done to a running server
+(drain, maintenance, unblock).
 
 ## 1. Sign in
 
@@ -104,7 +106,7 @@ and rolls it out: the nodes without the VIP first, the VIP holder last.
 A brand-new node needs its certificates before its first configuration: press
 **Deploy certificates**, then **Deploy configuration**, on the cluster's card.
 
-Follow the job on *Jobs*. When it ends, the card says every node runs the published version.
+Follow the job on *Events → Jobs*. When it ends, the card says every node runs the published version.
 Your site now answers on the VIP.
 
 ## 7. Day-to-day
@@ -142,8 +144,8 @@ interface's database is also dumped daily under `/var/lib/haprion-ui/dumps/`.
 
 ## 9. Replace the interface's certificate
 
-*Settings → Interface certificate*: **Upload certificate…**, or **New certificate** to make one
-from the certificate registry.
+*Settings → Interface certificate*: **Import** a certificate you have, or **New certificate** to
+make one from the certificate registry.
 
 ## 10. Add people
 
@@ -154,7 +156,7 @@ Keep the local `admin` account: it is the way in when the provider is down.
 
 ## When something goes wrong
 
-Start on the **Dashboard** and on *Jobs*: every operation is a job, and a job that did not end
+Start on the **Dashboard** and on *Events → Jobs*: every operation is a job, and a job that did not end
 cleanly says why. An admin also sees the error code, which is what to search the manual for.
 
 | You see | Look at |
@@ -166,7 +168,8 @@ cleanly says why. An admin also sees the error code, which is what to search the
 | status looks old | [Jobs and status freshness](user-manual.md#jobs-and-status-freshness) |
 | a node is lost | [Restoring a node onto an empty VM](user-manual.md#restoring-a-node-onto-an-empty-vm) |
 
-Status, deploys, versions, certificates, nodes, drain and backups are also commands on the
-management host (`haprion-status`, `haprion-deploy`, ...), the way to look closer or to script.
-Proxy objects and the network are edited in the interface only. The manual shows each command
+Everything the interface sets is also a command on the management host (`haprion-status`,
+`haprion-objects apply`, `haprion-deploy`, ...), the way to look closer or to script, and
+`haprion-export` writes what is set now as the files those commands take.
+[Automation from the terminal](user-manual.md#automation-from-the-terminal) shows each command
 beside the page it matches.

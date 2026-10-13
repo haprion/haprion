@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 
@@ -16,7 +16,38 @@ from haprion_ui import page_headers
 from tests.test_login import LoginTestCase
 
 TEMPLATES = Path(page_headers.__file__).resolve().parent / "templates"
-INLINE = re.compile(r'\sstyle="|\son[a-z]+="|<script(?![^>]*\ssrc=)[^>]*>|<style\b|javascript:')
+
+
+class InlineFinder(HTMLParser):
+    """What the policy refuses, found by a parser rather than a pattern.
+
+    A pattern misses `<SCRIPT>`, single quotes and a tag broken over lines
+    (CodeQL py/bad-tag-filter); the parser lowercases names and reads
+    attributes however they are written. Jinja between the tags is text to it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.found: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        names = {name: value or "" for name, value in attrs}
+        if tag == "style":
+            self.found.append("<style>")
+        if tag == "script" and "src" not in names:
+            self.found.append("<script> without src")
+        for name, value in names.items():
+            if name == "style" or name.startswith("on"):
+                self.found.append(f"<{tag} {name}>")
+            if value.strip().lower().startswith("javascript:"):
+                self.found.append(f"<{tag} {name}=javascript:>")
+
+
+def inline(markup: str) -> list[str]:
+    finder = InlineFinder()
+    finder.feed(markup)
+    finder.close()
+    return finder.found
 
 
 class NoPageIsStored(LoginTestCase):
@@ -65,8 +96,23 @@ class NothingInline(LoginTestCase):
     def test_no_template_has_inline_style_or_script(self) -> None:
         # What the policy refuses would silently stop working in the browser.
         found = [
-            f"{path.name}: {match.group(0)}"
+            f"{path.name}: {what}"
             for path in sorted(TEMPLATES.glob("*.html"))
-            for match in INLINE.finditer(path.read_text(encoding="utf-8"))
+            for what in inline(path.read_text(encoding="utf-8"))
         ]
         self.assertEqual(found, [])
+
+    def test_the_check_sees_every_way_of_writing_it(self) -> None:
+        for markup in (
+            '<col style="width: 3em">',
+            "<span STYLE='top: 4%'>",
+            '<select\n  onchange="this.form.submit()">',
+            "<SCRIPT>alert(1)</SCRIPT>",
+            "<script type=module>x()</script>",
+            "<style>p { color: red }</style>",
+            '<a href=" JavaScript:go()">',
+        ):
+            with self.subTest(markup=markup):
+                self.assertNotEqual(inline(markup), [])
+        self.assertEqual(inline('<script defer src="/static/page.js"></script>'), [])
+        self.assertEqual(inline('<a href="{{ url }}" class="{% if x %}on{% endif %}">'), [])

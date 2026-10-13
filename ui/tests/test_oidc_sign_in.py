@@ -4,9 +4,8 @@ Held here: the button appears only while sign-in through the provider is on;
 while it is on a password signs in a break-glass account only, refused exactly
 as a wrong password is; a sign-in is bound to the browser that started it and
 used once; the role comes from the groups at every sign-in, and neither group
-is a refusal; an account is found by the provider identity, created when the
-installation says so, bound once when an admin prepared it, and never taken
-over by name; Test sign-in makes no session; signing out at the provider when
+is a refusal; an account is found by the provider identity, made at the
+first sign-in (B297), and never taken over by name; Test sign-in makes no session; signing out at the provider when
 chosen; an account the provider owns has no password to change here.
 """
 
@@ -66,7 +65,6 @@ class SigningInThroughTheProvider(LoginTestCase):
         }
         self.by_identity: dict[tuple[str, str], Account] = {}
         self.created: list[dict[str, Any]] = []
-        self.bound: list[dict[str, Any]] = []
         self.roles: list[tuple[int, str]] = []
         self.audit_details: list[tuple[str, dict[str, Any]]] = []
 
@@ -101,10 +99,6 @@ class SigningInThroughTheProvider(LoginTestCase):
             self.account = account
             return True
 
-        def bind(_c: object, **fields: Any) -> bool:
-            self.bound.append(fields)
-            return True
-
         def audit(_c: object, *, action: str, detail: Any = None, **_: Any) -> None:
             self.audit.append(action)
             self.audit_details.append((action, dict(detail or {})))
@@ -118,10 +112,6 @@ class SigningInThroughTheProvider(LoginTestCase):
                 side_effect=lambda _c, *, issuer, subject: self.by_identity.get((issuer, subject)),
             ),
             mock.patch("haprion_ui.db.create_oidc_account", side_effect=create),
-            mock.patch(
-                "haprion_ui.db.bind_oidc_account",
-                side_effect=bind,
-            ),
             mock.patch(
                 "haprion_ui.db.set_role",
                 side_effect=lambda _c, *, user_id, role: self.roles.append((user_id, role)),
@@ -278,7 +268,7 @@ class SigningInThroughTheProvider(LoginTestCase):
         response = self.back(client, self.go(client))
         self.assertEqual(response.status_code, 401)
         self.assertIn("An account named operator already exists here.", response.text)
-        self.assertEqual((self.created, self.bound), ([], []))
+        self.assertEqual(self.created, [])
 
     def test_a_name_a_version_could_not_record_never_becomes_an_account(self) -> None:
         # Review 2026-09-29 F1: the sign-in says so, instead of every publish
@@ -288,7 +278,7 @@ class SigningInThroughTheProvider(LoginTestCase):
         response = self.back(client, self.go(client))
         self.assertEqual(response.status_code, 401)
         self.assertIn("The name the provider sent cannot be an account name here.", response.text)
-        self.assertEqual((self.created, self.bound, self.sessions), ([], [], {}))
+        self.assertEqual((self.created, self.sessions), ([], {}))
 
     def test_an_account_from_another_issuer_is_named_as_that(self) -> None:
         # The issuer changed - another provider, or the application renamed -
@@ -310,40 +300,25 @@ class SigningInThroughTheProvider(LoginTestCase):
             response = self.back(client, self.go(client))
         self.assertEqual(response.status_code, 401)
         self.assertIn("belongs to another provider&#39;s sign-in", response.text)
-        self.assertEqual((self.created, self.bound), ([], []))
+        self.assertEqual(self.created, [])
         self.assertEqual(self.audit_details[-1][1]["reason"], "other_issuer")
 
-    def test_a_prepared_provider_account_is_bound_once(self) -> None:
+    def test_an_unbound_provider_account_of_the_same_name_is_not_taken_over(self) -> None:
+        """One a UI from before B297 prepared, and nobody signed in as since."""
+
         prepared = Account(
             id=5, username="alice", role="reader", disabled=False, password_hash=None, source="oidc"
         )
-
-        def named(_c: object, username: str) -> Account | None:
-            return prepared if username == "alice" else None
-
-        def bind(_c: object, **fields: Any) -> bool:
-            self.bound.append(fields)
-            self.by_identity[(ISSUER, "sub-1")] = replace(prepared, oidc_issuer=ISSUER)
-            self.account = self.by_identity[(ISSUER, "sub-1")]
-            return True
-
-        with (
-            mock.patch("haprion_ui.db.account_by_username", side_effect=named),
-            mock.patch("haprion_ui.db.bind_oidc_account", side_effect=bind),
+        with mock.patch(
+            "haprion_ui.db.account_by_username",
+            side_effect=lambda _c, username: prepared if username == "alice" else None,
         ):
             client = self.client()
             response = self.back(client, self.go(client))
 
-        self.assertEqual(response.status_code, 303, response.text)
-        self.assertEqual(self.bound[-1], {"user_id": 5, "issuer": ISSUER, "subject": "sub-1"})
-        self.assertEqual(self.roles, [(5, "admin")])
-
-    def test_without_auto_create_an_unknown_name_is_refused(self) -> None:
-        self.provider = replace(self.provider, auto_create=False)
-        client = self.client()
-        response = self.back(client, self.go(client))
         self.assertEqual(response.status_code, 401)
-        self.assertIn("There is no account here for alice.", response.text)
+        self.assertIn("An account named alice already exists here.", response.text)
+        self.assertEqual(self.created, [])
 
     def test_the_role_follows_the_groups_at_every_sign_in(self) -> None:
         self.by_identity[(ISSUER, "sub-1")] = Account(
@@ -481,13 +456,15 @@ class SigningInThroughTheProvider(LoginTestCase):
             page.text,
         )
         self.assertNotIn("would sign in as", page.text)
-        self.assertEqual((self.created, self.bound), ([], []))
+        self.assertEqual(self.created, [])
 
-    def test_a_prepared_account_can_be_added_without_a_password(self) -> None:
+    def test_an_account_for_the_provider_is_not_made_here(self) -> None:
+        """Accounts through the provider come from its groups alone (B297)."""
+
         client = self.client(replace(configuration(), management_writes=True))
         self.sign_in(client, password=PASSWORD)
         token = client.cookies[auth.SESSION_COOKIE]
-        self.assertIn('name="provider_account"', client.get("/settings/new-user").text)
+        self.assertNotIn("provider_account", client.get("/settings/new-user").text)
         response = client.post(
             "/settings/new-user",
             data={
@@ -498,7 +475,5 @@ class SigningInThroughTheProvider(LoginTestCase):
             },
             follow_redirects=False,
         )
-        self.assertEqual(response.status_code, 303, response.text)
-        self.assertEqual(
-            self.created[-1], {"username": "bob", "role": "reader", "issuer": None, "subject": None}
-        )
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(self.created, [])

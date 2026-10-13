@@ -42,7 +42,6 @@ def provider(**fields: Any) -> db.OidcProvider:
         "groups_claim": "groups",
         "admin_group": None,
         "reader_group": None,
-        "auto_create": True,
         "button_text": "Sign in with SSO",
         "prompt_login": False,
         "logout_mode": "app",
@@ -70,7 +69,6 @@ FORM = {
     "button_text": "Sign in with authentik",
     "logout_mode": "app",
     "local_login": "break_glass_only",
-    "auto_create": "on",
 }
 
 

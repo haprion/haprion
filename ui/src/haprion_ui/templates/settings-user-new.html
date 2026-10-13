@@ -20,11 +20,6 @@
       <label><span class="field-title">Password</span><input type="password" name="new_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
       <label><span class="field-title">Repeat password</span><input type="password" name="repeat_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
     </div>
-    {% if sso_configured %}
-    <div class="form-checks">
-      <label class="check"><input type="checkbox" name="provider_account" value="on"> <span>Signs in through the provider</span></label>
-    </div>
-    {% endif %}
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/settings">Cancel</a><button type="submit" class="secondary-button deploy-button">Add user</button></div>
     </div>

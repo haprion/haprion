@@ -4607,10 +4607,6 @@ def build_router(config: Config) -> APIRouter:
                 **_users_context(request, session),
                 "problem": problem,
                 "form": {"username": "", "role": "reader", **(form or {})},
-                # Offered once a provider is set up: an account prepared for
-                # its first sign-in, when accounts are not created then (B198).
-                "sso_configured": (provider := _oidc_provider(request)) is not None
-                and provider.issuer is not None,
             },
             status_code=status_code,
         )
@@ -5327,7 +5323,6 @@ def build_router(config: Config) -> APIRouter:
         role: str = Form(default="", max_length=16),
         new_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
         repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
-        provider_account: str = Form(default="", max_length=8),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         gate = _admin_write_gate(request)
@@ -5337,45 +5332,16 @@ def build_router(config: Config) -> APIRouter:
         if not auth.csrf_token_is_valid(token, csrf_token):
             return PlainTextResponse("Refused", status_code=403)
         form = {"username": username, "role": role}
-        prepared = provider_account == "on"
         if not username:
             problem = "Name the account."
         elif users.name_problem(username) is not None:
             problem = users.NAME_PROBLEM
         elif role not in users.ROLES:
             problem = "Choose a role."
-        elif prepared:
-            problem = (
-                ""
-                if not (new_password or repeat_password)
-                else ("An account that signs in through the provider has no password here.")
-            )
         else:
             problem = _new_password_problem(new_password, repeat_password)
         if problem:
             return _new_user_page(request, gate, problem=problem, form=form, status_code=400)
-
-        if prepared:
-            with request.app.state.pool.connection() as connection:
-                if not db.create_oidc_account(
-                    connection, username=username, role=role, issuer=None, subject=None
-                ):
-                    connection.rollback()
-                    return _new_user_page(
-                        request,
-                        gate,
-                        problem="An account with that name already exists.",
-                        form=form,
-                        status_code=409,
-                    )
-                db.record_audit_event(
-                    connection,
-                    actor=gate.username,
-                    action="account_created",
-                    detail={"account": username, "role": role, "source": "oidc", "via": "web"},
-                )
-                connection.commit()
-            return RedirectResponse("/settings#users", status_code=303)
 
         with request.app.state.pool.connection() as connection:
             if not db.create_account(
@@ -5639,11 +5605,7 @@ def build_router(config: Config) -> APIRouter:
 
         if action == "save":
             shown = {
-                key: (
-                    form.get(key) == "on"
-                    if key in ("auto_create", "prompt_login")
-                    else form.get(key, "")
-                )
+                key: (form.get(key) == "on" if key == "prompt_login" else form.get(key, ""))
                 for key in db.OIDC_SETTINGS
                 if key not in ("client_secret_sealed", "key_id")
             }
@@ -8427,7 +8389,7 @@ def build_router(config: Config) -> APIRouter:
                 # test does not promise a sign-in the account step refuses.
                 refused = (
                     _oidc_account_refusal(
-                        connection, provider, issuer=issuer, subject=subject, username=username
+                        connection, issuer=issuer, subject=subject, username=username
                     )
                     if role is not None
                     else None
@@ -8487,25 +8449,16 @@ def build_router(config: Config) -> APIRouter:
 
         with request.app.state.pool.connection() as connection:
             refused = _oidc_account_refusal(
-                connection, provider, issuer=issuer, subject=subject, username=username
+                connection, issuer=issuer, subject=subject, username=username
             )
             if refused is not None:
                 connection.rollback()
                 return refuse(*refused)
             account = db.account_by_oidc(connection, issuer=issuer, subject=subject)
             if account is None:
-                named = db.account_by_username(connection, username)
-                if named is not None:
-                    # Prepared and unbound, as the check above read it; a
-                    # sign-in that bound it in between is refused here.
-                    if not db.bind_oidc_account(
-                        connection, user_id=named.id, issuer=issuer, subject=subject
-                    ):
-                        connection.rollback()
-                        return refuse(
-                            f"An account named {username} already exists here.", "name_taken"
-                        )
-                elif not db.create_oidc_account(
+                # The check above found the name free; one taken in between is
+                # refused here by the insert.
+                if not db.create_oidc_account(
                     connection, username=username, role=role, issuer=issuer, subject=subject
                 ):
                     connection.rollback()
@@ -10755,7 +10708,6 @@ def _sso_button(request: Request) -> str | None:
 
 def _oidc_account_refusal(
     connection: Any,
-    provider: db.OidcProvider,
     *,
     issuer: str,
     subject: str,
@@ -10765,9 +10717,9 @@ def _oidc_account_refusal(
 
     One answer for the sign-in and for Test sign-in, which must not promise what
     the sign-in refuses: a Test sign-in as a name a local account holds said
-    "would sign in as admin" (2026-09-28). A prepared provider account is
-    bound once, to whoever first signs in as it; any other account of the same
-    name is never taken over (B196).
+    "would sign in as admin" (2026-09-28). An account is made at the first
+    sign-in, with the role the groups give (B297); an account of the same name
+    is never taken over (B196).
     """
 
     account = db.account_by_oidc(connection, issuer=issuer, subject=subject)
@@ -10786,12 +10738,8 @@ def _oidc_account_refusal(
                     "An admin can remove it so that it is made again.",
                     "other_issuer",
                 )
-            if named.source != "oidc" or named.oidc_issuer is not None:
-                return f"An account named {username} already exists here.", "name_taken"
-            account = named
-        elif not provider.auto_create:
-            return f"There is no account here for {username}.", "no_account"
-        elif users.name_problem(username) is not None:
+            return f"An account named {username} already exists here.", "name_taken"
+        if users.name_problem(username) is not None:
             #
             # A version records the name as who published it (B207); one that
             # cannot stand there never becomes an account (review 2026-09-29 F1).

@@ -41,7 +41,7 @@ import yaml
 from haprion import backup_retention, backup_schedule, cluster_settings
 from haprion.config import ConfigError
 
-from haprion_ui import account_apply, config, db, profile_apply, settings_apply
+from haprion_ui import account_apply, config, profile_apply, settings_apply, settings_tool
 from haprion_ui.admin import AdminError, connect, load_environment, refused
 
 OPERATION = "export"
@@ -177,12 +177,6 @@ def export_cluster(cluster: str, written: Written, read: ReadEngine) -> None:
         written.add(f"{base}/backup-schedule.yaml", _yaml(schedule))
 
 
-def known_clusters(connection: Any, settings: config.Config) -> tuple[str, ...]:
-    """The poller's list of clusters, or `ui.toml`'s before the poller has read one."""
-
-    return db.cluster_list(connection) or settings.clusters
-
-
 def collect(
     connection: Any, settings: config.Config, chosen: Sequence[str], read: ReadEngine
 ) -> tuple[tuple[str, ...], Written]:
@@ -190,7 +184,7 @@ def collect(
     written.add("accounts.yaml", _yaml(account_apply.document(connection)))
     written.add("settings.yaml", _yaml(settings_apply.document(connection)))
     written.add("profiles.yaml", _yaml(profile_apply.document(connection)))
-    known = known_clusters(connection, settings)
+    known, _polled = settings_tool.known_clusters(connection, settings)
     unknown = sorted(set(chosen) - set(known))
     if unknown:
         raise ExportError(f"no such cluster: {', '.join(unknown)}")

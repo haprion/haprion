@@ -654,8 +654,10 @@ the activity, so a group taken away at the provider stops counting here by
 then. The provider's own token lifetime is not used for this; to end someone's
 access sooner, **Revoke sessions** on the account does it at once.
 
-An account made through the provider is bound to the issuer and the subject it
-first signed in with, not to its name. Changing the issuer — another provider,
+An account through the provider is made at its first sign-in, by the role its
+groups give; there is no list of them to keep here, and none is made in advance
+(schema `0072`). Who may sign in is decided in the provider's groups. It is
+bound to the issuer and the subject it first signed in with, not to its name. Changing the issuer — another provider,
 or the same provider's application under a new name — therefore leaves every
 such account bound to the old one, and sign-in says so. Remove those accounts
 under **Settings → Users**; each is made again at its next sign-in.
@@ -715,7 +717,7 @@ client authentication (`client_secret_basic` or `client_secret_post`),
 scopes, the claims for the name and the groups, the admin and reader groups,
 the button text, sign-out (this interface only, or also at the provider),
 local sign-in (break-glass accounts only, or all), an optional CA
-certificate, whether accounts are created at first sign-in, and whether the
+certificate, and whether the
 provider is always asked to sign in again. The redirect URI to register at the
 provider is shown there, to copy. The web's `ui.toml` names the public key
 step 17 made (`[oidc] public_key`); without it the page says the helper is not
@@ -755,7 +757,6 @@ oidc:
   groups_claim: groups
   admin_group: haprion-admins
   reader_group: haprion-readers
-  auto_create: true
   button_text: Sign in with SSO
   prompt_login: false
   logout_mode: app                 # app or provider
@@ -2940,10 +2941,14 @@ the contract (`haprion-export` in `docs/CONTRACT.md`).
 Applied to the installation it came from, every file changes nothing - that is the first thing to
 run. What the export cannot say it lists as `skipped`, with why: an object the generator refuses,
 a network that comes from the cluster definition (there is no document to apply), a backup
-schedule never set or set to a calendar the form cannot express.
+schedule never set or set to a calendar the form cannot express. `--prune` removes what the files
+do not name, so an object that was skipped goes with `haprion-objects apply --prune` on the
+export's directory; mend it, or apply without `--prune`.
 
-**What the export leaves out.** Nothing secret is read back, so none is written: no account
-passwords, no OIDC client secret, no DNS provider credentials (`fields`) or NDES challenge. Applied
+**What the export leaves out.** Accounts through the provider: each is made at its first
+sign-in, by the groups, and a file has nothing to say about one. An account the file does not
+name is left alone, and `--prune` never removes one of the provider's. Nothing secret is read
+back, so none is written either: no account passwords, no OIDC client secret, no DNS provider credentials (`fields`) or NDES challenge. Applied
 where they came from, the stored ones are kept. For a new installation, add them - from Ansible
 Vault, never in the files you keep in version control:
 
@@ -3294,6 +3299,9 @@ better done elsewhere. The details are in the section linked.
   then the node holding the VIP and letting it move, which needs nothing from the manager; a
   button that stopped keepalived on a node would be the first management action able to move
   traffic ([Keeping HAProxy current](#keeping-haproxy-current)).
+- **An account through the provider is not made in advance.** It is made at the first
+  sign-in, by the groups; to let only some people in, give them a group of their own at
+  the provider ([Signing in through an OpenID Connect provider](#signing-in-through-an-openid-connect-provider)).
 - **Certificate renewal is the CA client's**: certbot and the NDES run renew on their
   own timers, and the manager publishes what they renew
   ([Certificates](#certificates)).

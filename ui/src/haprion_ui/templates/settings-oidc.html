@@ -76,7 +76,6 @@
       <label class="oidc-wide"><span class="field-title">CA certificate <span class="optional">(optional)</span></span><textarea name="ca_pem" rows="3" spellcheck="false" autocomplete="off">{{ values.ca_pem or '' }}</textarea></label>
     </div>
     <div class="form-checks">
-      <label class="check"><input type="checkbox" name="auto_create" value="on"{% if values.auto_create %} checked{% endif %}> <span>Create accounts at first sign-in</span></label>
       <label class="check"><input type="checkbox" name="prompt_login" value="on"{% if values.prompt_login %} checked{% endif %}> <span>Always ask the provider to sign in again</span></label>
     </div>
     <div class="oidc-redirect">

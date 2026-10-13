@@ -29,16 +29,22 @@ from haprion_ui.admin import AdminError, actor_name, connect, load_environment, 
 EXIT_REFUSED = 65
 
 
+def known_clusters(connection: Any, settings: config.Config) -> tuple[tuple[str, ...], bool]:
+    """The poller's list of clusters and True, or `ui.toml`'s and False before it has read one."""
+
+    clusters = db.cluster_list(connection)
+    return (clusters, True) if clusters else (settings.clusters, False)
+
+
 def _readings(connection: Any, settings: config.Config) -> feature_switch.Readings:
     """What a switch needs besides its row, read as the web's sources read it."""
 
     def listed() -> tuple[tuple[str, ...], bool]:
-        clusters = db.cluster_list(connection)
-        return (clusters, True) if clusters else (settings.clusters, False)
+        return known_clusters(connection, settings)
 
     def kept(rows: list[Any]) -> list[Any]:
-        clusters, from_file = listed()
-        return [row for row in rows if not from_file or getattr(row, "cluster", None) in clusters]
+        clusters, polled = listed()
+        return [row for row in rows if not polled or getattr(row, "cluster", None) in clusters]
 
     return feature_switch.Readings(
         clusters=lambda: listed()[0],
@@ -154,20 +160,15 @@ def command_apply(args: argparse.Namespace, *, sleep: Callable[[float], None] = 
 
 def command_show(args: argparse.Namespace) -> int:
     with connect(load_environment()) as connection:
-        access = [entry.network for entry in db.status_access(connection)]
-        switches = {
-            name: switch.enabled for name, switch in sorted(db.feature_switches(connection).items())
-        }
+        shown = settings_apply.document(connection)
         provider = db.oidc_provider(connection)
-    shown: dict[str, Any] = {"status_access": access, "features": switches, "oidc": None}
+    access: list[str] = shown["status_access"]
+    switches: dict[str, bool] = shown["features"]
+    shown["oidc"] = None
     if provider is not None:
         shown["oidc"] = {
-            **{
-                key: getattr(provider, key)
-                for key in (*settings_apply.OIDC_TEXT, *settings_apply.OIDC_FLAGS)
-            },
+            **settings_apply.provider_fields(provider),
             "client_secret": "set" if provider.client_secret_sealed else None,
-            "enabled": provider.enabled,
             "verified": provider.verified,
         }
     if args.json:

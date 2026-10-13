@@ -4448,7 +4448,6 @@ class OidcProvider:
     groups_claim: str
     admin_group: str | None
     reader_group: str | None
-    auto_create: bool
     button_text: str
     prompt_login: bool
     logout_mode: str
@@ -4466,7 +4465,7 @@ class OidcProvider:
 
 _OIDC_COLUMNS = (
     "enabled, issuer, client_id, client_secret_sealed, key_id, auth_method, scopes, "
-    "username_claim, groups_claim, admin_group, reader_group, auto_create, button_text, "
+    "username_claim, groups_claim, admin_group, reader_group, button_text, "
     "prompt_login, logout_mode, local_login, ca_pem, revision, verified_revision, "
     "updated_at, updated_by"
 )
@@ -4485,7 +4484,6 @@ OIDC_SETTINGS = (
     "groups_claim",
     "admin_group",
     "reader_group",
-    "auto_create",
     "button_text",
     "prompt_login",
     "logout_mode",
@@ -4592,11 +4590,11 @@ def create_oidc_account(
     *,
     username: str,
     role: str,
-    issuer: str | None,
-    subject: str | None,
+    issuer: str,
+    subject: str,
 ) -> bool:
-    """A provider's account: no password; bound now, or later at its first sign-in
-    when an admin prepares it. False when the name or the identity is taken."""
+    """A provider's account, made at its first sign-in: no password, bound to the
+    identity that signed in (B297). False when the name or the identity is taken."""
 
     try:
         with connection.transaction(), connection.cursor() as cursor:
@@ -4609,20 +4607,6 @@ def create_oidc_account(
             return cursor.fetchone() is not None
     except psycopg.errors.UniqueViolation:
         return False
-
-
-def bind_oidc_account(
-    connection: Connection[Any], *, user_id: int, issuer: str, subject: str
-) -> bool:
-    """Bind a prepared provider account to the identity that first signs in as it."""
-
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "update app_user set oidc_issuer = %(issuer)s, oidc_subject = %(subject)s "
-            " where id = %(user_id)s and source = 'oidc' and oidc_issuer is null",
-            {"issuer": issuer, "subject": subject, "user_id": user_id},
-        )
-        return cursor.rowcount == 1
 
 
 @dataclass(frozen=True, slots=True)

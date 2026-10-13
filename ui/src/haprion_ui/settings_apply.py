@@ -34,7 +34,6 @@ owner may read it.
       groups_claim: groups
       admin_group: haprion-admins
       reader_group: haprion-readers
-      auto_create: true
       button_text: Sign in with SSO
       prompt_login: false
       logout_mode: app                # app | provider
@@ -67,7 +66,7 @@ MAX_FILE_BYTES = 256 * 1024
 # typed secret, `enabled` the On/Off buttons and `interface_url` the address
 # the web would have taken from the request; the rest are the row's columns.
 #
-OIDC_FLAGS = ("auto_create", "prompt_login")
+OIDC_FLAGS = ("prompt_login",)
 OIDC_TEXT = (
     "issuer",
     "client_id",
@@ -162,6 +161,11 @@ def read_file(path: Path) -> Wanted:
         given = document["oidc"]
         if not isinstance(given, Mapping):
             raise ApplyError(f"{path}: oidc is a mapping of the provider's settings")
+        if "auto_create" in given:
+            raise ApplyError(
+                f"{path}: oidc auto_create is gone: an account is made at the first sign-in, "
+                "with the role the groups give; leave the key out"
+            )
         unknown = sorted(str(key) for key in given if key not in OIDC_KEYS)
         if unknown:
             raise ApplyError(f"{path}: oidc has unknown field(s): {', '.join(unknown)}")
@@ -198,11 +202,17 @@ def document(connection: Any) -> dict[str, Any]:
     }
     provider = db.oidc_provider(connection)
     if provider is not None and provider.issuer is not None:
-        shown["oidc"] = {
-            **{key: getattr(provider, key) for key in (*OIDC_TEXT, *OIDC_FLAGS)},
-            "enabled": provider.enabled,
-        }
+        shown["oidc"] = provider_fields(provider)
     return shown
+
+
+def provider_fields(provider: db.OidcProvider) -> dict[str, Any]:
+    """The provider's settings by the file's names, and whether it is on; never the secret."""
+
+    return {
+        **{key: getattr(provider, key) for key in (*OIDC_TEXT, *OIDC_FLAGS)},
+        "enabled": provider.enabled,
+    }
 
 
 # - External monitoring ---------------------------------------------------------

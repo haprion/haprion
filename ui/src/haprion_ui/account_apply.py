@@ -175,23 +175,26 @@ def stored_accounts(connection: Any) -> list[Stored]:
 
 
 def document(connection: Any) -> dict[str, Any]:
-    """The stored accounts as the file `read_file` takes: no passwords, which are never read back.
+    """The local accounts as the file `read_file` takes: no passwords, which are never read back.
 
-    A provider's account carries no `break_glass`, which the file may not set
-    for it; applying this to the installation it came from changes nothing.
+    The provider's accounts are left out. Each is made at its owner's first
+    sign-in, with the role the groups give (B297), so a file has nothing to
+    say about one that another installation could act on; applying this to
+    the installation it came from leaves them alone, and changes nothing.
     """
 
-    accounts: list[dict[str, Any]] = []
-    for row in stored_accounts(connection):
-        entry: dict[str, Any] = {
-            "username": row.username,
-            "role": row.role,
-            "disabled": row.disabled,
-        }
-        if row.source == "local":
-            entry["break_glass"] = row.break_glass
-        accounts.append(entry)
-    return {"accounts": accounts}
+    return {
+        "accounts": [
+            {
+                "username": row.username,
+                "role": row.role,
+                "break_glass": row.break_glass,
+                "disabled": row.disabled,
+            }
+            for row in stored_accounts(connection)
+            if row.source == "local"
+        ]
+    }
 
 
 def plan(wanted: Sequence[Wanted], current: Sequence[Stored], *, prune: bool) -> Plan:

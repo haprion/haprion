@@ -49,7 +49,7 @@
                 "fields": {
                   "type": "array",
                   "items": {
-                    "enum": ["issuer", "client_id", "client_secret", "auth_method", "scopes", "username_claim", "groups_claim", "admin_group", "reader_group", "auto_create", "button_text", "prompt_login", "logout_mode", "local_login", "ca_pem"]
+                    "enum": ["issuer", "client_id", "client_secret", "auth_method", "scopes", "username_claim", "groups_claim", "admin_group", "reader_group", "button_text", "prompt_login", "logout_mode", "local_login", "ca_pem"]
                   }
                 },
                 "enabled": { "type": ["boolean", "null"] },

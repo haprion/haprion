@@ -4206,33 +4206,25 @@ class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
             (found.username, found.source, found.password_hash), ("alice", "oidc", None)
         )
 
-    def test_a_prepared_account_is_bound_once(self) -> None:
-        with self.web() as connection:
-            db.create_oidc_account(
-                connection, username="bob", role="reader", issuer=None, subject=None
+    def test_0072_removes_unbound_provider_accounts_and_keeps_sign_in_verified(self) -> None:
+        """B297: what an admin prepared goes, what signed in stays, `auto_create` is on."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into app_user (username, role, source) values ('bob', 'reader', 'oidc')"
             )
-            bob = db.account_by_username(connection, "bob")
-            if bob is None:
-                self.fail("no prepared account")
-            self.assertTrue(
-                db.bind_oidc_account(
-                    connection, user_id=bob.id, issuer="https://id.example/", subject="s9"
-                )
+            cursor.execute(
+                "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
+                "values ('carol', 'reader', 'oidc', 'https://id.example/', 's1')"
             )
-            self.assertFalse(
-                db.bind_oidc_account(
-                    connection, user_id=bob.id, issuer="https://id.example/", subject="s10"
-                )
-            )
-            admin = db.account_by_username(connection, "admin")
-            if admin is None:
-                self.fail("no admin")
-            self.assertFalse(
-                db.bind_oidc_account(
-                    connection, user_id=admin.id, issuer="https://id.example/", subject="s11"
-                )
-            )
-            connection.commit()
+            cursor.execute("update oidc_provider set auto_create = false")
+            cursor.execute("update oidc_provider set verified_revision = revision")
+            _migration("0072_accounts_from_the_groups.py", cursor).upgrade()
+            cursor.execute("select username from app_user where source = 'oidc' order by 1")
+            self.assertEqual(cursor.fetchall(), [("carol",)])
+            cursor.execute("select auto_create, verified_revision = revision from oidc_provider")
+            self.assertEqual(cursor.fetchone(), (True, True))
+            connection.rollback()
 
     def test_a_sign_in_in_progress_is_used_once_and_expires(self) -> None:
         pre = auth.token_hash("pre")
@@ -6837,7 +6829,6 @@ class TheSettingsFromAFile(unittest.TestCase):
   groups_claim: groups
   admin_group: haproxy-admins
   reader_group: null
-  auto_create: true
   button_text: Sign in with SSO
   prompt_login: false
   logout_mode: app
@@ -7479,4 +7470,7 @@ class TheExportAppliesUnchanged(unittest.TestCase):
         written = (target / "settings.yaml").read_text() + (target / "profiles.yaml").read_text()
         for secret in ("the client secret", "the token", "the challenge"):
             self.assertNotIn(secret, written)
-        self.assertNotIn("password", (target / "accounts.yaml").read_text())
+        exported = (target / "accounts.yaml").read_text()
+        self.assertNotIn("password", exported)
+        self.assertNotIn("sso-person", exported)
+        self.assertIn("viewer", exported)

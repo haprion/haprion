@@ -216,7 +216,6 @@ def parse(
         "groups_claim": groups_claim,
         "admin_group": admin_group,
         "reader_group": reader_group,
-        "auto_create": form.get("auto_create") == "on",
         "button_text": button_text,
         "prompt_login": form.get("prompt_login") == "on",
         "logout_mode": logout_mode,

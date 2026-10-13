@@ -55,6 +55,7 @@ class TheFile(unittest.TestCase):
             ("oidc:\n  issuer: https://idp.example.com\n  colour: red\n", "unknown field"),
             ("oidc:\n  enabled: 'on'\n", "true or false"),
             ("oidc:\n  client_id: 7\n", "must be text"),
+            ("oidc:\n  auto_create: false\n", "auto_create is gone"),
         ):
             with self.subTest(said), self.assertRaises(ApplyError) as raised:
                 settings_apply.read_file(self.write(text))
@@ -84,7 +85,6 @@ class TheIdentity(unittest.TestCase):
             groups_claim="groups",
             admin_group="admins",
             reader_group=None,
-            auto_create=True,
             button_text="Sign in",
             prompt_login=False,
             logout_mode="app",

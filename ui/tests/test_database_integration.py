@@ -4288,7 +4288,13 @@ class WhenAnExceptionReachedTheNodes(unittest.TestCase):
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def job(
-        self, operation: str, cluster: str, created: str, state: str = "done", **payload: Any
+        self,
+        operation: str,
+        cluster: str,
+        created: str,
+        state: str = "done",
+        result: dict[str, Any] | None = None,
+        **payload: Any,
     ) -> None:
         with (
             self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection,
@@ -4296,8 +4302,9 @@ class WhenAnExceptionReachedTheNodes(unittest.TestCase):
         ):
             cursor.execute(
                 "insert into job (operation, cluster, payload, idempotency_key, state, created_at, "
-                "started_at, finished_at) values (%(operation)s, %(cluster)s, %(payload)s, %(key)s, "
-                "%(state)s, %(created)s, %(created)s, %(created)s::timestamptz + interval '4 seconds') "
+                "started_at, finished_at, result) values (%(operation)s, %(cluster)s, %(payload)s, "
+                "%(key)s, %(state)s, %(created)s, %(created)s, "
+                "%(created)s::timestamptz + interval '4 seconds', %(result)s) "
                 "returning id",
                 {
                     "operation": operation,
@@ -4306,6 +4313,7 @@ class WhenAnExceptionReachedTheNodes(unittest.TestCase):
                     "key": uuid4(),
                     "state": state,
                     "created": created,
+                    "result": None if result is None else json.dumps(result),
                 },
             )
             job = _first(cursor)
@@ -4319,6 +4327,25 @@ class WhenAnExceptionReachedTheNodes(unittest.TestCase):
         ):
             cursor.execute("delete from job where id = %s", (job,))
             connection.commit()
+
+    def test_a_publish_that_was_done_in_a_job_whose_deploy_was_not(self) -> None:
+        # Review 26-10-13, D1: Publish & deploy ending partial has published,
+        # and the deploy after it carries the exception.
+        self.job(
+            "changes_publish",
+            "ex-c",
+            "2026-10-02 15:01Z",
+            state="partial",
+            result={"outcome": "partial", "publish": {"outcome": "done"}},
+            deploy=True,
+        )
+        self.job("deploy", "ex-c", "2026-10-02 15:03Z")
+        made = datetime(2026, 10, 2, 15, 0, tzinfo=UTC)
+
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            found = db.deploys_carrying(connection, cluster="ex-c", moments=[made])
+
+        self.assertEqual(found, {made: datetime(2026, 10, 2, 15, 3, 4, tzinfo=UTC)})
 
     def test_the_first_deploy_after_the_publish_that_took_it(self) -> None:
         self.job("deploy", "ex-a", "2026-10-02 13:00Z")  # before

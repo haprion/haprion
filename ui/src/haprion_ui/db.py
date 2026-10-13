@@ -4879,7 +4879,9 @@ def deploys_carrying(
     26-10-11). So first the publish that took it - the first `changes_publish`
     created after the moment, which publishes everything saved for the cluster
     - and then the first deploy created after that publish finished, or that
-    publish itself where it deployed (*Publish & deploy*, B257). `done` only,
+    publish itself where it deployed (*Publish & deploy*, B257). A publish is
+    one whose job was done or whose publish half was, as in `change_publishes`
+    (review 26-10-13, D1). A deploy is `done` only,
     which is a deploy whose every node took the release and reloaded the WAF
     engine. A moment no such deploy has followed yet is left out, as is one
     published outside the job queue: unknown is not *Not working*.
@@ -4900,7 +4902,8 @@ def deploys_carrying(
             ") from unnest(%(moments)s::timestamptz[]) as asked(moment) "
             "cross join lateral ("
             "  select min(finished_at) as at from job "
-            "   where cluster = %(cluster)s and state = 'done' "
+            "   where cluster = %(cluster)s "
+            "     and (state = 'done' or result->'publish'->>'outcome' = 'done') "
             "     and operation = 'changes_publish' and created_at >= moment"
             ") published",
             {"cluster": cluster, "moments": list(moments)},

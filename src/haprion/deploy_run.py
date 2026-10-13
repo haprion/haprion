@@ -413,7 +413,23 @@ def run(
         else:
             entry.outcome = "updated"
             entry.verified = bool(landed)
-            status = _await_peers(status, node_name, read_status, writer, report, pause)
+            try:
+                status = _await_peers(status, node_name, read_status, writer, report, pause)
+            except StatusError as exc:
+                #
+                # The next node would otherwise be chosen from the reading
+                # before this one failed - possibly the VIP owner, touched by a
+                # manager that has just lost sight of the cluster (review
+                # 26-10-13, L1). Stopped as the reading after a trigger is.
+                #
+                writer.write(f"\nERROR: {exc}\n")
+                writer.write(
+                    f"{node_name} was deployed, but the cluster could not be read while "
+                    "waiting for its peers. The remaining nodes were not touched.\n"
+                )
+                report.outcome = Outcome.FAILED
+                report.error = Message(code="status_unavailable", message=str(exc))
+                return DeployRun(exc.exit_code, report)
 
 
 #
@@ -454,6 +470,9 @@ def _await_peers(
     One that has not connected when the wait ends is named and the deploy goes
     on: the counts are a convenience, and holding a rollout for them would
     trade the release for them.
+
+    A reading that fails is raised, not waited out: what comes next is
+    another node, and it is chosen from the status returned here.
     """
 
     for _ in range(PEERS_WAIT_SECONDS):
@@ -461,10 +480,7 @@ def _await_peers(
         if not waiting:
             return status
         pause(1.0)
-        try:
-            status = read_status()
-        except StatusError:
-            break
+        status = read_status()
     waiting = _unconnected_peers(status, node_name)
     if waiting:
         warning = (

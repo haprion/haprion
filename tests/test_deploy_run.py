@@ -244,6 +244,35 @@ class SharedCountersTests(unittest.TestCase):
         codes = [warning.code for warning in LAST_REPORT[0].warnings]
         self.assertIn("counters_not_shared", codes)
 
+    def test_a_reading_that_fails_while_waiting_stops_before_the_next_node(self) -> None:
+        # Review 26-10-13, L1: the wait broke off and the next node was chosen
+        # from the reading before the failure.
+        cluster = self.sharing()
+
+        def disconnect(_: FakeCluster, node: FakeNode) -> None:
+            assert node.peers is not None  # noqa: S101 - set above
+            node.peers[0]["connected"] = False
+
+        cluster.on_deploy = disconnect
+        healthy = cluster.read_status
+
+        def failing() -> dict[str, Any]:
+            if cluster.reads >= 2:
+                cluster.reads += 1
+                return {"operation": "status"}
+            return healthy()
+
+        cluster.read_status = failing  # type: ignore[method-assign]
+        code, shown = deploy(cluster)
+
+        self.assertEqual(code, 68, shown)
+        self.assertEqual(cluster.triggered, ["node-b"])
+        self.assertIn("The remaining nodes were not touched", shown)
+        report = LAST_REPORT[0]
+        self.assertEqual(report.nodes["node-b"].outcome, "updated")
+        assert report.error is not None  # noqa: S101 - asserted by the exit code
+        self.assertEqual(report.error.code, "status_unavailable")
+
     def test_turning_sharing_on_does_not_wait_for_a_node_still_without_it(self) -> None:
         # Review 26-10-10, F2: the node deployed first reports the other, which
         # still runs the release without `peers` and has nothing to connect to.

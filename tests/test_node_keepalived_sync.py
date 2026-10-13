@@ -69,6 +69,15 @@ class Step(unittest.TestCase):
             stub = self.root / "bin" / name
             stub.write_text(STUB % variable)
             stub.chmod(0o755)
+        #
+        # `is-active` answers on its own: whether keepalived runs is a separate
+        # fact from whether its reload works.
+        #
+        (self.root / "bin" / "systemctl").write_text(
+            '#!/bin/sh\necho "systemctl $*" >> "$RECORD"\n'
+            '[ "$1" = is-active ] && exit "${ACTIVE_EXIT:-0}"\n'
+            'exit "${RELOAD_EXIT:-0}"\n'
+        )
         installer = self.root / "bin" / "install"
         installer.write_text(INSTALL_STUB)
         installer.chmod(0o755)
@@ -203,6 +212,36 @@ class TheKeepalivedStep(Step):
         self.assertEqual(code, 1)
         self.assertEqual(self.installed.read_text(), "    192.0.2.21\n")
         self.assertIn("keepalived reload failed", output)
+
+
+class KeepalivedNotRunning(Step):
+    """B298: masked on a node restored in test mode, not yet started on a new one."""
+
+    def test_the_list_is_tested_and_installed_and_nothing_is_reloaded(self) -> None:
+        published = self.root / "release" / "keepalived" / "addresses.conf"
+        published.write_text("    192.0.2.20\n")
+        self.installed.write_text("    192.0.2.21\n")
+        self.conf.write_text(f"virtual_ipaddress {{\n    include {self.installed}\n}}\n")
+
+        code, output = self.run_step(ACTIVE_EXIT="3")
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.installed.read_text(), "    192.0.2.20\n")
+        self.assertIn("--config-test", self.calls())
+        self.assertNotIn("systemctl reload", self.calls())
+        self.assertIn("read when it starts", output)
+        self.assertFalse((self.root / "etc" / "addresses.conf.rollback").exists())
+
+    def test_a_rejected_list_is_still_refused(self) -> None:
+        published = self.root / "release" / "keepalived" / "addresses.conf"
+        published.write_text("    not-an-address\n")
+        self.installed.write_text("    192.0.2.21\n")
+        self.conf.write_text(f"virtual_ipaddress {{\n    include {self.installed}\n}}\n")
+
+        code, _ = self.run_step(ACTIVE_EXIT="3", TEST_EXIT="5")
+
+        self.assertEqual(code, 1)
+        self.assertEqual(self.installed.read_text(), "    192.0.2.21\n")
 
 
 class TheIpvsFile(Step):

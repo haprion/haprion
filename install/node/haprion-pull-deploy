@@ -181,6 +181,20 @@ activate_keepalived() {
     what="$(IFS=,; echo "${STAGED_WHAT[*]}")"
     what="${what//,/ and }"
     if keepalived --config-test -f "$KEEPALIVED_CONF"; then
+        #
+        # Nothing to reload when keepalived is not running - masked on a node
+        # restored in test mode, not yet started on a node restored to a new
+        # VM (both measured 26-10-13): the files are installed, tested, and
+        # what keepalived reads when it starts. A reload there fails, and the
+        # deploy used to put the files back and fail with it.
+        #
+        if ! systemctl is-active --quiet keepalived; then
+            log "keepalived: not running; the ${what} is installed and read when it starts."
+            for index in "${!STAGED_INSTALLED[@]}"; do
+                [[ -z "${STAGED_BACKUP[index]}" ]] || rm -f "${STAGED_BACKUP[index]}"
+            done
+            return 0
+        fi
         log "keepalived: configuration test passed. Reloading..."
         if systemctl reload keepalived; then
             log "keepalived: ${what} active."

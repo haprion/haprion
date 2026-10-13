@@ -125,15 +125,27 @@ class CoordinatedUpdateTests(unittest.TestCase):
         activated or the one it replaced."""
 
         final_check = self.update.index("if ! ./check-compatibility; then")
-        prune = self.update.index('step "Pruning old releases"')
+        prune = self.update.index('keep="${RELEASES_KEPT:-10}"')
         self.assertLess(final_check, prune)
-        self.assertIn('keep="${RELEASES_KEPT:-10}"', self.update)
         self.assertNotIn("RELEASES_KEPT:-3", self.update)
         self.assertIn(
-            '[[ "$old_release" == "$release_id" || "$old_release" == "$previous_id" ]] && continue',
+            '[[ -z "$old_release" || "$old_release" == "$release_id" '
+            '|| "$old_release" == "$previous_id" ]] && continue',
             self.update,
         )
+        # Said only when there is something to remove (Fas 18, 26-10-13).
+        self.assertLess(
+            self.update.index("if (( ${#old_releases[@]} > 0 )); then"),
+            self.update.index('step "Pruning old releases"'),
+        )
         self.assertIn("-printf '%T@ %f\\n'", self.update)
+
+    def test_it_ends_by_saying_where_the_interface_is(self) -> None:
+        """Fas 18, 26-10-13: the update ends with the address and the commands."""
+
+        ending = self.update[self.update.index('log "platform update complete"') :]
+        self.assertIn("admin_value /etc/haprion/ui-tls.conf SERVER_NAME", ending)
+        self.assertIn("The web interface is at https://${server_name:-<this machine>}/", ending)
 
     def test_it_never_installs_the_independent_cli_or_node_bundle(self) -> None:
         self.assertNotIn("install-release.py", self.update)

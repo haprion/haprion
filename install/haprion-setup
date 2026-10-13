@@ -219,8 +219,10 @@ done
 
 cat <<DONE
 
-The manager is installed. The web interface answers at https://${SERVER_NAME}/
-with a self-signed certificate until a real one is chosen under Settings.
+The manager is installed. The web interface is at https://${SERVER_NAME}/
+with a self-signed certificate until a real one is chosen under Settings, and
+the commands (haprion-status, haprion-deploy, haprion-cluster ...) are ready
+in /usr/bin.
 
 On a first installation, make the first administrator:
 

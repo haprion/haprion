@@ -73,6 +73,7 @@ restore_previous() {
 # what the restore below needs.
 #
 step "Web service unit"
+# shellcheck disable=SC2153 # WEB_UNIT is accounts.sh's fixed name, not a misspelt web_unit
 web_unit="/etc/systemd/system/${WEB_UNIT}"
 web_unit_before="$(cat "$web_unit" 2>/dev/null || true)"
 install_file "$web_unit" root:root 644 "$(cat examples/haprion-web.service.example)"
@@ -101,24 +102,41 @@ fi
 # holds. The release just activated and the one it replaced always stay,
 # whatever their age: the rollback path is never the one pruned. Ordered by
 # modification time, not name - a release id ends in a commit hash.
+# Said only when there is something to remove: "removed 0" on every update
+# is a line to read that says nothing (Fas 18, 26-10-13).
 #
-step "Pruning old releases"
 keep="${RELEASES_KEPT:-10}"
 [[ "$keep" =~ ^[0-9]+$ && "$keep" -ge 2 ]] || die "RELEASES_KEPT must be a whole number of at least 2"
-pruned=0
+old_releases=()
 while read -r old_release; do
-    [[ "$old_release" == "$release_id" || "$old_release" == "$previous_id" ]] && continue
-    if rm -rf -- "${UI_ROOT}/releases/${old_release}"; then
-        pruned=$((pruned + 1))
-    else
-        warn "could not remove release ${old_release}; it stays"
-    fi
+    [[ -z "$old_release" || "$old_release" == "$release_id" || "$old_release" == "$previous_id" ]] && continue
+    old_releases+=("$old_release")
 done < <(find "${UI_ROOT}/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
          | sort -rn | cut -d' ' -f2- | tail -n +"$((keep + 1))")
-log "  kept the ${keep} newest releases, removed ${pruned}"
+if (( ${#old_releases[@]} > 0 )); then
+    step "Pruning old releases"
+    pruned=0
+    for old_release in "${old_releases[@]}"; do
+        if rm -rf -- "${UI_ROOT}/releases/${old_release}"; then
+            pruned=$((pruned + 1))
+        else
+            warn "could not remove release ${old_release}; it stays"
+        fi
+    done
+    log "  kept the ${keep} newest releases, removed ${pruned}"
+fi
 
 echo
 log "platform update complete"
 log "  previous  ${previous_id}"
 log "  current   ${release_id}"
 log "  rollback  ${rollback} --to ${previous_id}"
+
+#
+# Where to go next, in one place for whoever ran the update. The name is the
+# one step 5 made the certificate for.
+#
+server_name="$(admin_value /etc/haprion/ui-tls.conf SERVER_NAME 2>/dev/null || true)"
+echo
+echo "The web interface is at https://${server_name:-<this machine>}/, and the commands"
+echo "(haprion-status, haprion-deploy, haprion-cluster ...) are ready in /usr/bin."

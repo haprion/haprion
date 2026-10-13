@@ -50,6 +50,16 @@
   --info-soft: #e9f3fd;
   --unknown: #778396;
   --unknown-soft: #eef1f5;
+  /*
+   * The same states as words. The lamp colours are for a dot and read at
+   * about 2:1 as small text on white; these keep the hue at 4.5:1 or more on
+   * the panel and on each state's own soft background.
+   */
+  --healthy-text: #217e30;
+  --warning-text: #996300;
+  --critical-text: #c92a2a;
+  --info-text: #1d70b5;
+  --unknown-text: #616c7e;
   /* DNS objects' badge (26-10-06): a colour no status uses. */
   --dns: #7c5cc4;
   --dns-soft: #f1ecfb;
@@ -98,6 +108,11 @@
   --info-soft: #183c5d;
   --unknown: #9aa8ba;
   --unknown-soft: #2a394b;
+  --healthy-text: #49c462;
+  --warning-text: #ffb020;
+  --critical-text: #f47878;
+  --info-text: #50abf5;
+  --unknown-text: #9aa8ba;
   --dns: #b19cf5;
   --dns-soft: #30284f;
   --syslog: #5cd0d6;
@@ -314,7 +329,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .account-popover-title span { margin-top: 2px; color: var(--muted); font-size: 12px; text-transform: capitalize; }
 .account-popover form { margin: 0; padding: 6px; }
 .menu-button { width: 100%; padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.menu-button:hover { background: var(--panel-soft); color: var(--critical); }
+.menu-button:hover { background: var(--panel-soft); color: var(--critical-text); }
 .menu-link { display: block; margin: 6px 6px 0; padding: 8px 10px; border-radius: 5px; color: var(--text); text-decoration: none; }
 .menu-link:hover, .menu-link:focus-visible { background: var(--panel-soft); color: var(--text-strong); }
 
@@ -322,7 +337,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .heading-badges { display: inline-flex; align-items: center; gap: 8px; }
 .page-heading h1 { margin: 0; color: var(--text-strong); font-size: clamp(18px, 1.7vw, 20px); font-weight: 700; letter-spacing: -0.02em; }
 .mode-badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted-strong); font-size: 12px; font-weight: 600; white-space: nowrap; }
-.demo-badge { color: var(--info); background: var(--info-soft); }
+.demo-badge { color: var(--info-text); background: var(--info-soft); }
 
 .status-dot { display: inline-block; width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--unknown); box-shadow: 0 0 0 3px var(--unknown-soft); }
 .status-healthy { background-color: var(--healthy); box-shadow: 0 0 0 3px var(--healthy-soft); }
@@ -468,11 +483,11 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .cluster-state .warning-text { font-size: 12px; white-space: nowrap; }
 .cluster-state .warning-text .status-dot { margin-right: 6px; vertical-align: 1px; }
 .status-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-.status-badge-healthy { color: var(--healthy); background: var(--healthy-soft); }
-.status-badge-warning { color: var(--warning); background: var(--warning-soft); }
-.status-badge-critical { color: var(--critical); background: var(--critical-soft); }
-.status-badge-info { color: var(--info); background: var(--info-soft); }
-.status-badge-unknown { color: var(--unknown); background: var(--unknown-soft); }
+.status-badge-healthy { color: var(--healthy-text); background: var(--healthy-soft); }
+.status-badge-warning { color: var(--warning-text); background: var(--warning-soft); }
+.status-badge-critical { color: var(--critical-text); background: var(--critical-soft); }
+.status-badge-info { color: var(--info-text); background: var(--info-soft); }
+.status-badge-unknown { color: var(--unknown-text); background: var(--unknown-soft); }
 
 .cluster-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; padding: 13px 20px; border-bottom: 1px solid var(--line); background: var(--panel-soft); }
 .cluster-facts > div { min-width: 0; padding: 1px 18px; border-right: 1px solid var(--line); }
@@ -523,7 +538,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .node-table td small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
 .inline-status { display: inline-flex; align-items: center; gap: 8px; color: var(--text-strong); font-weight: 640; }
 .inline-status .status-dot { width: 6px; height: 6px; }
-.warning-text { color: var(--warning) !important; }
+.warning-text { color: var(--warning-text) !important; }
 .release-value { font-variant-numeric: tabular-nums; }
 /* Fixed columns, for the reason the proxy table got them on 2026-08-29: with
    automatic layout each cluster's table sizes to its own longest value, so two
@@ -687,15 +702,15 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .search-pages { display: flex; align-items: center; justify-content: center; gap: 14px; color: var(--text-secondary); font-size: 13px; }
 .proxy-hosts { display: block; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .protocol-badge, .ownership-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; }
-.protocol-http { color: var(--info); background: var(--info-soft); }
-.protocol-https { color: var(--healthy); background: var(--healthy-soft); }
-.protocol-tcp { color: var(--warning); background: var(--warning-soft); }
+.protocol-http { color: var(--info-text); background: var(--info-soft); }
+.protocol-https { color: var(--healthy-text); background: var(--healthy-soft); }
+.protocol-tcp { color: var(--warning-text); background: var(--warning-soft); }
 /* DNS (Fas 19a B5): served by dnsdist, so a colour of its own and none of the status colours. */
 .protocol-dns { color: var(--dns); background: var(--dns-soft); }
 .protocol-syslog { color: var(--syslog); background: var(--syslog-soft); }
-.protocol-unknown { color: var(--unknown); background: var(--unknown-soft); }
-.ownership-managed { color: var(--healthy); background: var(--healthy-soft); }
-.ownership-unmanaged { color: var(--warning); background: var(--warning-soft); }
+.protocol-unknown { color: var(--unknown-text); background: var(--unknown-soft); }
+.ownership-managed { color: var(--healthy-text); background: var(--healthy-soft); }
+.ownership-unmanaged { color: var(--warning-text); background: var(--warning-soft); }
 
 /* Versions. The published row is marked, not coloured: green here would read as
    "healthy", and a published version can be the one an operator wants to revert. */
@@ -749,8 +764,8 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .diff-file h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 0 6px; font-size: 12px; font-weight: 600; }
 .diff-path { overflow-wrap: anywhere; color: var(--text-strong); font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
 .diff-status { color: var(--muted); font-weight: 400; }
-.diff-added { color: var(--healthy); }
-.diff-removed { color: var(--critical); }
+.diff-added { color: var(--healthy-text); }
+.diff-removed { color: var(--critical-text); }
 .diff-lines { margin: 0; padding: 6px 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); font: 12px/1.5 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .diff-lines > span { display: block; padding: 0 12px; }
 .diff-lines > .diff-add { background: var(--healthy-soft); }
@@ -986,7 +1001,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .certificate-issuer { margin-left: 8px; }
 .certificate-sans { display: block; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
 .lifecycle-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; color: var(--text-primary); background: var(--unknown-soft); }
-.lifecycle-acme { color: var(--info); background: var(--info-soft); }
+.lifecycle-acme { color: var(--info-text); background: var(--info-soft); }
 /* Rows for certificates this cluster does not serve are held back rather than
    hidden: they are what a later phase picks from, and an operator looking for
    one that is missing needs to see that it exists. */
@@ -1138,7 +1153,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 .login-divider::before, .login-divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .login-form .secondary-button { width: 100%; height: 42px; margin-top: 3px; }
 .primary-button:hover { background: var(--brand-strong); }
-.form-error { margin: -8px 0 18px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--critical) 30%, transparent); border-radius: var(--radius-sm); background: var(--critical-soft); color: var(--critical); font-size: 12px; }
+.form-error { margin: -8px 0 18px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--critical) 30%, transparent); border-radius: var(--radius-sm); background: var(--critical-soft); color: var(--critical-text); font-size: 12px; }
 .login-footnote { margin: 22px 0 0; color: var(--muted); font-size: 10px; text-align: center; }
 
 @media (max-width: 900px) {
@@ -1313,6 +1328,10 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 }
 .node-health-table td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--line); color: var(--text-secondary); }
 .node-health-table .status-dot { margin-right: 8px; }
+.node-health-table col:nth-child(1) { width: 22%; }
+.node-health-table col:nth-child(2) { width: 34%; }
+.node-health-table col:nth-child(3) { width: 14%; }
+.node-health-table col:nth-child(4) { width: 30%; }
 /* The object form's folded groups (2026-09-30). A group is a rule, a title and
    one line saying what it holds; opened, its fields sit at the card's gutter
    like every other row, so the group adds a heading and no second indent.
@@ -1343,7 +1362,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 .feature-detail { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 .form-group-note { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
 .form-exceptions { grid-column: 1 / -1; align-self: center; margin: 0; color: var(--text-secondary); font-size: 13px; }
-.form-exceptions a { color: var(--info); }
+.form-exceptions a { color: var(--info-text); }
 .form-exceptions-table { grid-column: 1 / -1; }
 .form-exception-table { table-layout: fixed; }
 .form-exception-table td { padding-top: 7px; padding-bottom: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1541,7 +1560,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .target-list .receiver-format { width: 100%; font-size: 0.86rem; padding: 2px 6px; }
 .target-list .target-row:has(input:not(:checked)) .receiver-format { opacity: 0.45; }
 .target-list .target-held { color: var(--muted); }
-.target-list .target-held .target-effect { color: var(--healthy); }
+.target-list .target-held .target-effect { color: var(--healthy-text); }
 /* Kept for the retarget page's confirm script and older tests: no layout of its own. */
 .retarget-choices { flex-direction: column; align-items: flex-start; gap: 0; }
 @media (max-width: 900px) {
@@ -1572,11 +1591,11 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * the state reads at a glance. A real button underneath,
  * so it submits without script and announces itself as a switch.
  */
-.toggle-switch { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0; border: 0; background: none; color: var(--critical); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.toggle-switch { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0; border: 0; background: none; color: var(--critical-text); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
 .toggle-switch .toggle-track { overflow: visible; margin-top: 0; }
 .toggle-track { position: relative; width: 34px; height: 20px; border-radius: 10px; background: var(--critical); transition: background .15s; }
 .toggle-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--toggle-knob); box-shadow: 0 1px 2px rgb(0 0 0 / .25); transition: transform .15s; }
-.toggle-switch[aria-checked="true"] { color: var(--healthy); }
+.toggle-switch[aria-checked="true"] { color: var(--healthy-text); }
 .toggle-switch[aria-checked="true"] .toggle-track { background: var(--healthy); }
 .toggle-switch[aria-checked="true"] .toggle-track::after { transform: translateX(14px); }
 .toggle-switch:hover:not(:disabled) .toggle-track { box-shadow: 0 0 0 3px var(--hover-surface); }
@@ -1598,8 +1617,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .copy-button { position: absolute; top: 5px; right: 5px; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
 .copy-button:hover { border-color: var(--line); background: var(--panel-soft); color: var(--text); }
 .copy-button svg { width: 15px; height: 15px; }
-.copy-button.copied { color: var(--healthy); }
-.copy-button.refused { color: var(--critical); }
+.copy-button.copied { color: var(--healthy-text); }
+.copy-button.refused { color: var(--critical-text); }
 .receiver-form-grid { grid-template-columns: minmax(240px, 1fr) minmax(320px, 1.4fr); align-items: start; }
 .receiver-form .receiver-key-steps { margin: 0 0 8px; padding-left: 20px; }
 /* Linux and Windows as equals in a key step: a label each, a block each, the
@@ -1625,7 +1644,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .certificate-form .receiver-no-results { display: block; padding-top: 3px; }
 .certificate-form .receiver-no-results[hidden] { display: none; }
 .certificate-form .challenge-warning { display: flex; align-items: flex-start; gap: 7px; margin: 9px 0 0; color: var(--text-secondary); font-size: 12px; font-weight: var(--font-weight-regular); line-height: 1.45; }
-.certificate-form .challenge-warning svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; color: var(--warning); fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.certificate-form .challenge-warning svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; color: var(--warning-text); fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .certificate-form .certificate-guidance { max-width: 1160px; margin: 14px 20px 0; font-size: 13px; line-height: 1.55; }
 .certificate-form .certificate-guidance span { min-width: 0; }
 .certificate-form .field > .field-title { color: var(--text-secondary); font-weight: 620; }
@@ -1686,7 +1705,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .refusal { margin: 0; padding: 16px 20px; color: var(--text); }
 .refusal code {
   padding: 2px 6px; border-radius: var(--radius-sm); background: var(--critical-soft);
-  color: var(--critical); font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--critical-text); font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 .config-block {
   margin: 0; padding: 16px 20px; overflow-x: auto; background: var(--panel-soft);
@@ -2225,8 +2244,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .copy-row .receiver-command { flex: 1; min-width: 0; margin: 0; padding-right: 12px; }
 .copy-button-beside { flex: none; display: inline-flex; align-items: center; gap: 8px; min-height: 0; padding: 0 18px; font-size: 13px; }
 .copy-button-beside svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.copy-button-beside.copied { color: var(--healthy); }
-.copy-button-beside.refused { color: var(--critical); }
+.copy-button-beside.copied { color: var(--healthy-text); }
+.copy-button-beside.refused { color: var(--critical-text); }
 /* The restore run's cards: the pasted line and its fingerprint are one step, not two sections apart. */
 .restore-cards .cluster-header { padding-top: 12px; padding-bottom: 12px; }
 .restore-cards .restore-form .form-grid { padding-top: 12px; }
@@ -2349,6 +2368,9 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .advanced-lines { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
 .advanced-lines th, .advanced-lines td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .advanced-lines td:nth-child(3) { overflow-wrap: break-word; }
+.advanced-lines col:nth-child(1) { width: 3.5em; }
+.advanced-lines col:nth-child(2) { width: 7em; }
+.advanced-lines col:nth-child(3) { width: 15em; }
 .advanced-lines code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .advanced-lines small { display: block; color: var(--muted); }
 .advanced-lines .status-badge { min-height: 0; padding: 1px 8px; }

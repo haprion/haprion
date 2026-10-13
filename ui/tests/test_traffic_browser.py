@@ -36,6 +36,7 @@ from unittest import mock
 import uvicorn
 
 from haprion_ui.app import create_app
+from tests import browser_policy
 from tests.test_cluster_traffic import ReadingACluster, measurement
 from tests.test_login import PASSWORD, configuration
 
@@ -116,6 +117,7 @@ class TheChartInABrowser(ReadingACluster):
     @contextlib.contextmanager
     def signed_in(self) -> Iterator[Any]:
         page = self._browser.new_page()
+        browser_policy.watch(self, page)
         try:
             page.goto(f"http://127.0.0.1:{self.port}/login")
             page.fill("input[name=username]", "operator")
@@ -184,6 +186,24 @@ class MarkingARange(TheChartInABrowser):
 
             self.assertTrue(self.stayed(page), "changing the window reloaded the page")
             self.assertAlmostEqual(page.evaluate("window.scrollY"), before, delta=1)
+
+    def test_the_scale_and_the_axis_are_placed_without_inline_style(self) -> None:
+        # Review 26-10-13, S2: positions travel as data and page.js places them,
+        # also on a card a window change swaps in.
+        with self.signed_in() as page:
+            placed = "el => el.style.left || el.style.top"
+            labels = page.query_selector_all(".traffic-axis span, .traffic-levels span")
+            self.assertGreater(len(labels), 0)
+            self.assertTrue(all(label.evaluate(placed) for label in labels))
+            self.stay(page)
+            page.evaluate(
+                "document.querySelector('.page-ranges a[title=\"the last 7 days\"]').click()"
+            )
+            page.wait_for_function("() => window.location.search.includes('traffic=7d')")
+            self.assertTrue(self.stayed(page), "the window change reloaded the page")
+            again = page.query_selector_all(".traffic-axis span, .traffic-levels span")
+            self.assertGreater(len(again), 0)
+            self.assertTrue(all(label.evaluate(placed) for label in again))
 
     def test_a_bucket_link_carries_a_readable_address(self) -> None:
         """The fault this suite exists for: `href` inside SVG is not a string."""

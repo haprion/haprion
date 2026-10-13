@@ -16,7 +16,7 @@
 {% if answer.problem and not refused %}<p class="advanced-problem">{{ answer.problem }}</p>{% endif %}
 {% if answer.lines %}
 <table class="advanced-lines">
-  <colgroup><col style="width: 3.5em"><col style="width: 7em"><col style="width: 15em"><col></colgroup>
+  <colgroup><col><col><col><col></colgroup>
   <thead><tr><th>Line</th><th>Fate</th><th>Where</th><th>Text</th></tr></thead>
   <tbody>
     {% for line in answer.lines %}

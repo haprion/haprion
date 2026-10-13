@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from haprion_ui import db, timing, views
+from haprion_ui import db, page_headers, timing, views
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 
@@ -106,6 +106,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     if config is None:
         timing.log_handler()
     app.add_middleware(timing.TimingMiddleware)
+    app.add_middleware(page_headers.PageHeadersMiddleware)
 
     @app.get("/healthz")
     def healthz() -> JSONResponse:

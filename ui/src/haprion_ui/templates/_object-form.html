@@ -423,7 +423,7 @@
       <h4><span class="subsection-title">What the nodes report{% if backend_health is defined %} <span class="optional">{{ backend_health.backend }}{% if backend_health.held_by %}, held by {{ backend_health.held_by|join(' and ') }}{% endif %}</span>{% endif %}</span></h4>
       {% if rows %}
       <table class="node-health-table">
-        <colgroup><col style="width: 22%"><col style="width: 34%"><col style="width: 14%"><col style="width: 30%"></colgroup>
+        <colgroup><col><col><col><col></colgroup>
         <thead><tr><th>Node</th><th>Server</th><th>State</th><th>Last check</th></tr></thead>
         <tbody>
           {% for row in rows %}{% if row.up is none %}

@@ -31,7 +31,7 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Provider</h3><p>Let's Encrypt is the CA; the provider is who hosts the zone.</p></div></div></header>
     <div class="form-grid">
       <label><span class="field-title">DNS provider</span>
-        <select name="provider" onchange="this.form.submit()">
+        <select name="provider" data-submit-on-change>
           <option value=""{% if not chosen %} selected{% endif %}>Choose a provider…</option>
           {% for provider in providers %}
           <option value="{{ provider.id }}"{% if chosen and chosen.id == provider.id %} selected{% endif %}>{{ provider.name }}{% if provider.tier == 'community' %} (community plugin){% endif %}</option>

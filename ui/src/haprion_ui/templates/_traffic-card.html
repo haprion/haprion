@@ -32,7 +32,7 @@
         would be stretched with it.
       #}
       {% if backend.levels %}
-      <div class="traffic-levels" aria-hidden="true">{% for level in backend.levels %}<span style="top: {{ level.share }}%">{{ level.label }}</span>{% endfor %}</div>
+      <div class="traffic-levels" aria-hidden="true">{% for level in backend.levels %}<span data-top="{{ level.share }}">{{ level.label }}</span>{% endfor %}</div>
       {% endif %}
       <div class="traffic-plot">
       {#
@@ -78,7 +78,7 @@
         inside their ends so neither hangs off the card.
       #}
       {% if backend.ticks %}
-      <div class="traffic-axis" aria-hidden="true">{% for at, label in backend.ticks %}<span style="left: {{ at }}%">{{ label }}</span>{% endfor %}</div>
+      <div class="traffic-axis" aria-hidden="true">{% for at, label in backend.ticks %}<span data-left="{{ at }}">{{ label }}</span>{% endfor %}</div>
       {% endif %}
       </div>
     </div>

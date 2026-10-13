@@ -23,6 +23,7 @@ from playwright.sync_api import Browser, Playwright
 
 from haprion_ui import demo
 from haprion_ui.app import create_app
+from tests import browser_policy
 from tests.test_login import PASSWORD, configuration
 from tests.test_queue_route import QueueRouteTestCase
 from tests.test_settings_cluster import NOW
@@ -107,6 +108,7 @@ class TheLogsAndMetricsForm(QueueRouteTestCase):
     @contextlib.contextmanager
     def signed_in(self, width: int) -> Iterator[Any]:
         page = self._browser.new_page(viewport={"width": width, "height": 900})
+        browser_policy.watch(self, page)
         try:
             page.goto(f"http://127.0.0.1:{self.port}/login")
             page.fill("input[name=username]", "operator")

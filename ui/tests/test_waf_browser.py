@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 from unittest import mock
 
 from haprion_ui.views import STATIC_DIRECTORY
+from tests import browser_policy
 from tests.test_editor_page import EditorTestCase
 from tests.test_waf_page import CATALOG, LOGGING, finding, objects
 
@@ -111,6 +112,7 @@ class TheAllowDialog(EditorTestCase):
         self.addCleanup(server.shutdown)
         self.origin = f"http://127.0.0.1:{server.server_address[1]}"
         page = self.browser.new_page()
+        browser_policy.watch(self, page)
         self.addCleanup(page.close)
         page.goto(f"{self.origin}/waf")
         page.add_script_tag(path=str(STATIC_DIRECTORY / "waf.js"))

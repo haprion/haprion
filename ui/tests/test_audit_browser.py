@@ -22,6 +22,7 @@ from playwright.sync_api import Browser, Playwright, sync_playwright
 
 from haprion_ui.app import create_app
 from haprion_ui.db import AuditEvent
+from tests import browser_policy
 from tests.test_audit import AT
 from tests.test_login import PASSWORD, LoginTestCase, configuration
 
@@ -88,6 +89,7 @@ class AnAuditRowInABrowser(LoginTestCase):
     @contextlib.contextmanager
     def signed_in(self) -> Iterator[Any]:
         page = self._browser.new_page(viewport={"width": 1280, "height": 700})
+        browser_policy.watch(self, page)
         try:
             page.goto(f"http://127.0.0.1:{self.port}/login")
             page.fill("input[name=username]", "operator")

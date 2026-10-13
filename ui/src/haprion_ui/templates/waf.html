@@ -12,7 +12,7 @@
   {% if clusters | length > 1 %}
   <form class="heading-badges waf-cluster" method="get" action="/waf">
     <input type="hidden" name="view" value="{{ view }}">
-    <label>Cluster<select name="cluster" onchange="this.form.submit()"><option value="">All clusters</option>{% for cluster in clusters %}<option value="{{ cluster }}"{% if cluster == selected_cluster %} selected{% endif %}>{{ cluster }}</option>{% endfor %}</select></label>
+    <label>Cluster<select name="cluster" data-submit-on-change><option value="">All clusters</option>{% for cluster in clusters %}<option value="{{ cluster }}"{% if cluster == selected_cluster %} selected{% endif %}>{{ cluster }}</option>{% endfor %}</select></label>
   </form>
   {% endif %}
 </section>

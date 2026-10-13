@@ -20,6 +20,7 @@ from playwright.sync_api import Browser, Playwright
 
 from haprion_ui.app import create_app
 from haprion_ui.db import ProxyDraft
+from tests import browser_policy
 from tests.test_editor_page import OBSERVED
 from tests.test_login import PASSWORD, configuration
 from tests.test_object_page import DraftReading
@@ -114,6 +115,7 @@ class TheDialogInABrowser(DraftReading):
 
     def open_page(self) -> Any:
         page = self._browser.new_page(viewport={"width": 1280, "height": 900})
+        browser_policy.watch(self, page)
         self.addCleanup(page.close)
         page.goto(f"http://127.0.0.1:{self.port}/login")
         page.fill("input[name=username]", "operator")

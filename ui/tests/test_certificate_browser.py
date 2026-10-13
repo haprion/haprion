@@ -26,6 +26,7 @@ import uvicorn
 from playwright.sync_api import Browser, Playwright, sync_playwright
 
 from haprion_ui.app import create_app
+from tests import browser_policy
 from tests.test_certificate_page import TheCertificatePageHasTwoViews
 from tests.test_certificates import node, status
 from tests.test_login import PASSWORD, configuration
@@ -77,6 +78,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
     @contextlib.contextmanager
     def signed_in(self, query: str = "", *, path: str = "/certificates") -> Iterator[Any]:
         page = self._browser.new_page()
+        browser_policy.watch(self, page)
         try:
             page.goto(f"http://127.0.0.1:{self.port}/login")
             page.fill("input[name=username]", "operator")

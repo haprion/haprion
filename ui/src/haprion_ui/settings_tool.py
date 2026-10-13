@@ -33,7 +33,8 @@ def known_clusters(connection: Any, settings: config.Config) -> tuple[tuple[str,
     """The poller's list of clusters and True, or `ui.toml`'s and False before it has read one."""
 
     clusters = db.cluster_list(connection)
-    return (clusters, True) if clusters else (settings.clusters, False)
+    # Empty is an answer (B302): no cluster yet, or the last one removed.
+    return (clusters, True) if clusters is not None else (settings.clusters, False)
 
 
 def _readings(connection: Any, settings: config.Config) -> feature_switch.Readings:

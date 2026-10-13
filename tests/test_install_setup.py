@@ -579,6 +579,14 @@ class AUnitThatDoesNotStart(unittest.TestCase):
         "haprion-worker.service: Scheduled restart job, restart counter is at 6.\n"
     )
 
+    def test_the_lines_keep_the_order_they_were_last_said_in(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            stub = Path(raw) / "journalctl"
+            stub.write_text("#!/bin/sh\nprintf 'one\\ntwo\\nthree\\none\\nfour\\n'\n")
+            stub.chmod(0o755)
+            done = bash('source "$1"; PATH="$2:$PATH"; unit_failure x.service', str(LIB), raw)
+        self.assertEqual(done.stdout.splitlines(), ["three", "one", "four"])
+
     def test_the_reason_is_the_units_own_words(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             for name, body in (

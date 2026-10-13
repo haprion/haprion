@@ -538,7 +538,8 @@ def _cluster_list(request: Request, config: Config) -> tuple[tuple[str, ...], bo
 
     with request.app.state.pool.connection() as connection:
         listed = db.cluster_list(connection)
-    return (listed, True) if listed else (config.clusters, False)
+    # Empty is an answer (B302): no cluster yet, or the last one removed.
+    return (listed, True) if listed is not None else (config.clusters, False)
 
 
 def read_source(

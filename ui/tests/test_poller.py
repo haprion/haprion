@@ -531,10 +531,36 @@ class TheClusterList(unittest.TestCase):
             lambda _request: completed("not json"),
             lambda _request: self.answer("alpha", outcome="failed"),
             lambda _request: completed(envelope()),
-            lambda _request: self.answer(),
+            lambda _request: completed(
+                json.dumps(
+                    document("cluster_list", "done", {"clusters": [{"name": "x"}]}, cluster=None)
+                )
+            ),
         ):
             with self.subTest(run=run):
                 self.assertIsNone(poller.read_cluster_list(run))
+
+    def test_no_cluster_is_an_answer_not_an_unknown(self) -> None:
+        """B302: a new installation, or the last cluster removed (Fas 18, 26-10-13)."""
+
+        self.assertEqual(poller.read_cluster_list(lambda _request: self.answer()), ())
+
+    def test_the_pages_take_an_empty_list_for_what_it_says(self) -> None:
+        """Not ui.toml's list instead: that would show a removed cluster on every page."""
+
+        from haprion_ui import settings_tool, views
+
+        settings = unittest.mock.Mock(clusters=("alpha",))
+        pool = unittest.mock.MagicMock()
+        request = unittest.mock.Mock()
+        request.app.state.pool = pool
+        for recorded, expected in (((), ((), True)), (None, (("alpha",), False))):
+            with (
+                self.subTest(recorded=recorded),
+                unittest.mock.patch.object(db, "cluster_list", return_value=recorded),
+            ):
+                self.assertEqual(settings_tool.known_clusters(object(), settings), expected)
+                self.assertEqual(views._cluster_list(request, settings), expected)
 
     def test_a_pass_goes_over_the_listed_clusters_not_the_configured_ones(self) -> None:
         asked: list[str] = []

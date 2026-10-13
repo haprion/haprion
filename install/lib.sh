@@ -67,13 +67,14 @@ the unit's whole journal: journalctl -u ${unit} -n 50"
 
 #
 # The journal lines that say why a unit failed, without systemd's own
-# bookkeeping around them: the last three different ones, since a unit that
-# restarts says the same thing on every attempt.
+# bookkeeping around them: the last three different ones, in the order they
+# were last said, since a unit that restarts says the same thing on every
+# attempt.
 #
 unit_failure() {
     journalctl -u "$1" -n 200 -o cat --no-pager 2>/dev/null \
         | grep -Ev '^(Starting |Started |Stopped |Stopping |Failed to start |.*: Scheduled restart job|.*: Main process exited|.*: Failed with result|.*: Consumed )' \
-        | awk '!seen[$0]++' | tail -n 3 || true
+        | tac | awk '!seen[$0]++' | tac | tail -n 3 || true
 }
 
 #

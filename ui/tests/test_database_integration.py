@@ -982,6 +982,34 @@ class ARealDatabase(unittest.TestCase):
             connection.execute("delete from cluster_list")
             connection.commit()
 
+    def test_step_7_sees_the_pass_of_a_poller_with_no_cluster(self) -> None:
+        # Fas 18 (26-10-13): platform step 7's own query, as the poller, after a
+        # pass that recorded no cluster.
+        step = (
+            Path(__file__).resolve().parents[2] / "install/platform/07-platform-services"
+        ).read_text()
+        match = re.search(r'"(select count\(\*\) from cluster_list where [^"]*)"', step)
+        if match is None:
+            self.fail("step 7 has no cluster_list query")
+        for existing in (False, True):
+            with self.subTest(row_already_there=existing):
+                with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+                    if existing:
+                        db.record_cluster_list(connection, [])
+                        connection.commit()
+                    row = connection.execute("select statement_timestamp()::text").fetchone()
+                    if row is None:
+                        self.fail("no statement_timestamp")
+                    connection.commit()
+                    db.record_cluster_list(connection, [])
+                    connection.commit()
+                    query = match.group(1).replace("${started_at}", row[0])
+                    counted = connection.execute(query).fetchone()
+                    self.assertEqual(counted, (1,))
+                with self.connect() as connection:
+                    connection.execute("delete from cluster_list")
+                    connection.commit()
+
     def test_a_cluster_catches_up_once_a_pass_begun_after_its_job_is_settled(self) -> None:
         # 0068: the moment the dashboard's spinner may go.
         def finished_job(ago: str) -> None:

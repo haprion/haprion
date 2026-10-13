@@ -430,6 +430,13 @@ def read_cluster_list(
     ):
         logger.warning("the cluster list helper did not answer with a list")
         return None
+    #
+    # An empty list is an answer - no cluster yet, or the last one removed
+    # (B302) - and is recorded as such. Entries none of which name a cluster
+    # are not one.
+    #
+    if not result["clusters"]:
+        return ()
     names = tuple(
         str(entry["id"])
         for entry in result["clusters"]

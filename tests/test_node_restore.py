@@ -1116,3 +1116,28 @@ class WafEngineOverTheNode(Overwrite):
         summary = self.preview_overwrite(self.prepare_overwrite())
         self.assertEqual(summary["waf_engine"], {"version": "0.9.0-7"})
         self.assertIn(waf_engine_package.PACKAGE, FakeSession.calls[0][1]["packages"])
+
+
+class TheTargetsClock(RestoreTest):
+    """A VM put back from a snapshot runs days behind, and apt refuses every repository."""
+
+    def test_a_clock_days_behind_stops_the_preview(self) -> None:
+        FakeSession.answers["inspect"]["clock"] = time.time() - 18 * 86400
+        summary = self.preview(self.prepare())
+        self.assertIn("the target's clock is 18 d 0 h behind", " ".join(summary["problems"]))
+
+    def test_a_clock_within_minutes_stops_nothing(self) -> None:
+        FakeSession.answers["inspect"]["clock"] = time.time() + 60
+        summary = self.preview(self.prepare())
+        self.assertFalse(any("clock" in problem for problem in summary["problems"]))
+
+    def test_the_sentence_says_which_way_and_how_far(self) -> None:
+        self.assertIsNone(node_restore.clock_skew(1_100.0, 1_000.0, 1_001.0))
+        self.assertEqual(
+            node_restore.clock_skew(1_001.0 + 400, 1_000.0, 1_001.0),
+            "the target's clock is 6 min ahead of this manager's; set its time first - "
+            "apt and TLS judge every date against it",
+        )
+        self.assertIn(
+            "2 h 0 min behind", node_restore.clock_skew(1_000.0 - 7200, 1_000.0, 1_001.0) or ""
+        )

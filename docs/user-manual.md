@@ -2153,7 +2153,8 @@ manager's CLI release carrying no node package, or one that does not verify (see
 [Part 3](#part-3--the-versioned-cli-release)); for a node that ran the WAF engine and a target
 without it, the release carrying no engine package, or one that does not verify; a `node.conf` in the archive that cannot be read back
 into answers; a fingerprint that is not the one
-given (nothing is sent at all); an archive that is not of the chosen node; a target that is not
+given (nothing is sent at all); a target whose clock is more than five minutes from the manager's -
+a VM put back from a snapshot often runs days behind, and apt then refuses every repository; an archive that is not of the chosen node; a target that is not
 Ubuntu 26.04 or Debian 13; `haproxy` or `keepalived` already installed (unless an earlier restore run left
 them there - a run that rolled back can be tried again); the final address, or the node's own,
 already answering; and an account whose primary group the archive does not

@@ -539,6 +539,36 @@ def _inspect_header(source: RestoreSource, mode: str, run: str) -> dict[str, Any
     return header
 
 
+#
+# How far the target's clock may be from the manager's. apt refuses a release
+# file dated in its future, and TLS a certificate not yet valid; minutes are
+# what an unsynchronised VM drifts in a day, days what a snapshot put back is.
+#
+CLOCK_TOLERANCE_SECONDS = 300
+
+
+def clock_skew(target: object, asked: float, answered: float) -> str | None:
+    """Why the target's clock stops the restore, or None when it is close enough."""
+
+    if not isinstance(target, int | float) or isinstance(target, bool):
+        return None
+    if asked - CLOCK_TOLERANCE_SECONDS <= target <= answered + CLOCK_TOLERANCE_SECONDS:
+        return None
+    off = target - asked if target < asked else target - answered
+    seconds = abs(int(off))
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    span = (
+        f"{days} d {hours} h" if days else f"{hours} h {minutes} min" if hours else f"{minutes} min"
+    )
+    side = "behind" if off < 0 else "ahead of"
+    return (
+        f"the target's clock is {span} {side} this manager's; set its time first - "
+        "apt and TLS judge every date against it"
+    )
+
+
 def _problems(
     request: Request,
     node: Node,
@@ -647,9 +677,11 @@ def check(
     node = node_of(cluster, request.node)
     archive = archive_path(backup_root, node, request.archive)
     source = read(archive)
+    asked = time.time()
     inspected = session.call(
         request.target, _inspect_header(source, request.mode, request.run), progress=progress
     )
+    answered = time.time()
     if not inspected.get("ok"):
         raise RestoreError(f"the target could not be inspected: {inspected.get('error')}")
     interface = inspected["interface"]
@@ -666,6 +698,9 @@ def check(
     except restore_plan.PlanError as exc:
         raise RestoreError(str(exc)) from exc
     problems = _problems(request, node, source, plan, inspected, answering)
+    skew = clock_skew(inspected.get("clock"), asked, answered)
+    if skew is not None:
+        problems.append(skew)
     #
     # B178/B180: the node scripts and what else the product writes come from
     # this manager's own release, prepared with answers read out of the

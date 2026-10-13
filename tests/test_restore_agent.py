@@ -260,6 +260,7 @@ class Inspect(AgentTest):
         self.assertEqual(result["os_release"]["VERSION_ID"], "26.04")
         self.assertEqual(sorted(p for p in self.host.root.rglob("*")), before)
         self.assertEqual(result["installed"], [])
+        self.assertAlmostEqual(result["clock"], time.time(), delta=60)
 
     def test_says_what_configures_the_network(self) -> None:
         result = self.serve({"op": "inspect", "names": [], "ids": []})

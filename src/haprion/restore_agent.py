@@ -376,6 +376,10 @@ def inspect(host: Host, header: dict[str, Any], _payload: IO[bytes]) -> dict[str
         "previous_restore": host.path(STATE).exists(),
         "installed": installed(host, NOT_EMPTY_IF_INSTALLED),
         "network": network_managers(host),
+        # The target's clock, for the preview to compare with the manager's:
+        # a VM behind by days - a snapshot put back - has apt refuse every
+        # repository as "not valid yet", and a restore stops half-way.
+        "clock": time.time(),
         **_holdings(host, header),
     }
 

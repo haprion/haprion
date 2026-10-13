@@ -200,7 +200,23 @@ setup_report_failure() {
             why=("${before[@]}") todo=()
         fi
     fi
-    (( found )) || what=("the step stopped without saying why")
+    #
+    # No ERROR line: a check that reports in its own form, such as
+    # check-compatibility's PASS and FAIL. Its last line is what went wrong
+    # and its FAIL lines are why (26-10-13, first machine).
+    #
+    if (( ! found )); then
+        local -a failed=()
+        what=() why=()
+        while IFS= read -r line; do
+            [[ -n "${line// /}" ]] || continue
+            what=("${line#"${line%%[![:space:]]*}"}")
+            [[ "$line" =~ ^[[:space:]]*FAIL[[:space:]] ]] && failed+=("${line#"${line%%[![:space:]]*}"}")
+        done < "$output"
+        (( ${#what[@]} > 0 )) || what=("the step stopped without saying why")
+        (( ${#failed[@]} == 0 )) || why=("${failed[@]:0:8}")
+        (( ${#failed[@]} <= 8 )) || why+=("... and $(( ${#failed[@]} - 8 )) more")
+    fi
     (( ${#todo[@]} > 0 )) || todo=("$advice")
 
     echo

@@ -275,6 +275,19 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
             self.assertIn(flag, arguments)
         self.assertNotIn("--environment", arguments)
 
+    def test_a_first_installation_is_checked_without_what_step_07_installs(self) -> None:
+        code, errors = self.check("--release", "candidate", "--first-install", module="new")
+        self.assertEqual(code, 0, errors)
+        arguments = self.recorded()
+        for flag in ("--ui-release", "--skip-services", "--first-install"):
+            self.assertIn(flag, arguments)
+        self.assertNotIn("--upgrade-from-current", arguments)
+
+    def test_a_first_installation_names_its_release(self) -> None:
+        code, errors = self.check("--first-install", module="new")
+        self.assertNotEqual(code, 0)
+        self.assertIn("--first-install requires --release", errors)
+
 
 class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
     """The scripts outside a release ask it for its package (rename 26-10-10)."""

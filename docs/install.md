@@ -141,7 +141,7 @@ sudo ./01-platform-prepare /path/to/answers.env
 sudo ./02-platform-database /path/to/answers.env
 sudo ./migrate --release <release-id>
 sudo ./03-verify
-sudo ./check-compatibility --release <release-id>
+sudo ./check-compatibility --release <release-id> --first-install
 sudo ./install-ui-release <release-id>
 sudo ./04-platform-service /path/to/answers.env
 sudo ./05-platform-nginx /path/to/answers.env

@@ -547,7 +547,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-database", action="store_true")
     parser.add_argument("--skip-services", action="store_true")
     parser.add_argument("--upgrade-from-current", action="store_true")
+    #
+    # A first installation, checked before its release is activated: the worker
+    # unit, the sudo rules and the helper sockets come from platform step 07,
+    # which runs after activation, so they are left to the check after it.
+    #
+    parser.add_argument("--first-install", action="store_true")
     return parser.parse_args(argv)
+
+
+def first_install_error(args: argparse.Namespace) -> str | None:
+    """Why `--first-install` may not be used here, or None.
+
+    Only before the first activation: with a release current, skipping the
+    parts step 07 installs would weaken an upgrade's check instead.
+    """
+
+    if not args.first_install:
+        return None
+    if not args.ui_release or args.upgrade_from_current:
+        return "--first-install requires --ui-release and excludes --upgrade-from-current"
+    current = args.platform_root / "current"
+    if current.exists() or current.is_symlink():
+        return (
+            f"--first-install is for an installation with no active release, and {current} exists"
+        )
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -610,6 +635,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.upgrade_from_current and not args.ui_release:
         print("ERROR: --upgrade-from-current requires --ui-release", file=sys.stderr)
         return 1
+    refused = first_install_error(args)
+    if refused is not None:
+        print(f"ERROR: {refused}", file=sys.stderr)
+        return 1
 
     if not args.skip_database:
         print("\n== Database")
@@ -666,43 +695,47 @@ def main(argv: list[str] | None = None) -> int:
         for unit in (accounts.WORKER_UNIT, accounts.POLLER_UNIT, accounts.WEB_UNIT):
             check_service(report, unit=unit, release=ui_release)
 
-    print("\n== Worker sandbox")
-    check_worker_sandbox(
-        report,
-        unit_file=args.systemd_root / accounts.WORKER_UNIT,
-        policy_file=args.runtime_policy or DEFAULT_POLICY_PATH,
-    )
-
-    print("\n== Sudo rules")
-    check_sudoers(
-        report,
-        root=args.sudoers_root,
-        name=accounts.WORKER_SUDOERS,
-        user=accounts.WORKER,
-        helpers=requirements.worker_helpers,
-        cli_root=args.cli_root,
-        label="worker sudoers",
-    )
-    check_sudoers(
-        report,
-        root=args.sudoers_root,
-        name=accounts.POLLER_SUDOERS,
-        user=accounts.POLLER,
-        helpers=requirements.poller_helpers,
-        cli_root=args.cli_root,
-        label="poller sudoers",
-    )
-    web_rules = [
-        path
-        for path in (args.sudoers_root / accounts.WEB, args.sudoers_root / "haprion-web")
-        if path.exists()
-    ]
-    if web_rules:
-        report.fail("web sudoers", f"unexpected rule file {web_rules[0]}")
+    if args.first_install:
+        print("\n== Installed by platform step 07")
+        print("  SKIP  worker sandbox, sudo rules, helper sockets   checked after step 07")
     else:
-        report.pass_("web sudoers", "no rule file")
-    for helper_name, socket_path in sorted(requirements.socket_helpers.items()):
-        check_socket(report, helper=helper_name, socket_path=Path(socket_path))
+        print("\n== Worker sandbox")
+        check_worker_sandbox(
+            report,
+            unit_file=args.systemd_root / accounts.WORKER_UNIT,
+            policy_file=args.runtime_policy or DEFAULT_POLICY_PATH,
+        )
+
+        print("\n== Sudo rules")
+        check_sudoers(
+            report,
+            root=args.sudoers_root,
+            name=accounts.WORKER_SUDOERS,
+            user=accounts.WORKER,
+            helpers=requirements.worker_helpers,
+            cli_root=args.cli_root,
+            label="worker sudoers",
+        )
+        check_sudoers(
+            report,
+            root=args.sudoers_root,
+            name=accounts.POLLER_SUDOERS,
+            user=accounts.POLLER,
+            helpers=requirements.poller_helpers,
+            cli_root=args.cli_root,
+            label="poller sudoers",
+        )
+        web_rules = [
+            path
+            for path in (args.sudoers_root / accounts.WEB, args.sudoers_root / "haprion-web")
+            if path.exists()
+        ]
+        if web_rules:
+            report.fail("web sudoers", f"unexpected rule file {web_rules[0]}")
+        else:
+            report.pass_("web sudoers", "no rule file")
+        for helper_name, socket_path in sorted(requirements.socket_helpers.items()):
+            check_socket(report, helper=helper_name, socket_path=Path(socket_path))
 
     print("\n== Nodes")
     if args.runtime_policy is not None and args.collector_config is not None:

@@ -19,7 +19,7 @@ sudo ./01-platform-prepare /path/to/answers.env
 sudo ./02-platform-database /path/to/answers.env
 sudo ./migrate --release <release-id>
 sudo ./03-verify
-sudo ./check-compatibility --release <release-id>
+sudo ./check-compatibility --release <release-id> --first-install
 sudo ./install-ui-release <release-id>
 sudo ./04-platform-service /path/to/answers.env
 sudo ./05-platform-nginx /path/to/answers.env
@@ -27,7 +27,7 @@ sudo ./07-platform-services /path/to/answers.env
 sudo ./check-compatibility
 ```
 
-The last check reads the real worker and poller processes, so it comes after step 07.
+The last check reads the real worker and poller processes, and everything step 07 installs, so it comes after step 07.
 
 Steps 11, 13, 14 and 15 are optional and come after them:
 
@@ -267,6 +267,11 @@ correctly still run the previous release:
 ```bash
 sudo ./check-compatibility --release <release-id>
 ```
+
+On a first installation add `--first-install`: the worker unit, the sudo rules
+and the helper sockets come from step 07, which runs after activation, so this
+check leaves them to the one after step 07. It is refused once a release is
+current, so it cannot thin out an upgrade's check.
 
 Add `--before-migration` for the earlier prerequisite pass. It checks the current
 revision against the running UI and requires that UI to accept the candidate's

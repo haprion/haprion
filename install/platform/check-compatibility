@@ -2,7 +2,11 @@
 #
 # Read all independently installed parts as one compatibility report.
 #
-#     sudo ./check-compatibility [--release <release-id>] [--before-migration]
+#     sudo ./check-compatibility [--release <release-id>] [--before-migration | --first-install]
+#
+# --first-install is the check before a first installation's release is
+# activated: the worker unit, sudo rules and helper sockets come from step 07,
+# after activation, and are left to the check that follows it.
 #
 # This changes nothing. Requirements come from either the running UI release or
 # an explicitly named prepared release, never from the checkout containing this
@@ -17,6 +21,7 @@ need_root
 
 release_id=""
 before_migration=0
+first_install=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --release)
@@ -28,11 +33,17 @@ while [[ $# -gt 0 ]]; do
             before_migration=1
             shift
             ;;
-        *) die "usage: $(basename "$0") [--release <release-id>] [--before-migration]" ;;
+        --first-install)
+            first_install=1
+            shift
+            ;;
+        *) die "usage: $(basename "$0") [--release <release-id>] [--before-migration | --first-install]" ;;
     esac
 done
 [[ "$before_migration" -eq 0 || -n "$release_id" ]] \
     || die "--before-migration requires --release"
+[[ "$first_install" -eq 0 || ( -n "$release_id" && "$before_migration" -eq 0 ) ]] \
+    || die "--first-install requires --release and excludes --before-migration"
 
 python_root="${UI_ROOT}/current"
 extra_args=()
@@ -44,6 +55,9 @@ if [[ -n "$release_id" ]]; then
 fi
 if [[ "$before_migration" -eq 1 ]]; then
     extra_args+=(--upgrade-from-current)
+fi
+if [[ "$first_install" -eq 1 ]]; then
+    extra_args+=(--first-install)
 fi
 
 CLI_ROOT="${CLI_ROOT:-/opt/haprion}"

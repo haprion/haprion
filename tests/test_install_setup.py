@@ -345,8 +345,20 @@ class TheSetupReport(unittest.TestCase):
         self.assertIn("Why:             nginx: [emerg] bind() to 0.0.0.0:443 failed", shown)
         self.assertIn("What to do:      see why nginx stopped: nginx -t", shown)
 
+    def test_a_check_in_its_own_form_shows_its_verdict_and_its_failures(self) -> None:
+        shown = self.report(
+            "== Releases\n  PASS  UI release        r1\n"
+            "  FAIL  worker sudoers    cannot read /etc/sudoers.d/haprion-worker\n"
+            "  FAIL  node socket       /run/haprion/cluster-node.sock: No such file\n\n"
+            "INCOMPATIBLE: 2 check(s) failed\n"
+        )
+        self.assertIn("What went wrong: INCOMPATIBLE: 2 check(s) failed", shown)
+        self.assertIn("Why:             FAIL  worker sudoers    cannot read", shown)
+        self.assertIn("FAIL  node socket", shown)
+        self.assertNotIn("PASS", shown)
+
     def test_a_step_that_said_nothing_says_so(self) -> None:
-        self.assertIn("What went wrong: the step stopped without saying why", self.report("ok\n"))
+        self.assertIn("What went wrong: the step stopped without saying why", self.report("\n"))
 
 
 class TheChecksBeforeAnythingChanges(unittest.TestCase):
@@ -489,6 +501,13 @@ class TheSetupRunsEveryStep(unittest.TestCase):
             with self.subTest(before=before, after=after):
                 self.assertLess(order.index(before), order.index(after))
         self.assertEqual(order[-1], "platform/check-compatibility")
+
+    def test_the_check_before_the_first_activation_leaves_step_07_to_the_last(self) -> None:
+        text = DRIVER.read_text()
+        self.assertIn(
+            '"./platform/check-compatibility --release ${release_id}${first_install}"', text
+        )
+        self.assertIn('first_install=" --first-install"', text)
 
 
 class WhatLibShReadsShipsWithIt(unittest.TestCase):

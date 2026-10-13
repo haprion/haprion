@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import tempfile
@@ -219,6 +220,56 @@ class WorkerSandboxTests(unittest.TestCase):
             "/srv/example/validation /srv/old/registry\n"
         )
         self.assertEqual(self.check(unit).failures, 1)
+
+
+class FirstInstallTests(unittest.TestCase):
+    """--first-install leaves step 07's parts to the later check, and only then."""
+
+    def args(self, root: Path, *extra: str) -> argparse.Namespace:
+        return compatibility.parse_args(
+            [
+                "--platform-root",
+                str(root),
+                "--cli-root",
+                "/opt/haprion",
+                "--database",
+                "haprion",
+                "--database-role",
+                "_haprion-migrate",
+                "--clusters",
+                *extra,
+            ]
+        )
+
+    def test_before_the_first_activation_it_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            args = self.args(Path(raw), "--ui-release", "r1", "--first-install")
+            self.assertIsNone(compatibility.first_install_error(args))
+
+    def test_with_a_release_current_it_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "releases/r0").mkdir(parents=True)
+            (root / "current").symlink_to(root / "releases/r0")
+            error = compatibility.first_install_error(
+                self.args(root, "--ui-release", "r1", "--first-install")
+            )
+        self.assertIn("no active release", error or "")
+
+    def test_it_names_a_release_and_is_no_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            for extra in (
+                ("--first-install",),
+                ("--ui-release", "r1", "--first-install", "--upgrade-from-current"),
+            ):
+                with self.subTest(extra=extra):
+                    self.assertIsNotNone(
+                        compatibility.first_install_error(self.args(Path(raw), *extra))
+                    )
+
+    def test_without_it_nothing_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertIsNone(compatibility.first_install_error(self.args(Path(raw))))
 
 
 class PreparedReleaseTests(unittest.TestCase):

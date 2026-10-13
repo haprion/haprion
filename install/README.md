@@ -34,15 +34,21 @@ The
 management host needs Python 3.12+, the OS PyYAML, PyNaCl and psycopg 3 packages, `git`, `rsync`,
 `openssh-client` and a `sudo` new enough for no-argument rules.
 
-Copy the answers file and fill it in. It is the only place you make decisions:
+The answers file is optional. Without one every step uses the defaults in
+[`defaults.sh`](defaults.sh) - standard places, no cluster - and the clusters are
+created in the web interface. To choose differently, copy the example and keep
+the lines you change; it is the only place you make decisions:
 
 ```bash
 cp answers.example.env answers.env
 $EDITOR answers.env
 ```
 
-Every value in it is an example, including the names. Nothing in this project
-depends on what you call things.
+Pass it to each step below, or leave the argument out. `haprion-setup` runs the
+manager's steps here and the platform's under `platform/` in order, checks what
+it can before it changes anything, and reports a step that fails in words -
+what went wrong, why, what to do - with its whole output in
+`/var/log/haprion/setup.log` ([docs/install.md](../docs/install.md#1-choose-the-answers-or-keep-the-defaults)).
 
 ## Step 1 — prepare the management host
 
@@ -60,8 +66,9 @@ no node.
 sudo ./02-manager-config answers.env
 ```
 
-Renders `clusters.yaml` and `runtime-policy.yaml` from your answers, and creates
-the validation-only certificate. Rendering them rather than hand-editing is the
+Renders `clusters.yaml` and `runtime-policy.yaml` from your answers - with no
+cluster, an empty cluster file - creates the empty certificate registry the
+policy names, and creates the validation-only certificate. Rendering them rather than hand-editing is the
 point: what the code reads and what you reviewed cannot drift apart.
 
 When `BACKUP_ROOT` is set it also installs the hardened
@@ -71,7 +78,9 @@ validated cluster instance; the service itself never accepts a path or node.
 It also installs the operator editing policy — the `sudoedit` rules that let the
 accounts in `CONFIG_EDITORS` edit `core/haproxy.cfg` and `manual/reservations.yaml`
 without a root shell, checked by `visudo` before anything is written. Leave
-`CONFIG_EDITORS` empty and the step says it skipped it.
+`CONFIG_EDITORS` empty and the step says it skipped it. The paths are written
+once: after that *Create cluster* and *Remove cluster* keep them, and a rerun
+changes only the editors.
 
 ## Step 3 — keys, and the lines for the nodes
 

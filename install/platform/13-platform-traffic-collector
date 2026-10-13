@@ -2,7 +2,7 @@
 #
 # Platform step 13 - mirror each node's traffic log onto the manager.
 #
-#     sudo ./13-platform-traffic-collector <answers-file>
+#     sudo ./13-platform-traffic-collector [answers-file]
 #
 # Creates the collector's own directories, its SSH identity, the pinned
 # known_hosts it is allowed to trust, the inventory-derived configuration and
@@ -19,7 +19,6 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars CLUSTERS
 
 for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER" "$COLLECTOR_USER"; do
     id -u "$role" >/dev/null 2>&1 \
@@ -93,41 +92,42 @@ step "Host keys this identity may trust"
 # an identity. If a node is missing here, the honest fix is to accept it once
 # through the path that already exists, deliberately, and run this again.
 #
-[[ -r "$ROOT_KNOWN_HOSTS" ]] \
-    || die "${ROOT_KNOWN_HOSTS} is missing; accept the nodes' host keys through the existing
-  management path first, then run this step again"
-
 #
 # The nodes come from clusters.yaml, through the engine's own reader - the file
-# the Nodes card and haprion-node change (B211) - and not from the answers
-# file's NODES_<cluster>. Running this step again then keeps a node added since
+# Create cluster, the Nodes card and haprion-node change (B211, B302) - and not
+# from the answers file. Running this step again then keeps a node added since
 # the installation; reading the answers file would drop it from the collector
-# without a word.
+# without a word. No cluster yet is an installation too: the collector starts
+# with no nodes, and adding a node adds it here (cluster_definition).
 #
-CLUSTER_CONFIG="${CLUSTER_CONFIG:-/opt/haprion/current/bin/haprion-cluster-config}"
-cluster_nodes() {
-    local listed
-    listed="$("$CLUSTER_CONFIG" -c "$1" --field nodes)" \
-        || die "haprion-cluster-config could not read the nodes of ${1}"
-    [[ -n "$listed" ]] || die "clusters.yaml lists no nodes for ${1}"
-    printf '%s\n' "$listed"
-}
+inventory=()
+for cluster in $(installed_clusters); do
+    listed="$(installed_nodes "$cluster")"
+    while IFS=$'\t' read -r name host; do
+        if [[ -n "$name" ]]; then
+            inventory+=("${cluster}:${name}:${host}")
+        fi
+    done <<<"$listed"
+done
+
+(( ${#inventory[@]} == 0 )) || [[ -r "$ROOT_KNOWN_HOSTS" ]] \
+    || die "${ROOT_KNOWN_HOSTS} is missing; accept the nodes' host keys through the existing
+  management path first, then run this step again"
 
 pinned="$(mktemp)"
 trap 'rm -f "$pinned"' EXIT
 missing=""
 count=0
-while read -r cluster; do
-    while IFS=$'\t' read -r _ host; do
-        if lines="$(ssh-keygen -F "$host" -f "$ROOT_KNOWN_HOSTS" 2>/dev/null | grep -v '^#')" \
-            && [[ -n "$lines" ]]; then
-            printf '%s\n' "$lines" >> "$pinned"
-            count=$((count + 1))
-        else
-            missing+=" ${host}"
-        fi
-    done < <(cluster_nodes "$cluster")
-done < <(each_cluster)
+for entry in "${inventory[@]}"; do
+    host="${entry#*:*:}"
+    if lines="$(ssh-keygen -F "$host" -f "$ROOT_KNOWN_HOSTS" 2>/dev/null | grep -v '^#')" \
+        && [[ -n "$lines" ]]; then
+        printf '%s\n' "$lines" >> "$pinned"
+        count=$((count + 1))
+    else
+        missing+=" ${host}"
+    fi
+done
 
 [[ -z "$missing" ]] \
     || die "no pinned host key in ${ROOT_KNOWN_HOSTS} for:${missing}
@@ -150,14 +150,6 @@ step "Configuration from the inventory"
 # environment, and exporting all of it into a child process to pass six values
 # would put every deployment secret in that process's environment.
 #
-inventory=()
-while read -r cluster; do
-    while IFS=$'\t' read -r name host; do
-        inventory+=("${cluster}:${name}:${host}")
-    done < <(cluster_nodes "$cluster")
-done < <(each_cluster)
-[[ ${#inventory[@]} -gt 0 ]] || die "clusters.yaml lists no nodes for these clusters"
-
 DB_SOCKET_DIRECTORY="${DB_SOCKET_DIRECTORY:-/var/run/postgresql}"
 config="$(/usr/bin/python3 - "$LOGREAD_USER" "$COLLECTOR_KEY" "$COLLECTOR_KNOWN_HOSTS" \
     "$MIRROR" "$STAGING" "$DB_NAME" "$DB_SOCKET_DIRECTORY" "${inventory[@]}" <<'PY'

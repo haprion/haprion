@@ -2,7 +2,7 @@
 #
 # Platform step 17 - the OIDC helper: its key pair, its directory and its socket.
 #
-#     sudo ./17-platform-oidc <answers-file> <source-tree>
+#     sudo ./17-platform-oidc [answers-file|-] [source-tree]
 #
 # Sign-in through an OpenID Connect provider (Fas 13 part 4, B195-B199) needs
 # the provider, and the web service must not reach the network. So the requests
@@ -25,8 +25,12 @@ cd "$(dirname "$0")"
 source ../lib.sh
 need_root
 load_answers "${1:-}"
-source_tree="${2:-}"
-[[ -n "$source_tree" && -d "$source_tree" ]] || die "usage: $0 <answers-file> <source-tree>"
+#
+# The tree this step came in: the package's /usr/share/haprion-ui, or a
+# source checkout, unless another is named.
+#
+source_tree="${2:-$(cd ../.. && pwd)}"
+[[ -d "$source_tree" ]] || die "usage: $0 [answers-file|-] [source-tree]"
 source_tree="$(cd "$source_tree" && pwd)"
 tool="${source_tree}/tools/dns-profile-keys.py"
 [[ -f "$tool" ]] || die "${tool} is missing; this is not a source tree with the key tool"

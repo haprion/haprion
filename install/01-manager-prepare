@@ -7,7 +7,7 @@
 #
 # Safe to run again: everything it does is checked before it is done.
 #
-#     sudo ./01-manager-prepare answers.env
+#     sudo ./01-manager-prepare [answers.env]
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -16,9 +16,10 @@ source ./lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CLUSTERS
+require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE
 
-for path in "$CONFIG_ROOT" "$PUBLISH_ROOT" "$VALIDATION_ROOT" "$CLUSTER_FILE"; do
+for path in "$CONFIG_ROOT" "$PUBLISH_ROOT" "$VALIDATION_ROOT" "$CLUSTER_FILE" \
+            ${CERTIFICATE_ROOT:+"$CERTIFICATE_ROOT"} ${RECEIVER_ROOT:+"$RECEIVER_ROOT"}; do
     valid_abs_path "$path" || die "not an absolute path without '..': ${path}"
 done
 
@@ -81,6 +82,17 @@ ensure_dir "$CONFIG_ROOT"     "root:${CONFIG_GROUP}" 750
 ensure_dir "$PUBLISH_ROOT"    "root:${PULL_USER}"    750
 ensure_dir "$VALIDATION_ROOT" "root:root"            750
 ensure_dir "${VALIDATION_ROOT}/certs" "root:root"    700
+
+#
+# Where the certificate flows publish: the tree the nodes fetch certificates
+# from, read by the certificate pull account, and the receivers' tree beside
+# it. Their parent is made only when missing - it may be the operator's.
+#
+for root in ${CERTIFICATE_ROOT:+"$CERTIFICATE_ROOT"} ${RECEIVER_ROOT:+"$RECEIVER_ROOT"}; do
+    [[ -d "$(dirname "$root")" ]] || install -d -o root -g root -m 755 "$(dirname "$root")"
+done
+[[ -z "${CERTIFICATE_ROOT:-}" ]] || ensure_dir "$CERTIFICATE_ROOT" "root:${CERT_PULL_USER}" 750
+[[ -z "${RECEIVER_ROOT:-}" ]] || ensure_dir "$RECEIVER_ROOT" "root:root" 755
 
 step "Per-cluster repositories and release areas"
 for cluster in $(each_cluster); do
@@ -266,4 +278,4 @@ ensure_dnsdist mask
 
 log "step 1 done"
 echo
-echo "Next: ./02-manager-config answers.env"
+echo "Next: ./02-manager-config${1:+ $1}"

@@ -186,9 +186,13 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
     user = value["user"]
     if not isinstance(user, str) or USER.fullmatch(user) is None:
         raise CollectorError("collector user is invalid")
+    #
+    # Empty is an installation with no cluster yet (B302): the timer runs and
+    # fetches nothing, and Create cluster adds the first node here.
+    #
     raw_nodes = value["nodes"]
-    if not isinstance(raw_nodes, list) or not raw_nodes:
-        raise CollectorError("collector nodes must be a non-empty list")
+    if not isinstance(raw_nodes, list):
+        raise CollectorError("collector nodes must be a list")
     nodes: list[NodeTarget] = []
     for raw in raw_nodes:
         if not isinstance(raw, dict) or set(raw) != {"cluster", "node", "host"}:

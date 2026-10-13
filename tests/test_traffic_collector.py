@@ -1277,12 +1277,17 @@ class TheCollectorUnits(unittest.TestCase):
         self.assertIn("OnUnitActiveSec=1min", self.rendered["timer"])
 
     def test_the_nodes_come_from_the_cluster_file_not_the_answers(self) -> None:
-        """A node added from the interface (B211) survives this step being run again."""
+        """A node or cluster added from the interface (B211, B302) survives this step being run again."""
 
         step = STEP.read_text()
+        lib = (STEP.parents[1] / "lib.sh").read_text()
 
-        self.assertIn('"$CLUSTER_CONFIG" -c "$1" --field nodes', step)
+        self.assertIn("$(installed_clusters)", step)
+        self.assertIn('installed_nodes "$cluster"', step)
+        self.assertIn('"$CLUSTER_CONFIG" --list', lib)
+        self.assertIn('"$CLUSTER_CONFIG" -c "$1" --field nodes', lib)
         self.assertNotIn("cluster_value NODES", step)
+        self.assertNotIn("each_cluster", step)
 
     def test_sudo_is_tested_as_the_collector_not_listed_by_root(self) -> None:
         step = STEP.read_text()

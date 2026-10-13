@@ -1,0 +1,224 @@
+#!/bin/bash
+#
+# The whole manager installation, in one command (B302).
+#
+#     sudo haprion-setup [--answers <file>] [--release <release-id>]
+#
+# Runs the installation steps in order, with the defaults in defaults.sh for
+# everything an answers file does not set - and without one, with the
+# defaults only: fixed accounts, standard places, a local database, this
+# machine's own name and a self-signed certificate for the web interface
+# until a real one is chosen under Settings. No cluster: clusters and their
+# nodes are made in the interface.
+#
+# Every step is idempotent, so a run that stopped is resumed by running this
+# again. Before it changes anything it checks what it can know in advance -
+# the distribution, the commands, the database server, the name, the ports -
+# and names every problem it found at once. A step that fails is reported in
+# words: what went wrong, why, what to do, and where its whole output is.
+#
+set -Eeuo pipefail
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+cd "$here"
+# shellcheck source=lib.sh
+source ./lib.sh
+# shellcheck source=setup.sh
+source ./setup.sh
+
+answers=""
+release_id=""
+while (( $# > 0 )); do
+    case "$1" in
+        --answers)
+            [[ -n "${2:-}" ]] || die "--answers needs a file"
+            answers="$(readlink -f "$2")"
+            # The steps are named as words below; a space would split the path.
+            [[ "$answers" != *[[:space:]]* ]] || die "the answers file's path must not contain spaces: ${answers}"
+            shift 2 ;;
+        --release)
+            [[ -n "${2:-}" ]] || die "--release needs a release id"
+            release_id="$2"
+            shift 2 ;;
+        *) die "usage: haprion-setup [--answers <file>] [--release <release-id>]" ;;
+    esac
+done
+
+if [[ $EUID -ne 0 ]]; then
+    setup_problem "haprion-setup must run as root" \
+        "it creates accounts, directories, a database and services" \
+        "run it with sudo: sudo haprion-setup"
+    setup_report_problems || exit 1
+fi
+
+load_answers "$answers"
+source_tree="$(cd "${here}/.." && pwd)"
+
+LOG_DIR=/var/log/haprion
+LOG="${LOG_DIR}/setup.log"
+
+#
+# The web interface's release: named, the one current points at, or the one
+# the package unpacked. Several unpacked and none current is a question this
+# command cannot answer for the operator.
+#
+releases="${UI_ROOT}/releases"
+if [[ -z "$release_id" && -L "${UI_ROOT}/current" ]]; then
+    release_id="$(basename "$(readlink -f "${UI_ROOT}/current")")"
+fi
+if [[ -z "$release_id" ]]; then
+    mapfile -t unpacked < <(find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
+    case "${#unpacked[@]}" in
+        1) release_id="${unpacked[0]}" ;;
+        0) setup_problem "the web interface's release is not on this machine" \
+               "the haprion-ui package unpacks it under ${releases}" \
+               "install the package: apt install ./haprion-ui_<version>_amd64.deb" ;;
+        *) setup_problem "${#unpacked[@]} releases of the web interface are unpacked and none is active" \
+               "haprion-setup cannot tell which one this installation should run" \
+               "name it: haprion-setup --release <one of: ${unpacked[*]}>" ;;
+    esac
+elif [[ ! -d "${releases}/${release_id}" ]]; then
+    setup_problem "the release ${release_id} is not in ${releases}" \
+        "haprion-setup activates a release the package has already unpacked" \
+        "install the package that carries it, or name one that is there"
+fi
+
+[[ -x /opt/haprion/current/bin/haprion-cluster-config ]] \
+    || setup_problem "the management engine is not installed" \
+           "every step after the first reads the configuration through it" \
+           "install the package: apt install ./haprion-cli_<version>_all.deb"
+
+setup_check_distribution
+setup_check_commands
+setup_check_database
+setup_check_server_name "$SERVER_NAME"
+setup_check_ports
+setup_check_clock
+setup_report_problems || exit 1
+for note in "${SETUP_NOTES[@]}"; do
+    warn "$note"
+done
+install -d -o root -g root -m 750 "$LOG_DIR"
+
+#
+# One step: a title, the advice for a failure that brings none of its own,
+# and the command. The output goes to the log; what reaches the terminal is
+# one line per step and, when a step fails, its account of why.
+#
+STEPS=()
+add_step() {
+    STEPS+=("$1"$'\n'"$2"$'\n'"$3")
+}
+
+ans="${answers:--}"
+add_step "accounts, directories and the configuration repositories" \
+    "read the log for the line before the error" \
+    "./01-manager-prepare ${answers}"
+add_step "the web platform's directories" \
+    "read the log for the line before the error" \
+    "./platform/01-platform-prepare ${answers}"
+add_step "the key that seals DNS provider credentials" \
+    "check that python3-nacl is installed: apt install python3-nacl" \
+    "./platform/15-platform-dns-keys ${ans} ${source_tree}"
+add_step "the runtime policy and the cluster file" \
+    "read the log for the line before the error" \
+    "./02-manager-config ${answers}"
+add_step "the manager's SSH keys" \
+    "read the log for the line before the error" \
+    "./03-manager-keys ${answers}"
+add_step "the database and its roles" \
+    "check that PostgreSQL is running: systemctl status postgresql" \
+    "./platform/02-platform-database ${answers}"
+add_step "the database schema" \
+    "check that PostgreSQL is running: systemctl status postgresql" \
+    "./platform/migrate --release ${release_id}"
+add_step "the database's permissions" \
+    "read the log for the line before the error" \
+    "./platform/03-verify"
+add_step "the release's compatibility" \
+    "read the log; it names what does not match" \
+    "./platform/check-compatibility --release ${release_id}"
+if [[ "$(readlink -f "${UI_ROOT}/current" 2>/dev/null || true)" != "${releases}/${release_id}" ]]; then
+    add_step "activating the web interface" \
+        "read the log; the release's own check names what is missing" \
+        "./platform/install-ui-release ${release_id}"
+fi
+add_step "the web service" \
+    "see why it stopped: journalctl -u ${WEB_UNIT} -n 50" \
+    "./platform/04-platform-service ${answers}"
+add_step "HTTPS in front of the web service" \
+    "see why nginx stopped: nginx -t, and journalctl -u nginx -n 50" \
+    "./platform/05-platform-nginx ${answers}"
+add_step "the background services" \
+    "see why they stopped: journalctl -u ${WORKER_UNIT} -u ${POLLER_UNIT} -n 50" \
+    "./platform/07-platform-services ${answers}"
+add_step "database backups" \
+    "read the log for the line before the error" \
+    "./platform/06-platform-backup ${answers}"
+add_step "history retention" \
+    "read the log for the line before the error" \
+    "./platform/11-platform-retention ${answers}"
+add_step "traffic log collection" \
+    "read the log for the line before the error" \
+    "./platform/13-platform-traffic-collector ${answers}"
+add_step "sign-in through an identity provider" \
+    "read the log for the line before the error" \
+    "./platform/17-platform-oidc ${ans} ${source_tree}"
+#
+# certbot is built with uv until the package carries it ready-built
+# (B302, step 2): without uv the step is left for later, and said so.
+#
+if [[ -n "${UV_BIN:-}" ]]; then
+    add_step "certbot, for issuing certificates" \
+        "check that this machine reaches the Python package index (pypi.org)" \
+        "./platform/14-platform-certbot ${ans} ${source_tree}"
+fi
+add_step "the whole installation" \
+    "read the log; it names each part that does not match" \
+    "./platform/check-compatibility"
+
+total="${#STEPS[@]}"
+{
+    echo
+    echo "=== haprion-setup $(date '+%y-%m-%d %H:%M:%S')${answers:+, answers ${answers}}, release ${release_id}"
+} >> "$LOG"
+echo "haprion-setup: ${total} steps; the whole output goes to ${LOG}"
+echo
+
+number=0
+for entry in "${STEPS[@]}"; do
+    number=$((number + 1))
+    { IFS= read -r title; IFS= read -r advice; IFS= read -r command; } <<<"$entry"
+    printf '  [%2d/%d] %s ... ' "$number" "$total" "$title"
+    output="$(mktemp)"
+    {
+        echo
+        echo "--- step ${number} of ${total}: ${title} ($(date '+%H:%M:%S'))"
+        echo "--- ${command}"
+    } >> "$LOG"
+    # shellcheck disable=SC2086 # the command and its arguments, split as written above
+    if ${command} > "$output" 2>&1 < /dev/null; then
+        cat "$output" >> "$LOG"
+        rm -f "$output"
+        echo "done"
+        continue
+    fi
+    cat "$output" >> "$LOG"
+    echo "stopped"
+    setup_report_failure "$number" "$total" "$title" "$advice" "$output" "$LOG"
+    rm -f "$output"
+    exit 1
+done
+
+[[ -n "${UV_BIN:-}" ]] || warn "certbot was not installed: set UV_BIN to the uv executable and run haprion-setup again"
+
+cat <<DONE
+
+The manager is installed. The web interface answers at https://${SERVER_NAME}/
+with a self-signed certificate until a real one is chosen under Settings.
+
+On a first installation, make the first administrator:
+
+    sudo haprion-user init-admin
+
+Then sign in, and create the first cluster under Settings - Create cluster.
+DONE

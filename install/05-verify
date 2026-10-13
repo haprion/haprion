@@ -5,7 +5,7 @@
 # Read-only. It changes nothing, deploys nothing, and touches no node beyond
 # asking it for status.
 #
-#     ./05-verify answers.env
+#     ./05-verify [answers.env]
 #
 # Run it as yourself, not with sudo: part of what it checks is that an operator
 # can do the read-only things an operator should be able to do.
@@ -17,8 +17,8 @@ source ./lib.sh
 
 need_not_root
 load_answers "${1:-}"
-require_vars CONFIG_ROOT PUBLISH_ROOT CLUSTER_FILE CLUSTERS KEY_DIR \
-             CONFIG_DEPLOY_KEY NODE_STATUS_KEY TRIGGER_USER STATUS_USER
+require_vars CONFIG_ROOT PUBLISH_ROOT CLUSTER_FILE KEY_DIR \
+             CONFIG_DEPLOY_KEY NODE_STATUS_KEY
 [[ -z "${BACKUP_ROOT:-}" ]] || require_vars NODE_BACKUP_KEY
 
 PASS=0
@@ -73,7 +73,10 @@ step "Clusters"
 command -v haprion-config-status >/dev/null \
     || die "haprion-config-status is not installed - do step 2 of docs/install.md first"
 
-for cluster in $(each_cluster); do
+clusters="$(installed_clusters)"
+[[ -n "$clusters" ]] || pass "no cluster yet" "created in the interface, Settings - Create cluster"
+
+for cluster in $clusters; do
     if out="$(haprion-config-status -c "$cluster" 2>&1)"; then
         pass "config status for ${cluster}" "$(grep -oE 'Published version: *[0-9]+' <<<"$out" | tr -s ' ')"
     else
@@ -92,17 +95,18 @@ step "Nodes"
 # proves the whole management-to-node path: the key, the restriction, the node
 # account, the sudo rule and the reporter.
 #
-for cluster in $(each_cluster); do
-    for pair in $(cluster_value NODES "$cluster"); do
-        name="$(node_name "$pair")"
-        host="$(node_host "$pair")"
-        if out="$(sudo -n ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+for cluster in $clusters; do
+    nodes="$(installed_nodes "$cluster")"
+    while IFS=$'\t' read -r name host; do
+        [[ -n "$name" ]] || continue
+        # -n: the node list is this loop's input, and ssh would read the rest of it.
+        if out="$(sudo -n ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
                     -i "${KEY_DIR}/${NODE_STATUS_KEY}" "${STATUS_USER}@${host}" 2>&1)"; then
             pass "${name} reports status" "$(head -c 60 <<<"$out")"
         else
             bad "${name} reports status" "$(head -1 <<<"$out")"
         fi
-    done
+    done <<<"$nodes"
 done
 
 echo

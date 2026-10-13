@@ -2,7 +2,7 @@
 #
 # Platform step 15 - the key pair that seals DNS provider credentials.
 #
-#     sudo ./15-platform-dns-keys <answers-file> <source-tree>
+#     sudo ./15-platform-dns-keys [answers-file|-] [source-tree]
 #
 # The web interface collects a DNS provider's credentials once, seals them
 # against this installation's public key, and stores only the ciphertext; the
@@ -20,8 +20,12 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-source_tree="${2:-}"
-[[ -n "$source_tree" && -d "$source_tree" ]] || die "usage: $0 <answers-file> <source-tree>"
+#
+# The tree this step came in: the package's /usr/share/haprion-ui, or a
+# source checkout, unless another is named.
+#
+source_tree="${2:-$(cd ../.. && pwd)}"
+[[ -d "$source_tree" ]] || die "usage: $0 [answers-file|-] [source-tree]"
 source_tree="$(cd "$source_tree" && pwd)"
 tool="${source_tree}/tools/dns-profile-keys.py"
 [[ -f "$tool" ]] || die "${tool} is missing; this is not a source tree with the key tool"
@@ -89,7 +93,7 @@ if [[ -f "$POLICY" ]] && grep -Eq "^\s*dns_profiles:\s*$" "$POLICY"; then
             warn "${POLICY} does not list ${file} under acme.dns_profiles.private_keys"
         fi
     done
-else
+elif [[ -f "$POLICY" ]]; then
     warn "${POLICY} has no acme.dns_profiles block. Add, under acme:"
     warn "    dns_profiles:"
     warn "      directory: ${PROFILE_DIR}"
@@ -97,9 +101,41 @@ else
     for file in "${PRIVATE_DIR}"/*.key; do
         warn "        - ${file}"
     done
-    warn "and give the web interface the public key in ${UI_CONFIG}:"
-    warn "    [dns_profiles]"
-    warn "    public_key = \"${PUBLIC_DIR}/<key id>.pub\""
+else
+    #
+    # No policy yet: haprion-setup runs this step before step 2 of the
+    # manager installation, which then names these keys in the policy it writes.
+    #
+    log "  pending  ${POLICY} is written by 02-manager-config, which names these keys"
+fi
+
+step "The web interface's public key"
+#
+# What the web seals a provider's credentials against: the newest pair. Added
+# to ui.toml only when it names none, as its own table at the end - a TOML file
+# may always end with a new table. One that names a key is the operator's
+# choice and is checked, not changed.
+#
+newest="$(find "$PUBLIC_DIR" -maxdepth 1 -name '*.pub' -type f -printf '%T@ %p\n' | sort -n | tail -n 1 | cut -d' ' -f2-)"
+[[ -n "$newest" ]] || die "${PUBLIC_DIR} holds no public key, though the step above made one"
+if grep -Eq '^\s*\[dns_profiles\]\s*$' "$UI_CONFIG"; then
+    named="$(sed -n '/^\s*\[dns_profiles\]/,/^\s*\[/s/^\s*public_key\s*=\s*"\(.*\)"\s*$/\1/p' "$UI_CONFIG" | head -n 1)"
+    if [[ -n "$named" && -f "$named" ]]; then
+        log "  ok       ${UI_CONFIG} names ${named}"
+    else
+        warn "${UI_CONFIG} has a [dns_profiles] table whose public_key is not a file here: '${named}'"
+        warn "  Set it to ${newest}, then restart ${WEB_UNIT}."
+    fi
+else
+    install_file "$UI_CONFIG" "root:${PLATFORM_GROUP}" 640 "$(cat "$UI_CONFIG")
+
+[dns_profiles]
+public_key = \"${newest}\""
+    log "  added    [dns_profiles] public_key = ${newest}"
+    if systemctl is-active --quiet "$WEB_UNIT"; then
+        systemctl restart "$WEB_UNIT"
+        log "  restarted ${WEB_UNIT}, which reads it at start"
+    fi
 fi
 
 echo

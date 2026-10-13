@@ -17,7 +17,7 @@ and the tool that applies it, and the platform's own installation:
     /usr/lib/haprion/ui/            the release archive and PAYLOAD, which names
                                     it with its digest
     /usr/share/haprion-ui/install/  the platform steps (install/platform with
-                                    lib.sh and accounts.sh), and beside it the
+                                    lib.sh, accounts.sh and defaults.sh), and beside it the
                                     tools and certbot lock the optional steps use
     /usr/sbin/haprion-<command>     backup, drain, profiles, retention, rollback,
                                     settings, tls, user, web
@@ -135,7 +135,7 @@ SHARE = "usr/share/haprion-ui"
 # read from beside them (`<source-tree>` is then /usr/share/haprion-ui), and
 # the commands, under /usr/sbin.
 #
-SHARED = ("install/lib.sh", "install/accounts.sh", "install/platform/")
+SHARED = ("install/lib.sh", "install/accounts.sh", "install/defaults.sh", "install/platform/")
 TOOLS = (
     "tools/dns-profile-keys.py",
     "tools/install-certbot-env.py",

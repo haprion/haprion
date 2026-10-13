@@ -8,7 +8,9 @@ the command line never needs the platform at all.
 They come with the `haprion-ui` package, under
 `/usr/share/haprion-ui/install/platform/`, and the package unpacks its release
 under `/opt/haprion-ui/releases/<release-id>` (the id is printed when it is
-installed). Run them after the CLI installation, with the same answers file:
+installed). Run them after the CLI installation, with the same answers file or
+none - every step then uses the defaults in `../defaults.sh`. `haprion-setup`
+one directory up runs the whole sequence in order:
 
 ```bash
 sudo apt install ./haprion-ui_<version>_amd64.deb
@@ -42,7 +44,8 @@ itself: it reports what the first run would remove and leaves that to the timer.
 
 Step 13 mirrors each node's structured traffic log onto this host and imports it
 into daily PostgreSQL partitions. It fetches nothing until
-each node has accepted the key it prints.
+each node has accepted the key it prints. The nodes are the cluster file's; with
+no cluster yet the collector starts with none, and adding a node adds it.
 
 Step 14 builds the locked certbot environment - certbot and every DNS plugin
 the web interface offers - under `/opt/haprion-certbot`, proves it with the
@@ -51,7 +54,10 @@ the previous release is restored if the dry run fails.
 
 Step 15 makes the key pair that seals DNS provider credentials between the web
 interface and the root helper: private key under `/etc/haprion/ui-secrets/`,
-public key under `/etc/haprion/dns-profile-keys/`, never overwritten.
+public key under `/etc/haprion/dns-profile-keys/`, never overwritten. It names
+the public key in `ui.toml` when that file names none. Run before step 2 of the
+manager installation, as `haprion-setup` does, it has that step name the private
+keys in the runtime policy too.
 
 The order is not arbitrary. A release is first prepared without moving `current`.
 Its own immutable migration bundle prepares the schema, and its compatibility is

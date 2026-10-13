@@ -27,13 +27,27 @@ def main(
     require_secure: bool = True,
 ) -> int:
     parser = argparse.ArgumentParser(prog="haprion-cluster-config")
-    parser.add_argument("-c", "--cluster", required=True)
-    parser.add_argument("--field", required=True, choices=FIELDS)
+    #
+    # --list names the clusters the file holds, one per line, so an
+    # installation step reads the clusters that exist - including those created
+    # in the interface - rather than the ones an answers file once named.
+    #
+    which = parser.add_mutually_exclusive_group(required=True)
+    which.add_argument("-c", "--cluster")
+    which.add_argument("--list", action="store_true")
+    parser.add_argument("--field", choices=FIELDS)
     args = parser.parse_args(argv)
+    if args.list == (args.field is not None):
+        parser.error("give either --list, or -c with --field")
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
-        cluster = load_runtime_config(policy, require_secure=require_secure).cluster(args.cluster)
+        runtime = load_runtime_config(policy, require_secure=require_secure)
+        if args.list:
+            for name in runtime.clusters:
+                print(name)
+            return 0
+        cluster = runtime.cluster(args.cluster)
     except ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return exc.exit_code

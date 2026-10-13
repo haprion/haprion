@@ -2,7 +2,7 @@
 #
 # Platform step 14 - the locked certbot environment and its renewal timer.
 #
-#     sudo UV_BIN=/path/to/uv ./14-platform-certbot <answers-file> <source-tree>
+#     sudo UV_BIN=/path/to/uv ./14-platform-certbot [answers-file|-] [source-tree]
 #
 # Builds certbot and every DNS plugin the product offers, from the source
 # tree's certbot/uv.lock, into an immutable release under /opt/haprion-certbot;
@@ -24,8 +24,12 @@ source ../lib.sh
 need_root
 load_answers "${1:-}"
 require_vars WORKER_USER
-source_tree="${2:-}"
-[[ -n "$source_tree" && -d "$source_tree" ]] || die "usage: $0 <answers-file> <source-tree>"
+#
+# The tree this step came in: the package's /usr/share/haprion-ui, or a
+# source checkout, unless another is named.
+#
+source_tree="${2:-$(cd ../.. && pwd)}"
+[[ -d "$source_tree" ]] || die "usage: $0 [answers-file|-] [source-tree]"
 source_tree="$(cd "$source_tree" && pwd)"
 uv="${UV_BIN:-}"
 [[ -n "$uv" && -x "$uv" ]] || die "set UV_BIN to the uv executable"

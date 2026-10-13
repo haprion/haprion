@@ -6,8 +6,9 @@
 #
 #   * everything is idempotent. Running a script twice must be safe, because a
 #     failed installation is resumed by running it again, not by unpicking it
-#   * nothing is prompted for. All input comes from the answers file, so what a
-#     script is about to do can be reviewed before it does it
+#   * nothing is prompted for. All input comes from the answers file, or from
+#     the defaults in defaults.sh when there is none, so what a script is about
+#     to do can be reviewed before it does it
 
 # shellcheck shell=bash
 
@@ -15,11 +16,46 @@ set -Eeuo pipefail
 
 # shellcheck source=accounts.sh
 source "$(dirname "${BASH_SOURCE[0]}")/accounts.sh"
+# shellcheck source=defaults.sh
+source "$(dirname "${BASH_SOURCE[0]}")/defaults.sh"
+
+#
+# What the script is doing right now, in words, for an error that has no words
+# of its own (B302: an exit code alone helps nobody).
+#
+CURRENT_STEP=""
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
-step() { echo; echo "== $*"; }
+step() { CURRENT_STEP="$*"; echo; echo "== $*"; }
 warn() { echo "WARNING: $*" >&2; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
+
+#
+# An error in three parts, the shape haprion-setup shows: what went wrong, why,
+# and what to do about it. Every line is prefixed so the setup command can
+# lift them out of a step's log.
+#
+fail() {
+    local what="$1" why="${2:-}" todo="${3:-}"
+    echo "ERROR: ${what}" >&2
+    [[ -z "$why" ]] || echo "WHY: ${why}" >&2
+    [[ -z "$todo" ]] || echo "TODO: ${todo}" >&2
+    exit 1
+}
+
+#
+# A command that failed under `set -e` without a die of its own: named, with
+# the step it stopped and its exit code, instead of the script ending in
+# silence. Reported once, by the script itself - not again by each command
+# substitution the failure passed through.
+#
+on_command_failed() {
+    local status="$1" command="$2"
+    [[ "$BASHPID" == "$$" ]] || return 0
+    echo "ERROR: the command '${command}' stopped with exit code ${status}${CURRENT_STEP:+ while doing: ${CURRENT_STEP}}" >&2
+    echo "TODO: the lines above it in this output are that command's own words" >&2
+}
+trap 'on_command_failed "$?" "$BASH_COMMAND"' ERR
 
 need_root() {
     [[ $EUID -eq 0 ]] || die "run this with sudo"
@@ -29,10 +65,6 @@ need_not_root() {
     [[ $EUID -ne 0 ]] || die "run this as yourself, not with sudo"
 }
 
-#
-# The answers file is shell, so a typo is a syntax error rather than a silently
-# empty variable. It is sourced in a subshell first to check exactly that.
-#
 #
 # The project's accounts and groups (B266): one sysusers fragment from
 # install/sysusers/, installed where systemd reads it at boot and applied now.
@@ -54,9 +86,20 @@ apply_sysusers() {
     log "  applied  ${target}"
 }
 
+#
+# The answers file is optional (B302): without one the defaults in defaults.sh
+# are the answers, and with one they fill in only what it leaves unset.
+#
+# The file is shell, so a typo is a syntax error rather than a silently empty
+# variable. It is sourced in a subshell first to check exactly that.
+#
 load_answers() {
     local file="${1:-}" name
-    [[ -n "$file" ]] || die "usage: $(basename "$0") <answers-file>"
+    # "-" stands for no file, for the steps that take a second argument.
+    if [[ -z "$file" || "$file" == - ]]; then
+        apply_default_answers
+        return
+    fi
     [[ -r "$file" ]] || die "answers file not readable: $file"
     #
     # Account, group and database names are fixed since B266 (accounts.sh). An
@@ -73,6 +116,7 @@ load_answers() {
       source "$file" ) >/dev/null 2>&1 || die "answers file is not valid shell: $file"
     # shellcheck disable=SC1090
     source "$file"
+    apply_default_answers
 }
 
 require_vars() {
@@ -324,6 +368,26 @@ ensure_dnsdist() {
     log "  ok       ${version%% (*}"
 }
 
+#
+# The clusters the cluster file holds and the nodes of one, through the
+# engine's own reader: what Create cluster and the Nodes card have made, not
+# what an answers file named at installation (B302). For the steps that run
+# after the engine is installed.
+#
+CLUSTER_CONFIG="${CLUSTER_CONFIG:-/opt/haprion/current/bin/haprion-cluster-config}"
+installed_clusters() {
+    "$CLUSTER_CONFIG" --list \
+        || fail "the cluster file could not be read" \
+                "haprion-cluster-config --list did not answer; its own words are above" \
+                "run sudo haprion-cluster-config --list and correct what it names"
+}
+installed_nodes() {
+    "$CLUSTER_CONFIG" -c "$1" --field nodes \
+        || fail "the nodes of cluster ${1} could not be read" \
+                "haprion-cluster-config did not answer; its own words are above" \
+                "run sudo haprion-cluster-config -c ${1} --field nodes and correct what it names"
+}
+
 each_cluster() {
     local cluster
     for cluster in $CLUSTERS; do
@@ -337,6 +401,261 @@ each_cluster() {
 #
 node_name() { echo "${1%%:*}"; }
 node_host() { echo "${1##*:}"; }
+
+#
+# clusters.yaml as step 2 writes it, from the answers loaded. A function of its
+# own so a test can hold it to the engine's reader (B302).
+#
+render_cluster_file() {
+    local clusters_yaml cluster nodes node_path vip cert_ids default_cert display pair name host id
+    #
+    # Built as text rather than with a YAML library: this script runs before the
+    # application is necessarily installed, and adding a Python dependency to step 2
+    # would mean the installation could not repair itself.
+    #
+    clusters_yaml="# Cluster definitions. Rendered by install/02-manager-config.
+#
+# Every path here must stay inside the roots named in runtime-policy.yaml. The
+# code refuses any path that escapes its root, so this file cannot widen the
+# boundary - only use it.
+
+schema_version: 1
+"
+
+    #
+    # No cluster is a valid installation (B302): the first one is created in the
+    # interface, Settings - Create cluster, which writes its entry here.
+    #
+    if [[ -z "$(each_cluster)" ]]; then
+        clusters_yaml+="
+clusters: {}"
+    else
+        clusters_yaml+="
+clusters:"
+    fi
+
+    for cluster in $(each_cluster); do
+        nodes="$(cluster_value NODES "$cluster")"
+        [[ -n "$nodes" ]] || die "NODES_${cluster} is not set"
+        node_path="$(cluster_value NODE_PATH "$cluster")"
+        [[ -n "$node_path" ]] || die "NODE_PATH_${cluster} is not set"
+        vip="$(cluster_value VIP "$cluster")"
+        # The engine reads every cluster's VIP: it is what deploy checks ownership of.
+        [[ -n "$vip" ]] || die "VIP_${cluster} is not set; every cluster needs its virtual address"
+        cert_ids="$(cluster_value CERTIFICATE_IDS "$cluster")"
+        default_cert="$(cluster_value DEFAULT_CERTIFICATE "$cluster")"
+
+        display="$(tr '[:lower:]' '[:upper:]' <<<"${cluster:0:1}")${cluster:1}"
+
+        clusters_yaml+="
+  ${cluster}:
+    display_name: ${display}"
+        clusters_yaml+="
+    vip: ${vip}"
+        clusters_yaml+="
+    config_path: ${CONFIG_ROOT}/${cluster}
+    publish_path: ${PUBLISH_ROOT}/${cluster}
+    node_path: ${node_path}
+    nodes:"
+
+        for pair in $nodes; do
+            name="$(node_name "$pair")"
+            host="$(node_host "$pair")"
+            [[ "$name" != "$host" ]] || die "NODES_${cluster} entry '${pair}' is not name:hostname"
+            clusters_yaml+="
+      - name: ${name}
+        mgmt_host: ${host}"
+        done
+
+        clusters_yaml+="
+    validation_certs: ${VALIDATION_ROOT}/certs"
+
+        if [[ -n "$cert_ids" ]]; then
+            clusters_yaml+="
+    certificate_ids:"
+            for id in $cert_ids; do
+                clusters_yaml+="
+      - ${id}"
+            done
+            [[ -n "$default_cert" ]] && clusters_yaml+="
+    default_certificate: ${default_cert}"
+        fi
+    done
+    printf '%s\n' "$clusters_yaml"
+}
+
+#
+# runtime-policy.yaml as step 2 writes it. Reads the DNS keys step 15 made, and
+# nothing else from the machine.
+#
+render_policy() {
+    local policy file
+    local -a dns_keys
+    policy="# Runtime policy. Rendered by install/02-manager-config.
+#
+# This is the outer path boundary, not a convenience file. Paths in
+# ${CLUSTER_FILE}
+# are refused if they fall outside the roots named here.
+#
+# Requirements the code enforces: root-owned, a regular file, not group- or
+# world-writable, at most 1 MiB, schema_version exactly 1.
+
+schema_version: 1
+
+cluster_file: ${CLUSTER_FILE}
+config_root: ${CONFIG_ROOT}
+publish_root: ${PUBLISH_ROOT}
+validation_certs_root: ${VALIDATION_ROOT}
+
+deploy_identity:
+  key: \"${KEY_DIR}/${CONFIG_DEPLOY_KEY}\""
+
+    if [[ -n "${CERTIFICATE_ROOT:-}" ]]; then
+        policy+="
+
+# Central certificate distribution. Shared with whatever issues certificates,
+# which is why certificate deploy syncs only what a cluster references.
+certificate_root: ${CERTIFICATE_ROOT}
+
+# A separate identity: a key that can push configuration must not be able to
+# push certificates.
+cert_deploy_identity:
+  key: \"${KEY_DIR}/${CERT_DEPLOY_KEY}\"
+
+# Which certificates exist, where each one goes and how it is renewed. Written
+# by the certificate flows; Create cluster needs it (Fas 18, finding 3).
+certificate_registry: ${CERTIFICATE_REGISTRY}"
+        if [[ -n "${RECEIVER_ROOT:-}" ]]; then
+            policy+="
+
+# Where certificates for machines other than the nodes are published.
+receiver_root: ${RECEIVER_ROOT}"
+        fi
+        #
+        # The certbot platform step 14 installs, at the path it always installs it
+        # at, and the keys step 15 made for sealing DNS provider credentials -
+        # every one there is, since a profile may be sealed against any of them.
+        # Without the profile block the interface cannot issue through a DNS
+        # provider; without certbot named it would use the distribution's.
+        #
+        dns_keys=()
+        while IFS= read -r file; do
+            [[ -n "$file" ]] && dns_keys+=("$file")
+        done < <(find "${DNS_PROFILE_KEYS:-${UI_SECRETS}/dns-profile-keys}" -maxdepth 1 -name '*.key' -type f 2>/dev/null | LC_ALL=C sort)
+        policy+="
+
+# Issuing certificates from the interface.
+acme:
+  certbot: /opt/haprion-certbot/current/venv/bin/certbot"
+        if (( ${#dns_keys[@]} > 0 )); then
+            policy+="
+  dns_profiles:
+    directory: /etc/haprion/dns-profiles
+    private_keys:"
+            for file in "${dns_keys[@]}"; do
+                policy+="
+      - ${file}"
+            done
+        fi
+    fi
+
+    #
+    # The keys step 3 makes, named here so that the commands find them. Until
+    # 2026-10-09 this step wrote neither status_identity nor probe_identity, and
+    # `haprion-status` - which refuses to run without the first - did not work on a
+    # manager built from these scripts until the lines were added by hand.
+    #
+    if [[ -n "${NODE_STATUS_KEY:-}" ]]; then
+        policy+="
+
+# Reads node status and nothing else; haprion-deploy reads with it too.
+status_identity:
+  key: \"${KEY_DIR}/${NODE_STATUS_KEY}\""
+    fi
+
+    if [[ -n "${NODE_PROBE_KEY:-}" ]]; then
+        policy+="
+
+# Asks a node to try a health check; the same account as status, its own key.
+probe_identity:
+  key: \"${KEY_DIR}/${NODE_PROBE_KEY}\""
+    fi
+
+    if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
+        policy+="
+
+# Drain, maintenance and ready per server (B263); the trigger account, its own key.
+server_state_identity:
+  key: \"${KEY_DIR}/${SERVER_STATE_KEY}\""
+    fi
+
+    if [[ -n "${BACKUP_ROOT:-}" ]]; then
+        policy+="
+
+# Node state archives contain password hashes and private SSH keys. A separate
+# forced-command identity fetches them, and only root can traverse this root.
+backup_root: ${BACKUP_ROOT}
+backup_identity:
+  key: \"${KEY_DIR}/${NODE_BACKUP_KEY}\""
+    fi
+    printf '%s\n' "$policy"
+}
+
+#
+# The operator editing policy as step 2 writes it: the editors, and a sudoedit
+# rule for each path given. With no path - no cluster yet - only the editors:
+# sudo refuses an empty alias, and Create cluster adds the alias and its rule
+# with the first cluster's files (cluster_definition.sudoers_with, which a
+# test holds to this).
+#
+render_edit_policy() {
+    local editors="$1" i last
+    shift
+    local -a entries=()
+    for i in "$@"; do
+        entries+=("    sudoedit ${i}")
+    done
+    last=$(( ${#entries[@]} - 1 ))
+    echo "# Installed by install/02-manager-config. Do not edit by hand."
+    echo "#"
+    echo "# Editing the handwritten configuration without a root shell."
+    echo "#"
+    echo "# Every path is named in full. Adding a handwritten fragment means"
+    echo "# adding a line here first; REMOVING one means removing its line in"
+    echo "# the same change, because sudoedit creates a file it does not find."
+    echo "#"
+    echo "User_Alias HAPROXY_EDITORS = ${editors}"
+    if (( ${#entries[@]} > 0 )); then
+        echo
+        #
+        # Every continued line needs its own trailing backslash, and the last
+        # entry must not have one - which is also why a rule is removed by
+        # rewriting the whole alias rather than by deleting its line.
+        #
+        echo "Cmnd_Alias HAPROXY_EDIT = \\"
+        for i in "${!entries[@]}"; do
+            if (( i < last )); then
+                printf '%s, \\\n' "${entries[$i]}"
+            else
+                printf '%s\n' "${entries[$i]}"
+            fi
+        done
+        echo
+        echo "HAPROXY_EDITORS ALL = (root) HAPROXY_EDIT"
+    fi
+}
+
+#
+# The certificate registry a new installation starts with: no receivers and no
+# certificates. Created by step 2 when missing, never rewritten.
+#
+render_certificate_registry() {
+    printf '%s\n' "# Certificate registry. Written by the certificate flows; created empty by install/02-manager-config.
+
+schema_version: 1
+receivers: {}
+certificates: {}"
+}
 
 #
 # node.conf as 04-node-prepare installs it, from the answers already loaded.

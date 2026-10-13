@@ -102,4 +102,4 @@ fi
 echo
 log "platform step 1 done"
 echo
-echo "Next: sudo ./02-platform-database ${1}"
+echo "Next: sudo ./02-platform-database${1:+ $1}"

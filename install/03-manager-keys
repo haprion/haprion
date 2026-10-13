@@ -9,8 +9,8 @@
 # command that can ask a node to pull and nothing else - so the public keys get
 # there by your hand, over your own login.
 #
-#     sudo ./03-manager-keys answers.env
-#     sudo ./03-manager-keys answers.env > keys.txt   # to paste from later
+#     sudo ./03-manager-keys [answers.env]
+#     sudo ./03-manager-keys [answers.env] > keys.txt   # to paste from later
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -19,8 +19,7 @@ source ./lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars KEY_DIR CONFIG_DEPLOY_KEY NODE_STATUS_KEY \
-             TRIGGER_USER STATUS_USER CLUSTERS
+require_vars KEY_DIR CONFIG_DEPLOY_KEY NODE_STATUS_KEY
 
 step "Key pairs"
 
@@ -81,44 +80,52 @@ Log in to each node yourself and paste.
 
 INTRO
 
+#
+# The lines are the same on every node; they are printed per node so each
+# paste has a heading. With no cluster yet (B302) they are printed once, for
+# every node that will be added.
+#
+targets=()
 for cluster in $(each_cluster); do
-    nodes="$(cluster_value NODES "$cluster")"
-    for pair in $nodes; do
-        name="$(node_name "$pair")"
-        host="$(node_host "$pair")"
-        echo "--- ${name}  (${host}, cluster ${cluster}) ------------------------------"
-        echo
-        echo "  /home/${TRIGGER_USER}/.ssh/authorized_keys    (owner root, mode 644)"
-        echo
-        echo "restrict,command=\"sudo -n /usr/sbin/haprion-pull-deploy\" $(pub "$CONFIG_DEPLOY_KEY")"
-        if [[ -n "${CERT_DEPLOY_KEY:-}" ]]; then
-            echo "restrict,command=\"/usr/sbin/haprion-cert-trigger\" $(pub "$CERT_DEPLOY_KEY")"
-        fi
-        if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
-            echo "restrict,command=\"/usr/sbin/haprion-server-state-trigger\" $(pub "$SERVER_STATE_KEY")"
-            echo "    (written by 04-node-prepare when the node's answers file has SERVER_STATE_PUBKEY)"
-        fi
-        echo
-        echo "  /home/${STATUS_USER}/.ssh/authorized_keys     (owner root, mode 644)"
-        echo
-        echo "restrict,command=\"sudo -n /usr/sbin/haprion-node-status --json\" $(pub "$NODE_STATUS_KEY")"
-        #
-        # The probe rides on the status account and not on the trigger account,
-        # and it is still its own key with its own forced command. It needs no
-        # sudo at all: opening an outbound connection, and binding an address
-        # this node already carries, are unprivileged.
-        #
-        if [[ -n "${NODE_PROBE_KEY:-}" ]]; then
-            echo "restrict,command=\"/usr/sbin/haprion-health-probe\" $(pub "$NODE_PROBE_KEY")"
-        fi
-        if [[ -n "${BACKUP_ROOT:-}" ]]; then
-            echo
-            echo "  /home/${BACKUP_USER}/.ssh/authorized_keys     (owner root, mode 644)"
-            echo
-            echo "restrict,command=\"sudo -n /usr/sbin/haprion-state-export\" $(pub "$NODE_BACKUP_KEY")"
-        fi
-        echo
+    for pair in $(cluster_value NODES "$cluster"); do
+        targets+=("$(node_name "$pair")  ($(node_host "$pair"), cluster ${cluster})")
     done
+done
+(( ${#targets[@]} > 0 )) || targets=("every node")
+
+for target in "${targets[@]}"; do
+    echo "--- ${target} ------------------------------"
+    echo
+    echo "  /home/${TRIGGER_USER}/.ssh/authorized_keys    (owner root, mode 644)"
+    echo
+    echo "restrict,command=\"sudo -n /usr/sbin/haprion-pull-deploy\" $(pub "$CONFIG_DEPLOY_KEY")"
+    if [[ -n "${CERT_DEPLOY_KEY:-}" ]]; then
+        echo "restrict,command=\"/usr/sbin/haprion-cert-trigger\" $(pub "$CERT_DEPLOY_KEY")"
+    fi
+    if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
+        echo "restrict,command=\"/usr/sbin/haprion-server-state-trigger\" $(pub "$SERVER_STATE_KEY")"
+        echo "    (written by 04-node-prepare when the node's answers file has SERVER_STATE_PUBKEY)"
+    fi
+    echo
+    echo "  /home/${STATUS_USER}/.ssh/authorized_keys     (owner root, mode 644)"
+    echo
+    echo "restrict,command=\"sudo -n /usr/sbin/haprion-node-status --json\" $(pub "$NODE_STATUS_KEY")"
+    #
+    # The probe rides on the status account and not on the trigger account,
+    # and it is still its own key with its own forced command. It needs no
+    # sudo at all: opening an outbound connection, and binding an address
+    # this node already carries, are unprivileged.
+    #
+    if [[ -n "${NODE_PROBE_KEY:-}" ]]; then
+        echo "restrict,command=\"/usr/sbin/haprion-health-probe\" $(pub "$NODE_PROBE_KEY")"
+    fi
+    if [[ -n "${BACKUP_ROOT:-}" ]]; then
+        echo
+        echo "  /home/${BACKUP_USER}/.ssh/authorized_keys     (owner root, mode 644)"
+        echo
+        echo "restrict,command=\"sudo -n /usr/sbin/haprion-state-export\" $(pub "$NODE_BACKUP_KEY")"
+    fi
+    echo
 done
 
 if [[ -n "${SERVER_STATE_KEY:-}" ]]; then

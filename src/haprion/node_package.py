@@ -72,8 +72,8 @@ NODE_SCRIPTS = (
 )
 #
 # Path in the package -> (path in the commit, mode). Data rather than programs
-# is 0644: the shell library the step sources and the fixed account names it
-# reads (B266), the node's sysusers fragment, and the repository key `lib.sh`
+# is 0644: the shell library the step sources, the fixed account names and the
+# defaults it reads (B266, B302), the node's sysusers fragment, and the repository key `lib.sh`
 # installs dnsdist with (B249).
 #
 CONTENTS: dict[str, tuple[str, int]] = {
@@ -81,6 +81,7 @@ CONTENTS: dict[str, tuple[str, int]] = {
     f"{INSTALL_DIR[1:]}/04-node-prepare": ("install/04-node-prepare", 0o755),
     f"{INSTALL_DIR[1:]}/lib.sh": ("install/lib.sh", 0o644),
     f"{INSTALL_DIR[1:]}/accounts.sh": ("install/accounts.sh", 0o644),
+    f"{INSTALL_DIR[1:]}/defaults.sh": ("install/defaults.sh", 0o644),
     f"{INSTALL_DIR[1:]}/sysusers/haprion-node.conf": (
         "install/sysusers/haprion-node.conf",
         0o644,

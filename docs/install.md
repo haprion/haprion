@@ -24,8 +24,9 @@ Haprion is installed from Debian packages built from one commit:
 | `haprion-coraza-spoa` | the management host and the nodes, for the WAF | the engine; the CLI release also carries it, so a node restored to a new VM gets it back |
 | `haprion-crs` | the management host, for the WAF | the rule set; releases carry the rules to the nodes |
 
-Keep the source tree of the same commit for the manager steps in `install/`. The scripts use an
-answers file; its example includes `UV_BIN`, which names the uv the certbot step uses.
+Keep the source tree of the same commit for the manager steps in `install/`. The steps need no
+answers file: without one they use the defaults in `install/defaults.sh`. An answers file sets only
+what should differ, such as `UV_BIN`, which names the uv the certbot step uses.
 
 HAProxy nodes must already be prepared before the application can manage them. The
 [node preparation instructions](user-manual.md#part-2--the-nodes) are in the manual.
@@ -42,17 +43,39 @@ requests a day × 800 bytes × 14  +  disk_mib of every receiver  +  margin for 
 At one million requests a day that is about 10 GiB of day files, plus 1 GiB a receiver. A full
 root filesystem stops journald and apt as well as the log, so leave the system its own margin.
 
-## 1. Prepare the answers file
+## 1. Choose the answers, or keep the defaults
 
-From the source tree's `install/` directory:
+Without an answers file the installation uses its defaults: the fixed accounts, the places under
+`/srv/haprion` and `/srv/certdist`, a local PostgreSQL database, this machine's own name
+(`hostname -f`) for the web interface, and no cluster. Clusters and their nodes are created in the
+interface, under *Settings* → *Create cluster*.
+
+To choose differently, copy the example from the source tree's `install/` directory and keep the
+lines you change:
 
 ```bash
 cp answers.example.env answers.env
 $EDITOR answers.env
 ```
 
-Fill in the paths, accounts, database, cluster names and the interface's `SERVER_NAME` for
-your installation. The file is described in [install/answers.example.env](../install/answers.example.env).
+The file and every default are described in [install/answers.example.env](../install/answers.example.env).
+A line that sets a value to nothing keeps it empty, which is how an installation takes no node
+backups or deploys no certificates.
+
+**The whole manager in one command.** With both packages installed (sections 2 and 4), the steps of
+sections 3 and 4 run in order with
+
+```bash
+sudo install/haprion-setup [--answers answers.env] [--release <release-id>]
+```
+
+from the source tree. It first checks what it can know in advance - the distribution, the commands
+the steps run, the database server, that the server name resolves to this machine, that ports 80
+and 443 are free for nginx - and names every problem it found before it changes anything. A step
+that fails is reported in words: what went wrong, why, what to do, and where its whole output is
+(`/var/log/haprion/setup.log`). Every step is safe to run again, so the same command continues an
+installation that stopped. Certbot is installed when `UV_BIN` names a uv; the command says so when
+it does not. It ends with the command that makes the first administrator.
 
 ## 2. Install the CLI engine
 
@@ -81,6 +104,9 @@ sudo ./01-manager-prepare answers.env
 sudo ./02-manager-config answers.env
 sudo ./03-manager-keys answers.env | tee keys.txt
 ```
+
+The answers file is optional in every step: leave it out to use the defaults. Steps 14, 15 and 17
+take `-` in its place when a source tree follows it.
 
 Install the public-key lines printed by step 3 on the corresponding prepared nodes,
 following [install/README.md](../install/README.md#step-4--each-node). Keep private keys

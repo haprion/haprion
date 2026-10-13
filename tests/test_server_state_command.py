@@ -717,25 +717,23 @@ if __name__ == "__main__":
 
 
 class StepTwoNamesEveryIdentityStepThreeMakes(unittest.TestCase):
-    """02-manager-config's policy block, run in bash and read by the policy reader.
+    """02-manager-config's policy, rendered by lib.sh and read by the policy reader.
 
     Until 2026-10-09 it wrote neither status_identity nor probe_identity, so a
     manager built from the scripts had a `haprion-status` that refused to run.
+    The answers are the environment, without the defaults load_answers adds, so
+    a key left out is left out.
     """
 
     def rendered(self, answers: dict[str, str]) -> str:
-        installer = (BASE / "install" / "02-manager-config").read_text(encoding="utf-8")
-        start = installer.index('step "Runtime policy"')
-        end = installer.index('ensure_dir "$(dirname "$POLICY_FILE")"')
-        script = (
-            "set -eu\nstep() { :; }\nensure_dir() { :; }\nvalid_abs_path() { :; }\n"
-            'require_vars() { :; }\ndie() { echo "$*" >&2; exit 1; }\n'
-            + installer[start:end]
-            + '\nprintf "%s\\n" "$policy"\n'
-        )
-        done = subprocess.run(  # noqa: S603 - the installer's own block
-            ["/bin/bash", "-c", script],
-            env={"PATH": os.environ["PATH"], **answers},
+        script = 'set -eu; source "$0"; render_policy'
+        done = subprocess.run(  # noqa: S603 - the installer's own function
+            ["/bin/bash", "-c", script, str(BASE / "install" / "lib.sh")],
+            env={
+                "PATH": os.environ["PATH"],
+                "DNS_PROFILE_KEYS": "/nonexistent-dns-profile-keys",
+                **answers,
+            },
             capture_output=True,
             text=True,
             check=True,

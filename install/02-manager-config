@@ -7,7 +7,7 @@
 # reads and what you reviewed cannot drift apart, and creates the validation-only
 # certificate if it is missing.
 #
-#     sudo ./02-manager-config answers.env
+#     sudo ./02-manager-config [answers.env]
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -16,73 +16,14 @@ source ./lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CLUSTERS KEY_DIR \
+require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE KEY_DIR \
              CONFIG_DEPLOY_KEY
 
 POLICY_FILE="/etc/haprion/runtime-policy.yaml"
 
 step "Cluster definitions"
 
-#
-# Built as text rather than with a YAML library: this script runs before the
-# application is necessarily installed, and adding a Python dependency to step 2
-# would mean the installation could not repair itself.
-#
-clusters_yaml="# Cluster definitions. Rendered by install/02-manager-config.
-#
-# Every path here must stay inside the roots named in runtime-policy.yaml. The
-# code refuses any path that escapes its root, so this file cannot widen the
-# boundary - only use it.
-
-schema_version: 1
-
-clusters:"
-
-for cluster in $(each_cluster); do
-    nodes="$(cluster_value NODES "$cluster")"
-    [[ -n "$nodes" ]] || die "NODES_${cluster} is not set"
-    node_path="$(cluster_value NODE_PATH "$cluster")"
-    [[ -n "$node_path" ]] || die "NODE_PATH_${cluster} is not set"
-    vip="$(cluster_value VIP "$cluster")"
-    cert_ids="$(cluster_value CERTIFICATE_IDS "$cluster")"
-    default_cert="$(cluster_value DEFAULT_CERTIFICATE "$cluster")"
-
-    display="$(tr '[:lower:]' '[:upper:]' <<<"${cluster:0:1}")${cluster:1}"
-
-    clusters_yaml+="
-  ${cluster}:
-    display_name: ${display}"
-    [[ -n "$vip" ]] && clusters_yaml+="
-    vip: ${vip}"
-    clusters_yaml+="
-    config_path: ${CONFIG_ROOT}/${cluster}
-    publish_path: ${PUBLISH_ROOT}/${cluster}
-    node_path: ${node_path}
-    nodes:"
-
-    for pair in $nodes; do
-        name="$(node_name "$pair")"
-        host="$(node_host "$pair")"
-        [[ "$name" != "$host" ]] || die "NODES_${cluster} entry '${pair}' is not name:hostname"
-        clusters_yaml+="
-      - name: ${name}
-        mgmt_host: ${host}"
-    done
-
-    clusters_yaml+="
-    validation_certs: ${VALIDATION_ROOT}/certs"
-
-    if [[ -n "$cert_ids" ]]; then
-        clusters_yaml+="
-    certificate_ids:"
-        for id in $cert_ids; do
-            clusters_yaml+="
-      - ${id}"
-        done
-        [[ -n "$default_cert" ]] && clusters_yaml+="
-    default_certificate: ${default_cert}"
-    fi
-done
+clusters_yaml="$(render_cluster_file)"
 
 #
 # Written once. After that the file is the record: nodes are added and removed
@@ -105,88 +46,23 @@ step "Runtime policy"
 # inside; the reader rejects unknown fields, is strict about ownership and mode,
 # and refuses a symlink.
 #
-policy="# Runtime policy. Rendered by install/02-manager-config.
-#
-# This is the outer path boundary, not a convenience file. Paths in
-# ${CLUSTER_FILE}
-# are refused if they fall outside the roots named here.
-#
-# Requirements the code enforces: root-owned, a regular file, not group- or
-# world-writable, at most 1 MiB, schema_version exactly 1.
-
-schema_version: 1
-
-cluster_file: ${CLUSTER_FILE}
-config_root: ${CONFIG_ROOT}
-publish_root: ${PUBLISH_ROOT}
-validation_certs_root: ${VALIDATION_ROOT}
-
-deploy_identity:
-  key: \"${KEY_DIR}/${CONFIG_DEPLOY_KEY}\""
-
 if [[ -n "${CERTIFICATE_ROOT:-}" ]]; then
-    require_vars CERT_DEPLOY_KEY
-    policy+="
-
-# Central certificate distribution. Shared with whatever issues certificates,
-# which is why certificate deploy syncs only what a cluster references.
-certificate_root: ${CERTIFICATE_ROOT}
-
-# A separate identity: a key that can push configuration must not be able to
-# push certificates.
-cert_deploy_identity:
-  key: \"${KEY_DIR}/${CERT_DEPLOY_KEY}\""
+    require_vars CERT_DEPLOY_KEY CERTIFICATE_REGISTRY
+    valid_abs_path "$CERTIFICATE_REGISTRY" || die "not an absolute path without '..': ${CERTIFICATE_REGISTRY}"
 fi
-
-#
-# The keys step 3 makes, named here so that the commands find them. Until
-# 2026-10-09 this step wrote neither status_identity nor probe_identity, and
-# `haprion-status` - which refuses to run without the first - did not work on a
-# manager built from these scripts until the lines were added by hand.
-#
-if [[ -n "${NODE_STATUS_KEY:-}" ]]; then
-    policy+="
-
-# Reads node status and nothing else; haprion-deploy reads with it too.
-status_identity:
-  key: \"${KEY_DIR}/${NODE_STATUS_KEY}\""
-fi
-
-if [[ -n "${NODE_PROBE_KEY:-}" ]]; then
-    policy+="
-
-# Asks a node to try a health check; the same account as status, its own key.
-probe_identity:
-  key: \"${KEY_DIR}/${NODE_PROBE_KEY}\""
-fi
-
-if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
-    policy+="
-
-# Drain, maintenance and ready per server (B263); the trigger account, its own key.
-server_state_identity:
-  key: \"${KEY_DIR}/${SERVER_STATE_KEY}\""
-fi
-
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
     require_vars NODE_BACKUP_KEY
     valid_abs_path "$BACKUP_ROOT" || die "not an absolute path without '..': ${BACKUP_ROOT}"
     ensure_dir "$BACKUP_ROOT" "root:root" 700
-    policy+="
-
-# Node state archives contain password hashes and private SSH keys. A separate
-# forced-command identity fetches them, and only root can traverse this root.
-backup_root: ${BACKUP_ROOT}
-backup_identity:
-  key: \"${KEY_DIR}/${NODE_BACKUP_KEY}\""
 fi
+policy="$(render_policy)"
 
 ensure_dir "$(dirname "$POLICY_FILE")" "root:root" 755
 #
 # Written once, like the cluster file. A running installation's policy holds
-# blocks no answer renders - the certificate registry, acme, ndes - and
-# rendering it again would drop them, which stops every certificate flow
-# without an error until one is asked for.
+# what no answer renders - ndes, a DNS key added by rotation, an operator's own
+# edits - and rendering it again would drop them, which stops every
+# certificate flow without an error until one is asked for.
 #
 if [[ -f "$POLICY_FILE" && "${REWRITE_POLICY:-}" != yes ]]; then
     log "  kept     ${POLICY_FILE}  (REWRITE_POLICY=yes renders it from the answers, and drops what they do not hold)"
@@ -249,6 +125,20 @@ WantedBy=timers.target"
     systemctl daemon-reload
 fi
 
+#
+# The certificate registry, empty, when the policy names one that is not there
+# yet. Never rewritten: from here on the certificate flows own it.
+#
+if [[ -n "${CERTIFICATE_ROOT:-}" ]]; then
+    step "Certificate registry"
+    ensure_dir "$(dirname "$CERTIFICATE_REGISTRY")" "root:${CONFIG_GROUP}" 750
+    if [[ -f "$CERTIFICATE_REGISTRY" ]]; then
+        log "  ok       ${CERTIFICATE_REGISTRY}"
+    else
+        install_file "$CERTIFICATE_REGISTRY" "root:${CONFIG_GROUP}" 640 "$(render_certificate_registry)"
+    fi
+fi
+
 step "Validation certificate"
 
 #
@@ -290,49 +180,40 @@ step "Operator editing policy"
 # so a rule may only name a path that exists: naming one that does not is a
 # standing way to add a root-owned file to a directory HAProxy loads.
 #
+EDIT_POLICY=/etc/sudoers.d/haprion-config-edit
 if [[ -z "${CONFIG_EDITORS:-}" ]]; then
     log "  skipped  CONFIG_EDITORS is empty - no operator may edit core/ or manual/"
     log "           Set it in the answers file and run this step again."
+elif [[ -f "$EDIT_POLICY" ]]; then
+    #
+    # Written once, like the cluster file. After that Create cluster and
+    # Remove cluster keep its paths (B302), so a rerun renders only the
+    # editors' line - rendering the paths from CLUSTERS would take away the
+    # rule for every cluster created in the interface.
+    #
+    editors="$(printf '%s' "$CONFIG_EDITORS" | tr -s ' ' ',')"
+    sudoers_staging="$(mktemp)"
+    sed "s/^User_Alias HAPROXY_EDITORS = .*/User_Alias HAPROXY_EDITORS = ${editors}/" \
+        "$EDIT_POLICY" > "$sudoers_staging"
+    if ! visudo -cqf "$sudoers_staging"; then
+        rm -f "$sudoers_staging"
+        die "the editing policy with the new editors does not parse; nothing was installed"
+    fi
+    install_file "$EDIT_POLICY" root:root 440 "$(cat "$sudoers_staging")"
+    rm -f "$sudoers_staging"
+    log "            editors: ${editors}  (paths kept; the cluster flows own them)"
 else
     editors="$(printf '%s' "$CONFIG_EDITORS" | tr -s ' ' ',')"
     entries=()
-    for cluster in $CLUSTERS; do
+    for cluster in $(each_cluster); do
         for relative in core/haproxy.cfg manual/reservations.yaml; do
             path="${CONFIG_ROOT}/${cluster}/${relative}"
             [[ -f "$path" ]] || die "expected ${path}; run ./01-manager-prepare first"
-            entries+=("    sudoedit ${path}")
+            entries+=("$path")
         done
     done
-    last=$(( ${#entries[@]} - 1 ))
-
     sudoers_staging="$(mktemp)"
-    {
-        echo "# Installed by install/02-manager-config. Do not edit by hand."
-        echo "#"
-        echo "# Editing the handwritten configuration without a root shell."
-        echo "#"
-        echo "# Every path is named in full. Adding a handwritten fragment means"
-        echo "# adding a line here first; REMOVING one means removing its line in"
-        echo "# the same change, because sudoedit creates a file it does not find."
-        echo "#"
-        echo "User_Alias HAPROXY_EDITORS = ${editors}"
-        echo
-        #
-        # Every continued line needs its own trailing backslash, and the last
-        # entry must not have one - which is also why a rule is removed by
-        # rewriting the whole alias rather than by deleting its line.
-        #
-        echo "Cmnd_Alias HAPROXY_EDIT = \\"
-        for i in "${!entries[@]}"; do
-            if (( i < last )); then
-                printf '%s, \\\n' "${entries[$i]}"
-            else
-                printf '%s\n' "${entries[$i]}"
-            fi
-        done
-        echo
-        echo "HAPROXY_EDITORS ALL = (root) HAPROXY_EDIT"
-    } > "$sudoers_staging"
+    render_edit_policy "$editors" "${entries[@]}" > "$sudoers_staging"
 
     #
     # Checked before it is installed, never after. A sudoers file that does not
@@ -342,13 +223,13 @@ else
         rm -f "$sudoers_staging"
         die "the rendered editing policy does not parse; nothing was installed"
     fi
-    install -o root -g root -m 440 "$sudoers_staging" /etc/sudoers.d/haprion-config-edit
+    install -o root -g root -m 440 "$sudoers_staging" "$EDIT_POLICY"
     rm -f "$sudoers_staging"
-    log "  installed /etc/sudoers.d/haprion-config-edit  (visudo accepted it)"
+    log "  installed ${EDIT_POLICY}  (visudo accepted it)"
     log "            editors: ${editors}"
 fi
 
 echo
 log "step 2 done"
 echo
-echo "Next: ./03-manager-keys answers.env"
+echo "Next: ./03-manager-keys${1:+ $1}"

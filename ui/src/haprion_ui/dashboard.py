@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import haproxy_versions, node_resources
-from haprion.cluster_status import keepalived_state
+from haprion.cluster_status import BEHIND_RELEASE, behind_part, keepalived_state
 
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.db import ClusterStatus
@@ -42,6 +42,12 @@ class NodeView:
     #
     runtime_note: str | None = None
     runtime_title: str | None = None
+    #
+    # Whether the release itself is the part behind, which is what the
+    # Release column's *Behind target* says. False when the node runs the
+    # target and a file the release activates afterwards is behind.
+    #
+    release_behind: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,7 +233,7 @@ def observation_label(observed_at: datetime, now: datetime) -> str:
     return f"Observed {relative_age(observed_at, now).lower()}"
 
 
-def _node_view(value: Any) -> NodeView:
+def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
     node = _mapping(value)
     name = _text(node.get("name"), "Unnamed node")
     management_host = _text(node.get("mgmt_host"), "—")
@@ -294,7 +300,13 @@ def _node_view(value: Any) -> NodeView:
     elif validation.get("valid") is False:
         label, tone, detail = "Invalid config", "warning", "Last configuration check failed"
     elif current is False:
-        label, tone, detail = VERSION_DRIFT, "warning", "Node is not on the target release"
+        part = behind_part(status, target_hash)
+        label, tone = VERSION_DRIFT, "warning"
+        detail = (
+            "Node is not on the target release"
+            if part in (None, BEHIND_RELEASE)
+            else f"The {part} is behind the release"
+        )
     else:
         label, tone, detail = "Online", "healthy", "Serving and reporting normally"
 
@@ -310,6 +322,8 @@ def _node_view(value: Any) -> NodeView:
         runtime=f"{_text(runtime.get('version'))} · {_duration(runtime.get('uptime_sec'))}",
         stats="Available" if status.get("stats_ok") is True else "Unavailable",
         current=current,
+        release_behind=current is False
+        and behind_part(status, target_hash) in (None, BEHIND_RELEASE),
     )
 
 
@@ -408,8 +422,14 @@ def _cluster_view(
     result = _mapping(reading.result)
     summary = _mapping(result.get("summary"))
     node_values = result.get("nodes")
+    target_hash = _mapping(summary.get("target")).get("hash")
     nodes = (
-        tuple(_node_view(value) for value in node_values) if isinstance(node_values, list) else ()
+        tuple(
+            _node_view(value, target_hash if isinstance(target_hash, str) else None)
+            for value in node_values
+        )
+        if isinstance(node_values, list)
+        else ()
     )
     if isinstance(node_values, list):
         running = {

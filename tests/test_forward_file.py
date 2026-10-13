@@ -20,7 +20,15 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haprion.cluster_status import forwarding_current, parse_status
+from haprion.cluster_status import (
+    BEHIND_ADDRESSES,
+    BEHIND_FORWARDING,
+    BEHIND_IPVS,
+    BEHIND_RELEASE,
+    behind_part,
+    forwarding_current,
+    parse_status,
+)
 from tests.test_status_addresses import envelope, node_status
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
@@ -95,6 +103,44 @@ class WhatTheManagerMakesOfIt(unittest.TestCase):
     def test_a_node_from_before_the_measurement_is_not_held_to_it(self) -> None:
         self.assertIs(forwarding_current({}), True)
         self.assertIs(forwarding_current({"forward_file": None}), True)
+
+
+class WhichPartIsBehind(unittest.TestCase):
+    """Review 26-10-13 r16k, F1: the part a deploy meets first, for CLI and dashboard alike."""
+
+    TARGET = "c3" * 20
+
+    def status(self, **parts: object) -> dict[str, object]:
+        status: dict[str, object] = {"release": {"hash": self.TARGET}}
+        status.update(parts)
+        return status
+
+    def test_another_release_is_the_release(self) -> None:
+        stale = self.status(release={"hash": "d4" * 20}, **reported(installed_sha256="b2" * 32))
+        self.assertEqual(behind_part(stale, self.TARGET), BEHIND_RELEASE)
+
+    def test_each_file_the_release_activates_is_named(self) -> None:
+        listed = {
+            "published": True,
+            "published_sha256": DIGEST,
+            "installed": True,
+            "installed_sha256": "b2" * 32,
+            "included": True,
+        }
+        cases = (
+            (self.status(keepalived={"addresses": listed}), BEHIND_ADDRESSES),
+            (self.status(ipvs=listed), BEHIND_IPVS),
+            (self.status(**reported(installed_sha256="b2" * 32)), BEHIND_FORWARDING),
+        )
+        for status, part in cases:
+            with self.subTest(part=part):
+                self.assertEqual(behind_part(status, self.TARGET), part)
+
+    def test_a_node_carrying_everything_is_behind_in_nothing(self) -> None:
+        self.assertIsNone(behind_part(self.status(**reported()), self.TARGET))
+
+    def test_without_a_target_the_release_is_not_judged(self) -> None:
+        self.assertIsNone(behind_part({"release": {"hash": "d4" * 20}}, None))
 
 
 class WhatTheNodeReports(unittest.TestCase):

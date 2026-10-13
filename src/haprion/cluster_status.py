@@ -472,6 +472,34 @@ def forwarding_current(status: Mapping[str, Any]) -> bool | None:
     return wanted == carried
 
 
+BEHIND_RELEASE = "release"
+BEHIND_ADDRESSES = "address list"
+BEHIND_IPVS = "IPVS file"
+BEHIND_FORWARDING = "log forwarding"
+
+
+def behind_part(status: Mapping[str, Any], target_hash: str | None) -> str | None:
+    """Which part of the published release a node does not carry, or None.
+
+    In the order the deploy installs them, so the first answer is the one the
+    next deploy meets first. A node whose release is the target and whose
+    `current` is still false is behind in one of the files the release
+    activates after the reload; saying "not on the target release" about it
+    is wrong, and `haprion-status` names the part (review 26-10-13 r16k, F1).
+    """
+
+    observed = _text(_mapping(status.get("release")).get("hash"))
+    if target_hash is not None and observed != target_hash:
+        return BEHIND_RELEASE
+    if addresses_current(status) is False:
+        return BEHIND_ADDRESSES
+    if ipvs_current(status) is False:
+        return BEHIND_IPVS
+    if forwarding_current(status) is False:
+        return BEHIND_FORWARDING
+    return None
+
+
 def _count(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 

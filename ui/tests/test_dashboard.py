@@ -291,6 +291,42 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(cluster.nodes[1].label, "Version drift")
         self.assertEqual(cluster.version, "v7")
 
+    def test_a_node_on_the_target_with_a_file_behind_says_which(self) -> None:
+        """Review 26-10-13 r16k, F1: not "not on the target release" about a node that is."""
+
+        target = "c3" * 20
+        node = {
+            "name": "node-b",
+            "mgmt_host": "node-b.example.com",
+            "reachable": True,
+            "status_ok": True,
+            "current": False,
+            "status": {
+                "haproxy": {"active": True},
+                "keepalived": {"active": True, "state": "BACKUP"},
+                "vip": {"owner": False},
+                "release": {"version": "8", "hash": target},
+                "runtime": {"version": "3.4.6", "uptime_sec": 10},
+                "config_validation": {"valid": True},
+                "stats_ok": True,
+                "forward_file": {
+                    "published": True,
+                    "published_sha256": "a1" * 32,
+                    "installed": True,
+                    "installed_sha256": "b2" * 32,
+                },
+            },
+        }
+
+        on_target = dashboard._node_view(node, target)
+        self.assertEqual(on_target.label, "Version drift")
+        self.assertEqual(on_target.detail, "The log forwarding is behind the release")
+        self.assertFalse(on_target.release_behind)
+
+        behind = dashboard._node_view(node, "d4" * 20)
+        self.assertEqual(behind.detail, "Node is not on the target release")
+        self.assertTrue(behind.release_behind)
+
     def test_old_data_cannot_remain_green(self) -> None:
         cluster = self.dashboard(reading("done-single-owner.json", age_seconds=121)).clusters[0]
         self.assertTrue(cluster.stale)

@@ -372,13 +372,16 @@ class RemovingANode(unittest.TestCase):
             self.assertEqual(caught.exception.code, "node_owns_vip")
             self.assertEqual(site.snapshot(), before)
 
-    def test_a_cluster_keeps_two_nodes(self) -> None:
+    def test_a_cluster_keeps_its_last_node(self) -> None:
+        """B302: one node is a cluster; none is a cluster to remove instead."""
+
         with tempfile.TemporaryDirectory() as raw:
             site = Installation(Path(raw))
-            name = site.runtime().cluster("alpha").nodes[0].name
+            first, last = (node.name for node in site.runtime().cluster("alpha").nodes)
+            self.remove(site, name=first)
 
-            with self.assertRaisesRegex(EnrollmentError, "at least 2 nodes"):
-                self.remove(site, name=name)
+            with self.assertRaisesRegex(EnrollmentError, "keeps its last node"):
+                self.remove(site, name=last)
 
 
 class ChangingAHost(unittest.TestCase):

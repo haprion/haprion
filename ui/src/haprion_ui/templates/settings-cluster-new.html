@@ -3,7 +3,7 @@
 {% block title %}Create cluster — Haprion{% endblock %}
 {% block content %}
 {#
-  A new cluster with its first two nodes (Fas 16, B211) - `haprion-cluster add`.
+  A new cluster with its first node or two (Fas 16, B211, B302) - `haprion-cluster add`.
   The form and both blocks are read by the engine's own check and shown with
   each node's host key before anything is queued; the root helper makes the
   repository, the release directory and every file, asks both nodes for their
@@ -40,7 +40,7 @@
       </tbody>
     </table></div>
     <ul class="removal-consequences">
-      <li>{{ creation.display_name }} · VIP {{ creation.vip }}{% if creation.address_prefix %}/{{ creation.address_prefix }}{% endif %}{% if creation.address_interface %} on {{ creation.address_interface }}{% endif %} · node path {{ creation.node_path }} · certificate {{ creation.default_certificate }}</li>
+      <li>{{ creation.display_name }} · VIP {{ creation.vip }}{% if creation.address_prefix %}/{{ creation.address_prefix }}{% endif %}{% if creation.address_interface %} on {{ creation.address_interface }}{% endif %} · node path {{ creation.node_path }}{% if creation.default_certificate %} · certificate {{ creation.default_certificate }}{% endif %}</li>
       <li>Compare each host key with the one 04-node-prepare printed on the node. The change is taken back if either node does not answer as itself.</li>
     </ul>
     <div class="form-grid">
@@ -62,12 +62,12 @@
       <label><span class="field-title">VIP prefix</span><input name="address_prefix" value="{{ form.address_prefix }}" maxlength="3" inputmode="numeric" spellcheck="false" placeholder="24"></label>
       <label><span class="field-title">VIP interface</span><input name="address_interface" value="{{ form.address_interface }}" maxlength="63" spellcheck="false" placeholder="eth0"></label>
       <label><span class="field-title">Node path on the manager</span><input name="node_path" value="{{ form.node_path }}" maxlength="63" spellcheck="false" placeholder="Same as the ID"></label>
-      <label><span class="field-title">Default certificate</span><select name="default_certificate" required><option value=""></option>{% for identifier in certificates %}<option value="{{ identifier }}"{% if identifier == form.default_certificate %} selected{% endif %}>{{ identifier }}</option>{% endfor %}</select></label>
+      <label><span class="field-title">Default certificate <span class="optional">(optional)</span></span><select name="default_certificate"><option value=""></option>{% for identifier in certificates %}<option value="{{ identifier }}"{% if identifier == form.default_certificate %} selected{% endif %}>{{ identifier }}</option>{% endfor %}</select></label>
     </div>
     <div class="form-grid">
       <label><span class="field-title">First node's enrollment block</span><textarea name="block_1" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…" required>{{ form.block_1 }}</textarea></label>
       <label><span class="field-title">First node's host</span><input name="host_1" value="{{ form.host_1 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
-      <label><span class="field-title">Second node's enrollment block</span><textarea name="block_2" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…" required>{{ form.block_2 }}</textarea></label>
+      <label><span class="field-title">Second node's enrollment block <span class="optional">(optional)</span></span><textarea name="block_2" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…">{{ form.block_2 }}</textarea></label>
       <label><span class="field-title">Second node's host</span><input name="host_2" value="{{ form.host_2 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
     </div>
     <div class="editor-actions editor-submit">

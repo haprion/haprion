@@ -5,7 +5,7 @@ Two operations, one helper and one socket:
 * `cluster_node` names one cluster and adds a node from its enrollment block
   and the host name the manager is to reach it at, removes one by name, or
   moves one to another host name (`host`, B295);
-* `cluster_define` creates a cluster with its first two nodes, or removes one.
+* `cluster_define` creates a cluster with its first node or two, or removes one.
 
 What each means - the files, the repository, the proof that every node answers
 as itself, the refusals - is `node_enrollment`'s and `cluster_definition`'s,
@@ -155,11 +155,12 @@ def build_define_request(
                 "display_name": display_name,
                 "vip": vip,
                 "node_path": node_path,
-                "default_certificate": default_certificate,
                 "blocks": list(blocks),
                 "hosts": list(hosts),
             }
         )
+        if default_certificate is not None:
+            parameters["default_certificate"] = default_certificate
         if address_prefix is not None:
             parameters["address_prefix"] = address_prefix
         if address_interface is not None:
@@ -288,7 +289,11 @@ def _define_work(
         display_name=_text(parameters, "display_name"),
         vip=_text(parameters, "vip"),
         node_path=_text(parameters, "node_path"),
-        default_certificate=_text(parameters, "default_certificate"),
+        default_certificate=(
+            _text(parameters, "default_certificate")
+            if "default_certificate" in parameters
+            else None
+        ),
         blocks=_texts(parameters, "blocks"),
         hosts=_texts(parameters, "hosts"),
         address_prefix=cluster_definition.parse_prefix(parameters.get("address_prefix")),

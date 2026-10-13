@@ -186,19 +186,18 @@ def write(
             if unknown:
                 raise ConfigError(f"unknown cluster(s): {', '.join(unknown)}")
         #
-        # The check that is not obvious from this file, and the one that cost an
-        # installation in testing: `load_runtime_config` refuses a cluster that
-        # no certificate names, because a cluster with no certificate has no
-        # configuration to render. So a retarget that took the last certificate
-        # away from a cluster would write a registry the whole engine then
-        # refuses to load - every command, not just this one.
-        #
-        # Refused here, before the rename, and refused as the caller's mistake
-        # rather than as a broken installation: the request is answerable, and
-        # the answer is which cluster would have been left with nothing.
+        # A cluster that had certificates is not left with none by a retarget.
+        # A new cluster starts without any and loads (B302), but one that has
+        # served certificates has listeners that name them, and taking the last
+        # away turns its next publish into a refusal nobody asked for. Refused
+        # here, before the rename, as the caller's mistake: the answer is which
+        # cluster would have been left with nothing.
         #
         uncovered = sorted(
-            cluster_id for cluster_id in runtime.clusters if not candidate.for_cluster(cluster_id)
+            cluster_id
+            for cluster_id in runtime.clusters
+            if runtime.clusters[cluster_id].certificate_ids
+            and not candidate.for_cluster(cluster_id)
         )
         if uncovered:
             raise RegistryError(
@@ -219,7 +218,8 @@ def write(
         undefaulted = sorted(
             f"{cluster_id} ({cluster.default_certificate})"
             for cluster_id, cluster in runtime.clusters.items()
-            if cluster.default_certificate not in candidate.for_cluster(cluster_id)
+            if cluster.default_certificate is not None
+            and cluster.default_certificate not in candidate.for_cluster(cluster_id)
         )
         if undefaulted:
             raise RegistryError(

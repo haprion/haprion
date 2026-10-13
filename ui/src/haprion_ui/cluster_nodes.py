@@ -119,7 +119,11 @@ def removable(rows: list[NodeRow], name: str) -> str | None:
     if name not in {row.name for row in rows}:
         return f"{name} is not a node of this cluster."
     if len(rows) <= MIN_NODES:
-        return f"A cluster keeps at least {MIN_NODES} nodes."
+        return (
+            "A cluster keeps its last node; remove the cluster instead."
+            if MIN_NODES == 1
+            else f"A cluster keeps at least {MIN_NODES} nodes."
+        )
     if any(row.name == name and row.owner for row in rows):
         return f"{name} holds the VIP. Move the address to another node first."
     return None
@@ -159,13 +163,13 @@ class NewNode:
 
 @dataclass(frozen=True, slots=True)
 class Creation:
-    """A new cluster's form, read, with its first two nodes."""
+    """A new cluster's form, read, with its first node or two (B302)."""
 
     cluster: str
     display_name: str
     vip: str
     node_path: str
-    default_certificate: str
+    default_certificate: str | None
     address_prefix: int | None
     address_interface: str | None
     blocks: tuple[str, ...]
@@ -177,10 +181,11 @@ class Creation:
             "display_name": self.display_name,
             "vip": self.vip,
             "node_path": self.node_path,
-            "default_certificate": self.default_certificate,
             "blocks": list(self.blocks),
             "hosts": [node.host for node in self.nodes],
         }
+        if self.default_certificate is not None:
+            payload["default_certificate"] = self.default_certificate
         if self.address_prefix is not None:
             payload["address_prefix"] = self.address_prefix
         if self.address_interface is not None:
@@ -209,18 +214,27 @@ def read_creation(
     cluster = form.get("cluster", "").strip()
     if cluster in set(listed):
         raise FormProblem(f"There is already a cluster {cluster}.")
-    certificate = form.get("default_certificate", "")
-    if certificate not in set(certificates):
+    #
+    # A certificate is optional (B302): a new installation has none, and a
+    # cluster serves plain HTTP and TCP until one is issued for it.
+    #
+    certificate = form.get("default_certificate", "") or None
+    if certificate is not None and certificate not in set(certificates):
         raise FormProblem("Choose the default certificate from the registry.")
-    blocks = ["".join(form.get(f"block_{n}", "").split()) for n in (1, 2)]
+    #
+    # The first node's block, and the second's when one is given; a further
+    # node is added from the cluster's Nodes card.
+    #
+    numbers = [n for n in (1, 2) if n == 1 or "".join(form.get(f"block_{n}", "").split())]
+    blocks = ["".join(form.get(f"block_{n}", "").split()) for n in numbers]
     try:
         #
         # An empty host is the block's own suggestion, as for a single node;
         # an empty node path is the cluster's ID, as step 2 names it.
         #
         hosts = [
-            form.get(f"host_{n}", "").strip() or node_enrollment.parse(blocks[n - 1]).host
-            for n in (1, 2)
+            form.get(f"host_{n}", "").strip() or node_enrollment.parse(blocks[i]).host
+            for i, n in enumerate(numbers)
         ]
         spec = cluster_definition.definition(
             cluster,
@@ -268,6 +282,4 @@ def cluster_removable(listed: Iterable[str], cluster: str) -> str | None:
     names = list(listed)
     if cluster not in names:
         return f"{cluster} is not a cluster."
-    if len(names) <= 1:
-        return "The manager keeps at least one cluster."
     return None

@@ -53,10 +53,11 @@ NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 # instance shares its addresses between any number of nodes by priority - so
 # this is a figure nobody is meant to reach, set where it was measured to hold
 # (2026-09-30, B211): the pages draw eight without scrolling sideways, and the
-# poller reads a node in about 0.3 s, one after another. Two is the floor
-# because a cluster of one has nothing to fail over to.
+# poller reads a node in about 0.3 s, one after another. One is the floor
+# (B302): a cluster is created with its first node and the second is added to
+# it, and a cluster of one serves - it only has nothing to fail over to.
 #
-MIN_NODES = 2
+MIN_NODES = 1
 MAX_NODES = 8
 CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
 
@@ -347,7 +348,7 @@ class Cluster:
     publish_path: Path
     node_path: str
     validation_certs: Path
-    default_certificate: str
+    default_certificate: str | None
     certificate_ids: tuple[str, ...]
     trusted_proxy_cidrs: tuple[str, ...]
     abuse_protection: AbuseProtection | None
@@ -1442,9 +1443,12 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
     schema_version = data.get("schema_version")
     if type(schema_version) is not int or schema_version != 1:
         raise ConfigError("cluster configuration schema_version must be 1")
+    #
+    # Empty is a manager before its first cluster (B302): it is installed with
+    # none, and *Create cluster* adds the first. A command that takes a cluster
+    # refuses one it does not find, here as anywhere.
+    #
     raw_clusters = _mapping(data.get("clusters"), "clusters")
-    if not raw_clusters:
-        raise ConfigError("clusters must not be empty")
 
     clusters: dict[str, Cluster] = {}
     for cluster_id, raw_value in raw_clusters.items():
@@ -1506,9 +1510,12 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 raise ConfigError(
                     f"{location}.certificate_ids has moved to the certificate registry"
                 )
+            #
+            # None is a cluster before its first certificate (B302): a new
+            # cluster serves plain HTTP and TCP until one is issued or
+            # uploaded for it, and an HTTPS object is refused until then.
+            #
             certificate_ids = registry.for_cluster(cluster_id)
-            if not certificate_ids:
-                raise ConfigError(f"no certificate in the registry names cluster {cluster_id!r}")
         else:
             raw_certificates = raw.get("certificate_ids")
             if not isinstance(raw_certificates, list) or not raw_certificates:
@@ -1521,9 +1528,16 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 raise ConfigError(f"{location}.certificate_ids contains an invalid ID")
             if len(set(certificate_ids)) != len(certificate_ids):
                 raise ConfigError(f"{location}.certificate_ids contains duplicates")
-        default_certificate = _required_string(raw, "default_certificate", location)
-        if default_certificate not in certificate_ids:
-            raise ConfigError(f"{location}.default_certificate is not allowlisted")
+        #
+        # Bookkeeping, never generated from: what the certificate commands
+        # refuse to delete or move away from the cluster. Optional since a
+        # cluster may start without certificates (B302).
+        #
+        default_certificate: str | None = None
+        if "default_certificate" in raw:
+            default_certificate = _required_string(raw, "default_certificate", location)
+            if default_certificate not in certificate_ids:
+                raise ConfigError(f"{location}.default_certificate is not allowlisted")
 
         raw_cidrs = raw.get("trusted_proxy_cidrs", [])
         if not isinstance(raw_cidrs, list):

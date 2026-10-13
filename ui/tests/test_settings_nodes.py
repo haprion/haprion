@@ -152,12 +152,23 @@ class AddingANode(NodesPage):
 
 
 class RemovingANode(NodesPage):
-    def test_a_pair_keeps_both_nodes(self) -> None:
+    def test_one_of_a_pair_may_go_and_is_asked_for(self) -> None:
+        """B302: a cluster of one serves; only its last node stays."""
+
         response = self.post_to(
             self.client_for(), "/settings/nodes/edge-demo/remove", node="edge-b"
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("at least 2 nodes", response.text)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("Type edge-b to remove it", response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_the_last_node_stays(self) -> None:
+        self.assertEqual(
+            cluster_nodes.removable(
+                [cluster_nodes.NodeRow("a", "a.example.com", owner=True, reachable=True)], "a"
+            ),
+            "A cluster keeps its last node; remove the cluster instead.",
+        )
 
     def test_a_third_node_is_asked_for_and_then_removed(self) -> None:
         self.rows = with_third_node()
@@ -339,6 +350,30 @@ class CreatingACluster(ClusterPage):
             },
         )
 
+    def test_one_node_and_no_certificate_queue_the_request_without_them(self) -> None:
+        """B302: the first node now, the second from the Nodes card; a certificate later."""
+
+        response = self.post_to(
+            self.client_for(),
+            "/settings/new-cluster",
+            **self.creation(default_certificate="", block_2="", host_2="", confirm="gamma"),
+        )
+
+        self.assertEqual(response.status_code, 303, response.text)
+        (queued,) = self.queued
+        self.assertEqual(
+            queued["payload"],
+            {
+                "action": "add",
+                "display_name": "Gamma",
+                "vip": "198.51.100.30",
+                "node_path": "gamma",
+                "blocks": [block("gamma", "gamma-a")],
+                "hosts": ["gamma-a.example.com"],
+                "address_prefix": 24,
+            },
+        )
+
     def test_what_the_engine_refuses_is_said_on_the_page(self) -> None:
         for fields, message in (
             ({"cluster": "edge-demo"}, "already a cluster edge-demo"),
@@ -388,16 +423,15 @@ class RemovingACluster(ClusterPage):
             ("cluster_define", "service-demo", {"action": "remove"}),
         )
 
-    def test_the_last_cluster_is_not_offered_and_is_refused(self) -> None:
+    def test_the_last_cluster_is_offered_too(self) -> None:
+        """B302: a manager may have no clusters; it is installed with none."""
+
         patch = mock.patch("haprion_ui.db.cluster_list", return_value=("service-demo",))
         patch.start()
         self.addCleanup(patch.stop)
-        client = self.client_for()
 
-        self.assertNotIn("remove-cluster", client.get("/settings/nodes/service-demo").text)
-        response = self.post_to(client, "/settings/nodes/service-demo/remove-cluster")
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("at least one cluster", response.text)
+        self.assertIn("remove-cluster", self.client_for().get("/settings/nodes/service-demo").text)
+        self.assertIsNone(cluster_nodes.cluster_removable(("service-demo",), "service-demo"))
 
 
 class ARemovedClusterLeavesThePages(NodesPage):

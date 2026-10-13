@@ -110,7 +110,7 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "unique names"), self.temporary_runtime(mutate):
             pass
 
-    def test_a_cluster_has_between_two_and_eight_nodes(self) -> None:
+    def test_a_cluster_has_between_one_and_eight_nodes(self) -> None:
         def nodes(count: int) -> Mutate:
             def mutate(data: dict[str, Any]) -> None:
                 data["clusters"]["alpha"]["nodes"] = [
@@ -120,13 +120,13 @@ class ConfigTests(unittest.TestCase):
 
             return mutate
 
-        for count in (2, 3, 8):
+        for count in (1, 2, 3, 8):
             with self.subTest(count=count), self.temporary_runtime(nodes(count)) as runtime:
                 self.assertEqual(len(runtime.cluster("alpha").nodes), count)
-        for count in (0, 1, 9):
+        for count in (0, 9):
             with (
                 self.subTest(count=count),
-                self.assertRaisesRegex(ConfigError, "between 2 and 8 nodes"),
+                self.assertRaisesRegex(ConfigError, "between 1 and 8 nodes"),
                 self.temporary_runtime(nodes(count)),
             ):
                 pass
@@ -812,13 +812,32 @@ class TheCertificateRegistry(RegistryTestCase):
         with self.assertRaisesRegex(ConfigError, "has moved to the certificate registry"):
             self.load(mutate_clusters=keep_the_list)
 
-    def test_a_cluster_no_certificate_names_is_refused(self) -> None:
+    def test_a_cluster_no_certificate_names_loads_without_a_default(self) -> None:
+        """B302: a new cluster starts without certificates and serves HTTP and TCP until then."""
+
         def nobody_names_alpha(data: dict[str, Any]) -> None:
             for entry in data["certificates"].values():
                 entry.pop("clusters", None)
 
-        with self.assertRaisesRegex(ConfigError, "no certificate in the registry names cluster"):
-            self.load(mutate_registry=nobody_names_alpha)
+        def no_default(data: dict[str, Any]) -> None:
+            for cluster in data["clusters"].values():
+                cluster.pop("default_certificate", None)
+
+        alpha = self.load(mutate_registry=nobody_names_alpha, mutate_clusters=no_default).clusters[
+            "alpha"
+        ]
+        self.assertEqual(alpha.certificate_ids, ())
+        self.assertIsNone(alpha.default_certificate)
+
+    def test_no_clusters_at_all_is_a_manager_before_its_first(self) -> None:
+        def none(data: dict[str, Any]) -> None:
+            data["clusters"] = {}
+
+        def nobody(data: dict[str, Any]) -> None:
+            for entry in data["certificates"].values():
+                entry.pop("clusters", None)
+
+        self.assertEqual(dict(self.load(mutate_registry=nobody, mutate_clusters=none).clusters), {})
 
     def test_the_default_certificate_must_still_be_one_the_cluster_carries(self) -> None:
         def only_net(data: dict[str, Any]) -> None:

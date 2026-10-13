@@ -1124,7 +1124,8 @@ def prepare(
 
     if operation == "cluster_define":
         #
-        # A whole cluster created with its first two nodes, or removed (B211).
+        # A whole cluster created with its first node or two, or removed (B211,
+        # B302).
         # The same socket and the same division as `cluster_node`: the shape is
         # checked here, and what the fields mean - a free name and node path, a
         # certificate the registry has, two blocks made for this cluster - is
@@ -1142,21 +1143,26 @@ def prepare(
         if action != "add":
             raise BadPayload("action must be add or remove")
         texts = {}
-        for field in ("display_name", "vip", "node_path", "default_certificate"):
+        for field in ("display_name", "vip", "node_path"):
             value = payload.get(field)
             if not isinstance(value, str) or not value:
                 raise BadPayload(f"a cluster needs its {field.replace('_', ' ')}")
             texts[field] = value
+        certificate = payload.get("default_certificate")
+        if certificate is not None and (not isinstance(certificate, str) or not certificate):
+            raise BadPayload("the default certificate must be a name")
         pairs: dict[str, list[str]] = {}
         for name in ("blocks", "hosts"):
             value = payload.get(name)
             if (
                 not isinstance(value, list)
-                or len(value) != 2
+                or not 1 <= len(value) <= 2
                 or not all(isinstance(item, str) and item.strip() for item in value)
             ):
-                raise BadPayload(f"a cluster is created with two nodes: two {name}")
+                raise BadPayload(f"a cluster is created with one or two nodes: one or two {name}")
             pairs[name] = [str(item) for item in value]
+        if len(pairs["blocks"]) != len(pairs["hosts"]):
+            raise BadPayload("a cluster's blocks and hosts must pair up")
         prefix = payload.get("address_prefix")
         if prefix is not None and (isinstance(prefix, bool) or not isinstance(prefix, int)):
             raise BadPayload("the address prefix must be a number")
@@ -1173,6 +1179,7 @@ def prepare(
                 hosts=pairs["hosts"],
                 address_prefix=prefix,
                 address_interface=interface,
+                default_certificate=certificate,
                 **texts,
             ),
         )

@@ -1360,8 +1360,8 @@ certificate nothing holds anywhere is refused as `not_registered`.
 
 **The guards are the operation, not a warning.** A certificate is refused, with nothing touched,
 when a proxy object in a cluster's committed configuration still names it, when it is a cluster's
-`default_certificate`, when it is the only certificate a cluster has (the engine refuses to load a
-cluster no certificate names), when another registry entry names the same certbot lineage or the
+`default_certificate`, when it is the only certificate a cluster that has served certificates has
+(its listeners name them, so its next publish would be refused), when another registry entry names the same certbot lineage or the
 same receiver directory (the lineage and the receiver's pair are removed whole, so they have to
 be the entry's alone), or when a draft in the interface's database still names it. The
 draft check is the web's, made on the confirmation page and again as the job is queued; the worker
@@ -1833,8 +1833,8 @@ and no release until `haprion-cert-deploy -c <cluster>` and then `haprion-deploy
 certificates stops and says so, since the node has none.
 
 A removal takes the node's lines out of all six files, so it can no longer fetch configuration or
-certificates. It is refused for the node that reports holding the VIP and below two nodes; the node
-itself is not touched and keeps serving until it is shut down. A cluster has two to eight nodes
+certificates. It is refused for the node that reports holding the VIP and for a cluster's last node; the node
+itself is not touched and keeps serving until it is shut down. A cluster has one to eight nodes
 ([Cluster definitions](#cluster-definitions)). Each node's `keepalived.conf` is not written by this project.
 
 A change cut short - a reboot, a killed process, power - cannot leave the files half changed for
@@ -1855,32 +1855,34 @@ nodes from it rather than from the answers file. The runtime policy is kept the 
 
 ### Creating and removing a cluster
 
-Steps 1 and 2 make the clusters of a new installation from the answers file. A cluster added later
-is made by `haprion-cluster`, or the Nodes card under Settings, through the same root helper as a
-node:
+A manager may have no clusters, and a cluster may start with one node and no certificate. A
+cluster is made by `haprion-cluster`, or *Create cluster* under Settings, through the same root
+helper as a node; its next node is added the way any node is
+([Adding and removing a node](#adding-and-removing-a-node)):
 
 ```bash
-# On each of the two nodes: step 4 prints its enrollment block for the new cluster.
+# On the node: step 4 prints its enrollment block for the new cluster.
 sudo /usr/share/haprion-node/install/04-node-prepare answers.env beta
 
-# On the management host, both blocks on stdin in the order of the --host options:
+# On the management host, the block on stdin (two blocks and two --host options make both nodes at once):
 sudo haprion-cluster add -c beta --display-name Beta --vip 203.0.113.10 \
-    --node-path beta --certificate example.com \
-    --host node-c.example.com --host node-d.example.com [--prefix 24] [--interface eth0] < blocks
+    --node-path beta --host node-c.example.com [--certificate example.com] \
+    [--prefix 24] [--interface eth0] < block
 
 sudo haprion-cluster remove -c beta
 ```
 
-A creation writes, as one change: the cluster's entry in `clusters.yaml`; the default certificate's
-entry in the certificate registry, which gains the cluster as a target; a configuration repository
+A creation writes, as one change: the cluster's entry in `clusters.yaml`; with `--certificate`, that
+certificate's entry in the certificate registry, which gains the cluster as a target; a configuration repository
 (the bare history and the worktree, seeded with the same `core/haproxy.cfg`, `manual/` and
 `managed/network.yaml` step 1 makes, and owned like the others); an empty release directory; a
 `sudoedit` rule per handwritten file in the operator editing policy, checked with `visudo -cqf`
-before it is installed; the two repositories in root's git `safe.directory`; and both nodes in the
-six places of [Adding and removing a node](#adding-and-removing-a-node). Then both nodes are asked for their
+before it is installed; the two repositories in root's git `safe.directory`; and its nodes in the
+six places of [Adding and removing a node](#adding-and-removing-a-node). Then each node is asked for its
 status, as a single added node is. Anything short of that removes the repository and release
 directory again and puts every file back. The ID, the node path and the nodes' names and hosts
-must all be free; the certificate must already be in the registry.
+must all be free; a certificate named must already be in the registry. A cluster without one serves
+plain HTTP and TCP; an HTTPS object waits for a certificate issued or uploaded for it.
 
 The new cluster is polled and drawn from the poller's next pass ([Which clusters get
 polled](#which-clusters-get-polled)). It has no release until its network description and objects
@@ -1888,7 +1890,7 @@ are published and `haprion-cert-deploy -c <cluster>` and then `haprion-deploy -c
 the Backups page; its retention is the default until then. Each node's `keepalived.conf` is not
 written by this project.
 
-A removal is refused for the last cluster. It takes the cluster out of `clusters.yaml`, out of every
+A removal takes the cluster out of `clusters.yaml`, out of every
 certificate's targets, out of the editing policy and `safe.directory`, and takes its nodes out of the
 six places; it stops `haprion-state-backup@<cluster>.timer`. Nothing is deleted: the configuration
 repository and its history, the release directory, the nodes' backup archives and the retention
@@ -3763,11 +3765,12 @@ clusters:
 `node_path` is the subdirectory a node fetches from on the management host. It is the only
 per-cluster value the node side needs.
 
-A cluster has **between two and eight nodes**. keepalived sets no limit - one VRRP instance shares
+A cluster has **between one and eight nodes**. keepalived sets no limit - one VRRP instance shares
 its addresses between any number of nodes by priority, so a third node adds a standby, not capacity -
 and eight is a ceiling nobody is meant to reach rather than a size to aim for: the pages were measured
 to draw eight nodes per cluster without scrolling sideways, and every node costs the poller a read
-(below). Two is the floor, because a cluster of one has nothing to fail over to. Each node's own
+(below). One is the floor: a cluster is created with its first node and the next is added to it, and a
+cluster of one serves - with nothing to fail over to. Each node's own
 `keepalived.conf` (its priority and its `unicast_peer` list) is not written by this project.
 
 There is **no hard limit on the number of clusters** in the engine, interface configuration or

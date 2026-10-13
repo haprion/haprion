@@ -1,19 +1,22 @@
-"""``haprion-cluster`` - create a cluster with its first two nodes, or remove one (B211).
+"""``haprion-cluster`` - create a cluster with its first node or two, or remove one (B211, B302).
 
     haprion-cluster add -c <id> --display-name <name> --vip <address>
-                        --node-path <path> --certificate <id>
-                        --host <first node> --host <second node>
+                        --node-path <path> [--certificate <id>]
+                        --host <first node> [--host <second node>]
                         [--prefix <length>] [--interface <name>] [--json] < blocks
     haprion-cluster remove -c <id> [--json]
 
 `--json` prints the helper's envelope (`schemas/v1/haprion-cluster-define`)
 and leaves with its exit code.
 
-The blocks are what `04-node-prepare` printed on the two nodes, one after the
-other on stdin, in the order of the `--host` options. Both go through the same
+The blocks are what `04-node-prepare` printed on the nodes, one after the
+other on stdin, in the order of the `--host` options; a further node is added
+with `haprion-node add`. A cluster may start without a certificate (B302):
+`--certificate` names the one the certificate commands then refuse to take
+away from it. The request goes through the same
 root helper the interface's Settings page uses: the cluster file, the
 certificate registry, the repository, the release directory, the editing
-policy and both nodes' files change as one, and a node that does not then
+policy and the nodes' files change as one, and a node that does not then
 answer as itself takes all of it back.
 
 Removing archives the cluster's repository, release directory and backups under
@@ -41,7 +44,7 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--display-name", required=True)
     create.add_argument("--vip", required=True)
     create.add_argument("--node-path", required=True)
-    create.add_argument("--certificate", required=True)
+    create.add_argument("--certificate")
     create.add_argument("--host", action="append", required=True)
     create.add_argument("--prefix", type=int)
     create.add_argument("--interface")

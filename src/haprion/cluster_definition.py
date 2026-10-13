@@ -191,7 +191,7 @@ class Definition:
     display_name: str
     vip: str
     node_path: str
-    default_certificate: str
+    default_certificate: str | None
     nodes: tuple[tuple[Enrollment, str], ...]
     address_prefix: int | None = None
     address_interface: str | None = None
@@ -203,7 +203,7 @@ def definition(
     display_name: str,
     vip: str,
     node_path: str,
-    default_certificate: str,
+    default_certificate: str | None,
     blocks: Sequence[str],
     hosts: Sequence[str],
     address_prefix: int | None = None,
@@ -231,9 +231,13 @@ def definition(
         raise EnrollmentError("cluster_invalid", "the address prefix does not fit the VIP")
     if address_interface is not None and not NAME.fullmatch(address_interface):
         raise EnrollmentError("cluster_invalid", f"{address_interface!r} is not an interface name")
-    if len(blocks) != 2 or len(hosts) != 2:
+    #
+    # One node or two (B302): a cluster is created with its first node, and
+    # the next is added to it; two at once is still accepted.
+    #
+    if not 1 <= len(blocks) <= 2 or len(hosts) != len(blocks):
         raise EnrollmentError(
-            "cluster_invalid", "a cluster is created with its first two nodes' blocks"
+            "cluster_invalid", "a cluster is created with its first node's block, or its first two"
         )
     nodes = tuple(
         (node_enrollment.parse(block), node_enrollment.host_name(host))
@@ -246,7 +250,7 @@ def definition(
                 f"the block for {enrollment.name} was made for {enrollment.cluster!r}, not "
                 f"{cluster!r}; run 04-node-prepare on it with {cluster}",
             )
-    if nodes[0][0].name == nodes[1][0].name or nodes[0][1] == nodes[1][1]:
+    if len(nodes) == 2 and (nodes[0][0].name == nodes[1][0].name or nodes[0][1] == nodes[1][1]):
         raise EnrollmentError("cluster_invalid", "the two nodes must be two nodes")
     return Definition(
         cluster=cluster,
@@ -310,9 +314,10 @@ def _cluster_entry(
                 {"name": enrollment.name, "mgmt_host": host} for enrollment, host in spec.nodes
             ],
             "validation_certs": validation_certs,
-            "default_certificate": spec.default_certificate,
         }
     )
+    if spec.default_certificate is not None:
+        entry["default_certificate"] = spec.default_certificate
     return entry
 
 
@@ -349,12 +354,17 @@ def _edit_paths(policy: PathPolicy, cluster: str) -> tuple[str, str]:
 SUDOEDIT = re.compile(r"^\s*sudoedit (\S+?)(?:,\s*\\)?\s*$")
 
 
+RULE = "HAPROXY_EDITORS ALL = (root) HAPROXY_EDIT"
+
+
 def sudoers_with(text: str, add: Sequence[str] = (), drop: Sequence[str] = ()) -> str:
     """The operator editing policy with `add` named and `drop` gone, in step 2's shape.
 
     The whole alias is written again rather than one line edited: the last entry
     carries no trailing comma, so removing a line can move that position and
-    leave the file unparseable (user-manual.md, 'Sudo rules').
+    leave the file unparseable (user-manual.md, 'Sudo rules'). With no file
+    left to name - the last cluster removed (B302) - the alias and its rule go,
+    since sudo refuses an empty alias; the next cluster writes them again.
     """
 
     lines = text.splitlines()
@@ -362,23 +372,23 @@ def sudoers_with(text: str, add: Sequence[str] = (), drop: Sequence[str] = ()) -
     paths = [path for path in paths if path not in drop] + [
         path for path in add if path not in paths
     ]
-    try:
-        start = next(
-            i for i, line in enumerate(lines) if line.startswith("Cmnd_Alias HAPROXY_EDIT")
-        )
-    except StopIteration:
+    if not any(line.startswith("User_Alias HAPROXY_EDITORS") for line in lines):
         raise EnrollmentError(
-            "dependency_unavailable", "the operator editing policy has no HAPROXY_EDIT alias", 78
-        ) from None
-    end = start + 1
-    while end < len(lines) and SUDOEDIT.match(lines[end]):
-        end += 1
+            "dependency_unavailable", "the operator editing policy names no HAPROXY_EDITORS", 78
+        )
+    kept = [
+        line
+        for line in lines
+        if not line.startswith("Cmnd_Alias HAPROXY_EDIT")
+        and not SUDOEDIT.match(line)
+        and line.strip() != RULE
+    ]
+    while kept and not kept[-1].strip():
+        kept.pop()
     if not paths:
-        raise EnrollmentError("cluster_last", "the editing policy would name no file")
+        return "\n".join(kept) + "\n"
     entries = [f"    sudoedit {path}, \\" for path in paths[:-1]] + [f"    sudoedit {paths[-1]}"]
-    return (
-        "\n".join([*lines[:start], "Cmnd_Alias HAPROXY_EDIT = \\", *entries, *lines[end:]]) + "\n"
-    )
+    return "\n".join([*kept, "", "Cmnd_Alias HAPROXY_EDIT = \\", *entries, "", RULE]) + "\n"
 
 
 def _checked_sudoers(text: str, tools: Tools) -> None:
@@ -763,22 +773,36 @@ def plan_add(
                         "node_exists",
                         f"{enrollment.name} ({host}) is already in {other.cluster_id}",
                     )
-    first = next(iter(runtime.clusters.values()))
+    #
+    # The validation certificate's directory, as the clusters already here
+    # name it, or where the installation put it when this is the first
+    # (B302 - a manager is installed without clusters).
+    #
+    first = next(iter(runtime.clusters.values()), None)
+    validation_certs = (
+        str(first.validation_certs)
+        if first is not None
+        else str(policy.validation_certs_root / "certs")
+    )
 
     clusters_before = _read(policy.cluster_file)
     document = safe_yaml.load(clusters_before)
     document["clusters"][spec.cluster] = _cluster_entry(
         policy,
         spec,
-        validation_certs=str(first.validation_certs),
+        validation_certs=validation_certs,
         logging=locations.collector_config.exists(),
     )
     clusters_after = yaml.safe_dump(document, sort_keys=False).encode()
     registry_before = _read(policy.certificate_registry)
-    registry_after = _registry_with(
-        cert_registry.read_document(policy.certificate_registry),
-        spec.default_certificate,
-        spec.cluster,
+    registry_after = (
+        registry_before
+        if spec.default_certificate is None
+        else _registry_with(
+            cert_registry.read_document(policy.certificate_registry),
+            spec.default_certificate,
+            spec.cluster,
+        )
     )
     _candidate(policy, clusters_after, registry_after, require_secure=require_secure)
 
@@ -885,8 +909,6 @@ def remove(
     places = places or Places()
     if cluster not in runtime.clusters:
         raise EnrollmentError("cluster_unknown", f"there is no cluster {cluster!r}")
-    if len(runtime.clusters) == 1:
-        raise EnrollmentError("cluster_last", "this is the only cluster; the manager keeps one")
     if policy.certificate_registry is None:
         raise EnrollmentError(
             "dependency_unavailable", "the runtime policy names no certificate_registry", 78

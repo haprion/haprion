@@ -526,7 +526,9 @@ def plan_remove(
     if len(nodes) <= MIN_NODES:
         raise EnrollmentError(
             "cluster_minimum",
-            f"a cluster keeps at least {MIN_NODES} nodes; remove the cluster instead",
+            "a cluster keeps its last node; remove the cluster instead"
+            if MIN_NODES == 1
+            else f"a cluster keeps at least {MIN_NODES} nodes; remove the cluster instead",
         )
 
     clusters_before = _read(policy.cluster_file)

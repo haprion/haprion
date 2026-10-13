@@ -862,9 +862,11 @@ class DefiningClusters(unittest.TestCase):
 
     def test_a_creation_short_of_its_shape_is_refused(self) -> None:
         for change, message in (
-            ({"hosts": ["node-c.example.com"]}, "two hosts"),
-            ({"blocks": ["one", "two", "three"]}, "two blocks"),
-            ({"blocks": ["one", " "]}, "two blocks"),
+            ({"hosts": ["node-c.example.com"]}, "pair up"),
+            ({"hosts": []}, "one or two hosts"),
+            ({"blocks": ["one", "two", "three"]}, "one or two blocks"),
+            ({"blocks": ["one", " "]}, "one or two blocks"),
+            ({"default_certificate": ""}, "default certificate must be a name"),
             ({"vip": ""}, "its vip"),
             ({"address_prefix": "24"}, "prefix must be a number"),
             ({"address_prefix": True}, "prefix must be a number"),

@@ -239,6 +239,32 @@ class Site:
 
 @unittest.skipUnless(Path(GIT).exists(), "git is not installed where the tests run")
 class CreatingACluster(unittest.TestCase):
+    def test_the_first_cluster_on_an_empty_manager_with_one_node_and_no_certificate(self) -> None:
+        """B302: installed without clusters, the first is created with its first node."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+            site.remove("alpha")
+            registry_before = site.registry.read_bytes()
+
+            site.add(
+                site.spec(
+                    default_certificate=None,
+                    blocks=[block("node-c", 10)],
+                    hosts=["node-c.example.com"],
+                )
+            )
+
+            gamma = site.runtime().cluster("gamma")
+            self.assertEqual([node.name for node in gamma.nodes], ["node-c"])
+            self.assertIsNone(gamma.default_certificate)
+            self.assertEqual(gamma.certificate_ids, ())
+            self.assertEqual(gamma.validation_certs, site.root / "validation/certs")
+            self.assertEqual(site.registry.read_bytes(), registry_before)
+            sudoers = site.sudoers.read_text()
+            self.assertIn(f"sudoedit {site.config_root}/gamma/core/haproxy.cfg, \\", sudoers)
+            self.assertTrue(sudoers.rstrip().endswith("HAPROXY_EDITORS ALL = (root) HAPROXY_EDIT"))
+
     def test_the_cluster_its_repository_and_its_nodes_exist_as_one(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = Site(Path(raw))
@@ -436,11 +462,14 @@ class RemovingACluster(unittest.TestCase):
             with self.assertRaisesRegex(EnrollmentError, "is archived"):
                 site.add()
 
-    def test_the_last_cluster_stays(self) -> None:
+    def test_the_last_cluster_can_go_and_its_editing_rule_with_it(self) -> None:
+        """B302: no clusters is a manager's state; the editing policy keeps no empty alias."""
+
         with tempfile.TemporaryDirectory() as raw:
             site = Site(Path(raw))
-            with self.assertRaisesRegex(EnrollmentError, "only cluster"):
-                site.remove("alpha")
+            site.remove("alpha")
+            self.assertEqual(dict(site.runtime().clusters), {})
+            self.assertNotIn("HAPROXY_EDIT =", site.sudoers.read_text())
 
     def test_a_failure_puts_back_what_was_moved(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

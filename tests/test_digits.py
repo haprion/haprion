@@ -25,6 +25,15 @@ PYTHON_TREES = ("src", "ui/src", "tools", "contract-tests")
 SCRIPT_TREES = ("install", "examples")
 BARE = re.compile(r"\.(isdigit|isdecimal|isnumeric)\(")
 EXPLAINED = ROOT / "src" / "haprion" / "digits.py"
+#
+# The one line allowed to call `isdigit()`: the check itself, with its length
+# cap. A line that merely mentions `isascii()` is not that line - ASCII without
+# a cap still hands `int()` 5 000 digits, which it refuses (review 26-10-13
+# r16k, F2). The node scripts carry it as `_digits`, since they cannot import
+# the engine, and are held to the same line and the same limit.
+#
+CHECK = "return 0 < len(text) <= limit and text.isascii() and text.isdigit()"
+NODE_COPY = f"def _digits(text, limit={MAX_DIGITS}):"
 
 
 def _sources() -> list[Path]:
@@ -70,9 +79,29 @@ class NoBareIsDigit(unittest.TestCase):
             f"{path.relative_to(ROOT)}:{number}: {line.strip()}"
             for path in _sources()
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-            if BARE.search(line) and ".isascii()" not in line
+            if BARE.search(line) and line.strip() != CHECK
         ]
         self.assertEqual(found, [], "use haprion.digits.is_digits (a node script: _digits)")
+
+    def test_the_engine_and_every_node_copy_are_the_same_check(self) -> None:
+        self.assertIn(f"    {CHECK}\n", EXPLAINED.read_text(encoding="utf-8"))
+        copies = [path for path in _sources() if CHECK in path.read_text(encoding="utf-8")]
+        self.assertTrue(copies, "the node scripts' _digits is no longer found")
+        for path in copies:
+            with self.subTest(script=path.name):
+                lines = path.read_text(encoding="utf-8").splitlines()
+                at = next(i for i, line in enumerate(lines) if line.strip() == CHECK)
+                definition = next(line for line in reversed(lines[:at]) if line.startswith("def "))
+                self.assertEqual(definition, NODE_COPY)
+
+    def test_the_gate_refuses_ascii_without_a_cap(self) -> None:
+        for line in (
+            "if text.isascii() and text.isdigit():",
+            "    return text.isascii() and text.isdigit()",
+            "ok = value.isdigit()",
+        ):
+            with self.subTest(line=line):
+                self.assertTrue(BARE.search(line) and line.strip() != CHECK)
 
 
 if __name__ == "__main__":

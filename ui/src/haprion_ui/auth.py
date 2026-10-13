@@ -99,10 +99,12 @@ def verify_password(password_hash: str, password: str) -> bool:
     library cannot parse is a broken account, and the honest answer to "can this
     person log in" is no - not a stack trace on the login path.
 
-    Rehashing on login is deliberately absent: the web role holds no `update` on
-    `app_user`, so it could not write a new hash if it wanted to. Changing
-    parameters is a password reset through the local tool, which is the same
-    privilege boundary everything else about accounts sits behind.
+    Rehashing on login is deliberately absent. The web role can write
+    `password_hash` (migration 0039, for an administrator setting a password and
+    for a person changing their own), but the sign-in path writes nothing about
+    the account: a login that rewrote the hash would turn every sign-in into an
+    account change. New parameters reach a hash the next time its password is
+    set.
     """
 
     try:

@@ -5611,6 +5611,12 @@ sudo is setuid and the whole point of this service is to run one helper through
 it; a capability set that permits changing uid, for the same reason; and network
 address families, because the helper reaches nodes from inside this sandbox.
 
+`ProtectProc=invisible` hides the poller's own process from the root sudo runs as, since the
+bounding set withholds `CAP_SYS_PTRACE`, and sudo-rs then warns on every call that it *could not get
+parent process starting time* - the parent's start time is what it ties a cached password to, and
+the rules are NOPASSWD. The poller and worker units drop that one exact line with
+`LogFilterPatterns=`; everything else sudo logs, refusals included, reaches the journal as before.
+
 One more is worth stating separately, because it was found by running it rather
 than by reasoning about it. The status identity's key is root-owned and lives
 under `/root`, so the unit needs a hole in `ProtectHome` — and:

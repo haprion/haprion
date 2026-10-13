@@ -111,6 +111,15 @@ ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
 ProtectProc=invisible
+# sudo-rs reads its parent's start time from /proc for the timestamp it ties a
+# password to, and the parent - this unit's process, another user than the
+# root sudo runs as - is hidden by ProtectProc without CAP_SYS_PTRACE, which
+# the bounding set leaves out on purpose. Every call then logged one warning,
+# some 24 000 lines a day (measured 26-10-13). The rules are NOPASSWD, so the
+# timestamp is never used: the one exact line is dropped, everything else sudo
+# says is kept. Hiding the processes and withholding the capability are the
+# sandbox doing its job, and neither is loosened for a log line.
+LogFilterPatterns=~^Could not get parent process starting time$
 RestrictSUIDSGID=yes
 RestrictNamespaces=yes
 RestrictRealtime=yes

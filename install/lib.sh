@@ -36,11 +36,44 @@ die()  { echo "ERROR: $*" >&2; exit 1; }
 # lift them out of a step's log.
 #
 fail() {
-    local what="$1" why="${2:-}" todo="${3:-}"
+    local what="$1" why="${2:-}" todo="${3:-}" line
     echo "ERROR: ${what}" >&2
-    [[ -z "$why" ]] || echo "WHY: ${why}" >&2
-    [[ -z "$todo" ]] || echo "TODO: ${todo}" >&2
+    # One prefix a line: a reason taken from a journal may be several.
+    while IFS= read -r line; do
+        [[ -z "$line" ]] || echo "WHY: ${line}" >&2
+    done <<<"$why"
+    while IFS= read -r line; do
+        [[ -z "$line" ]] || echo "TODO: ${line}" >&2
+    done <<<"$todo"
     exit 1
+}
+
+#
+# Restart units and, when one does not come up, say why in the unit's own
+# words: systemctl answers only "the control process exited with error code",
+# and the reason - a path the sandbox cannot open, a missing file - is in the
+# journal (26-10-13, the first machine).
+#
+restart_units() {
+    local unit
+    systemctl restart "$@" 2>/dev/null && return 0
+    for unit in "$@"; do
+        systemctl is-active --quiet "$unit" && continue
+        fail "${unit} did not start" "$(unit_failure "$unit")" \
+             "correct what the lines above name, then run this step again
+the unit's whole journal: journalctl -u ${unit} -n 50"
+    done
+}
+
+#
+# The journal lines that say why a unit failed, without systemd's own
+# bookkeeping around them: the last three different ones, since a unit that
+# restarts says the same thing on every attempt.
+#
+unit_failure() {
+    journalctl -u "$1" -n 200 -o cat --no-pager 2>/dev/null \
+        | grep -Ev '^(Starting |Started |Stopped |Stopping |Failed to start |.*: Scheduled restart job|.*: Main process exited|.*: Failed with result|.*: Consumed )' \
+        | awk '!seen[$0]++' | tail -n 3 || true
 }
 
 #

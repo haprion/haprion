@@ -242,11 +242,27 @@ step "Directories the worker's sandbox opens"
 # registry (user-manual.md, 'The certificate registry') and stays empty until the import helper
 # exists; the deletion helper removes from it, so the unit opens it, and it
 # has to be here before the unit is. Root-only, like the profile directory.
-# Certbot's directories and the distribution root are checked by step 14.
+# The distribution root is checked by step 14.
 #
 ensure_dir /etc/haprion/certificates root:root 700
 ensure_dir /etc/haprion/ndes-profiles root:root 700
 ensure_dir /etc/haprion/ndes-requests root:root 700
+# Step 15's, as it makes it; that step is optional and may come later.
+ensure_dir /etc/haprion/dns-profiles root:root 700
+#
+# Certbot's own three, made with the owner and mode certbot gives them when
+# they are missing - on a new machine no certbot has run yet, and the worker
+# would not start (26-10-13). Never corrected when they exist: they are
+# certbot's, and step 14 checks them.
+#
+for path in /etc/letsencrypt:755 /var/lib/letsencrypt:755 /var/log/letsencrypt:700; do
+    if [[ -d "${path%:*}" ]]; then
+        log "  ok       ${path%:*}"
+    else
+        install -d -o root -g root -m "${path##*:}" "${path%:*}"
+        log "  created  ${path%:*}"
+    fi
+done
 
 step "Units"
 policy_paths="$(worker_writable_paths)" \
@@ -267,7 +283,7 @@ step "Starting"
 # how a sandbox fix can look like it did not work.
 #
 systemctl enable --quiet "$WORKER_UNIT" "$POLLER_UNIT"
-systemctl restart "$WORKER_UNIT" "$POLLER_UNIT"
+restart_units "$WORKER_UNIT" "$POLLER_UNIT"
 for unit in "${units[@]}"; do
     systemctl is-active --quiet "${unit}.service" \
         || { systemctl status --no-pager --lines=20 "${unit}.service" || true;

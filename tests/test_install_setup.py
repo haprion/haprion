@@ -543,6 +543,74 @@ class WhatLibShReadsShipsWithIt(unittest.TestCase):
         self.assertEqual({f"install/{name}" for name in self.sourced()} - listed, set())
 
 
+class TheWorkersSandboxOpensWhatExists(unittest.TestCase):
+    """Every fixed path the worker unit opens is made by step 07, before the unit.
+
+    systemd refuses to start a unit whose ReadWritePaths names a missing path;
+    the first new machine stopped on /etc/letsencrypt (26-10-13).
+    """
+
+    # Made elsewhere, before step 07 can run.
+    ELSEWHERE = {"/run/haprion": "install/tmpfiles/haprion.conf, applied by step 1"}
+
+    def test_each_one_is_created_by_step_07(self) -> None:
+        unit = (INSTALL / "platform/examples/haprion-worker.service.example").read_text()
+        line = re.search(r"^ReadWritePaths=(.*)$", unit, re.MULTILINE)
+        assert line is not None
+        fixed = [path for path in line.group(1).split() if not path.startswith("@")]
+        step = (INSTALL / "platform/07-platform-services").read_text()
+        made = set(re.findall(r"^ensure_dir (\S+) ", step, re.MULTILINE))
+        loop = re.search(r"^for path in ((?:/\S+:\d+ ?)+); do", step, re.MULTILINE)
+        assert loop is not None
+        made |= {entry.split(":")[0] for entry in loop.group(1).split()}
+        self.assertEqual(set(fixed) - made, set(self.ELSEWHERE))
+
+
+class AUnitThatDoesNotStart(unittest.TestCase):
+    """Reported with the journal's reason, not systemctl's 'control process exited'."""
+
+    JOURNAL = (
+        "Starting haprion-worker.service - Haprion job worker...\n"
+        "haprion-worker.service: Failed to set up mount namespacing: /etc/letsencrypt: No such file or directory\n"
+        "haprion-worker.service: Failed at step NAMESPACE spawning /opt/x/haprion-worker: No such file or directory\n"
+        "haprion-worker.service: Main process exited, code=exited, status=226/NAMESPACE\n"
+        "haprion-worker.service: Failed with result 'exit-code'.\n"
+        "Failed to start haprion-worker.service - Haprion job worker.\n"
+        "haprion-worker.service: Scheduled restart job, restart counter is at 6.\n"
+    )
+
+    def test_the_reason_is_the_units_own_words(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            for name, body in (
+                ("systemctl", "#!/bin/sh\nexit 1\n"),
+                ("journalctl", '#!/bin/sh\ncat "$JOURNAL"\n'),
+            ):
+                stub = Path(raw) / name
+                stub.write_text(body)
+                stub.chmod(0o755)
+            journal = Path(raw) / "journal"
+            journal.write_text(self.JOURNAL * 2)
+            done = bash(
+                'set -Eeuo pipefail; source "$1"; PATH="$2:$PATH"; restart_units haprion-worker.service',
+                str(LIB),
+                raw,
+                env=dict(os.environ, JOURNAL=str(journal)),
+            )
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(
+            done.stderr.splitlines(),
+            [
+                "ERROR: haprion-worker.service did not start",
+                "WHY: haprion-worker.service: Failed to set up mount namespacing: "
+                "/etc/letsencrypt: No such file or directory",
+                "WHY: haprion-worker.service: Failed at step NAMESPACE spawning "
+                "/opt/x/haprion-worker: No such file or directory",
+                "TODO: correct what the lines above name, then run this step again",
+                "TODO: the unit's whole journal: journalctl -u haprion-worker.service -n 50",
+            ],
+        )
+
+
 class NoClusterYetForTheCollector(unittest.TestCase):
     def test_a_collector_with_no_node_loads(self) -> None:
         document = {

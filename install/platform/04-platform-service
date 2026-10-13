@@ -35,7 +35,7 @@ log "  reloaded systemd"
 
 step "Starting"
 systemctl enable --quiet "${unit_name}.service"
-systemctl restart "${unit_name}.service"
+restart_units "${unit_name}.service"
 log "  started  ${unit_name}.service"
 
 #

@@ -316,30 +316,51 @@ CACHES=(
     cluster_network
 )
 
-step "Proving the poller cached every read it makes"
 fresh_rows() {
     sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX -c \
         "select count(*) from ${1} where observed_at > '${started_at}'" \
         2>/dev/null || echo 0
 }
-all_cached=0
-for _ in $(seq 30); do
-    all_cached=1
-    for table in "${CACHES[@]}"; do
-        [[ "$(fresh_rows "$table")" -gt 0 ]] || all_cached=0
+#
+# The cached reads are per cluster, so an installation with none yet (B302)
+# has none to prove; what proves the poller then is the list it records on
+# every pass - empty, and newer than the restart.
+#
+if [[ -z "$(installed_clusters)" ]]; then
+    step "Proving the poller runs, with no cluster yet"
+    recorded=0
+    for _ in $(seq 30); do
+        recorded="$(sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX -c \
+            "select count(*) from cluster_list where observed_at > '${started_at}' and clusters = '[]'" \
+            2>/dev/null || echo 0)"
+        [[ "$recorded" -gt 0 ]] && break
+        sleep 1
     done
-    [[ "$all_cached" -eq 1 ]] && break
-    sleep 1
-done
-[[ "$all_cached" -eq 1 ]] || {
-    journalctl -u "$POLLER_UNIT" --no-pager --lines=20 || true
-    die "the poller wrote no fresh rows for every cached read within 30 seconds"
-}
-for table in "${CACHES[@]}"; do
-    sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qAX -c \
-        "select cluster, outcome, coalesce(poll_error, '-') as poll_error, observed_at
-           from ${table} order by cluster" | sed 's/^/  /'
-done
+    [[ "$recorded" -gt 0 ]] \
+        || fail "the poller recorded no pass within 30 seconds" "$(unit_failure "$POLLER_UNIT")" \
+                "the poller's whole journal: journalctl -u ${POLLER_UNIT} -n 50"
+    log "  ok       the poller passes, and records that there is no cluster yet"
+else
+    step "Proving the poller cached every read it makes"
+    all_cached=0
+    for _ in $(seq 30); do
+        all_cached=1
+        for table in "${CACHES[@]}"; do
+            [[ "$(fresh_rows "$table")" -gt 0 ]] || all_cached=0
+        done
+        [[ "$all_cached" -eq 1 ]] && break
+        sleep 1
+    done
+    [[ "$all_cached" -eq 1 ]] \
+        || fail "the poller wrote no fresh rows for every cached read within 30 seconds" \
+                "$(unit_failure "$POLLER_UNIT")" \
+                "the poller's whole journal: journalctl -u ${POLLER_UNIT} -n 50"
+    for table in "${CACHES[@]}"; do
+        sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qAX -c \
+            "select cluster, outcome, coalesce(poll_error, '-') as poll_error, observed_at
+               from ${table} order by cluster" | sed 's/^/  /'
+    done
+fi
 
 step "What each identity must not be able to do"
 failed=0

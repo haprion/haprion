@@ -20,7 +20,7 @@ from typing import Any
 import psycopg
 from haprion.version_history import MAX_LIST_LIMIT
 
-from haprion_ui import config, db, poller
+from haprion_ui import config, db, poller, service
 
 
 def completed(stdout: str, *, returncode: int = 0, stderr: str = "") -> Any:
@@ -443,6 +443,70 @@ class TheSingletonLockSession(unittest.TestCase):
         source = inspect.getsource(poller.main)
         self.assertIn("db.lock_session(", source)
         self.assertNotIn("lock_pool", source)
+
+
+class NoClusterYet(unittest.TestCase):
+    """A new installation has no cluster (B302); the poller runs, it does not exit."""
+
+    def test_the_poller_records_that_there_is_none_and_keeps_polling(self) -> None:
+        recorded: list[tuple[str, ...]] = []
+        passes: list[tuple[str, ...]] = []
+
+        class OnePass:
+            def __init__(self, **_kwargs: Any) -> None:
+                self.asked = 0
+
+            def requested(self) -> bool:
+                self.asked += 1
+                return self.asked > 1
+
+        @contextlib.contextmanager
+        def session(_database: Any) -> Any:
+            yield object()
+
+        def record_pass(_pool: Any, _config: Any, *, clusters: tuple[str, ...]) -> int:
+            passes.append(clusters)
+            return 0
+
+        pool = unittest.mock.MagicMock()
+        patches = {
+            "read_cluster_list": unittest.mock.Mock(return_value=()),
+            "load_config": unittest.mock.Mock(
+                return_value=unittest.mock.Mock(
+                    clusters=(), poller=config.Poller(interval_seconds=20)
+                )
+            ),
+            "index_cluster_list": unittest.mock.Mock(),
+            "poll_once": record_pass,
+            "StopRequest": OnePass,
+        }
+        with contextlib.ExitStack() as stack:
+            for name, value in patches.items():
+                stack.enter_context(unittest.mock.patch.object(poller, name, value))
+            stack.enter_context(unittest.mock.patch.object(db, "pool", return_value=pool))
+            stack.enter_context(
+                unittest.mock.patch.object(db, "listener", return_value=unittest.mock.Mock())
+            )
+            stack.enter_context(unittest.mock.patch.object(db, "lock_session", session))
+            stack.enter_context(
+                unittest.mock.patch.object(
+                    db, "connected_identity", return_value=("app_poller", "haprion")
+                )
+            )
+            stack.enter_context(
+                unittest.mock.patch.object(db, "try_singleton_lock", return_value=True)
+            )
+            stack.enter_context(
+                unittest.mock.patch.object(
+                    db,
+                    "record_cluster_list",
+                    lambda _connection, clusters: recorded.append(tuple(clusters)),
+                )
+            )
+            stack.enter_context(unittest.mock.patch.object(service, "sleep_until_notified"))
+            code = poller.main([])
+        self.assertEqual(code, 0)
+        self.assertEqual((recorded, passes), ([()], [()]))
 
 
 class TheClusterList(unittest.TestCase):

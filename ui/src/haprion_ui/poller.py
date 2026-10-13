@@ -624,12 +624,12 @@ def main(argv: list[str] | None = None) -> int:
     #
     # The cluster file decides which clusters exist (B206); `ui.toml`'s list is
     # the fallback while the list helper cannot be read, and the only list
-    # before it was installed.
+    # before it was installed. None at all is an installation whose first
+    # cluster is not created yet (B302): the poller runs its passes, records
+    # that there is none, and takes up the first one the pass after it exists.
     #
-    known = read_cluster_list() or config.clusters
-    if not known:
-        logger.error("no clusters are configured; there is nothing to poll")
-        return 78
+    listed_at_start = read_cluster_list()
+    known = listed_at_start if listed_at_start is not None else config.clusters
 
     pool = db.pool(config.database, min_size=1, max_size=4)
     pool.open(wait=True, timeout=10)
@@ -679,7 +679,10 @@ def main(argv: list[str] | None = None) -> int:
                         connection.commit()
                 index_cluster_list(pool, known)
                 healthy = poll_once(pool, config, clusters=known)
-                logger.info("%d/%d cluster(s) fully current", healthy, len(known))
+                if known:
+                    logger.info("%d/%d cluster(s) fully current", healthy, len(known))
+                else:
+                    logger.info("no cluster yet; Settings - Create cluster makes the first")
                 #
                 # Woken by a finished job as well as by the clock. A publish
                 # that changed a cluster used to sit invisible until the next

@@ -646,6 +646,34 @@ class CallerTests(HelperFixture):
         self.assertIn("Addresses:    in use", out)
         self.assertIn("Addresses:    BEHIND the release - run haprion-deploy", out)
 
+    def test_the_log_forwarding_is_named_only_when_it_is_the_half_that_is_behind(self) -> None:
+        """Review 26-10-13, A1: rsyslog kept the previous receivers."""
+
+        carried = {
+            "published": True,
+            "published_sha256": "a1" * 32,
+            "installed": True,
+            "installed_sha256": "a1" * 32,
+        }
+        kept = dict(carried, installed_sha256="b2" * 32)
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a", owner=True, release_hash=TARGET_HASH, forward_file=carried
+                    ),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=TARGET_HASH, forward_file=kept
+                    ),
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertEqual(out.count("Forward file:"), 1)
+        self.assertIn("Forward file: BEHIND the release - run haprion-deploy", out)
+
     def test_the_ipvs_file_has_a_line_of_its_own(self) -> None:
         stale = dict(IPVS, installed_sha256="b2" * 32)
         outside = dict(IPVS, included=False)

@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import threading
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO, cast
 
@@ -255,7 +257,73 @@ class _Common:
     document: Mapping[str, JsonValue]
 
 
+#
+# How long a caller has to hand over its request - the line, and for a caller
+# that holds no lifeline the end of its input. A byte limit is not a time
+# limit: a caller that connected to a socket and said nothing held one of the
+# few connections a helper takes, for as long as it liked (security review
+# 26-10-13, S08). Every caller writes its request at once; this is for the one
+# that does not.
+#
+REQUEST_DEADLINE_SECONDS = 30
+
+
+class _RequestTimedOut(Exception):
+    pass
+
+
+@contextmanager
+def _request_deadline(seconds: float) -> Iterator[None]:
+    """Raise HelperProtocolError if the block is still reading after `seconds`.
+
+    A timer signal, because the request is read through a buffered stream that
+    must stay blocking - it may be the lifeline afterwards. Signals reach the
+    main thread only; read anywhere else, there is no deadline to set.
+    """
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def expired(_signum: int, _frame: object) -> None:
+        raise _RequestTimedOut
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    except _RequestTimedOut as exc:
+        raise HelperProtocolError(
+            f"no complete request arrived within {seconds:g} s", exit_code=65
+        ) from exc
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def _read_common(
+    stream: BinaryIO,
+    *,
+    expected_operation: str,
+    allowed_parameter_keys: frozenset[str] = frozenset(),
+    validate_parameters: ParameterValidator | None = None,
+    max_bytes: int = MAX_REQUEST_BYTES,
+    lifeline: bool = False,
+) -> _Common:
+    """`_read_request`, within the time a caller has to send it (S08)."""
+
+    with _request_deadline(REQUEST_DEADLINE_SECONDS):
+        return _read_request(
+            stream,
+            expected_operation=expected_operation,
+            allowed_parameter_keys=allowed_parameter_keys,
+            validate_parameters=validate_parameters,
+            max_bytes=max_bytes,
+            lifeline=lifeline,
+        )
+
+
+def _read_request(
     stream: BinaryIO,
     *,
     expected_operation: str,

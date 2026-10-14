@@ -5,6 +5,7 @@ import json
 import os
 import time
 import unittest
+import unittest.mock
 from collections.abc import Mapping
 from typing import Any
 
@@ -189,6 +190,39 @@ class RequestFraming(unittest.TestCase):
     def test_an_empty_line_is_an_empty_request(self) -> None:
         with self.assertRaisesRegex(HelperProtocolError, "empty"):
             self.read(b"\n")
+
+
+class TheRequestHasADeadline(unittest.TestCase):
+    """S08 (security review 26-10-13): a caller that connects and says nothing,
+    or never ends its input, held a helper's connection for as long as it liked."""
+
+    def read_from_silent_pipe(self, written: bytes) -> float:
+        read_end, write_end = os.pipe()
+        self.addCleanup(os.close, write_end)
+        os.write(write_end, written)
+        with (
+            os.fdopen(read_end, "rb") as stream,
+            unittest.mock.patch.object(helper_protocol, "REQUEST_DEADLINE_SECONDS", 0.2),
+        ):
+            started = time.monotonic()
+            with self.assertRaisesRegex(HelperProtocolError, "no complete request"):
+                read_helper_request(stream, expected_operation="status")
+            return time.monotonic() - started
+
+    def test_a_caller_that_sends_nothing_is_refused(self) -> None:
+        self.assertLess(self.read_from_silent_pipe(b""), 5)
+
+    def test_a_caller_that_never_ends_its_input_is_refused(self) -> None:
+        line = json.dumps(
+            {
+                "schema_version": 1,
+                "operation": "status",
+                "cluster": "alpha",
+                "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "parameters": {},
+            }
+        ).encode()
+        self.assertLess(self.read_from_silent_pipe(line + b"\n"), 5)
 
 
 class TheLifeline(unittest.TestCase):

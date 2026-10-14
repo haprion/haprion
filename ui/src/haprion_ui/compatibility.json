@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0073",
+    "database_head": "0074",
     "rollback_safe_from": "0064",
     "database_revisions": [
       "0028",
@@ -49,9 +49,10 @@
       "0070",
       "0071",
       "0072",
-      "0073"
+      "0073",
+      "0074"
     ],
-    "engine_api": 29,
+    "engine_api": 30,
     "node_api": 1,
     "poller_helpers": [
       "haprion-status-helper",

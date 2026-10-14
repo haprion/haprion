@@ -4091,7 +4091,10 @@ for longer than two minutes refuses with `operation_locked` rather than waiting 
 
 `haprion-cert-list` reports `source` and `targets` for every certificate the registry names, and
 `null` for both on a file in the distribution directory that no entry names: a certificate placed
-there by hand, listed so it can be registered rather than hidden.
+there by hand, listed so it can be registered rather than hidden. `haprion-cert-list -c <cluster>`
+answers for one cluster; `haprion-cert-list --registry` asks the manager for the whole registry and
+what the interface is served with, and answers before the first cluster exists. The poller reads it
+the same way, once a pass.
 
 #### Certificate publication hook
 

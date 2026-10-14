@@ -777,10 +777,6 @@ def cert_list_result(
     letsencrypt_root: Path = LETSENCRYPT_ROOT,
     now: datetime | None = None,
     registry: Registry | None = None,
-    import_store: Path = IMPORT_STORE,
-    request_root: Path | None = None,
-    manager: str | None = None,
-    interface_served: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The cluster's referenced certificates, then the rest of the directory.
 
@@ -791,7 +787,8 @@ def cert_list_result(
     With a registry, each entry also says where the certificate comes from and
     which clusters and receivers it goes to. A certificate published to a
     receiver only is not in this directory and so not in this listing - it is
-    a per-cluster answer, and that certificate is nobody's here.
+    a per-cluster answer, and that certificate is nobody's here; the whole
+    registry is `manager_result`'s.
     """
 
     if not root.is_dir():
@@ -820,21 +817,40 @@ def cert_list_result(
             for name in order
         ]
     }
-    #
-    # The same block in every cluster's answer, because it is the same file
-    # read the same way. Carried here rather than by a helper of its own: the
-    # poller is indexed by cluster in every one of its cache tables, so a
-    # clusterless source would have cost a new table, a migration and the two
-    # releases that a schema revision drags with it. The interface reads this
-    # from the freshest cluster row, so a registry written between two clusters'
-    # polls is never shown half.
-    #
+    return result
+
+
+def manager_result(
+    root: Path,
+    registry: Registry | None,
+    *,
+    letsencrypt_root: Path = LETSENCRYPT_ROOT,
+    now: datetime | None = None,
+    import_store: Path = IMPORT_STORE,
+    request_root: Path | None = None,
+    manager: str | None = None,
+    interface_served: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """What the manager holds, asked of the manager rather than of a cluster.
+
+    The registry used to travel in every cluster's listing, which left a
+    manager with no cluster yet unable to say anything about its own
+    certificates - not even the one its interface is served with (B304).
+    `registry` is absent where the installation declares none; what the
+    interface is served with is said either way.
+    """
+
+    if not root.is_dir():
+        raise CertInventoryError(f"the certificate root {root} is not a directory")
+    result: dict[str, Any] = {
+        "interface_served": dict(interface_served) if interface_served is not None else None
+    }
     if registry is not None:
         result["registry"] = registry_result(
             registry,
             certificate_root=root,
-            renewed=renewed,
-            now=clock,
+            renewed=renewed_fingerprints(letsencrypt_root),
+            now=now or datetime.now(UTC),
             live=letsencrypt_root / "live",
             store=import_store,
             request_root=request_root,

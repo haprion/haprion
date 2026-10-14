@@ -3,39 +3,10 @@
   "ok": true,
   "outcome": "done",
   "operation": "cert_list",
-  "cluster": "alpha",
+  "cluster": null,
   "request_id": "99999999-9999-4999-8999-999999999998",
   "result": {
-    "certificates": [
-      {
-        "id": "example.com",
-        "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "common_name": "*.example.com",
-        "sans": [
-          "*.example.com",
-          "example.com"
-        ],
-        "not_before": "2026-08-01T00:00:00Z",
-        "not_after": "2026-11-01T00:00:00Z",
-        "issuer": "Example Test CA",
-        "lifecycle": "acme",
-        "valid": true,
-        "referenced_by_cluster": true,
-        "deployable": true,
-        "validation_error": null,
-        "measured_at": null,
-        "source": {
-          "kind": "acme",
-          "lineage": "example.com-wildcard"
-        },
-        "targets": {
-          "clusters": [
-            "alpha"
-          ],
-          "receivers": []
-        }
-      }
-    ],
+    "interface_served": null,
     "registry": {
       "certificates": [
         {

@@ -22,6 +22,7 @@ from haprion_ui.certificates import (
     short_issuer,
 )
 from haprion_ui.db import ClusterCertificates, ClusterStatus
+from tests.registry_fixture import manager_of
 
 NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
 STALE_AFTER = timedelta(minutes=2)
@@ -80,7 +81,12 @@ def overview(
     status: tuple[ClusterStatus, ...] = (),
 ) -> CertificateOverview:
     return build_certificate_overview(
-        clusters, readings, status_readings=status, now=NOW, stale_after=STALE_AFTER
+        clusters,
+        readings,
+        status_readings=status,
+        now=NOW,
+        stale_after=STALE_AFTER,
+        manager=manager_of(readings),
     )
 
 

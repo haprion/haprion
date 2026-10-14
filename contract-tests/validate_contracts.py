@@ -188,7 +188,10 @@ def check_cert_list_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
         return
-    certificates = result["certificates"]
+    # A null cluster is the manager's answer (B304): the registry, no listing.
+    certificates = (
+        result.get("certificates", []) if document["cluster"] is None else result["certificates"]
+    )
     identifiers = [certificate["id"] for certificate in certificates]
     if len(identifiers) != len(set(identifiers)):
         raise AssertionError(f"{path}: certificate IDs must be unique")
@@ -1250,8 +1253,11 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["summary"]["configured_nodes"] += 1
     elif operation == "list":
         result["total_versions"] = 0
-    elif operation == "cert_list":
+    elif operation == "cert_list" and "certificates" in result:
         result["certificates"].append(deepcopy(result["certificates"][0]))
+    elif operation == "cert_list":
+        entries = result["registry"]["certificates"]
+        entries.append(deepcopy(entries[0]))
     elif operation == "network":
         result["default_vip"] = "not-a-vip-in-this-table"
     elif operation == "list_backups":

@@ -16,7 +16,9 @@ code. A reading that fails is that reading's answer; the others still come.
 
 The caller names a cluster and, per reading, the parameters that reading's
 helper takes - the diffs the version listing is asked for, the fingerprint the
-object listing may be unchanged since. Which readings exist is fixed here.
+object listing may be unchanged since. Which readings exist is fixed here. A
+null cluster asks for the manager's own readings, of which `cert_list` is the
+one (B304): every pass makes it, whether or not a cluster exists yet.
 """
 
 from __future__ import annotations
@@ -42,8 +44,9 @@ from haprion.config import DEFAULT_POLICY_PATH
 from haprion.envelope import envelope
 from haprion.helper_protocol import (
     HelperProtocolError,
+    HelperRequest,
     JsonValue,
-    read_helper_request,
+    read_scoped_request,
     require_no_arguments,
     write_document,
 )
@@ -69,9 +72,17 @@ READINGS: Mapping[str, Helper] = {
     cluster_settings_helper.OPERATION: cluster_settings_helper.main,
     objects_helper.OPERATION: objects_helper.main,
 }
+#
+# The readings that answer for the manager when the cluster is null. Each of
+# their helpers takes either form; the others would refuse a null cluster, and
+# are refused here first so the answer names the reading.
+#
+MANAGER_READINGS: frozenset[str] = frozenset({cert_list_helper.OPERATION})
 
 
-def build_request(cluster: str, request_id: str, reads: Mapping[str, Mapping[str, Any]]) -> str:
+def build_request(
+    cluster: str | None, request_id: str, reads: Mapping[str, Mapping[str, Any]]
+) -> str:
     """The poller's one request: each reading named with its own parameters."""
 
     return json.dumps(
@@ -87,9 +98,9 @@ def build_request(cluster: str, request_id: str, reads: Mapping[str, Mapping[str
 
 
 def run_readings_helper(
-    cluster: str, request_id: str, reads: Mapping[str, Mapping[str, Any]]
+    cluster: str | None, request_id: str, reads: Mapping[str, Mapping[str, Any]]
 ) -> subprocess.CompletedProcess[str]:
-    """Ask the root helper for these readings of one cluster."""
+    """Ask the root helper for these readings of one cluster, or of the manager."""
 
     return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
         [SUDO, "-n", HELPER],
@@ -166,12 +177,16 @@ def main(
             raise HelperProtocolError(
                 "haprion-readings-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
-        request = read_helper_request(
+        request = read_scoped_request(
             input_stream or sys.stdin.buffer,
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
         )
         reads = _reads(request.parameters)
+        cluster = request.cluster if isinstance(request, HelperRequest) else None
+        if cluster is None and not set(reads) <= MANAGER_READINGS:
+            refused = ", ".join(sorted(set(reads) - MANAGER_READINGS))
+            raise HelperProtocolError(f"reading(s) that need a cluster: {refused}", exit_code=65)
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
@@ -182,7 +197,7 @@ def main(
             {
                 "schema_version": 1,
                 "operation": name,
-                "cluster": request.cluster,
+                "cluster": cluster,
                 "request_id": request.request_id,
                 "parameters": parameters,
             },
@@ -197,7 +212,7 @@ def main(
         envelope(
             operation=OPERATION,
             outcome="done",
-            cluster=request.cluster,
+            cluster=cluster,
             request_id=request.request_id,
             result={"reads": answers},
         ),

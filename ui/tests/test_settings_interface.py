@@ -20,6 +20,7 @@ from unittest import mock
 from uuid import uuid4
 
 from haprion_ui import auth, certificate_form, certificate_renew, certificates, operations
+from tests.registry_fixture import manager_of
 from tests.test_certificate_form import CertificateFormRouteTestCase
 from tests.test_certificate_import_page import FAKE_CERT, ImportPageTestCase
 from tests.test_certificates import NOW, registered, with_registry
@@ -158,9 +159,10 @@ class TheRegistryView(unittest.TestCase):
     def test_the_interface_s_entry_leaves_the_list_for_its_own_place(self) -> None:
         overview = certificates.build_certificate_overview(
             ("alpha",),
-            [registry_reading(interface_entry())],
+            (),
             now=NOW,
             stale_after=timedelta(minutes=5),
+            manager=manager_of([registry_reading(interface_entry())]),
         )
         registry = overview.registry
         if registry is None:
@@ -177,15 +179,18 @@ class TheRegistryView(unittest.TestCase):
     def test_a_renewal_over_ndes_keeps_the_mark(self) -> None:
         overview = certificates.build_certificate_overview(
             ("alpha",),
-            [
-                registry_reading(
-                    interface_entry(
-                        source={"kind": "import", "lineage": None, "ndes_profile": "corp-ca"}
-                    )
-                )
-            ],
+            (),
             now=NOW,
             stale_after=timedelta(minutes=5),
+            manager=manager_of(
+                [
+                    registry_reading(
+                        interface_entry(
+                            source={"kind": "import", "lineage": None, "ndes_profile": "corp-ca"}
+                        )
+                    )
+                ]
+            ),
         )
         if overview.registry is None or overview.registry.interface is None:
             self.fail("no interface entry")

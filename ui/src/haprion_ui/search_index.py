@@ -50,7 +50,11 @@ KINDS = {
 
 @dataclass(frozen=True, slots=True)
 class Entry:
-    cluster: str
+    #
+    # None for the manager's own rows (B304): its certificates, which belong
+    # to no cluster.
+    #
+    cluster: str | None
     source: str
     kind: str
     title: str
@@ -82,7 +86,7 @@ def _text(value: Any) -> str:
 
 
 def _entries(
-    cluster: str,
+    cluster: str | None,
     source: str,
     kind: str,
     title: str,
@@ -172,16 +176,20 @@ def network_entries(cluster: str, result: Mapping[str, Any]) -> list[Entry]:
 
 
 def certificate_entries(cluster: str, result: Mapping[str, Any]) -> list[Entry]:
-    """The certificates the Certificates page lists, built by its own function.
+    """A cluster's certificates that no registry entry names, linked to its listing.
 
-    Its registry view where the installation has one, the cluster's listing
-    where it does not - so a search cannot find a certificate the page it links
-    to would not show.
+    The registered ones are the manager's rows (`manager_entries`, B304), found
+    once with a link to their own row, however many clusters list them.
     """
 
     from haprion_ui import certificates
     from haprion_ui.db import ClusterCertificates
 
+    registered = {
+        _text(_mapping(entry).get("id"))
+        for entry in _sequence(result.get("certificates"))
+        if _mapping(entry).get("source") is not None
+    }
     reading = ClusterCertificates(
         cluster=cluster,
         observed_at=datetime.now(UTC),
@@ -194,21 +202,49 @@ def certificate_entries(cluster: str, result: Mapping[str, Any]) -> list[Entry]:
     overview = certificates.build_certificate_overview(
         [cluster], [reading], stale_after=timedelta(days=1)
     )
-    registry = overview.registry
-    listed: Iterable[Any] = (
-        registry.certificates
-        if registry is not None
-        else [cert for view in overview.clusters for cert in view.certificates]
+    rows: list[Entry] = []
+    for view in overview.clusters:
+        for certificate in view.certificates:
+            if certificate.identifier in registered:
+                continue
+            values = [("", certificate.identifier), *(("", san) for san in certificate.sans)]
+            rows += _entries(
+                cluster,
+                "cert_list",
+                "certificate",
+                certificate.identifier,
+                "/certificates?view=clusters",
+                values,
+            )
+    return rows
+
+
+def manager_entries(result: Mapping[str, Any]) -> list[Entry]:
+    """The registry's certificates, as the Certificates page lists them (B304).
+
+    Built by the page's own function, so a search cannot find a certificate
+    the page it links to would not show. No cluster: they are the manager's.
+    """
+
+    from haprion_ui import certificates
+    from haprion_ui.db import ManagerCertificates
+
+    reading = ManagerCertificates(
+        observed_at=datetime.now(UTC),
+        outcome="done",
+        result=dict(result),
+        warnings=[],
+        error=None,
+        poll_error=None,
+    )
+    overview = certificates.build_certificate_overview(
+        (), (), stale_after=timedelta(days=1), manager=reading
     )
     rows: list[Entry] = []
-    for certificate in listed:
-        href = (
-            "/certificates?" + urlencode({"open": certificate.identifier})
-            if registry is not None
-            else "/certificates?view=clusters"
-        )
+    for certificate in overview.registry.certificates if overview.registry else ():
+        href = "/certificates?" + urlencode({"open": certificate.identifier})
         values = [("", certificate.identifier), *(("", san) for san in certificate.sans)]
-        rows += _entries(cluster, "cert_list", "certificate", certificate.identifier, href, values)
+        rows += _entries(None, "manager", "certificate", certificate.identifier, href, values)
     return rows
 
 

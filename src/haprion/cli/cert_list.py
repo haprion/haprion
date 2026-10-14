@@ -1,5 +1,9 @@
 """``haprion-cert-list`` - which certificates a cluster can be given, read-only.
 
+With ``--registry`` instead of a cluster: every certificate the manager holds,
+where each comes from and where each goes - asked of the manager, so it answers
+before the first cluster exists (B304).
+
 Metadata only. The listing exists so an operator, and later the interface, can
 answer three questions without opening a file: what is deployable to this
 cluster, what does each certificate actually cover, and is anything renewing it.
@@ -22,13 +26,18 @@ OPERATION = "cert_list"
 HELPER = "/opt/haprion/current/bin/haprion-cert-list-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
-USAGE = "Usage:\n  haprion-cert-list -c <cluster> [--registry] [--json]\n"
+USAGE = (
+    "Usage:\n  haprion-cert-list -c <cluster> [--json]\n  haprion-cert-list --registry [--json]\n"
+)
 
-type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
+type RunHelper = Callable[[str | None, str], subprocess.CompletedProcess[str]]
 
 
-def run_cert_list_helper(cluster_id: str, request_id: str) -> subprocess.CompletedProcess[str]:
-    """Ask the root helper which certificates one cluster can be given."""
+def run_cert_list_helper(
+    cluster_id: str | None, request_id: str
+) -> subprocess.CompletedProcess[str]:
+    """Ask the root helper which certificates one cluster can be given, or, with
+    no cluster, what the manager holds."""
 
     request = {
         "schema_version": 1,
@@ -46,20 +55,23 @@ def run_cert_list_helper(cluster_id: str, request_id: str) -> subprocess.Complet
     )
 
 
-def _parse(argv: list[str]) -> tuple[str, bool, bool]:
+def _parse(argv: list[str]) -> tuple[str | None, bool, bool]:
     #
-    # `--registry` still names a cluster, and that is not decoration: the
-    # registry travels in the cluster listing's answer rather than in a helper
-    # of its own, so `-c` says whose answer is being read. A clusterless listing
-    # would need a helper, a wrapper and a sudoers rule of its own; the
-    # implementation plan's C5 gate count says why that was not worth it.
+    # The registry is the manager's and is asked of the manager (B304); a
+    # cluster's listing no longer carries it, so the two forms do not mix.
     #
-    if not argv or argv[0] not in ("-c", "--cluster") or len(argv) < 2:
-        usage(USAGE)
-    flags = argv[2:]
+    flags = list(argv)
+    cluster: str | None = None
+    if flags and flags[0] in ("-c", "--cluster"):
+        if len(flags) < 2:
+            usage(USAGE)
+        cluster, flags = flags[1], flags[2:]
     if any(flag not in ("--json", "--registry") for flag in flags) or len(set(flags)) != len(flags):
         usage(USAGE)
-    return argv[1], "--json" in flags, "--registry" in flags
+    registry = "--registry" in flags
+    if (cluster is None) != registry:
+        usage(USAGE)
+    return cluster, "--json" in flags, registry
 
 
 class HelperFailure(ValueError):

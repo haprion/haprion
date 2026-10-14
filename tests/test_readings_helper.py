@@ -115,6 +115,30 @@ class OneCallForTheLocalReadings(unittest.TestCase):
         self.assertIsNone(answer)
         self.assertIn("unknown reading", errors)
 
+    def test_a_null_cluster_carries_the_manager_s_reading_and_no_other(self) -> None:
+        """B304: the registry is read every pass, with or without a cluster."""
+
+        def manager(**reads: Any) -> io.BytesIO:
+            return io.BytesIO(
+                readings_helper.build_request(
+                    None, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", reads
+                ).encode()
+            )
+
+        certificates = Recorded("cert_list")
+        code, answer, _ = self.run_helper(manager(cert_list={}), {"cert_list": certificates})
+        self.assertEqual(code, 0)
+        self.assertIsNone(answer["cluster"])
+        assert certificates.sent is not None
+        self.assertIsNone(certificates.sent["cluster"])
+
+        code, answer, errors = self.run_helper(
+            manager(cert_list={}, network={}), dict(readings_helper.READINGS)
+        )
+        self.assertEqual(code, 65)
+        self.assertIsNone(answer)
+        self.assertIn("need a cluster: network", errors)
+
     def test_the_six_are_the_poller_s_manager_local_helpers(self) -> None:
         self.assertEqual(
             sorted(readings_helper.READINGS),

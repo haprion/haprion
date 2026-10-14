@@ -421,6 +421,48 @@ def read_clusterless_request(
     )
 
 
+def read_scoped_request(
+    stream: BinaryIO,
+    *,
+    expected_operation: str,
+    allowed_parameter_keys: frozenset[str] = frozenset(),
+    validate_parameters: ParameterValidator | None = None,
+    max_bytes: int = MAX_REQUEST_BYTES,
+) -> HelperRequest | ClusterlessRequest:
+    """One request for an operation that reads either a cluster or the manager.
+
+    `cert_list` and the readings helper that carries it: with a cluster, what
+    that cluster is given; with an explicit null, what the manager holds, which
+    a manager with no cluster yet must be able to read too (B304). The two
+    types stay apart, as `ClusterlessRequest` says why; the caller branches
+    once, on which one came back.
+    """
+
+    common = _read_common(
+        stream,
+        expected_operation=expected_operation,
+        allowed_parameter_keys=allowed_parameter_keys,
+        validate_parameters=validate_parameters,
+        max_bytes=max_bytes,
+        lifeline=False,
+    )
+    if common.document["cluster"] is None:
+        return ClusterlessRequest(
+            operation=common.operation,
+            request_id=common.request_id,
+            parameters=common.parameters,
+        )
+    cluster = _required_string(common.document, "cluster")
+    if not CLUSTER_ID.fullmatch(cluster):
+        raise HelperProtocolError("cluster is not a valid cluster ID")
+    return HelperRequest(
+        operation=common.operation,
+        cluster=cluster,
+        request_id=common.request_id,
+        parameters=common.parameters,
+    )
+
+
 def write_document(stream: TextIO, document: Mapping[str, Any]) -> None:
     """Write one helper result to stdout, in the one form every helper uses.
 

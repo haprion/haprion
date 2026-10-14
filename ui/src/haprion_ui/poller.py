@@ -70,7 +70,12 @@ MAX_PARALLEL_CLUSTERS = 8
 
 type RunHelper = Callable[[str, str], Any]
 type Recorder = Callable[..., None]
-type ReadingsHelper = Callable[[str, str, Mapping[str, Mapping[str, Any]]], Any]
+type ReadingsHelper = Callable[[str | None, str, Mapping[str, Mapping[str, Any]]], Any]
+#
+# A reading answered inside the readings helper's one call: the cluster it is
+# called with is ignored, so the manager's reading (B304) can be one too.
+#
+type ReadingRun = Callable[[str | None, str], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +251,19 @@ def poll_cluster(
             "result": {},
             "poll_error": f"could not run the {operation} helper: {exc}",
         }
+    return _judge(
+        completed,
+        cluster=cluster,
+        operation=operation,
+        accept_partial=operation == "status" if partial_ok is None else partial_ok,
+        asked=asked,
+    )
+
+
+def _judge(
+    completed: Any, *, cluster: str | None, operation: str, accept_partial: bool, asked: str
+) -> dict[str, Any]:
+    """A helper's answer as a row: its reading, or why there is none."""
 
     try:
         json.loads(completed.stdout)
@@ -259,7 +277,6 @@ def poll_cluster(
             ),
         }
 
-    accept_partial = operation == "status" if partial_ok is None else partial_ok
     expected_outcomes = ("done", "partial", "failed") if accept_partial else ("done", "failed")
     #
     # The worker's check (review 26-10-13, K3): this cluster, this request,
@@ -480,10 +497,10 @@ def poll_once(
         )
 
 
-def _extra(pool: Any, cluster: str, source: Source) -> Mapping[str, Any]:
+def _extra(pool: Any, cluster: str | None, source: Source) -> Mapping[str, Any]:
     """What a source asks for beyond its reading, decided from what is kept."""
 
-    if source.asks is None:
+    if source.asks is None or cluster is None:
         return {}
     try:
         with pool.connection() as connection:
@@ -495,10 +512,10 @@ def _extra(pool: Any, cluster: str, source: Source) -> Mapping[str, Any]:
 
 def _local_readings(
     pool: Any,
-    cluster: str,
+    cluster: str | None,
     sources: Sequence[Source],
     readings: ReadingsHelper = run_readings_helper,
-) -> tuple[str, dict[str, RunHelper]]:
+) -> tuple[str, dict[str, ReadingRun]]:
     """The manager-local readings of one cluster, from one helper call (N2).
 
     Each comes back as the `run` its source is polled with, answering with the
@@ -531,12 +548,12 @@ def _local_readings(
     except Exception as exc:  # noqa: BLE001 - one failure, reported on every reading it carried
         failure = exc
 
-        def failed(_cluster: str, _request_id: str) -> Any:
+        def failed(_cluster: str | None, _request_id: str) -> Any:
             raise RuntimeError(f"the readings helper gave no answer: {failure}")
 
         return asked, dict.fromkeys(reads, failed)
 
-    def answered(name: str) -> RunHelper:
+    def answered(name: str) -> ReadingRun:
         found = given.get(name)
         answer: dict[str, Any] = found if isinstance(found, dict) else {}
         document = answer.get("envelope")
@@ -551,6 +568,71 @@ def _local_readings(
         return lambda _cluster, _request_id: result
 
     return asked, {name: answered(name) for name in reads}
+
+
+#
+# What the manager holds - the certificate registry and what the interface is
+# served with - is asked for with no cluster, once a pass, whether or not a
+# cluster exists (B304). It travelled in each cluster's certificate listing,
+# so a manager with no cluster yet said nothing about its own certificates.
+#
+MANAGER_CERTIFICATES = Source("cert_list", None, db.record_cluster_certificates, reading=_nothing)
+
+
+def poll_manager(pool: Any, readings: ReadingsHelper = run_readings_helper) -> bool:
+    """The manager's own certificate reading; True when it was done. Never raises."""
+
+    asked, answered = _local_readings(pool, None, (MANAGER_CERTIFICATES,), readings)
+    try:
+        completed = answered[MANAGER_CERTIFICATES.operation](None, asked)
+    except Exception as exc:  # noqa: BLE001 - one failure is one row, as for a cluster
+        reading: dict[str, Any] = {
+            "outcome": "unavailable",
+            "result": {},
+            "poll_error": f"could not run the cert_list helper: {exc}",
+        }
+    else:
+        reading = _judge(
+            completed, cluster=None, operation="cert_list", accept_partial=False, asked=asked
+        )
+    try:
+        with pool.connection() as connection:
+            db.record_manager_certificates(
+                connection,
+                outcome=reading["outcome"],
+                result=reading["result"],
+                warnings=reading.get("warnings"),
+                error=reading.get("error"),
+                poll_error=reading.get("poll_error"),
+            )
+            connection.commit()
+    except Exception as exc:  # noqa: BLE001 - a cluster's readings must still be made
+        logger.warning("the manager's certificates were not recorded: %s", exc)
+        return False
+    if reading["outcome"] == "done":
+        #
+        # The registry's certificates in the search, with no cluster: found
+        # once, linked to their own row. Only from a reading that answered,
+        # as for a cluster's (`_index`).
+        #
+        try:
+            with pool.connection() as connection:
+                db.replace_search_entries(
+                    connection,
+                    cluster=None,
+                    source="manager",
+                    entries=search_index.manager_entries(reading["result"]),
+                )
+                connection.commit()
+        except Exception as exc:  # noqa: BLE001 - the search is never worth a failed pass
+            logger.warning("the manager's certificates: search not updated: %s", exc)
+    else:
+        logger.warning(
+            "manager cert_list: %s%s",
+            reading["outcome"],
+            f" ({reading['poll_error']})" if reading.get("poll_error") else "",
+        )
+    return bool(reading["outcome"] == "done")
 
 
 def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) -> int:
@@ -685,6 +767,7 @@ def main(argv: list[str] | None = None) -> int:
                         db.record_cluster_list(connection, known)
                         connection.commit()
                 index_cluster_list(pool, known)
+                poll_manager(pool)
                 healthy = poll_once(pool, config, clusters=known)
                 if known:
                     logger.info("%d/%d cluster(s) fully current", healthy, len(known))

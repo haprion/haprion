@@ -30,7 +30,7 @@ from haprion.certificates import CERTIFICATE_OPENING
 from haprion_ui import certificate_receivers, metrics, sorting
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
-from haprion_ui.db import ClusterCertificates
+from haprion_ui.db import ClusterCertificates, ManagerCertificates
 
 type Tone = Literal["healthy", "warning", "critical", "unknown", "info"]
 
@@ -1181,27 +1181,46 @@ def _served_view(value: Any, *, now: datetime) -> ServedView | None:
     )
 
 
+def _manager_result(manager: ManagerCertificates | None) -> Mapping[str, Any] | None:
+    """The manager's reading (B304) when it answered; None before or when it did not.
+
+    A failed reading keeps nothing of the last good one - the poller writes
+    every answer over the row - so a failure is said as "could not be read",
+    not drawn from a registry that may since have changed.
+    """
+
+    if manager is None or manager.outcome != "done":
+        return None
+    return _mapping(manager.result)
+
+
+def interface_served(
+    manager: ManagerCertificates | None, *, now: datetime | None = None
+) -> ServedView | None:
+    """What the interface is served with, whether or not a registry is declared."""
+
+    result = _manager_result(manager)
+    if result is None:
+        return None
+    return _served_view(result.get("interface_served"), now=now or datetime.now(UTC))
+
+
 def profile_references(
-    readings: Iterable[ClusterCertificates], *, field: str
+    manager: ManagerCertificates | None, *, field: str
 ) -> dict[str, tuple[str, ...]] | None:
     """Which registered certificates name each provider profile, by profile.
 
     `field` is `dns_profile` or `ndes_profile`, the registry's own binding.
-    None where no reading carries a registry at all - then nothing can be
+    None where the manager's reading carries no registry - then nothing can be
     said either way, and a caller must not treat silence as "unreferenced".
     The profile pages use this to drop a "removal refused" notice once the
     certificates it named are gone, without waiting for another attempt.
     """
 
-    newest: ClusterCertificates | None = None
-    for reading in readings:
-        if not isinstance(_mapping(reading.result).get("registry"), Mapping):
-            continue
-        if newest is None or reading.observed_at > newest.observed_at:
-            newest = reading
-    if newest is None:
+    result = _manager_result(manager)
+    if result is None or not isinstance(result.get("registry"), Mapping):
         return None
-    entries = _mapping(_mapping(newest.result).get("registry")).get("certificates")
+    entries = _mapping(result.get("registry")).get("certificates")
     references: dict[str, list[str]] = {}
     if isinstance(entries, list):
         for value in entries:
@@ -1214,29 +1233,21 @@ def profile_references(
 
 
 def _registry_view(
-    readings: Iterable[ClusterCertificates],
+    reading: ManagerCertificates | None,
     status_readings: Iterable[Any],
     *,
     now: datetime,
 ) -> RegistryView | None:
-    """The registry as one list, read from the freshest cluster that carried it.
+    """The registry as one list, from the manager's own reading (B304).
 
-    Every cluster's listing carries the same block, because it is the same file
-    read the same way inside the same helper. Taking the newest rather than
-    merging them means a registry rewritten between two clusters' polls is
-    shown whole rather than half from each.
+    It used to be read from the freshest cluster listing that carried it, so
+    a manager with no cluster had none to show.
     """
 
-    newest: ClusterCertificates | None = None
-    for reading in readings:
-        if not isinstance(_mapping(reading.result).get("registry"), Mapping):
-            continue
-        if newest is None or reading.observed_at > newest.observed_at:
-            newest = reading
-    if newest is None:
+    result = _manager_result(reading)
+    if result is None or not isinstance(result.get("registry"), Mapping):
         return None
-
-    block = _mapping(_mapping(newest.result).get("registry"))
+    block = _mapping(result.get("registry"))
     carriage = _carriage(status_readings)
 
     entries = block.get("certificates")
@@ -1294,6 +1305,11 @@ def build_certificate_overview(
     # reported as unknown rather than as a failure.
     #
     status_readings: Iterable[Any] = (),
+    #
+    # What the manager holds (B304): the registry and what the interface is
+    # served with. None draws the clusters' listings and no registry.
+    #
+    manager: ManagerCertificates | None = None,
 ) -> CertificateOverview:
     """Combine configured clusters and their newest cached certificate listing.
 
@@ -1311,7 +1327,7 @@ def build_certificate_overview(
     # The registry and the node status first: the cluster rows carry the
     # registry's columns, and their state is read from the same carriage.
     #
-    registry = _registry_view(readings, status_readings, now=now)
+    registry = _registry_view(manager, status_readings, now=now)
     carriage = _carriage(status_readings)
     targets = registry.targets if registry is not None else None
 

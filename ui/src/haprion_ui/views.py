@@ -586,6 +586,16 @@ def read_source(
     return listed, rows
 
 
+def read_manager_certificates(request: Request, config: Config) -> db.ManagerCertificates | None:
+    """What the manager holds - the registry, what the interface is served
+    with - read whether or not a cluster exists (B304)."""
+
+    if config.demo_fixture:
+        return demo.manager_certificates()
+    with request.app.state.pool.connection() as connection:
+        return db.manager_certificates(connection)
+
+
 def client_address(request: Request) -> str:
     """The address to hold responsible for this request.
 
@@ -2875,6 +2885,7 @@ def build_router(config: Config) -> APIRouter:
         overview = certificates.build_certificate_overview(
             clusters,
             certificate_rows,
+            manager=read_manager_certificates(request, config),
             status_readings=status_rows,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
@@ -3725,6 +3736,7 @@ def build_router(config: Config) -> APIRouter:
         overview = certificates.build_certificate_overview(
             clusters,
             certificate_rows,
+            manager=read_manager_certificates(request, config),
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
         usable_profiles: tuple[str, ...] = ()
@@ -3865,6 +3877,7 @@ def build_router(config: Config) -> APIRouter:
         overview = certificates.build_certificate_overview(
             clusters,
             certificate_rows,
+            manager=read_manager_certificates(request, config),
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
         if overview.registry is None:
@@ -4222,6 +4235,7 @@ def build_router(config: Config) -> APIRouter:
         overview = certificates.build_certificate_overview(
             clusters,
             certificate_rows,
+            manager=read_manager_certificates(request, config),
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
         return overview.registry
@@ -4447,7 +4461,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         _token, registry, context = _page_context(request, gate)
         entry = registry.interface if registry else None
-        served = registry.served if registry else None
+        served = certificates.interface_served(read_manager_certificates(request, config))
         sort, asked = users.TABLE.chosen(request)
         with request.app.state.pool.connection() as connection:
             switches = db.feature_switches(connection)
@@ -6129,8 +6143,9 @@ def build_router(config: Config) -> APIRouter:
             recent = db.profile_jobs(connection, "dns_profile_apply")
         public_key = _dns_public_key()
         catalogue = {provider.id: provider for provider in dns_profile_form.providers()}
-        _, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
-        references = certificates.profile_references(certificate_rows, field="dns_profile")
+        references = certificates.profile_references(
+            read_manager_certificates(request, config), field="dns_profile"
+        )
         statuses = {
             profile.id: dns_profile_form.without_stale_refusal(
                 dns_profile_form.profile_status(profile.id, profile.revision, recent),
@@ -6511,8 +6526,9 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             profiles = db.ndes_profiles(connection)
             recent = db.profile_jobs(connection, "ndes_profile_apply")
-        _, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
-        references = certificates.profile_references(certificate_rows, field="ndes_profile")
+        references = certificates.profile_references(
+            read_manager_certificates(request, config), field="ndes_profile"
+        )
         statuses = {
             p.id: dns_profile_form.without_stale_refusal(
                 ndes_profile_form.profile_status(p.id, p.revision, recent), p.id, references
@@ -11106,6 +11122,7 @@ def _attention(request: Request, config: Config) -> attention.Attention:
     certificate_view = certificates.build_certificate_overview(
         certificate_clusters,
         certificate_rows,
+        manager=read_manager_certificates(request, config),
         stale_after=stale_after,
         status_readings=status_rows,
     )

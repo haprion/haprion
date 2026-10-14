@@ -21,7 +21,7 @@ from unittest import mock
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
-from haprion import cert_inventory, config
+from haprion import cert_inventory, config, ui_interface
 from haprion.certificates import leaf_fingerprint
 from haprion.cli import cert_list, cert_list_helper
 from haprion.config import ConfigError
@@ -577,9 +577,9 @@ class RegistryListingTests(unittest.TestCase):
                 envelope(
                     operation="cert_list",
                     outcome="done",
-                    cluster="alpha",
+                    cluster=None,
                     request_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                    result={"certificates": [], "registry": result},
+                    result={"interface_served": None, "registry": result},
                 )
             )
 
@@ -754,7 +754,7 @@ class CommandTests(unittest.TestCase):
     def _run(self, argv: list[str], document: dict[str, Any]) -> tuple[str, str, int]:
         out, err = io.StringIO(), io.StringIO()
 
-        def run_helper(cluster: str, request_id: str) -> Any:
+        def run_helper(cluster: str | None, request_id: str) -> Any:
             return type(
                 "Completed", (), {"stdout": json.dumps(document), "stderr": "", "returncode": 0}
             )
@@ -800,15 +800,15 @@ class CommandTests(unittest.TestCase):
 
 
 class RegistryCommandTests(unittest.TestCase):
-    """`haprion-cert-list -c <cluster> --registry`, the CLI half of the C5 view.
+    """`haprion-cert-list --registry`, the CLI half of the C5 view.
 
     The parity rule: the interface must not be able to show something the
-    command line cannot. `-c` is still required because the registry travels in
-    the cluster listing's answer rather than in a helper of its own.
+    command line cannot. The registry is asked of the manager, with no cluster
+    (B304), so it answers before the first cluster exists.
     """
 
     def _document(self, registry: dict[str, Any] | None) -> dict[str, Any]:
-        result: dict[str, Any] = {"certificates": []}
+        result: dict[str, Any] = {"interface_served": None}
         if registry is not None:
             result["registry"] = registry
         return {
@@ -816,7 +816,7 @@ class RegistryCommandTests(unittest.TestCase):
             "ok": True,
             "outcome": "done",
             "operation": "cert_list",
-            "cluster": "alpha",
+            "cluster": None,
             "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             "result": result,
             "warnings": [],
@@ -846,7 +846,8 @@ class RegistryCommandTests(unittest.TestCase):
     def _run(self, argv: list[str], document: dict[str, Any]) -> tuple[str, str, int]:
         out, err = io.StringIO(), io.StringIO()
 
-        def run_helper(cluster: str, request_id: str) -> Any:
+        def run_helper(cluster: str | None, request_id: str) -> Any:
+            self.asked = cluster
             return type(
                 "Completed", (), {"stdout": json.dumps(document), "stderr": "", "returncode": 0}
             )
@@ -877,7 +878,7 @@ class RegistryCommandTests(unittest.TestCase):
                 "receivers": ["lb-01"],
             }
         )
-        rendered, _, code = self._run(["-c", "alpha", "--registry"], document)
+        rendered, _, code = self._run(["--registry"], document)
 
         self.assertEqual(code, 0)
         self.assertIn("example.com", rendered)
@@ -890,7 +891,7 @@ class RegistryCommandTests(unittest.TestCase):
 
     def test_it_never_claims_a_receiver_installed_anything(self) -> None:
         document = self._document({"certificates": [self._entry()], "receivers": []})
-        rendered, _, _ = self._run(["-c", "alpha", "--registry"], document)
+        rendered, _, _ = self._run(["--registry"], document)
 
         self.assertIn("reports nothing back", rendered)
         for claim in ("installed", "deployed", "arrived", "on all targets"):
@@ -916,13 +917,13 @@ class RegistryCommandTests(unittest.TestCase):
                 "receivers": [],
             }
         )
-        rendered, _, _ = self._run(["-c", "alpha", "--registry"], document)
+        rendered, _, _ = self._run(["--registry"], document)
 
         self.assertIn("UNREADABLE", rendered)
         self.assertIn("no material at its source yet", rendered)
 
     def test_an_installation_without_a_registry_says_so_rather_than_printing_nothing(self) -> None:
-        _, errors, code = self._run(["-c", "alpha", "--registry"], self._document(None))
+        _, errors, code = self._run(["--registry"], self._document(None))
 
         self.assertNotEqual(code, 0)
         self.assertIn("certificate_registry", errors)
@@ -930,15 +931,24 @@ class RegistryCommandTests(unittest.TestCase):
     def test_the_flags_may_be_given_in_either_order_and_not_twice(self) -> None:
         document = self._document({"certificates": [], "receivers": []})
         for argv in (
-            ["-c", "alpha", "--registry", "--json"],
-            ["-c", "alpha", "--json", "--registry"],
+            ["--registry", "--json"],
+            ["--json", "--registry"],
         ):
             rendered, _, code = self._run(argv, document)
             self.assertEqual(code, 0)
             self.assertIn('"registry"', rendered)
 
         with self.assertRaises(SystemExit):
-            self._run(["-c", "alpha", "--registry", "--registry"], document)
+            self._run(["--registry", "--registry"], document)
+
+    def test_the_registry_is_asked_of_the_manager_not_of_a_cluster(self) -> None:
+        """A manager with no cluster could not list its registry (26-10-14)."""
+
+        self._run(["--registry"], self._document({"certificates": [], "receivers": []}))
+        self.assertIsNone(self.asked)
+        for argv in (["-c", "alpha", "--registry"], []):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                self._run(argv, self._document(None))
 
 
 class HelperTests(unittest.TestCase):
@@ -950,7 +960,9 @@ class HelperTests(unittest.TestCase):
     other helpers answer off-contract for months.
     """
 
-    def _run(self, *, cluster: str = "alpha", with_root: bool = True) -> tuple[int, str, str]:
+    def _run(
+        self, *, cluster: str | None = "alpha", with_root: bool = True
+    ) -> tuple[int, str, str]:
         request = {
             "schema_version": 1,
             "operation": "cert_list",
@@ -986,6 +998,8 @@ class HelperTests(unittest.TestCase):
                 mock.patch.object(
                     cert_list_helper, "load_runtime_config", lambda *a, **k: Config()
                 ),
+                mock.patch.object(cert_list_helper, "manager_name", lambda: "mgr.example.com"),
+                mock.patch.object(ui_interface, "served_description", lambda: None),
             ):
                 code = cert_list_helper.main(
                     [],
@@ -1004,6 +1018,16 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(document["operation"], "cert_list")
         self.assertEqual(document["outcome"], "done")
         self.assertEqual(document["result"]["certificates"][0]["id"], "example.com")
+
+    def test_a_null_cluster_is_answered_for_the_manager(self) -> None:
+        """A manager with no cluster yet could not read its own certificates (B304)."""
+
+        code, out, err = self._run(cluster=None)
+
+        self.assertEqual((code, err), (0, ""))
+        document = assert_contract("haprion-cert-list", out)
+        self.assertIsNone(document["cluster"])
+        self.assertEqual(document["result"], {"interface_served": None})
 
     def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
         code, out, err = self._run(cluster="beta")

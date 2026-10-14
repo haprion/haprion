@@ -21,6 +21,7 @@ from haprion import node_enrollment
 from haprion.node_enrollment import Enrollment
 
 from haprion_ui import auth, cluster_nodes, demo
+from haprion_ui.db import ManagerCertificates
 from tests.test_login import configuration
 from tests.test_queue_route import KEY, QueueRouteTestCase
 
@@ -105,10 +106,36 @@ class ThePage(NodesPage):
     def test_without_a_cluster_the_card_is_where_the_first_is_created(self) -> None:
         """The card was hidden with no cluster, and Create cluster with it (26-10-14)."""
 
-        with mock.patch("haprion_ui.db.cluster_statuses", return_value=[]):
+        served = {
+            "server_name": "mgr.example.com",
+            "fingerprint_sha256": "d" * 64,
+            "common_name": "mgr.example.com",
+            "sans": ["mgr.example.com"],
+            "issuer": "CN=mgr.example.com",
+            "not_after": "2028-09-25T00:00:00Z",
+            "self_signed": True,
+        }
+        manager = ManagerCertificates(
+            observed_at=NOW,
+            outcome="done",
+            result={"interface_served": served},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        with (
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[]),
+            mock.patch("haprion_ui.db.manager_certificates", return_value=manager),
+        ):
             client = self.client(replace(configuration(), management_writes=True, clusters=()))
             self.sign_in(client)
             page = client.get("/settings").text
+        #
+        # B304: what the interface is served with is the manager's, read with
+        # no cluster; it said "could not be read" on a new installation.
+        #
+        self.assertIn("Made at installation", page)
+        self.assertNotIn("could not be read", page)
         self.assertIn('id="nodes"', page)
         card = page.split('id="nodes"')[1].split("</section>")[0]
         self.assertIn('href="/settings/new-cluster"', card)
@@ -292,12 +319,13 @@ class TheListFollowsTheClusterFile(NodesPage):
 class ClusterPage(NodesPage):
     def setUp(self) -> None:
         super().setUp()
-        patch = mock.patch(
-            "haprion_ui.db.cluster_certificates",
-            side_effect=lambda _connection: list(demo.certificate_rows(NOW)),
-        )
-        patch.start()
-        self.addCleanup(patch.stop)
+        for name, rows in (
+            ("cluster_certificates", lambda _connection: list(demo.certificate_rows(NOW))),
+            ("manager_certificates", lambda _connection: demo.manager_certificates(NOW)),
+        ):
+            patch = mock.patch(f"haprion_ui.db.{name}", side_effect=rows)
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def creation(self, **fields: Any) -> dict[str, Any]:
         form = {

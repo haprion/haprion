@@ -28,6 +28,7 @@ from haprion_ui.app import create_app
 from haprion_ui.config import Config, Database, Listen, Poller, Throttle
 from haprion_ui.config import Session as SessionPolicy
 from haprion_ui.db import Account, AuthenticatedSession
+from tests.registry_fixture import manager_of
 
 PASSWORD = "a sufficiently long password"
 
@@ -145,6 +146,14 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.cluster_inventories", return_value=[]),
             mock.patch("haprion_ui.db.cluster_histories", return_value=[]),
             mock.patch("haprion_ui.db.cluster_certificates", return_value=[]),
+            #
+            # From the registry the test describes, wherever it patched the
+            # listings - see `tests.registry_fixture` (B304).
+            #
+            mock.patch(
+                "haprion_ui.db.manager_certificates",
+                side_effect=lambda connection: manager_of(db.cluster_certificates(connection)),
+            ),
             mock.patch("haprion_ui.db.cluster_backups", return_value=[]),
             mock.patch("haprion_ui.db.cluster_networks", return_value=[]),
             mock.patch("haprion_ui.db.cluster_settings", return_value=[]),

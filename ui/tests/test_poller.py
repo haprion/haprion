@@ -756,6 +756,61 @@ class TheObjectsReadingSendsWhatItHolds(unittest.TestCase):
         replace.assert_not_called()
 
 
+class TheManagerIsReadWithoutACluster(unittest.TestCase):
+    """B304: what the manager holds is read every pass, before any cluster exists."""
+
+    class Pool:
+        def connection(self) -> Any:
+            return contextlib.nullcontext(unittest.mock.Mock())
+
+    def test_the_reading_is_recorded_and_its_certificates_searched_with_no_cluster(self) -> None:
+        asked: list[tuple[str | None, Mapping[str, Any]]] = []
+        registry: dict[str, list[str]] = {"certificates": [], "receivers": []}
+
+        def readings(cluster: str | None, request_id: str, reads: Mapping[str, Any]) -> Any:
+            asked.append((cluster, reads))
+            inner = document(
+                "cert_list",
+                result={"interface_served": None, "registry": registry},
+                cluster=None,
+                request_id=request_id,
+            )
+            outer = document(
+                "readings",
+                result={"reads": {"cert_list": {"exit_code": 0, "envelope": inner, "stderr": ""}}},
+                cluster=None,
+                request_id=request_id,
+            )
+            return subprocess.CompletedProcess([], 0, json.dumps(outer), "")
+
+        with (
+            unittest.mock.patch("haprion_ui.db.record_manager_certificates") as recorded,
+            unittest.mock.patch("haprion_ui.db.replace_search_entries") as searched,
+        ):
+            self.assertTrue(poller.poll_manager(self.Pool(), readings))
+
+        self.assertEqual(asked, [(None, {"cert_list": {}})])
+        self.assertEqual(recorded.call_args.kwargs["outcome"], "done")
+        self.assertEqual(recorded.call_args.kwargs["result"]["registry"], registry)
+        self.assertEqual(
+            (searched.call_args.kwargs["cluster"], searched.call_args.kwargs["source"]),
+            (None, "manager"),
+        )
+
+    def test_a_failed_reading_is_recorded_and_searched_for_nothing(self) -> None:
+        def readings(*_args: Any) -> Any:
+            return subprocess.CompletedProcess([], 1, "", "sudo: a password is required")
+
+        with (
+            unittest.mock.patch("haprion_ui.db.record_manager_certificates") as recorded,
+            unittest.mock.patch("haprion_ui.db.replace_search_entries") as searched,
+        ):
+            self.assertFalse(poller.poll_manager(self.Pool(), readings))
+
+        self.assertEqual(recorded.call_args.kwargs["outcome"], "unavailable")
+        searched.assert_not_called()
+
+
 class TheLocalReadingsComeFromOneCall(unittest.TestCase):
     """`_local_readings`: one `haprion-readings-helper` call, each answer as its own reading (N2)."""
 
@@ -767,9 +822,9 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
         return [source for source in poller.SOURCES if source.run is None]
 
     def test_each_reading_gets_its_own_envelope_and_the_list_its_diffs(self) -> None:
-        asked: list[tuple[str, Mapping[str, Any]]] = []
+        asked: list[tuple[str | None, Mapping[str, Any]]] = []
 
-        def readings(cluster: str, _request_id: str, reads: Mapping[str, Any]) -> Any:
+        def readings(cluster: str | None, _request_id: str, reads: Mapping[str, Any]) -> Any:
             asked.append((cluster, reads))
             answers = {
                 name: {"exit_code": 0, "envelope": document(name, result={"n": name}), "stderr": ""}
@@ -810,7 +865,7 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
             self.assertIn("readings helper gave no answer", reading["poll_error"])
 
     def test_a_reading_whose_helper_failed_keeps_its_own_words(self) -> None:
-        def readings(_cluster: str, _request_id: str, reads: Mapping[str, Any]) -> Any:
+        def readings(_cluster: str | None, _request_id: str, reads: Mapping[str, Any]) -> Any:
             answers = {
                 name: {"exit_code": 78, "envelope": None, "stderr": "ERROR: no policy"}
                 for name in reads

@@ -148,6 +148,19 @@ class ClusterCertificates:
 
 
 @dataclass(frozen=True, slots=True)
+class ManagerCertificates:
+    """The last reading of what the manager holds - the registry and what the
+    interface is served with - asked for with no cluster (B304)."""
+
+    observed_at: datetime
+    outcome: str
+    result: dict[str, Any]
+    warnings: list[Any]
+    error: dict[str, Any] | None
+    poll_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ClusterSettingsRow:
     """The last settings reading - log targets and metrics - for one cluster (Fas 15)."""
 
@@ -2295,6 +2308,48 @@ def cluster_certificates(
         return cursor.fetchall()
 
 
+def record_manager_certificates(
+    connection: Connection[Any],
+    *,
+    outcome: str,
+    result: Mapping[str, Any],
+    warnings: Any = None,
+    error: Mapping[str, Any] | None = None,
+    poll_error: str | None = None,
+) -> None:
+    """Replace the manager's certificate reading with the newest helper answer (B304)."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into manager_certificates (outcome, result, warnings, error, poll_error) "
+            "values (%(outcome)s, %(result)s, %(warnings)s, %(error)s, %(poll)s) "
+            "on conflict (id) do update set "
+            "    outcome = excluded.outcome, "
+            "    result = excluded.result, "
+            "    warnings = excluded.warnings, "
+            "    error = excluded.error, "
+            "    poll_error = excluded.poll_error",
+            {
+                "outcome": outcome,
+                "result": Jsonb(dict(result)),
+                "warnings": Jsonb(list(warnings or [])),
+                "error": None if error is None else Jsonb(dict(error)),
+                "poll": poll_error,
+            },
+        )
+
+
+def manager_certificates(connection: Connection[Any]) -> ManagerCertificates | None:
+    """The manager's newest certificate reading; None before the poller has made one."""
+
+    with connection.cursor(row_factory=class_row(ManagerCertificates)) as cursor:
+        cursor.execute(
+            "select observed_at, outcome, result, warnings, error, poll_error "
+            "from manager_certificates where id = 1"
+        )
+        return cursor.fetchone()
+
+
 def record_cluster_network(
     connection: Connection[Any],
     *,
@@ -2391,7 +2446,7 @@ def record_cluster_list(connection: Connection[Any], clusters: Sequence[str]) ->
 def replace_search_entries(
     connection: Connection[Any],
     *,
-    cluster: str,
+    cluster: str | None,
     source: str,
     entries: Sequence[search_index.Entry],
 ) -> int:
@@ -2407,20 +2462,29 @@ def replace_search_entries(
     is not mistaken for one that happened.
     """
 
+    #
+    # The manager's own rows have no cluster (B304), and `= null` matches none.
+    #
+    scope = sql.SQL(
+        "where cluster is null and source = %(source)s"
+        if cluster is None
+        else "where cluster = %(cluster)s and source = %(source)s"
+    )
     wanted = sorted(
         (entry.kind, entry.title, entry.label, entry.value, entry.href, entry.admin_only)
         for entry in entries
     )
     with connection.cursor() as cursor:
         cursor.execute(
-            "select kind, title, label, value, href, admin_only from search_entry "
-            "where cluster = %(cluster)s and source = %(source)s",
+            sql.SQL(
+                "select kind, title, label, value, href, admin_only from search_entry {scope}"
+            ).format(scope=scope),
             {"cluster": cluster, "source": source},
         )
         if sorted(tuple(row) for row in cursor.fetchall()) == wanted:
             return len(entries)
         cursor.execute(
-            "delete from search_entry where cluster = %(cluster)s and source = %(source)s",
+            sql.SQL("delete from search_entry {scope}").format(scope=scope),
             {"cluster": cluster, "source": source},
         )
         cursor.executemany(
@@ -2450,7 +2514,8 @@ def prune_search_entries(connection: Connection[Any], clusters: Sequence[str]) -
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "delete from search_entry where not (cluster = any(%(clusters)s))",
+            "delete from search_entry "
+            "where cluster is not null and not (cluster = any(%(clusters)s))",
             {"clusters": list(clusters)},
         )
         return cursor.rowcount
@@ -2494,7 +2559,7 @@ def search(
             "               case when kind = 'certificate' then '' else cluster end as shown_cluster "
             "          from search_entry "
             "         where lower(value) like %(pattern)s "
-            "           and cluster = any(%(clusters)s) "
+            "           and (cluster is null or cluster = any(%(clusters)s)) "
             "           and (%(admin)s or not admin_only)) hits "
             " group by kind, shown_cluster, title, href "
             " order by array_position(%(kinds)s::text[], kind), shown_cluster, lower(title) "

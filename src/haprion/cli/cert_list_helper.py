@@ -7,7 +7,9 @@ what reaches the caller is nine fields per certificate.
 
 The caller names a cluster and nothing else. Which certificates that cluster
 references, and which root they are distributed from, are resolved inside the
-privilege boundary from configuration.
+privilege boundary from configuration. A null cluster asks for the manager's
+own: the registry and what the interface is served with (B304), which a
+manager with no cluster yet must be able to read too.
 """
 
 from __future__ import annotations
@@ -18,14 +20,15 @@ from pathlib import Path
 from typing import BinaryIO, TextIO
 
 from haprion import ui_interface
-from haprion.cert_inventory import CertInventoryError, cert_list_result
+from haprion.cert_inventory import CertInventoryError, cert_list_result, manager_result
 from haprion.cert_receiver import manager_name
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haprion.envelope import envelope
 from haprion.helper_protocol import (
     HelperProtocolError,
+    HelperRequest,
     config_error_code,
-    read_helper_request,
+    read_scoped_request,
     require_no_arguments,
     write_document,
     write_failure,
@@ -56,7 +59,7 @@ def main(
             raise HelperProtocolError(
                 "haprion-cert-list-helper must run as root", exit_code=EXIT_NOT_ROOT
             )
-        request = read_helper_request(
+        request = read_scoped_request(
             input_stream or sys.stdin.buffer,
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
@@ -71,16 +74,17 @@ def main(
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
 
+    cluster_name = request.cluster if isinstance(request, HelperRequest) else None
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
         runtime = load_runtime_config(policy, require_secure=require_secure)
-        cluster = runtime.cluster(request.cluster)
+        cluster = runtime.cluster(cluster_name) if cluster_name is not None else None
     except ConfigError as exc:
         errors.write(f"ERROR: {exc}\n")
         return write_failure(
             writer,
             operation=OPERATION,
-            cluster=request.cluster,
+            cluster=cluster_name,
             request_id=request.request_id,
             code=config_error_code(exc.exit_code),
             message=str(exc),
@@ -91,7 +95,7 @@ def main(
         return write_failure(
             writer,
             operation=OPERATION,
-            cluster=request.cluster,
+            cluster=cluster_name,
             request_id=request.request_id,
             code="certificate_metadata_unavailable",
             message="the runtime policy declares no certificate_root",
@@ -102,19 +106,21 @@ def main(
     # policy names one. A policy without the block lists as before.
     ndes_policy = getattr(policy, "ndes", None)
     try:
-        result = cert_list_result(
-            policy.certificate_root,
-            cluster,
-            registry=runtime.registry,
-            request_root=ndes_policy.state_root if ndes_policy is not None else None,
-            manager=manager_name(),
-            interface_served=ui_interface.served_description(),
-        )
+        if cluster is None:
+            result = manager_result(
+                policy.certificate_root,
+                runtime.registry,
+                request_root=ndes_policy.state_root if ndes_policy is not None else None,
+                manager=manager_name(),
+                interface_served=ui_interface.served_description(),
+            )
+        else:
+            result = cert_list_result(policy.certificate_root, cluster, registry=runtime.registry)
     except CertInventoryError as exc:
         return write_failure(
             writer,
             operation=OPERATION,
-            cluster=request.cluster,
+            cluster=cluster_name,
             request_id=request.request_id,
             code="certificate_metadata_unavailable",
             message=str(exc),
@@ -132,7 +138,7 @@ def main(
         envelope(
             operation=OPERATION,
             outcome="done",
-            cluster=request.cluster,
+            cluster=cluster_name,
             request_id=request.request_id,
             result=result,
         ),

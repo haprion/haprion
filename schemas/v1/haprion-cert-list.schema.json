@@ -11,6 +11,7 @@
         "result": {
           "oneOf": [
             { "$ref": "#/$defs/cert_list_result" },
+            { "$ref": "#/$defs/manager_result" },
             { "type": "null" }
           ]
         }
@@ -18,7 +19,13 @@
       "allOf": [
         {
           "if": { "properties": { "outcome": { "const": "done" } } },
-          "then": { "properties": { "result": { "$ref": "#/$defs/cert_list_result" } } }
+          "then": {
+            "properties": {
+              "result": {
+                "oneOf": [{ "$ref": "#/$defs/cert_list_result" }, { "$ref": "#/$defs/manager_result" }]
+              }
+            }
+          }
         }
       ]
     }
@@ -218,51 +225,63 @@
           "type": "array",
           "items": { "$ref": "#/$defs/deployable_certificate" }
         },
-        "registry": {
-          "description": "Every certificate the registry names, regardless of cluster, plus the registered receivers that may be chosen as targets. Absent where the installation declares no certificate_registry. Carried in this per-cluster answer rather than by a helper of its own, because the poller is indexed by cluster in every one of its cache tables.",
-          "type": "object",
-          "required": ["certificates", "receivers"],
-          "properties": {
-            "certificates": {
-              "type": "array",
-              "items": { "$ref": "#/$defs/registered_certificate" }
-            },
-            "receivers": { "type": "array", "items": { "type": "string", "maxLength": 63 } },
-            "manager": {
-              "description": "The name a receiver reaches this manager by - the interface's server name - for the fetch commands the receivers page writes out (B142). Null where the helper could not read it.",
-              "type": ["string", "null"],
-              "maxLength": 253
-            },
-            "interface_served": {
-              "description": "Additive (B188): what nginx serves the manager's interface with now, read from the configured pair - the registry's marked certificate once installed, the installer's self-signed pair before. Null where the helper could not read it.",
-              "oneOf": [
-                {
-                  "type": "object",
-                  "required": ["server_name", "fingerprint_sha256", "common_name", "sans", "issuer", "not_after", "self_signed"],
-                  "properties": {
-                    "server_name": { "type": "string", "maxLength": 253 },
-                    "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-                    "common_name": { "type": ["string", "null"], "maxLength": 255 },
-                    "sans": { "type": "array", "items": { "type": "string", "maxLength": 255 } },
-                    "issuer": { "type": "string", "maxLength": 1024 },
-                    "not_after": { "type": "string", "format": "date-time" },
-                    "self_signed": { "type": "boolean" }
-                  },
-                  "additionalProperties": false
-                },
-                { "type": "null" }
-              ]
-            },
-            "receiver_records": {
-              "description": "One record per registered receiver, for the interface's receivers page (B142): how it fetches and which certificates name it. `flat` is the layout of a receiver registered before C7.",
-              "type": "array",
-              "items": { "$ref": "#/$defs/receiver_record" }
-            }
-          },
-          "additionalProperties": false
-        }
+        "registry": false
       },
       "additionalProperties": true
+    },
+    "registry": {
+      "description": "Every certificate the registry names, regardless of cluster, plus the registered receivers that may be chosen as targets. Absent where the installation declares no certificate_registry. Carried in the manager's answer (B304), not in a cluster's.",
+      "type": "object",
+      "required": ["certificates", "receivers"],
+      "properties": {
+        "certificates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/registered_certificate" }
+        },
+        "receivers": { "type": "array", "items": { "type": "string", "maxLength": 63 } },
+        "manager": {
+          "description": "The name a receiver reaches this manager by - the interface's server name - for the fetch commands the receivers page writes out (B142). Null where the helper could not read it.",
+          "type": ["string", "null"],
+          "maxLength": 253
+        },
+        "interface_served": { "$ref": "#/$defs/interface_served" },
+        "receiver_records": {
+          "description": "One record per registered receiver, for the interface's receivers page (B142): how it fetches and which certificates name it. `flat` is the layout of a receiver registered before C7.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/receiver_record" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "interface_served": {
+      "description": "Additive (B188): what nginx serves the manager's interface with now, read from the configured pair - the registry's marked certificate once installed, the installer's self-signed pair before. Null where the helper could not read it.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["server_name", "fingerprint_sha256", "common_name", "sans", "issuer", "not_after", "self_signed"],
+          "properties": {
+            "server_name": { "type": "string", "maxLength": 253 },
+            "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "common_name": { "type": ["string", "null"], "maxLength": 255 },
+            "sans": { "type": "array", "items": { "type": "string", "maxLength": 255 } },
+            "issuer": { "type": "string", "maxLength": 1024 },
+            "not_after": { "type": "string", "format": "date-time" },
+            "self_signed": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        { "type": "null" }
+      ]
+    },
+    "manager_result": {
+      "description": "The answer to a request whose cluster is null (B304): what the manager holds, read whether or not a cluster exists.",
+      "type": "object",
+      "required": ["interface_served"],
+      "properties": {
+        "interface_served": { "$ref": "#/$defs/interface_served" },
+        "registry": { "$ref": "#/$defs/registry" }
+      },
+      "additionalProperties": false
     }
   }
 }

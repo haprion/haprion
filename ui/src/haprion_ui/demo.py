@@ -25,6 +25,7 @@ from haprion_ui.db import (
     ClusterObjects,
     ClusterSettingsRow,
     ClusterStatus,
+    ManagerCertificates,
 )
 
 CLUSTERS = ("edge-demo", "service-demo")
@@ -397,6 +398,28 @@ def _certificate(
 
 
 def certificate_rows(now: datetime | None = None) -> tuple[ClusterCertificates, ...]:
+    """Each cluster's listing; the registry is the manager's (B304)."""
+
+    return _catalogue(now)[0]
+
+
+def manager_certificates(now: datetime | None = None) -> ManagerCertificates:
+    """The registry both clusters' certificates come from, read for the manager."""
+
+    _, registry, observed = _catalogue(now)
+    return ManagerCertificates(
+        observed_at=observed,
+        outcome="done",
+        result={"interface_served": None, "registry": registry},
+        warnings=[],
+        error=None,
+        poll_error=None,
+    )
+
+
+def _catalogue(
+    now: datetime | None,
+) -> tuple[tuple[ClusterCertificates, ...], dict[str, Any], datetime]:
     """One healthy catalogue, and one holding a certificate worth renewing.
 
     Both clusters read the same distribution directory and differ only in what
@@ -526,14 +549,13 @@ def certificate_rows(now: datetime | None = None) -> tuple[ClusterCertificates, 
         "manager": "manager.demo.example",
         "receiver_records": receivers,
     }
-    return (
+    rows = (
         ClusterCertificates(
             cluster="edge-demo",
             observed_at=observed,
             outcome="done",
             result={
                 "certificates": [wildcard, {**internal, "referenced_by_cluster": False}, retired],
-                "registry": registry,
             },
             warnings=[],
             error=None,
@@ -549,13 +571,13 @@ def certificate_rows(now: datetime | None = None) -> tuple[ClusterCertificates, 
                     {**wildcard, "referenced_by_cluster": False},
                     retired,
                 ],
-                "registry": registry,
             },
             warnings=[],
             error=None,
             poll_error=None,
         ),
     )
+    return rows, registry, observed
 
 
 def _archives(node_hour: datetime, count: int) -> list[dict[str, Any]]:

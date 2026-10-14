@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import select
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -89,6 +91,14 @@ MAX_FILE_BYTES = 1024 * 1024
 # therefore prepared here rather than in either command.
 #
 DEFAULT_RUN_ROOT = Path("/run/haprion-validation")
+#
+# A sandboxed check: how long the caller waits, how long the unit may run -
+# shorter, so systemd ends it before the caller gives up - and how much of its
+# output is kept (S07).
+#
+CLIENT_SECONDS = 30
+RUNTIME_SECONDS = 25
+DIAGNOSTICS_BYTES = 16384
 VALIDATION_CERTIFICATE = "validation.pem"
 
 
@@ -430,6 +440,15 @@ def sandbox_command(
         "BindReadOnlyPaths=-/etc/ssl/certs",
         "BindReadOnlyPaths=-/etc/ssl/openssl.cnf",
         f"BindReadOnlyPaths={candidate_root}:/candidate",
+        #
+        # Its own time limit, inside the caller's: a client that gave up does
+        # not stop the parser (security review 26-10-13, S07). Accounting so
+        # the journal says what a check uses - the measurement a memory and a
+        # task limit are to be set from, rather than guessed.
+        #
+        f"RuntimeMaxSec={RUNTIME_SECONDS}",
+        "MemoryAccounting=yes",
+        "TasksAccounting=yes",
     )
     command = [
         "/usr/bin/systemd-run",
@@ -534,17 +553,62 @@ def _dnsdist(candidate_root: Path, request_id: str) -> ValidationResult:
 
 
 def _sandboxed(command: list[str]) -> ValidationResult:
-    completed = subprocess.run(  # noqa: S603 - argv is entirely constructed above
+    finished = _run_unit(command)
+    if finished is None:
+        return ValidationResult(
+            valid=False,
+            diagnostics=f"refused: the check did not finish within {CLIENT_SECONDS} s\n",
+        )
+    returncode, diagnostics = finished
+    return ValidationResult(valid=returncode == 0, diagnostics=diagnostics)
+
+
+def _run_unit(command: list[str]) -> tuple[int, str] | None:
+    """Run one sandboxed check: its exit code and output, or None past the deadline.
+
+    The output is kept to DIAGNOSTICS_BYTES as it arrives rather than collected
+    whole and cut afterwards: a parser that floods it must not grow this
+    process. Past the deadline the unit itself is stopped - the client giving
+    up stops nothing else (security review 26-10-13, S07).
+    """
+
+    unit = next(arg.removeprefix("--unit=") for arg in command if arg.startswith("--unit="))
+    process = subprocess.Popen(  # noqa: S603 - argv is entirely constructed above
         command,
         stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         env={"PATH": "/usr/sbin:/usr/bin"},
     )
-    diagnostics = (completed.stdout + completed.stderr)[:16384]
-    return ValidationResult(valid=completed.returncode == 0, diagnostics=diagnostics)
+    assert process.stdout is not None  # noqa: S101 - PIPE was asked for
+    kept = bytearray()
+    deadline = time.monotonic() + CLIENT_SECONDS
+    try:
+        with process.stdout:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, CLIENT_SECONDS)
+                ready, _, _ = select.select([process.stdout], [], [], remaining)
+                if not ready:
+                    continue
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                kept += chunk[: max(0, DIAGNOSTICS_BYTES - len(kept))]
+        returncode = process.wait(timeout=max(0.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        subprocess.run(  # noqa: S603 - fixed argv, a unit name this module made
+            ["/usr/bin/systemctl", "stop", f"{unit}.service"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        return None
+    return returncode, kept.decode("utf-8", "replace")
 
 
 type SandboxValidator = Callable[[Path, str], ValidationResult]

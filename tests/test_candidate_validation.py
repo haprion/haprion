@@ -203,22 +203,54 @@ class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
     def test_rules_without_the_engine_on_the_manager_are_refused(self) -> None:
         calls: list[list[str]] = []
 
-        def ran(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        def ran(command: list[str]) -> tuple[int, str]:
             calls.append(command)
-            return subprocess.CompletedProcess(command, 0, "", "")
+            return 0, ""
 
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             (root / "waf").mkdir()
             (root / "waf" / "coraza.yaml").write_text("x")
             with (
-                mock.patch.object(subprocess, "run", ran),
+                mock.patch.object(candidate_validation, "_run_unit", ran),
                 mock.patch.object(candidate_validation, "WAF_ENGINE", str(root / "absent")),
             ):
                 result = candidate_validation.validate_in_sandbox(root, "1111")
         self.assertFalse(result.valid)
         self.assertIn("haprion-coraza-spoa", result.diagnostics)
         self.assertEqual(len(calls), 1)
+
+
+class TheSandboxedCheckIsBounded(unittest.TestCase):
+    """S07 (security review 26-10-13): the output was collected whole and cut
+    afterwards, and a check past the caller's timeout was left running."""
+
+    def test_a_flood_of_output_is_kept_to_its_limit_as_it_arrives(self) -> None:
+        command = ["/bin/sh", "-c", "head -c 1000000 /dev/zero | tr '\\0' x", "--unit=test"]
+        finished = candidate_validation._run_unit(command)
+        assert finished is not None
+        self.assertEqual(finished[0], 0)
+        self.assertEqual(len(finished[1]), candidate_validation.DIAGNOSTICS_BYTES)
+
+    def test_a_check_past_the_deadline_is_refused_and_its_unit_stopped(self) -> None:
+        stopped: list[list[str]] = []
+        with (
+            mock.patch.object(candidate_validation, "CLIENT_SECONDS", 0.3),
+            mock.patch.object(subprocess, "run", lambda argv, **_: stopped.append(argv)),
+        ):
+            result = candidate_validation._sandboxed(
+                ["/bin/sh", "-c", "exec sleep 10", "--unit=haprion-validation-test"]
+            )
+        self.assertFalse(result.valid)
+        self.assertIn("did not finish", result.diagnostics)
+        self.assertEqual(
+            stopped, [["/usr/bin/systemctl", "stop", "haprion-validation-test.service"]]
+        )
+
+    def test_the_unit_is_limited_in_time_inside_the_caller_s(self) -> None:
+        command = " ".join(sandbox_command(Path("/run/candidate"), "1111"))
+        self.assertIn(f"RuntimeMaxSec={candidate_validation.RUNTIME_SECONDS}", command)
+        self.assertLess(candidate_validation.RUNTIME_SECONDS, candidate_validation.CLIENT_SECONDS)
 
 
 class TheDnsListenerIsValidatedByDnsdist(unittest.TestCase):
@@ -243,12 +275,10 @@ class TheDnsListenerIsValidatedByDnsdist(unittest.TestCase):
     ) -> tuple[candidate_validation.ValidationResult, list[list[str]]]:
         calls: list[list[str]] = []
 
-        def ran(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        def ran(command: list[str]) -> tuple[int, str]:
             calls.append(command)
             dns = "--check-config" in command
-            return subprocess.CompletedProcess(
-                command, code if dns else 0, output if dns else "", ""
-            )
+            return (code, output) if dns else (0, "")
 
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -258,7 +288,7 @@ class TheDnsListenerIsValidatedByDnsdist(unittest.TestCase):
             if installed:
                 binary.write_text("")
             with (
-                mock.patch.object(subprocess, "run", ran),
+                mock.patch.object(candidate_validation, "_run_unit", ran),
                 mock.patch.object(candidate_validation, "DNSDIST", str(binary)),
             ):
                 return candidate_validation.validate_in_sandbox(root, "1111"), calls

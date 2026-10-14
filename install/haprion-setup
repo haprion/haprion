@@ -175,7 +175,7 @@ add_step "sign-in through an identity provider" \
 #
 if [[ -n "${UV_BIN:-}" ]]; then
     add_step "certbot, for issuing certificates" \
-        "check that this machine reaches the Python package index (pypi.org)" \
+        "read the log: a download error means this machine does not reach pypi.org; a failed check names its plugin" \
         "./platform/14-platform-certbot ${ans} ${source_tree}"
 fi
 add_step "the whole installation" \

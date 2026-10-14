@@ -209,5 +209,37 @@ class InstallCertbotEnvTests(unittest.TestCase):
             installer.engine_root(self.project)
 
 
+VERIFIER_PATH = INSTALLER_PATH.parents[1] / "certbot" / "verify-integrations.py"
+
+
+class OfflineVerifierTests(unittest.TestCase):
+    def test_the_network_block_leaves_socket_a_class_that_refuses(self) -> None:
+        """dnspython annotates `socket.socket | ssl.SSLSocket`; before Python 3.14
+        that is evaluated at import, and a function in its place failed every
+        lexicon plugin on a Debian 13 manager (26-10-14). Run apart: the block
+        patches the socket module for the whole process."""
+
+        probe = textwrap.dedent(
+            f"""\
+            import runpy, socket, ssl
+            runpy.run_path({str(VERIFIER_PATH)!r}, run_name="verifier")["forbid_network"]()
+            assert isinstance(socket.socket | ssl.SSLSocket, object)
+            try:
+                socket.socket()
+            except RuntimeError as exc:
+                assert "network access" in str(exc), exc
+            else:
+                raise AssertionError("a socket was created")
+            """
+        )
+        completed = subprocess.run(  # noqa: S603 - this interpreter and a fixed probe
+            [sys.executable, "-I", "-c", probe],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -95,7 +95,14 @@ def forbid_network() -> None:
     def refuse(*args: object, **kwargs: object) -> object:
         raise RuntimeError("network access is not available during integration verification")
 
-    socket.socket = refuse  # type: ignore[misc, assignment]
+    # socket.socket stays a class: libraries annotate with it, and before
+    # Python 3.14 an annotation such as `socket.socket | ssl.SSLSocket` is
+    # evaluated at import - a function there fails the import, not the check.
+    class RefusedSocket(socket.socket):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            refuse()
+
+    socket.socket = RefusedSocket  # type: ignore[misc]
     socket.create_connection = refuse  # type: ignore[assignment]
     socket.getaddrinfo = refuse  # type: ignore[assignment]
 

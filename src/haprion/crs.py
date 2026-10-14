@@ -120,6 +120,52 @@ _MACRO_IN_PARENTHESES = re.compile(r"\s*\(%\{[^}]*\}\)")
 _MACRO = re.compile(r"%\{[^}]*\}")
 
 
+@dataclass(frozen=True, slots=True)
+class EngineRule:
+    """One of the installation's own rules ahead of the rule set (security review S04).
+
+    Coraza's recommended refusals of a request it could not read to the end:
+    a body it could not parse, a malformed upload, arguments past its limit, a
+    URI it could not parse. Without them the rule set inspects nothing of what
+    was not read, and the request passes as clean. Numbered in 1900xx, the
+    range the engine connector reports back to HAProxy besides the rule set's
+    own (coraza-spoa `isAttackRule`), keeping Coraza's last digits.
+    """
+
+    id: int
+    phase: int
+    condition: str
+    message: str
+
+
+ENGINE_RULES = (
+    EngineRule(190009, 1, 'URI_PARSE_ERROR "@eq 1"', "The address could not be parsed"),
+    EngineRule(190004, 1, 'ARGUMENTS_LIMIT_REACHED "@eq 1"', "More arguments than are inspected"),
+    EngineRule(190002, 2, 'REQBODY_ERROR "!@eq 0"', "The request body could not be parsed"),
+    EngineRule(
+        190003, 2, 'MULTIPART_STRICT_ERROR "!@eq 0"', "The upload is not well-formed multipart"
+    ),
+    EngineRule(190005, 2, 'ARGUMENTS_LIMIT_REACHED "@eq 1"', "More arguments than are inspected"),
+)
+ENGINE_RULE_FILE = 190
+#
+# The arguments the engine keeps from each source (query, path, body); past
+# it they are dropped uninspected, which 190004 and 190005 refuse.
+#
+ENGINE_ARGUMENTS_LIMIT = 1000
+
+
+def engine_catalog() -> dict[int, Rule]:
+    """The installation's own rules, as the catalog describes a rule set's."""
+
+    return {
+        rule.id: Rule(
+            id=rule.id, message=rule.message, severity="critical", file=ENGINE_RULE_FILE, paranoia=0
+        )
+        for rule in ENGINE_RULES
+    }
+
+
 def catalog(rule_set: RuleSet) -> dict[int, Rule]:
     """Every rule with an ID in the rule set's `.conf` files."""
 
@@ -286,26 +332,26 @@ _catalogs: dict[tuple[Path, str], dict[int, Rule]] = {}
 
 
 def installed_catalog(root: Path = ROOT) -> dict[int, Rule]:
-    """The installed rule set's catalog, read once per installed version; empty without one.
+    """The installation's own rules and the installed rule set's, read once per version.
 
     For the interface, which asks on every page: the version file is read each
     time, the rules only when it changes - a package upgrade is a new version.
-    A rule set that cannot be read gives an empty catalog, and the page shows
-    the rule's ID without its meaning rather than no page.
+    A rule set that cannot be read gives the installation's own rules alone,
+    and the page shows a rule set's ID without its meaning rather than no page.
     """
 
     try:
         version = _read(root / "VERSION").decode("ascii", "replace").strip()
     except RuleSetError:
-        return {}
+        return engine_catalog()
     known = _catalogs.get((root, version))
     if known is not None:
         return known
     try:
         rule_set = installed(root)
     except RuleSetError:
-        return {}
-    rules = catalog(rule_set) if rule_set is not None else {}
+        return engine_catalog()
+    rules = engine_catalog() | (catalog(rule_set) if rule_set is not None else {})
     _catalogs[(root, version)] = rules
     return rules
 

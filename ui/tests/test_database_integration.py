@@ -4462,6 +4462,7 @@ class WhatAnExceptionLetThroughIsNoFinding(unittest.TestCase):
         self.now = datetime.now(UTC).replace(microsecond=0)
         rows = (
             # (rule, field, path, client)
+            (190002, "", "/api", "192.0.2.5"),
             (942100, "ARGS:q", "/search", "192.0.2.1"),
             (342100, "ARGS:q", "/", "192.0.2.2"),
             (342100, "ARGS:q", "/", "192.0.2.2"),
@@ -4508,7 +4509,8 @@ class WhatAnExceptionLetThroughIsNoFinding(unittest.TestCase):
             findings = db.waf_findings(
                 connection, clusters=["ct-a"], since=self.now - timedelta(days=1)
             )
-        self.assertEqual([row.rule_id for row in findings], [942100])
+        # Newest first; the installation's own rule (1900xx) is a finding too.
+        self.assertEqual([row.rule_id for row in findings], [942100, 190002])
 
     def test_each_exception_counts_within_its_field_and_paths(self) -> None:
         root = db.CounterScope("ct-a", "shop", 342100, "ARGS:q", ("/",))

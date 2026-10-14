@@ -28,7 +28,7 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
-from haprion import node_resources
+from haprion import crs, node_resources
 from haprion.generate import METRICS_FRONTEND
 from psycopg import Connection, sql
 from psycopg.rows import class_row
@@ -4849,14 +4849,14 @@ def waf_findings(
             "         count(distinct path)::int as path_count "
             "    from waf_finding_path "
             "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
-            "     and rule_id >= %(first)s "
+            "     and (rule_id >= %(first)s or rule_id / 1000 = %(engine)s) "
             "   group by cluster, object, rule_id, field"
             "), clients as ("
             "  select cluster, object, rule_id, field, "
             "         count(distinct nullif(client, ''))::int as clients "
             "    from waf_finding_client "
             "   where cluster = any(%(clusters)s) and hour >= date_trunc('hour', %(since)s, 'UTC') "
-            "     and rule_id >= %(first)s "
+            "     and (rule_id >= %(first)s or rule_id / 1000 = %(engine)s) "
             "   group by cluster, object, rule_id, field"
             ") "
             "select paths.cluster, paths.object, paths.rule_id, paths.field, paths.requests, "
@@ -4871,6 +4871,7 @@ def waf_findings(
                 "paths": WAF_FINDING_PATHS,
                 "limit": WAF_FINDING_LIMIT,
                 "first": WAF_RULE_FIRST,
+                "engine": crs.ENGINE_RULE_FILE,
             },
         )
         return cursor.fetchall()
@@ -4878,7 +4879,8 @@ def waf_findings(
 
 #
 # The rule set's IDs start here; below are the exceptions' counters (B273),
-# which count what was let through and are no finding.
+# which count what was let through and are no finding, and the installation's
+# own rules (crs.ENGINE_RULES, 1900xx), which are.
 #
 WAF_RULE_FIRST = 900000
 

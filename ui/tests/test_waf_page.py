@@ -9,6 +9,7 @@ from typing import Any
 from unittest import mock
 
 import yaml
+from haprion import crs
 from haprion.crs import Rule
 
 from haprion_ui import waf
@@ -99,6 +100,21 @@ class WhatIsShownAsAFinding(unittest.TestCase):
         self.assertEqual(self.build(finding(), draft=off), [])
         [card] = self.build(finding(), stored=off, draft=LOGGING)
         self.assertEqual(card.mode, "log")
+
+    def test_what_the_engine_could_not_read_is_named_and_offers_no_allow(self) -> None:
+        """Security review S04: an exception takes the rule set's rules, not the engine's."""
+
+        [card] = waf.build_findings(
+            [finding(190002, "", ("/api",), matched="")],
+            {},
+            {("alpha", "shop"): LOGGING},
+            {},
+            crs.engine_catalog() | CATALOG,
+        )
+        [shown] = card.findings
+        self.assertEqual(shown.kind, "Unreadable")
+        self.assertEqual(shown.message, crs.engine_catalog()[190002].message)
+        self.assertEqual(shown.allow_href, "")
 
     def test_a_rule_the_catalog_does_not_know_is_still_shown(self) -> None:
         [card] = self.build(finding(999999, "", ("/x",)))

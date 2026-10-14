@@ -623,12 +623,32 @@ WAF_BASE = (
     'SecRule REQUEST_HEADERS:Content-Type "^application/[a-z0-9.-]+[+]json" '
     '"id:200006,phase:1,t:none,t:lowercase,pass,nolog,ctl:requestBodyProcessor=JSON"',
 )
+#
+# The engine's refusals of what it could not read (security review S04). Each
+# refuses as the rule set's do: the engine says deny, and `mode` decides.
+# HAProxy marks a body it cut on a `large_bodies` path (WAF_BODY_CUT), where
+# the operator chose to inspect what fitted, so the half body is not refused
+# as unparseable; a client's own copy of the header is removed first.
+#
+WAF_BODY_CUT = "x-haprion-body-cut"
+WAF_BODY_CUT_RULE = 190001
+WAF_PARSE = (
+    f"SecArgumentsLimit {crs.ENGINE_ARGUMENTS_LIMIT}",
+    f'SecRule REQUEST_HEADERS:{WAF_BODY_CUT} "@streq 1" '
+    f'"id:{WAF_BODY_CUT_RULE},phase:1,t:none,pass,nolog,ctl:ruleRemoveById=190002"',
+    *(
+        f'SecRule {rule.condition} "id:{rule.id},phase:{rule.phase},t:none,log,deny,'
+        f"status:400,msg:'{rule.message}'\""
+        for rule in crs.ENGINE_RULES
+    ),
+)
 
 
 #
 # An exception's own rules, numbered from here within each object's
-# application (the base uses 2000xx; the rule set 9xxxxx). Each object has its
-# own rule set, so the numbers repeat between objects without meeting.
+# application (the base uses 2000xx and 1900xx; the rule set 9xxxxx). Each
+# object has its own rule set, so the numbers repeat between objects without
+# meeting.
 #
 WAF_EXCEPTION_FIRST_ID = 210000
 
@@ -847,6 +867,7 @@ def _waf_files(
         before, after = _waf_exception_directives(proxy.waf.exceptions)
         directives = [
             *WAF_BASE,
+            *WAF_PARSE,
             *before,
             f"Include {crs}/crs-setup.conf",
             #
@@ -2358,42 +2379,57 @@ def _access_rules(
     return lines
 
 
-def _waf_body_rules(proxy: Proxy, waf: Waf, host: str) -> list[str]:
+def _waf_large_body(proxy: Proxy, waf: Waf) -> tuple[list[str], str | None]:
+    """The `large_bodies` paths as an ACL: its lines and its name.
+
+    None when there are none, and an empty name when one is `/`, which is
+    every path. Matched on the path decoded and with its slashes merged, as
+    the access rules are.
+    """
+
+    if not waf.large_bodies:
+        return [], None
+    if "/" in waf.large_bodies:
+        return [], ""
+    acl = _acl_name(proxy.name, "large-body")
+    lines = []
+    for path in waf.large_bodies:
+        lines += [
+            f"    acl {acl} {ACCESS_PATH_EXPRESSION} -m str {path.lower()}",
+            f"    acl {acl} {ACCESS_PATH_EXPRESSION} -m beg {path.lower()}/",
+        ]
+    return lines, acl
+
+
+def _waf_body_rules(waf: Waf, host: str, large: str | None) -> list[str]:
     """A body the engine could not read to its end (review 2026-10-04 F1, B243).
 
     The engine gets what HAProxy's buffer holds after `wait-for-body` - about
     15 kB of a 16 kB buffer - and an attack after that much padding passed
-    `block` uninspected (measured). `req.body_size` is the declared length, or
-    what has been parsed of a chunked body, and `req.body_len` what the buffer
-    holds; the difference is above zero exactly when the body did not fit,
-    with a length and chunked alike (measured in 3.4.6). A body that arrives
-    too slowly is answered 408 by `wait-for-body` and never gets here.
-
-    `block` refuses it with 413, `log` marks it; `large_bodies` are the paths
-    that expect it, where it is let through with what fitted inspected. Matched
-    on the path decoded and with its slashes merged, as the access rules are.
+    `block` uninspected (measured). `block` refuses it with 413, `log` marks
+    it; `large_bodies` (`large`) are the paths that expect it, where it is let
+    through with what fitted inspected.
     """
 
-    short = "{ req.body_size,sub(txn.waf_body) gt 0 }"
-    lines = [f"    http-request set-var(txn.waf_body) req.body_len if {host}"]
-    condition = f"{host} {short}"
-    if waf.large_bodies:
-        acl = _acl_name(proxy.name, "large-body")
-        for path in waf.large_bodies:
-            if path == "/":
-                return []
-            lines += [
-                f"    acl {acl} {ACCESS_PATH_EXPRESSION} -m str {path.lower()}",
-                f"    acl {acl} {ACCESS_PATH_EXPRESSION} -m beg {path.lower()}/",
-            ]
-        condition += f" !{acl}"
+    if large == "":
+        return []
+    condition = f"{host} {WAF_BODY_SHORT}" + (f" !{large}" if large else "")
     if waf.mode == "block":
         return [
-            *lines,
             f"    http-request set-var(txn.rule) str(waf-body:deny) if {condition}",
             f"    http-request deny deny_status 413 if {condition}",
         ]
-    return [*lines, *_verdict(condition, "waf-body", "log")]
+    return _verdict(condition, "waf-body", "log")
+
+
+#
+# `req.body_size` is the declared length, or what has been parsed of a
+# chunked body, and `req.body_len` what the buffer holds (`txn.waf_body`); the
+# difference is above zero exactly when the body did not fit, with a length
+# and chunked alike (measured in 3.4.6). A body that arrives too slowly is
+# answered 408 by `wait-for-body` and never gets here.
+#
+WAF_BODY_SHORT = "{ req.body_size,sub(txn.waf_body) gt 0 }"
 
 
 def _waf_rules(proxy: Proxy, host: str) -> list[str]:
@@ -2411,8 +2447,21 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
         return []
     verdict = "{ var(txn.coraza.action) -m str deny }"
     failed = "{ var(txn.coraza.error) -m found }"
+    acl_lines, large = _waf_large_body(proxy, waf)
     lines = [
         f"    http-request wait-for-body time 1s if {host}",
+        f"    http-request set-var(txn.waf_body) req.body_len if {host}",
+        *acl_lines,
+        #
+        # Only HAProxy says a body was cut (WAF_BODY_CUT): whatever the
+        # client sent under that name is gone before the engine is asked.
+        #
+        f"    http-request del-header {WAF_BODY_CUT} if {host}",
+    ]
+    if large is not None:
+        marked = f"{host} {WAF_BODY_SHORT}" + (f" {large}" if large else "")
+        lines.append(f"    http-request set-header {WAF_BODY_CUT} 1 if {marked}")
+    lines += [
         f"    http-request set-var(txn.coraza.app) str({proxy.name}) if {host}",
         #
         # The engine takes this as its transaction ID, puts it on every rule it
@@ -2421,8 +2470,10 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
         #
         f'    http-request set-var-fmt(txn.coraza.request) "{proxy.name}.%[uuid]" if {host}',
         f"    http-request send-spoe-group {WAF_SPOE_ENGINE} {WAF_SPOE_GROUP} if {host}",
-        *_verdict(f"{host} {verdict}", "crs", "deny" if waf.mode == "block" else "log"),
     ]
+    if large is not None:
+        lines.append(f"    http-request del-header {WAF_BODY_CUT} if {host}")
+    lines += _verdict(f"{host} {verdict}", "crs", "deny" if waf.mode == "block" else "log")
     if waf.on_engine_error == "deny":
         lines += [
             f"    http-request set-var(txn.rule) str(waf-engine:deny) if {host} {failed}",
@@ -2434,7 +2485,7 @@ def _waf_rules(proxy: Proxy, host: str) -> list[str]:
     # After the engine's answer: a record whose engine did not answer says so
     # first, and a refused body names itself whatever was logged before.
     #
-    return [*lines, *_waf_body_rules(proxy, waf, host)]
+    return [*lines, *_waf_body_rules(waf, host, large)]
 
 
 def _message(proxy: Proxy, message: str) -> str:

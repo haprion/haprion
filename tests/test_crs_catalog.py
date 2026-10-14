@@ -73,7 +73,9 @@ class TheCatalogDescribesEachRule(unittest.TestCase):
 
     def test_without_the_package_the_catalog_is_empty(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            self.assertEqual(crs.installed_catalog(Path(temporary) / "absent"), {})
+            self.assertEqual(
+                crs.installed_catalog(Path(temporary) / "absent"), crs.engine_catalog()
+            )
 
     def test_the_catalog_is_read_again_when_the_version_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

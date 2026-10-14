@@ -1123,6 +1123,20 @@ and what lies under it, matched as an access rule's path is: there the request
 is served with what fitted inspected. `/` covers the whole object. A body that
 arrives too slowly is answered 408 after a second, as before.
 
+**A request the engine cannot read.** The rule set inspects what the engine
+took apart, so what it could not take apart would pass as clean. The engine
+therefore judges, as it judges a rule set match: a body it could not parse
+(broken JSON or XML), a malformed multipart upload, more than 1000 arguments
+from one source (the query, the path or the body - the rest would go
+uninspected), and an address it could not parse. In `block` the request is
+refused with 403 and recorded `crs:deny`, in `log` it is served and recorded
+`crs:log`; the record carries the rule (1900xx), and *Findings* shows it as
+*Unreadable*. These cannot be excepted - what was not read cannot be narrowed
+to a field - so a client that sends such requests is corrected, or its object
+stays in `log`. On a `large_bodies` path a body cut at the buffer is not
+refused as unparseable, since its end never reached the engine; a whole body
+that does not parse still is.
+
 **When the engine does not answer** - stopped, restarting, or overloaded -
 `allow` serves the request uninspected and records `waf-engine:log`, and `deny`
 answers 503 and records `waf-engine:deny`; either answers at once. A node whose
@@ -3351,6 +3365,10 @@ better done elsewhere. The details are in the section linked.
   `haprion-restore-check.service` ([Backups, and proving they restore](#backups-and-proving-they-restore)).
   The partitions the nightly retention creates need no watching of their own: the traffic
   log's run out first, after seven days, and its import then fails in *Needs attention*.
+- **A request the WAF engine could not read cannot be excepted.** A broken body, a malformed
+  upload or arguments past the limit are judged by the object's mode, like a rule set match,
+  but no exception lets one through: what was not read cannot be narrowed to a field
+  ([A request the engine cannot read](#the-waf-engine)).
 
 
 ## Environment reference

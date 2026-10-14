@@ -46,7 +46,7 @@
         <td><span class="finding-count">{{ finding.requests }}</span></td>
         <td><span class="finding-count">{{ finding.clients }}</span></td>
         <td><span class="users-date">{{ finding.last_seen | shown_at }}</span></td>
-        <td>{% if finding.ineffective %}<span class="status-badge status-badge-warning">Not working</span>{% elif finding.in_draft %}<span class="finding-draft">In draft</span>{% elif can_write %}<a class="secondary-button" href="{{ finding.allow_href }}&amp;matched={{ finding.matched | urlencode }}" data-waf-allow>Allow…</a>{% endif %}</td>
+        <td>{% if finding.ineffective %}<span class="status-badge status-badge-warning">Not working</span>{% elif finding.in_draft %}<span class="finding-draft">In draft</span>{% elif can_write and finding.allow_href %}<a class="secondary-button" href="{{ finding.allow_href }}&amp;matched={{ finding.matched | urlencode }}" data-waf-allow>Allow…</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

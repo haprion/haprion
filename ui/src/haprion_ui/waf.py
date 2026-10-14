@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
+from haprion import crs
 from haprion.generate import waf_counter_ids
 from haprion.proxy_model import (
     ModelError,
@@ -34,6 +35,12 @@ from haprion_ui.preview import canonical_waf, canonical_waf_exception
 # LFI`) say nothing to somebody deciding whether a finding is a false alarm.
 #
 KINDS: Mapping[int, tuple[str, str]] = {
+    crs.ENGINE_RULE_FILE: (
+        "Unreadable",
+        "The engine could not read the request to its end - a broken body, a malformed "
+        "upload or more arguments than it inspects - so the rest went uninspected. "
+        "Usually a client to correct; it cannot be allowed, only the object put in log.",
+    ),
     911: (
         "Method",
         "The request used an HTTP method the site is not expected to accept.",
@@ -313,6 +320,10 @@ def shown_field(field: str) -> str:
 
 
 def _allow_href(cluster: str, name: str, row: Any) -> str:
+    """Where the finding's exception is made; empty for a rule no exception takes."""
+
+    if row.rule_id // 1000 == crs.ENGINE_RULE_FILE:
+        return ""
     query = [("cluster", cluster), ("object", name), ("rule", str(row.rule_id))]
     if row.field:
         query.append(("field", row.field))

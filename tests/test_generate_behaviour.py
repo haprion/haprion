@@ -2835,6 +2835,14 @@ BLOCKS_WITH_EXCEPTIONS = """  mode: block
   large_bodies: [/upload]"""
 
 
+FORM = "application/x-www-form-urlencoded"
+MULTIPART = "multipart/form-data; boundary=b"
+MULTIPART_TWICE = (
+    b'--b\r\nContent-Disposition: form-data; name="a"\r\n'
+    b'Content-Disposition: form-data; name="b"\r\n\r\nx\r\n--b--\r\n'
+)
+
+
 @unittest.skipUnless(
     shutil.which("haproxy") and WAF_ENGINE.is_file() and WAF_RULES.is_dir(),
     "haproxy, the WAF engine or the rule set is not installed here",
@@ -2943,6 +2951,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         name: str,
         body: bytes | None = None,
         headers: Mapping[str, str] | None = None,
+        content_type: str = "application/x-www-form-urlencoded",
     ) -> tuple[int, str, str]:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
@@ -2953,7 +2962,7 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
             for header, value in (headers or {}).items():
                 connection.putheader(header, value)
             if body is not None:
-                connection.putheader("Content-Type", "application/x-www-form-urlencoded")
+                connection.putheader("Content-Type", content_type)
                 connection.putheader("Content-Length", str(len(body)))
             connection.endheaders()
             if body is not None:
@@ -3124,6 +3133,57 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         early = b"name=x' UNION SELECT password FROM users--&pad=" + b"a" * 20_000
         self.assertEqual(self.ask("/upload", name="blocks", body=early)[:2], (403, "crs:deny"))
 
+    def test_what_the_engine_could_not_read_is_judged_as_the_rule_set_judges(self) -> None:
+        """Security review S04: refused in `block`, let through and named in `log`."""
+
+        many = "&".join(f"a{index}=1" for index in range(1001))
+        for label, target, body, content_type, rule in (
+            ("broken JSON", "/api", b'{"a":', "application/json", "190002"),
+            ("arguments past the limit", "/form", many.encode(), FORM, "190005"),
+            ("arguments past the limit in the query", f"/q?{many}", None, FORM, "190004"),
+            ("malformed upload", "/form", MULTIPART_TWICE, MULTIPART, "190003"),
+        ):
+            with self.subTest(label):
+                status, verdict, rules = self.ask(
+                    target, name="blocks", body=body, content_type=content_type
+                )
+                self.assertEqual((status, verdict), (403, "crs:deny"))
+                self.assertIn(rule, rules.split(","))
+                status, verdict, rules = self.ask(
+                    target, name="looks", body=body, content_type=content_type
+                )
+                self.assertEqual((status, verdict), (200, "crs:log"))
+                self.assertIn(rule, rules.split(","))
+        for body, content_type in ((b'{"a": 1}', "application/json"), (b"a=1", FORM)):
+            with self.subTest(body=body):
+                self.assertEqual(
+                    self.ask("/api", name="blocks", body=body, content_type=content_type),
+                    (200, "", ""),
+                )
+
+    def test_a_body_cut_on_a_large_body_path_is_not_refused_as_unreadable(self) -> None:
+        cut = b'{"a": "' + b"x" * 20_000 + b'"}'
+        self.assertEqual(
+            self.ask("/upload", name="blocks", body=cut, content_type="application/json"),
+            (200, "", ""),
+        )
+        # Whole, and still broken: the path does not excuse it.
+        self.assertEqual(
+            self.ask("/upload", name="blocks", body=b'{"a":', content_type="application/json")[:2],
+            (403, "crs:deny"),
+        )
+        # The mark is HAProxy's: a client's own copy changes nothing.
+        self.assertEqual(
+            self.ask(
+                "/api",
+                name="blocks",
+                body=b'{"a":',
+                content_type="application/json",
+                headers={"X-Haprion-Body-Cut": "1"},
+            )[:2],
+            (403, "crs:deny"),
+        )
+
     def test_the_engine_hands_its_transaction_id_back_to_haproxy(self) -> None:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
         connection.request("GET", SQLI, headers={"Host": "looks.example.com"})
@@ -3141,6 +3201,12 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
     """The same layer with no engine: `on_engine_error` decides (B232)."""
 
     engine_running = False
+
+    def test_what_the_engine_could_not_read_is_judged_as_the_rule_set_judges(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_a_body_cut_on_a_large_body_path_is_not_refused_as_unreadable(self) -> None:
+        self.skipTest("the engine is not running")
 
     def test_an_ordinary_request_is_served_and_named_by_nothing(self) -> None:
         self.assertEqual(self.ask("/?q=hello", name="looks"), (200, "waf-engine:log", ""))

@@ -114,6 +114,18 @@ class RenewalInvocations(Fixture):
         self.assertEqual(commands[0].timeout, 5000 + route53)
         self.assertEqual(commands[1].timeout, cert_issue.CERTBOT_TIMEOUT)
 
+    def test_a_host_where_certbot_never_issued_has_nothing_to_renew(self) -> None:
+        """A new manager has no renewal directory; the setup step's dry run
+        and the nightly timer stopped on it (26-10-14)."""
+
+        commands = cert_renew.invocations(
+            self.policy,
+            self.runtime,
+            renewal_directory=self.root / "absent",
+            require_secure=False,
+        )
+        self.assertEqual(commands, ())
+
     def test_scrubbing_is_literal_and_longest_first(self) -> None:
         self.assertEqual(
             cert_renew._scrub("secret-value and secret", ("secret", "secret-value")),

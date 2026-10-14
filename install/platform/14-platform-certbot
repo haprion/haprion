@@ -88,9 +88,16 @@ step "Proving it against this host's lineages"
 if ! /opt/haprion/current/bin/haprion-cert-renew \
     --certbot "$CERTBOT" --dry-run --run-deploy-hooks; then
     restore_previous
-    die "the dry-run renewal failed with ${release##*/}; the previous environment is current again"
+    if [[ -n "$previous" && "$previous" != "$release" ]]; then
+        die "the dry-run renewal failed with ${release##*/}; the previous environment is current again"
+    fi
+    die "the dry-run renewal failed with ${release##*/}"
 fi
-log "  ok       renew --dry-run --run-deploy-hooks with ${release##*/}"
+if compgen -G "/etc/letsencrypt/renewal/*.conf" >/dev/null; then
+    log "  ok       renew --dry-run --run-deploy-hooks with ${release##*/}"
+else
+    log "  ok       no certificates from Let's Encrypt yet; nothing to renew"
+fi
 
 step "Renewal timer"
 install_file "/etc/systemd/system/${UNIT}.service" root:root 644 \

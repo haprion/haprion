@@ -61,12 +61,19 @@ def invocations(
     run_deploy_hooks: bool = False,
     require_secure: bool = True,
 ) -> tuple[RenewalInvocation, ...]:
-    """Build one bounded renewal command for every on-disk lineage."""
+    """Build one bounded renewal command for every on-disk lineage.
+
+    Certbot creates the renewal directory with its first certificate; until
+    then there is nothing to renew, as for certbot itself and for the DNS
+    profile helper's reading of the same directory (26-10-14).
+    """
 
     try:
+        if not renewal_directory.exists():
+            return ()
         if not renewal_directory.is_dir():
             raise ConfigError(
-                f"certbot renewal directory does not exist: {renewal_directory}", exit_code=78
+                f"certbot renewal directory is not a directory: {renewal_directory}", exit_code=78
             )
         lineages = tuple(sorted(path.stem for path in renewal_directory.glob("*.conf")))
     except OSError as exc:

@@ -47,6 +47,11 @@ of their filesystem, or less than a tenth of it is free, the oldest finished day
 fourteen, each with a warning in the system log. Today's file is never removed, so a filesystem
 of its own for `/var/log/haprion` is still the way to keep a flood of requests off the root.
 
+**Who reaches the interface.** The web interface changes what the clusters serve, so it belongs
+on a network only its administrators reach - a management network, or a VPN into one - and not
+on the one the proxied sites face. Haprion limits sign-in attempts and refuses what it should,
+but which networks can reach it at all is decided by the firewall in front of it.
+
 ## 1. Choose the answers, or keep the defaults
 
 Without an answers file the installation uses its defaults: the fixed accounts, the places under

@@ -436,6 +436,7 @@ DNS_PROFILE_APPLY_WAIT = 6.0
 OBJECT_FIGURES = {"dns": metrics.DNS_FIGURES, "syslog": metrics.SYSLOG_FIGURES}
 
 SIGN_IN_FAILED = "Sign-in failed. Check the username and password and try again."
+SIGN_IN_BUSY = "Too many sign-ins at once. Try again in a moment."
 UNAVAILABLE_PROVIDER = "Sign-in through the provider is not available"
 EXPIRED = (
     "This run has expired: it was prepared more than an hour ago. Start a new restore from the "
@@ -7867,41 +7868,85 @@ def build_router(config: Config) -> APIRouter:
             return _login_again(request, config)
 
         address = client_address(request)
+        window = config.throttle.window_minutes
         with request.app.state.pool.connection() as connection:
             failures = db.failures_since_last_success(
-                connection,
-                username=username,
-                client_ip=address,
-                window_minutes=config.throttle.window_minutes,
+                connection, username=username, client_ip=address, window_minutes=window
             )
-            throttled = failures >= config.throttle.max_failures
-
+            throttled = failures >= config.throttle.max_failures or (
+                db.account_failures_since_last_success(
+                    connection, username=username, window_minutes=window
+                )
+                >= config.throttle.max_failures * auth.ACCOUNT_FAILURE_FACTOR
+            )
             account = None if throttled else db.account_by_username(connection, username)
             provider = db.oidc_provider(connection)
+        #
+        # While sign-in goes through the provider, a password signs in a
+        # break-glass account only (B195) - unless the installation chose all
+        # local accounts. Refused exactly as a wrong password is, so the form
+        # does not say which accounts are break-glass.
+        #
+        held_back = (
+            account is not None
+            and provider is not None
+            and provider.enabled
+            and provider.local_login == "break_glass_only"
+            and not account.break_glass
+        )
+        #
+        # The hash is computed holding no connection, and at most
+        # auth.HASHING_AT_ONCE at a time: six connections serve every page, and
+        # a stream of sign-ins held them through Argon2 (security review S01,
+        # B305). A throttled attempt is refused without hashing - the throttle
+        # counts names that do not exist the same way, so skipping it says
+        # nothing about who has an account.
+        #
+        busy = False
+        if throttled:
+            accepted = False
+        elif not auth.HASHING.acquire(timeout=auth.HASHING_WAIT_SECONDS):
+            accepted, busy = False, True
+        else:
+            try:
+                if (
+                    account is None
+                    or account.disabled
+                    or account.password_hash is None
+                    or held_back
+                ):
+                    #
+                    # The same time is spent whether the account is missing,
+                    # disabled, the provider's (which has no password) or held
+                    # back, so none of them can be told apart from outside.
+                    #
+                    auth.burn_absent_user_time(password)
+                    accepted = False
+                else:
+                    accepted = auth.verify_password(account.password_hash, password)
+            finally:
+                auth.HASHING.release()
+        if busy:
             #
-            # While sign-in goes through the provider, a password signs in a
-            # break-glass account only (B195) - unless the installation chose
-            # all local accounts. Refused exactly as a wrong password is, so the
-            # form does not say which accounts are break-glass.
+            # Not counted against the name or the address: the load is not
+            # this person's doing, and a flood must not lock real users out.
             #
-            held_back = (
-                account is not None
-                and provider is not None
-                and provider.enabled
-                and provider.local_login == "break_glass_only"
-                and not account.break_glass
-            )
-            if account is None or account.disabled or account.password_hash is None or held_back:
-                #
-                # The same time is spent whether the account is missing,
-                # disabled, throttled, the provider's (which has no password)
-                # or held back, so none of them can be told apart from outside.
-                #
-                auth.burn_absent_user_time(password)
-                accepted = False
-            else:
-                accepted = auth.verify_password(account.password_hash, password)
+            return _login_again(request, config, error=SIGN_IN_BUSY)
 
+        with request.app.state.pool.connection() as connection:
+            if accepted:
+                #
+                # Read again before the session is made: the account may have
+                # been disabled or its password changed while the hash ran.
+                #
+                current = db.account_by_username(connection, username)
+                accepted = (
+                    current is not None
+                    and account is not None
+                    and current.id == account.id
+                    and not current.disabled
+                    and current.password_hash == account.password_hash
+                )
             db.record_login_attempt(
                 connection, username=username or "?", client_ip=address, succeeded=accepted
             )

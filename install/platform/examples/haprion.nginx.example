@@ -10,6 +10,19 @@
 # Rendered by 05-platform-nginx from the answers file. Edit that, not this.
 #
 
+#
+# Sign-in attempts, counted per client before the application spends an Argon2
+# on them (B305, security review S01). Only a POST to /login has a key; every
+# other request maps to an empty one, which nginx does not count. Ten a minute,
+# with room for a burst of ten: a person mistyping never meets it, a script
+# does, and is answered 429 without the application seeing it.
+#
+map $request_method$uri $haprion_sign_in {
+    default      "";
+    POST/login   $binary_remote_addr;
+}
+limit_req_zone $haprion_sign_in zone=haprion_sign_in:1m rate=10r/m;
+
 server {
     listen 80;
     listen [::]:80;
@@ -93,6 +106,8 @@ server {
     }
 
     location / {
+        limit_req zone=haprion_sign_in burst=10 nodelay;
+        limit_req_status 429;
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
 

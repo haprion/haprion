@@ -3457,6 +3457,46 @@ class AccountsFromTheWeb(unittest.TestCase):
             first.close()
             second.close()
 
+    def test_an_ipv6_source_is_its_prefix_and_an_account_counts_every_source(self) -> None:
+        """B305 (security review S02): each address of a prefix was its own budget,
+        and an account guessed at from many sources was never stopped."""
+
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            for address in ("2001:db8:1:2::a", "2001:db8:1:2::b", "2001:db8:1:3::a"):
+                db.record_login_attempt(
+                    connection, username="dave", client_ip=address, succeeded=False
+                )
+            db.record_login_attempt(
+                connection, username="dave", client_ip="192.0.2.8", succeeded=False
+            )
+            connection.commit()
+
+            def per_source(address: str) -> int:
+                return db.failures_since_last_success(
+                    connection, username="dave", client_ip=address, window_minutes=15
+                )
+
+            self.assertEqual(per_source("2001:db8:1:2::ffff"), 2)
+            self.assertEqual(per_source("2001:db8:1:3::1"), 1)
+            self.assertEqual(per_source("192.0.2.8"), 1)
+            self.assertEqual(per_source("192.0.2.9"), 0)
+            self.assertEqual(
+                db.account_failures_since_last_success(
+                    connection, username="Dave", window_minutes=15
+                ),
+                4,
+            )
+            db.record_login_attempt(
+                connection, username="dave", client_ip="192.0.2.9", succeeded=True
+            )
+            connection.commit()
+            self.assertEqual(
+                db.account_failures_since_last_success(
+                    connection, username="dave", window_minutes=15
+                ),
+                0,
+            )
+
     def test_an_unlock_is_a_row_the_throttle_counts_from(self) -> None:
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
             for _ in range(3):

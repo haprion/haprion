@@ -123,6 +123,7 @@ class LoginTestCase(unittest.TestCase):
         self.attempts: list[tuple[str, str, bool]] = []
         self.audit: list[str] = []
         self.failures = 0
+        self.account_failures = 0
         #
         # Every feature on unless a test turns one off (0040, B193): an empty
         # table reads as all on.
@@ -137,6 +138,10 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.account_by_username", side_effect=self._account),
             mock.patch("haprion_ui.db.record_login_attempt", side_effect=self._attempt),
             mock.patch("haprion_ui.db.failures_since_last_success", side_effect=self._failures),
+            mock.patch(
+                "haprion_ui.db.account_failures_since_last_success",
+                side_effect=lambda _c, **_: self.account_failures,
+            ),
             mock.patch("haprion_ui.db.create_session", side_effect=self._create_session),
             mock.patch("haprion_ui.db.session_by_hash", side_effect=self._session),
             mock.patch("haprion_ui.db.touch_session"),
@@ -692,6 +697,75 @@ class Throttling(LoginTestCase):
         throttled = self.sign_in(self.client())
         self.assertEqual(wrong.status_code, throttled.status_code)
         self.assertEqual(without_csrf(wrong.text), without_csrf(throttled.text))
+
+    def test_a_throttled_attempt_is_not_hashed(self) -> None:
+        """S01 (security review 26-10-13): every refused attempt cost an Argon2."""
+
+        self.failures = 99
+        with (
+            mock.patch.object(auth, "verify_password") as verify,
+            mock.patch.object(auth, "burn_absent_user_time") as burn,
+        ):
+            response = self.sign_in(self.client())
+        self.assertEqual(response.status_code, 401)
+        verify.assert_not_called()
+        burn.assert_not_called()
+
+    def test_many_sources_guessing_at_one_account_are_stopped(self) -> None:
+        """S02: the budget was per name and address only (B305)."""
+
+        self.account_failures = 3 * auth.ACCOUNT_FAILURE_FACTOR
+        response = self.sign_in(self.client(configuration(max_failures=3)))
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn(auth.SESSION_COOKIE, response.cookies)
+
+    def test_the_hash_runs_holding_no_database_connection(self) -> None:
+        """S01: six connections serve every page, and Argon2 held one."""
+
+        held: list[int] = []
+        real = self.pool.connection
+
+        @contextmanager
+        def counted() -> Any:
+            held.append(1)
+            try:
+                with real() as connection:
+                    yield connection
+            finally:
+                held.pop()
+
+        def verify(password_hash: str, password: str) -> bool:
+            self.assertEqual(held, [], "Argon2 ran inside a connection")
+            return True
+
+        with (
+            mock.patch.object(self.pool, "connection", counted),
+            mock.patch.object(auth, "verify_password", verify),
+        ):
+            response = self.sign_in(self.client())
+        self.assertEqual(response.status_code, 303)
+
+    def test_when_the_hashing_is_full_the_answer_is_try_again_and_nothing_counts(self) -> None:
+        for _ in range(auth.HASHING_AT_ONCE):
+            auth.HASHING.acquire()
+        try:
+            with mock.patch.object(auth, "HASHING_WAIT_SECONDS", 0.05):
+                response = self.sign_in(self.client())
+        finally:
+            for _ in range(auth.HASHING_AT_ONCE):
+                auth.HASHING.release()
+        self.assertIn("Too many sign-ins at once", response.text)
+        self.assertEqual(self.attempts, [])
+
+    def test_an_account_disabled_while_its_hash_ran_is_not_signed_in(self) -> None:
+        def verify(password_hash: str, password: str) -> bool:
+            self.account = replace(self.account, disabled=True)
+            return True
+
+        with mock.patch.object(auth, "verify_password", verify):
+            response = self.sign_in(self.client())
+        self.assertNotEqual(response.status_code, 303)
+        self.assertEqual(self.attempts[-1][2], False)
 
     def test_the_client_address_comes_from_the_forwarded_header(self) -> None:
         client = self.client()

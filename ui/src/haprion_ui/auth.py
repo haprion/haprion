@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -112,6 +113,20 @@ def verify_password(password_hash: str, password: str) -> bool:
         return _HASHER.verify(password_hash, password)
     except (VerifyMismatchError, VerificationError, InvalidHashError, PasswordTooLong):
         return False
+
+
+#
+# What a sign-in may cost the machine (B305, security review S01). Argon2 takes
+# 64 MiB and three passes per check; this many run at once, and a sign-in that
+# waits longer than the wait for one is told to try again rather than queued.
+# The account budget is the per-source limit times this, across every address:
+# enough to stop many sources guessing at one account, not so little that one
+# person's typos from two machines lock it.
+#
+HASHING_AT_ONCE = 2
+HASHING_WAIT_SECONDS = 5
+HASHING = threading.BoundedSemaphore(HASHING_AT_ONCE)
+ACCOUNT_FAILURE_FACTOR = 10
 
 
 def burn_absent_user_time(password: str) -> None:

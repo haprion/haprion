@@ -1050,23 +1050,59 @@ def failures_since_last_success(
     stay in the record, and stop counting.
     """
 
+    #
+    # An IPv6 source is its /64: one host given a prefix has as many addresses
+    # as it likes, and each was a budget of its own (security review S02).
+    #
     with connection.cursor() as cursor:
         cursor.execute(
             "select count(*) "
             "  from login_attempt "
             " where username_normalised = lower(%(username)s) "
-            "   and client_ip = %(client_ip)s "
+            "   and client_ip <<= set_masklen(%(client_ip)s::inet, "
+            "         case when family(%(client_ip)s::inet) = 6 then 64 else 32 end) "
             "   and succeeded = false "
             "   and at > statement_timestamp() - make_interval(mins => %(window)s) "
             "   and at > greatest( "
             "         coalesce((select max(at) from login_attempt "
             "                    where username_normalised = lower(%(username)s) "
-            "                      and client_ip = %(client_ip)s "
+            "                      and client_ip <<= set_masklen(%(client_ip)s::inet, "
+            "                    case when family(%(client_ip)s::inet) = 6 then 64 else 32 end) "
             "                      and succeeded = true), '-infinity'::timestamptz), "
             "         coalesce((select max(at) from login_unlock "
             "                    where username_normalised = lower(%(username)s)), "
             "                  '-infinity'::timestamptz))",
             {"username": username, "client_ip": client_ip, "window": window_minutes},
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def account_failures_since_last_success(
+    connection: Connection[Any], *, username: str, window_minutes: int
+) -> int:
+    """How many failures this name has accumulated recently, from anywhere (B305).
+
+    The per-source count stops one address; this stops many guessing at one
+    account. Bounded by the same window and reset the same way, by a success
+    or an unlock, so it slows an attack rather than locking an account for good.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select count(*) "
+            "  from login_attempt "
+            " where username_normalised = lower(%(username)s) "
+            "   and succeeded = false "
+            "   and at > statement_timestamp() - make_interval(mins => %(window)s) "
+            "   and at > greatest( "
+            "         coalesce((select max(at) from login_attempt "
+            "                    where username_normalised = lower(%(username)s) "
+            "                      and succeeded = true), '-infinity'::timestamptz), "
+            "         coalesce((select max(at) from login_unlock "
+            "                    where username_normalised = lower(%(username)s)), "
+            "                  '-infinity'::timestamptz))",
+            {"username": username, "window": window_minutes},
         )
         row = cursor.fetchone()
     return int(row[0]) if row is not None else 0

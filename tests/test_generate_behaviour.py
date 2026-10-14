@@ -342,6 +342,19 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def held_dead_port() -> socket.socket:
+    """A port bound and never listened on: a connection to it is refused.
+
+    Held for the test's life. A port only found free and let go was taken by
+    another suite's server during a full gate run, and the "dead" server
+    answered (26-10-14).
+    """
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    return sock
+
+
 def echo_server(pool: str, port: int) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - the name is the library's
@@ -404,6 +417,7 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
     directory: tempfile.TemporaryDirectory[str]
     port: int
     proxy: Proxy
+    dead: tuple[socket.socket, socket.socket]
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -424,13 +438,16 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         # A pool nothing listens on, so the failure is real rather than
         # simulated: HAProxy has to try the connection and fail it.
         #
-        gone = load_apart("gone", GONE.format(web=free_port()).encode())
+        cls.dead = (held_dead_port(), held_dead_port())
+        gone = load_apart("gone", GONE.format(web=cls.dead[0].getsockname()[1]).encode())
         #
         # Half the pool refuses connections. Health checks are off on purpose:
         # the question is what happens to a request that is already being
         # dispatched, not whether a check would eventually have removed it.
         #
-        pair = load_apart("pair", PAIR.format(dead=free_port(), web=ports["web"]).encode())
+        pair = load_apart(
+            "pair", PAIR.format(dead=cls.dead[1].getsockname()[1], web=ports["web"]).encode()
+        )
         limited = load_apart("limited", LIMITED.format(web=ports["web"], api=ports["api"]).encode())
         layer = generate(
             [cls.proxy, restricted, closed, gone, pair, limited],
@@ -450,6 +467,8 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         cls.haproxy.wait(timeout=5)
         for server in cls.servers.values():
             server.shutdown()
+        for sock in cls.dead:
+            sock.close()
         cls.directory.cleanup()
 
     def request(self, target: str, host: str = HOSTNAME) -> tuple[int, str]:

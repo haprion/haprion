@@ -5354,8 +5354,9 @@ unauthenticated page that creates an administrator is exactly what it sounds
 like.
 
 So the first account is made by the installation itself, on the terminal of
-whoever installs it: when `install-ui-release` activates a release on an
-installation that has **no account at all**, it runs `haprion-user init-admin`,
+whoever installs it: `haprion-setup` asks for it last, when everything else is
+done, and `install-ui-release` run on its own asks when it activates a release.
+On an installation that has **no account at all**, they run `haprion-user init-admin`,
 which creates `admin` as a break-glass admin and asks for its password, twice,
 as `add` does. It is never printed and stored nowhere but as a hash. Every later
 release finds accounts and does nothing, and asks nothing. Without a terminal —

@@ -465,6 +465,39 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
         self.assertIn("run it with sudo: sudo haprion-setup", done.stdout)
 
 
+class TheFirstAccountComesLast(unittest.TestCase):
+    """The password was asked for in the middle of the run and the closing
+    words asked for the account again (26-10-14): setup asks once, last."""
+
+    def closing_words(self, accounts: str) -> str:
+        done = bash(
+            STRICT + 'setup_closing_words "$2" "$3"', str(SETUP), "mgr.example.com", accounts
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_with_an_account_the_closing_words_only_say_sign_in(self) -> None:
+        shown = self.closing_words("1")
+        self.assertIn("https://mgr.example.com/", shown)
+        self.assertIn("Sign in, and create the first cluster", shown)
+        self.assertNotIn("init-admin", shown)
+
+    def test_without_an_account_or_a_count_they_say_how_to_make_one(self) -> None:
+        for accounts in ("0", ""):
+            with self.subTest(accounts=accounts):
+                self.assertIn("sudo haprion-user init-admin", self.closing_words(accounts))
+
+    def test_setup_activates_without_asking_and_asks_after_the_last_step(self) -> None:
+        driver = DRIVER.read_text()
+        self.assertIn("./platform/install-ui-release --no-first-account ${release_id}", driver)
+        self.assertGreater(driver.index("haprion-user init-admin"), driver.index("for entry in"))
+        installer = (INSTALL / "platform" / "install-ui-release").read_text()
+        self.assertIn("--no-first-account) first_account=0 ;;", installer)
+        self.assertIn(
+            "if (( first_account )); then\n    /usr/sbin/haprion-user init-admin", installer
+        )
+
+
 class TheSetupRunsEveryStep(unittest.TestCase):
     """A numbered step added later is in haprion-setup, or named here with why it is not."""
 

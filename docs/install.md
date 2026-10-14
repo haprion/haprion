@@ -75,7 +75,8 @@ and 443 are free for nginx - and names every problem it found before it changes 
 that fails is reported in words: what went wrong, why, what to do, and where its whole output is
 (`/var/log/haprion/setup.log`). Every step is safe to run again, so the same command continues an
 installation that stopped. Certbot is installed when `UV_BIN` names a uv; the command says so when
-it does not. It ends with the command that makes the first administrator.
+it does not. When everything else is done, it creates the first administrator, `admin`, and asks
+for its password at the terminal; without a terminal it ends with the command that does it.
 
 ## 2. Install the CLI engine
 

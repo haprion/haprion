@@ -2,7 +2,10 @@
 #
 # Activate a release of the web interface, or only prepare it.
 #
-#     sudo ./install-ui-release [--prepare] <release-id>
+#     sudo ./install-ui-release [--prepare] [--no-first-account] <release-id>
+#
+# --no-first-account is haprion-setup's: it asks for the first account itself,
+# last, when everything else is done.
 #
 # The release is the one the haprion-ui package unpacked under
 # /opt/haprion-ui/releases: built from one commit, in a container of this
@@ -25,12 +28,17 @@ source ../lib.sh
 
 need_root
 prepare_only=0
-if [[ "${1:-}" == "--prepare" ]]; then
-    prepare_only=1
+first_account=1
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --prepare) prepare_only=1 ;;
+        --no-first-account) first_account=0 ;;
+        *) die "unknown option: $1" ;;
+    esac
     shift
-fi
+done
 release_id="${1:-}"
-[[ -n "$release_id" ]] || die "usage: $(basename "$0") [--prepare] <release-id>"
+[[ -n "$release_id" ]] || die "usage: $(basename "$0") [--prepare] [--no-first-account] <release-id>"
 [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid release id: ${release_id}"
 release="${UI_ROOT}/releases/${release_id}"
 
@@ -203,8 +211,12 @@ step "The first account"
 # A warning rather than a stop: the release is already active, and an
 # installation that has not migrated yet makes the account after it has.
 #
-/usr/sbin/haprion-user init-admin \
-    || warn "no first account was made; after ./migrate, run: haprion-user init-admin"
+if (( first_account )); then
+    /usr/sbin/haprion-user init-admin \
+        || warn "no first account was made; after ./migrate, run: haprion-user init-admin"
+else
+    log "  later    haprion-setup asks for it when everything else is done"
+fi
 
 echo
 log "release ${release_id} is current"

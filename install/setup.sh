@@ -230,3 +230,32 @@ setup_report_failure() {
     echo
     echo "  Everything the step said is in ${log}"
 }
+
+#
+# The last words of a completed run. The first account is made by step
+# install-ui-release when there is none (B196), so it is asked for here only
+# when the count of accounts is 0 or could not be read (26-10-14: the closing
+# words asked for an account the run had just made).
+#
+setup_closing_words() {
+    local server_name="$1" accounts="$2"
+    cat <<DONE
+
+The manager is installed. The web interface is at https://${server_name}/
+with a self-signed certificate until a real one is chosen under Settings, and
+the commands (haprion-status, haprion-deploy, haprion-cluster ...) are ready
+in /usr/bin.
+
+DONE
+    if [[ "$accounts" =~ ^[1-9][0-9]*$ ]]; then
+        echo "Sign in, and create the first cluster under Settings - Create cluster."
+    else
+        cat <<'DONE'
+There is no account to sign in with yet. Make the first administrator:
+
+    sudo haprion-user init-admin
+
+Then sign in, and create the first cluster under Settings - Create cluster.
+DONE
+    fi
+}

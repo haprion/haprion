@@ -455,7 +455,8 @@ Nothing can sign in until an account exists, and creating one is a root action
 rather than a page the interface offers. `install-ui-release` makes the first
 one: on an installation with no account at all it runs
 `haprion-user init-admin`, which creates `admin` as a break-glass admin and
-asks for its password. Later releases find accounts and do nothing. More
+asks for its password. `haprion-setup` asks last instead, when everything else
+is done (`--no-first-account`). Later releases find accounts and do nothing. More
 accounts:
 
 ```bash

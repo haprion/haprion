@@ -146,7 +146,7 @@ add_step "the release's compatibility" \
 if [[ "$(readlink -f "${UI_ROOT}/current" 2>/dev/null || true)" != "${releases}/${release_id}" ]]; then
     add_step "activating the web interface" \
         "read the log; the release's own check names what is missing" \
-        "./platform/install-ui-release ${release_id}"
+        "./platform/install-ui-release --no-first-account ${release_id}"
 fi
 add_step "the web service" \
     "see why it stopped: journalctl -u ${WEB_UNIT} -n 50" \
@@ -217,16 +217,20 @@ done
 
 [[ -n "${UV_BIN:-}" ]] || warn "certbot was not installed: set UV_BIN to the uv executable and run haprion-setup again"
 
-cat <<DONE
-
-The manager is installed. The web interface is at https://${SERVER_NAME}/
-with a self-signed certificate until a real one is chosen under Settings, and
-the commands (haprion-status, haprion-deploy, haprion-cluster ...) are ready
-in /usr/bin.
-
-On a first installation, make the first administrator:
-
-    sudo haprion-user init-admin
-
-Then sign in, and create the first cluster under Settings - Create cluster.
-DONE
+#
+# The first account last, when everything it signs in to is in place, and on
+# the terminal rather than in the log (B196: its password is typed here, never
+# printed). Asked only when there is no account; without a terminal, or when
+# it fails, the closing words say how to make it.
+#
+count_accounts() {
+    /usr/sbin/haprion-user list --json 2>/dev/null \
+        | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["accounts"]))' 2>/dev/null || true
+}
+accounts="$(count_accounts)"
+if [[ "$accounts" == "0" && -t 0 ]]; then
+    echo
+    /usr/sbin/haprion-user init-admin || true
+    accounts="$(count_accounts)"
+fi
+setup_closing_words "$SERVER_NAME" "$accounts"

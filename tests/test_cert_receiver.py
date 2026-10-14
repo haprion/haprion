@@ -20,8 +20,6 @@ import json
 import os
 import pwd
 import re
-import shutil
-import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
@@ -523,25 +521,15 @@ class AnHttpsReceiversSecret(ReceiverFixture):
         self.assertNotIn("receiver password", self.secret().read_text())
 
     def test_the_hash_is_the_form_nginx_checks(self) -> None:
-        """SHA-512 crypt, as `openssl passwd -6` writes it (CodeQL: no fast hash)."""
+        """yescrypt, checked by the same crypt(3) nginx calls (CodeQL: no fast hash)."""
 
         hashed = cert_receiver.secret_hash("receiver password")
         self.assertRegex(hashed, cert_receiver.SECRET_HASH)
-        salt = hashed.split("$")[2]
-        self.assertEqual(cert_receiver.sha512_crypt("receiver password", salt), hashed)
+        self.assertEqual(cert_receiver.crypt("receiver password", hashed), hashed)
+        self.assertNotEqual(cert_receiver.crypt("not the password", hashed), hashed)
         self.assertNotEqual(cert_receiver.secret_hash("receiver password"), hashed)
-        openssl = shutil.which("openssl")
-        if openssl is None:
-            self.skipTest("no openssl to compare with")
-        for password, salt in (("x", "saltsalt"), ("a" * 100, "Zz./09"), ("p w", "q")):
-            with self.subTest(password=password[:8], salt=salt):
-                reference = subprocess.run(  # noqa: S603 - fixed binary, test values
-                    [openssl, "passwd", "-6", "-salt", salt, password],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout.strip()
-                self.assertEqual(cert_receiver.sha512_crypt(password, salt), reference)
+        with self.assertRaises(cert_receiver.ReceiverError):
+            cert_receiver.crypt("receiver password", "$unknown$")
         self.assertRegex(cert_receiver.new_secret(), r"^[A-Za-z0-9_-]{32}$")
 
     def test_https_without_a_secret_and_a_secret_without_https_are_refused(self) -> None:
@@ -708,8 +696,9 @@ class TheCommand(ReceiverFixture):
 
         with mock.patch.object(cert_receiver, "_own"):
             code, out, _ = self.run_cli(
-                "add", "lb-02.example.net", "--transport", "https", "--allow", "192.0.2.0/24"
-            )
+                "add", "lb-02.example.net", "--transport", "https", "--allow", "192.0.2.0/24",
+                "--show-password",
+            )  # fmt: skip
         self.assertEqual(code, 0, out)
         password = re.search(r"^password: (\S+)$", out, re.MULTILINE)
         assert password is not None, out
@@ -717,12 +706,29 @@ class TheCommand(ReceiverFixture):
         self.assertNotIn(password.group(1), stored)
         self.assertNotIn(password.group(1), (self.root / "certificates.yaml").read_text())
 
-        code, out, _ = self.run_cli("secret", "lb-02.example.net", "--json")
+        code, out, _ = self.run_cli("secret", "lb-02.example.net", "--show-password", "--json")
         self.assertEqual(code, 0, out)
         document = json.loads(out)
         self.assertEqual(document["result"]["action"], "secret")
         self.assertNotEqual(document["result"]["password"], password.group(1))
         assert_contract("haprion-cert-receiver", out)
+
+    def test_a_password_is_made_only_when_it_may_be_printed(self) -> None:
+        """Without --show-password nothing is made, and nothing is replaced."""
+
+        for argv in (
+            ("add", "lb-02.example.net", "--transport", "https", "--allow", "192.0.2.0/24"),
+            ("secret", "lb-02.example.net", "--json"),
+        ):
+            with mock.patch.object(command, "set_secret") as replaced:
+                code, out, err = self.run_cli(*argv)
+            self.assertEqual(code, 64, err)
+            self.assertIn("--show-password", err)
+            self.assertNotIn('password":', out)
+            replaced.assert_not_called()
+        self.assertFalse(
+            self.locations.receiver_secrets.joinpath("lb-02.example.net.htpasswd").exists()
+        )
 
     def test_add_then_list_then_remove(self) -> None:
         code, out, _ = self.run_cli(

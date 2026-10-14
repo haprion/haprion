@@ -32,8 +32,8 @@ functions rather than grow a second implementation.
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import grp
-import hashlib
 import ipaddress
 import os
 import pwd
@@ -106,23 +106,20 @@ HTTPS_PREFIX = "/certdist"
 # alone let any host on an allowed network fetch private keys. The password is
 # made by whoever asks - this command, or the interface - and shown to them
 # once; what reaches this module, and the job that carries it, is the hash
-# nginx checks, never the password. SHA-512 crypt (`$6$`), which nginx checks
-# through the C library's crypt(3); written here because Python's own crypt
+# nginx checks, never the password. yescrypt (`$y$`), Debian's own form for
+# account passwords: deliberately slow, and made and checked by the same C
+# library nginx checks it through (libxcrypt's crypt(3)), since Python's crypt
 # module is gone from 3.13.
 #
-CRYPT_ALPHABET = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-SECRET_HASH = re.compile(r"\$6\$[./0-9A-Za-z]{16}\$[./0-9A-Za-z]{86}")
+SECRET_HASH = re.compile(r"\$y\$[./0-9A-Za-z]{3,8}\$[./0-9A-Za-z]{22}\$[./0-9A-Za-z]{43}")
 SECRET_BYTES = 24
+LIBCRYPT = "libcrypt.so.1"
 #
-# The order sha512-crypt writes the digest's bytes in, three at a time
-# (Drepper, "Unix crypt using SHA-256 and SHA-512"); the last byte alone.
+# libxcrypt's own limits: CRYPT_OUTPUT_SIZE for a setting or a hash, and
+# sizeof(struct crypt_data) for crypt_rn's work area.
 #
-_CRYPT_ORDER = (
-    (0, 21, 42), (22, 43, 1), (44, 2, 23), (3, 24, 45), (25, 46, 4), (47, 5, 26),
-    (6, 27, 48), (28, 49, 7), (50, 8, 29), (9, 30, 51), (31, 52, 10), (53, 11, 32),
-    (12, 33, 54), (34, 55, 13), (56, 14, 35), (15, 36, 57), (37, 58, 16), (59, 17, 38),
-    (18, 39, 60), (40, 61, 19), (62, 20, 41),
-)  # fmt: skip
+_CRYPT_OUTPUT_SIZE = 384
+_CRYPT_DATA_SIZE = 32768
 
 type Runner = Callable[[Sequence[str]], tuple[int, str]]
 
@@ -534,50 +531,52 @@ def new_secret() -> str:
 
 
 def secret_hash(password: str) -> str:
-    """The `$6$` form nginx's auth_basic_user_file reads, with a fresh salt."""
+    """The `$y$` form nginx's auth_basic_user_file reads, with a fresh salt."""
 
-    return sha512_crypt(password, "".join(secrets.choice(CRYPT_ALPHABET) for _ in range(16)))
+    library = _libcrypt()
+    setting = ctypes.create_string_buffer(_CRYPT_OUTPUT_SIZE)
+    #
+    # No random bytes passed: libxcrypt takes them from the kernel itself.
+    #
+    if not library.crypt_gensalt_rn(b"$y$", 0, None, 0, setting, _CRYPT_OUTPUT_SIZE):
+        raise ReceiverError(
+            "dependency_unavailable", "libcrypt made no yescrypt salt", exit_code=69
+        )
+    hashed = crypt(password, setting.value.decode("ascii"))
+    if not SECRET_HASH.fullmatch(hashed):
+        raise ReceiverError(
+            "dependency_unavailable", "libcrypt made no yescrypt hash", exit_code=69
+        )
+    return hashed
 
 
-def sha512_crypt(password: str, salt: str) -> str:
-    """SHA-512 crypt with the default 5000 rounds, as `openssl passwd -6` writes it."""
+def crypt(password: str, setting: str) -> str:
+    """crypt(3) as nginx calls it: a stored hash as the setting gives it back on a match."""
 
-    key, seasoning = password.encode("utf-8"), salt.encode("ascii")[:16]
-    alternate = hashlib.sha512(key + seasoning + key).digest()
-    intermediate = hashlib.sha512(key + seasoning)
-    remaining = len(key)
-    while remaining > 64:
-        intermediate.update(alternate)
-        remaining -= 64
-    intermediate.update(alternate[:remaining])
-    bits = len(key)
-    while bits:
-        intermediate.update(alternate if bits & 1 else key)
-        bits >>= 1
-    digest = intermediate.digest()
-    key_sequence = (hashlib.sha512(key * len(key)).digest() * (len(key) // 64 + 1))[: len(key)]
-    salt_digest = hashlib.sha512(seasoning * (16 + digest[0])).digest()
-    salt_sequence = (salt_digest * (len(seasoning) // 64 + 1))[: len(seasoning)]
-    for round_ in range(5000):
-        step = hashlib.sha512(key_sequence if round_ & 1 else digest)
-        if round_ % 3:
-            step.update(salt_sequence)
-        if round_ % 7:
-            step.update(key_sequence)
-        step.update(digest if round_ & 1 else key_sequence)
-        digest = step.digest()
-    encoded: list[str] = []
+    library = _libcrypt()
+    data = ctypes.create_string_buffer(_CRYPT_DATA_SIZE)
+    result = library.crypt_rn(
+        password.encode("utf-8"), setting.encode("ascii"), data, _CRYPT_DATA_SIZE
+    )
+    #
+    # A failure is NULL or a string starting with '*', never a hash.
+    #
+    hashed = ctypes.string_at(result).decode("ascii") if result else "*"
+    if hashed.startswith("*"):
+        raise ReceiverError("dependency_unavailable", "libcrypt refused the setting", exit_code=69)
+    return hashed
 
-    def put(high: int, middle: int, low: int, count: int) -> None:
-        word = (high << 16) | (middle << 8) | low
-        for _ in range(count):
-            encoded.append(CRYPT_ALPHABET[word & 0x3F])
-            word >>= 6
 
-    for high, middle, low in _CRYPT_ORDER:
-        put(digest[high], digest[middle], digest[low], 4)
-    put(0, 0, digest[63], 2)
-    return f"$6${seasoning.decode('ascii')}${''.join(encoded)}"
+def _libcrypt() -> ctypes.CDLL:
+    library = ctypes.CDLL(LIBCRYPT)
+    library.crypt_gensalt_rn.restype = ctypes.c_char_p
+    library.crypt_gensalt_rn.argtypes = (
+        ctypes.c_char_p, ctypes.c_ulong, ctypes.c_char_p, ctypes.c_int,
+        ctypes.c_char_p, ctypes.c_int,
+    )  # fmt: skip
+    library.crypt_rn.restype = ctypes.c_void_p
+    library.crypt_rn.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_int)
+    return library
 
 
 def secret_file(receiver_id: str, locations: Locations) -> Path:
@@ -592,7 +591,7 @@ def write_secret(receiver_id: str, hashed: str, locations: Locations) -> Layer:
     """
 
     if not SECRET_HASH.fullmatch(hashed):
-        raise ReceiverError("bad_input", "the receiver's secret is not a $6$ crypt hash")
+        raise ReceiverError("bad_input", "the receiver's secret is not a yescrypt hash")
     group = grp.getgrnam(HTTPS_OWNER).gr_gid
     directory = locations.receiver_secrets
     directory.mkdir(mode=0o750, parents=True, exist_ok=True)

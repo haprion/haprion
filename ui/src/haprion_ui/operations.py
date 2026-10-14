@@ -722,7 +722,7 @@ def _certificate_operation(
         if hashed is not None and (
             not isinstance(hashed, str) or not SECRET_HASH.fullmatch(hashed)
         ):
-            raise BadPayload("secret_hash must be a $6$ crypt hash")
+            raise BadPayload("secret_hash must be a yescrypt hash")
         if action == "secret":
             if transport is not None or public_key is not None or allow_raw or hashed is None:
                 raise BadPayload("a new secret takes the receiver and its secret_hash only")

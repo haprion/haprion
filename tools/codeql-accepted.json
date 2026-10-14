@@ -117,7 +117,14 @@
       "path": "src/haprion/cert_receiver.py",
       "message": "Overly permissive mask in open sets file to group readable.",
       "decided": "2026-10-14",
-      "reason": "B306: an https receiver's user file holds only the $6$ crypt hash of its password and is created 0o640 root:www-data, because nginx's worker processes run as www-data and read auth_basic_user_file on every request. The group is the reader the contract names; it is never writable by it, and nothing else is in the group's reach in that directory."
+      "reason": "B306: an https receiver's user file holds only the yescrypt hash of its password and is created 0o640 root:www-data, because nginx's worker processes run as www-data and read auth_basic_user_file on every request. The group is the reader the contract names; it is never writable by it, and nothing else is in the group's reach in that directory."
+    },
+    {
+      "rule": "py/clear-text-logging-sensitive-data",
+      "path": "src/haprion/cli/cert_receiver.py",
+      "message": "This expression logs [sensitive data (password)](1) as clear text.\nThis expression logs [sensitive data (secret)](2) as clear text.\nThis expression logs [sensitive data (password)](3) as clear text.\nThis expression logs [sensitive data (password)](4) as clear text.",
+      "decided": "2026-10-14",
+      "reason": "B306: the password an https receiver fetches with is made by this command and printed to the operator who ran it, once, because the receiver must be given it and the manager keeps only its hash. It is printed only when the operator passes --show-password, and the command refuses to make one without it; the interface is the ordinary way and shows it on the page instead. It goes to stdout of the operator's own terminal, never to a log, the audit trail or the registry."
     }
   ]
 }

@@ -43,8 +43,8 @@ USAGE = (
     "  haprion-cert-receiver add <id> --transport rsync|sftp --public-key <file>\n"
     "                        [--owner <name>] [--path <dir>] [--json]\n"
     "  haprion-cert-receiver add <id> --transport https --allow <cidr>... [--path <dir>]\n"
-    "                        [--json]\n"
-    "  haprion-cert-receiver secret <id> [--json]\n"
+    "                        --show-password [--json]\n"
+    "  haprion-cert-receiver secret <id> --show-password [--json]\n"
     "  haprion-cert-receiver list [--json]\n"
     "  haprion-cert-receiver remove <id> [--json]\n"
     "\n"
@@ -64,6 +64,8 @@ USAGE = (
     "                        this way, and neither is a wildcard.\n"
     "  secret <id>           A new password for an https receiver, printed once;\n"
     "                        the old one stops working at once.\n"
+    "  --show-password       Required wherever a password is made: it is printed\n"
+    "                        on stdout. The interface shows it on the page instead.\n"
     "  --public-key <file>   The .pub file the receiver's own ssh-keygen wrote.\n"
     "  --allow <cidr>        An address or network that may fetch over https.\n"
     "                        May be repeated. Required for https, refused otherwise.\n"
@@ -83,6 +85,7 @@ class Arguments:
         self.path: Path | None = None
         self.allow: list[str] = []
         self.json_mode = False
+        self.show_password = False
 
 
 def _parse(argv: list[str], writer: TextIO) -> Arguments:
@@ -124,6 +127,9 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
             index += 2
         elif argument == "--json":
             parsed.json_mode = True
+            index += 1
+        elif argument == "--show-password":
+            parsed.show_password = True
             index += 1
         else:
             writer.write(USAGE)
@@ -193,6 +199,22 @@ def main(
             writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
         return exit_code
 
+    #
+    # A password made here is printed here, so the command makes one only when
+    # asked to print it - refused before anything is changed, so the receiver's
+    # old password is never replaced by one nobody saw.
+    #
+    new_credential = arguments.action == "secret" or (
+        arguments.action == "add" and arguments.transport == "https"
+    )
+    if new_credential and not arguments.show_password:
+        return refuse(
+            "bad_input",
+            "this makes a password and prints it once: pass --show-password, "
+            "or use the interface, which shows it on the page",
+            EXIT_USAGE,
+        )
+
     if require_root and os.geteuid() != 0:
         return refuse("not_root", "haprion-cert-receiver must run as root", EXIT_NOT_ROOT)
 
@@ -232,12 +254,7 @@ def main(
         # The password is made here and shown here, once (B306); what goes on
         # is its hash, which is all nginx needs and all that is kept.
         #
-        password = (
-            new_secret()
-            if arguments.action == "secret"
-            or (arguments.action == "add" and arguments.transport == "https")
-            else None
-        )
+        password = new_secret() if new_credential else None
         hashed = secret_hash(password) if password is not None else None
         if arguments.action == "secret":
             assert hashed is not None  # noqa: S101 - made just above

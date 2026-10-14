@@ -94,7 +94,7 @@ class TheSiteParses(unittest.TestCase):
 
 
 class AReceiversSecretIsWhatNginxChecks(unittest.TestCase):
-    """B306: nginx checks the receiver's `$6$` hash through crypt(3); this asks
+    """B306: nginx checks the receiver's `$y$` hash through crypt(3); this asks
     a running nginx rather than trusting that it does."""
 
     def setUp(self) -> None:

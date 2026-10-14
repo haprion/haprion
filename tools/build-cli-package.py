@@ -48,9 +48,13 @@ PACKAGE = "haprion-cli"
 LIB = "usr/lib/haprion/cli"
 TARGET = "/opt/haprion"
 SUDOERS = "etc/sudoers.d/haprion"
+#
+# libcrypt1 is loaded through ctypes for an https receiver's yescrypt hash
+# (cert_receiver.secret_hash), which no shared-library scan would see.
+#
 DEPENDS = (
     "python3 (>= 3.12), python3-yaml, python3-nacl, python3-psycopg, sudo, git, rsync, "
-    "openssh-client, haproxy"
+    "openssh-client, haproxy, libcrypt1"
 )
 #
 # Entry points that are not operator commands, besides every `-helper`: what

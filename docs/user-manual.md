@@ -1672,8 +1672,9 @@ sudo haprion-cert-receiver add lb-02.example.net --transport rsync \
 sudo haprion-cert-receiver add lb-03.example.net --transport sftp \
   --public-key /tmp/lb-03.pub --owner crx-lb-03
 
-sudo haprion-cert-receiver add 192.0.2.40 --transport https --allow 192.0.2.0/24
-sudo haprion-cert-receiver secret 192.0.2.40   # a new password; the old one stops at once
+sudo haprion-cert-receiver add 192.0.2.40 --transport https --allow 192.0.2.0/24 \
+  --show-password
+sudo haprion-cert-receiver secret 192.0.2.40 --show-password   # the old one stops at once
 
 sudo haprion-cert-receiver list
 sudo haprion-cert-receiver remove lb-02.example.net
@@ -1724,7 +1725,8 @@ and no unrestricted key is installed. An SFTP account keeps `/usr/sbin/nologin` 
 `https` is a deliberate lowering of the trust level: a password is not a key pair, and what such a
 receiver holds - a wildcard, a certificate the clusters serve - is the operator's call, not the
 program's. It reaches nothing but its own directory. **The password** is made by whoever registers
-the receiver - the command prints it, the interface shows it - once; the manager keeps only its
+the receiver - the interface shows it on the page, the command prints it when given
+`--show-password` and refuses without it - once; the manager keeps only its
 salted hash, in `/etc/nginx/haprion-receivers/<id>.htpasswd` (`root:www-data`, 0640), and neither
 the registry nor the interface's job holds it. A lost password is replaced with `secret` (or
 *New secret* on the page); the old one stops working at once. The receiver keeps it in a netrc

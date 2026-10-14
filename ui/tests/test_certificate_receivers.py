@@ -15,7 +15,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haprion.cert_receiver import sha512_crypt
+from haprion.cert_receiver import crypt
 
 from haprion_ui import auth, certificate_receivers
 from tests.test_certificate_delete import DeleteRouteTestCase
@@ -533,7 +533,7 @@ class TheJobs(ReceiverRouteTestCase):
         return found.group(1)
 
     def assert_hash_of(self, hashed: str, password: str) -> None:
-        self.assertEqual(sha512_crypt(password, hashed.split("$")[2]), hashed)
+        self.assertEqual(crypt(password, hashed), hashed)
 
     def test_an_https_receiver_s_password_is_shown_once_and_only_its_hash_queued(self) -> None:
         """B306 (security review S03): the job row is stored, so it carries the hash."""

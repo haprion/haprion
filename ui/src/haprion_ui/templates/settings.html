@@ -117,9 +117,13 @@
   </table></div>
 </section>
 {% endif %}
-{% if cluster_nodes %}
+{#
+  Shown without a cluster too: Create cluster is how a new installation gets
+  its first (26-10-14).
+#}
 <section class="cluster-card settings-card" id="nodes">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Nodes</h3></div></div><div class="cluster-state"><a class="secondary-button" href="/settings/new-cluster">Create cluster</a></div></header>
+  {% if cluster_nodes %}
   <div class="table-scroll"><table class="node-table settings-cluster-table settings-nodes-table">
     <thead><tr><th>Cluster</th><th>Nodes</th><th><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>
@@ -132,8 +136,8 @@
       {% endfor %}
     </tbody>
   </table></div>
+  {% endif %}
 </section>
-{% endif %}
 {% if location_data %}
 <section class="cluster-card settings-card" id="location-data">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Location data</h3><p>{% if location_data.database %}IPFire Location {{ location_data.database }}{% else %}The location database could not be read.{% endif %}</p></div></div></header>

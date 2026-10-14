@@ -357,6 +357,25 @@ class SigningIn(LoginTestCase):
         self.assertIn('href="/certificates" aria-current="page"', page.text)
         self.assertIn("No clusters configured", page.text)
 
+    def test_without_a_cluster_an_admin_is_shown_where_to_create_one(self) -> None:
+        """A new installation has no cluster; the empty pages pointed at a
+        configuration file and the poller, not at Create cluster (26-10-14)."""
+
+        pages = ("/", "/proxies", "/certificates", "/network", "/history", "/backups")
+        client = self.client(replace(configuration(), management_writes=True))
+        self.sign_in(client)
+        for path in pages:
+            with self.subTest(path=path):
+                text = client.get(path).text
+                self.assertIn('<a class="secondary-button" href="/settings/new-cluster">', text)
+                self.assertNotIn("before starting the poller", text)
+        self.account = replace(self.account, role="reader")
+        reader = self.client(replace(configuration(), management_writes=True))
+        self.sign_in(reader)
+        text = reader.get("/proxies").text
+        self.assertNotIn("/settings/new-cluster", text)
+        self.assertIn("An administrator creates the first one under Settings.", text)
+
     def test_the_certificate_page_renders_every_row_it_is_given(self) -> None:
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)

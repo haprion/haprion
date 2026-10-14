@@ -1133,6 +1133,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .empty-page { padding: 48px 24px; border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); text-align: center; }
 .empty-page h2 { margin: 0; color: var(--text-strong); font-size: 16px; }
 .empty-page p { margin: 5px 0 0; }
+.empty-page p.empty-page-action { margin-top: 14px; }
 
 .login-page { min-height: 100vh; background: var(--bg); }
 .login-layout { display: grid; min-height: 100vh; place-items: center; padding: 28px 18px; }

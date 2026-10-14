@@ -106,7 +106,7 @@
     {% endif %}
   </article>
 {% else %}
-  <div class="empty-page"><h2>No clusters configured</h2><p>Add a cluster to the platform configuration before starting the poller.</p></div>
+  {% include "_no-clusters.html" %}
 {% endfor %}
 </div>
 {% endblock %}

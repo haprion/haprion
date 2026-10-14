@@ -102,6 +102,18 @@ class ThePage(NodesPage):
         self.assertIn("edge-a, edge-b", card)
         self.assertIn('href="/settings/nodes/service-demo"', card)
 
+    def test_without_a_cluster_the_card_is_where_the_first_is_created(self) -> None:
+        """The card was hidden with no cluster, and Create cluster with it (26-10-14)."""
+
+        with mock.patch("haprion_ui.db.cluster_statuses", return_value=[]):
+            client = self.client(replace(configuration(), management_writes=True, clusters=()))
+            self.sign_in(client)
+            page = client.get("/settings").text
+        self.assertIn('id="nodes"', page)
+        card = page.split('id="nodes"')[1].split("</section>")[0]
+        self.assertIn('href="/settings/new-cluster"', card)
+        self.assertNotIn("<table", card)
+
 
 class AddingANode(NodesPage):
     def test_a_block_is_shown_before_anything_is_queued(self) -> None:

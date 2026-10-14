@@ -607,7 +607,7 @@ class TheWorkersSandboxOpensWhatExists(unittest.TestCase):
         fixed = [path for path in line.group(1).split() if not path.startswith("@")]
         step = (INSTALL / "platform/07-platform-services").read_text()
         made = set(re.findall(r"^ensure_dir (\S+) ", step, re.MULTILINE))
-        loop = re.search(r"^for path in ((?:/\S+:\d+ ?)+); do", step, re.MULTILINE)
+        loop = re.search(r"^for path in ((?:/[^\s:]+:\d+ ?)+); do", step, re.MULTILINE)
         assert loop is not None
         made |= {entry.split(":")[0] for entry in loop.group(1).split()}
         self.assertEqual(set(fixed) - made, set(self.ELSEWHERE))

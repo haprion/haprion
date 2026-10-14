@@ -1613,6 +1613,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .receiver-commands .table-note strong { display: inline; font-size: inherit; }
 .receiver-steps { margin: 8px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; }
 .receiver-steps li { max-width: 140ch; }
+.receiver-password-body { max-width: 140ch; padding: 4px 20px 0; }
 .receiver-step-title { display: block; color: var(--text-secondary); font-weight: 620; font-size: 13px; }
 .receiver-steps small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; white-space: pre-line; }
 .receiver-command { margin: 6px 0 0; position: relative; padding: 10px 44px 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); color: var(--muted-strong); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }

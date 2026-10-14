@@ -339,14 +339,25 @@ class Activity:
     def badge(self) -> str:
         """The label on the row, where the receiver's name is already there."""
 
-        registering = self.action == "add"
+        busy, done, failed = WORDS.get(self.action, WORDS["add"])
         if self.busy:
-            return "Registering" if registering else "Removing"
+            return busy
         if self.tone == "healthy":
-            return "Registered" if registering else "Removed"
+            return done
         if self.tone == "warning":
             return "A layer was left"
-        return "Registration failed" if registering else "Removal failed"
+        return failed
+
+
+#
+# What each job is called on its row: running, done, failed. A new secret
+# was called *Removing* - the words knew two actions (26-10-14).
+#
+WORDS: Mapping[str, tuple[str, str, str]] = {
+    "add": ("Registering", "Registered", "Registration failed"),
+    "remove": ("Removing", "Removed", "Removal failed"),
+    "secret": ("Setting a new secret", "New secret set", "New secret failed"),
+}
 
 
 # How long a finished job's verdict stays on a row - the certificate rows'
@@ -406,16 +417,17 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
         payload = job.payload if isinstance(job.payload, Mapping) else {}
         receiver = _text(payload.get("receiver"))
         action = _text(payload.get("action")) or "add"
-        verb = "Registering" if action == "add" else "Removing"
+        verb, done, _failed = WORDS.get(action, WORDS["add"])
+        target = f"for {receiver}" if action == "secret" else receiver
         finished = getattr(job, "finished_at", None)
         if job.state in {"pending", "running"}:
-            activity.append(Activity(job.id, receiver, action, f"{verb} {receiver}", "info", ""))
+            activity.append(Activity(job.id, receiver, action, f"{verb} {target}", "info", ""))
             continue
         envelope = job.result if isinstance(job.result, Mapping) else {}
         error = _mapping(envelope.get("error"))
         message = _text(error.get("message"))
         if job.state == "done" and job.outcome == "done":
-            label = f"{'Registered' if action == 'add' else 'Removed'} {receiver}"
+            label = f"{done} {target}"
             activity.append(Activity(job.id, receiver, action, label, "healthy", "", finished))
         elif job.state == "done" and job.outcome == "partial":
             failed = [
@@ -428,7 +440,7 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
                     job.id,
                     receiver,
                     action,
-                    f"{verb} {receiver}: a layer was left",
+                    f"{verb} {target}: a layer was left",
                     "warning",
                     "; ".join(item for item in failed if item),
                     finished,
@@ -440,7 +452,7 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
                     job.id,
                     receiver,
                     action,
-                    f"{verb} {receiver} failed",
+                    f"{verb} {target} failed",
                     "critical",
                     message or _text(job.stderr_excerpt),
                     finished,

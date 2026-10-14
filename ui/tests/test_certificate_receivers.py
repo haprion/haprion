@@ -303,6 +303,31 @@ class TheActivityLine(unittest.TestCase):
         )
         self.assertEqual([item.busy for item in activity], [True, False, False, False])
 
+    def test_a_new_secret_is_called_what_it_is(self) -> None:
+        """26-10-14: the row said *Removing* while a new secret was set."""
+
+        running = queued(
+            operation="cert_receiver",
+            cluster=None,
+            state="running",
+            payload={"receiver": "192.0.2.9", "action": "secret", "secret_hash": "$y$"},
+        )
+        done = replace(
+            running,
+            id=2,
+            state="done",
+            outcome="done",
+            result={"outcome": "done", "result": {"layers": []}, "error": None},
+        )
+        activity = certificate_receivers.recent_activity([running, done])
+        self.assertEqual(
+            [(item.label, item.badge) for item in activity],
+            [
+                ("Setting a new secret for 192.0.2.9", "Setting a new secret"),
+                ("New secret set for 192.0.2.9", "New secret set"),
+            ],
+        )
+
 
 class WhatTheRowsCarry(unittest.TestCase):
     """A job's state sits on the row it concerns, or on a row of its own."""
@@ -437,8 +462,8 @@ class ThePage(ReceiverRouteTestCase):
         self.assertIn('app.example.com <span class="target-kind">pkcs12</span>', page)
         self.assertIn("get /app.example.com/app.example.com.pfx", page)
         self.assertIn("crx-lb-02-example-net@mgr.example.net:&lt;certificate&gt;/", page)
-        self.assertIn("Ready-made:</strong> <code>examples/receivers/fetch-sftp</code>", page)
-        self.assertIn("install-pkcs12.ps1</code> imports the <code>.pfx</code>", page)
+        # The examples live in the source tree, not on the manager: not named here.
+        self.assertNotIn("Ready-made", page)
         # In use: no Remove; nothing yet: Remove.
         self.assertIn('title="Use Remove from… on the certificate first"', page)
         self.assertIn('name="receiver" value="lb-02.example.net"', page)
@@ -577,10 +602,17 @@ class TheJobs(ReceiverRouteTestCase):
 
         response = ask("192.0.2.9")
         password = self.password_on(response.text)
-        # Answered at the form's address: nothing may ask for it again (26-10-14).
-        self.assertIn('<html lang="en" data-theme=', response.text)
+        # Answered at the form's address: nothing may ask for it again, and the
+        # password is a page of its own - not the list with a box on top, which
+        # showed the step twice and a job state that stood still (26-10-14).
         self.assertIn(" data-answered>", response.text.split("<head>")[0])
+        self.assertNotIn("haproxy-live", response.text)
         self.assertNotIn('http-equiv="refresh"', response.text)
+        self.assertIn("<h1>Password for 192.0.2.9</h1>", response.text)
+        self.assertNotIn("receiver-table", response.text)
+        self.assertEqual(response.text.count("certfetch.netrc -Value"), 1)
+        self.assertIn('href="/certificates/receivers">Done</a>', response.text)
+        self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertNotIn(" data-answered", page.split("<head>")[0])
         self.assertEqual(self.queued[0]["payload"]["action"], "secret")
         self.assert_hash_of(self.queued[0]["payload"]["secret_hash"], password)

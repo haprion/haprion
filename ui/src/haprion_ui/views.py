@@ -4269,14 +4269,8 @@ def build_router(config: Config) -> APIRouter:
         session: AuthenticatedSession,
         *,
         problem: str = "",
-        issued: tuple[str, str] | None = None,
     ) -> Response:
-        """The list: every receiver, its fetch commands, and the job on its row.
-
-        `issued` is an https receiver's new password with its ID, on the one
-        answer that shows it (B306): it was made for this request, its hash went
-        into the job, and nothing keeps it - not the database, not a cache.
-        """
+        """The list: every receiver, its fetch commands, and the job on its row."""
 
         _token, registry, context = _page_context(request, session)
         rows = registry.receiver_rows if registry else ()
@@ -4298,14 +4292,31 @@ def build_router(config: Config) -> APIRouter:
                 "on_rows": on_rows,
                 "ghosts": ghosts,
                 "problem": problem,
-                "issued": issued[0] if issued else None,
-                "issued_step": certificate_receivers.password_step(
-                    issued[0], manager or "<manager>", issued[1]
-                )
-                if issued
-                else None,
             },
-            headers={"Cache-Control": "no-store"} if issued else None,
+        )
+
+    def _receiver_password_page(
+        request: Request, session: AuthenticatedSession, receiver: str, password: str
+    ) -> Response:
+        """An https receiver's new password, on the one answer that shows it (B306).
+
+        It was made for this request, its hash went into the job, and nothing
+        keeps it - not the database, not a cache.
+        """
+
+        _token, registry, context = _page_context(request, session)
+        manager = registry.manager if registry else None
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-receiver-password.html",
+            {
+                **context,
+                "receiver": receiver,
+                "step": certificate_receivers.password_step(
+                    receiver, manager or "<manager>", password
+                ),
+            },
+            headers={"Cache-Control": "no-store"},
         )
 
     def _receiver_form_page(
@@ -5929,7 +5940,7 @@ def build_router(config: Config) -> APIRouter:
             # Drawn here rather than after a redirect: a redirect's next page
             # would need the password from somewhere, and nothing holds it.
             #
-            return _receivers_page(request, session, issued=(payload["receiver"], password))
+            return _receiver_password_page(request, session, payload["receiver"], password)
         return RedirectResponse("/certificates/receivers", status_code=303)
 
     @router.post("/certificates/receivers/new", response_class=HTMLResponse)

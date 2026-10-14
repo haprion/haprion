@@ -19,16 +19,6 @@
 {% if problem %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
 {% endif %}
-{% if issued_step %}
-<section class="cluster-card receiver-secret">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Password for {{ issued }}</h3><p>Shown once. The manager keeps only its hash.</p></div></div></header>
-  <ol class="receiver-steps">
-    <li><span class="receiver-step-title">{{ issued_step.title }}</span>
-      <span class="receiver-os">Linux:</span><pre class="receiver-command"><code>{{ issued_step.command }}</code></pre>
-      <span class="receiver-os">Windows (PowerShell):</span><pre class="receiver-command"><code>{{ issued_step.windows_command }}</code></pre></li>
-  </ol>
-</section>
-{% endif %}
 
 {% macro job_badge(item) -%}
 <span class="status-badge status-badge-{{ item.tone }} receiver-job-badge"{% if item.busy %} data-busy="{{ item.receiver }}"{% endif %}>{% if item.busy %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}<span>{{ item.badge }}</span><span aria-hidden="true">·</span><a href="/jobs#job-{{ item.job_id }}">Job {{ item.job_id }}</a></span>{% if item.message %} <small class="receiver-job-message">{{ item.message }}</small>{% endif %}
@@ -82,7 +72,6 @@
             {% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
           {% endfor %}
         </ol>
-        <p class="table-note"><strong>Ready-made:</strong> <code>examples/receivers/fetch-{{ row.transport }}</code> does all of this, verifies the pair and reloads only on change.{% if row.holds | selectattr('format', 'equalto', 'pkcs12') | list %} Windows: <code>examples/receivers/install-pkcs12.ps1</code> imports the <code>.pfx</code>.{% endif %}</p>
       </td>
     </tr>
     {% else %}

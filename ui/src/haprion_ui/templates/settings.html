@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% import "_sort.html" as sort %}
 {% block title %}Settings — Haprion{% endblock %}
-{% block head_extra %}{% if certificate_job %}<meta name="haproxy-live" content="3"><noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endblock %}
+{% block head_extra %}{% if certificate_job %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 {#

@@ -196,5 +196,14 @@
     }, delay);
   };
 
-  window.addEventListener("DOMContentLoaded", () => follow(every(document)));
+  //
+  // A page that answers a form is at the address the form posted to. Asking
+  // that address again is a GET it does not answer, and the reload that
+  // follows sends the form a second time - a second job under the same
+  // request key, and gone from the screen whatever the answer showed once,
+  // such as a receiver's new password (26-10-14). Such a page keeps still.
+  //
+  const answered = document.documentElement.hasAttribute("data-answered");
+
+  window.addEventListener("DOMContentLoaded", () => follow(answered ? 0 : every(document)));
 })();

@@ -4,7 +4,7 @@
   never come from a CDN.
 #}
 <!doctype html>
-<html lang="en" data-theme="{{ request | selected_theme }}">
+<html lang="en" data-theme="{{ request | selected_theme }}"{% if request.method != 'GET' %} data-answered{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">

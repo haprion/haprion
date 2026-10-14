@@ -11,7 +11,7 @@
   job's id; the meta refresh is the fallback inside <noscript>, for a browser
   with JavaScript turned off.
 #}
-{% block head_extra %}{% if view == 'jobs' and jobs.active_count %}<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endblock %}
+{% block head_extra %}{% if view == 'jobs' and jobs.active_count %}<meta name="haproxy-live" content="5">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endif %}{% endblock %}
 {% block content %}
 {% if view in ('audit', 'nodes') %}<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/date-picker.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/page-size.js') }}?v={{ asset_token }}"></script>{% endif %}
 <section class="page-heading">

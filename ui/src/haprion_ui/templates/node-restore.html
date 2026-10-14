@@ -6,7 +6,7 @@
   by live.js, with a meta refresh inside <noscript> for a browser without
   JavaScript. A page left open in a tab ends up showing the answer.
 #}
-{% block head_extra %}{% if restore.active %}<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block head_extra %}{% if restore.active %}<meta name="haproxy-live" content="5">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {% set plan = restore.plan %}{% set facts = restore.target_facts %}
 <section class="page-heading">

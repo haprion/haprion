@@ -1581,7 +1581,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .receiver-table th:nth-child(2), .receiver-table td:nth-child(2) { width: 24ch; }
 .receiver-table th:nth-child(3), .receiver-table td:nth-child(3) { width: 26ch; }
 .receiver-table th:nth-child(4), .receiver-table td:nth-child(4) { width: auto; }
-.receiver-table th:nth-child(5), .receiver-table td:nth-child(5) { width: 27ch; white-space: nowrap; }
+.receiver-table th:nth-child(5), .receiver-table td:nth-child(5) { width: 34ch; white-space: nowrap; }
 .receiver-table td { overflow-wrap: anywhere; }
 .receiver-table .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
 .receiver-table .link-button:disabled { color: var(--muted); cursor: default; text-decoration: none; }

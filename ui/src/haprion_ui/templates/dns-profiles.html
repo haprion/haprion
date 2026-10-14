@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% from "_back.html" import back_button %}
 {% block title %}DNS providers — Haprion{% endblock %}
-{% block head_extra %}{% if refresh %}<meta name="haproxy-live" content="3"><noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endblock %}
+{% block head_extra %}{% if refresh %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}{% endblock %}
 {% block content %}
 {#
   One provider's credentials, entered once and kept sealed (B146). The page

@@ -175,3 +175,58 @@ class AnOpenDialogHoldsTheRedraw(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class APageThatAnswersAFormKeepsStill(unittest.TestCase):
+    """26-10-14: a receiver's password page, answered at the form's address, asked for
+    itself again; the GET was refused, the reload sent the form a second time."""
+
+    playwright: ClassVar[Any]
+    browser: ClassVar[Any]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.playwright = sync_playwright().start()
+        cls.browser = cls.playwright.chromium.launch()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.browser.close()
+        cls.playwright.stop()
+
+    def asked(self, answered: bool) -> int:
+        """How often the page's address was asked for within three live intervals."""
+
+        context = self.browser.new_context()
+        self.addCleanup(context.close)
+        tab = context.new_page()
+        marker = " data-answered" if answered else ""
+        body = (
+            f"<!doctype html><html{marker}><head><title>Receivers</title>"
+            '<meta name="haproxy-live" content="1">'
+            '<script src="/static/live.js"></script></head>'
+            "<body><main><p>Password for 192.0.2.9</p></main></body></html>"
+        )
+        requests: list[str] = []
+
+        def answer(route: Any) -> None:
+            requests.append(route.request.method)
+            route.fulfill(content_type="text/html", body=body)
+
+        tab.route(f"{ORIGIN}/certificates/receivers/secret", answer)
+        tab.route(
+            f"{ORIGIN}/static/live.js",
+            lambda route: route.fulfill(
+                content_type="text/javascript",
+                body=(STATIC_DIRECTORY / "live.js").read_text(),
+            ),
+        )
+        tab.goto(f"{ORIGIN}/certificates/receivers/secret")
+        tab.wait_for_timeout(3500)
+        return len(requests)
+
+    def test_an_answer_to_a_form_is_not_asked_for_again(self) -> None:
+        self.assertEqual(self.asked(answered=True), 1)
+
+    def test_a_page_that_was_asked_for_keeps_itself_current(self) -> None:
+        self.assertGreater(self.asked(answered=False), 1)

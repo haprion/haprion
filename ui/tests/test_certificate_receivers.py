@@ -527,7 +527,7 @@ class TheJobs(ReceiverRouteTestCase):
         self.assertEqual(self.queued[0]["payload"]["allow"], ["192.0.2.9/32"])
 
     def password_on(self, page: str) -> str:
-        found = re.search(r"login \S+ password ([A-Za-z0-9_-]{32})\b", page)
+        found = re.search(r"login \S+ password ([A-Za-z0-9_-]{32})(?![A-Za-z0-9_-])", page)
         if found is None:
             self.fail("no password on the page")
         return found.group(1)
@@ -577,6 +577,11 @@ class TheJobs(ReceiverRouteTestCase):
 
         response = ask("192.0.2.9")
         password = self.password_on(response.text)
+        # Answered at the form's address: nothing may ask for it again (26-10-14).
+        self.assertIn('<html lang="en" data-theme=', response.text)
+        self.assertIn(" data-answered>", response.text.split("<head>")[0])
+        self.assertNotIn('http-equiv="refresh"', response.text)
+        self.assertNotIn(" data-answered", page.split("<head>")[0])
         self.assertEqual(self.queued[0]["payload"]["action"], "secret")
         self.assert_hash_of(self.queued[0]["payload"]["secret_hash"], password)
 

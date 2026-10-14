@@ -32,6 +32,7 @@ from haprion import (
     dns_profiles,
     ndes_profiles,
 )
+from haprion.cert_receiver import SECRET_HASH
 from haprion.cli import (
     backup_job_ask,
     backup_job_helper,
@@ -703,19 +704,37 @@ def _certificate_operation(
         # its own, and what runs here is the client that carries the request
         # there and the answer back, in the same stdin/stdout shape.
         #
-        _only(payload, "receiver", "action", "transport", "public_key", "allow")
+        # An https receiver's secret arrives as its hash (B306): the web made
+        # the password, showed it once and kept it nowhere - not here, and not
+        # in the job row this payload is stored in.
+        #
+        _only(payload, "receiver", "action", "transport", "public_key", "allow", "secret_hash")
         receiver = payload.get("receiver")
         if not isinstance(receiver, str) or not RECEIVER_ID.fullmatch(receiver):
             raise BadPayload("receiver must be a receiver ID")
         action = payload.get("action")
-        if action not in {"add", "remove"}:
-            raise BadPayload("action must be add or remove")
+        if action not in {"add", "remove", "secret"}:
+            raise BadPayload("action must be add, remove or secret")
         transport = payload.get("transport")
         public_key = payload.get("public_key")
         allow_raw = payload.get("allow", [])
+        hashed = payload.get("secret_hash")
+        if hashed is not None and (
+            not isinstance(hashed, str) or not SECRET_HASH.fullmatch(hashed)
+        ):
+            raise BadPayload("secret_hash must be an {SSHA} hash")
+        if action == "secret":
+            if transport is not None or public_key is not None or allow_raw or hashed is None:
+                raise BadPayload("a new secret takes the receiver and its secret_hash only")
+            return Prepared(
+                argv=RECEIVER_CLIENT,
+                request=cert_receiver_helper.build_request(
+                    str(request_id), receiver=receiver, action="secret", secret_hash=hashed
+                ),
+            )
         if action == "remove":
-            if transport is not None or public_key is not None or allow_raw:
-                raise BadPayload("a removal takes no transport, key or allowlist")
+            if transport is not None or public_key is not None or allow_raw or hashed:
+                raise BadPayload("a removal takes no transport, key, allowlist or secret")
             return Prepared(
                 argv=RECEIVER_CLIENT,
                 request=cert_receiver_helper.build_request(
@@ -734,9 +753,11 @@ def _certificate_operation(
                 raise BadPayload("an https receiver has no key")
             if not allow:
                 raise BadPayload("an https receiver needs at least one address in allow")
+            if hashed is None:
+                raise BadPayload("an https receiver needs its secret_hash")
         else:
-            if allow:
-                raise BadPayload("allow belongs to an https receiver only")
+            if allow or hashed is not None:
+                raise BadPayload("allow and a secret belong to an https receiver only")
             if not isinstance(public_key, str) or not public_key.strip():
                 raise BadPayload("public_key is required for rsync and sftp")
             if len(public_key) > cert_receiver_helper.MAX_PUBLIC_KEY:
@@ -750,6 +771,7 @@ def _certificate_operation(
                 transport=str(transport),
                 public_key=public_key if isinstance(public_key, str) else None,
                 allow=allow,
+                secret_hash=hashed,
             ),
         )
 

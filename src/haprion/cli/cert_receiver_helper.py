@@ -50,8 +50,14 @@ from haprion.helper_protocol import (
 OPERATION = "cert_receiver"
 HELPER = "/opt/haprion/current/bin/haprion-cert-receiver-helper"
 
-PARAMETERS = frozenset({"receiver", "action", "transport", "public_key", "allow"})
-ACTIONS = frozenset({"add", "remove"})
+PARAMETERS = frozenset({"receiver", "action", "transport", "public_key", "allow", "secret_hash"})
+#
+# `secret` gives an https receiver a new secret (B306). What arrives is its hash:
+# the password was shown to whoever made it and travels nowhere, not in this
+# request and not in the job that carries it.
+#
+ACTIONS = frozenset({"add", "remove", "secret"})
+MAX_SECRET_HASH = 160
 
 # A pasted key is one line; anything longer is not one.
 MAX_PUBLIC_KEY = 4096
@@ -71,6 +77,7 @@ def build_request(
     transport: str | None = None,
     public_key: str | None = None,
     allow: tuple[str, ...] = (),
+    secret_hash: str | None = None,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
@@ -81,6 +88,8 @@ def build_request(
         parameters["public_key"] = public_key
     if allow:
         parameters["allow"] = list(allow)
+    if secret_hash is not None:
+        parameters["secret_hash"] = secret_hash
     return json.dumps(
         {
             "schema_version": 1,
@@ -158,14 +167,24 @@ def main(
             raise HelperProtocolError("parameters.receiver is not a receiver ID", exit_code=65)
         action = _text(parameters, "action", 8)
         if action not in ACTIONS:
-            raise HelperProtocolError("parameters.action must be add or remove", exit_code=65)
-        transport = public_key = None
+            raise HelperProtocolError(
+                "parameters.action must be add, remove or secret", exit_code=65
+            )
+        transport = public_key = hashed = None
         allow: tuple[str, ...] = ()
+        if "secret_hash" in parameters:
+            hashed = _text(parameters, "secret_hash", MAX_SECRET_HASH)
         if action == "add":
             transport = _text(parameters, "transport", 8)
             if "public_key" in parameters:
                 public_key = _text(parameters, "public_key", MAX_PUBLIC_KEY)
             allow = _allow(parameters)
+        elif action == "secret":
+            extra = sorted(set(parameters) - {"receiver", "action", "secret_hash"})
+            if extra or hashed is None:
+                raise HelperProtocolError(
+                    "a new secret takes the receiver and its secret_hash only", exit_code=65
+                )
         else:
             extra = sorted(set(parameters) - {"receiver", "action"})
             if extra:
@@ -196,10 +215,20 @@ def main(
                 transport=transport or "",
                 public_key=public_key,
                 allow=allow,
+                hashed_secret=hashed,
                 tools=tools,
                 locations=locations,
                 require_secure=require_secure,
                 lock_path=lock_path,
+            )
+        elif action == "secret":
+            assert hashed is not None  # noqa: S101 - required above
+            result = cert_receiver.set_secret(
+                runtime,
+                receiver_id=receiver_id,
+                hashed_secret=hashed,
+                tools=tools,
+                locations=locations,
             )
         else:
             result = cert_receiver.remove(

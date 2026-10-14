@@ -31,11 +31,15 @@ functions rather than grow a second implementation.
 
 from __future__ import annotations
 
+import base64
 import contextlib
+import grp
+import hashlib
 import ipaddress
 import os
 import pwd
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -98,6 +102,18 @@ HTTPS_OWNER = "www-data"
 #
 HTTPS_PREFIX = "/certdist"
 
+#
+# An https receiver's own secret (B306, security review S03): an address list
+# alone let any host on an allowed network fetch private keys. The password is
+# made by whoever asks - this command, or the interface - and shown to them
+# once; what reaches this module, and the job that carries it, is the hash
+# nginx checks, never the password. SSHA, because nginx reads it without
+# depending on the C library's crypt(); a 32-byte random password makes the
+# fast hash no weaker than the secret.
+#
+SECRET_HASH = re.compile(r"\{SSHA\}[A-Za-z0-9+/]{32,128}={0,2}")
+SECRET_BYTES = 24
+
 type Runner = Callable[[Sequence[str]], tuple[int, str]]
 
 
@@ -130,6 +146,7 @@ class Locations:
     nginx_snippet: Path = Path("/etc/nginx/snippets/haprion-receivers.conf")
     ui_site: Path = Path("/etc/nginx/sites-available/haprion")
     ui_tls: Path = Path("/etc/haprion/ui-tls.conf")
+    receiver_secrets: Path = Path("/etc/nginx/haprion-receivers")
 
 
 def run_command(argv: Sequence[str]) -> tuple[int, str]:
@@ -500,7 +517,52 @@ def read_ui_tls(locations: Locations) -> dict[str, str]:
     }
 
 
-def render_nginx_snippet(registry: Registry) -> str:
+def new_secret() -> str:
+    """A receiver's password: random, URL-safe, shown once by whoever made it."""
+
+    return secrets.token_urlsafe(SECRET_BYTES)
+
+
+def secret_hash(password: str) -> str:
+    """The `{SSHA}` form nginx's auth_basic_user_file reads."""
+
+    salt = secrets.token_bytes(8)
+    digest = hashlib.sha1(password.encode("utf-8") + salt).digest()  # noqa: S324 - nginx's SSHA
+    return "{SSHA}" + base64.b64encode(digest + salt).decode("ascii")
+
+
+def secret_file(receiver_id: str, locations: Locations) -> Path:
+    return locations.receiver_secrets / f"{receiver_id}.htpasswd"
+
+
+def write_secret(receiver_id: str, hashed: str, locations: Locations) -> Layer:
+    """The receiver's user file: root's, readable by the account nginx serves as.
+
+    Written to a new name and moved into place, so nginx - which reads the file
+    on every request - never sees half of it.
+    """
+
+    if not SECRET_HASH.fullmatch(hashed):
+        raise ReceiverError("bad_input", "the receiver's secret is not an {SSHA} hash")
+    group = grp.getgrnam(HTTPS_OWNER).gr_gid
+    directory = locations.receiver_secrets
+    directory.mkdir(mode=0o750, parents=True, exist_ok=True)
+    os.chown(directory, ROOT_UID, group)
+    os.chmod(directory, 0o750)  # noqa: S103 - nginx's group reads the files in it
+    target = secret_file(receiver_id, locations)
+    staged = target.with_name(f".{target.name}.{os.getpid()}")
+    descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+    try:
+        os.write(descriptor, f"{receiver_id}:{hashed}\n".encode("ascii"))
+        os.fchown(descriptor, ROOT_UID, group)
+        os.fchmod(descriptor, 0o640)
+    finally:
+        os.close(descriptor)
+    os.replace(staged, target)
+    return Layer("secret", "created", str(target))
+
+
+def render_nginx_snippet(registry: Registry, locations: Locations | None = None) -> str:
     """One location per `https` receiver, whitelisted per line, for the interface's block.
 
     Rendered whole from the registry like the sshd drop-in, and holding only
@@ -518,9 +580,17 @@ def render_nginx_snippet(registry: Registry) -> str:
         lines.append(f"location {HTTPS_PREFIX}/{receiver.receiver_id}/ {{")
         lines.append(f"    alias {receiver.path}/;")
         lines.append("    autoindex off;")
+        #
+        # Both, not either: the address list and the receiver's own secret.
+        #
+        lines.append("    satisfy all;")
         for entry in receiver.allow:
             lines.append(f"    allow {entry};")
         lines.append("    deny all;")
+        lines.append(f'    auth_basic "{receiver.receiver_id}";')
+        lines.append(
+            f"    auth_basic_user_file {secret_file(receiver.receiver_id, locations or Locations())};"
+        )
         lines.append("}")
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -633,6 +703,7 @@ def check_request(
     transport: str,
     allow: Sequence[str],
     public_key: Path | str | None,
+    hashed_secret: str | None = None,
 ) -> None:
     """What the command will not do, said before anything is written.
 
@@ -662,7 +733,15 @@ def check_request(
             raise ReceiverError("bad_input", f"--allow{exc}") from None
         if public_key is not None:
             raise ReceiverError("bad_input", "an https receiver has no key; leave out --public-key")
+        if hashed_secret is None or not SECRET_HASH.fullmatch(hashed_secret):
+            raise ReceiverError(
+                "bad_input",
+                "an https receiver fetches with a secret of its own as well as from its "
+                "addresses (B306); the request carries no valid one",
+            )
         return
+    if hashed_secret is not None:
+        raise ReceiverError("bad_input", "a secret belongs to an https receiver only")
     if allow:
         raise ReceiverError("bad_input", "--allow belongs to an https receiver only")
     if public_key is None:
@@ -683,6 +762,7 @@ def add(
     owner: str | None = None,
     path: Path | None = None,
     allow: Sequence[str] = (),
+    hashed_secret: str | None = None,
     tools: Tools | None = None,
     locations: Locations | None = None,
     require_secure: bool = True,
@@ -697,7 +777,7 @@ def add(
 
     tools = tools or Tools()
     locations = locations or Locations()
-    check_request(transport, allow, public_key)
+    check_request(transport, allow, public_key, hashed_secret)
     check_identity(receiver_id, tools)
 
     registry = runtime.registry
@@ -777,6 +857,10 @@ def add(
         if not existed:
             undo.append(lambda: shutil.rmtree(directory, ignore_errors=True))
 
+        if transport == "https":
+            assert hashed_secret is not None  # noqa: S101 - check_request requires it
+            layers.append(write_secret(receiver_id, hashed_secret, locations))
+            undo.append(lambda: secret_file(receiver_id, locations).unlink(missing_ok=True))
         layers.append(_write_lock(receiver, key_line, registry, locations, tools, undo))
 
         cert_registry.set_receiver(
@@ -827,7 +911,7 @@ def _write_lock(
         )
         layer = _write_checked(
             locations.nginx_snippet,
-            render_nginx_snippet(_candidate(registry, receiver)),
+            render_nginx_snippet(_candidate(registry, receiver), locations),
             check=[NGINX, "-t"],
             reload=[SYSTEMCTL, "reload", "nginx"],
             tools=tools,
@@ -903,10 +987,11 @@ def instructions(receiver: Receiver, locations: Locations) -> tuple[str, ...]:
     if receiver.transport == "https":
         server_name = read_ui_tls(locations)["SERVER_NAME"]
         return (
-            f"transport: https (no key; the whitelist is {', '.join(receiver.allow)})",
+            f"transport: https, from {', '.join(receiver.allow)} and with its own secret",
             f"url: https://{server_name}{HTTPS_PREFIX}/{receiver.receiver_id}/"
             "<certificate>/fullchain.pem",
-            "the private key is beside it as privkey.pem, under the same whitelist",
+            f"user: {receiver.receiver_id}; the password is the one shown when the secret was made",
+            "the private key is beside it as privkey.pem, under the same two locks",
         )
     if receiver.transport == "sftp":
         return (
@@ -921,6 +1006,66 @@ def instructions(receiver: Receiver, locations: Locations) -> tuple[str, ...]:
         f"fetch: rsync -a {receiver.owner}@{host}:<certificate>/ /local/path/",
         f"the key you gave is bound to {receiver.receiver_id} and its addresses; fetch from there",
     )
+
+
+def set_secret(
+    runtime: RuntimeConfig,
+    *,
+    receiver_id: str,
+    hashed_secret: str,
+    tools: Tools | None = None,
+    locations: Locations | None = None,
+) -> Result:
+    """Give an https receiver a new secret; the old one stops working at once.
+
+    Also how a receiver registered before B306 gets its first: the location is
+    rendered again with the secret's lines and nginx reloaded, checked first
+    and put back if nginx refuses it.
+    """
+
+    tools = tools or Tools()
+    locations = locations or Locations()
+    registry = runtime.registry
+    if registry is None:
+        raise ReceiverError(
+            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+        )
+    receiver = registry.receivers.get(receiver_id)
+    if receiver is None:
+        raise ReceiverError("unknown_receiver", f"receiver {receiver_id} is not registered")
+    if receiver.transport != "https":
+        raise ReceiverError(
+            "bad_input", f"{receiver_id} fetches over {receiver.transport}, with its own key"
+        )
+    target = secret_file(receiver_id, locations)
+    before = target.read_text(encoding="ascii") if target.exists() else None
+    layers = [write_secret(receiver_id, hashed_secret, locations)]
+    try:
+        layers.append(
+            _write_checked(
+                locations.nginx_snippet,
+                render_nginx_snippet(registry, locations),
+                check=[NGINX, "-t"],
+                reload=[SYSTEMCTL, "reload", "nginx"],
+                tools=tools,
+                what="nginx",
+            )
+        )
+    except ReceiverError:
+        if before is None:
+            target.unlink(missing_ok=True)
+        else:
+            _restore_secret(target, before)
+        raise
+    return Result(receiver_id, "secret", tuple(layers), instructions(receiver, locations))
+
+
+def _restore_secret(target: Path, before: str) -> None:
+    staged = target.with_name(f".{target.name}.{os.getpid()}")
+    staged.write_text(before, encoding="ascii")
+    os.chown(staged, ROOT_UID, grp.getgrnam(HTTPS_OWNER).gr_gid)
+    os.chmod(staged, 0o640)
+    os.replace(staged, target)
 
 
 def listing(policy: PathPolicy, runtime: RuntimeConfig) -> list[dict[str, Any]]:
@@ -1000,13 +1145,15 @@ def remove(
             layers.append(
                 _write_checked(
                     locations.nginx_snippet,
-                    render_nginx_snippet(remaining),
+                    render_nginx_snippet(remaining, locations),
                     check=[NGINX, "-t"],
                     reload=[SYSTEMCTL, "reload", "nginx"],
                     tools=tools,
                     what="nginx",
                 )
             )
+            secret_file(receiver_id, locations).unlink(missing_ok=True)
+            layers.append(Layer("secret", "removed", str(secret_file(receiver_id, locations))))
         else:
             home = tools.home(receiver.owner) or receiver.path
             layers.append(_remove_lock(home))

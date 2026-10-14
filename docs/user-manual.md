@@ -1673,6 +1673,7 @@ sudo haprion-cert-receiver add lb-03.example.net --transport sftp \
   --public-key /tmp/lb-03.pub --owner crx-lb-03
 
 sudo haprion-cert-receiver add 192.0.2.40 --transport https --allow 192.0.2.0/24
+sudo haprion-cert-receiver secret 192.0.2.40   # a new password; the old one stops at once
 
 sudo haprion-cert-receiver list
 sudo haprion-cert-receiver remove lb-02.example.net
@@ -1712,7 +1713,7 @@ through the manager has passed through one machine too many.
 |---|---|---|
 | `rsync` | `rsync` over ssh | `restrict,from="<id>,<addresses>",command="/usr/bin/rrsync -ro <path>"` - one directory, read-only, no shell |
 | `sftp` | `sftp`, read-only | the same key line without the forced command, plus a `Match User` block with `ChrootDirectory <path>` and `ForceCommand internal-sftp -R` |
-| `https` | plain `GET`, no key at all | an address whitelist in nginx, and nothing else |
+| `https` | `GET` with the receiver's own password | an address whitelist in nginx and the password, both required (`satisfy all`) |
 
 The rsync account has `/bin/sh` as its login shell because OpenSSH runs an
 `authorized_keys command="..."` through that shell with `-c`. The shell does not grant an
@@ -1720,9 +1721,15 @@ interactive login: the key still carries `restrict`, `from=` and the fixed `rrsy
 and no unrestricted key is installed. An SFTP account keeps `/usr/sbin/nologin` because
 `internal-sftp` is sshd's in-process server and does not need a shell.
 
-`https` is a deliberate lowering of the trust level: an address list is not a key, and what such a
+`https` is a deliberate lowering of the trust level: a password is not a key pair, and what such a
 receiver holds - a wildcard, a certificate the clusters serve - is the operator's call, not the
-program's. It reaches nothing but its own directory. It is served from the interface's own server block, on 443 under the
+program's. It reaches nothing but its own directory. **The password** is made by whoever registers
+the receiver - the command prints it, the interface shows it - once; the manager keeps only its
+salted hash, in `/etc/nginx/haprion-receivers/<id>.htpasswd` (`root:www-data`, 0640), and neither
+the registry nor the interface's job holds it. A lost password is replaced with `secret` (or
+*New secret* on the page); the old one stops working at once. The receiver keeps it in a netrc
+file (`/root/.certfetch.netrc`, mode 600) that curl reads with `--netrc-file`, so it is on no
+command line. It is served from the interface's own server block, on 443 under the
 interface's certificate and hostname, at `https://<server name>/certdist/<id>/<certificate>/`.
 The `location` blocks live in `/etc/nginx/snippets/haprion-receivers.conf`, which only this
 command writes and which the interface's site pulls in with one `include` line; the interface's

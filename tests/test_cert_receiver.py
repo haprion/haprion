@@ -14,13 +14,17 @@ needs root and a second host.
 
 from __future__ import annotations
 
+import base64
 import dataclasses
+import grp
+import hashlib
 import json
 import os
 import pwd
+import re
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest import mock
 
 import yaml
@@ -29,6 +33,7 @@ from haprion import cert_receiver, cert_registry
 from haprion.cert_receiver import Locations, ReceiverError, Result, Tools
 from haprion.cli import cert_receiver as command
 from haprion.config import PathPolicy, RuntimeConfig, load_policy, load_runtime_config
+from tests.contract_schema import assert_contract
 from tests.test_cert_publish import ME, Fixture, issue
 
 KEEPER = {"keeper.example": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
@@ -72,6 +77,13 @@ class ReceiverFixture(Fixture):
             patcher = mock.patch.object(cert_receiver, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        #
+        # nginx's group, which owns the receivers' secrets, is the test's own:
+        # a test that is not root can give a file to no one else.
+        #
+        group = mock.patch.object(grp, "getgrnam", lambda _name: mock.Mock(gr_gid=os.getgid()))
+        group.start()
+        self.addCleanup(group.stop)
         self.runner = Runner()
         self.etc = self.root / "etc"
         (self.etc / "nginx" / "sites-enabled").mkdir(parents=True)
@@ -87,6 +99,7 @@ class ReceiverFixture(Fixture):
             nginx_snippet=self.etc / "nginx" / "snippets" / "haprion-receivers.conf",
             ui_site=self.etc / "nginx" / "sites-available" / "haprion",
             ui_tls=self.etc / "haprion" / "ui-tls.conf",
+            receiver_secrets=self.etc / "nginx" / "haprion-receivers",
         )
         # The interface's site as 05-platform-nginx renders it: with the line
         # that makes the snippet reachable at all.
@@ -138,6 +151,8 @@ class ReceiverFixture(Fixture):
             "owner": ME,
             **options,
         }
+        if arguments["transport"] == "https":
+            arguments.setdefault("hashed_secret", cert_receiver.secret_hash("receiver password"))
         return cert_receiver.add(
             policy,
             runtime,
@@ -480,6 +495,94 @@ class WhenALayerRefuses(ReceiverFixture):
         self.assertFalse(self.locations.nginx_snippet.exists())
 
 
+class AnHttpsReceiversSecret(ReceiverFixture):
+    """B306 (security review S03): an address list alone let any host on an
+    allowed network fetch private keys. Both locks now, and only the hash here."""
+
+    HTTPS: ClassVar[dict[str, Any]] = {
+        "transport": "https",
+        "public_key": None,
+        "owner": None,
+        "allow": ["192.0.2.0/24"],
+    }
+
+    def secret(self, receiver_id: str = "lb-02.example.net") -> Path:
+        return self.locations.receiver_secrets / f"{receiver_id}.htpasswd"
+
+    def test_the_location_asks_for_both_and_the_file_holds_only_the_hash(self) -> None:
+        hashed = cert_receiver.secret_hash("receiver password")
+        with mock.patch.object(cert_receiver, "_own"):
+            self.add(**self.HTTPS, hashed_secret=hashed)
+
+        snippet = self.locations.nginx_snippet.read_text(encoding="utf-8")
+        self.assertIn("    satisfy all;", snippet)
+        self.assertIn("    deny all;", snippet)
+        self.assertIn(f"    auth_basic_user_file {self.secret()};", snippet)
+        self.assertEqual(self.secret().read_text(), f"lb-02.example.net:{hashed}\n")
+        self.assertEqual(self.secret().stat().st_mode & 0o777, 0o640)
+        self.assertNotIn("receiver password", self.secret().read_text())
+
+    def test_the_hash_is_the_form_nginx_checks(self) -> None:
+        hashed = cert_receiver.secret_hash("receiver password")
+        raw = base64.b64decode(hashed.removeprefix("{SSHA}"))
+        digest, salt = raw[:20], raw[20:]
+        self.assertEqual(hashlib.sha1(b"receiver password" + salt).digest(), digest)  # noqa: S324
+        self.assertRegex(cert_receiver.new_secret(), r"^[A-Za-z0-9_-]{32}$")
+
+    def test_https_without_a_secret_and_a_secret_without_https_are_refused(self) -> None:
+        with mock.patch.object(cert_receiver, "_own"), self.assertRaises(ReceiverError) as no:
+            self.add(**self.HTTPS, hashed_secret="not a hash")  # noqa: S106 - a refusal
+        self.assertEqual(no.exception.code, "bad_input")
+        with self.assertRaises(ReceiverError) as wrong:
+            self.add(hashed_secret=cert_receiver.secret_hash("x"))
+        self.assertEqual(wrong.exception.code, "bad_input")
+        self.assertFalse(self.secret().exists())
+
+    def test_a_new_secret_replaces_the_old_and_a_refusal_puts_it_back(self) -> None:
+        with mock.patch.object(cert_receiver, "_own"):
+            self.add(**self.HTTPS)
+        old = self.secret().read_text()
+        _, runtime = self.loaded()
+        newer = cert_receiver.secret_hash("another password")
+        result = cert_receiver.set_secret(
+            runtime,
+            receiver_id="lb-02.example.net",
+            hashed_secret=newer,
+            tools=self.tools,
+            locations=self.locations,
+        )
+        self.assertEqual(result.action, "secret")
+        self.assertIn(newer, self.secret().read_text())
+
+        self.runner.failures["nginx -t"] = (1, "unknown directive")
+        with self.assertRaises(ReceiverError):
+            cert_receiver.set_secret(
+                runtime,
+                receiver_id="lb-02.example.net",
+                hashed_secret=cert_receiver.secret_hash("third"),
+                tools=self.tools,
+                locations=self.locations,
+            )
+        self.assertIn(newer, self.secret().read_text())
+        self.assertNotEqual(old, self.secret().read_text())
+
+    def test_removing_the_receiver_removes_its_secret(self) -> None:
+        with mock.patch.object(cert_receiver, "_own"):
+            self.add(**self.HTTPS)
+        policy, runtime = self.loaded()
+        with mock.patch.object(cert_receiver, "_remove_directory", return_value=None):
+            cert_receiver.remove(
+                policy,
+                runtime,
+                receiver_id="lb-02.example.net",
+                tools=self.tools,
+                locations=self.locations,
+                require_secure=False,
+                lock_path=self.root / "cert-publish.lock",
+            )
+        self.assertFalse(self.secret().exists())
+
+
 class RemovingAReceiver(ReceiverFixture):
     def remove(self, receiver_id: str = "lb-02.example.net") -> Result:
         policy, runtime = self.loaded()
@@ -584,6 +687,27 @@ class TheCommand(ReceiverFixture):
             lock_path=self.root / "cert-publish.lock",
         )
         return code, out.getvalue(), err.getvalue()
+
+    def test_an_https_receiver_s_password_is_printed_once_and_kept_nowhere(self) -> None:
+        """B306: made by the command, shown here, and only its hash on disk."""
+
+        with mock.patch.object(cert_receiver, "_own"):
+            code, out, _ = self.run_cli(
+                "add", "lb-02.example.net", "--transport", "https", "--allow", "192.0.2.0/24"
+            )
+        self.assertEqual(code, 0, out)
+        password = re.search(r"^password: (\S+)$", out, re.MULTILINE)
+        assert password is not None, out
+        stored = (self.locations.receiver_secrets / "lb-02.example.net.htpasswd").read_text()
+        self.assertNotIn(password.group(1), stored)
+        self.assertNotIn(password.group(1), (self.root / "certificates.yaml").read_text())
+
+        code, out, _ = self.run_cli("secret", "lb-02.example.net", "--json")
+        self.assertEqual(code, 0, out)
+        document = json.loads(out)
+        self.assertEqual(document["result"]["action"], "secret")
+        self.assertNotEqual(document["result"]["password"], password.group(1))
+        assert_contract("haprion-cert-receiver", out)
 
     def test_add_then_list_then_remove(self) -> None:
         code, out, _ = self.run_cli(

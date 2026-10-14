@@ -45,6 +45,11 @@ WINDOWS_MKDIR = f"mkdir {WINDOWS_CERT_DIR} -Force | Out-Null"
 # The interface's own certificate as a file, served by its server block for a
 # receiver that fetches over https to save and trust (05-platform-nginx).
 UI_CERTIFICATE_FILE = "manager-ui.pem"
+# Where an https receiver keeps its password (B306): a file curl reads with
+# --netrc-file, so the password is in no command line, history or process list.
+NETRC_FILE = "/root/.certfetch.netrc"
+WINDOWS_NETRC_FILE = WINDOWS_CERT_DIR + "\\certfetch.netrc"
+PASSWORD_PLACEHOLDER = "<password>"  # noqa: S105 - the word the page shows, not a secret
 
 TRANSPORT_LABELS = {
     "rsync": "rsync over ssh",
@@ -208,8 +213,29 @@ def _files(held: Held) -> tuple[str, ...]:
     return ("fullchain.pem", "privkey.pem")
 
 
-def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
+def password_step(identifier: str, host: str, password: str | None = None) -> Step:
+    """Where an https receiver's password goes on its host (B306), once."""
+
+    line = f"machine {host} login {identifier} password {password or PASSWORD_PLACEHOLDER}"
+    return Step(
+        "Once: store this receiver's password",
+        f"install -m 600 /dev/null {NETRC_FILE}\necho '{line}' > {NETRC_FILE}",
+        "Shown once, when it was made; the manager keeps only its hash. "
+        "A lost one is replaced with New secret."
+        if password is None
+        else "Copy it now: this page is the only place it is shown.",
+        f"Set-Content -Path {WINDOWS_NETRC_FILE} -Value '{line}'",
+    )
+
+
+def fetch_steps(
+    row: ReceiverRow, manager: str | None, *, password: str | None = None
+) -> tuple[Step, ...]:
     """The commands this receiver's host runs, one block per certificate it holds.
+
+    `password` is an https receiver's, on the one page that shows it - the
+    answer to the request that made it (B306). Elsewhere the step says where
+    it goes, and the page cannot say what it is: the manager keeps only its hash.
 
     Written for the certificates the receiver holds today; a receiver that
     holds none gets the same commands with `<certificate>` in the name's
@@ -233,17 +259,20 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                 f"https://{host}{HTTPS_PREFIX}/{UI_CERTIFICATE_FILE}",
             )
         )
+        steps.append(password_step(row.identifier, host, password))
         for held in holds:
             for name in _files(held):
                 url = f"https://{host}{HTTPS_PREFIX}/{row.identifier}/{held.certificate_id}/{name}"
                 steps.append(
                     Step(
                         f"Fetch {name} for {held.certificate_id}",
-                        f"curl --fail --cacert manager-ui.pem -o {name} {url}",
+                        f"curl --fail --netrc-file {NETRC_FILE} --cacert manager-ui.pem "
+                        f"-o {name} {url}",
                         "A PKCS#12 pair is then imported with examples/receivers/install-pkcs12.ps1."
                         if name.endswith(".pfx")
                         else "",
-                        f"curl.exe --fail --cacert {WINDOWS_CERT_DIR}\\manager-ui.pem "
+                        f"curl.exe --fail --netrc-file {WINDOWS_NETRC_FILE} "
+                        f"--cacert {WINDOWS_CERT_DIR}\\manager-ui.pem "
                         f"-o {WINDOWS_CERT_DIR}\\{name} {url}",
                     )
                 )

@@ -94,6 +94,7 @@ class AddingThroughTheHelper(HelperFixture):
                     "action": "add",
                     "transport": "https",
                     "allow": ["192.0.2.9/32"],
+                    "secret_hash": cert_receiver.secret_hash("receiver password"),
                 }
             )
 
@@ -101,6 +102,18 @@ class AddingThroughTheHelper(HelperFixture):
         assert document is not None
         self.assertEqual(document["outcome"], "done")
         self.assertEqual(self.registered()["192.0.2.9"]["allow"], ["192.0.2.9/32"])
+        # B306: the helper is given the hash and never answers with a password.
+        self.assertNotIn("password", document["result"])
+
+    def test_a_new_secret_takes_the_receiver_and_the_hash_only(self) -> None:
+        for extra in ({}, {"secret_hash": cert_receiver.secret_hash("x"), "transport": "https"}):
+            with self.subTest(extra=extra):
+                code, document, _ = self.run_helper(
+                    {"receiver": "192.0.2.9", "action": "secret", **extra}
+                )
+                self.assertEqual(code, 65)
+                assert document is not None
+                self.assertEqual(document["error"]["code"], "bad_input")
 
     def test_the_command_s_refusals_come_back_as_the_envelope_s_failure(self) -> None:
         code, document, errors = self.run_helper(

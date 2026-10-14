@@ -26,7 +26,10 @@ from haprion.cert_receiver import (
     Tools,
     add,
     listing,
+    new_secret,
     remove,
+    secret_hash,
+    set_secret,
 )
 from haprion.cli.cert_publish import EXIT_NOT_ROOT
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
@@ -41,6 +44,7 @@ USAGE = (
     "                        [--owner <name>] [--path <dir>] [--json]\n"
     "  haprion-cert-receiver add <id> --transport https --allow <cidr>... [--path <dir>]\n"
     "                        [--json]\n"
+    "  haprion-cert-receiver secret <id> [--json]\n"
     "  haprion-cert-receiver list [--json]\n"
     "  haprion-cert-receiver remove <id> [--json]\n"
     "\n"
@@ -54,10 +58,12 @@ USAGE = (
     "  --transport rsync     Fetches with rsync over ssh, forced to rrsync -ro.\n"
     "  --transport sftp      Fetches with sftp, read-only, chrooted into its own\n"
     "                        directory.\n"
-    "  --transport https     Fetches over https with no key at all, from the\n"
-    "                        addresses in --allow and nowhere else. A certificate\n"
-    "                        a cluster carries is never published this way, and\n"
-    "                        neither is a wildcard.\n"
+    "  --transport https     Fetches over https from the addresses in --allow,\n"
+    "                        with a password of its own, printed once here. A\n"
+    "                        certificate a cluster carries is never published\n"
+    "                        this way, and neither is a wildcard.\n"
+    "  secret <id>           A new password for an https receiver, printed once;\n"
+    "                        the old one stops working at once.\n"
     "  --public-key <file>   The .pub file the receiver's own ssh-keygen wrote.\n"
     "  --allow <cidr>        An address or network that may fetch over https.\n"
     "                        May be repeated. Required for https, refused otherwise.\n"
@@ -81,7 +87,7 @@ class Arguments:
 
 def _parse(argv: list[str], writer: TextIO) -> Arguments:
     parsed = Arguments()
-    if not argv or argv[0] not in {"add", "list", "remove"}:
+    if not argv or argv[0] not in {"add", "list", "remove", "secret"}:
         writer.write(USAGE)
         raise SystemExit(EXIT_USAGE)
     parsed.action = argv[0]
@@ -125,11 +131,16 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
     return parsed
 
 
-def _print_result(result: Result, writer: TextIO) -> None:
+def _print_result(result: Result, writer: TextIO, password: str | None = None) -> None:
     writer.write(f"{result.action} {result.receiver_id}\n")
     for layer in result.layers:
         detail = f"  ({layer.detail})" if layer.detail else ""
         writer.write(f"  {layer.state:<8} {layer.name}{detail}\n")
+    if password is not None:
+        writer.write(
+            f"\npassword: {password}\n"
+            "  shown this once; the manager keeps only its hash. Give it to the receiver.\n"
+        )
     if result.instructions:
         writer.write("\nWhat the receiver needs:\n")
         for line in result.instructions:
@@ -217,7 +228,27 @@ def main(
                 _print_listing(rows, writer)
             return 0
 
-        if arguments.action == "add":
+        #
+        # The password is made here and shown here, once (B306); what goes on
+        # is its hash, which is all nginx needs and all that is kept.
+        #
+        password = (
+            new_secret()
+            if arguments.action == "secret"
+            or (arguments.action == "add" and arguments.transport == "https")
+            else None
+        )
+        hashed = secret_hash(password) if password is not None else None
+        if arguments.action == "secret":
+            assert hashed is not None  # noqa: S101 - made just above
+            result = set_secret(
+                runtime,
+                receiver_id=arguments.receiver_id,
+                hashed_secret=hashed,
+                tools=tools,
+                locations=locations,
+            )
+        elif arguments.action == "add":
             result = add(
                 policy,
                 runtime,
@@ -227,6 +258,7 @@ def main(
                 owner=arguments.owner,
                 path=arguments.path,
                 allow=arguments.allow,
+                hashed_secret=hashed,
                 tools=tools,
                 locations=locations,
                 require_secure=require_secure,
@@ -252,7 +284,8 @@ def main(
                     operation=OPERATION,
                     outcome="done",
                     cluster=None,
-                    result=result.as_dict(),
+                    result=result.as_dict()
+                    | ({"password": password} if password is not None else {}),
                     request_id=request_id,
                 ),
                 separators=(",", ":"),
@@ -261,5 +294,5 @@ def main(
             + "\n"
         )
     else:
-        _print_result(result, writer)
+        _print_result(result, writer, password)
     return 0

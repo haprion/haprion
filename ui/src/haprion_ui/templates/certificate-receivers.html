@@ -19,6 +19,16 @@
 {% if problem %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
 {% endif %}
+{% if issued_step %}
+<section class="cluster-card receiver-secret">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Password for {{ issued }}</h3><p>Shown once. The manager keeps only its hash.</p></div></div></header>
+  <ol class="receiver-steps">
+    <li><span class="receiver-step-title">{{ issued_step.title }}</span>
+      <span class="receiver-os">Linux:</span><pre class="receiver-command"><code>{{ issued_step.command }}</code></pre>
+      <span class="receiver-os">Windows (PowerShell):</span><pre class="receiver-command"><code>{{ issued_step.windows_command }}</code></pre></li>
+  </ol>
+</section>
+{% endif %}
 
 {% macro job_badge(item) -%}
 <span class="status-badge status-badge-{{ item.tone }} receiver-job-badge"{% if item.busy %} data-busy="{{ item.receiver }}"{% endif %}>{% if item.busy %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}<span>{{ item.badge }}</span><span aria-hidden="true">·</span><a href="/jobs#job-{{ item.job_id }}">Job {{ item.job_id }}</a></span>{% if item.message %} <small class="receiver-job-message">{{ item.message }}</small>{% endif %}
@@ -47,6 +57,12 @@
       <td data-label="Holds">{% if item %}{{ job_badge(item) }}{% elif row.holds %}{% for held in row.holds %}{% if not loop.first %}, {% endif %}{{ held.certificate_id }}{% if held.format == 'pkcs12' %} <span class="target-kind">pkcs12</span>{% endif %}{% endfor %}{% else %}<span class="optional">nothing yet</span>{% endif %}</td>
       <td data-label="Actions">
         <button type="button" class="link-button" data-receiver-commands="{{ row.identifier }}" aria-expanded="false">Fetch commands</button>
+        {% if row.transport == 'https' %} · <form method="post" action="/certificates/receivers/secret" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+          <input type="hidden" name="receiver" value="{{ row.identifier }}">
+          <button type="submit" class="link-button"{% if certificate_job %} disabled{% endif %}>New secret</button>
+        </form>{% endif %}
         {% if row.removable %} · <form method="post" action="/certificates/receivers/remove" class="inline-form" data-receiver-remove>
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">

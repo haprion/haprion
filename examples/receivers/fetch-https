@@ -1,9 +1,10 @@
 #!/bin/sh
 #
-# For a receiver registered with `--transport https`: no key, an address
-# whitelist, and nothing else. Whoever can reach the manager from a whitelisted
-# address can read this certificate and its private key; what is published
-# here is the operator's call.
+# For a receiver registered with `--transport https`: an address whitelist and
+# a password of its own, both required. The password was shown once when the
+# secret was made; it is kept in NETRC (mode 600), so it is on no command line:
+#
+#   machine manager.example.net login 192.0.2.40 password <password>
 #
 # The manager's certificate is verified against a CA file: without that, an
 # address whitelist protects the manager from strangers and does nothing at all
@@ -18,12 +19,13 @@ CA=${CA:-/etc/ssl/certs/internal-root.pem}
 TARGET=${TARGET:-/etc/ssl/haproxy}
 CERTIFICATE=${CERTIFICATE:-app.example.net}
 RELOAD=${RELOAD:-systemctl reload nginx}
+NETRC=${NETRC:-/root/.certfetch.netrc}
 
 staging=$(mktemp -d)
 trap 'rm -rf -- "$staging"' EXIT INT TERM
 
 for name in fullchain.pem privkey.pem; do
-    curl --fail --silent --show-error --cacert "$CA" \
+    curl --fail --silent --show-error --netrc-file "$NETRC" --cacert "$CA" \
         --output "${staging}/${name}" "${URL}/${CERTIFICATE}/${name}"
 done
 

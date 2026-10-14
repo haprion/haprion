@@ -7,6 +7,10 @@ row, the form's refusals said before a job is queued, and the routes' gates.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+import re
 import unittest
 from dataclasses import replace
 from typing import Any
@@ -127,12 +131,21 @@ class WhatTheHostRuns(unittest.TestCase):
         )
         self.assertEqual(steps[0].note.count("\n"), 1)
         self.assertIn("skip this step and drop --cacert", steps[0].note)
-        self.assertIn("--cacert C:\\certs\\manager-ui.pem", steps[1].windows_command)
+        # B306: the password once, in a file curl reads - never on a command line.
+        self.assertEqual(steps[1].title, "Once: store this receiver's password")
+        self.assertIn(
+            "machine mgr.example.net login 192.0.2.9 password <password>", steps[1].command
+        )
+        self.assertIn("install -m 600 /dev/null /root/.certfetch.netrc", steps[1].command)
+        self.assertIn("C:\\certs\\certfetch.netrc", steps[1].windows_command)
+        self.assertIn("--cacert C:\\certs\\manager-ui.pem", steps[2].windows_command)
+        self.assertIn("--netrc-file C:\\certs\\certfetch.netrc", steps[2].windows_command)
         self.assertIn(
             "https://mgr.example.net/certdist/192.0.2.9/<certificate>/fullchain.pem",
-            steps[1].command,
+            steps[2].command,
         )
-        self.assertIn("--cacert manager-ui.pem", steps[1].command)
+        self.assertIn("--cacert manager-ui.pem", steps[2].command)
+        self.assertIn("--netrc-file /root/.certfetch.netrc", steps[2].command)
 
     def test_a_receiver_holding_nothing_still_gets_its_commands(self) -> None:
         (row,) = self.rows(record("lb-02.example.net"))
@@ -512,6 +525,64 @@ class TheJobs(ReceiverRouteTestCase):
             allow="192.0.2.9/32",
         )
         self.assertEqual(self.queued[0]["payload"]["allow"], ["192.0.2.9/32"])
+
+    def password_on(self, page: str) -> str:
+        found = re.search(r"login \S+ password ([A-Za-z0-9_-]{32})\b", page)
+        if found is None:
+            self.fail("no password on the page")
+        return found.group(1)
+
+    def assert_hash_of(self, hashed: str, password: str) -> None:
+        raw = base64.b64decode(hashed.removeprefix("{SSHA}"))
+        self.assertEqual(
+            hashlib.sha1(password.encode() + raw[20:]).digest(),  # noqa: S324 - nginx's SSHA
+            raw[:20],
+        )
+
+    def test_an_https_receiver_s_password_is_shown_once_and_only_its_hash_queued(self) -> None:
+        """B306 (security review S03): the job row is stored, so it carries the hash."""
+
+        response = self.add(
+            self.writing_client(),
+            receiver="192.0.2.9",
+            transport="https",
+            public_key="",
+            allow="192.0.2.9/32",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        password = self.password_on(response.text)
+        payload = self.queued[0]["payload"]
+        self.assertNotIn(password, json.dumps(payload))
+        self.assert_hash_of(payload["secret_hash"], password)
+        page = self.writing_client().get("/certificates/receivers").text
+        self.assertNotIn(password, page)
+
+    def test_a_new_secret_is_for_an_https_receiver_and_shown_once(self) -> None:
+        self.records.append(record("192.0.2.9", transport="https", allow=("192.0.2.9/32",)))
+        client = self.writing_client()
+        page = client.get("/certificates/receivers").text
+        self.assertIn('action="/certificates/receivers/secret"', page)
+
+        def ask(receiver: str) -> Any:
+            return client.post(
+                "/certificates/receivers/secret",
+                data={
+                    "receiver": receiver,
+                    "idempotency_key": str(uuid4()),
+                    auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                },
+                follow_redirects=False,
+            )
+
+        refused = ask("lb-02.example.net")
+        self.assertIn("is not an https receiver", refused.text)
+        self.assertEqual(self.queued, [])
+
+        response = ask("192.0.2.9")
+        password = self.password_on(response.text)
+        self.assertEqual(self.queued[0]["payload"]["action"], "secret")
+        self.assert_hash_of(self.queued[0]["payload"]["secret_hash"], password)
 
     def test_a_refused_form_is_drawn_again_with_what_was_typed(self) -> None:
         response = self.add(self.writing_client(), public_key="not a key")

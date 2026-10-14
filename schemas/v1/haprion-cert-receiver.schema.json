@@ -32,9 +32,14 @@
       "required": ["id", "action", "layers", "instructions"],
       "properties": {
         "id": { "type": "string", "maxLength": 63 },
-        "action": { "enum": ["added", "removed"] },
+        "action": { "enum": ["added", "removed", "secret"] },
         "layers": { "type": "array", "items": { "$ref": "#/$defs/layer" } },
-        "instructions": { "type": "array", "items": { "type": "string", "maxLength": 1024 } }
+        "instructions": { "type": "array", "items": { "type": "string", "maxLength": 1024 } },
+        "password": {
+          "description": "B306: an https receiver's new password, in the command's own --json output only, once. The helper is given the hash and never sends one.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{32}$"
+        }
       },
       "additionalProperties": false
     }

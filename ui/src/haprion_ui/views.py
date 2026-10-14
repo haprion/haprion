@@ -50,6 +50,7 @@ from haprion import (
     backup_retention,
     backup_schedule,
     cert_export_socket,
+    cert_receiver,
     crs,
     dnsdist_config,
     proxy_model,
@@ -4264,9 +4265,18 @@ def build_router(config: Config) -> APIRouter:
         )
 
     def _receivers_page(
-        request: Request, session: AuthenticatedSession, *, problem: str = ""
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        problem: str = "",
+        issued: tuple[str, str] | None = None,
     ) -> Response:
-        """The list: every receiver, its fetch commands, and the job on its row."""
+        """The list: every receiver, its fetch commands, and the job on its row.
+
+        `issued` is an https receiver's new password with its ID, on the one
+        answer that shows it (B306): it was made for this request, its hash went
+        into the job, and nothing keeps it - not the database, not a cache.
+        """
 
         _token, registry, context = _page_context(request, session)
         rows = registry.receiver_rows if registry else ()
@@ -4288,7 +4298,14 @@ def build_router(config: Config) -> APIRouter:
                 "on_rows": on_rows,
                 "ghosts": ghosts,
                 "problem": problem,
+                "issued": issued[0] if issued else None,
+                "issued_step": certificate_receivers.password_step(
+                    issued[0], manager or "<manager>", issued[1]
+                )
+                if issued
+                else None,
             },
+            headers={"Cache-Control": "no-store"} if issued else None,
         )
 
     def _receiver_form_page(
@@ -5858,6 +5875,7 @@ def build_router(config: Config) -> APIRouter:
         key: UUID,
         *,
         form: Mapping[str, str] | None,
+        password: str | None = None,
     ) -> Response:
         def again(problem: str) -> Response:
             if form is None:
@@ -5906,6 +5924,12 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
+        if password is not None:
+            #
+            # Drawn here rather than after a redirect: a redirect's next page
+            # would need the password from somewhere, and nothing holds it.
+            #
+            return _receivers_page(request, session, issued=(payload["receiver"], password))
         return RedirectResponse("/certificates/receivers", status_code=303)
 
     @router.post("/certificates/receivers/new", response_class=HTMLResponse)
@@ -5943,7 +5967,42 @@ def build_router(config: Config) -> APIRouter:
             )
         except certificate_receivers.ReceiverProblem as refused:
             return _receiver_form_page(request, gate, problem=str(refused), form=entered)
-        return _queue_receiver_job(request, gate, payload, key, form=entered)
+        password = None
+        if payload.get("transport") == "https":
+            password = cert_receiver.new_secret()
+            payload = {**payload, "secret_hash": cert_receiver.secret_hash(password)}
+        return _queue_receiver_job(request, gate, payload, key, form=entered, password=password)
+
+    @router.post("/certificates/receivers/secret", response_class=HTMLResponse)
+    def certificate_receiver_secret(
+        request: Request,
+        receiver: str = Form(default="", max_length=128),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue a new secret for an https receiver, and show its password once."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        registry = _registry_overview(request)
+        rows = registry.receiver_rows if registry else ()
+        if not any(row.identifier == receiver and row.transport == "https" for row in rows):
+            return _receivers_page(request, gate, problem=f"{receiver} is not an https receiver.")
+        password = cert_receiver.new_secret()
+        payload = {
+            "receiver": receiver,
+            "action": "secret",
+            "secret_hash": cert_receiver.secret_hash(password),
+        }
+        return _queue_receiver_job(request, gate, payload, key, form=None, password=password)
 
     @router.post("/certificates/receivers/remove", response_class=HTMLResponse)
     def certificate_receiver_remove(

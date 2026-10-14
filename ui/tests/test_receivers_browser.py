@@ -91,10 +91,22 @@ class TheTableFitsInABrowser(ReceiverRouteTestCase):
         finally:
             page.close()
 
-    def test_no_table_scrolls_sideways_at_half_4k_nor_on_a_phone(self) -> None:
+    def test_nothing_runs_past_its_edge_from_a_phone_to_a_full_screen(self) -> None:
         with self.signed_in() as page:
             self.assertIn("New secret", page.content())
-            for width in (1280, 390):
+            #
+            # Opened, too: the fetch commands are long lines in the row under
+            # it, and a table sized to its content must not take their width.
+            #
+            for button in page.locator("[data-receiver-commands]").all():
+                button.click()
+            self.assertEqual(page.locator(".receiver-commands:visible").count(), 3)
+            #
+            # 1024 is 1280 at 125 % zoom, and 1440 a wider window: the table
+            # must fit, and so must each cell's content - a cell can run past
+            # its own edge without the table scrolling (26-10-14).
+            #
+            for width in (1920, 1440, 1280, 1024, 390):
                 with self.subTest(width=width):
                     page.set_viewport_size({"width": width, "height": 900})
                     overflow = page.evaluate(
@@ -102,6 +114,12 @@ class TheTableFitsInABrowser(ReceiverRouteTestCase):
                         ".map((box) => box.scrollWidth - box.clientWidth)"
                     )
                     self.assertEqual(set(overflow), {0})
+                    spilled = page.evaluate(
+                        "() => [...document.querySelectorAll('.receiver-table td')]"
+                        ".filter((cell) => cell.scrollWidth > cell.clientWidth)"
+                        ".map((cell) => cell.textContent.trim())"
+                    )
+                    self.assertEqual(spilled, [])
                     self.assertTrue(
                         page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                     )

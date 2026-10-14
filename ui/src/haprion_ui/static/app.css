@@ -1576,13 +1576,16 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * command blocks are the diagnostics' block, because they are read the same
  * way: copied, not skimmed.
  */
-.receiver-table { table-layout: fixed; }
-.receiver-table th:nth-child(1), .receiver-table td:nth-child(1) { width: 26ch; }
-.receiver-table th:nth-child(2), .receiver-table td:nth-child(2) { width: 24ch; }
-.receiver-table th:nth-child(3), .receiver-table td:nth-child(3) { width: 26ch; }
-.receiver-table th:nth-child(4), .receiver-table td:nth-child(4) { width: auto; }
-.receiver-table th:nth-child(5), .receiver-table td:nth-child(5) { width: 34ch; white-space: nowrap; }
-.receiver-table td { overflow-wrap: anywhere; }
+/*
+ * Every column but Holds is as wide as what it says, on one line - widths in
+ * ch held the actions for one font and not another, and they ran out of their
+ * cell (26-10-14) - and Holds takes the rest, wrapping a long list there. The
+ * 1% asks the layout for the narrowest column that still fits its line.
+ */
+.receiver-table { table-layout: auto; }
+.receiver-table td { white-space: nowrap; }
+.receiver-table th:not(:nth-child(4)), .receiver-table td:not(:nth-child(4)) { width: 1%; }
+.receiver-table td:nth-child(4) { white-space: normal; overflow-wrap: anywhere; }
 .receiver-table .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
 .receiver-table .link-button:disabled { color: var(--muted); cursor: default; text-decoration: none; }
 .receiver-table .inline-form { display: inline; }

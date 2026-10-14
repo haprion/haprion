@@ -133,11 +133,14 @@ class WhatTheHostRuns(unittest.TestCase):
         self.assertIn("skip this step and drop --cacert", steps[0].note)
         # B306: the password once, in a file curl reads - never on a command line.
         self.assertEqual(steps[1].title, "Once: store this receiver's password")
-        self.assertIn(
-            "machine mgr.example.net login 192.0.2.9 password <password>", steps[1].command
-        )
-        self.assertIn("install -m 600 /dev/null /root/.certfetch.netrc", steps[1].command)
-        self.assertIn("C:\\certs\\certfetch.netrc", steps[1].windows_command)
+        # On the list it says where the password is and offers nothing to run: a
+        # line with a placeholder in it stored the placeholder (26-10-14).
+        self.assertEqual((steps[1].command, steps[1].windows_command), ("", ""))
+        self.assertIn("New secret", steps[1].note)
+        shown = certificate_receivers.password_step("192.0.2.9", "mgr.example.net", "pw-123")
+        self.assertIn("machine mgr.example.net login 192.0.2.9 password pw-123", shown.command)
+        self.assertIn("install -m 600 /dev/null /root/.certfetch.netrc", shown.command)
+        self.assertIn("C:\\certs\\certfetch.netrc", shown.windows_command)
         self.assertIn("--cacert C:\\certs\\manager-ui.pem", steps[2].windows_command)
         self.assertIn("--netrc-file C:\\certs\\certfetch.netrc", steps[2].windows_command)
         self.assertIn(

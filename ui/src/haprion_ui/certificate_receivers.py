@@ -49,7 +49,6 @@ UI_CERTIFICATE_FILE = "manager-ui.pem"
 # --netrc-file, so the password is in no command line, history or process list.
 NETRC_FILE = "/root/.certfetch.netrc"
 WINDOWS_NETRC_FILE = WINDOWS_CERT_DIR + "\\certfetch.netrc"
-PASSWORD_PLACEHOLDER = "<password>"  # noqa: S105 - the word the page shows, not a secret
 
 TRANSPORT_LABELS = {
     "rsync": "rsync over ssh",
@@ -214,16 +213,28 @@ def _files(held: Held) -> tuple[str, ...]:
 
 
 def password_step(identifier: str, host: str, password: str | None = None) -> Step:
-    """Where an https receiver's password goes on its host (B306), once."""
+    """Where an https receiver's password goes on its host (B306), once.
 
-    line = f"machine {host} login {identifier} password {password or PASSWORD_PLACEHOLDER}"
+    With the password, on the one page that shows it: the commands that store
+    it. Without, on the list: where it is, and no command - a runnable line
+    with a placeholder in it wrote the placeholder into the host's file, and
+    the fetch was refused (26-10-14).
+    """
+
+    title = "Once: store this receiver's password"
+    if password is None:
+        return Step(
+            title,
+            "",
+            "New secret makes one and shows it once, with the commands that store it here; "
+            "the manager keeps only its hash.",
+            "",
+        )
+    line = f"machine {host} login {identifier} password {password}"
     return Step(
-        "Once: store this receiver's password",
+        title,
         f"install -m 600 /dev/null {NETRC_FILE}\necho '{line}' > {NETRC_FILE}",
-        "Shown once, when it was made; the manager keeps only its hash. "
-        "A lost one is replaced with New secret."
-        if password is None
-        else "Copy it now: this page is the only place it is shown.",
+        "Copy it now: this page is the only place it is shown.",
         f"Set-Content -Path {WINDOWS_NETRC_FILE} -Value '{line}'",
     )
 

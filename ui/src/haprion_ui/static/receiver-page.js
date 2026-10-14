@@ -4,15 +4,23 @@
   // while a registration runs; the swapped-in rows and form are new elements.
   //
   const wire = () => {
-    // The fetch commands under a row: shown on request, one row at a time is
-    // not enforced - two hosts side by side is a legitimate comparison.
-    document.querySelectorAll("[data-receiver-commands]").forEach((button) => {
-      const target = document.getElementById(`receiver-commands-${button.dataset.receiverCommands}`);
+    // The fetch commands under a row: shown on request, one row at a time.
+    // Opening another closes the one that was open; the commands are long,
+    // and two open pushed the rest of the list off the screen (26-10-14).
+    const toggles = Array.from(document.querySelectorAll("[data-receiver-commands]"));
+    const panel = (button) =>
+      document.getElementById(`receiver-commands-${button.dataset.receiverCommands}`);
+    toggles.forEach((button) => {
+      const target = panel(button);
       if (!target) return;
       button.addEventListener("click", () => {
         const open = target.hidden;
-        target.hidden = !open;
-        button.setAttribute("aria-expanded", String(open));
+        toggles.forEach((other) => {
+          const shown = panel(other);
+          if (!shown) return;
+          shown.hidden = other === button ? !open : true;
+          other.setAttribute("aria-expanded", String(other === button && open));
+        });
       });
     });
 

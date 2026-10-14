@@ -212,41 +212,30 @@ def _files(held: Held) -> tuple[str, ...]:
     return ("fullchain.pem", "privkey.pem")
 
 
-def password_step(identifier: str, host: str, password: str | None = None) -> Step:
+def password_step(identifier: str, host: str, password: str) -> Step:
     """Where an https receiver's password goes on its host (B306), once.
 
-    With the password, on the one page that shows it: the commands that store
-    it. Without, on the list: where it is, and no command - a runnable line
-    with a placeholder in it wrote the placeholder into the host's file, and
-    the fetch was refused (26-10-14).
+    On the one page that shows it, with the password in the commands: a
+    runnable line with a placeholder in it wrote the placeholder into the
+    host's file, and the fetch was refused (26-10-14).
     """
 
-    title = "Once: store this receiver's password"
-    if password is None:
-        return Step(
-            title,
-            "",
-            "New secret makes one and shows it once, with the commands that store it here; "
-            "the manager keeps only its hash.",
-            "",
-        )
     line = f"machine {host} login {identifier} password {password}"
     return Step(
-        title,
+        "Once: store this receiver's password",
         f"install -m 600 /dev/null {NETRC_FILE}\necho '{line}' > {NETRC_FILE}",
         "Copy it now: this page is the only place it is shown.",
         f"Set-Content -Path {WINDOWS_NETRC_FILE} -Value '{line}'",
     )
 
 
-def fetch_steps(
-    row: ReceiverRow, manager: str | None, *, password: str | None = None
-) -> tuple[Step, ...]:
+def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
     """The commands this receiver's host runs, one block per certificate it holds.
 
-    `password` is an https receiver's, on the one page that shows it - the
-    answer to the request that made it (B306). Elsewhere the step says where
-    it goes, and the page cannot say what it is: the manager keeps only its hash.
+    An https receiver's password is not among them: it is stored once, from
+    the page that shows it (`password_step`), and the row has *New secret* for
+    a lost one - a step here that could only say so was one step too many
+    (26-10-14).
 
     Written for the certificates the receiver holds today; a receiver that
     holds none gets the same commands with `<certificate>` in the name's
@@ -270,7 +259,6 @@ def fetch_steps(
                 f"https://{host}{HTTPS_PREFIX}/{UI_CERTIFICATE_FILE}",
             )
         )
-        steps.append(password_step(row.identifier, host, password))
         for held in holds:
             for name in _files(held):
                 url = f"https://{host}{HTTPS_PREFIX}/{row.identifier}/{held.certificate_id}/{name}"

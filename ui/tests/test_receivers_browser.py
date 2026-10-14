@@ -91,6 +91,14 @@ class TheTableFitsInABrowser(ReceiverRouteTestCase):
         finally:
             page.close()
 
+    def test_a_row_s_commands_close_on_their_own_button(self) -> None:
+        with self.signed_in() as page:
+            button = page.locator("[data-receiver-commands]").first
+            button.click()
+            button.click()
+            self.assertEqual(page.locator(".receiver-commands:visible").count(), 0)
+            self.assertEqual(button.get_attribute("aria-expanded"), "false")
+
     def test_nothing_runs_past_its_edge_from_a_phone_to_a_full_screen(self) -> None:
         with self.signed_in() as page:
             self.assertIn("New secret", page.content())
@@ -98,9 +106,18 @@ class TheTableFitsInABrowser(ReceiverRouteTestCase):
             # Opened, too: the fetch commands are long lines in the row under
             # it, and a table sized to its content must not take their width.
             #
-            for button in page.locator("[data-receiver-commands]").all():
+            #
+            # One open at a time (26-10-14): the next one closes the last, and
+            # the open one closes on its own button.
+            #
+            buttons = page.locator("[data-receiver-commands]").all()
+            for button in buttons:
                 button.click()
-            self.assertEqual(page.locator(".receiver-commands:visible").count(), 3)
+                self.assertEqual(page.locator(".receiver-commands:visible").count(), 1)
+                self.assertEqual(button.get_attribute("aria-expanded"), "true")
+            self.assertEqual(
+                [b.get_attribute("aria-expanded") for b in buttons], ["false", "false", "true"]
+            )
             #
             # 1024 is 1280 at 125 % zoom, and 1440 a wider window: the table
             # must fit, and so must each cell's content - a cell can run past

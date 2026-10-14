@@ -680,8 +680,7 @@ class HowOldATlsBackendMayBe(unittest.TestCase):
         cls.directory.cleanup()
 
     def probe_against(self, version: str) -> dict[str, object]:
-        port = free_port()
-        server = spawned.old_tls_server(self.certificate, self.key, version, port)
+        server, port = spawned.old_tls_server(self.certificate, self.key, version)
         try:
             code, answer = ask(
                 {
@@ -742,8 +741,7 @@ class AFloorTheObjectChose(unittest.TestCase):
         cls.directory.cleanup()
 
     def probe(self, **fields: object) -> dict[str, object]:
-        port = free_port()
-        server = spawned.old_tls_server(self.certificate, self.key, "-tls1_1", port)
+        server, port = spawned.old_tls_server(self.certificate, self.key, "-tls1_1")
         try:
             code, answer = ask(
                 {

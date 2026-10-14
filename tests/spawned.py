@@ -40,6 +40,12 @@ def die_with_the_test_run() -> None:
     ctypes.CDLL("libc.so.6", use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
 
 
+def free_port() -> int:
+    with socket.socket() as held:
+        held.bind(("127.0.0.1", 0))
+        return int(held.getsockname()[1])
+
+
 def wait_for(port: int, timeout: float = 5.0) -> None:
     """Return once something is listening on `port`, or raise.
 
@@ -57,7 +63,7 @@ def wait_for(port: int, timeout: float = 5.0) -> None:
     raise AssertionError(f"nothing came up on port {port} within {timeout}s")
 
 
-def old_tls_server(certificate: Path, key: Path, version: str, port: int) -> sp.Popen[bytes]:
+def old_tls_server(certificate: Path, key: Path, version: str) -> tuple[sp.Popen[bytes], int]:
     """A backend that speaks `version` and nothing else, run by OpenSSL itself.
 
     Not a Python server. A `ssl.SSLContext` configured to offer TLS 1.1 is code
@@ -71,34 +77,53 @@ def old_tls_server(certificate: Path, key: Path, version: str, port: int) -> sp.
     versions at all: the point is a backend that offers one and a probe that
     declines it, not a backend that could not be built. `-www` answers any GET
     with a status line, which is all the probe reads.
+
+    The port is chosen here and returned. A free port is free only until it
+    is let go, and in a full gate another test took one before `s_server`
+    bound it (26-10-14): the server exited and the test waited five seconds
+    for nothing. A server that is gone before it listens is started again on
+    another port.
     """
 
     openssl = shutil.which("openssl")
     assert openssl is not None
-    process = sp.Popen(
-        [
-            openssl,
-            "s_server",
-            "-accept",
-            str(port),
-            "-cert",
-            str(certificate),
-            "-key",
-            str(key),
-            version,
-            "-cipher",
-            "DEFAULT@SECLEVEL=0",
-            "-www",
-            "-quiet",
-        ],
-        stdout=sp.DEVNULL,
-        stderr=sp.DEVNULL,
-        preexec_fn=die_with_the_test_run,
-    )
-    try:
-        wait_for(port)
-    except BaseException:
+    for _ in range(5):
+        port = free_port()
+        process = sp.Popen(
+            [
+                openssl,
+                "s_server",
+                "-accept",
+                str(port),
+                "-cert",
+                str(certificate),
+                "-key",
+                str(key),
+                version,
+                "-cipher",
+                "DEFAULT@SECLEVEL=0",
+                "-www",
+                "-quiet",
+            ],
+            stdout=sp.DEVNULL,
+            stderr=sp.DEVNULL,
+            preexec_fn=die_with_the_test_run,
+        )
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and process.poll() is None:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    pass
+            except OSError:
+                time.sleep(0.05)
+                continue
+            #
+            # Something answered; ours only if it is still there - a port
+            # another test took answers too, while this server has exited.
+            #
+            time.sleep(0.05)
+            if process.poll() is None:
+                return process, port
         process.terminate()
         process.wait(timeout=5)
-        raise
-    return process
+    raise AssertionError("openssl s_server did not come up on any of five ports")

@@ -2100,8 +2100,8 @@ class HowOldAPoolMayBe(unittest.TestCase):
         """One request through a proxy, to a pool that speaks only TLS 1.1."""
 
         certificate, key = self_signed(self.root, f"old-{policy}", expired=False)
-        backend = free_port()
-        self.running.append(spawned.old_tls_server(certificate, key, "-tls1_1", backend))
+        server, backend = spawned.old_tls_server(certificate, key, "-tls1_1")
+        self.running.append(server)
 
         port = free_port()
         root = self.root / policy

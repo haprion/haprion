@@ -151,11 +151,27 @@ def validate(path: Path) -> ArchiveFacts:
         raise ArchiveError("the state export is not a readable tar.gz archive") from exc
 
     with archive:
-        members = archive.getmembers()
-        if not members or len(members) > MAX_MEMBERS:
+        #
+        # One header at a time, stopped at the first one over a limit: with
+        # `getmembers()` every header was parsed, and the data between them
+        # decompressed, before the count was looked at (security review
+        # 26-10-13, S06). Reading on to the next header passes through this
+        # member's data, so the running size also bounds what is unpacked.
+        #
+        members: list[tarfile.TarInfo] = []
+        unpacked = 0
+        try:
+            for member in archive:
+                members.append(member)
+                unpacked += member.size
+                if len(members) > MAX_MEMBERS:
+                    raise ArchiveError("the state export has an invalid number of members")
+                if unpacked > MAX_UNPACKED_BYTES:
+                    raise ArchiveError("the state export is too large when unpacked")
+        except (OSError, EOFError, tarfile.TarError) as exc:
+            raise ArchiveError("the state export is not a readable tar.gz archive") from exc
+        if not members:
             raise ArchiveError("the state export has an invalid number of members")
-        if sum(member.size for member in members) > MAX_UNPACKED_BYTES:
-            raise ArchiveError("the state export is too large when unpacked")
         indexed: dict[str, tarfile.TarInfo] = {}
         for member in members:
             name = _safe_name(member.name)

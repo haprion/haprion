@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import stat
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from haprion import backup_archive
 from haprion.backup_archive import REQUIRED_PATHS, ArchiveError, validate
 
 
@@ -102,6 +105,34 @@ class BackupArchiveTests(unittest.TestCase):
             archive = self.make_archive(Path(raw), omit_netplan=True)
             with self.assertRaisesRegex(ArchiveError, "Netplan YAML"):
                 validate(archive)
+
+    def test_the_member_limit_stops_reading_at_the_first_header_over_it(self) -> None:
+        """S06 (security review 26-10-13): every header was parsed, and the data
+        between them unpacked, before the count was looked at."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "many.tar.gz"
+            with tarfile.open(path, "w:gz") as archive:
+                for number in range(50):
+                    archive.addfile(tarfile.TarInfo(f"rootfs/empty-{number}"), io.BytesIO())
+            parsed: list[str] = []
+            real_next = tarfile.TarFile.next
+
+            def counted(archive: tarfile.TarFile) -> tarfile.TarInfo | None:
+                member = real_next(archive)
+                if member is not None:
+                    parsed.append(member.name)
+                return member
+
+            with (
+                mock.patch.object(backup_archive, "MAX_MEMBERS", 5),
+                mock.patch.object(tarfile.TarFile, "next", counted),
+                self.assertRaisesRegex(ArchiveError, "number of members"),
+            ):
+                validate(path)
+        # The limit plus the one over it; tarfile reads the first header once
+        # more when it opens the archive. Before: all 50, and the trailer.
+        self.assertEqual(len(parsed), 7)
 
     def test_a_path_outside_the_two_archive_roots_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

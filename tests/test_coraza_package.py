@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import re
 import socket
 import subprocess
 import sys
@@ -103,7 +104,7 @@ class Packages(unittest.TestCase):
 
     def test_the_engine_package_holds_the_binary_the_unit_and_the_licence(self) -> None:
         deb = self.build_coraza(self.coraza_source(), "out")
-        self.assertEqual(deb.name, "haprion-coraza-spoa_9.9.9-7_amd64.deb")
+        self.assertEqual(deb.name, "haprion-coraza-spoa_9.9.9-8_amd64.deb")
         rows = listing(deb)
         self.assertEqual(rows["/usr/sbin/coraza-spoa"], "-rwxr-xr-x root/root")
         self.assertEqual(
@@ -117,7 +118,7 @@ class Packages(unittest.TestCase):
             rows["/usr/lib/systemd/journald@haprion-waf.conf.d/haprion.conf"],
             "-rw-r--r-- root/root",
         )
-        self.assertEqual(field(deb, "Version"), "9.9.9-7")
+        self.assertEqual(field(deb, "Version"), "9.9.9-8")
         self.assertEqual(field(deb, "Architecture"), "amd64")
 
     def test_the_unit_waits_for_a_release_and_runs_without_privilege(self) -> None:
@@ -202,7 +203,7 @@ class Packages(unittest.TestCase):
         out = self.root / "out"
         out.mkdir()
         deb = self.tool.build_crs(self.sources, out, source=self.crs_source())
-        self.assertEqual(deb.name, "haprion-crs_9.9.9-3_all.deb")
+        self.assertEqual(deb.name, "haprion-crs_9.9.9-1_all.deb")
         rows = listing(deb)
         share = "/usr/share/haprion/crs"
         for path in (
@@ -298,7 +299,8 @@ class Packages(unittest.TestCase):
     def test_the_pinned_sources_are_well_formed(self) -> None:
         for source in (self.tool.CORAZA, self.tool.CRS):
             self.assertRegex(source.sha256, "^[0-9a-f]{64}$")
-            self.assertIn(source.version, source.file)
+            # The release's version, or the full commit it was built from (S04).
+            self.assertRegex(source.file, rf"{re.escape(source.version)}|[0-9a-f]{{40}}")
             self.assertTrue(source.url.startswith("https://"))
 
 

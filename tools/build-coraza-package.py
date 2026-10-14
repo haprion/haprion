@@ -41,8 +41,8 @@ from haprion.debian_package import package, write  # noqa: E402 - the path above
 # Each package counts its own revision: it moves when our part of the package
 # changes (the unit, the build), not when the other package does.
 #
-CORAZA_REVISION = "7"
-CRS_REVISION = "3"
+CORAZA_REVISION = "8"
+CRS_REVISION = "1"
 GO_VERSION = "go1.26.9"
 GOVULNCHECK_VERSION = "v1.8.0"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
@@ -125,25 +125,35 @@ class Source:
     url: str
 
 
+#
+# 0.9.0 as released, with the one change after it that matters: Coraza 3.8.1,
+# which fixes GHSA-6r3q-mjv7-xr8m, GHSA-w253-m66g-rx24 and GHSA-6gcq-wc29-5xf2
+# in the 3.7.0 the tag was built with (security review 26-10-13, S04). No SPOA
+# release carries it yet; the commit is the tag plus the dependency bump
+# (go.mod, go.sum), a typo in the contrib unit and CI - compared 26-10-14. Back
+# to a tag when the next release is out. The version stays 0.9.0, because the
+# engine's code is that release's; the package revision says it is built anew.
+#
 CORAZA = Source(
-    file="coraza-spoa-0.9.0.tar.gz",
-    sha256="4cb1a39b0f6d8d44ef570b2668da060826206139d7c24d26442852cb99ac44fb",
-    top="coraza-spoa-0.9.0",
+    file="coraza-spoa-ded94c21b1f38747f8f2675db3ef29794944efd1.tar.gz",
+    sha256="691644cc6fe1fcc3e0ae2c9e7a7442186a5530b0e7e87c2746f8f0cd0de1a093",
+    top="coraza-spoa-ded94c21b1f38747f8f2675db3ef29794944efd1",
     version="0.9.0",
-    url="https://github.com/corazawaf/coraza-spoa/archive/refs/tags/v0.9.0.tar.gz",
+    url="https://github.com/corazawaf/coraza-spoa/archive/ded94c21b1f38747f8f2675db3ef29794944efd1.tar.gz",
 )
 #
 # The LTS line (B227). The minimal archive is signed by the CRS release key,
 # fingerprint 3600 6F0E 0BA1 6783 2158 8211 38EE ACA1 AB8A 6E72; the signature
-# was checked once, when this digest was pinned.
+# was checked once, when this digest was pinned (4.25.2: 26-10-14, the LTS
+# security release for the advisories in the review's S04).
 #
 CRS = Source(
-    file="coreruleset-4.25.1-minimal.tar.gz",
-    sha256="e314bc5b64a268ae4264822bc93db24eb93c5eb648ff80aed96b23f3fce2c701",
-    top="coreruleset-4.25.1",
-    version="4.25.1",
-    url="https://github.com/coreruleset/coreruleset/releases/download/v4.25.1/"
-    "coreruleset-4.25.1-minimal.tar.gz",
+    file="coreruleset-4.25.2-minimal.tar.gz",
+    sha256="a2d4b2a5bb4f397f7e40d4e22d0346350706a5f17c1cfefc09e8b9740e00d87e",
+    top="coreruleset-4.25.2",
+    version="4.25.2",
+    url="https://github.com/coreruleset/coreruleset/releases/download/v4.25.2/"
+    "coreruleset-4.25.2-minimal.tar.gz",
 )
 
 #

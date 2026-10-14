@@ -720,8 +720,8 @@ local sign-in (break-glass accounts only, or all), an optional CA
 certificate, and whether the
 provider is always asked to sign in again. The redirect URI to register at the
 provider is shown there, to copy. The web's `ui.toml` names the public key
-step 17 made (`[oidc] public_key`); without it the page says the helper is not
-installed.
+step 17 made (`[oidc] public_key`, added by the step); without it the page says
+the helper is not installed.
 
 **Verify** asks the helper: discovery against the issuer, the key set, the
 client's method, the signing algorithm, and whether the provider accepts the

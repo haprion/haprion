@@ -532,7 +532,9 @@ The step makes the key pair the web seals the client secret against: the
 private key in `/etc/haprion/oidc/` (the helper's account, 0600, in a
 0500 directory), the public key in `/etc/haprion/oidc-keys/`. A second run keeps the
 pair; `ROTATE=1` adds one, and the client secret is then saved again. It
-installs the socket (group `_haprion-web`) and the per-request service.
+installs the socket (group `_haprion-web`) and the per-request service, and adds
+`[oidc] public_key` to `ui.toml` when the file names none - as step 15 does for the
+DNS profiles - and restarts the web service to read it.
 
 The account must exist first: add `oidc: <name>` under `roles` in the identity
 policy, render the sysusers fragment and apply it. The CLI release must carry

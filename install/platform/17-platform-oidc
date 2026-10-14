@@ -110,13 +110,34 @@ systemctl is-active --quiet haprion-oidc-helper.socket \
 log "  listening on /run/haprion/oidc.sock  (group ${WEB_USER})"
 
 step "The web's half"
-for file in "$PUBLIC_DIR"/*.pub; do
-    key_id="$(basename "$file" .pub)"
-done
+#
+# What the web seals the client secret against: the newest pair. Added to
+# ui.toml only when it names none, as its own table at the end, the way step
+# 15 adds the DNS profiles' key; one that names a key is the operator's choice
+# and is checked, not changed (26-10-14: a new installation was left to edit
+# the file by hand).
+#
+newest="$(find "$PUBLIC_DIR" -maxdepth 1 -name '*.pub' -type f -printf '%T@ %p\n' | sort -n | tail -n 1 | cut -d' ' -f2-)"
+[[ -n "$newest" ]] || die "${PUBLIC_DIR} holds no public key, though the step above made one"
 if grep -Eq '^\s*\[oidc\]\s*$' "$UI_CONFIG"; then
-    log "  ok       [oidc] in ${UI_CONFIG}"
+    named="$(sed -n '/^\s*\[oidc\]/,/^\s*\[/s/^\s*public_key\s*=\s*"\(.*\)"\s*$/\1/p' "$UI_CONFIG" | head -n 1)"
+    if [[ -n "$named" && -f "$named" ]]; then
+        log "  ok       ${UI_CONFIG} names ${named}"
+    else
+        warn "${UI_CONFIG} has an [oidc] table whose public_key is not a file here: '${named}'"
+        warn "  Set it to ${newest}, then restart ${WEB_UNIT}."
+    fi
 else
-    warn "give the web interface the public key in ${UI_CONFIG} and restart it:"
-    warn "    [oidc]"
-    warn "    public_key = \"${PUBLIC_DIR}/${key_id}.pub\""
+    install_file "$UI_CONFIG" "root:${PLATFORM_GROUP}" 640 "$(cat "$UI_CONFIG")
+
+[oidc]
+public_key = \"${newest}\""
+    log "  added    [oidc] public_key = ${newest}"
+    if systemctl is-active --quiet "$WEB_UNIT"; then
+        systemctl restart "$WEB_UNIT"
+        log "  restarted ${WEB_UNIT}, which reads it at start"
+    fi
 fi
+
+echo
+log "platform step 17 done"

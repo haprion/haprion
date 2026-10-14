@@ -498,6 +498,20 @@ class TheFirstAccountComesLast(unittest.TestCase):
         )
 
 
+class TheKeyStepsNameTheirKeyForTheWeb(unittest.TestCase):
+    """Step 17 left `[oidc] public_key` for the operator to add by hand and the
+    web to be restarted (26-10-14); step 15 adds its own. Both add theirs."""
+
+    def test_each_adds_its_table_when_ui_toml_names_none(self) -> None:
+        for step, table in (("15-platform-dns-keys", "dns_profiles"), ("17-platform-oidc", "oidc")):
+            with self.subTest(step=step):
+                text = (INSTALL / "platform" / step).read_text()
+                self.assertIn('install_file "$UI_CONFIG" "root:${PLATFORM_GROUP}" 640', text)
+                self.assertIn(f"\n[{table}]\npublic_key = ", text)
+                self.assertIn('systemctl restart "$WEB_UNIT"', text)
+                self.assertNotIn("give the web interface the public key", text)
+
+
 class TheSetupRunsEveryStep(unittest.TestCase):
     """A numbered step added later is in haprion-setup, or named here with why it is not."""
 

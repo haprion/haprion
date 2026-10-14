@@ -41,7 +41,11 @@ requests a day × 800 bytes × 14  +  disk_mib of every receiver  +  margin for 
 ```
 
 At one million requests a day that is about 10 GiB of day files, plus 1 GiB a receiver. A full
-root filesystem stops journald and apt as well as the log, so leave the system its own margin.
+root filesystem stops journald and apt as well as the log, so leave the system its own margin. The
+day files are also held to a space budget, checked every hour: when they hold more than a quarter
+of their filesystem, or less than a tenth of it is free, the oldest finished days go before their
+fourteen, each with a warning in the system log. Today's file is never removed, so a filesystem
+of its own for `/var/log/haprion` is still the way to keep a flood of requests off the root.
 
 ## 1. Choose the answers, or keep the defaults
 

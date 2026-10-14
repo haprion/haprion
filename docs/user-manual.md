@@ -4706,7 +4706,7 @@ All root-owned under `/usr/sbin`, installed by the `haprion-node` package, not g
 | `haprion-health-probe` | opens one connection per named target and reports the status line |
 | `haprion-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB; `waf <cursor>` returns the WAF engine's journal lines after a journal cursor, same cap |
 | `haprion-traffic-log-enable` | installs or removes this node's rsyslog route and retention timer |
-| `haprion-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
+| `haprion-traffic-log-prune` | deletes traffic day files past the 14-day window, or the oldest over the space budget, whole and never renamed |
 | `haprion-server-state-trigger` | unprivileged wrapper: validates `server-state <guid> <ready\|drain\|maint>` or `unblock <object> <address>...`, then escalates |
 | `haprion-server-state` | sets one server's state on HAProxy's admin socket and keeps it; reloads HAProxy for the other scripts and puts kept states back on the new worker, and again when HAProxy starts; replaces certificates HAProxy already holds without a reload (`update-certs`); lifts an object's dynamic block on addresses, from its blocked table and its count (`unblock`) |
 

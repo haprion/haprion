@@ -159,13 +159,15 @@ CONF
 render_prune_timer() {
     cat <<'CONF'
 [Unit]
-Description=Daily retention pass over the Haprion traffic log
+Description=Hourly retention pass over the Haprion traffic log
 
 [Timer]
-OnCalendar=daily
-# The window is whole days, so the exact minute does not matter - and a fleet
-# that deletes at the same second is a fleet that does its disk work together.
-RandomizedDelaySec=30m
+# Hourly, not daily: the window is whole days, but the space budget (B307) is
+# not, and a flood of traffic fills a disk within the day.
+OnCalendar=hourly
+# A fleet that deletes at the same second is a fleet that does its disk work
+# together.
+RandomizedDelaySec=10m
 # A node that was off over the boundary still prunes on its next boot rather
 # than skipping the day silently.
 Persistent=true

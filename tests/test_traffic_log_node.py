@@ -13,6 +13,7 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from unittest import mock
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -492,6 +493,37 @@ class TrafficLogRetentionTests(unittest.TestCase):
         self.assertEqual(PRUNE.prune(self.root / "absent", today=TODAY), [])
 
 
+class TrafficLogSpaceBudgetTests(unittest.TestCase):
+    """S05 (security review 26-10-13): the window was days, not bytes (B307)."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        for day in ("2026-09-04", "2026-09-05", "2026-09-06", TODAY.isoformat()):
+            (self.root / f"traffic-{day}.jsonl").write_bytes(b"x" * 100)
+
+    def run_with(self, *, capacity: int, free: int) -> list[str]:
+        space = mock.Mock(f_blocks=capacity, f_frsize=1, f_bavail=free)
+        with mock.patch.object(PRUNE.os, "statvfs", return_value=space):
+            return list(PRUNE.over_budget(self.root, today=TODAY))
+
+    def test_within_budget_nothing_goes(self) -> None:
+        self.assertEqual(self.run_with(capacity=4000, free=3000), [])
+
+    def test_over_its_share_the_oldest_finished_days_go_until_it_fits(self) -> None:
+        # 400 bytes held, a quarter of 1000 is 250: two days go, oldest first.
+        self.assertEqual(
+            self.run_with(capacity=1000, free=900),
+            ["traffic-2026-09-04.jsonl", "traffic-2026-09-05.jsonl"],
+        )
+
+    def test_short_of_free_space_today_is_never_removed(self) -> None:
+        removed = self.run_with(capacity=10_000, free=0)
+        self.assertEqual(len(removed), 3)
+        self.assertTrue((self.root / f"traffic-{TODAY.isoformat()}.jsonl").exists())
+
+
 class TrafficLogRetentionUnitTests(unittest.TestCase):
     def setUp(self) -> None:
         script = BASE / "install" / "node" / "haprion-traffic-log-enable"
@@ -500,8 +532,9 @@ class TrafficLogRetentionUnitTests(unittest.TestCase):
         ).stdout
         self.service, self.timer = printed.split("--- timer ---\n")
 
-    def test_the_pass_runs_daily_and_catches_up_after_downtime(self) -> None:
-        self.assertIn("OnCalendar=daily", self.timer)
+    def test_the_pass_runs_hourly_and_catches_up_after_downtime(self) -> None:
+        # Hourly for the space budget (B307): a flood fills a disk within a day.
+        self.assertIn("OnCalendar=hourly", self.timer)
         self.assertIn("Persistent=true", self.timer)
 
     def test_the_pass_can_write_nowhere_but_the_log_directory(self) -> None:

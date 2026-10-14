@@ -14,7 +14,7 @@
 | `haprion-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haprion-traffic-log-read` | returns bounded, whole JSONL records for one validated UTC day and cursor, or the WAF engine's journal lines after a journal cursor (`waf <cursor>`) |
 | `haprion-traffic-log-enable` | installs or removes the node's rsyslog route and its retention timer |
-| `haprion-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
+| `haprion-traffic-log-prune` | deletes traffic day files past the 14-day window, or the oldest over the space budget, whole and never renamed |
 
 ## Nothing environment-specific is compiled in
 

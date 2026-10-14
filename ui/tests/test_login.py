@@ -653,6 +653,24 @@ class RefusingToSignIn(LoginTestCase):
         self.assertNotIn(auth.SESSION_COOKIE, client.cookies)
         self.assertEqual(response.status_code, 200)
 
+    def test_a_post_without_the_pre_session_cookie_is_not_a_login(self) -> None:
+        """S09 (security review 26-10-13): with no cookie the secret was "", and
+        the HMAC of "" is anyone's - a foreign page could sign a victim in as
+        the attacker."""
+
+        response = self.client().post(
+            "/login",
+            data={
+                "username": "operator",
+                "password": PASSWORD,
+                auth.CSRF_FIELD: auth.csrf_token(""),
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("login", self.audit)
+        self.assertEqual(self.attempts, [])
+
 
 class Throttling(LoginTestCase):
     def test_the_correct_password_is_refused_once_the_limit_is_reached(self) -> None:

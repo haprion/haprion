@@ -188,7 +188,12 @@ def csrf_token_is_valid(session_token: str, submitted: str | None) -> bool:
     2026-10-04, CR-05). `surrogatepass` encodes whatever the form decoded to.
     """
 
-    if not submitted:
+    #
+    # An empty secret is no secret: the HMAC of "" is anyone's to compute, and
+    # a login posted with no pre-session cookie at all was accepted that way
+    # (security review 26-10-13, S09).
+    #
+    if not submitted or not session_token:
         return False
     return hmac.compare_digest(
         csrf_token(session_token).encode("ascii"), submitted.encode("utf-8", "surrogatepass")

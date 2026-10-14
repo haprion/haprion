@@ -8,12 +8,17 @@ machine has it.
 
 from __future__ import annotations
 
+import base64
 import shutil
 import socket
 import subprocess
 import tempfile
+import time
 import unittest
+from http.client import HTTPConnection
 from pathlib import Path
+
+from haprion import cert_receiver
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "install" / "platform" / "examples"
 NGINX = shutil.which("nginx") or "/usr/sbin/nginx"
@@ -86,6 +91,57 @@ class TheSiteParses(unittest.TestCase):
         self.assertIn("POST/login   $binary_remote_addr;", site)
         self.assertIn('default      "";', site)
         self.assertIn("limit_req zone=haprion_sign_in", site)
+
+
+class AReceiversSecretIsWhatNginxChecks(unittest.TestCase):
+    """B306: nginx checks the receiver's `$6$` hash through crypt(3); this asks
+    a running nginx rather than trusting that it does."""
+
+    def setUp(self) -> None:
+        if not Path(NGINX).exists():
+            self.skipTest("nginx is not installed here")
+
+    def test_the_right_password_fetches_and_a_wrong_one_does_not(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "files").mkdir()
+            (root / "files" / "fullchain.pem").write_text("material\n")
+            hashed = cert_receiver.secret_hash("receiver password")
+            (root / "receiver.htpasswd").write_text(f"192.0.2.9:{hashed}\n")
+            port = free_port()
+            (root / "nginx.conf").write_text(
+                f"pid {root}/nginx.pid;\nerror_log {root}/error.log;\nevents {{}}\n"
+                f"http {{\n  access_log off;\n  server {{\n    listen 127.0.0.1:{port};\n"
+                f"    location /r/ {{\n      alias {root}/files/;\n"
+                '      auth_basic "192.0.2.9";\n'
+                f"      auth_basic_user_file {root}/receiver.htpasswd;\n    }}\n  }}\n}}\n"
+            )
+            server = subprocess.Popen(  # noqa: S603 - fixed binary, a file made above
+                [NGINX, "-p", raw, "-c", str(root / "nginx.conf"), "-g", "daemon off;"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                self.assertEqual(self.fetch(port, "receiver password"), 200)
+                self.assertEqual(self.fetch(port, "not the password"), 401)
+            finally:
+                server.terminate()
+                server.wait(timeout=5)
+
+    def fetch(self, port: int, password: str) -> int:
+        token = base64.b64encode(f"192.0.2.9:{password}".encode()).decode()
+        for _ in range(50):
+            try:
+                connection = HTTPConnection("127.0.0.1", port, timeout=5)
+                connection.request(
+                    "GET", "/r/fullchain.pem", headers={"Authorization": f"Basic {token}"}
+                )
+                status = connection.getresponse().status
+                connection.close()
+                return status
+            except ConnectionRefusedError:
+                time.sleep(0.1)
+        self.fail("nginx did not listen")
 
 
 if __name__ == "__main__":

@@ -111,6 +111,13 @@
       "message": "Overly permissive mask in chmod sets file to world readable.",
       "decided": "2026-09-22",
       "reason": "The chmod completes the open accepted above: the drop-in directory <timer>.d/ and the file in it are made 0755/0644 explicitly because the socket helper runs under UMask=0077, which filtered the modes given to mkdir and os.open down to 0700/0600 - measured in production 2026-09-22, where systemd logged the drop-in as world-inaccessible on every query. The chmod runs after the directory has been verified root-owned and not group/world-writable, so it never widens something that is not root's. Unit files are root-owned 0644 by convention; a schedule is not secret; and nothing here becomes writable."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haprion/cert_receiver.py",
+      "message": "Overly permissive mask in open sets file to group readable.",
+      "decided": "2026-10-14",
+      "reason": "B306: an https receiver's user file holds only the $6$ crypt hash of its password and is created 0o640 root:www-data, because nginx's worker processes run as www-data and read auth_basic_user_file on every request. The group is the reader the contract names; it is never writable by it, and nothing else is in the group's reach in that directory."
     }
   ]
 }

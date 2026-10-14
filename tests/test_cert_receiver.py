@@ -14,14 +14,14 @@ needs root and a second host.
 
 from __future__ import annotations
 
-import base64
 import dataclasses
 import grp
-import hashlib
 import json
 import os
 import pwd
 import re
+import shutil
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
@@ -523,10 +523,25 @@ class AnHttpsReceiversSecret(ReceiverFixture):
         self.assertNotIn("receiver password", self.secret().read_text())
 
     def test_the_hash_is_the_form_nginx_checks(self) -> None:
+        """SHA-512 crypt, as `openssl passwd -6` writes it (CodeQL: no fast hash)."""
+
         hashed = cert_receiver.secret_hash("receiver password")
-        raw = base64.b64decode(hashed.removeprefix("{SSHA}"))
-        digest, salt = raw[:20], raw[20:]
-        self.assertEqual(hashlib.sha1(b"receiver password" + salt).digest(), digest)  # noqa: S324
+        self.assertRegex(hashed, cert_receiver.SECRET_HASH)
+        salt = hashed.split("$")[2]
+        self.assertEqual(cert_receiver.sha512_crypt("receiver password", salt), hashed)
+        self.assertNotEqual(cert_receiver.secret_hash("receiver password"), hashed)
+        openssl = shutil.which("openssl")
+        if openssl is None:
+            self.skipTest("no openssl to compare with")
+        for password, salt in (("x", "saltsalt"), ("a" * 100, "Zz./09"), ("p w", "q")):
+            with self.subTest(password=password[:8], salt=salt):
+                reference = subprocess.run(  # noqa: S603 - fixed binary, test values
+                    [openssl, "passwd", "-6", "-salt", salt, password],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip()
+                self.assertEqual(cert_receiver.sha512_crypt(password, salt), reference)
         self.assertRegex(cert_receiver.new_secret(), r"^[A-Za-z0-9_-]{32}$")
 
     def test_https_without_a_secret_and_a_secret_without_https_are_refused(self) -> None:

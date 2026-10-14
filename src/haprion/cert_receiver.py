@@ -31,7 +31,6 @@ functions rather than grow a second implementation.
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import grp
 import hashlib
@@ -107,12 +106,23 @@ HTTPS_PREFIX = "/certdist"
 # alone let any host on an allowed network fetch private keys. The password is
 # made by whoever asks - this command, or the interface - and shown to them
 # once; what reaches this module, and the job that carries it, is the hash
-# nginx checks, never the password. SSHA, because nginx reads it without
-# depending on the C library's crypt(); a 32-byte random password makes the
-# fast hash no weaker than the secret.
+# nginx checks, never the password. SHA-512 crypt (`$6$`), which nginx checks
+# through the C library's crypt(3); written here because Python's own crypt
+# module is gone from 3.13.
 #
-SECRET_HASH = re.compile(r"\{SSHA\}[A-Za-z0-9+/]{32,128}={0,2}")
+CRYPT_ALPHABET = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+SECRET_HASH = re.compile(r"\$6\$[./0-9A-Za-z]{16}\$[./0-9A-Za-z]{86}")
 SECRET_BYTES = 24
+#
+# The order sha512-crypt writes the digest's bytes in, three at a time
+# (Drepper, "Unix crypt using SHA-256 and SHA-512"); the last byte alone.
+#
+_CRYPT_ORDER = (
+    (0, 21, 42), (22, 43, 1), (44, 2, 23), (3, 24, 45), (25, 46, 4), (47, 5, 26),
+    (6, 27, 48), (28, 49, 7), (50, 8, 29), (9, 30, 51), (31, 52, 10), (53, 11, 32),
+    (12, 33, 54), (34, 55, 13), (56, 14, 35), (15, 36, 57), (37, 58, 16), (59, 17, 38),
+    (18, 39, 60), (40, 61, 19), (62, 20, 41),
+)  # fmt: skip
 
 type Runner = Callable[[Sequence[str]], tuple[int, str]]
 
@@ -524,11 +534,50 @@ def new_secret() -> str:
 
 
 def secret_hash(password: str) -> str:
-    """The `{SSHA}` form nginx's auth_basic_user_file reads."""
+    """The `$6$` form nginx's auth_basic_user_file reads, with a fresh salt."""
 
-    salt = secrets.token_bytes(8)
-    digest = hashlib.sha1(password.encode("utf-8") + salt).digest()  # noqa: S324 - nginx's SSHA
-    return "{SSHA}" + base64.b64encode(digest + salt).decode("ascii")
+    return sha512_crypt(password, "".join(secrets.choice(CRYPT_ALPHABET) for _ in range(16)))
+
+
+def sha512_crypt(password: str, salt: str) -> str:
+    """SHA-512 crypt with the default 5000 rounds, as `openssl passwd -6` writes it."""
+
+    key, seasoning = password.encode("utf-8"), salt.encode("ascii")[:16]
+    alternate = hashlib.sha512(key + seasoning + key).digest()
+    intermediate = hashlib.sha512(key + seasoning)
+    remaining = len(key)
+    while remaining > 64:
+        intermediate.update(alternate)
+        remaining -= 64
+    intermediate.update(alternate[:remaining])
+    bits = len(key)
+    while bits:
+        intermediate.update(alternate if bits & 1 else key)
+        bits >>= 1
+    digest = intermediate.digest()
+    key_sequence = (hashlib.sha512(key * len(key)).digest() * (len(key) // 64 + 1))[: len(key)]
+    salt_digest = hashlib.sha512(seasoning * (16 + digest[0])).digest()
+    salt_sequence = (salt_digest * (len(seasoning) // 64 + 1))[: len(seasoning)]
+    for round_ in range(5000):
+        step = hashlib.sha512(key_sequence if round_ & 1 else digest)
+        if round_ % 3:
+            step.update(salt_sequence)
+        if round_ % 7:
+            step.update(key_sequence)
+        step.update(digest if round_ & 1 else key_sequence)
+        digest = step.digest()
+    encoded: list[str] = []
+
+    def put(high: int, middle: int, low: int, count: int) -> None:
+        word = (high << 16) | (middle << 8) | low
+        for _ in range(count):
+            encoded.append(CRYPT_ALPHABET[word & 0x3F])
+            word >>= 6
+
+    for high, middle, low in _CRYPT_ORDER:
+        put(digest[high], digest[middle], digest[low], 4)
+    put(0, 0, digest[63], 2)
+    return f"$6${seasoning.decode('ascii')}${''.join(encoded)}"
 
 
 def secret_file(receiver_id: str, locations: Locations) -> Path:
@@ -543,7 +592,7 @@ def write_secret(receiver_id: str, hashed: str, locations: Locations) -> Layer:
     """
 
     if not SECRET_HASH.fullmatch(hashed):
-        raise ReceiverError("bad_input", "the receiver's secret is not an {SSHA} hash")
+        raise ReceiverError("bad_input", "the receiver's secret is not a $6$ crypt hash")
     group = grp.getgrnam(HTTPS_OWNER).gr_gid
     directory = locations.receiver_secrets
     directory.mkdir(mode=0o750, parents=True, exist_ok=True)

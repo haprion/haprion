@@ -475,7 +475,16 @@ def haproxy_alerts(since: float) -> list[str]:
         )
     except (OSError, subprocess.TimeoutExpired):
         return []
-    alerts = [line.strip() for line in read.stdout.splitlines() if "[ALERT]" in line]
+    #
+    # Not the backends a passive node cannot check from a source address it
+    # does not hold: those come with every start there and say nothing about
+    # why a worker exited (measured 26-10-15).
+    #
+    alerts = [
+        line.strip()
+        for line in read.stdout.splitlines()
+        if "[ALERT]" in line and "has no server available" not in line
+    ]
     return alerts[-MAX_ALERTS:]
 
 

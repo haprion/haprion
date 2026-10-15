@@ -313,6 +313,7 @@ class AReloadCountsOnlyWhenANewWorkerAnswers(RunningHaproxy):
         journal = self.root / "journalctl"
         journal.write_text(
             "#!/bin/sh\necho '[ALERT]    (1) : Binding for frontend held: cannot bind socket'\n"
+            "echo \"[ALERT]    (1) : backend 'mgd-api' has no server available!\"\n"
         )
         journal.chmod(0o755)
         self.helper.JOURNALCTL = str(journal)
@@ -322,7 +323,8 @@ class AReloadCountsOnlyWhenANewWorkerAnswers(RunningHaproxy):
 
         self.assertEqual(code, 1, out)
         self.assertIn("did not start a new worker", out)
-        self.assertIn("HAProxy: [ALERT]", out)
+        self.assertIn("cannot bind socket", out)
+        self.assertNotIn("no server available", out)
         self.assertEqual(self.helper.worker_pid(self.helper.ask(["show info"])), before)
 
     def test_a_reload_that_starts_a_worker_still_succeeds_with_nothing_kept(self) -> None:

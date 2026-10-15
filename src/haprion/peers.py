@@ -1,4 +1,5 @@
-"""The nodes' own addresses: where they share their stick tables (B270) and serve metrics.
+"""The nodes' own addresses: where they share their stick tables (B270), serve metrics and
+send each other VRRP adverts (B313).
 
 Looked up from each node's `mgmt_host` when a cluster that shares its tables
 or exports metrics is published, never stored: a node that changes address keeps needing only its
@@ -37,15 +38,15 @@ def addresses(cluster: Cluster, lookup: Lookup = socket.getaddrinfo) -> tuple[tu
             answers = lookup(node.mgmt_host, None, type=socket.SOCK_STREAM)
         except OSError as exc:
             raise ConfigError(
-                f"cannot look up {node.mgmt_host} for node {node.name}, which the metrics "
-                f"exporter and shared counters need: {exc}"
+                f"cannot look up {node.mgmt_host} for node {node.name}, whose own address "
+                f"the metrics exporter, shared counters and keepalived need: {exc}"
             ) from exc
         unique = sorted({str(ipaddress.ip_address(answer[4][0])) for answer in answers})
         if len(unique) != 1:
             shown = ", ".join(unique) if unique else "no address"
             raise ConfigError(
-                f"{node.mgmt_host} for node {node.name} gives {shown}; the metrics exporter and "
-                "shared counters need exactly one address per node"
+                f"{node.mgmt_host} for node {node.name} gives {shown}; the metrics exporter, "
+                "shared counters and keepalived need exactly one address per node"
             )
         found.append((node.name, unique[0]))
     return tuple(found)

@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import PurePosixPath
 
-from haprion import cluster_settings, crs, geo, ipvs_config
+from haprion import cluster_settings, crs, geo, ipvs_config, keepalived_conf
 from haprion.config import Cluster, ConfigError
 from haprion.generate import countries_named, generate
 from haprion.keepalived_fragment import NAME as KEEPALIVED_NAME
@@ -191,6 +191,21 @@ def managed_files(
         if rule_set is not None and any(proxy.inspected is not None for proxy in proxies)
         else None
     )
+    #
+    # Looked up once, and only when something listens on the nodes' own
+    # addresses or the product writes their keepalived.conf (B313): a cluster
+    # with none of these never asks DNS anything here.
+    #
+    addresses = (
+        tuple(node_addresses())
+        if node_addresses is not None
+        and (
+            settings.peers is not None
+            or settings.metrics is not None
+            or cluster.vrrp_router_id is not None
+        )
+        else ()
+    )
     generated = generate(
         proxies,
         vips=network.vips,
@@ -221,12 +236,7 @@ def managed_files(
         # opened only for a country: a cluster with neither never asks DNS
         # anything here (B270).
         #
-        node_addresses=(
-            node_addresses()
-            if (settings.peers is not None or settings.metrics is not None)
-            and node_addresses is not None
-            else ()
-        ),
+        node_addresses=addresses,
         held_ports=held_ports,
         rule_definitions=crs.definitions(rules) if rules is not None else None,
     )
@@ -297,6 +307,24 @@ def managed_files(
     # file would leave them forwarding.
     #
     result[f"{KEEPALIVED_PREFIX}{ipvs_config.FILE}"] = generated.ipvs.encode("utf-8")
+    #
+    # And each node's keepalived.conf, for a cluster the product created
+    # (B313). Without the addresses there is nothing true to write, and a
+    # publish that silently left the nodes without one would look like it had.
+    #
+    if cluster.vrrp_router_id is not None:
+        if not addresses:
+            raise ConfigError(
+                f"cannot write keepalived for {cluster.cluster_id}: the nodes' addresses "
+                "were not looked up"
+            )
+        for name, text in keepalived_conf.render_all(
+            cluster.cluster_id,
+            router_id=cluster.vrrp_router_id,
+            nodes=addresses,
+            interface=cluster.address_interface,
+        ).items():
+            result[f"{KEEPALIVED_PREFIX}{name}"] = text.encode("utf-8")
     #
     # What each object in this version amounts to, so a later reading can ask
     # whether one object reached the nodes without asking who published it or

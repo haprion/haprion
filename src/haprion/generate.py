@@ -382,7 +382,7 @@ def generate(
     traffic_logging: bool = False,
     settings: ClusterSettings = NO_SETTINGS,
     countries: geo.Countries | None = None,
-    peer_nodes: Sequence[tuple[str, str]] = (),
+    node_addresses: Sequence[tuple[str, str]] = (),
     rule_definitions: Mapping[int, crs.Definition] | None = None,
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
@@ -440,8 +440,13 @@ def generate(
     _refuse_udp_conflicts(everything, ports)
     _refuse_shared_listeners(everything, ports)
     if settings.metrics is not None:
-        _refuse_metrics_port(settings.metrics, everything, reservations, ports)
-    peers = _peers_section(settings, peer_nodes, reservations)
+        _refuse_metrics_port(settings.metrics, reservations)
+    if (settings.metrics is not None or settings.peers is not None) and not node_addresses:
+        raise GeneratorError(
+            "the metrics exporter and shared counters listen on the nodes' own addresses, "
+            "and none were given"
+        )
+    peers = _peers_section(settings, node_addresses, reservations)
     placed = [
         (vip, proxy) for vip, proxy in everything if proxy.listen.protocol not in OUTSIDE_HAPROXY
     ]
@@ -455,8 +460,6 @@ def generate(
         _refuse_loopback_port(
             dnsdist_config.STATS_PORT, "the DNS listener's statistics", settings, reservations
         )
-        if scrapers:
-            _refuse_dns_statistics_port(everything)
     #
     # A named dns server is written with the address saved beside it when the
     # object was saved (B252, B261); nothing is looked up here. A name saved
@@ -464,7 +467,9 @@ def generate(
     # generated, and says to save the object again.
     #
     try:
-        dns = dnsdist_config.render(resolving, known_networks, scrapers)
+        dns = dnsdist_config.render(
+            resolving, known_networks, scrapers, [address for _name, address in node_addresses]
+        )
     except dnsdist_config.Unresolved as exc:
         raise GeneratorError(str(exc)) from exc
     try:
@@ -493,7 +498,7 @@ def generate(
         )
     }
     if settings.metrics is not None or peers:
-        files[CLUSTER_FILE] = _cluster_file(settings, peers)
+        files[CLUSTER_FILE] = _cluster_file(settings, peers, node_addresses)
     guarded = [proxy for proxy in ordered if proxy.inspected is not None]
     if guarded:
         _refuse_loopback_port(WAF_ENGINE_PORT, "the WAF engine", settings, reservations)
@@ -528,22 +533,6 @@ def generate(
         rsyslog_files=rsyslog_forward.render(settings.log_targets, traffic_logging=traffic_logging),
         ipvs=ipvs.file,
     )
-
-
-def _refuse_dns_statistics_port(placed: Sequence[tuple[Vip, Proxy]]) -> None:
-    """dnsdist's statistics port, which it takes on every address once Prometheus reads it (B253).
-
-    Every IPv4 address, as the exporter's, so a tcp or dns object on the same
-    port of a VIP would meet it there.
-    """
-
-    port = dnsdist_config.STATS_PORT
-    for _vip, proxy in placed:
-        if proxy.listen.protocol in ("tcp", "dns") and proxy.listen.port == port:
-            raise GeneratorError(
-                f"port {port} is where Prometheus reads the DNS listener's statistics, and "
-                f"{proxy.name} listens on it"
-            )
 
 
 def _refuse_loopback_port(
@@ -951,7 +940,11 @@ def _waf_application(name: str, directives: Sequence[str]) -> str:
     )
 
 
-def _cluster_file(settings: ClusterSettings, peers: Sequence[str] = ()) -> str:
+def _cluster_file(
+    settings: ClusterSettings,
+    peers: Sequence[str] = (),
+    nodes: Sequence[tuple[str, str]] = (),
+) -> str:
     """The metrics exporter and the peers section.
 
     The external log receivers are not here: rsyslog on the node sends to them
@@ -960,7 +953,7 @@ def _cluster_file(settings: ClusterSettings, peers: Sequence[str] = ()) -> str:
 
     body: list[str] = []
     if settings.metrics is not None:
-        body.extend(_metrics_frontend(settings.metrics))
+        body.extend(_metrics_frontend(settings.metrics, nodes))
     body.extend(peers)
     return _lines(HEADER, body)
 
@@ -982,25 +975,29 @@ def _peers_section(
     if settings.peers is None:
         return []
     port = settings.peers.port
-    if not nodes:
-        raise GeneratorError("sharing counters needs the nodes' addresses, and none were given")
     if port in reservations.tcp_ports:
         raise GeneratorError(
             f"peers port {port} is reserved in manual/reservations.yaml for every address"
         )
     lines = ["", f"peers {PEERS_SECTION}"]
     for name, address in nodes:
-        shown = f"[{address}]" if ":" in address else address
-        lines.append(f"    peer {name} {shown}:{port}")
+        lines.append(f"    peer {name} {_bracketed(address)}:{port}")
     return lines
 
 
-def _metrics_frontend(metrics: Metrics) -> list[str]:
+def _bracketed(address: str) -> str:
+    return f"[{address}]" if ":" in address else address
+
+
+def _metrics_frontend(metrics: Metrics, nodes: Sequence[tuple[str, str]]) -> list[str]:
     """HAProxy's own Prometheus exporter, for the sources the cluster names.
 
-    Bound on every IPv4 address, not on a VIP: both nodes read the same file,
-    and a scrape of each node is what shows the passive one too. The source
-    list and the nodes' firewall are what keep it private. Only failures are
+    Bound on each node's own address, never on a VIP: a VIP holds only its
+    objects' ports (26-10-15), and a scrape of each node is what shows the
+    passive one too. Both nodes read the same file, so it names every node's
+    address; the other node's is not on the host, and `ip_nonlocal_bind`, which
+    the VIP needs anyway, lets it be bound without ever being reached. The
+    source list and the nodes' firewall are what keep it private. Only failures are
     logged; a scrape every few seconds is not traffic anybody reads.
     """
 
@@ -1008,7 +1005,8 @@ def _metrics_frontend(metrics: Metrics) -> list[str]:
         "",
         f"frontend {METRICS_FRONTEND}",
         f"    guid {frontend_guid(METRICS_IDENTITY)}",
-        f"    bind :{metrics.port} guid-prefix {listener_guid_prefix(METRICS_IDENTITY)}",
+        f"    bind {','.join(f'{_bracketed(address)}:{metrics.port}' for _name, address in nodes)}"
+        f" guid-prefix {listener_guid_prefix(METRICS_IDENTITY)}",
         "    mode http",
         "    option dontlog-normal",
         f"    timeout client {TIMEOUT_CLIENT}",
@@ -1018,17 +1016,13 @@ def _metrics_frontend(metrics: Metrics) -> list[str]:
     ]
 
 
-def _refuse_metrics_port(
-    metrics: Metrics,
-    placed: Sequence[tuple[Vip, Proxy]],
-    reservations: Reservations,
-    ports: Mapping[str, int],
-) -> None:
-    """The exporter's port, which it takes on every address.
+def _refuse_metrics_port(metrics: Metrics, reservations: Reservations) -> None:
+    """The exporter's port, which it takes on the nodes' own addresses.
 
-    Anything else on that port - generated or reserved for the handwritten
-    half - would bind it too, and under SO_REUSEPORT the kernel would split
-    connections between the two at random with nothing reporting it.
+    No object can meet it there - objects sit on VIPs - but a reservation can:
+    one without an address holds the port on every address, the nodes' own
+    included, and one with an address may name a node's. Either is refused, as
+    the handwritten half that made it would bind the same port.
     """
 
     port = metrics.port
@@ -1039,14 +1033,6 @@ def _refuse_metrics_port(
             f"the metrics port {port} is reserved in manual/reservations.yaml for handwritten "
             "configuration"
         )
-    for _vip, proxy in placed:
-        used = {proxy.listen.port} if proxy.listen.protocol in ("tcp", "dns") else set()
-        if proxy.listen.protocol in ports:
-            used.add(ports[proxy.listen.protocol])
-        if proxy.listen.redirect_http:
-            used.add(ports["http"])
-        if port in used:
-            raise GeneratorError(f"the metrics port {port} is the port {proxy.name} listens on")
 
 
 def source_of(proxy: Proxy, vip: Vip, sources: Mapping[str, str]) -> str | None:

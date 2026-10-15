@@ -186,13 +186,19 @@ class TheGeneratedLayer(unittest.TestCase):
     def test_nothing_set_writes_no_cluster_file(self) -> None:
         self.assertNotIn(CLUSTER_FILE, self.generate("minimal", NOTHING).configuration)
 
-    def test_the_metrics_port_is_refused_where_something_else_listens(self) -> None:
+    def test_the_exporter_listens_on_the_nodes_own_addresses_and_never_a_vip(self) -> None:
+        """26-10-15: a VIP holds only its objects' ports, so an object may take the number."""
+
         for case, port in (("tcp", 5432), ("https", 443), ("minimal", 80)):
-            with (
-                self.subTest(case=case, port=port),
-                self.assertRaisesRegex(GeneratorError, "metrics port"),
-            ):
-                self.generate(case, ClusterSettings(metrics=Metrics(port, ("192.0.2.0/24",))))
+            with self.subTest(case=case, port=port):
+                layer = self.generate(
+                    case, ClusterSettings(metrics=Metrics(port, ("192.0.2.0/24",)))
+                )
+                cluster_file = layer.configuration["1000-cluster.cfg"]
+                self.assertIn(
+                    f"    bind 192.0.2.1:{port},192.0.2.2:{port} guid-prefix ", cluster_file
+                )
+                self.assertNotIn(f"bind :{port}", cluster_file)
 
     def test_the_metrics_port_is_refused_where_the_handwritten_half_reserved_it(self) -> None:
         for reservations in (b"tcp_ports: [8405]", b"tcp_ports: ['192.0.2.99:8405']"):
@@ -214,7 +220,12 @@ class EveryPublishCarriesTheSettings(unittest.TestCase):
             "managed/network.yaml": NETWORK,
             LOCATION: GRAYLOG,
         }
-        kept = managed_files(base, network_document=NETWORK, cluster=cluster())
+        kept = managed_files(
+            base,
+            network_document=NETWORK,
+            cluster=cluster(),
+            node_addresses=lambda: (("node-a", "192.0.2.1"),),
+        )
         self.assertEqual(kept[LOCATION], GRAYLOG)
         self.assertIn("managed/generated/1000-cluster.cfg", kept)
 
@@ -228,7 +239,7 @@ class EveryPublishCarriesTheSettings(unittest.TestCase):
 
 
 class SharingIsLookedUpOnlyWhenItIsOn(unittest.TestCase):
-    """The nodes' addresses are asked for by a publish that shares, and only then (B270)."""
+    """The nodes' addresses are asked for by a publish that shares or exports, and only then."""
 
     def publish(self, settings: bytes) -> tuple[dict[str, bytes], list[str]]:
         asked: list[str] = []
@@ -242,7 +253,7 @@ class SharingIsLookedUpOnlyWhenItIsOn(unittest.TestCase):
             network_document=NETWORK,
             cluster=cluster(),
             settings_document=settings,
-            peer_nodes=nodes,
+            node_addresses=nodes,
         )
         return files, asked
 
@@ -251,6 +262,12 @@ class SharingIsLookedUpOnlyWhenItIsOn(unittest.TestCase):
         self.assertEqual(asked, ["nodes"])
         written = files["managed/generated/1000-cluster.cfg"].decode()
         self.assertIn("peers mgd-peers\n    peer node-a 192.0.2.1:10000\n", written)
+
+    def test_a_cluster_that_exports_metrics_asks_too(self) -> None:
+        files, asked = self.publish(b"metrics:\n  port: 8405\n  sources: [192.0.2.0/24]\n")
+        self.assertEqual(asked, ["nodes"])
+        written = files["managed/generated/1000-cluster.cfg"].decode()
+        self.assertIn("    bind 192.0.2.1:8405,192.0.2.2:8405 guid-prefix ", written)
 
     def test_a_cluster_that_does_not_asks_nothing(self) -> None:
         _, asked = self.publish(b"{}\n")

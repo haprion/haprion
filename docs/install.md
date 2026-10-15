@@ -263,10 +263,11 @@ through `/etc/haproxy/releases` (`/etc/tmpfiles.d/haprion-dns.conf`), as the WAF
 engine's group does. A configuration dnsdist warns about is refused like one it cannot
 load: its check ignores a setting it does not know with only a warning.
 
-dnsdist serves its counters on `127.0.0.1:9521`, without a key and to loopback only; its
+dnsdist serves its counters on `127.0.0.1:9521`, without a key; its
 API keeps requiring one, and no console is configured. `haprion-node-status` reads them
 while dnsdist runs and reports them per pool and server, which is where the interface's
-DNS cards come from. Nothing outside the node can reach them.
+DNS cards come from. With the cluster's Prometheus exporter its sources read them too, on the
+node's own address - never on a VIP.
 
 A syslog listener (UDP only) is served by the kernel's IPVS through keepalived rather than
 by HAProxy, so the receivers see each message's sender. Every release carries

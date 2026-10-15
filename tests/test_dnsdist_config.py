@@ -50,6 +50,9 @@ backends:
 )
 
 
+NODES = (("node-a", "192.0.2.1"), ("node-b", "192.0.2.2"))
+
+
 def refusal(*proxies: Proxy, **options: object) -> str:
     with unittest.TestCase().assertRaises(GeneratorError) as raised:
         generate(list(proxies), vips=VIPS, default_vip="main", **options)  # type: ignore[arg-type]
@@ -99,12 +102,18 @@ backends:
         reserved = Reservations(tcp_ports=frozenset({53}))
         self.assertIn("reservations.yaml", refusal(resolver(), reservations=reserved))
 
-    def test_the_metrics_port_is_refused_as_a_listener_and_as_the_statistics_port(self) -> None:
+    def test_the_metrics_port_is_refused_as_the_statistics_port_and_not_as_a_listener(self) -> None:
+        """The listener is on the VIP, the exporter on the nodes' own addresses (26-10-15)."""
+
         on_listener = ClusterSettings(metrics=Metrics(port=53, sources=()))
         on_statistics = ClusterSettings(metrics=Metrics(port=dnsdist_config.STATS_PORT, sources=()))
 
-        self.assertIn("metrics port 53", refusal(resolver(), settings=on_listener))
-        self.assertIn("statistics", refusal(resolver(), settings=on_statistics))
+        generate(
+            [resolver()], vips=VIPS, default_vip="main", settings=on_listener, node_addresses=NODES
+        )
+        self.assertIn(
+            "statistics", refusal(resolver(), settings=on_statistics, node_addresses=NODES)
+        )
 
 
 NAMED_DOCUMENT = """schema: 1
@@ -235,7 +244,9 @@ class PrometheusReadsDnsdist(unittest.TestCase):
     """B253: with the cluster's exporter, dnsdist's statistics are served to its sources too."""
 
     def file(self, settings: ClusterSettings = NOTHING) -> str:
-        layer = generate([resolver()], vips=VIPS, default_vip="main", settings=settings)
+        layer = generate(
+            [resolver()], vips=VIPS, default_vip="main", settings=settings, node_addresses=NODES
+        )
         return layer.dns_files[dnsdist_config.FILE]
 
     def test_without_the_exporter_only_the_node_reads_them(self) -> None:
@@ -243,17 +254,21 @@ class PrometheusReadsDnsdist(unittest.TestCase):
         self.assertIn(f'webserver("127.0.0.1:{dnsdist_config.STATS_PORT}")', text)
         self.assertIn('acl="127.0.0.1/32"', text)
 
-    def test_with_the_exporter_its_sources_read_them_on_every_address(self) -> None:
+    def test_with_the_exporter_its_sources_read_them_on_the_nodes_own_addresses(self) -> None:
         text = self.file(
             ClusterSettings(
                 metrics=Metrics(port=8405, sources=("198.51.100.0/24", "203.0.113.7/32"))
             )
         )
-        self.assertIn(f'webserver("0.0.0.0:{dnsdist_config.STATS_PORT}")', text)
+        for address in ("127.0.0.1", "192.0.2.1", "192.0.2.2"):
+            self.assertIn(f'webserver("{address}:{dnsdist_config.STATS_PORT}")', text)
+        self.assertEqual(text.count("webserver("), 3)  # those three and no other
         self.assertIn('acl="127.0.0.1/32, 198.51.100.0/24, 203.0.113.7/32"', text)
         self.assertIn("apiRequiresAuthentication=true", text)
 
-    def test_an_object_on_the_statistics_port_is_refused_once_they_are_served(self) -> None:
+    def test_an_object_may_take_the_statistics_port_on_its_vip(self) -> None:
+        """26-10-15: the statistics are on the nodes' own addresses, the object on the VIP."""
+
         settings = ClusterSettings(metrics=Metrics(port=8405, sources=("198.51.100.0/24",)))
         tcp = load_proxy(
             "nine",
@@ -265,8 +280,13 @@ backends:
   nine-pool: {{balance: roundrobin, servers: [{{host: 198.51.100.9, port: 9}}]}}
 """.encode(),
         )
-        self.assertIn("Prometheus reads", refusal(resolver(), tcp, settings=settings))
-        generate([resolver(), tcp], vips=VIPS, default_vip="main")
+        generate(
+            [resolver(), tcp],
+            vips=VIPS,
+            default_vip="main",
+            settings=settings,
+            node_addresses=NODES,
+        )
 
 
 if __name__ == "__main__":

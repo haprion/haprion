@@ -55,12 +55,18 @@ class TheNodeStepReportsWhatListensOnEveryAddress(unittest.TestCase):
     def test_programs_on_every_address_are_named_once_a_port(self) -> None:
         self.assertEqual(
             wildcard_listeners(LISTENING),
-            ["22 sshd", "5000 an unnamed program", "6556 cmk-agent-ctl", "9100 systemd"],
+            [
+                "22 sshd",
+                "5000 an unnamed program",
+                "6556 cmk-agent-ctl",
+                "9100 systemd",
+                "9521 dnsdist",
+            ],
         )
 
-    def test_haproxy_dnsdist_and_one_address_listeners_are_left_out(self) -> None:
+    def test_haproxy_and_one_address_listeners_are_left_out(self) -> None:
         reported = " ".join(wildcard_listeners(LISTENING))
-        for port in ("8405", "9521", "443", "2222", "9520"):
+        for port in ("8405", "443", "2222", "9520"):
             self.assertNotIn(port, reported.split())
 
     def test_nothing_on_every_address_reports_nothing(self) -> None:

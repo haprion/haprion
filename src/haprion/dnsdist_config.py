@@ -298,8 +298,14 @@ def _rules(proxy: Proxy, vip: Vip, networks: Mapping[str, Sequence[str]]) -> lis
     ]
 
 
-def _webserver(scrapers: Sequence[str]) -> list[str]:
+def _webserver(scrapers: Sequence[str], nodes: Sequence[str]) -> list[str]:
     """dnsdist's statistics: the node's status on loopback, and the exporter's scrapers.
+
+    The scrapers' on each node's own address, never on every address: that
+    held the port on the VIP too, which holds only its objects' (26-10-15).
+    Both nodes read one file, so it names every node's address; the other
+    node's is bound through `ip_nonlocal_bind` and never reached. dnsdist
+    takes one `webserver()` per address (measured on 2.1.3).
 
     One ACL for every address the web server listens on (2.1's
     `setWebserverConfig`), so loopback stays in it when the scrapers join. The
@@ -311,9 +317,12 @@ def _webserver(scrapers: Sequence[str]) -> list[str]:
         "127.0.0.1/32",
         *(str(ipaddress.ip_network(entry, strict=False)) for entry in scrapers),
     ]
-    listen = f"0.0.0.0:{STATS_PORT}" if scrapers else f"127.0.0.1:{STATS_PORT}"
+    listen = ["127.0.0.1", *(nodes if scrapers else ())]
     return [
-        f"webserver({_quote(listen)})",
+        *(
+            f"webserver({_quote(f'[{address}]:{STATS_PORT}' if ':' in address else f'{address}:{STATS_PORT}')})"
+            for address in listen
+        ),
         f"setWebserverConfig({{acl={_quote(', '.join(dict.fromkeys(allowed)))}, "
         "statsRequireAuthentication=false, apiRequiresAuthentication=true})",
     ]
@@ -329,6 +338,7 @@ def render(
     placed: Sequence[tuple[Vip, Proxy, str | None]],
     networks: Mapping[str, Sequence[str]],
     scrapers: Sequence[str] = (),
+    nodes: Sequence[str] = (),
 ) -> DnsLayer:
     """The cluster's dnsdist configuration, from its dns objects and where they sit.
 
@@ -337,8 +347,8 @@ def render(
     carries no `dns/`, which is what stops dnsdist on the nodes.
 
     `scrapers` are the sources of the cluster's Prometheus exporter, and empty
-    when it has none: with them, the statistics are served on every address for
-    them as well as for the node itself.
+    when it has none: with them, the statistics are served on the nodes' own
+    addresses (`nodes`) for them as well as on loopback for the node itself.
     """
 
     if not placed:
@@ -395,7 +405,7 @@ def render(
         "-- Whatever reached a listener without matching an object is refused.",
         "addAction(AllRule(), RCodeAction(DNSRCode.REFUSED))",
         "",
-        *_webserver(scrapers),
+        *_webserver(scrapers, nodes),
         "",
     ]
     return DnsLayer(files={FILE: "\n".join(lines)}, parts=parts)

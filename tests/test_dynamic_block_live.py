@@ -179,7 +179,7 @@ backends:
                 default_vip="main",
                 ports={"http": self.http_port, "https": _free_port()},
                 settings=settings,
-                peer_nodes=NODES,
+                node_addresses=NODES,
                 trusted_proxies=(f"{PROXY}/32",),
             ).configuration
             for name, content in files.items():

@@ -306,17 +306,20 @@ blocking's exempt. *not used* is a value nothing names; a dash means the objects
 
 ### Ports the cluster takes itself
 
-A tcp, DNS or syslog object names its own port. A publish refuses one the cluster already uses:
+A VIP carries its objects' ports and nothing else: what the cluster runs for itself listens on
+the nodes' own addresses or on loopback, so a tcp, DNS or syslog object may take any port its VIP
+does not already serve. A publish refuses only:
 
-| Port | Used for | Taken on |
-|---|---|---|
-| 80 and 443 | the http and https objects | a VIP that serves http or https |
-| the metrics port, if set | the Prometheus exporter ([Logs & metrics](#sending-the-traffic-log-elsewhere-and-metrics)) | every address |
-| 9521 | the DNS listener's statistics, once Prometheus reads them | every address |
-| 9520 | the WAF engine | loopback only; refused as the metrics port or a reservation |
+| Port | Why |
+|---|---|
+| 80 and 443 | on a VIP that serves http or https objects |
+| a port another object takes on the same VIP | one address and port is bound once |
+| a port `manual/reservations.yaml` reserves | the handwritten half binds it |
 
-So does a port `manual/reservations.yaml` reserves. A port another program on the nodes holds is
-not known at publish: see [HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline).
+The Prometheus exporter, dnsdist's statistics (9521), the shared counters' port and the WAF
+engine (9520, loopback) never take a VIP's port. A port another program on the nodes holds on
+every address is not known at publish: see
+[HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline).
 
 ### HTTP/3
 
@@ -2551,11 +2554,11 @@ attention row, until the receiver is reached again. What it usually means:
 | *Connection refused* | the receiver's host answers but nothing listens on the port: the receiver is stopped, or the port or protocol is wrong (a TLS port given without TLS, or the other way round) |
 | none, and lines are not delivered | the connection is made but the receiver does not read: it is overloaded, or TLS is refused after connecting - its own log says which |
 
-**The exporter** answers `GET /metrics` on the port given, on every IPv4
-address of both nodes - the configuration is shared by the pair, and scraping
-each node is what shows the passive one as well. Only the listed sources get
-an answer; anything else gets 403, and any other path 404. The port is taken on
-every address, so a publish refuses one that an object already listens on or
+**The exporter** answers `GET /metrics` on the port given, on each node's own
+address - the address its `mgmt_host` gives, never a VIP - so Prometheus scrapes
+the nodes by name, and scraping each node is what shows the passive one as well.
+Only the listed sources get an answer; anything else gets 403, and any other
+path 404. An object may use the same port on a VIP; a publish refuses a port
 that `manual/reservations.yaml` reserves. Letting the scraper through the
 nodes' firewall, and letting the nodes reach the log receivers, is part of the
 installation, not of this setting.
@@ -2582,12 +2585,11 @@ the dashboard, a node whose counters do not reach another node, or that shares
 none while the others do, reads *Counters not shared* with the reason.
 
 **DNS objects are scraped from dnsdist.** A cluster with the exporter and a DNS
-object also has dnsdist answer `GET /metrics` on port 9521 of every IPv4 address,
-for the same sources (and the node itself); without the exporter it answers on
+object also has dnsdist answer `GET /metrics` on port 9521 of each node's own address,
+for the same sources (and on loopback for the node itself); without the exporter it answers on
 loopback only. Its metrics are dnsdist's own (`dnsdist_*`), with each server
 named `<pool>/s<n>` and each object's queries counted by the rules `<pool>`,
-`<pool>/tcp` and `<pool>/refused`. A publish refuses a tcp or DNS object on port
-9521 while dnsdist serves them there. Its API stays closed.
+`<pool>/tcp` and `<pool>/refused`. Its API stays closed.
 
 **The names a dashboard shows.** The exporter labels every backend metric with
 `proxy="<name>"`, and carries nothing else that could name it - a backend's

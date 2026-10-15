@@ -12,6 +12,7 @@ keep in step: adding a directory adds a case.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -114,6 +115,26 @@ class NoBackendCarriesAGuid(unittest.TestCase):
 
         self.assertIn(" guid srv:", text)
         self.assertIn("    guid fe:", text)
+
+
+class AVipHoldsOnlyItsObjectsPorts(unittest.TestCase):
+    """26-10-15: nothing generated listens on every address, so a VIP starts empty.
+
+    A listener without an address holds its port on every VIP too, and an
+    object there then fails every deploy. The exporter did, and dnsdist's
+    statistics did; both now name the nodes' own addresses.
+    """
+
+    WILDCARD_BIND = re.compile(r"^\s*bind\s+(:|\*:|\[::\]:|0\.0\.0\.0:)", re.MULTILINE)
+    WILDCARD_WEBSERVER = re.compile(r'webserver\("(0\.0\.0\.0|\[::\]|\*):')
+
+    def test_no_case_binds_every_address(self) -> None:
+        for case in cases():
+            with self.subTest(case.name):
+                for name, text in produced(case).items():
+                    self.assertIsNone(self.WILDCARD_BIND.search(text), name)
+                for name, text in produced_dns(case).items():
+                    self.assertIsNone(self.WILDCARD_WEBSERVER.search(text), name)
 
 
 class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):

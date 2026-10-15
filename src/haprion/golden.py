@@ -178,7 +178,7 @@ def arguments(case: Path) -> dict[str, Any]:
         "settings": cluster_settings.load_document(
             (case / SETTINGS).read_bytes() if (case / SETTINGS).exists() else None
         ),
-        "peer_nodes": PEER_NODES,
+        "node_addresses": PEER_NODES,
     }
 
 

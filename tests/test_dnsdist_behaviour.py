@@ -288,7 +288,7 @@ class EveryGoldenDnsdistFileIsAConfiguration(unittest.TestCase):
     """
 
     def test_the_file_with_prometheus_s_sources_is_one_as_well(self) -> None:
-        """B253: a second listen address and a wider ACL, held to the same standard."""
+        """B253: the nodes' own addresses and a wider ACL, held to the same standard."""
 
         from haprion import dnsdist_config
         from haprion.cluster_settings import ClusterSettings, Metrics
@@ -311,6 +311,7 @@ backends:
             vips={"main": Vip("main", "192.0.2.10")},
             default_vip="main",
             settings=ClusterSettings(metrics=Metrics(port=8405, sources=("198.51.100.0/24",))),
+            node_addresses=(("node-a", "192.0.2.1"), ("node-b", "192.0.2.2")),
         ).dns_files[dnsdist_config.FILE]
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / dnsdist_config.FILE

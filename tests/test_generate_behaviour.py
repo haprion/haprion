@@ -3470,5 +3470,7 @@ class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
     def test_nothing_else_may_take_the_engine_s_port(self) -> None:
         with self.assertRaisesRegex(Exception, "WAF engine"):
             self.layer(
-                "  mode: log", settings=ClusterSettings(metrics=Metrics(9520, ("192.0.2.0/24",)))
+                "  mode: log",
+                settings=ClusterSettings(metrics=Metrics(9520, ("192.0.2.0/24",))),
+                node_addresses=(("node-a", "192.0.2.11"),),
             )

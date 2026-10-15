@@ -239,7 +239,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     rule_set=crs.installed,
                     allow_certificate_mismatch=allow_certificate_mismatch,
                     settings_document=canonical,
-                    peer_nodes=lambda: peers.addresses(cluster),
+                    node_addresses=lambda: peers.addresses(cluster),
                 )
             except ConfigError as exc:
                 raise Refusal("changes_invalid", str(exc), 65) from exc

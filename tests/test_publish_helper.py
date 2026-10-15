@@ -83,6 +83,13 @@ class PublishFixture(unittest.TestCase):
         cluster["config_path"] = str(self.repo)
         cluster["publish_path"] = str(self.publish_path)
         cluster["validation_certs"] = str(cert_root)
+        #
+        # Addresses rather than the example's names, so a publish that looks the
+        # nodes up - the exporter and shared counters listen on their own
+        # addresses - gets an answer without DNS.
+        #
+        for number, node in enumerate(cluster["nodes"], start=1):
+            node["mgmt_host"] = f"192.0.2.{number}"
         cluster_path = root / "clusters.yaml"
         cluster_path.write_text(yaml.safe_dump(clusters), encoding="utf-8")
 

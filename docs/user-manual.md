@@ -19,6 +19,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [A slow server](#a-slow-server)
   - [Drain and maintenance](#drain-and-maintenance)
   - [Addresses, and what to call them](#addresses-and-what-to-call-them)
+  - [Ports the cluster takes itself](#ports-the-cluster-takes-itself)
   - [HTTP/3](#http3)
   - [DNS objects](#dns-objects)
   - [Syslog objects](#syslog-objects)
@@ -302,6 +303,20 @@ address or group shows what it touches before it is saved. A VIP counts the obje
 a source address the objects that leave from it (its VIP's or one named), and a group the objects
 that name it as a source anywhere: who may reach them, who is refused, an access rule or dynamic
 blocking's exempt. *not used* is a value nothing names; a dash means the objects could not be read.
+
+### Ports the cluster takes itself
+
+A tcp, DNS or syslog object names its own port. A publish refuses one the cluster already uses:
+
+| Port | Used for | Taken on |
+|---|---|---|
+| 80 and 443 | the http and https objects | a VIP that serves http or https |
+| the metrics port, if set | the Prometheus exporter ([Logs & metrics](#sending-the-traffic-log-elsewhere-and-metrics)) | every address |
+| 9521 | the DNS listener's statistics, once Prometheus reads them | every address |
+| 9520 | the WAF engine | loopback only; refused as the metrics port or a reservation |
+
+So does a port `manual/reservations.yaml` reserves. A port another program on the nodes holds is
+not known at publish: see [HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline).
 
 ### HTTP/3
 

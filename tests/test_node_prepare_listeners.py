@@ -28,6 +28,8 @@ LISTEN 0      4096         0.0.0.0:22    0.0.0.0:* users:(("sshd",pid=457508,fd=
 LISTEN 0      4096            [::]:22       [::]:* users:(("sshd",pid=457508,fd=4),("systemd",pid=1,fd=239))
 LISTEN 0      4096         0.0.0.0:9100  0.0.0.0:* users:(("systemd",pid=1,fd=90))
 LISTEN 0      4096         0.0.0.0:8405  0.0.0.0:* users:(("haproxy",pid=2934330,fd=9))
+LISTEN 0      4096         0.0.0.0:9521  0.0.0.0:* users:(("dnsdist",pid=1500,fd=21))
+LISTEN 0      4096         0.0.0.0:6556  0.0.0.0:* users:(("cmk-agent-ctl",pid=900,fd=9))
 LISTEN 0      4096     192.0.2.20:443    0.0.0.0:* users:(("haproxy",pid=2934330,fd=12))
 LISTEN 0      4096     192.0.2.11:2222   0.0.0.0:* users:(("sshd",pid=1200,fd=3))
 LISTEN 0      4096       127.0.0.1:9520  0.0.0.0:* users:(("coraza-spoa",pid=800,fd=7))
@@ -53,12 +55,12 @@ class TheNodeStepReportsWhatListensOnEveryAddress(unittest.TestCase):
     def test_programs_on_every_address_are_named_once_a_port(self) -> None:
         self.assertEqual(
             wildcard_listeners(LISTENING),
-            ["22 sshd", "5000 an unnamed program", "9100 systemd"],
+            ["22 sshd", "5000 an unnamed program", "6556 cmk-agent-ctl", "9100 systemd"],
         )
 
-    def test_haproxy_and_one_address_listeners_are_left_out(self) -> None:
+    def test_haproxy_dnsdist_and_one_address_listeners_are_left_out(self) -> None:
         reported = " ".join(wildcard_listeners(LISTENING))
-        for port in ("8405", "443", "2222", "9520"):
+        for port in ("8405", "9521", "443", "2222", "9520"):
             self.assertNotIn(port, reported.split())
 
     def test_nothing_on_every_address_reports_nothing(self) -> None:

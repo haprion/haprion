@@ -122,8 +122,9 @@ apply_sysusers sysusers/haprion-node.conf
 #
 #
 # `ss -Hltnp` on stdin: "port program" for each TCP port some program other
-# than HAProxy listens on at every address, once per port. HAProxy's own are
-# its metrics port and the objects, which the publish already keeps apart.
+# than HAProxy or dnsdist listens on at every address, once per port. Theirs
+# are the metrics port, the objects and dnsdist's statistics port, which the
+# publish already keeps apart (seen 26-10-15: dnsdist on 9521, reported).
 #
 wildcard_listeners() {
     awk '
@@ -133,7 +134,7 @@ wildcard_listeners() {
             sub(/.*:/, "", port)
             program = "an unnamed program"
             if (match($6, /\(\("[^"]+"/)) program = substr($6, RSTART + 3, RLENGTH - 4)
-            if (program == "haproxy" || seen[port]++) next
+            if (program == "haproxy" || program == "dnsdist" || seen[port]++) next
             print port, program
         }
     ' | sort -n

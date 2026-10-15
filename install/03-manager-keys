@@ -60,6 +60,20 @@ if [[ -n "${BACKUP_ROOT:-}" ]]; then
     generate_key "$NODE_BACKUP_KEY" "haprion node state backup"
 fi
 
+#
+# Adding a node pins its host key in root's known_hosts (B211); the change
+# edits the file and refuses to start without it (Fas 18 finding 28). Made
+# empty here, before the first node, and left alone after.
+#
+ROOT_KNOWN_HOSTS="/root/.ssh/known_hosts"
+ensure_dir "${ROOT_KNOWN_HOSTS%/*}" root:root 700
+if [[ -f "$ROOT_KNOWN_HOSTS" ]]; then
+    log "  ok       ${ROOT_KNOWN_HOSTS}"
+else
+    install -o root -g root -m 644 /dev/null "$ROOT_KNOWN_HOSTS"
+    log "  created  ${ROOT_KNOWN_HOSTS}  (empty - adding a node pins its host key here)"
+fi
+
 step "Lines to install on the nodes"
 
 pub() { cut -d' ' -f1,2 < "${KEY_DIR}/$1.pub"; }

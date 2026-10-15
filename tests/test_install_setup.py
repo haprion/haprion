@@ -122,6 +122,38 @@ class RelativePathsAreTheCallers(unittest.TestCase):
                 self.assertRegex(changes[0], r'^cd "(\$\(dirname "\$0"\)|\$here)"$')
 
 
+class Step3MakesTheFileANodeChangeEdits(unittest.TestCase):
+    """Create cluster refused on a new manager: no root known_hosts (Fas 18, finding 28)."""
+
+    BLOCK = re.compile(r"^ROOT_KNOWN_HOSTS=.*?^fi\n", re.MULTILINE | re.DOTALL)
+
+    def test_it_is_the_file_the_change_reads(self) -> None:
+        from haprion import node_enrollment  # noqa: PLC0415
+
+        found = self.BLOCK.search((INSTALL / "03-manager-keys").read_text())
+        assert found, "03-manager-keys no longer makes root's known_hosts"
+        self.assertIn(f'ROOT_KNOWN_HOSTS="{node_enrollment.ROOT_KNOWN_HOSTS}"', found.group(0))
+
+    def test_it_is_made_empty_once_and_then_left_alone(self) -> None:
+        found = self.BLOCK.search((INSTALL / "03-manager-keys").read_text())
+        assert found
+        with tempfile.TemporaryDirectory() as raw:
+            known = Path(raw) / "ssh" / "known_hosts"
+            block = (
+                found.group(0)
+                .replace("/root/.ssh/known_hosts", str(known))
+                .replace("install -o root -g root -m 644", "install -m 644")
+            )
+            script = f'set -Eeuo pipefail; source "{LIB}"; chown() {{ :; }}\n{block}'
+            first = bash(script)
+            known.write_text("node-a ssh-ed25519 AAAAexample\n")
+            again = bash(script)
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            self.assertIn("created", first.stdout)
+            self.assertIn("ok", again.stdout)
+            self.assertEqual(known.read_text(), "node-a ssh-ed25519 AAAAexample\n")
+
+
 class TheExampleShowsTheDefaults(unittest.TestCase):
     """answers.example.env says its values are the defaults; this keeps it true."""
 

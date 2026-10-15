@@ -93,11 +93,14 @@ MAX_FILE_BYTES = 1024 * 1024
 DEFAULT_RUN_ROOT = Path("/run/haprion-validation")
 #
 # A sandboxed check: how long the caller waits, how long the unit may run -
-# shorter, so systemd ends it before the caller gives up - and how much of its
-# output is kept (S07).
+# shorter, so systemd ends it before the caller gives up - how much memory and
+# how many tasks it may use, and how much of its output is kept (S07).
 #
 CLIENT_SECONDS = 30
 RUNTIME_SECONDS = 25
+MEMORY_MAX = "256M"
+TASKS_MAX = 32
+WAF_GOMAXPROCS = 2
 DIAGNOSTICS_BYTES = 16384
 VALIDATION_CERTIFICATE = "validation.pem"
 
@@ -442,13 +445,23 @@ def sandbox_command(
         f"BindReadOnlyPaths={candidate_root}:/candidate",
         #
         # Its own time limit, inside the caller's: a client that gave up does
-        # not stop the parser (security review 26-10-13, S07). Accounting so
-        # the journal says what a check uses - the measurement a memory and a
-        # task limit are to be set from, rather than guessed.
+        # not stop the parser (security review 26-10-13, S07). And memory and
+        # tasks, from what the checks use (measured 26-10-15 on both clusters'
+        # candidates): haproxy 17-18 MB, 38 MB with three 1 MiB maps; the WAF
+        # engine 41-44 MB; dnsdist 4 MB; one task each, the engine four at two
+        # Go threads. No swap, so a parser that runs away is stopped rather
+        # than slowed until the time limit.
         #
         f"RuntimeMaxSec={RUNTIME_SECONDS}",
-        "MemoryAccounting=yes",
-        "TasksAccounting=yes",
+        f"MemoryMax={MEMORY_MAX}",
+        "MemorySwapMax=0",
+        f"TasksMax={TASKS_MAX}",
+        #
+        # Go starts a thread per core, so the engine's task count followed the
+        # host - nine on eight cores. Two are plenty for a check of a tenth of
+        # a second, and make the limit above the same on any manager.
+        #
+        *((f"Environment=GOMAXPROCS={WAF_GOMAXPROCS}",) if suffix == "-waf" else ()),
     )
     command = [
         "/usr/bin/systemd-run",

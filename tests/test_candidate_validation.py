@@ -252,6 +252,32 @@ class TheSandboxedCheckIsBounded(unittest.TestCase):
         self.assertIn(f"RuntimeMaxSec={candidate_validation.RUNTIME_SECONDS}", command)
         self.assertLess(candidate_validation.RUNTIME_SECONDS, candidate_validation.CLIENT_SECONDS)
 
+    def test_every_check_is_limited_in_memory_and_tasks(self) -> None:
+        """S07: measured 26-10-15; the largest check used 44 MB and four tasks."""
+
+        engines = (
+            None,
+            (candidate_validation.WAF_ENGINE, "-validate", "-config", "/candidate/waf/coraza.yaml"),
+            (candidate_validation.DNSDIST, "--check-config", "-C", "/candidate/dns/dnsdist.conf"),
+        )
+        for program in engines:
+            with self.subTest(program):
+                command = sandbox_command(Path("/run/candidate"), "1111", program)
+                self.assertIn("MemoryMax=256M", command)
+                self.assertIn("MemorySwapMax=0", command)
+                self.assertIn("TasksMax=32", command)
+
+    def test_only_the_waf_engine_is_held_to_two_go_threads(self) -> None:
+        waf = sandbox_command(
+            Path("/run/candidate"),
+            "1111",
+            (candidate_validation.WAF_ENGINE, "-validate", "-config", "/candidate/waf/coraza.yaml"),
+        )
+        self.assertIn("Environment=GOMAXPROCS=2", waf)
+        self.assertNotIn(
+            "Environment=GOMAXPROCS=2", sandbox_command(Path("/run/candidate"), "1111")
+        )
+
 
 class TheDnsListenerIsValidatedByDnsdist(unittest.TestCase):
     """B249: `dns/dnsdist.conf` crosses alone and is checked by dnsdist, warnings refusing."""

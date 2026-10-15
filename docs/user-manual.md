@@ -4559,7 +4559,14 @@ This section explains what they do and why; run the script rather than following
 start from 2 GB per node.** The engine is allowed up to 40 % of the node's memory (see
 [The WAF engine](#the-waf-engine)), its rules take about 50 MB for the first object
 and a few MB for each further one, and HAProxy keeps the rest. The DNS listener adds about 85 MB.
-The dashboard shows each node's memory in use and marks a cluster at 85 %.
+
+One vCPU is where a node starts, not what every node needs. CPU follows the traffic: requests a
+second, new TLS connections - a handshake costs far more than a request on an open connection -
+and, most of all, the WAF engine, which reads every request of an object it guards, more so at a
+higher paranoia level. How far one vCPU goes also depends on the processor behind it. Only the
+node holding the VIP carries the traffic, so a busier cluster needs larger nodes, not more of
+them. The dashboard shows each node's CPU and memory in use and marks a cluster at 85 %; give
+the nodes more vCPUs before they get there.
 
 
 #### HAProxy and keepalived baseline

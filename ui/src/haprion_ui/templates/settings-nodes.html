@@ -67,7 +67,7 @@
       <li>The same machine under a new name or address. The manager asks it there and keeps the old host unless it answers as {{ moving }} with the host key it already has.</li>
     </ul>
     <div class="form-grid">
-      <label><span class="field-title">Host</span><input name="host" value="{{ host }}" maxlength="253" spellcheck="false" required></label>
+      <label><span class="field-title">DNS name or IP</span><input name="host" value="{{ host }}" maxlength="253" spellcheck="false" required></label>
     </div>
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/settings/nodes/{{ cluster }}">Cancel</a><button type="submit" class="secondary-button deploy-button">Change host</button></div>
@@ -105,7 +105,7 @@
       <li>The manager then asks the node for its status and takes the change back if it does not answer as {{ addition.name }}. Then deploy certificates and configuration to {{ cluster }} from the dashboard.</li>
     </ul>
     <div class="form-grid">
-      <label><span class="field-title">Host</span><input name="host" value="{{ addition.host }}" maxlength="253" spellcheck="false" required></label>
+      <label><span class="field-title">DNS name or IP</span><input name="host" value="{{ addition.host }}" maxlength="253" spellcheck="false" required></label>
       <label><span class="field-title">Type {{ addition.name }} to add it</span><input name="confirm" maxlength="64" spellcheck="false" autocomplete="off" required></label>
     </div>
     <div class="editor-actions editor-submit">
@@ -120,7 +120,7 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Add a node</h3></div></div></header>
     <div class="form-grid">
       <label><span class="field-title">Enrollment block</span><textarea name="block" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…" required>{{ block }}</textarea></label>
-      <label><span class="field-title">Host</span><input name="host" value="{{ host }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
+      <label><span class="field-title">DNS name or IP <span class="optional">(optional)</span></span><input name="host" value="{{ host }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
     </div>
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><button type="submit" class="secondary-button">Read block</button></div>

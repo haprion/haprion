@@ -10,7 +10,7 @@
   status and takes all of it back if either does not answer as itself.
 #}
 <section class="page-heading">
-  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Create cluster</h1>{% if not creation %}<p class="page-lede">Run 04-node-prepare on both new nodes first, then paste the two blocks it prints.</p>{% endif %}</div>
+  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Create cluster</h1>{% if not creation %}<p class="page-lede">Run 04-node-prepare on the new node first, then paste the block it prints.</p>{% endif %}</div>
 </section>
 
 {% if problem %}
@@ -59,16 +59,16 @@
       <label><span class="field-title">Cluster ID</span><input name="cluster" value="{{ form.cluster }}" maxlength="63" spellcheck="false" placeholder="edge" required></label>
       <label><span class="field-title">Display name</span><input name="display_name" value="{{ form.display_name }}" maxlength="64" placeholder="Edge" required></label>
       <label><span class="field-title">VIP</span><input name="vip" value="{{ form.vip }}" maxlength="64" spellcheck="false" placeholder="203.0.113.10" required></label>
-      <label><span class="field-title">VIP prefix</span><input name="address_prefix" value="{{ form.address_prefix }}" maxlength="3" inputmode="numeric" spellcheck="false" placeholder="24"></label>
-      <label><span class="field-title">VIP interface</span><input name="address_interface" value="{{ form.address_interface }}" maxlength="63" spellcheck="false" placeholder="eth0"></label>
-      <label><span class="field-title">Node path on the manager</span><input name="node_path" value="{{ form.node_path }}" maxlength="63" spellcheck="false" placeholder="Same as the ID"></label>
+      <label><span class="field-title">VIP prefix <span class="optional">(optional)</span></span><input name="address_prefix" value="{{ form.address_prefix }}" maxlength="3" inputmode="numeric" spellcheck="false" placeholder="24"></label>
+      <label><span class="field-title">VIP interface <span class="optional">(optional)</span></span><input name="address_interface" value="{{ form.address_interface }}" maxlength="63" spellcheck="false" placeholder="eth0"></label>
+      <label><span class="field-title">Node path on the manager <span class="optional">(optional)</span></span><input name="node_path" value="{{ form.node_path }}" maxlength="63" spellcheck="false" placeholder="Same as the ID"></label>
       <label><span class="field-title">Default certificate <span class="optional">(optional)</span></span><select name="default_certificate"><option value=""></option>{% for identifier in certificates %}<option value="{{ identifier }}"{% if identifier == form.default_certificate %} selected{% endif %}>{{ identifier }}</option>{% endfor %}</select></label>
     </div>
     <div class="form-grid">
-      <label><span class="field-title">First node's enrollment block</span><textarea name="block_1" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…" required>{{ form.block_1 }}</textarea></label>
-      <label><span class="field-title">First node's host</span><input name="host_1" value="{{ form.host_1 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
-      <label><span class="field-title">Second node's enrollment block <span class="optional">(optional)</span></span><textarea name="block_2" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…">{{ form.block_2 }}</textarea></label>
-      <label><span class="field-title">Second node's host</span><input name="host_2" value="{{ form.host_2 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
+      <label><span class="field-title">First node's block</span><textarea name="block_1" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…" required>{{ form.block_1 }}</textarea></label>
+      <label><span class="field-title">First node's DNS name or IP <span class="optional">(optional)</span></span><input name="host_1" value="{{ form.host_1 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
+      <label><span class="field-title">Second node's block <span class="optional">(optional)</span></span><textarea name="block_2" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…">{{ form.block_2 }}</textarea></label>
+      <label><span class="field-title">Second node's DNS name or IP <span class="optional">(optional)</span></span><input name="host_2" value="{{ form.host_2 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
     </div>
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/settings#nodes">Cancel</a><button type="submit" class="secondary-button">Read blocks</button></div>

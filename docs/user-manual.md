@@ -3336,6 +3336,12 @@ better done elsewhere. The details are in the section linked.
   balanced because dnsdist understands it and passes the client on inside the query
   ([DNS objects](#dns-objects)); syslog because it is never answered
   ([Syslog objects](#syslog-objects)).
+- **A port another program on the nodes listens on is not caught at publish.** The
+  manager does not know what else runs on a node: sshd on port 22, or an exporter, on
+  every address. HAProxy validates the configuration without binding anything, so the
+  publish passes; the deploy then fails on that node, rolls back to the previous release
+  and shows HAProxy's own reason - `cannot bind socket (Address already in use)`. Pick
+  another port for the object, or make the program listen only on the node's own address.
 - **A pool's own counters start again on every reload**, while its servers' and the
   frontends' are kept: HAProxy 3.4.6 does not carry a backend's own counters correctly
   ([Counters across a reload](#counters-across-a-reload)).

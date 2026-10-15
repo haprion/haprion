@@ -79,6 +79,49 @@ class TheAnswersFileIsOptional(unittest.TestCase):
         self.assertEqual(values["PUBLISH_ROOT"], "/srv/haprion/published")
 
 
+class RelativePathsAreTheCallers(unittest.TestCase):
+    """Every step changes to its own directory first; a path the operator gives
+    relative to where they stood must still name the same file (Fas 18, finding 21)."""
+
+    LIB_SOURCE = re.compile(r'^(source|\.) .*lib\.sh"?$', re.MULTILINE)
+
+    def test_an_answers_file_beside_the_caller_is_found(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "answers.env").write_text("CONFIG_ROOT=/srv/other\n")
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's lib.sh
+                [
+                    "/bin/bash",
+                    "-c",
+                    'set -Eeuo pipefail; cd "$1"; source ./lib.sh; load_answers answers.env; '
+                    'printf %s "$CONFIG_ROOT"',
+                    "bash",
+                    str(INSTALL),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=raw,
+            )
+        self.assertEqual((done.returncode, done.stdout), (0, "/srv/other"), done.stderr)
+
+    def test_every_script_changes_to_its_own_directory_just_before_lib_sh(self) -> None:
+        texts = {
+            path: path.read_bytes().decode(errors="replace")  # apt-keys/ holds binary keys
+            for path in sorted(INSTALL.rglob("*"))
+            if path.is_file() and path.name != "lib.sh"
+        }
+        scripts = {
+            path: found for path, text in texts.items() if (found := self.LIB_SOURCE.search(text))
+        }
+        self.assertGreater(len(scripts), 15)
+        for path, found in scripts.items():
+            with self.subTest(path.relative_to(INSTALL)):
+                head = texts[path][: found.start()]
+                changes = re.findall(r"^cd .*$", head, re.MULTILINE)
+                self.assertEqual(len(changes), 1, changes)
+                self.assertRegex(changes[0], r'^cd "(\$\(dirname "\$0"\)|\$here)"$')
+
+
 class TheExampleShowsTheDefaults(unittest.TestCase):
     """answers.example.env says its values are the defaults; this keeps it true."""
 

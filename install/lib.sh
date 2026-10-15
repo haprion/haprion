@@ -25,6 +25,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/defaults.sh"
 #
 CURRENT_STEP=""
 
+#
+# Where the operator ran the step from. Every script that sources this file
+# first does  cd "$(dirname "$0")"  (a test holds them to it), and that cd
+# leaves the caller's directory in OLDPWD - so an answers file named relative
+# to where the operator stood is still found.
+#
+CALLER_DIR="${OLDPWD:-$PWD}"
+caller_path() { if [[ "$1" == /* ]]; then echo "$1"; else echo "${CALLER_DIR}/$1"; fi; }
+
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 step() { CURRENT_STEP="$*"; echo; echo "== $*"; }
 warn() { echo "WARNING: $*" >&2; }
@@ -134,6 +143,7 @@ load_answers() {
         apply_default_answers
         return
     fi
+    file="$(caller_path "$file")"
     [[ -r "$file" ]] || die "answers file not readable: $file"
     #
     # Account, group and database names are fixed since B266 (accounts.sh). An

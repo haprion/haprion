@@ -29,7 +29,8 @@ load_answers "${1:-}"
 # The tree this step came in: the package's /usr/share/haprion-ui, or a
 # source checkout, unless another is named.
 #
-source_tree="${2:-$(cd ../.. && pwd)}"
+source_tree="$(caller_path "${2:-}")"
+[[ -n "${2:-}" ]] || source_tree="$(cd ../.. && pwd)"
 [[ -d "$source_tree" ]] || die "usage: $0 [answers-file|-] [source-tree]"
 source_tree="$(cd "$source_tree" && pwd)"
 tool="${source_tree}/tools/dns-profile-keys.py"

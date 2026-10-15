@@ -4589,22 +4589,22 @@ address decides which one traffic reaches. `04-node-prepare` sets this and repor
 **Nothing else on a node may listen on every address.** A program bound to `0.0.0.0:<port>` holds
 that port on the virtual address too, and HAProxy then cannot bind an object there: the deploy
 fails on `cannot bind socket (Address already in use)` and rolls back. sshd is the usual case -
-Ubuntu's `ssh.socket` listens on `0.0.0.0:22` - and it rules out a tcp object on port 22, such as
-an SFTP service on the virtual address. Have sshd listen on the node's own address only:
+out of the box it listens on `0.0.0.0:22`, which rules out a tcp object on port 22 such as an SFTP
+service on the virtual address - so `04-node-prepare` gives sshd the node's own address, the one
+the node reaches the management host from:
 
 ```text
-# /etc/ssh/sshd_config.d/10-listen.conf
+# /etc/ssh/sshd_config.d/05-haprion-listen.conf
 ListenAddress 192.0.2.11
 ```
 
-```bash
-sudo sshd -t && sudo systemctl daemon-reload && sudo systemctl restart ssh.socket
-```
-
-On Ubuntu sshd is socket activated: a generator turns `ListenAddress` into `ssh.socket`'s
-`ListenStream=` on `daemon-reload`, and restarting the socket keeps the open sessions. Keep the
-address the management host reaches the node on. `ip_nonlocal_bind` above is what lets the socket
-come up at boot before that address does.
+It does so only while sshd listens on every address; an sshd already on chosen addresses is left
+as it is. It refuses the virtual address and an address the node does not have, and after
+restarting sshd it checks that sshd answers on the address and no longer on every address -
+otherwise it removes the file, puts sshd back as it was and stops. Open sessions survive the
+restart. On Ubuntu sshd is socket activated, and the restart is of `ssh.socket`;
+`ip_nonlocal_bind` above is what lets it come up at boot before the address does. Any other
+program on every address is reported, not changed.
 
 **HAProxy's log socket outlives rsyslog.** HAProxy runs chrooted in `/var/lib/haproxy`, so its
 `log /dev/log` is `/var/lib/haproxy/dev/log`, the socket Ubuntu's `/etc/rsyslog.d/49-haproxy.conf`

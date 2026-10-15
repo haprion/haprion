@@ -86,7 +86,10 @@ APT_DIRECTORIES = ("/etc/apt/sources.list.d", "/etc/apt/preferences.d", "/etc/ap
 SHARED_DIRECTORIES = {
     "/etc/sysctl.d": frozenset({"/etc/sysctl.d/60-haproxy.conf"}),
     "/etc/sudoers.d": frozenset({"/etc/sudoers.d/haprion-node"}),
-    "/etc/ssh/sshd_config.d": frozenset(),
+    #
+    # sshd on the node's own address (B310), which the restored node keeps.
+    #
+    "/etc/ssh/sshd_config.d": frozenset({"/etc/ssh/sshd_config.d/05-haprion-listen.conf"}),
 }
 # The product sets nothing in the SSH server's own file; the target's stays.
 TARGET_FILES = frozenset({"/etc/ssh/sshd_config"})

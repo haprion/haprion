@@ -450,8 +450,13 @@ class TheProductsFilesAreTheInstallersOwn(unittest.TestCase):
         text = NODE_PREPARE.read_text(encoding="utf-8")
         self.assertIn('install -o root -g root -m 440 "$tmp" /etc/sudoers.d/haprion-node', text)
         self.assertIn('sysctl_file="/etc/sysctl.d/60-haproxy.conf"', text)
-        self.assertNotIn("sshd_config", text)
-        written = set(re.findall(r"/etc/(?:sudoers|sysctl)\.d/[\w.-]+", text))
+        self.assertIn('SSHD_LISTEN="/etc/ssh/sshd_config.d/05-haprion-listen.conf"', text)
+        #
+        # sshd's own file stays the operator's; only the drop-in is the product's.
+        #
+        self.assertNotIn('/etc/ssh/sshd_config"', text)
+        self.assertNotIn("/etc/ssh/sshd_config ", text)
+        written = set(re.findall(r"/etc/(?:sudoers\.d|sysctl\.d|ssh/sshd_config\.d)/[\w.-]+", text))
         own = set().union(*restore_plan.SHARED_DIRECTORIES.values())
         self.assertEqual(written, own)
 

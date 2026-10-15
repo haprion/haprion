@@ -120,6 +120,25 @@ apply_sysusers sysusers/haprion-node.conf
 # could write would run before the forced command does. No dotfiles are created,
 # and any left by an earlier installation become root's.
 #
+#
+# `ss -Hltnp` on stdin: "port program" for each TCP port some program other
+# than HAProxy listens on at every address, once per port. HAProxy's own are
+# its metrics port and the objects, which the publish already keeps apart.
+#
+wildcard_listeners() {
+    awk '
+        $4 !~ /^(0\.0\.0\.0|\*|\[::\]):[0-9]+$/ { next }
+        {
+            port = $4
+            sub(/.*:/, "", port)
+            program = "an unnamed program"
+            if (match($6, /\(\("[^"]+"/)) program = substr($6, RSTART + 3, RLENGTH - 4)
+            if (program == "haproxy" || seen[port]++) next
+            print port, program
+        }
+    ' | sort -n
+}
+
 ensure_account() {
     local user="$1"
     local home="/home/${user}"
@@ -544,6 +563,97 @@ else
     warn "haproxy is not enabled on this node. This project manages HAProxy;"
     warn "  it does not install it. Install and enable it before deploying."
 fi
+
+#
+# sshd off the virtual address (B310). Listening on every address, it holds its
+# port on the virtual address too, and an object on that port - an SFTP service
+# on 22 - fails every deploy on `cannot bind socket` (26-10-15: sshd's
+# 0.0.0.0:22 beside a tcp object on 22, for two days). A warning nobody reads
+# does not prevent that, so sshd is given the node's own address: the one this
+# node reaches the management host from, which is the one the management host
+# reaches it on. An sshd already on chosen addresses is left as it is.
+#
+# Changed carefully, because it is how the operator reaches this node: the
+# address must be on this node and not the virtual one, `sshd -t` must pass,
+# and sshd must answer there afterwards - otherwise the file is removed and
+# sshd put back before the step fails. Open sessions survive the restart.
+#
+SSHD_LISTEN="/etc/ssh/sshd_config.d/05-haprion-listen.conf"
+
+sshd_restart() {
+    systemctl daemon-reload
+    if systemctl is-active --quiet ssh.socket; then
+        systemctl restart ssh.socket
+    else
+        systemctl restart ssh.service
+    fi
+}
+
+sshd_put_back() {
+    rm -f "$SSHD_LISTEN"
+    sshd -t && sshd_restart || true
+    die "$1; ${SSHD_LISTEN} removed and sshd put back as it was"
+}
+
+sshd_off_the_virtual_address() {
+    local sshd_settings manager_address own_address ssh_port listening_here
+    if ! command -v sshd >/dev/null; then
+        warn "sshd is not installed: the management host reaches nodes over ssh"
+    elif ! sshd_settings="$(sshd -T 2>/dev/null)"; then
+        warn "sshd -T could not read sshd's configuration; its listen address is not checked"
+    elif ! awk '$1 == "listenaddress" { print $2 }' <<<"$sshd_settings" \
+            | grep -qE '^(0\.0\.0\.0|\[::\]):'; then
+        log "  ok       sshd listens on chosen addresses only"
+    else
+        manager_address="$(getent ahostsv4 "$MANAGER_HOST" | awk 'NR == 1 { print $1 }')"
+        [[ -n "$manager_address" ]] || die "cannot resolve MANAGER_HOST ${MANAGER_HOST} to an IPv4 address"
+        own_address="$(ip -4 -o route get "$manager_address" \
+            | sed -n 's/.* src \([0-9.]*\).*/\1/p')"
+        [[ -n "$own_address" ]] || die "no route to the management host ${manager_address}"
+        [[ "$own_address" != "$(cluster_value VIP "$CLUSTER")" ]] \
+            || die "this node reaches the management host from the virtual address ${own_address}"
+        ip -4 -o addr show | grep -qF " inet ${own_address}/" \
+            || die "${own_address} is not an address of this node"
+        ssh_port="$(awk '$1 == "port" { print $2; exit }' <<<"$sshd_settings")"
+        install_file "$SSHD_LISTEN" root:root 644 "$(printf '%s\n' \
+            "# Installed by install/04-node-prepare (B310)." \
+            "# sshd on this node's own address, so the virtual address's ports stay free." \
+            "ListenAddress ${own_address}")"
+        sshd -t || sshd_put_back "sshd -t refused ListenAddress ${own_address}"
+        sshd_restart || sshd_put_back "sshd did not restart"
+        listening_here=""
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            listening_here="$(ss -Hltn | awk -v a="${own_address}:${ssh_port}" '$4 == a')"
+            [[ -n "$listening_here" ]] && break
+            sleep 0.5
+        done
+        [[ -n "$listening_here" ]] || sshd_put_back "sshd does not listen on ${own_address}:${ssh_port}"
+        if ss -Hltn | awk -v p="${ssh_port}" '$4 == "0.0.0.0:" p || $4 == "[::]:" p' | grep -q .; then
+            sshd_put_back "sshd still listens on every address: sshd_config names it itself"
+        fi
+        log "  applied  sshd listens on ${own_address}:${ssh_port} only"
+    fi
+}
+
+sshd_off_the_virtual_address
+
+#
+# Anything else listening on every address meets the same failure. Not
+# changed - it is not this product's - but named.
+#
+wildcard_report=""
+if ! listening="$(ss -Hltnp 2>/dev/null)"; then
+    warn "ss (iproute2) could not list the listening ports: what listens on every address"
+    warn "  is not checked"
+else
+    wildcard_report="$(wildcard_listeners <<<"$listening")"
+    [[ -n "$wildcard_report" ]] || log "  ok       nothing but HAProxy listens on every address"
+fi
+while read -r port program; do
+    [[ -n "$port" ]] || continue
+    warn "port ${port} is held on every address by ${program}: an object on that port"
+    warn "  cannot bind the virtual address. Have it listen on this node's own address."
+done <<<"$wildcard_report"
 
 #
 # HAProxy runs chrooted in /var/lib/haproxy, so its `log /dev/log` is

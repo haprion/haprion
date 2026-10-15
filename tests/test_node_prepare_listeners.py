@@ -1,0 +1,188 @@
+"""04-node-prepare reports what listens on every address (26-10-15).
+
+sshd's `0.0.0.0:22` held port 22 on the virtual address, and a tcp object on 22
+failed every deploy. The node step checks for it rather than changing sshd;
+`wildcard_listeners` is the part that reads `ss`, run here on captured lines.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+NODE_PREPARE = Path(__file__).resolve().parents[1] / "install" / "04-node-prepare"
+LIB = NODE_PREPARE.parent / "lib.sh"
+
+#
+# `ss -Hltnp` as a node answers it: sshd socket activated (systemd alone while
+# no session runs, sshd beside it while one does), HAProxy on the virtual
+# address and on its metrics port, and listeners on one address only.
+#
+LISTENING = """\
+LISTEN 0      4096         0.0.0.0:22    0.0.0.0:* users:(("sshd",pid=457508,fd=3),("systemd",pid=1,fd=238))
+LISTEN 0      4096            [::]:22       [::]:* users:(("sshd",pid=457508,fd=4),("systemd",pid=1,fd=239))
+LISTEN 0      4096         0.0.0.0:9100  0.0.0.0:* users:(("systemd",pid=1,fd=90))
+LISTEN 0      4096         0.0.0.0:8405  0.0.0.0:* users:(("haproxy",pid=2934330,fd=9))
+LISTEN 0      4096     192.0.2.20:443    0.0.0.0:* users:(("haproxy",pid=2934330,fd=12))
+LISTEN 0      4096     192.0.2.11:2222   0.0.0.0:* users:(("sshd",pid=1200,fd=3))
+LISTEN 0      4096       127.0.0.1:9520  0.0.0.0:* users:(("coraza-spoa",pid=800,fd=7))
+LISTEN 0      511                *:5000        *:*
+"""
+
+
+def wildcard_listeners(text: str) -> list[str]:
+    script = NODE_PREPARE.read_text()
+    found = re.search(r"^wildcard_listeners\(\) \{\n.*?^\}\n", script, re.MULTILINE | re.DOTALL)
+    assert found is not None, "04-node-prepare has no wildcard_listeners"
+    run = subprocess.run(  # noqa: S603 - fixed binary, the function from the script
+        ["/bin/bash", "-c", f"set -Eeuo pipefail\n{found.group(0)}wildcard_listeners"],
+        input=text,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return run.stdout.splitlines()
+
+
+class TheNodeStepReportsWhatListensOnEveryAddress(unittest.TestCase):
+    def test_programs_on_every_address_are_named_once_a_port(self) -> None:
+        self.assertEqual(
+            wildcard_listeners(LISTENING),
+            ["22 sshd", "5000 an unnamed program", "9100 systemd"],
+        )
+
+    def test_haproxy_and_one_address_listeners_are_left_out(self) -> None:
+        reported = " ".join(wildcard_listeners(LISTENING))
+        for port in ("8405", "443", "2222", "9520"):
+            self.assertNotIn(port, reported.split())
+
+    def test_nothing_on_every_address_reports_nothing(self) -> None:
+        self.assertEqual(wildcard_listeners(""), [])
+
+    def test_the_step_warns_about_each(self) -> None:
+        script = NODE_PREPARE.read_text()
+        self.assertIn('wildcard_report="$(wildcard_listeners <<<"$listening")"', script)
+
+
+def function(script: str, name: str) -> str:
+    found = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", script, re.MULTILINE | re.DOTALL)
+    assert found is not None, f"04-node-prepare has no {name}"
+    return found.group(0)
+
+
+#
+# Stand-ins for what the step asks: sshd answers by whether the drop-in exists,
+# and so does ss - unless sshd_config itself names every address (STUCK).
+#
+FAKES = {
+    "sshd": """#!/bin/bash
+[[ "$1" == -t ]] && exit 0
+echo "port 22"
+if [[ -f "$SSHD_LISTEN" ]]; then echo "listenaddress 192.0.2.11:22"; fi
+if [[ ! -f "$SSHD_LISTEN" || -n "${STUCK:-}" || -n "${CHOSEN:-}" ]]; then
+    [[ -n "${CHOSEN:-}" ]] && echo "listenaddress 192.0.2.11:22" || echo "listenaddress 0.0.0.0:22"
+fi
+""",
+    "ss": """#!/bin/bash
+if [[ -f "$SSHD_LISTEN" ]]; then echo "LISTEN 0 4096 192.0.2.11:22 0.0.0.0:*"; fi
+if [[ ! -f "$SSHD_LISTEN" || -n "${STUCK:-}" ]]; then echo "LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*"; fi
+""",
+    "systemctl": '#!/bin/bash\necho "$*" >> "$CALLS"\n[[ "$1" == is-active ]] && exit 1\nexit 0\n',
+    "getent": '#!/bin/bash\necho "192.0.2.5 STREAM mgr"\n',
+    "ip": """#!/bin/bash
+case "$*" in
+    *"route get"*) echo "192.0.2.5 dev eth0 src ${SOURCE:-192.0.2.11} uid 0" ;;
+    *"addr show"*) echo "2: eth0    inet 192.0.2.11/24 brd 192.0.2.255 scope global eth0" ;;
+esac
+""",
+    "sleep": "#!/bin/sh\nexit 0\n",
+}
+
+
+class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
+    """B310: sshd on the node's own address, or put back as it was."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="sshd-listen-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        for name, text in FAKES.items():
+            (bin_dir / name).write_text(text)
+            (bin_dir / name).chmod(0o755)
+        self.drop_in = self.root / "05-haprion-listen.conf"
+        self.calls = self.root / "calls"
+        script = NODE_PREPARE.read_text()
+        self.program = "\n".join(
+            (
+                f"source {LIB}",
+                #
+                # The file itself, without the chown only root may do.
+                #
+                'install_file() { printf "%s\\n" "$4" > "$1"; log "  written  $1"; }',
+                f'SSHD_LISTEN="{self.drop_in}"',
+                function(script, "sshd_restart"),
+                function(script, "sshd_put_back"),
+                function(script, "sshd_off_the_virtual_address"),
+                "sshd_off_the_virtual_address",
+            )
+        )
+        self.env = {
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "SSHD_LISTEN": str(self.drop_in),
+            "CALLS": str(self.calls),
+            "MANAGER_HOST": "mgr",
+            "CLUSTER": "alpha",
+            "VIP_alpha": "192.0.2.20",
+        }
+
+    def run_step(self, **extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - fixed binary, the step's own functions
+            ["/bin/bash", "-c", self.program],
+            env={**os.environ, **self.env, **extra},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def restarts(self) -> list[str]:
+        if not self.calls.exists():
+            return []
+        return [line for line in self.calls.read_text().splitlines() if "restart" in line]
+
+    def test_sshd_on_every_address_is_given_the_node_s_own(self) -> None:
+        run = self.run_step()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("ListenAddress 192.0.2.11\n", self.drop_in.read_text())
+        self.assertIn("applied  sshd listens on 192.0.2.11:22 only", run.stdout)
+        self.assertEqual(self.restarts(), ["restart ssh.service"])
+
+    def test_sshd_already_on_chosen_addresses_is_left_alone(self) -> None:
+        run = self.run_step(CHOSEN="1")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("ok       sshd listens on chosen addresses only", run.stdout)
+        self.assertFalse(self.drop_in.exists())
+        self.assertEqual(self.restarts(), [])
+
+    def test_the_virtual_address_is_never_written(self) -> None:
+        run = self.run_step(SOURCE="192.0.2.20")
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("from the virtual address", run.stderr)
+        self.assertFalse(self.drop_in.exists())
+        self.assertEqual(self.restarts(), [])
+
+    def test_sshd_still_on_every_address_is_put_back(self) -> None:
+        run = self.run_step(STUCK="1")
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("put back as it was", run.stderr)
+        self.assertFalse(self.drop_in.exists())
+        self.assertEqual(self.restarts(), ["restart ssh.service", "restart ssh.service"])
+
+
+if __name__ == "__main__":
+    unittest.main()

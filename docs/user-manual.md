@@ -3341,7 +3341,8 @@ better done elsewhere. The details are in the section linked.
   every address. HAProxy validates the configuration without binding anything, so the
   publish passes; the deploy then fails on that node, rolls back to the previous release
   and shows HAProxy's own reason - `cannot bind socket (Address already in use)`. Pick
-  another port for the object, or make the program listen only on the node's own address.
+  another port for the object, or make the program listen only on the node's own address
+  ([HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline)).
 - **A pool's own counters start again on every reload**, while its servers' and the
   frontends' are kept: HAProxy 3.4.6 does not carry a backend's own counters correctly
   ([Counters across a reload](#counters-across-a-reload)).
@@ -4562,6 +4563,26 @@ net.ipv4.ip_nonlocal_bind = 1
 Without it, HAProxy on the node that does *not* hold the address fails to start: it is asked to
 bind an address the kernel says is not there. With it, both nodes run continuously and the virtual
 address decides which one traffic reaches. `04-node-prepare` sets this and reports it.
+
+**Nothing else on a node may listen on every address.** A program bound to `0.0.0.0:<port>` holds
+that port on the virtual address too, and HAProxy then cannot bind an object there: the deploy
+fails on `cannot bind socket (Address already in use)` and rolls back. sshd is the usual case -
+Ubuntu's `ssh.socket` listens on `0.0.0.0:22` - and it rules out a tcp object on port 22, such as
+an SFTP service on the virtual address. Have sshd listen on the node's own address only:
+
+```text
+# /etc/ssh/sshd_config.d/10-listen.conf
+ListenAddress 192.0.2.11
+```
+
+```bash
+sudo sshd -t && sudo systemctl daemon-reload && sudo systemctl restart ssh.socket
+```
+
+On Ubuntu sshd is socket activated: a generator turns `ListenAddress` into `ssh.socket`'s
+`ListenStream=` on `daemon-reload`, and restarting the socket keeps the open sessions. Keep the
+address the management host reaches the node on. `ip_nonlocal_bind` above is what lets the socket
+come up at boot before that address does.
 
 **HAProxy's log socket outlives rsyslog.** HAProxy runs chrooted in `/var/lib/haproxy`, so its
 `log /dev/log` is `/var/lib/haproxy/dev/log`, the socket Ubuntu's `/etc/rsyslog.d/49-haproxy.conf`

@@ -37,7 +37,7 @@ from collections.abc import Sequence
 # that a file is the product's to replace. Changing it orphans every installed
 # file, which the node then leaves alone.
 #
-MARK = "# Written by Haprion (B313)."
+MARK = "# Written by Haprion - a deploy replaces this file."
 #
 # Where the cluster file names no interface: the node fills in the one that
 # carries its own address (`unicast_src_ip`), which it can see and the

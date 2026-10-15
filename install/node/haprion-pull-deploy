@@ -118,6 +118,67 @@ STAGED_WHAT=()
 STAGED_INSTALLED=()
 STAGED_BACKUP=()
 STAGED_READ=0
+#
+# Set when this run installed keepalived.conf itself (B313): keepalived is
+# then started if it is not running, where a list or IPVS file alone waits for
+# it to start.
+#
+STAGED_CONF=0
+
+#
+# The product's keepalived.conf (B313), for a cluster it created: the release
+# carries one per node, `keepalived/node-<name>.conf`, and this node installs
+# its own. Only over a file that starts with the product's line, or where there
+# is none - a keepalived.conf a person wrote is theirs, and stays. Its first
+# line is `keepalived_conf.MARK`; a test holds the two together.
+#
+KEEPALIVED_MARK="# Written by Haprion - a deploy replaces this file."
+KEEPALIVED_INTERFACE_FROM_NODE="@INTERFACE@"
+
+stage_keepalived_conf() {
+    local published rendered own interface backup
+
+    published="${CURRENT}/keepalived/node-$(hostname).conf"
+
+    [[ -f "$published" ]] || return 0
+    if [[ -f "$KEEPALIVED_CONF" ]] \
+        && [[ "$(head -n 1 "$KEEPALIVED_CONF")" != "$KEEPALIVED_MARK" ]]; then
+        log "keepalived: ${KEEPALIVED_CONF} was written by a person; left as it is."
+        return 0
+    fi
+    #
+    # The interface, where the cluster file names none: the one that carries
+    # this node's own address, which the file names as unicast_src_ip.
+    #
+    rendered="$(cat "$published")"
+    if [[ "$rendered" == *"$KEEPALIVED_INTERFACE_FROM_NODE"* ]]; then
+        own="$(awk '$1 == "unicast_src_ip" { print $2; exit }' "$published")"
+        interface="$(ip -o -4 addr show | awk -v own="$own" '{ split($4, a, "/"); if (a[1] == own) { print $2; exit } }')"
+        if [[ -z "$interface" ]]; then
+            log "ERROR: keepalived: no interface carries this node's address ${own:-(none named)}."
+            return 1
+        fi
+        rendered="${rendered//"$KEEPALIVED_INTERFACE_FROM_NODE"/$interface}"
+    fi
+    if [[ -f "$KEEPALIVED_CONF" ]] && [[ "$(cat "$KEEPALIVED_CONF")" == "$rendered" ]]; then
+        return 0
+    fi
+    log "keepalived: the configuration changed."
+    backup=""
+    if [[ -f "$KEEPALIVED_CONF" ]]; then
+        backup="${KEEPALIVED_CONF}.rollback"
+        cp -a "$KEEPALIVED_CONF" "$backup"
+    fi
+    install -d -o root -g root -m 755 "${KEEPALIVED_CONF%/*}"
+    printf '%s\n' "$rendered" > "${KEEPALIVED_CONF}.new"
+    chmod 644 "${KEEPALIVED_CONF}.new"
+    mv -f "${KEEPALIVED_CONF}.new" "$KEEPALIVED_CONF"
+    STAGED_WHAT+=("configuration")
+    STAGED_INSTALLED+=("$KEEPALIVED_CONF")
+    STAGED_BACKUP+=("$backup")
+    STAGED_READ=1
+    STAGED_CONF=1
+}
 
 #
 # $1 the release's file, $2 where it is installed, $3 what it is called in the
@@ -189,21 +250,41 @@ activate_keepalived() {
         # deploy used to put the files back and fail with it.
         #
         if ! systemctl is-active --quiet keepalived; then
-            log "keepalived: not running; the ${what} is installed and read when it starts."
-            for index in "${!STAGED_INSTALLED[@]}"; do
-                [[ -z "${STAGED_BACKUP[index]}" ]] || rm -f "${STAGED_BACKUP[index]}"
-            done
-            return 0
+            #
+            # Except when this run wrote keepalived.conf (B313): nothing else
+            # starts it, and an address list nobody serves is a VIP that
+            # never appears. Not on a masked unit, which is a node someone
+            # took out on purpose (a restore in test mode).
+            #
+            if (( STAGED_CONF )) && [[ "$(systemctl is-enabled keepalived 2>/dev/null)" != masked ]]; then
+                log "keepalived: configuration test passed. Starting..."
+                if systemctl start keepalived; then
+                    log "keepalived: ${what} active."
+                    for index in "${!STAGED_INSTALLED[@]}"; do
+                        [[ -z "${STAGED_BACKUP[index]}" ]] || rm -f "${STAGED_BACKUP[index]}"
+                    done
+                    return 0
+                fi
+                log "ERROR: keepalived did not start."
+                systemctl stop keepalived 2>/dev/null || true
+            else
+                log "keepalived: not running; the ${what} is installed and read when it starts."
+                for index in "${!STAGED_INSTALLED[@]}"; do
+                    [[ -z "${STAGED_BACKUP[index]}" ]] || rm -f "${STAGED_BACKUP[index]}"
+                done
+                return 0
+            fi
+        else
+            log "keepalived: configuration test passed. Reloading..."
+            if systemctl reload keepalived; then
+                log "keepalived: ${what} active."
+                for index in "${!STAGED_INSTALLED[@]}"; do
+                    [[ -z "${STAGED_BACKUP[index]}" ]] || rm -f "${STAGED_BACKUP[index]}"
+                done
+                return 0
+            fi
+            log "ERROR: keepalived reload failed."
         fi
-        log "keepalived: configuration test passed. Reloading..."
-        if systemctl reload keepalived; then
-            log "keepalived: ${what} active."
-            for index in "${!STAGED_INSTALLED[@]}"; do
-                [[ -z "${STAGED_BACKUP[index]}" ]] || rm -f "${STAGED_BACKUP[index]}"
-            done
-            return 0
-        fi
-        log "ERROR: keepalived reload failed."
     else
         log "ERROR: keepalived rejected the published ${what}."
     fi
@@ -283,6 +364,12 @@ sync_keepalived() {
         refuse_unread_ipvs
         return 1
     fi
+    #
+    # The configuration first: the list and the IPVS file are staged only when
+    # keepalived.conf includes them, and on a new node it is this file that
+    # does.
+    #
+    stage_keepalived_conf || return 1
     stage_keepalived_addresses
     stage_keepalived_ipvs
     activate_keepalived

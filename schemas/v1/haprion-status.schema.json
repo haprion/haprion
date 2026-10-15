@@ -163,6 +163,10 @@
                 "included": { "type": ["boolean", "null"] }
               },
               "additionalProperties": true
+            },
+            "configured": {
+              "type": ["string", "null"],
+              "enum": ["product", "operator", "missing", null]
             }
           },
           "additionalProperties": true
@@ -173,7 +177,11 @@
           "properties": {
             "address": { "type": ["string", "null"], "format": "ipv4" },
             "interface": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
-            "owner": { "type": ["boolean", "null"] }
+            "owner": { "type": ["boolean", "null"] },
+            "carried": {
+              "type": ["array", "null"],
+              "items": { "type": "string", "format": "ipv4" }
+            }
           },
           "additionalProperties": true
         },

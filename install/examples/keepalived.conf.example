@@ -1,8 +1,9 @@
 #
 # Example keepalived configuration for one cluster of two nodes.
 #
-# Not installed by any script: it carries addresses, an interface name and a
-# shared secret that only you know. 04-node-prepare checks the three properties
+# For a cluster whose keepalived.conf a person writes. A cluster created in
+# the interface gets its file from the deploy instead (docs/user-manual.md,
+# 'keepalived on the nodes'). 04-node-prepare checks the three properties
 # below and complains if they are missing, rather than guessing at them.
 #
 # Copy to /etc/keepalived/keepalived.conf on BOTH nodes and change every line

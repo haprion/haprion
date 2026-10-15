@@ -525,6 +525,35 @@ def _node_result(
     return entry, None
 
 
+def _owner_without_keepalived(results: list[dict[str, Any]], vip: str) -> None:
+    """Decide ownership for a node that has no keepalived.conf (B313).
+
+    Such a node cannot name the address - it is named in keepalived.conf - so
+    it answers `null`, and one `null` blocks every deploy as UNKNOWN. That is
+    the right answer when the configuration exists and could not be read, and
+    the wrong one before the product's first deploy, which is what writes the
+    file: the deploy that would end the state was refused for being in it.
+    The manager knows the address, and the node says which addresses it
+    carries; a node that carries it owns it, one that does not does not. Only
+    `missing` is judged here - a file somebody wrote and the node could not
+    read stays unknown.
+    """
+
+    for entry in results:
+        if not entry["status_ok"]:
+            continue
+        status = _mapping(entry["status"])
+        reported = status.get("vip")
+        carried = reported.get("carried") if isinstance(reported, dict) else None
+        if (
+            isinstance(reported, dict)
+            and reported.get("owner") is None
+            and _mapping(status.get("keepalived")).get("configured") == "missing"
+            and isinstance(carried, list)
+        ):
+            reported["owner"] = vip in carried
+
+
 def _vip_state(results: list[dict[str, Any]]) -> tuple[VipState, list[str], list[str]]:
     owners: list[str] = []
     unknown: list[str] = []
@@ -625,6 +654,7 @@ def collect(
     dns_published: bool | None = None,
     dns_names: tuple[PublishedName, ...] = (),
     resolve: dnsdist_config.Lookup | None = None,
+    vip: str | None = None,
 ) -> StatusReport:
     """Ask every node, then say what the pair adds up to.
 
@@ -656,6 +686,8 @@ def collect(
         if warning is not None:
             warnings.append(warning)
 
+    if vip is not None:
+        _owner_without_keepalived(results, vip)
     vip_state, owners, unknown = _vip_state(results)
     valid = sum(1 for entry in results if entry["status_ok"])
     if waf_published:

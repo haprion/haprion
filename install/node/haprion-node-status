@@ -1022,6 +1022,56 @@ def owns_vip(interface, vip):
     return False
 
 
+#
+# The first line of a keepalived.conf the product wrote (B313); the deploy and
+# the generator use the same line, and a test holds the three together.
+#
+KEEPALIVED_MARK = "# Written by Haprion - a deploy replaces this file."
+
+
+def keepalived_configured():
+    """Who wrote keepalived.conf: `product`, `operator`, or `missing` when there is none.
+
+    None when it is there and cannot be read: an unreadable file is not a
+    missing one, and the manager reads `missing` as "this node cannot hold the
+    address through keepalived".
+    """
+
+    if not KEEPALIVED_CONFIG.exists():
+        return "missing"
+    try:
+        with KEEPALIVED_CONFIG.open(encoding="utf-8") as handle:
+            first = handle.readline().rstrip("\n")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return "product" if first == KEEPALIVED_MARK else "operator"
+
+
+def carried_addresses():
+    """Every IPv4 address on this node, whatever put it there; None when `ip` cannot say.
+
+    Read so the manager can tell whether a node without keepalived holds the
+    cluster's address all the same: the node does not know the address then -
+    it is named in keepalived.conf - and the manager does.
+    """
+
+    r = run("/usr/sbin/ip", "-j", "-4", "addr", "show")
+    if r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+    return sorted(
+        {
+            addr["local"]
+            for iface in data
+            for addr in iface.get("addr_info", [])
+            if addr.get("family") == "inet" and isinstance(addr.get("local"), str)
+        }
+    )
+
+
 def address_list(path):
     """One address file as (present, digest). Two facts, told apart on purpose.
 
@@ -1846,11 +1896,13 @@ result = {
         "active": keepalived_active,
         "state": keepalived_state,
         "addresses": addresses,
+        "configured": keepalived_configured(),
     },
     "vip": {
         "address": vip,
         "interface": interface,
         "owner": vip_owner,
+        "carried": carried_addresses(),
     },
     "ip_nonlocal_bind": ip_nonlocal_bind,
     "release": release,

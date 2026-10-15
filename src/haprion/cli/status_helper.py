@@ -163,6 +163,7 @@ def main(
         waf_published=read_waf_published(Path(cluster.publish_path), cluster.node_path),
         dns_published=read_dns_published(Path(cluster.publish_path), cluster.node_path),
         dns_names=read_dns_names(Path(cluster.publish_path), cluster.node_path),
+        vip=cluster.vip,
     )
 
     #

@@ -503,3 +503,50 @@ class WhatEachObjectIsDoingOnTheNodes(unittest.TestCase):
             states = self.states(publish, hash_a=self.PUBLISHED, hash_b="../../elsewhere")
             self.assertEqual(states["shop"]["state"], "unknown")
             self.assertIsNone(read_manifest(publish, release="../../elsewhere"))
+
+
+class ANodeWithoutKeepalived(unittest.TestCase):
+    """B313: before the product's first deploy, no node has keepalived.conf."""
+
+    VIP = "192.0.2.10"
+
+    def bare(self, name: str, carried: object, configured: object = "missing") -> dict[str, object]:
+        status = node_status(name, owner=None, release_hash=None)
+        status["keepalived"] = {"active": False, "state": None, "configured": configured}
+        status["vip"] = {"address": None, "interface": None, "owner": None, "carried": carried}
+        return status
+
+    def state(self, a: dict[str, object], b: dict[str, object], vip: str | None = VIP) -> object:
+        report = collect(NODES, answering(**{"node-a": a, "node-b": b}), target=None, vip=vip)
+        return report.result["summary"]["vip_state"]
+
+    def test_neither_carrying_the_address_is_no_owner_and_lets_the_first_deploy_through(
+        self,
+    ) -> None:
+        a = self.bare("node-a", ["192.0.2.11"])
+        b = self.bare("node-b", ["192.0.2.12"])
+        self.assertEqual(self.state(a, b), "no_owner")
+
+    def test_one_carrying_it_by_other_means_owns_it(self) -> None:
+        a = self.bare("node-a", ["192.0.2.10", "192.0.2.11"])
+        b = self.bare("node-b", ["192.0.2.12"])
+        self.assertEqual(self.state(a, b), "single_owner")
+
+    def test_both_carrying_it_is_split_brain(self) -> None:
+        a = self.bare("node-a", ["192.0.2.10"])
+        b = self.bare("node-b", ["192.0.2.10"])
+        self.assertEqual(self.state(a, b), "split_brain")
+
+    def test_a_file_somebody_wrote_and_the_node_could_not_read_stays_unknown(self) -> None:
+        for configured in ("operator", None):
+            with self.subTest(configured=configured):
+                a = self.bare("node-a", ["192.0.2.11"], configured=configured)
+                b = self.bare("node-b", ["192.0.2.12"])
+                self.assertEqual(self.state(a, b), "unknown")
+
+    def test_without_the_carried_list_or_the_address_nothing_is_decided(self) -> None:
+        a = self.bare("node-a", None)
+        b = self.bare("node-b", ["192.0.2.12"])
+        self.assertEqual(self.state(a, b), "unknown")
+        a = self.bare("node-a", ["192.0.2.11"])
+        self.assertEqual(self.state(a, b, vip=None), "unknown")

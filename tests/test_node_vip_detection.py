@@ -120,3 +120,54 @@ class ParsingTheNodeSConfiguration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhoWroteKeepalivedAndWhatTheNodeCarries(unittest.TestCase):
+    """B313: the two readings that let the manager judge a node without keepalived."""
+
+    REGION = re.compile(r"^KEEPALIVED_MARK = .*?(?=^def address_list\()", re.DOTALL | re.MULTILINE)
+
+    def setUp(self) -> None:
+        found = self.REGION.search(SCRIPT.read_text())
+        assert found, "the readings are no longer where the test extracts them from"
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.conf = self.root / "keepalived.conf"
+        self.answer: tuple[int, str] = (0, "[]")
+        namespace: dict[str, Any] = {
+            "json": __import__("json"),
+            "KEEPALIVED_CONFIG": self.conf,
+            "run": lambda *_argv: type(
+                "Done", (), {"returncode": self.answer[0], "stdout": self.answer[1]}
+            )(),
+        }
+        exec(found.group(0), namespace)  # noqa: S102 - verbatim functions from the node script
+        self.namespace = namespace
+
+    def test_missing_product_and_operator_are_told_apart(self) -> None:
+        configured = self.namespace["keepalived_configured"]
+        self.assertEqual(configured(), "missing")
+        self.conf.write_text(
+            "# Written by Haprion - a deploy replaces this file.\nvrrp_instance alpha {}\n"
+        )
+        self.assertEqual(configured(), "product")
+        self.conf.write_text("vrrp_instance alpha {}\n")
+        self.assertEqual(configured(), "operator")
+
+    def test_the_mark_is_the_generator_s(self) -> None:
+        from haprion import keepalived_conf  # noqa: PLC0415
+
+        self.assertEqual(self.namespace["KEEPALIVED_MARK"], keepalived_conf.MARK)
+
+    def test_every_ipv4_address_is_carried_and_a_failed_read_is_none(self) -> None:
+        self.answer = (
+            0,
+            '[{"ifname": "lo", "addr_info": [{"family": "inet", "local": "127.0.0.1"}]},'
+            ' {"ifname": "eth0", "addr_info": [{"family": "inet", "local": "192.0.2.11"},'
+            ' {"family": "inet", "local": "192.0.2.10"}]}]',
+        )
+        self.assertEqual(
+            self.namespace["carried_addresses"](), ["127.0.0.1", "192.0.2.10", "192.0.2.11"]
+        )
+        self.answer = (1, "")
+        self.assertIsNone(self.namespace["carried_addresses"]())

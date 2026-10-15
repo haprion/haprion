@@ -287,6 +287,17 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
     detail: str
     if haproxy.get("active") is not True:
         label, tone, detail = "HAProxy stopped", "critical", "The proxy service is not active"
+    elif keepalived.get("configured") == "missing":
+        #
+        # Nothing has failed: there is no configuration yet. For a cluster
+        # created in the interface the first deploy writes it (B313); "fault"
+        # sent people looking for something broken.
+        #
+        label, tone, detail = (
+            "Keepalived not configured",
+            "warning",
+            "No keepalived.conf on this node yet",
+        )
     elif keepalived.get("active") is not True or reported_state not in {"MASTER", "BACKUP"}:
         label, tone, detail = (
             "Keepalived fault",

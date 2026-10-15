@@ -400,6 +400,119 @@ class TheIpvsFile(Step):
         self.assertIn("previous IPVS file restored", output)
 
 
+class TheProductsKeepalivedConf(Step):
+    """B313: the node installs its own `keepalived/node-<name>.conf` from the release."""
+
+    PRODUCT = (
+        "# Written by Haprion - a deploy replaces this file.\n"
+        "include IPVS\n"
+        "vrrp_instance alpha {\n"
+        "    interface @INTERFACE@\n"
+        "    unicast_src_ip 192.0.2.11\n"
+        "    virtual_ipaddress {\n"
+        "        include ADDRESSES\n"
+        "    }\n"
+        "}\n"
+    )
+
+    def setUp(self) -> None:
+        super().setUp()
+        bin_dir = self.root / "bin"
+        (bin_dir / "hostname").write_text("#!/bin/sh\necho node-a\n")
+        (bin_dir / "hostname").chmod(0o755)
+        (bin_dir / "ip").write_text(
+            "#!/bin/sh\n"
+            "echo '1: lo    inet 127.0.0.1/8 scope host lo'\n"
+            "echo '2: ens18    inet 192.0.2.11/24 brd 192.0.2.255 scope global ens18'\n"
+        )
+        (bin_dir / "ip").chmod(0o755)
+        (bin_dir / "systemctl").write_text(
+            '#!/bin/sh\necho "systemctl $*" >> "$RECORD"\n'
+            '[ "$1" = is-active ] && exit "${ACTIVE_EXIT:-0}"\n'
+            '[ "$1" = is-enabled ] && { echo "${ENABLED:-enabled}"; exit 0; }\n'
+            'exit "${RELOAD_EXIT:-0}"\n'
+        )
+        self.node_file = self.root / "release" / "keepalived" / "node-node-a.conf"
+        self.node_file.write_text(
+            self.PRODUCT.replace("IPVS", str(self.root / "etc" / "ipvs.conf")).replace(
+                "ADDRESSES", str(self.installed)
+            )
+        )
+        self.published.write_text("    192.0.2.20\n")
+
+    def test_a_new_node_gets_the_file_its_addresses_and_a_started_keepalived(self) -> None:
+        code, output = self.run_step("sync_keepalived", ACTIVE_EXIT="3")
+
+        self.assertEqual(code, 0, output)
+        written = self.conf.read_text()
+        self.assertTrue(written.startswith("# Written by Haprion - a deploy replaces this file.\n"))
+        self.assertIn("interface ens18\n", written)
+        self.assertNotIn("@INTERFACE@", written)
+        # The list is staged because the file just written includes it.
+        self.assertEqual(self.installed.read_text(), "    192.0.2.20\n")
+        self.assertEqual(self.calls().count("--config-test"), 1)
+        self.assertIn("systemctl start keepalived", self.calls())
+        self.assertNotIn("reload", self.calls())
+
+    def test_a_running_keepalived_is_reloaded_when_its_file_changes(self) -> None:
+        self.conf.write_text("# Written by Haprion - a deploy replaces this file.\nold\n")
+
+        code, output = self.run_step("sync_keepalived")
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("interface ens18", self.conf.read_text())
+        self.assertIn("systemctl reload keepalived", self.calls())
+        self.assertNotIn("systemctl start", self.calls())
+
+    def test_a_file_a_person_wrote_is_left_alone(self) -> None:
+        mine = "vrrp_instance alpha {\n    include ADDRESSES\n}\n".replace(
+            "ADDRESSES", str(self.installed)
+        )
+        self.conf.write_text(mine)
+
+        code, output = self.run_step("sync_keepalived")
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.conf.read_text(), mine)
+        self.assertIn("written by a person; left as it is", output)
+
+    def test_a_refused_file_is_removed_again_and_nothing_starts(self) -> None:
+        code, output = self.run_step("sync_keepalived", ACTIVE_EXIT="3", TEST_EXIT="5")
+
+        self.assertEqual(code, 1)
+        self.assertFalse(self.conf.exists())
+        self.assertNotIn("systemctl start", self.calls())
+        self.assertIn("the published configuration was removed again", output)
+
+    def test_a_masked_keepalived_is_not_started(self) -> None:
+        # A node restored in test mode: someone took it out on purpose.
+        code, output = self.run_step("sync_keepalived", ACTIVE_EXIT="3", ENABLED="masked")
+
+        self.assertEqual(code, 0, output)
+        self.assertTrue(self.conf.exists())
+        self.assertNotIn("systemctl start", self.calls())
+
+    def test_no_interface_with_the_node_s_address_is_refused(self) -> None:
+        self.node_file.write_text(self.node_file.read_text().replace("192.0.2.11", "192.0.2.99"))
+
+        code, output = self.run_step("sync_keepalived", ACTIVE_EXIT="3")
+
+        self.assertEqual(code, 1)
+        self.assertFalse(self.conf.exists())
+        self.assertIn("no interface carries this node's address 192.0.2.99", output)
+
+    def test_the_mark_is_the_generator_s(self) -> None:
+        from haprion import keepalived_conf  # noqa: PLC0415
+
+        text = SCRIPT.read_text()
+        self.assertIn(f'KEEPALIVED_MARK="{keepalived_conf.MARK}"', text)
+        self.assertIn(
+            f'KEEPALIVED_INTERFACE_FROM_NODE="{keepalived_conf.INTERFACE_FROM_NODE}"', text
+        )
+        self.assertIn('keepalived/node-$(hostname).conf"', text)
+        self.assertEqual(keepalived_conf.file_name("x"), "node-x.conf")
+
+
 class OneReadingOfTheTopLevelInclude(unittest.TestCase):
     """`04-node-prepare` warns with the deploy's own awk program, not a second reading of it."""
 

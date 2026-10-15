@@ -90,6 +90,8 @@ class NodePackageBuildTests(unittest.TestCase):
         self.assertEqual(rows[f"{install}/lib.sh"], "-rw-r--r-- root/root")
         self.assertEqual(field(deb, "Architecture"), "all")
         self.assertIn("python3", field(deb, "Depends"))
+        # The product writes keepalived.conf on the nodes it set up (B313).
+        self.assertIn("keepalived", [name.strip() for name in field(deb, "Depends").split(",")])
 
     def test_two_builds_of_the_same_commit_are_byte_identical(self) -> None:
         first, _ = self.build("a")

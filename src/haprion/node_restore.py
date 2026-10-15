@@ -927,7 +927,9 @@ def overwrite_checks(cluster_id: str, cluster: Cluster, policy: PathPolicy) -> O
         identity = policy.status_identity
         if identity is None:
             return Standing(None, neighbour, False, "no status_identity in the runtime policy")
-        report = collect(cluster.nodes, lambda node: ask_node(node, identity), target=None)
+        report = collect(
+            cluster.nodes, lambda node: ask_node(node, identity), target=None, vip=cluster.vip
+        )
         try:
             parsed = parse_status(report.as_envelope(cluster_id, request_id=new_request_id()))
             own = parsed.node(name).owns_vip

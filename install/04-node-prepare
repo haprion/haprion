@@ -740,13 +740,12 @@ step "Keepalived"
 KA_CONF="/etc/keepalived/keepalived.conf"
 
 if [[ ! -f "$KA_CONF" ]]; then
-    if [[ -n "$(cluster_value VIP "$CLUSTER")" ]]; then
-        warn "cluster ${CLUSTER} has a virtual address but keepalived is not"
-        warn "  configured on this node. See docs/user-manual.md, 'HAProxy and keepalived baseline'"
-        warn "  for the configuration this project assumes, and why."
-    else
-        log "  skipped  cluster ${CLUSTER} has no virtual address"
-    fi
+    #
+    # For a cluster created in the interface the first deploy writes it (B313);
+    # one a person runs keepalived for gets it from them, as before.
+    #
+    log "  pending  ${KA_CONF}: the first deploy writes it for a cluster created in"
+    log "           the interface; otherwise see docs/user-manual.md, 'HAProxy and keepalived baseline'"
 else
     if grep -q haprion-keepalived-state "$KA_CONF"; then
         log "  ok       notify lines present"

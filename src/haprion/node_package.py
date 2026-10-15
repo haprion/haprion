@@ -96,8 +96,12 @@ FILES: dict[str, int] = {
     **{path: mode for path, (_, mode) in CONTENTS.items()},
     BUILD_FILE: 0o644,
 }
-DEPENDS = "python3, sudo, rsyslog, rsyslog-gnutls, haproxy, ipvsadm"
-RECOMMENDS = "keepalived"
+#
+# keepalived is a dependency since the product writes its configuration on the
+# nodes of a cluster it created (B313); before, a person did, and it was only
+# recommended.
+#
+DEPENDS = "python3, sudo, rsyslog, rsyslog-gnutls, haproxy, ipvsadm, keepalived"
 #
 # Nothing to start and nothing to stop: the scripts run when the manager asks.
 # The first installation says what comes next, and an upgrade is complete when
@@ -215,7 +219,6 @@ def write_package(
                     "Version": version,
                     "Architecture": ARCHITECTURE,
                     "Depends": DEPENDS,
-                    "Recommends": RECOMMENDS,
                     "Section": "net",
                     "Priority": "optional",
                     "Description": "Haprion node scripts and configuration step\n"

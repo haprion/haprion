@@ -156,7 +156,9 @@ def read_status(cluster: Cluster, identity: DeployIdentity) -> ClusterStatus:
     underneath it mid-run.
     """
 
-    report = collect(cluster.nodes, lambda node: ask_node(node, identity), target=None)
+    report = collect(
+        cluster.nodes, lambda node: ask_node(node, identity), target=None, vip=cluster.vip
+    )
     return parse_status(report.as_envelope(cluster.cluster_id, request_id=new_request_id()))
 
 

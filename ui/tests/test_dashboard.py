@@ -150,6 +150,28 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(cluster.nodes[0].keepalived, "STOPPED")
         self.assertEqual(cluster.nodes[0].label, "Keepalived fault")
 
+    def test_a_node_without_keepalived_conf_is_not_configured_rather_than_faulty(self) -> None:
+        # B313: before the product's first deploy there is nothing to have failed.
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        nodes[0]["status"] = dict(nodes[0]["status"])
+        nodes[0]["status"]["keepalived"] = {"active": False, "state": None, "configured": "missing"}
+        result["nodes"] = nodes
+        cluster = self.dashboard(
+            ClusterStatus(
+                cluster=status.cluster,
+                observed_at=status.observed_at,
+                outcome=status.outcome,
+                result=result,
+                warnings=status.warnings,
+                error=status.error,
+                poll_error=None,
+            )
+        ).clusters[0]
+        self.assertEqual(cluster.nodes[0].label, "Keepalived not configured")
+        self.assertEqual(cluster.nodes[0].tone, "warning")
+
     def test_stats_failure_is_distinct_from_an_unreachable_node(self) -> None:
         status = reading("done-single-owner.json")
         result = dict(status.result)

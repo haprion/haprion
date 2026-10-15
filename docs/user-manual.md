@@ -4569,9 +4569,19 @@ and a few MB for each further one, and HAProxy keeps the rest. The DNS listener 
 One vCPU is where a node starts, not what every node needs. CPU follows the traffic: requests a
 second, new TLS connections - a handshake costs far more than a request on an open connection -
 and, most of all, the WAF engine, which reads every request of an object it guards, more so at a
-higher paranoia level. How far one vCPU goes also depends on the processor behind it. Only the
-node holding the VIP carries the traffic, so a busier cluster needs larger nodes, not more of
-them. The dashboard shows each node's CPU and memory in use and marks a cluster at 85 %; give
+higher paranoia level. How far one vCPU goes also depends on the processor behind it. As a rough
+guide, one vCPU at full load, with small requests and answers, a backend that answers at once
+and the traffic log on:
+
+| | Connections reused | A new TLS connection per request |
+|---|---|---|
+| without the WAF | about 6 900 requests a second | about 1 250 |
+| WAF, paranoia 1 | about 1 100 | about 700 |
+| WAF, paranoia 4 | about 750 | about 500 |
+
+At a tenth of those rates a node uses roughly a sixth to a quarter of its vCPU. Larger bodies,
+slower backends and more rules lower them. Only the node holding the VIP carries the traffic,
+so a busier cluster needs larger nodes, not more of them. The dashboard shows each node's CPU and memory in use and marks a cluster at 85 %; give
 the nodes more vCPUs before they get there.
 
 

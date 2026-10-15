@@ -212,7 +212,11 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
     for (cluster, operation), job in newest.items():
         if job.state not in UNSETTLED:
             continue
-        label = jobs_module.FAILURE_LABELS.get(operation, f"{operation} did not work")
+        label = (
+            jobs_module.failure_label(job)
+            if jobs_module.action_names(job) or operation in jobs_module.FAILURE_LABELS
+            else f"{operation} did not work"
+        )
         when = job.finished_at or job.created_at
         items.append(
             Item(

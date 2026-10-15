@@ -2,6 +2,7 @@
 {% from "_back.html" import back_button %}
 {% block title %}Nodes — {{ cluster }} — Haprion{% endblock %}
 {% block content %}
+<script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 {#
   One cluster's nodes (Fas 16, B211). Adding reads the block 04-node-prepare
   printed on the node; the root helper writes six files, asks the node for its
@@ -21,7 +22,7 @@
 
 <div class="cluster-list">
 <section class="cluster-card settings-card {{ accent | accent_class }}">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Nodes</h3></div></div>{% if running %}<span class="status-badge status-badge-info">{{ running }}</span>{% elif cluster_removable and not cluster_removal %}<div class="cluster-state"><form method="post" action="/settings/nodes/{{ cluster }}/remove-cluster" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button">Remove cluster</button></form></div>{% endif %}</header>
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Nodes</h3></div></div>{% if running %}<span class="status-badge status-badge-info" data-busy="{{ cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>{% elif cluster_removable and not cluster_removal %}<div class="cluster-state"><form method="post" action="/settings/nodes/{{ cluster }}/remove-cluster" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button">Remove cluster</button></form></div>{% endif %}</header>
   <div class="table-scroll"><table class="node-table settings-node-table">
     <thead><tr><th>Node</th><th>Host</th><th>VIP</th><th><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>

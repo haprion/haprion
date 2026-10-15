@@ -16,11 +16,12 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
+from uuid import uuid4
 
 from haprion import node_enrollment
 from haprion.node_enrollment import Enrollment
 
-from haprion_ui import auth, cluster_nodes, demo
+from haprion_ui import auth, cluster_nodes, db, demo
 from haprion_ui.db import ManagerCertificates
 from tests.test_login import configuration
 from tests.test_queue_route import KEY, QueueRouteTestCase
@@ -140,6 +141,35 @@ class ThePage(NodesPage):
         card = page.split('id="nodes"')[1].split("</section>")[0]
         self.assertIn('href="/settings/new-cluster"', card)
         self.assertNotIn("<table", card)
+
+
+class AJobOnThePage(NodesPage):
+    """The badge said "Changing nodes" and stayed after the job was done (Fas 18, 26-10-15)."""
+
+    def test_a_running_addition_is_named_and_the_page_waits_for_it(self) -> None:
+        running = db.Job(
+            id=7,
+            request_id=uuid4(),
+            operation="cluster_node",
+            cluster="edge-demo",
+            payload={"action": "add", "block": "b", "host": "edge-c.example.com"},
+            state="running",
+            created_at=NOW,
+            started_at=NOW,
+            finished_at=None,
+            exit_code=None,
+            outcome=None,
+            result=None,
+            stderr_excerpt=None,
+            idempotency_key=None,
+            attempts=1,
+        )
+        with mock.patch("haprion_ui.db.recent_jobs", return_value=[running]):
+            page = self.client_for().get("/settings/nodes/edge-demo")
+        self.assertIn("Adding node", page.text)
+        self.assertNotIn("Changing nodes", page.text)
+        self.assertIn('data-busy="edge-demo"', page.text)
+        self.assertIn("/static/waiting.js", page.text)
 
 
 class AddingANode(NodesPage):

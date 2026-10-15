@@ -579,7 +579,7 @@ def _view(
     ended_badly = job.state in ATTENTION
     return JobView(
         id=job.id,
-        operation=_operation(job.operation),
+        operation=named[0] if (named := action_names(job)) else _operation(job.operation),
         #
         # The same dash the other unknown cells use. A certificate job has no
         # cluster - its scope is the registry - and the column has to say that
@@ -768,6 +768,45 @@ def build_job_overview(
 # What the cluster column shows for an operation that has no cluster.
 NO_CLUSTER = "—"
 
+#
+# One operation, several things a person did (Fas 18, 26-10-15): a node
+# added, removed or moved, a cluster created or removed. Named by the action
+# the job carries - the list, the running badge and the failure in the same
+# words - and by the operation's own name when the payload has no action.
+#
+ACTION_NAMES: dict[tuple[str, str], tuple[str, str, str]] = {
+    ("cluster_node", "add"): ("Add node", "Adding node", "Adding the node failed"),
+    ("cluster_node", "remove"): ("Remove node", "Removing node", "Removing the node failed"),
+    ("cluster_node", "host"): ("Change node host", "Changing node host", "Host change failed"),
+    ("cluster_define", "add"): (
+        "Create cluster",
+        "Creating cluster",
+        "Creating the cluster failed",
+    ),
+    ("cluster_define", "remove"): (
+        "Remove cluster",
+        "Removing cluster",
+        "Removing the cluster failed",
+    ),
+}
+
+
+def action_names(job: Job) -> tuple[str, str, str] | None:
+    """The job's name, running label and failure label by its action, if it has one."""
+
+    action = job.payload.get("action") if isinstance(job.payload, dict) else None
+    return ACTION_NAMES.get((job.operation, action)) if isinstance(action, str) else None
+
+
+def failure_label(job: Job, operation: str | None = None) -> str:
+    """What a job that did not work is called; `operation` overrides the job's own."""
+
+    operation = operation or job.operation
+    if operation == job.operation and (named := action_names(job)):
+        return named[2]
+    return FAILURE_LABELS.get(operation, operation)
+
+
 RUNNING_LABELS = {
     "backup_run": "Backing up nodes",
     "backup_schedule": "Changing backup schedule",
@@ -887,7 +926,7 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
         )
         verdicts[job.cluster] = (
             Failure(
-                label=FAILURE_LABELS.get(operation, operation),
+                label=failure_label(job, operation),
                 code=error_code(job),
             )
             if job.state in ATTENTION
@@ -954,4 +993,6 @@ def running_label(job: Job) -> str:
 
     if job.operation == "changes_publish" and deploys(job):
         return PUBLISH_AND_DEPLOY
+    if named := action_names(job):
+        return named[1]
     return RUNNING_LABELS.get(job.operation, job.operation)

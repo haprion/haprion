@@ -326,6 +326,27 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
             attempts=0,
         )
 
+    def test_a_node_or_cluster_job_is_named_by_its_action(self) -> None:
+        # One operation, several things done (Fas 18, 26-10-15): "Changing
+        # nodes" for an added node told nobody which.
+        for operation, action, running, failed in (
+            ("cluster_node", "add", "Adding node", "Adding the node failed"),
+            ("cluster_node", "remove", "Removing node", "Removing the node failed"),
+            ("cluster_node", "host", "Changing node host", "Host change failed"),
+            ("cluster_define", "add", "Creating cluster", "Creating the cluster failed"),
+            ("cluster_define", "remove", "Removing cluster", "Removing the cluster failed"),
+        ):
+            with self.subTest(operation=operation, action=action):
+                payload = {"action": action}
+                busy = jobs.in_flight([self.job("alpha", operation, "running", payload)])
+                self.assertEqual(busy, {"alpha": running})
+                failure = jobs.last_failure([self.job("alpha", operation, "failed", payload)])
+                self.assertEqual(failure["alpha"].label, failed)
+
+    def test_without_an_action_the_operation_names_it(self) -> None:
+        busy = jobs.in_flight([self.job("alpha", "cluster_node", "running")])
+        self.assertEqual(busy, {"alpha": "Changing nodes"})
+
     def test_a_running_job_names_what_it_is_doing(self) -> None:
         busy = jobs.in_flight([self.job("alpha", "deploy", "running")])
 

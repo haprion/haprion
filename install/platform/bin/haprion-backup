@@ -67,7 +67,7 @@ psql_scratch() { sudo -u postgres psql -qtAX -v ON_ERROR_STOP=1 "$@"; }
 # Named rather than discovered, so a restore that silently produced an empty
 # schema cannot pass by matching zero against zero.
 #
-TABLES=(app_user app_session audit_event login_attempt job)
+TABLES=(alembic_version app_user app_session audit_event login_attempt job)
 
 #
 # `how` is the name of one of the two functions above, so the caller states
@@ -99,6 +99,18 @@ archive_counts() {
                 | awk '/^COPY /{rows=1; next} /^\\\.$/{rows=0} rows{count++} END{print count+0}'
         )"
     done
+}
+
+#
+# A row count of zero everywhere would compare equal against an empty restore,
+# so the restore must bring back the schema's version: every migrated
+# database holds exactly one row in alembic_version, the newest installation
+# too, before it has an account.
+#
+restore_brought_back() {
+    local restored="$1"
+    [[ "$(grep '^alembic_version=' <<<"$restored" | cut -d= -f2)" == 1 ]] \
+        || die "the restored database holds no schema version; the restore brought nothing back"
 }
 
 do_dump() {
@@ -228,25 +240,24 @@ do_verify_restore() {
         fi
     done <<<"$expected"
 
-    #
-    # A row count of zero everywhere would compare equal against an empty
-    # restore, so the account table is required to be non-empty: an installation
-    # with no accounts cannot be signed into, and a backup of one is not worth
-    # verifying.
-    #
-    [[ "$(grep '^app_user=' <<<"$restored" | cut -d= -f2)" -gt 0 ]] \
-        || die "the restored database holds no accounts; this proves nothing"
+    restore_brought_back "$restored"
 
     #
     # Counts can match while the data is unusable, so one row is read back in
-    # full: the newest account's hash must still verify as an Argon2id hash.
+    # full: the newest account's hash must still verify as an Argon2id hash. A
+    # new installation has none yet - haprion-setup asks for the first account
+    # after its last step - and the weekly check reads it back once there is.
     #
-    local hash
-    hash="$(psql_scratch -d "$scratch" -c \
-        "select password_hash from app_user order by id limit 1")"
-    # shellcheck disable=SC2016  # the literal dollar signs are the prefix being matched
-    [[ "$hash" == '$argon2id$'* ]] || die "a restored password hash is not Argon2id"
-    log "  ok       a restored password hash is intact"
+    if [[ "$(grep '^app_user=' <<<"$restored" | cut -d= -f2)" -gt 0 ]]; then
+        local hash
+        hash="$(psql_scratch -d "$scratch" -c \
+            "select password_hash from app_user order by id limit 1")"
+        # shellcheck disable=SC2016  # the literal dollar signs are the prefix being matched
+        [[ "$hash" == '$argon2id$'* ]] || die "a restored password hash is not Argon2id"
+        log "  ok       a restored password hash is intact"
+    else
+        log "  ok       no account yet; a password hash is read back once there is one"
+    fi
 
     [[ "$mismatch" -eq 0 ]] || die "the restore does not match the archive"
 

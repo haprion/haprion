@@ -104,5 +104,41 @@ class TheRestoreCheck(unittest.TestCase):
         self.assertIn('die "the restore does not match the archive"', verify)
 
 
+class ANewInstallationIsBackedUpBeforeItHasAnAccount(unittest.TestCase):
+    """haprion-setup asks for the first account after its last step, and step
+    06 proves the first dump by restoring it: the check refused a restore with
+    no account and stopped every new installation (26-10-15, the install
+    test). The schema's version row is what an empty restore lacks."""
+
+    def brought_back(self, restored: str) -> subprocess.CompletedProcess[str]:
+        source = SCRIPT.read_text()
+        program = (
+            "set -Eeuo pipefail\n"
+            'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+            + function("restore_brought_back", source)
+            + 'restore_brought_back "$1"\n'
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program, "bash", restored],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_a_restore_with_the_version_and_no_account_is_proven(self) -> None:
+        done = self.brought_back("alembic_version=1\napp_user=0\njob=0")
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_a_restore_without_the_version_brought_nothing_back(self) -> None:
+        done = self.brought_back("alembic_version=0\napp_user=0\njob=0")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("brought nothing back", done.stderr)
+
+    def test_the_version_is_counted_and_an_account_is_not_required(self) -> None:
+        source = SCRIPT.read_text()
+        self.assertIn("TABLES=(alembic_version ", source)
+        self.assertNotIn("holds no accounts", source)
+
+
 if __name__ == "__main__":
     unittest.main()

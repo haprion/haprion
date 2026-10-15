@@ -141,13 +141,17 @@ activate() {
             cp -a "${backup}/cert" "$TLS_CERT"
             cp -a "${backup}/key" "$TLS_KEY"
             rm -rf "$backup"
-            nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+            nginx -t >/dev/null 2>&1 && systemctl try-reload-or-restart nginx || true
             die "nginx rejected the new pair; the previous one has been restored"
         fi
         die "nginx rejected the new pair, and there was no previous one to restore"
     fi
 
-    systemctl reload nginx
+    #
+    # A stopped nginx is left stopped: on a first installation 05-platform-nginx
+    # starts it once the site is in place, and a reload of it would fail.
+    #
+    systemctl try-reload-or-restart nginx
     log "  reloaded nginx"
     [[ -n "$backup" ]] && rm -rf "$backup"
     publish_copy

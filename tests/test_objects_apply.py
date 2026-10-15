@@ -208,6 +208,26 @@ class ObjectsFromFiles(unittest.TestCase):
             answer["error"], {"code": "changes_invalid", "message": "no VIP named edge"}
         )
 
+    def test_haproxy_s_words_on_a_refused_candidate_are_shown(self) -> None:
+        # The install test (Fas 18): `apply` said the candidate was invalid
+        # and not why, where `haprion-publish` shows HAProxy's text.
+        fakes = Fakes({})
+        words = "[ALERT] config : parsing [haproxy.cfg:12] : unknown keyword 'bogus'"
+        fakes.refuse = {
+            "code": "candidate_invalid",
+            "message": "these changes did not produce a valid HAProxy candidate.",
+            "details": {"diagnostics": words},
+        }
+        self.write("shop", document("shop"))
+
+        code, _, err = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root))
+        self.assertEqual(code, 65)
+        self.assertIn(words, err)
+
+        code, out, _ = self.run_cli(fakes, "apply", "-c", "alpha", str(self.root), "--json")
+        answer = assert_contract("haprion-objects-apply", out)
+        self.assertEqual(answer["error"]["details"], {"diagnostics": words})
+
     def test_reading_still_works_as_before(self) -> None:
         fakes = Fakes({"shop": document("shop")})
 

@@ -302,6 +302,19 @@ is_packaged_conffile() {
         && [[ "$(md5sum < "$path" | cut -d' ' -f1)" == "$recorded" ]]
 }
 
+#
+# An empty directory that dpkg records as the package's own - nothing a person
+# put there.
+#
+is_packaged_empty_dir() {
+    local package="$1" path="$2"
+    [[ -d "$path" && ! -L "$path" && -z "$(ls -A "$path")" ]] || return 1
+    dpkg-query -S "$path" 2>/dev/null \
+        | awk -v path="$path" -v package="$package" -F': ' '
+            $2 == path { n = split($1, owners, ", "); for (i = 1; i <= n; i++) if (owners[i] == package) found = 1 }
+            END { exit !found }'
+}
+
 ensure_group() {
     local group="$1"
     if getent group "$group" >/dev/null; then

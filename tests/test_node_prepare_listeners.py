@@ -200,7 +200,7 @@ class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
         self.etc = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.etc)
 
-    def link(self, packaged: bool) -> subprocess.CompletedProcess[str]:
+    def link(self, packaged: bool, name: str = "haproxy.cfg") -> subprocess.CompletedProcess[str]:
         body = function(self.script, "link_into_current").replace("/etc/haproxy/", f"{self.etc}/")
         verdict = "true" if packaged else "false"
         return subprocess.run(  # noqa: S603 - fixed interpreter, the step's own function
@@ -208,7 +208,8 @@ class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
                 "/bin/bash",
                 "-c",
                 f'log() {{ echo "$*"; }}; warn() {{ echo "WARNING: $*"; }}; '
-                f"is_packaged_conffile() {{ {verdict}; }}; {body} link_into_current haproxy.cfg",
+                f"is_packaged_conffile() {{ {verdict}; }}; is_packaged_empty_dir() {{ {verdict}; }}; "
+                f"{body} link_into_current {name}",
             ],
             capture_output=True,
             text=True,
@@ -228,6 +229,20 @@ class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
         self.assertIn("not touching it", done.stdout)
         self.assertEqual((self.etc / "haproxy.cfg").read_text(), "mine\n")
         self.assertFalse((self.etc / "haproxy.cfg.packaged").exists())
+
+    def test_the_package_s_empty_conf_d_gives_way_to_the_release_s(self) -> None:
+        (self.etc / "conf.d").mkdir()
+        done = self.link(packaged=True, name="conf.d")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(os.readlink(self.etc / "conf.d"), "current/conf.d")
+        self.assertNotIn("WARNING", done.stdout)
+
+    def test_a_conf_d_of_the_operator_s_is_left_alone(self) -> None:
+        (self.etc / "conf.d").mkdir()
+        (self.etc / "conf.d" / "mine.cfg").write_text("mine\n")
+        done = self.link(packaged=False, name="conf.d")
+        self.assertIn("not touching it", done.stdout)
+        self.assertTrue((self.etc / "conf.d" / "mine.cfg").exists())
 
     def test_without_a_node_path_the_node_takes_the_cluster_id(self) -> None:
         found = re.search(r'^node_path="\$\(cluster_value .*?\n(?=\n)', self.script, re.M | re.S)

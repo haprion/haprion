@@ -106,7 +106,7 @@ def main(
         if args.json:
             write_document(writer, envelope(OPERATION, cluster, "failed", None, refused))
         else:
-            errors.write(f"ERROR: {refused}\n")
+            errors.write(refused.report())
         return refused.exit_code
     published = [v for v in versions if v.get("changed")]
     summary = {

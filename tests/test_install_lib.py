@@ -151,6 +151,43 @@ class ThePackagesOwnConfigurationFile(unittest.TestCase):
         self.assertFalse(self.packaged(self.sample_md5))
 
 
+class ThePackagesOwnEmptyDirectory(unittest.TestCase):
+    """is_packaged_empty_dir: empty, and dpkg names the package among its owners."""
+
+    def setUp(self) -> None:
+        self.work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.work)
+        self.directory = self.work / "conf.d"
+        self.directory.mkdir()
+
+    def packaged(self, owners: str) -> bool:
+        # dpkg-query -S: "<package>[, <package>...]: <path>"
+        fake = 'dpkg-query() { [[ -n "$OWNERS" ]] && printf "%s: %s\\n" "$OWNERS" "$DIR"; }; '
+        done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+            [
+                "/bin/bash",
+                "-c",
+                f'source "$0"; {fake} is_packaged_empty_dir haproxy "$DIR"',
+                str(LIB),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "DIR": str(self.directory), "OWNERS": owners},
+        )
+        return done.returncode == 0
+
+    def test_an_empty_directory_of_the_package_s_is_its(self) -> None:
+        self.assertTrue(self.packaged("haproxy"))
+        self.assertTrue(self.packaged("other, haproxy"))
+
+    def test_one_with_a_file_in_it_or_of_another_package_is_not(self) -> None:
+        self.assertFalse(self.packaged(""))
+        self.assertFalse(self.packaged("haproxy-other"))
+        (self.directory / "mine.cfg").write_text("mine\n")
+        self.assertFalse(self.packaged("haproxy"))
+
+
 if __name__ == "__main__":
     unittest.main()
 

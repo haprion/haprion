@@ -236,6 +236,7 @@ def publish(
                 refused.code,
                 f"{refused}; {len(answers)} earlier batch(es) published",
                 refused.exit_code,
+                refused.details,
             ) from refused
         answers.append(dict(result))
         head = str(result.get("hash") or head)
@@ -312,7 +313,7 @@ def main(
         if args.json:
             write_document(writer, envelope(OPERATION, cluster, "failed", None, refused))
         else:
-            errors.write(f"ERROR: {refused}\n")
+            errors.write(refused.report())
         return refused.exit_code
     summary = _summary(plan, check=args.check, versions=versions)
     if args.json:

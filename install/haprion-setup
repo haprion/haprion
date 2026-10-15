@@ -135,15 +135,18 @@ add_step "the database's permissions" \
     "read the log for the line before the error" \
     "./platform/03-verify"
 #
-# Before the first activation the parts step 07 installs are not there yet;
-# the check after step 07 is the one that reads them.
+# The release's compatibility is checked before it is activated, and only
+# then: once current is this release, the check after the last step reads
+# everything, and a rerun after a stop before step 07 would otherwise fail
+# on the parts step 07 has not installed yet.
 #
-first_install=""
-[[ -e "${UI_ROOT}/current" || -L "${UI_ROOT}/current" ]] || first_install=" --first-install"
-add_step "the release's compatibility" \
-    "read the log; it names what does not match" \
-    "./platform/check-compatibility --release ${release_id}${first_install}"
-if [[ "$(readlink -f "${UI_ROOT}/current" 2>/dev/null || true)" != "${releases}/${release_id}" ]]; then
+activation="$(setup_activation "$UI_ROOT" "$release_id")"
+if [[ "$activation" != "done" ]]; then
+    first_install=""
+    [[ "$activation" == first ]] && first_install=" --first-install"
+    add_step "the release's compatibility" \
+        "read the log; it names what does not match" \
+        "./platform/check-compatibility --release ${release_id}${first_install}"
     add_step "activating the web interface" \
         "read the log; the release's own check names what is missing" \
         "./platform/install-ui-release --no-first-account ${release_id}"

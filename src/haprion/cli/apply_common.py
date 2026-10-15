@@ -29,10 +29,31 @@ type RunPublish = Callable[[str], subprocess.CompletedProcess[str]]
 
 
 class Refused(Exception):
-    def __init__(self, code: str, message: str, exit_code: int = EXIT_REFUSED) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        exit_code: int = EXIT_REFUSED,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
+        #
+        # The helper's own details, passed on: HAProxy's words on a candidate
+        # it refused are the only way to find the line (Fas 18, the install
+        # test: `apply` said only that the candidate was invalid).
+        #
+        self.details = dict(details) if details else None
+
+    def report(self) -> str:
+        """The refusal as the terminal shows it, with HAProxy's words when there are any."""
+
+        diagnostics = (self.details or {}).get("diagnostics")
+        text = f"ERROR: {self}\n"
+        if not isinstance(diagnostics, str) or not diagnostics.strip():
+            return text
+        return text + f"\n{diagnostics.rstrip()}\n"
 
 
 def envelope(
@@ -52,6 +73,7 @@ def envelope(
         else {
             "code": error.code if CODE.fullmatch(error.code) else "refused",
             "message": (str(error) or error.code)[:MAX_MESSAGE],
+            **({"details": error.details} if error.details else {}),
         },
     }
 
@@ -75,10 +97,12 @@ def answer_of(completed: subprocess.CompletedProcess[str], operation: str) -> Ma
         )
     error = answer.get("error")
     if isinstance(error, Mapping):
+        details = error.get("details")
         raise Refused(
             str(error.get("code") or "refused"),
             str(error.get("message") or "refused"),
             completed.returncode or EXIT_REFUSED,
+            details if isinstance(details, Mapping) else None,
         )
     result = answer.get("result")
     if not isinstance(result, Mapping):

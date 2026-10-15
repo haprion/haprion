@@ -638,7 +638,38 @@ class TheSetupRunsEveryStep(unittest.TestCase):
         self.assertIn(
             '"./platform/check-compatibility --release ${release_id}${first_install}"', text
         )
-        self.assertIn('first_install=" --first-install"', text)
+        self.assertIn('[[ "$activation" == first ]] && first_install=" --first-install"', text)
+
+
+class ARerunAfterActivationSkipsTheCheckBeforeIt(unittest.TestCase):
+    """A run that stopped after the activation and before step 07 was rerun
+    and failed the check before activation on the parts step 07 installs
+    (26-10-15, the install test): once current is the release, that check is
+    left to the one after the last step."""
+
+    def activation(self, root: Path) -> str:
+        done = bash(STRICT + 'setup_activation "$2" "$3"', str(SETUP), str(root), "0.8.0-abc")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout.strip()
+
+    def test_each_state_of_current(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "releases" / "0.8.0-abc").mkdir(parents=True)
+            (root / "releases" / "0.8.0-old").mkdir()
+            self.assertEqual(self.activation(root), "first")
+            (root / "current").symlink_to("releases/0.8.0-old")
+            self.assertEqual(self.activation(root), "other")
+            (root / "current").unlink()
+            (root / "current").symlink_to("releases/0.8.0-abc")
+            self.assertEqual(self.activation(root), "done")
+
+    def test_the_driver_adds_the_check_and_the_activation_only_before_it(self) -> None:
+        text = DRIVER.read_text()
+        block = text[text.index('if [[ "$activation" != "done" ]]; then') :]
+        block = block[: block.index("\nfi\n")]
+        self.assertIn("./platform/check-compatibility --release", block)
+        self.assertIn("./platform/install-ui-release --no-first-account", block)
 
 
 class WhatLibShReadsShipsWithIt(unittest.TestCase):

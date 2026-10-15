@@ -347,6 +347,15 @@ link_into_current() {
         mv "$path" "${path}.packaged"
         log "  moved    ${path} -> ${path}.packaged  (the haproxy package's sample, unchanged)"
     fi
+    #
+    # The same package from haproxy.debian.net also ships an empty conf.d, which
+    # its unit reads with -f (Fas 18, the install test): the release's takes
+    # its place. A conf.d with anything in it is left alone below.
+    #
+    if [[ "$name" == conf.d ]] && is_packaged_empty_dir haproxy "$path"; then
+        rmdir "$path"
+        log "  removed  ${path}  (the haproxy package's empty directory)"
+    fi
     if [[ -e "$path" ]]; then
         warn "${path} exists and is not a symlink - not touching it"
         warn "  move it aside, then run this step again"

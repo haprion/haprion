@@ -115,6 +115,26 @@ setup_check_clock() {
 }
 
 #
+# Where the web interface's release stands: `first` with no release active,
+# `other` with another one current, `done` when current is this one already.
+# Before the first activation the parts platform step 07 installs - the
+# worker's unit, its sudo rules, the helper sockets - are not there yet.
+#
+setup_activation() {
+    local ui_root="$1" release_id="$2" current
+    if [[ ! -e "${ui_root}/current" && ! -L "${ui_root}/current" ]]; then
+        echo first
+        return
+    fi
+    current="$(readlink -f "${ui_root}/current" 2>/dev/null || true)"
+    if [[ "$current" == "$(readlink -f "${ui_root}/releases/${release_id}")" ]]; then
+        echo "done"
+    else
+        echo other
+    fi
+}
+
+#
 # The problems, all of them, in the same shape as a failed step.
 #
 setup_report_problems() {

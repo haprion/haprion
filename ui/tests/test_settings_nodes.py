@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -230,6 +231,22 @@ class RemovingANode(NodesPage):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIn("Type edge-b to remove it", response.text)
         self.assertEqual(self.queued, [])
+
+    def test_a_pair_offers_remove_on_the_node_without_the_vip(self) -> None:
+        # The page counted "more than two" from before B302 and offered nothing
+        # on a pair the removal would have accepted (Fas 18, 26-10-15).
+        rows = cluster_nodes.node_rows(
+            next(row for row in demo.status_rows(NOW) if row.cluster == "edge-demo")
+        )
+        self.assertEqual(len(rows), 2)
+        owner = next(row.name for row in rows if row.owner)
+        other = next(row.name for row in rows if not row.owner)
+        page = self.client_for().get("/settings/nodes/edge-demo").text
+        forms = re.findall(
+            r'action="/settings/nodes/edge-demo/remove".*?name="node" value="([^"]+)"', page
+        )
+        self.assertEqual(forms, [other])
+        self.assertNotIn(owner, forms)
 
     def test_the_last_node_stays(self) -> None:
         self.assertEqual(

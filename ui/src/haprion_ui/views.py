@@ -4992,6 +4992,7 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
         listed = listed_clusters(request, config)
+        rows = cluster_nodes.node_rows(_status_row(request, cluster))
         return TEMPLATES.TemplateResponse(
             request,
             "settings-nodes.html",
@@ -5000,7 +5001,15 @@ def build_router(config: Config) -> APIRouter:
                 "section": "settings",
                 "cluster": cluster,
                 "accent": cluster_identity.accent_index(cluster),
-                "nodes": cluster_nodes.node_rows(_status_row(request, cluster)),
+                "nodes": rows,
+                #
+                # The button follows the rule the removal is checked with, so
+                # the two cannot disagree (Fas 18, 26-10-15: a count of two left
+                # from before B302 hid it on every two-node cluster).
+                #
+                "removable_nodes": {
+                    row.name for row in rows if cluster_nodes.removable(rows, row.name) is None
+                },
                 "running": jobs.in_flight(recent).get(cluster),
                 "addition": addition,
                 "removal": removal,

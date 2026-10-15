@@ -4774,15 +4774,16 @@ the new configuration breaks, it breaks on the node not carrying traffic, and th
 reaching the other one. That protection is only real if the owner is actually known — which is why
 the three points above are part of the installation and not an operational detail.
 
-**One more assumption, in the cluster's own configuration rather than the node's.** Status and
-metrics are read from a local HAProxy stats socket, so the published configuration is expected to
-contain a line like:
+**One more line, in the cluster's own configuration rather than the node's.** Status and
+statistics are read from a local HAProxy stats socket. A cluster made by *Create cluster*,
+`haprion-cluster` or step 1 has it in its `core/haproxy.cfg` from the start; a core written by hand
+needs it, or every node of the cluster reads *Stats unavailable* while it serves:
 
 ```text
 stats socket /run/haproxy/ui-status.sock mode 660 level user
 ```
 
-`level user` is read-only — enough for status and metrics, not enough to change anything. It is a
+`level user` is read-only — enough for status and statistics, not enough to change anything. It is a
 local socket and must not be exposed on the network. An existing admin socket is separate and is not
 replaced by it.
 

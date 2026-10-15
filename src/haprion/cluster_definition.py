@@ -80,10 +80,11 @@ MAX_DISPLAY_NAME = 64
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 #
-# The layout every cluster's repository starts with, the same directories and
-# files `01-manager-prepare` seeds. A test holds the two together: the core
-# template below must carry every line of the script's, and adds only the TLS
-# defaults, which the script leaves for the operator to paste.
+# The layout every cluster's repository starts with: Create cluster writes it,
+# and `01-manager-prepare` asks for it through `haprion-cluster-config --seed`,
+# so there is one template and not two that drift apart (they did: the
+# script's copy lacked the stick counters, and neither opened the status
+# socket - Fas 18 finding 53).
 #
 SEED_DIRECTORIES = (
     "core/conf.d",
@@ -107,6 +108,12 @@ SHM_STATS_FILE = "/run/haproxy/stats.shm"
 # 600, so only root opens it. Named in the core template below.
 #
 MANAGER_SOCKET = "/run/haproxy/manager.sock"
+#
+# The socket node status reads HAProxy's counters and version from
+# (`haprion-node-status`, RUNTIME_SOCKET): read-only. Without it every node
+# of the cluster reads *Stats unavailable* while it serves.
+#
+STATUS_SOCKET = "/run/haproxy/ui-status.sock"
 CORE_TEMPLATE = """#
 # The handwritten `global` and `defaults` for this cluster. Generated
 # configuration is assembled behind this file and never edits it.
@@ -128,6 +135,10 @@ global
     # The manager's own runtime socket, root only: drain, maintenance and
     # ready per server (docs/user-manual.md, 'Node scripts').
     stats socket /run/haproxy/manager.sock mode 600 level admin
+
+    # Status and statistics for the interface, read-only (docs/user-manual.md,
+    # 'HAProxy and keepalived baseline').
+    stats socket /run/haproxy/ui-status.sock mode 660 level user
 
     # Stick counter slots: dynamic blocking counts on the fourth and marks on
     # the fifth (docs/user-manual.md, 'Dynamic blocking').
@@ -169,17 +180,21 @@ NETWORK = """# Where traffic arrives, where it leaves from, and who may
 vips:
   main:
     address: {vip}
-default_vip: main
+{source}default_vip: main
 """
 
 
-def seed_files(vip: str) -> dict[str, bytes]:
+def seed_files(vip: str | None, source: str | None = None) -> dict[str, bytes]:
+    """A new cluster's repository; without a VIP, no network description yet."""
+
     files = {
         ".gitignore": GITIGNORE.encode(),
         "core/haproxy.cfg": CORE_TEMPLATE.format(tls=tls_policy.core_defaults_lines()).encode(),
         "manual/reservations.yaml": RESERVATIONS.encode(),
-        "managed/network.yaml": NETWORK.format(vip=vip).encode(),
     }
+    if vip:
+        line = f"    source: {source}\n" if source else ""
+        files["managed/network.yaml"] = NETWORK.format(vip=vip, source=line).encode()
     for directory in SEED_DIRECTORIES:
         files[f"{directory}/.gitkeep"] = b""
     return files

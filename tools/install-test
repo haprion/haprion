@@ -45,6 +45,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 PODMAN = "podman"
 CLUSTER = "alpha"
@@ -344,9 +345,25 @@ class Run:
         for role in NODES:
             self.on(role, "systemctl is-active haproxy keepalived")
 
-    def status(self) -> dict[str, object]:
-        _, output = self.on("mgr", f"haprion-status -c {CLUSTER} --json")
+    def status(self) -> dict[str, Any]:
+        _, output = self.on("mgr", f"haprion-status -c {CLUSTER} --json", check=False)
         return dict(json.loads(output))
+
+    def statistics_reported(self) -> None:
+        """Every node reads its HAProxy's statistics: the dashboard's numbers.
+
+        A new cluster's core once opened no status socket, and every node of
+        it read *Stats unavailable* while serving (Fas 18 finding 53).
+        """
+
+        nodes = self.status()["result"]["nodes"]
+        silent = [
+            node["name"]
+            for node in nodes
+            if not (isinstance(node.get("status"), dict) and node["status"].get("stats_ok"))
+        ]
+        if silent or len(nodes) != len(NODES):
+            raise Failed(f"no statistics from {silent or 'the missing nodes'}")
 
     def save_logs(self) -> None:
         for role in ("mgr", *NODES):
@@ -440,6 +457,7 @@ def run_one(
         step("an object published", run.publish)
         step("haprion-deploy", run.deploy)
         step("haproxy and keepalived running on both nodes", run.services_running)
+        step("both nodes report HAProxy's statistics", run.statistics_reported)
         holder = step("the virtual address on exactly one node", run.wait_for_one_holder)
         step("the object answers on the virtual address", run.answers_on_the_vip)
 

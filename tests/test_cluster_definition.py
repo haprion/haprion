@@ -382,19 +382,39 @@ class CreatingACluster(unittest.TestCase):
             with self.assertRaisesRegex(EnrollmentError, "no certificate"):
                 site.add(site.spec(default_certificate="example.org"))
 
-    def test_the_seed_carries_every_line_of_step_one_s_core(self) -> None:
+    def test_step_one_asks_the_engine_for_the_layout(self) -> None:
+        """One template: step 1 once kept a copy, and the copy drifted (finding 53)."""
+
         script = (BASE / "install/01-manager-prepare").read_text()
-        start = script.index("<<'CORE'\n") + len("<<'CORE'\n")
-        theirs = script[start : script.index("\nCORE\n", start)]
-        ours = cluster_definition.seed_files("192.0.2.1")["core/haproxy.cfg"].decode()
-        self.assertIn("ssl-default-bind-ciphersuites", ours)
-        for line in theirs.splitlines():
-            if line.strip() and not line.lstrip().startswith("#"):
-                with self.subTest(line=line):
-                    self.assertIn(line, ours.splitlines())
-        for directory in cluster_definition.SEED_DIRECTORIES:
-            with self.subTest(directory=directory):
-                self.assertIn(f'"${{seed}}/{directory}"', script)
+        self.assertIn('"$CLUSTER_CONFIG" --seed "$seed"', script)
+        self.assertNotIn("<<'CORE'", script)
+        self.assertNotIn("<<'RESERVATIONS'", script)
+        self.assertNotIn("vips:", script)
+
+    def test_a_new_cluster_opens_the_socket_node_status_reads(self) -> None:
+        """Without it every node of the cluster read *Stats unavailable* (finding 53)."""
+
+        node_status = (BASE / "install/node/haprion-node-status").read_text()
+        self.assertIn(f'RUNTIME_SOCKET = "{cluster_definition.STATUS_SOCKET}"', node_status)
+        core = cluster_definition.seed_files("192.0.2.1")["core/haproxy.cfg"].decode()
+        self.assertIn(
+            f"    stats socket {cluster_definition.STATUS_SOCKET} mode 660 level user",
+            core.splitlines(),
+        )
+
+    def test_the_seed_carries_a_source_address_and_needs_no_vip(self) -> None:
+        with_source = cluster_definition.seed_files("192.0.2.1", "192.0.2.2")
+        network = yaml.safe_load(with_source["managed/network.yaml"])
+        self.assertEqual(
+            network,
+            {
+                "vips": {"main": {"address": "192.0.2.1", "source": "192.0.2.2"}},
+                "default_vip": "main",
+            },
+        )
+        plain = yaml.safe_load(cluster_definition.seed_files("192.0.2.1")["managed/network.yaml"])
+        self.assertEqual(plain, {"vips": {"main": {"address": "192.0.2.1"}}, "default_vip": "main"})
+        self.assertNotIn("managed/network.yaml", cluster_definition.seed_files(None))
 
     def test_a_new_cluster_keeps_its_counters_where_the_check_can_open_them(self) -> None:
         """The core names the file; the validation sandbox makes its directory (N3)."""

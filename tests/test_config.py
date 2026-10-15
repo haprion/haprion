@@ -185,6 +185,42 @@ class ConfigTests(unittest.TestCase):
             ["node-a\tnode-a.example.com", "node-b\tnode-b.example.com"],
         )
 
+    def test_seed_writes_the_files_create_cluster_commits(self) -> None:
+        """Step 1's clusters get the engine's layout, read from no policy (finding 53)."""
+
+        from haprion.cluster_definition import seed_files  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as raw:
+            seed = Path(raw) / "seed"
+            seed.mkdir()
+            code = cluster_config_main(
+                ["--seed", str(seed), "--vip", "192.0.2.1", "--source", "192.0.2.2"],
+                policy_path=Path(raw) / "missing.yaml",
+            )
+            written = {
+                str(path.relative_to(seed)): path.read_bytes()
+                for path in seed.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(code, 0)
+            self.assertEqual(written, seed_files("192.0.2.1", "192.0.2.2"))
+
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                again = cluster_config_main(["--seed", str(seed)])
+            self.assertEqual(again, 73)
+            self.assertIn("not an empty directory", stderr.getvalue())
+
+    def test_seed_refuses_what_is_not_an_address(self) -> None:
+        with tempfile.TemporaryDirectory() as raw, redirect_stderr(io.StringIO()):
+            for argv in (
+                ["--seed", raw, "--vip", "not-an-address"],
+                ["--seed", raw, "--source", "192.0.2.2"],
+                ["-c", "alpha", "--field", "vip", "--vip", "192.0.2.1"],
+            ):
+                with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                    cluster_config_main(argv)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -125,108 +125,27 @@ for cluster in $(each_cluster); do
         # change is a diff rather than an import.
         #
         if ! git -C "$bare" rev-parse --verify HEAD >/dev/null 2>&1; then
-            seed="$(mktemp -d)"
-            mkdir -p "${seed}/core/conf.d" "${seed}/core/maps" \
-                     "${seed}/managed/generated" "${seed}/managed/objects" \
-                     "${seed}/manual/conf.d"
-            # Empty directories do not survive Git. A placeholder keeps the
-            # layout intact through clone, worktree and restore.
-            find "$seed" -type d -empty -exec touch {}/.gitkeep \;
-            printf '%s\n' '*.swp' '*~' '.#*' > "${seed}/.gitignore"
-
             #
-            # The network description, seeded rather than left to be created
-            # later. A cluster that has one address still has a table with one
-            # row in it, and a table that exists is a table the interface can
-            # edit; a derived value can be shown but never changed. The name
-            # `main` is what the code falls back to for a cluster that never
-            # named its addresses, so seeding it changes nothing but where the
-            # answer is written down.
+            # The network description gets a `vips` table with one `main`
+            # row: a table that exists is a table the interface can edit. The
+            # name `main` is what the code falls back to for a cluster that
+            # never named its addresses.
             #
             seed_vip="$(cluster_value VIP "$cluster")"
             seed_source="$(cluster_value SOURCE "$cluster")"
-            if [ -n "$seed_vip" ]; then
-                {
-                    echo "# Where traffic arrives, where it leaves from, and who may"
-                    echo "# reach it. Owned by the application: edited through the same"
-                    echo "# publish path as a proxy object, with the same lock, history"
-                    echo "# and revert. See docs/user-manual.md, 'Cluster definitions'."
-                    echo "#"
-                    echo "# Adding a VIP or a source address here does half the job. The"
-                    echo "# other half is keepalived on the nodes, and a source address"
-                    echo "# must sit in the same virtual_ipaddress block as its VIP."
-                    echo "vips:"
-                    echo "  main:"
-                    echo "    address: ${seed_vip}"
-                    if [ -n "$seed_source" ]; then echo "    source: ${seed_source}"; fi
-                    echo "default_vip: main"
-                } > "${seed}/managed/network.yaml"
-            fi
+            seed="$(mktemp -d)"
             #
-            # The two handwritten files, seeded so they exist to be edited.
-            # An operator's sudoedit policy names files by exact path, and a
-            # rule for a path that does not exist is a rule that creates one -
-            # so the policy in step 2 can only name files this step wrote.
+            # The layout, the handwritten files and the network description
+            # come from the engine, the same files Create cluster commits:
+            # one template, not a copy here that drifts from it (Fas 18
+            # finding 53). An operator's sudoedit policy names files by exact
+            # path, so the policy in step 2 can only name files this wrote.
             #
-            # The TLS defaults are deliberately NOT written here. The cipher
-            # lists have one source in this project, and a copy in an install
-            # script would be a second one that nothing keeps in step. The
-            # publish path refuses a cluster whose `global` section disagrees
-            # with that source, and its refusal prints the exact lines and the
-            # command to add them - so this is a pointer, not an omission.
-            #
-            cat > "${seed}/core/haproxy.cfg" <<'CORE'
-#
-# The handwritten `global` and `defaults` for this cluster. Generated
-# configuration is assembled behind this file and never edits it.
-#
-# BEFORE THE FIRST PUBLISH: add the ssl-default-bind-* lines from
-# docs/user-manual.md, 'Runtime policy'. A publish is refused until they
-# are here and agree with the lists the generator uses, and the refusal
-# prints them in full.
-#
-global
-    # Your own log, chroot, stats socket, user and group lines go here.
-
-    # Required. A generated bind line names its certificate list by a path
-    # relative to the file it is written in, and a node validates a release
-    # at one path before installing it at another.
-    default-path config
-
-    # Counters that carry over a reload: HAProxy keeps them in this file and
-    # finds each object again by its GUID. Opened as root before the chroot,
-    # so the path is the host's (docs/user-manual.md, 'Counters across a
-    # reload').
-    shm-stats-file /run/haproxy/stats.shm
-
-    # The manager's own runtime socket, root only: drain, maintenance and
-    # ready per server (docs/user-manual.md, 'Node scripts').
-    stats socket /run/haproxy/manager.sock mode 600 level admin
-
-defaults
-    log     global
-    mode    http
-    option  httplog
-    timeout connect 5s
-    timeout client  50s
-    timeout server  50s
-CORE
-
-            cat > "${seed}/manual/reservations.yaml" <<'RESERVATIONS'
-# What the handwritten half of this cluster already uses, so the generator
-# can refuse an object that would collide with it. Read, never interpreted -
-# this file is a promise a person makes, not something derived.
-#
-# Empty is correct while nothing handwritten defines a listener.
-#
-# hostnames:
-#   - legacy.example.com
-#
-# tcp_ports:
-#   - 8443                 # every address on this cluster
-#   - 192.0.2.10:8443      # only that address
-{}
-RESERVATIONS
+            "$CLUSTER_CONFIG" --seed "$seed" \
+                ${seed_vip:+--vip "$seed_vip"} ${seed_source:+--source "$seed_source"} \
+                || fail "the layout of cluster ${cluster} could not be written" \
+                        "haprion-cluster-config --seed did not finish; its own words are above" \
+                        "check that the CLI release is installed (section 2 of docs/install.md)"
 
             git -C "$seed" init --initial-branch=main >/dev/null
             git -C "$seed" add -A

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import sys
 from pathlib import Path
 
+from haprion.cluster_definition import seed_files
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 
 FIELDS = (
@@ -35,8 +37,20 @@ def main(
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("-c", "--cluster")
     which.add_argument("--list", action="store_true")
+    #
+    # --seed writes a new cluster's repository layout into an empty directory:
+    # the same files Create cluster commits, for step 1's clusters from an
+    # answers file. Reads no policy - step 1 runs before step 2 writes one.
+    #
+    which.add_argument("--seed", type=Path, metavar="DIRECTORY")
     parser.add_argument("--field", choices=FIELDS)
+    parser.add_argument("--vip")
+    parser.add_argument("--source")
     args = parser.parse_args(argv)
+    if args.seed is not None:
+        return _seed(parser, args.seed, args.vip, args.source)
+    if args.vip is not None or args.source is not None:
+        parser.error("--vip and --source go with --seed")
     if args.list == (args.field is not None):
         parser.error("give either --list, or -c with --field")
 
@@ -61,6 +75,27 @@ def main(
             print(item)
     else:
         print(value)
+    return 0
+
+
+def _seed(
+    parser: argparse.ArgumentParser, directory: Path, vip: str | None, source: str | None
+) -> int:
+    if source and not vip:
+        parser.error("--source needs --vip")
+    for address in (vip, source):
+        if address:
+            try:
+                ipaddress.ip_address(address)
+            except ValueError:
+                parser.error(f"not an IP address: {address}")
+    if not directory.is_dir() or any(directory.iterdir()):
+        print(f"ERROR: {directory} is not an empty directory", file=sys.stderr)
+        return 73
+    for relative, content in seed_files(vip or None, source or None).items():
+        path = directory / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
     return 0
 
 

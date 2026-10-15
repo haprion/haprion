@@ -90,6 +90,18 @@ CONTENTS: dict[str, tuple[str, int]] = {
         "install/apt-keys/powerdns-dnsdist.asc",
         0o644,
     ),
+    #
+    # HAProxy's repository keys, the ones a restore installs (B179), for the
+    # node step's ensure_haproxy.
+    #
+    f"{INSTALL_DIR[1:]}/apt-keys/haproxy-debian-net.asc": (
+        "src/haprion/apt-keys/haproxy-debian-net.asc",
+        0o644,
+    ),
+    f"{INSTALL_DIR[1:]}/apt-keys/haproxy-ubuntu-ppa.asc": (
+        "src/haprion/apt-keys/haproxy-ubuntu-ppa.asc",
+        0o644,
+    ),
     COPYRIGHT_FILE: ("LICENSE", 0o644),
 }
 FILES: dict[str, int] = {

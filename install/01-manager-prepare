@@ -276,6 +276,12 @@ echo
 step "dnsdist"
 ensure_dnsdist mask
 
+#
+# The validator: every candidate is checked with this host's `haproxy -c`.
+#
+step "HAProxy"
+ensure_haproxy
+
 log "step 1 done"
 echo
 echo "Next: ./02-manager-config${1:+ $1}"

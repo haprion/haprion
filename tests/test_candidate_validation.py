@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -379,3 +380,44 @@ class TheValidatorVersion(unittest.TestCase):
             raise FileNotFoundError("/usr/sbin/haproxy")
 
         self.assertIsNone(candidate_validation.validator_version(missing))
+
+
+class AValidatorOlderThanTheConfiguration(unittest.TestCase):
+    """Fas 18, 26-10-15: Debian 13's own HAProxy 3.0 failed on `shm-stats-file`."""
+
+    def test_older_than_the_branch_is_said_in_words(self) -> None:
+        reason = candidate_validation.too_old("3.0.11-1+deb13u3")
+        assert reason is not None
+        self.assertIn("HAProxy 3.0.11 on the management host is older than 3.4", reason)
+        self.assertIn("step 01", reason)
+
+    def test_the_branch_or_newer_and_an_unreadable_version_pass(self) -> None:
+        for version in ("3.4.6-1ppa1~resolute", "3.4.7", "3.5.0", "4.0.1", None, "garbage"):
+            with self.subTest(version=version):
+                self.assertIsNone(candidate_validation.too_old(version))
+
+    def test_nothing_runs_on_a_validator_too_old(self) -> None:
+        calls: list[list[str]] = []
+
+        def ran(command: list[str]) -> tuple[int, str]:
+            calls.append(command)
+            return 0, ""
+
+        with (
+            tempfile.TemporaryDirectory() as raw,
+            mock.patch.object(candidate_validation, "_run_unit", ran),
+        ):
+            result = candidate_validation.validate_in_sandbox(
+                Path(raw), "1111", version=lambda: "3.0.11"
+            )
+        self.assertFalse(result.valid)
+        self.assertIn("older than 3.4", result.diagnostics)
+        self.assertEqual(calls, [])
+
+    def test_the_branch_is_the_one_the_installation_installs(self) -> None:
+        lib = (Path(__file__).resolve().parents[1] / "install" / "lib.sh").read_text()
+        found = re.search(r'^HAPROXY_BRANCH="(\d+)\.(\d+)"$', lib, re.MULTILINE)
+        assert found, "install/lib.sh no longer names HAPROXY_BRANCH"
+        self.assertEqual(
+            (int(found.group(1)), int(found.group(2))), candidate_validation.REQUIRED_BRANCH
+        )

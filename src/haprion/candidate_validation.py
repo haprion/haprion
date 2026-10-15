@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from haprion import haproxy_versions
 from haprion.certificates import AUTHORITY_DIRECTORY, leaf_block
 from haprion.config import ConfigError
 from haprion.helper_protocol import HelperProtocolError, JsonValue
@@ -511,7 +512,48 @@ def sandbox_command(
     return command
 
 
-def validate_in_sandbox(candidate_root: Path, request_id: str) -> ValidationResult:
+#
+# The oldest HAProxy the generated configuration is written for. It must
+# match `HAPROXY_BRANCH` in install/lib.sh, which installs it; a test holds
+# the two together.
+#
+REQUIRED_BRANCH = (3, 4)
+
+
+def too_old(version: str | None) -> str | None:
+    """Why this host's HAProxy cannot validate, or None.
+
+    An unreadable version is left to `haproxy -c` itself: refusing on what
+    could not be read would stop every publish over a parsing detail, and the
+    check that follows says what is wrong in its own words.
+    """
+
+    found = haproxy_versions.upstream(version)
+    if found is None:
+        return None
+    parts = tuple(int(part) for part in found.split(".")[:2])
+    if parts >= REQUIRED_BRANCH:
+        return None
+    required = ".".join(str(part) for part in REQUIRED_BRANCH)
+    return (
+        f"HAProxy {found} on the management host is older than {required}, which the "
+        "generated configuration is written for. Run install step 01 again: it installs "
+        f"{required} from the HAProxy maintainer's repository."
+    )
+
+
+def validate_in_sandbox(
+    candidate_root: Path,
+    request_id: str,
+    version: Callable[[], str | None] = validator_version,
+) -> ValidationResult:
+    #
+    # Said in words before HAProxy says it as an unknown keyword (Fas 18,
+    # 26-10-15: Debian's own 3.0 refused `shm-stats-file`).
+    #
+    reason = too_old(version())
+    if reason is not None:
+        return ValidationResult(False, reason)
     result = _sandboxed(sandbox_command(candidate_root, request_id))
     if result.valid and (candidate_root / WAF_TARGET / "coraza.yaml").exists():
         result = _then(result, _waf_engine(candidate_root, request_id))

@@ -225,6 +225,9 @@ a+ /var/log/journal/%m.${WAF_JOURNAL_NAMESPACE} - - - - d:group:${LOGS_GROUP}:r-
 systemd-tmpfiles --create "$WAF_JOURNAL_TMPFILES"
 log "  applied  ${WAF_JOURNAL_TMPFILES}"
 
+step "HAProxy"
+ensure_haproxy node
+
 step "HAProxy release layout"
 
 #

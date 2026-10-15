@@ -3181,7 +3181,15 @@ there, or a certificate already gone, is no change), and `haprion-node`, `haprio
 
 ### Keeping HAProxy current
 
-Which HAProxy version runs, and when it is upgraded, stays with you. That is a boundary in the
+The configuration this project generates is written for **HAProxy 3.4 or newer**; Debian 13 ships
+3.0 and Ubuntu 26.04 3.2. Where a host has an older HAProxy, the installation steps (step 1 on the
+management host, step 4 on a node) add the HAProxy maintainer's repository - Vincent Bernat's PPA on
+Ubuntu, `haproxy.debian.net` on Debian, with a pin - and install 3.4 from it: the same key, source
+and pin a restored node gets. A host already on 3.4 or newer is left as it is, whatever source it
+came from, and a node that already serves a release is never upgraded by them. A publish on a
+management host older than 3.4 is refused with that sentence rather than with HAProxy's.
+
+After that, which HAProxy version runs, and when it is upgraded, stays with you. That is a boundary in the
 design rather than an omission, and it is worth knowing why before it matters.
 
 Upgrading the package restarts the data plane. The whole privilege model here exists so that this

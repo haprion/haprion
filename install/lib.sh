@@ -430,6 +430,89 @@ ensure_dnsdist() {
 }
 
 #
+# HAProxy from its maintainer's repository, on the branch the product is built
+# for: what the configuration it generates needs (shm-stats-file, among
+# others), and what the distributions' own packages are older than - Debian 13
+# ships 3.0, Ubuntu 26.04 3.2 (Fas 18, 26-10-15). The same key, source and pin
+# a restored node gets, from `haproxy_repository.repository_files`; a test
+# holds the two to the same bytes.
+#
+# Only where HAProxy is older than the branch. A host that already runs it,
+# from whatever source a person chose, is left exactly as it is: keeping
+# HAProxy current stays with the operator (the manual's "Keeping HAProxy
+# current"). And on a node, only while it serves no release - an upgrade
+# restarts the data plane, which this step never does to live traffic.
+#
+HAPROXY_BRANCH="3.4"
+OS_RELEASE="${OS_RELEASE:-/etc/os-release}"
+HAPROXY_CURRENT="${HAPROXY_CURRENT:-/etc/haproxy/current}"
+
+haproxy_key() {
+    local name="$1" found
+    for found in "./apt-keys/${name}" "../src/haprion/apt-keys/${name}"; do
+        [[ -r "$found" ]] && { echo "$found"; return 0; }
+    done
+    die "HAProxy: the repository key ${name} is not beside this step"
+}
+
+ensure_haproxy() {
+    local role="${1:-}" installed id codename key keyring suite uri pin release
+    installed="$(dpkg-query -W -f='${Version}' haproxy 2>/dev/null || true)"
+    if [[ -n "$installed" ]] && dpkg --compare-versions "$installed" ge "${HAPROXY_BRANCH}~"; then
+        log "  ok       haproxy ${installed}"
+        return 0
+    fi
+    if [[ "$role" == node ]]; then
+        release="$(readlink -e "$HAPROXY_CURRENT" 2>/dev/null || true)"
+        if [[ -n "$release" && "${release##*/}" != 00000000-000000 ]]; then
+            fail "HAProxy ${installed:-(none)} is older than ${HAPROXY_BRANCH}, and this node serves a release" \
+                 "upgrading it restarts HAProxy, which this step does not do to a node carrying traffic" \
+                 "upgrade HAProxy to ${HAPROXY_BRANCH} in a maintenance window, then run this step again"
+        fi
+    fi
+    id="$(sed -n 's/^ID="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$OS_RELEASE")"
+    codename="$(sed -n 's/^VERSION_CODENAME="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$OS_RELEASE")"
+    case "${id}/${codename}" in
+        ubuntu/resolute)
+            key="haproxy-ubuntu-ppa.asc"
+            uri="https://ppa.launchpadcontent.net/vbernat/haproxy-${HAPROXY_BRANCH}/ubuntu"
+            suite="${codename}"
+            pin="" ;;
+        debian/trixie)
+            key="haproxy-debian-net.asc"
+            uri="https://haproxy.debian.net"
+            suite="${codename}-backports-${HAPROXY_BRANCH}"
+            #
+            # haproxy.debian.net marks its suites NotAutomatic; without the pin
+            # APT keeps Debian's own older HAProxy.
+            #
+            pin="$(printf 'Package: haproxy*\nPin: release o=PPA-haproxy,n=%s\nPin-Priority: 600' "$suite")" ;;
+        *) die "HAProxy: ${id} ${codename} is not a supported distribution (Ubuntu 26.04, Debian 13)" ;;
+    esac
+    keyring="/etc/apt/keyrings/${key}"
+    install -d -o root -g root -m 755 /etc/apt/keyrings
+    install_file "$keyring" root:root 644 "$(cat "$(haproxy_key "$key")")"
+    install_file "/etc/apt/sources.list.d/haproxy-${HAPROXY_BRANCH}.sources" root:root 644 \
+        "$(printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: main\nSigned-By: %s' \
+            "$uri" "$suite" "$keyring")"
+    [[ -z "$pin" ]] \
+        || install_file "/etc/apt/preferences.d/haproxy-${HAPROXY_BRANCH}.pref" root:root 644 "$pin"
+    apt_update || die "HAProxy: apt-get update failed"
+    #
+    # `confold`: a node's haproxy.cfg is a link into the release by now, which
+    # dpkg reads as a changed configuration file and would otherwise ask about.
+    #
+    DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        install -y -q haproxy >/dev/null \
+        || die "HAProxy: the package could not be installed from ${uri}"
+    installed="$(dpkg-query -W -f='${Version}' haproxy 2>/dev/null || true)"
+    dpkg --compare-versions "$installed" ge "${HAPROXY_BRANCH}~" \
+        || die "HAProxy: expected ${HAPROXY_BRANCH} or newer, found '${installed}'"
+    log "  ok       haproxy ${installed} (from ${uri})"
+}
+
+#
 # The clusters the cluster file holds and the nodes of one, through the
 # engine's own reader: what Create cluster and the Nodes card have made, not
 # what an answers file named at installation (B302). For the steps that run

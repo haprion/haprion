@@ -153,3 +153,101 @@ class ThePackagesOwnConfigurationFile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+#
+# ensure_haproxy with what it installs recorded under a scratch root and apt
+# left out; dpkg-query answers from a file, the version before the install and
+# then the one after it.
+#
+ENSURE_HAPROXY = (
+    'source "$0"; cd "$(dirname "$0")"; '
+    'install_file() { mkdir -p "$ROOT$(dirname "$1")"; printf "%s\\n" "$4" > "$ROOT$1"; }; '
+    "install() { :; }; apt_update() { :; }; apt-get() { :; }; "
+    'dpkg-query() { local first; first="$(head -n 1 "$ANSWERS")"; sed -i 1d "$ANSWERS"; '
+    'echo "$first"; }; '
+    'ensure_haproxy "$1"'
+)
+
+
+class HaproxyFromItsMaintainer(unittest.TestCase):
+    """ensure_haproxy writes what a restored node gets (haproxy_repository), byte for byte."""
+
+    def run_step(
+        self, os_id: str, codename: str, before: str, role: str = "", serving: bool = False
+    ) -> tuple[int, str, dict[str, bytes]]:
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        root = work / "root"
+        root.mkdir()
+        answers = work / "dpkg"
+        answers.write_text(f"{before}\n3.4.7-1\n")
+        os_release = work / "os-release"
+        os_release.write_text(f"ID={os_id}\nVERSION_CODENAME={codename}\n")
+        current = work / "current"
+        if serving:
+            (work / "20261015-120000").mkdir()
+            current.symlink_to(work / "20261015-120000")
+        done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+            ["/bin/bash", "-c", ENSURE_HAPROXY, str(LIB), role],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "ROOT": str(root),
+                "ANSWERS": str(answers),
+                "OS_RELEASE": str(os_release),
+                "HAPROXY_CURRENT": str(current),
+            },
+        )
+        files = {
+            "/" + path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+        return done.returncode, done.stdout + done.stderr, files
+
+    def test_each_distribution_gets_what_a_restore_writes(self) -> None:
+        from haprion import haproxy_repository  # noqa: PLC0415
+
+        for os_id, version, codename in (
+            ("debian", "13", "trixie"),
+            ("ubuntu", "26.04", "resolute"),
+        ):
+            with self.subTest(os_id=os_id):
+                code, output, files = self.run_step(os_id, codename, "3.0.11-1+deb13u3")
+                self.assertEqual(code, 0, output)
+                expected = {
+                    written.path: written.data
+                    for written in haproxy_repository.repository_files(
+                        {"ID": os_id, "VERSION_ID": version, "VERSION_CODENAME": codename},
+                        "3.4",
+                    )
+                }
+                self.assertEqual(files, expected)
+                self.assertIn("ok       haproxy 3.4.7-1", output)
+
+    def test_a_host_already_on_the_branch_is_left_as_it_is(self) -> None:
+        code, output, files = self.run_step("ubuntu", "resolute", "3.4.6-1ppa1~resolute")
+        self.assertEqual((code, files), (0, {}), output)
+        self.assertIn("ok       haproxy 3.4.6-1ppa1~resolute", output)
+
+    def test_a_node_serving_a_release_is_not_upgraded(self) -> None:
+        code, output, files = self.run_step(
+            "debian", "trixie", "3.0.11-1", role="node", serving=True
+        )
+        self.assertNotEqual(code, 0)
+        self.assertEqual(files, {})
+        self.assertIn("this node serves a release", output)
+
+    def test_a_new_node_is(self) -> None:
+        code, output, files = self.run_step("debian", "trixie", "3.0.11-1", role="node")
+        self.assertEqual(code, 0, output)
+        self.assertIn("/etc/apt/sources.list.d/haproxy-3.4.sources", files)
+
+    def test_another_distribution_is_refused(self) -> None:
+        code, output, files = self.run_step("debian", "bookworm", "2.6.12-1")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(files, {})
+        self.assertIn("not a supported distribution", output)

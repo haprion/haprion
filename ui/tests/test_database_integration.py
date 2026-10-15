@@ -7605,3 +7605,28 @@ class AcknowledgedAttention(unittest.TestCase):
             connection.commit()
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 connection.execute("update attention_ack set acknowledged_by = 'x'")
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class GettingStartedHidden(unittest.TestCase):
+    """0075 (B316): the web hides the list once, for good; it cannot take it back."""
+
+    def connect(self, role: str = "HAPRION_UI_TEST_WEB_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role]}")
+
+    def tearDown(self) -> None:
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
+            connection.execute("truncate getting_started")
+            connection.commit()
+
+    def test_hidden_once_and_for_good(self) -> None:
+        with self.connect() as connection:
+            self.assertFalse(db.getting_started_hidden(connection))
+            self.assertTrue(db.hide_getting_started(connection, actor="operator"))
+            self.assertFalse(db.hide_getting_started(connection, actor="other"))
+            self.assertTrue(db.getting_started_hidden(connection))
+            connection.commit()
+            by = connection.execute("select hidden_by from getting_started").fetchall()
+        self.assertEqual(by, [("operator",)])
+        with self.connect() as connection, self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            connection.execute("delete from getting_started")

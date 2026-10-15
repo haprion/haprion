@@ -109,6 +109,7 @@ from haprion_ui import (
     dns_profile_form,
     feature_switch,
     features,
+    getting_started,
     health,
     held_servers,
     history,
@@ -863,6 +864,9 @@ def build_router(config: Config) -> APIRouter:
                 # What needs doing, under the four cards (B274).
                 #
                 "attention": _attention(request, config),
+                "getting_started": _getting_started(request, dashboard_view, network_rows)
+                if session.role == "admin"
+                else None,
                 "pending": pending,
                 "traffic": traffic,
                 "username": session.username,
@@ -4411,6 +4415,93 @@ def build_router(config: Config) -> APIRouter:
             },
             status_code=status_code,
         )
+
+    @router.post("/getting-started/hide")
+    def hide_getting_started(
+        request: Request, csrf_token: Annotated[str, Form(max_length=128)]
+    ) -> Response:
+        """Hide the getting started list for the whole installation (B316)."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        with request.app.state.pool.connection() as connection:
+            if db.hide_getting_started(connection, actor=gate.username):
+                db.record_audit_event(
+                    connection, actor=gate.username, action="getting_started_hidden", detail={}
+                )
+            connection.commit()
+        return RedirectResponse("/", status_code=303)
+
+    def _getting_started(
+        request: Request, dashboard_view: dashboard.DashboardView, network_rows: Any
+    ) -> getting_started.Checklist | None:
+        """The list for an admin, until it is hidden (B316); every tick read, none stored."""
+
+        with request.app.state.pool.connection() as connection:
+            if db.getting_started_hidden(connection):
+                return None
+            provider = db.oidc_provider(connection)
+            switches = db.feature_switches(connection)
+            access = db.status_access(connection)
+        networks = {
+            view.cluster: view
+            for view in network.build_network_overview(
+                listed_clusters(request, config),
+                network_rows,
+                stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            )
+        }
+        settings_views = {
+            view.cluster: view
+            for view in cluster_settings_page.card_views(
+                *read_source(request, config, SETTINGS_SOURCE), waiting=frozenset(), running={}
+            )
+        }
+        backups_on = features.NODE_BACKUPS in switches and switches[features.NODE_BACKUPS].enabled
+        scheduled = (
+            {
+                view.cluster
+                for view in _backup_overview(request).clusters
+                if view.schedule is not None and view.schedule.enabled
+            }
+            if backups_on
+            else set()
+        )
+        registry = _registry_overview(request)
+        interface = registry.interface.identifier if registry and registry.interface else None
+        served = certificates.interface_served(read_manager_certificates(request, config))
+        facts = getting_started.Facts(
+            clusters=tuple(
+                getting_started.ClusterFacts(
+                    name=view.cluster,
+                    nodes=tuple(node.name for node in view.nodes),
+                    owner=next((node.name for node in view.nodes if node.vip == "Owner"), None),
+                    vips=tuple(
+                        getting_started.Vip(vip.address, vip.tls_policy, vip.source)
+                        for vip in getattr(networks.get(view.cluster), "vips", ())
+                    ),
+                    logs_forwarded=getattr(settings_views.get(view.cluster), "logs_set", False),
+                    backups_scheduled=view.cluster in scheduled,
+                )
+                for view in dashboard_view.clusters
+                if view.configured
+            ),
+            interface_self_signed=served.self_signed if served is not None else None,
+            accounts=len(_account_rows(request)),
+            sso=provider is not None and provider.enabled,
+            site_certificates=sum(
+                entry.source_label in {"Certbot", "NDES"} and entry.identifier != interface
+                for entry in (registry.certificates if registry else ())
+            ),
+            node_backups_on=backups_on,
+            status_access=bool(access),
+            features_changed=any(switch.updated_by for switch in switches.values()),
+        )
+        return getting_started.checklist(facts)
 
     @router.post("/attention/acknowledge")
     def acknowledge_attention(

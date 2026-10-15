@@ -130,6 +130,9 @@ class LoginTestCase(unittest.TestCase):
         #
         self.switches: dict[str, Any] = {}
         self.acks: set[tuple[str, str, str]] = set()
+        # The getting started list (B316) is shown until a test hides it.
+        self.getting_started_hidden = False
+        self.hidden_by: list[str] = []
         self.provider: Any = None
         self.id_tokens: dict[bytes, str | None] = {}
 
@@ -196,6 +199,11 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.status_access", return_value=[]),
             mock.patch("haprion_ui.db.attention_acks", side_effect=lambda _c: set(self.acks)),
             mock.patch("haprion_ui.db.forget_attention_acks"),
+            mock.patch(
+                "haprion_ui.db.getting_started_hidden",
+                side_effect=lambda _c: self.getting_started_hidden,
+            ),
+            mock.patch("haprion_ui.db.hide_getting_started", side_effect=self._hide),
             # Every cluster read through since its last job (0068).
             mock.patch("haprion_ui.db.clusters_catching_up", return_value=[]),
             #
@@ -253,6 +261,10 @@ class LoginTestCase(unittest.TestCase):
             self.addCleanup(patch.stop)
 
     # - the fake database -------------------------------------------------
+
+    def _hide(self, _connection: object, *, actor: str) -> bool:
+        self.hidden_by.append(actor)
+        return True
 
     def _account(self, _connection: object, username: str) -> Account | None:
         return self.account if username.lower() == "operator" else None

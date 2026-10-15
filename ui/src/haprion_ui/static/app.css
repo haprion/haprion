@@ -2500,6 +2500,22 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 
 /* Needs attention (B274): one row per thing, the link to where it is fixed at the end. */
 .attention-card { margin: 0 0 24px; }
+/* Getting started (B316): ticked from what the installation is; one line per item at 1280. */
+.getting-started { margin: 0 0 24px; }
+.checklist { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.checklist li { display: grid; grid-template-columns: 26px 380px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 50px; padding: 6px 20px; border-bottom: 1px solid var(--line); }
+.checklist li:last-child { border-bottom: 0; }
+.checklist .check { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--line-strong); }
+.checklist .check.is-done { border-color: transparent; background: var(--healthy-text); color: var(--panel); }
+.checklist .check svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.checklist .item-title { font-weight: 600; color: var(--text-strong); white-space: nowrap; }
+.checklist .is-finished .item-title { color: var(--text-secondary); }
+.checklist .item-state { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) {
+  .checklist li { grid-template-columns: 26px minmax(0, 1fr) auto; }
+  .checklist .item-title { white-space: normal; }
+  .checklist .item-state { grid-column: 2 / 4; grid-row: 2; white-space: normal; }
+}
 .attention-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
 .attention-list li { display: flex; align-items: center; border-bottom: 1px solid var(--line); }
 .attention-list li > .attention-row { flex: 1 1 auto; min-width: 0; }

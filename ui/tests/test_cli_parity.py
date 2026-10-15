@@ -138,6 +138,9 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/attention/acknowledge": NotASetting(
         "a judgement on a row of Needs attention, not something the installation is"
     ),
+    "/getting-started/hide": NotASetting(
+        "what the dashboard shows an admin, not something the installation is"
+    ),
     "/settings/status-access": Command("haprion-settings apply", "haprion-settings-apply"),
     "/backups/restore/new": Command("haprion-node-restore prepare", "haprion-node-restore-prepare"),
     "/backups/restore/{run}/preview": Command(

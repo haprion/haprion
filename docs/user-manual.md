@@ -53,6 +53,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [A basic log viewer, on purpose](#a-basic-log-viewer-on-purpose)
   - [Sending the traffic log elsewhere, and metrics](#sending-the-traffic-log-elsewhere-and-metrics)
 - [Jobs and status freshness](#jobs-and-status-freshness)
+  - [Getting started](#getting-started)
   - [Needs attention, and external monitoring](#needs-attention-and-external-monitoring)
   - [Events: jobs, the nodes and the audit record](#events-jobs-the-nodes-and-the-audit-record)
   - [How often status is refreshed](#how-often-status-is-refreshed)
@@ -2662,6 +2663,16 @@ process, not per pool. dnsdist's counters are read on the node and are not part
 of HAProxy's exporter, so a dashboard reading the exporter does not see them.
 
 ## Jobs and status freshness
+
+### Getting started
+
+A new installation's dashboard shows an admin *Getting started*: what is still to set up, one line
+each, with the page that does it. A line is ticked when the installation shows it done, never by
+being pressed - a cluster whose VIP a node holds, a TLS version chosen on every VIP, an interface
+certificate that is not self-signed, a second account or sign-in through SSO, a certificate from
+ACME or NDES, every cluster's traffic log forwarded and backed up on a schedule. External monitoring
+and the features are optional. *Hide* removes the list for the whole installation, for good; the
+audit record says who.
 
 ### Needs attention, and external monitoring
 

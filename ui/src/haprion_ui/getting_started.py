@@ -1,0 +1,204 @@
+"""Getting started: what a new installation still has to set up (B316, 26-10-15).
+
+A list on the dashboard, for an admin, until somebody hides it for the whole
+installation. Every tick is read from what the installation is - a cluster
+serving, a certificate that is not self-signed, a schedule on every cluster -
+never from somebody having pressed the item, so the list cannot say done for
+something that is not. What a person uses the installation for, such as a
+first site, is not on it: a list that waits for that is never finished.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+
+TLS_LABELS = {
+    "intermediate": "TLS 1.2 and 1.3",
+    "modern": "TLS 1.3 only",
+    "tls12only": "TLS 1.2 only",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class Vip:
+    address: str
+    tls: str | None
+    source: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ClusterFacts:
+    """What the list reads about one cluster."""
+
+    name: str
+    nodes: tuple[str, ...]
+    # The node that holds the VIP; None before the first deploy or in a fault.
+    owner: str | None
+    vips: tuple[Vip, ...]
+    logs_forwarded: bool
+    backups_scheduled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Facts:
+    clusters: tuple[ClusterFacts, ...]
+    # None when the served certificate could not be read: not ticked, not said.
+    interface_self_signed: bool | None
+    accounts: int
+    sso: bool
+    site_certificates: int
+    node_backups_on: bool
+    status_access: bool
+    features_changed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Item:
+    title: str
+    done: bool
+    state: str
+    action: str
+    href: str
+    optional: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Checklist:
+    items: tuple[Item, ...]
+
+    @property
+    def done(self) -> int:
+        return sum(item.done for item in self.items)
+
+
+def _plural(count: int, word: str, plural: str = "") -> str:
+    return f"{count} {word if count == 1 else plural or word + 's'}"
+
+
+def _every(clusters: Iterable[ClusterFacts], test: str) -> bool:
+    chosen = list(clusters)
+    return bool(chosen) and all(getattr(cluster, test) for cluster in chosen)
+
+
+def _cluster_item(clusters: tuple[ClusterFacts, ...]) -> Item:
+    serving = [cluster for cluster in clusters if cluster.nodes and cluster.owner]
+    if serving:
+        first = serving[0]
+        address = first.vips[0].address if first.vips else ""
+        state = f"{first.name} · {', '.join(first.nodes)}"
+        if address:
+            state += f" · {address} on {first.owner}"
+        if len(clusters) > 1:
+            state += f" · {_plural(len(clusters), 'cluster')}"
+        return Item("Nodes and a cluster", True, state, "", "")
+    if clusters:
+        return Item(
+            "Nodes and a cluster",
+            False,
+            f"{clusters[0].name} · not deployed yet",
+            "Dashboard",
+            "/",
+        )
+    return Item(
+        "Nodes and a cluster", False, "No cluster yet", "Create cluster", "/settings/new-cluster"
+    )
+
+
+def _tls_item(clusters: tuple[ClusterFacts, ...]) -> Item:
+    vips = [vip for cluster in clusters for vip in cluster.vips]
+    chosen = {vip.tls for vip in vips if vip.tls}
+    if not vips:
+        tls = "No VIP yet"
+    elif len(chosen) == 1 and all(vip.tls for vip in vips):
+        tls = TLS_LABELS.get(next(iter(chosen)), next(iter(chosen)))
+    elif chosen:
+        tls = "TLS chosen on some VIPs"
+    else:
+        tls = "TLS not chosen"
+    sources = sum(bool(vip.source) for vip in vips)
+    source = (
+        _plural(sources, "source address", "source addresses")
+        if sources
+        else "the nodes' own addresses"
+    )
+    done = bool(vips) and all(vip.tls for vip in vips)
+    return Item("TLS and source address", done, f"{tls} · {source}", "Network", "/network")
+
+
+def checklist(facts: Facts) -> Checklist:
+    clusters = facts.clusters
+    logs = sum(cluster.logs_forwarded for cluster in clusters)
+    scheduled = sum(cluster.backups_scheduled for cluster in clusters)
+    if facts.interface_self_signed is None:
+        interface = "Could not be read"
+    else:
+        interface = "Self-signed" if facts.interface_self_signed else "Issued by a CA"
+    items = (
+        _cluster_item(clusters),
+        _tls_item(clusters),
+        Item(
+            "Interface certificate",
+            facts.interface_self_signed is False,
+            interface,
+            "Replace",
+            "/settings",
+        ),
+        Item(
+            "Users and sign-in",
+            bool(facts.sso) or facts.accounts > 1,
+            "Sign-in through SSO"
+            if facts.sso
+            else _plural(facts.accounts, "account")
+            if facts.accounts > 1
+            else "Only admin",
+            "Users",
+            "/settings#users",
+        ),
+        Item(
+            "Certificates for your sites",
+            facts.site_certificates > 0,
+            _plural(facts.site_certificates, "certificate") + " from ACME or NDES"
+            if facts.site_certificates
+            else "None from ACME or NDES yet",
+            "Certificates",
+            "/certificates",
+        ),
+        Item(
+            "Traffic log off the nodes",
+            _every(clusters, "logs_forwarded"),
+            f"Forwarded from {logs} of {_plural(len(clusters), 'cluster')}"
+            if logs
+            else "Kept on the nodes only",
+            "Logs",
+            "/settings#logs-metrics",
+        ),
+        Item(
+            "Node backups",
+            facts.node_backups_on and _every(clusters, "backups_scheduled"),
+            "Off under Features"
+            if not facts.node_backups_on
+            else f"Scheduled on {scheduled} of {_plural(len(clusters), 'cluster')}"
+            if scheduled
+            else "No schedule",
+            "Features" if not facts.node_backups_on else "Schedule",
+            "/settings#features" if not facts.node_backups_on else "/backups",
+        ),
+        Item(
+            "External monitoring",
+            facts.status_access,
+            "Allowed" if facts.status_access else "No address may ask",
+            "Allow",
+            "/settings/status-access",
+            optional=True,
+        ),
+        Item(
+            "Enable the features you want to use",
+            facts.features_changed,
+            "Chosen" if facts.features_changed else "As installed",
+            "Features",
+            "/settings#features",
+            optional=True,
+        ),
+    )
+    return Checklist(items)

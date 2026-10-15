@@ -2104,6 +2104,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .traffic-scope-note { flex: 1 1 auto; min-width: 0; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .traffic-clear { margin-left: auto; color: var(--muted); }
 .traffic-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+/* Straight on the card, not inside a chart: the card's own inset, as the section heads have. */
+.cluster-card > .traffic-note { margin: 12px 20px 18px; }
 /* The range switch, as one segmented control rather than four loose links:
    they are alternatives to each other, and a shared border is what says so.
    Recessive - it is a control on a card, not the subject of the page - and

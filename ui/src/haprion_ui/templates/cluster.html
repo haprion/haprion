@@ -43,6 +43,14 @@
       holding the address receives anything, so the series is read from
       whichever node held it - the same rule backend members already follow.
     #}
+    {#
+      A cluster nothing has been measured on yet - new, or never deployed -
+      says so once, rather than two sections explaining charts that are not
+      there (Fas 18, 26-10-15).
+    #}
+    {% if not view.frontends and not view.backends and not view.redirects %}
+    <p class="traffic-note">No traffic measured in {{ traffic_window }}.</p>
+    {% else %}
     <h4 class="traffic-section">Frontends</h4>
     <p class="traffic-note-lede">What arrived at each frontend, one per VIP and protocol. An <code>http</code> line exists where a site redirects plain http to https: that redirect is served by a real frontend on port 80, and this is the traffic it turned away.</p>
     {% if view.frontends %}
@@ -105,6 +113,7 @@
     {% set owner = backend_owners.get(view.cluster, {}).get(backend.series, '') if backend_owners else '' %}
     {% with traffic_redirect = true %}{% include "_traffic-card.html" %}{% endwith %}
     {% endfor %}
+    {% endif %}
     {% endif %}
 
   </article>

@@ -325,8 +325,19 @@ class WhatThePageSays(ReadingACluster):
 
         text = self.page().text  # type: ignore[attr-defined]
 
+        # Once, and without the two sections' explanations of charts that are
+        # not there (Fas 18, 26-10-15: a new cluster's card read as broken).
+        self.assertEqual(text.count("No traffic measured in the last 24 hours."), 1)
+        self.assertNotIn(">Frontends<", text)
+        self.assertNotIn(">Backends<", text)
+
+    def test_a_cluster_with_backends_only_keeps_both_sections(self) -> None:
+        self.frontends = []
+
+        text = self.page().text  # type: ignore[attr-defined]
+
         self.assertIn("No address samples in this window", text)
-        self.assertIn("No backend samples in this window", text)
+        self.assertNotIn("No traffic measured", text)
 
 
 class OneScalePerSection(ReadingACluster):

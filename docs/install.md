@@ -283,7 +283,9 @@ every block, since that is where keepalived reads a virtual server:
 include /etc/keepalived/ipvs.conf
 ```
 
-Add it after the first deploy has installed the file, one node at a time, with
+The `keepalived.conf` the deploy writes for a cluster created in the interface has it
+([keepalived on the nodes](user-manual.md#keepalived-on-the-nodes)). In one a person writes,
+add it after the first deploy has installed the file, one node at a time, with
 `keepalived --config-test -f /etc/keepalived/keepalived.conf` before the reload;
 `04-node-prepare` warns while it is missing. `04-node-prepare` also installs `ipvsadm`, which
 `haprion-node-status` reads the counters with, and masks `ipvsadm.service` first: Debian's

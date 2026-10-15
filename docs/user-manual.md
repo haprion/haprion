@@ -1881,7 +1881,8 @@ certificates stops and says so, since the node has none.
 A removal takes the node's lines out of all six files, so it can no longer fetch configuration or
 certificates. It is refused for the node that reports holding the VIP and for a cluster's last node; the node
 itself is not touched and keeps serving until it is shut down. A cluster has one to eight nodes
-([Cluster definitions](#cluster-definitions)). Each node's `keepalived.conf` is not written by this project.
+([Cluster definitions](#cluster-definitions)). On a cluster created in the interface the next deploy rewrites every
+node's `keepalived.conf` with the new peer list ([keepalived on the nodes](#keepalived-on-the-nodes)).
 
 A change cut short - a reboot, a killed process, power - cannot leave the files half changed for
 long. Before the first file is touched, the whole change (every file's content before and after, and
@@ -1933,8 +1934,8 @@ plain HTTP and TCP; an HTTPS object waits for a certificate issued or uploaded f
 The new cluster is polled and drawn from the poller's next pass ([Which clusters get
 polled](#which-clusters-get-polled)). It has no release until its network description and objects
 are published and `haprion-cert-deploy -c <cluster>` and then `haprion-deploy -c <cluster>` run, and no backup schedule until one is set on
-the Backups page; its retention is the default until then. Each node's `keepalived.conf` is not
-written by this project.
+the Backups page; its retention is the default until then. The first deploy also writes each node's
+`keepalived.conf` and starts keepalived ([keepalived on the nodes](#keepalived-on-the-nodes)).
 
 A removal takes the cluster out of `clusters.yaml`, out of every
 certificate's targets, out of the editing policy and `safe.directory`, and takes its nodes out of the
@@ -3825,8 +3826,9 @@ its addresses between any number of nodes by priority, so a third node adds a st
 and eight is a ceiling nobody is meant to reach rather than a size to aim for: the pages were measured
 to draw eight nodes per cluster without scrolling sideways, and every node costs the poller a read
 (below). One is the floor: a cluster is created with its first node and the next is added to it, and a
-cluster of one serves - with nothing to fail over to. Each node's own
-`keepalived.conf` (its priority and its `unicast_peer` list) is not written by this project.
+cluster of one serves - with nothing to fail over to. Each node's `keepalived.conf` - its priority and
+its `unicast_peer` list - is written by the deploy for a cluster created in the interface
+([keepalived on the nodes](#keepalived-on-the-nodes)).
 
 There is **no hard limit on the number of clusters** in the engine, interface configuration or
 database schema. Two is the recommended starting shape - commonly one internal and one external
@@ -4012,13 +4014,45 @@ The include is reported and never compared. Putting that line into `keepalived.c
 step, taken one node at a time (below), and a deploy that treated it as a target would try forever
 to reach a state only a human can put the node in.
 
-The application writes the address list and nothing else. `priority`, `virtual_router_id`,
-`authentication`, `unicast_src_ip`, `unicast_peer` and the `notify_` lines stay in a file a person
-edits. Those decide who owns an address, and getting one wrong gives two masters or none - neither
-of which `--config-test` catches, because both are runtime behaviour rather than syntax. An extra
-line in `virtual_ipaddress` cannot cause either, which is what makes this half safe to generate.
+#### keepalived on the nodes
 
-**Switching a node over, in this order:**
+Who writes `keepalived.conf` depends on how the cluster came to be.
+
+**A cluster created in the interface** gets a router ID when it is created, and every publish
+writes one `keepalived.conf` per node into the release (`keepalived/node-<name>.conf`). The deploy
+installs the node's own file, tests it with `keepalived --config-test`, and starts keepalived the
+first time or reloads it after. The file is the baseline below in a fixed shape:
+
+- `state BACKUP` and `nopreempt` on every node; the priority follows the cluster's node order
+  (100, 90, 80 ...) and decides only who takes the address on a cold start
+- unicast to the other nodes, with `check_unicast_src`: an advert from an address that is not a
+  peer is discarded and logged once. There is no VRRP password - it is eight bytes of clear text
+  on the wire, and VRRPv3 dropped it
+- a node alone names `127.0.0.1` as its peer. An empty peer list makes keepalived fall back to
+  multicast on the segment, and the node's own address makes it read its own adverts and warn
+  every second
+- the interface is the cluster's `address_interface`, or else the one carrying the node's own
+  address
+- the address list included in `virtual_ipaddress`, the IPVS file at the top level, and the
+  `notify_` lines
+
+Its first line, `# Written by Haprion - a deploy replaces this file.`, is how the deploy knows
+the file is the product's. Delete that line and the file is yours: the deploy leaves it as it is from then on, and only the
+address list below is written.
+
+Adding a node changes the peer lists, which reach the nodes with the next deploy as a reload: the
+address stays where it is. Until the first deploy a node has no `keepalived.conf`; the dashboard
+says *Keepalived not configured*, and since no node carries the address the deploy proceeds with
+*no node currently owns the VIP*.
+
+**A cluster whose `keepalived.conf` a person wrote** keeps it. The application writes the address
+list and nothing else: `priority`, `virtual_router_id`, `authentication`, `unicast_src_ip`,
+`unicast_peer` and the `notify_` lines stay in the file a person edits. Those decide who owns an
+address, and getting one wrong gives two masters or none - neither of which `--config-test`
+catches, because both are runtime behaviour rather than syntax. An extra line in
+`virtual_ipaddress` cannot cause either, which is what makes this half safe to generate.
+
+**Switching a node over to the generated address list, in this order:**
 
 1. Deploy once, so `/etc/keepalived/addresses.conf` exists. Until a node's `keepalived.conf`
    mentions that path the file is installed and inert, and the deploy says so.
@@ -4587,8 +4621,9 @@ the nodes more vCPUs before they get there.
 
 #### HAProxy and keepalived baseline
 
-This project does not install HAProxy or keepalived, but it does **assume things about how they are
-configured**. Get these wrong and nothing fails loudly — deploys just stop being safe, because the
+The node package installs HAProxy and keepalived, and the project **assumes things about how they
+are configured** - for a cluster created in the interface it writes `keepalived.conf` itself
+([keepalived on the nodes](#keepalived-on-the-nodes)). Get these wrong and nothing fails loudly — deploys just stop being safe, because the
 ordering that protects live traffic quietly stops meaning anything.
 
 **Both nodes must be able to bind the virtual address, whether or not they own it.**

@@ -312,9 +312,7 @@ Listener metrics have no rollup and retain their fixed seven days.
 
 The metrics page reads windows longer than a day from per-hour sums
 (`metric_frontend_hour_delta`, `metric_backend_hour_delta`, revision `0055`),
-kept by a trigger as samples arrive and not partitioned. Revision `0055` filled
-the pools' older hours from the rollup once; the page no longer reads the
-rollup. The timer deletes hours older than 31 days, one more than the longest
+kept by a trigger as samples arrive and not partitioned. The timer deletes hours older than 31 days, one more than the longest
 window.
 
 Traffic logs follow the separate `[traffic_logs].retention_days` setting. The

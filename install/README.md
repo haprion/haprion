@@ -18,15 +18,16 @@ touches, and in what order — and it is answered once in
 
 ## Before you start
 
-You need HAProxy and, if your clusters use a virtual address, keepalived already
-installed on the nodes. This project manages HAProxy; it does not install it.
+The node package installs HAProxy and keepalived. For a cluster created in the
+interface the deploy also writes each node's `keepalived.conf`
+([keepalived on the nodes](../docs/user-manual.md#keepalived-on-the-nodes)).
 
-**But it does assume things about how they are configured**, and getting those
-wrong does not fail loudly — it quietly makes deploys unsafe. Read
-[the keepalived baseline in the manual](../docs/user-manual.md#haproxy-and-keepalived-baseline)
-before step 4: both nodes binding the virtual address, both keepalived instances
-as `BACKUP` with `nopreempt`, and the `notify_` lines that tell the management
-host who owns the address. There is a working starting point in
+**A cluster whose `keepalived.conf` a person writes** has to meet
+[the keepalived baseline in the manual](../docs/user-manual.md#haproxy-and-keepalived-baseline):
+both nodes binding the virtual address, both keepalived instances as `BACKUP`
+with `nopreempt`, and the `notify_` lines that tell the management host who owns
+the address. Getting those wrong does not fail loudly - it quietly makes deploys
+unsafe. There is a working starting point in
 [`examples/keepalived.conf.example`](examples/keepalived.conf.example), and step
 4 checks all three and says so if one is missing.
 
@@ -121,8 +122,9 @@ the step the package put there. That step creates the service accounts, the
 `/etc/haproxy` release layout and the sudo rules; the node scripts are the
 package's, in `/usr/sbin`.
 
-Then paste the `authorized_keys` lines for this node from step 3, and add the
-keepalived notify lines if the script asked for them. The server state key's line
+Then paste the `authorized_keys` lines for this node from step 3, and, on a
+cluster whose `keepalived.conf` a person writes, add the keepalived notify lines
+if the script asked for them. The server state key's line
 is the exception: with `SERVER_STATE_PUBKEY` in the answers file, this step writes
 it. Drain, maintenance and ready also need the admin socket line in each cluster's
 `core/haproxy.cfg` (`docs/user-manual.md`, 'Node scripts').

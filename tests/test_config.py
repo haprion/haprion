@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import io
 import tempfile
 import unittest
@@ -412,6 +413,54 @@ class TheClusterAddressTable(unittest.TestCase):
             _cluster(vips={"internal": {"address": "192.0.2.20", "source": "not-an-address"}})
 
         self.assertIn("source", str(raised.exception))
+
+
+class TheVrrpRouterId(unittest.TestCase):
+    """B313: set when the product created the cluster; one per cluster on this manager."""
+
+    def load(self, **ids: object) -> dict[str, Cluster]:
+        clusters = yaml.safe_load((BASE / "examples" / "clusters.yaml").read_text())
+        #
+        # A second cluster beside the example's one: its own paths and nodes,
+        # so the only thing the two can share is what the test gives them.
+        #
+        beta = copy.deepcopy(clusters["clusters"]["alpha"])
+        for key in ("config_path", "publish_path"):
+            beta[key] = beta[key].replace("alpha", "beta")
+        beta["node_path"] = "b"
+        beta["nodes"] = [
+            {"name": f"beta-{node['name']}", "mgmt_host": f"beta-{node['mgmt_host']}"}
+            for node in beta["nodes"]
+        ]
+        clusters["clusters"]["beta"] = beta
+        for name, value in ids.items():
+            clusters["clusters"][name]["vrrp_router_id"] = value
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            cluster_file = directory / "clusters.yaml"
+            cluster_file.write_text(yaml.safe_dump(clusters, sort_keys=False), encoding="utf-8")
+            policy = yaml.safe_load((BASE / "examples" / "runtime-policy.yaml").read_text())
+            policy["cluster_file"] = str(cluster_file)
+            policy_file = directory / "runtime-policy.yaml"
+            policy_file.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+            loaded = load_policy(policy_file, require_secure=False)
+            return dict(load_runtime_config(loaded, require_secure=False).clusters)
+
+    def test_absent_is_none_and_a_number_is_read(self) -> None:
+        clusters = self.load(alpha=7)
+        self.assertEqual(clusters["alpha"].vrrp_router_id, 7)
+        self.assertIsNone(clusters["beta"].vrrp_router_id)
+
+    def test_outside_1_to_255_or_not_a_number_is_refused(self) -> None:
+        for value in (0, 256, "7", True):
+            with self.subTest(value=value), self.assertRaises(ConfigError) as raised:
+                self.load(alpha=value)
+            self.assertIn("vrrp_router_id", str(raised.exception))
+
+    def test_two_clusters_with_one_id_are_refused(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            self.load(alpha=3, beta=3)
+        self.assertIn("also alpha's", str(raised.exception))
 
 
 class TheResolversSection(unittest.TestCase):

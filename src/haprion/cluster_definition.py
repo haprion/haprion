@@ -296,8 +296,28 @@ class Places:
 # ---------------------------------------------------------------- the files
 
 
+def _free_router_id(runtime: RuntimeConfig) -> int:
+    """The lowest VRRP router ID no cluster of this manager has (B313).
+
+    Unique among this manager's clusters only. With unicast adverts and
+    `check_unicast_src` a router ID elsewhere on the segment never meets
+    these (measured 26-10-15), so there is nothing beyond the manager to ask.
+    """
+
+    taken = {cluster.vrrp_router_id for cluster in runtime.clusters.values()}
+    for candidate in range(1, 256):
+        if candidate not in taken:
+            return candidate
+    raise EnrollmentError("cluster_invalid", "every VRRP router ID from 1 to 255 is in use")
+
+
 def _cluster_entry(
-    policy: PathPolicy, spec: Definition, *, validation_certs: str, logging: bool
+    policy: PathPolicy,
+    spec: Definition,
+    *,
+    validation_certs: str,
+    logging: bool,
+    vrrp_router_id: int,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {"display_name": spec.display_name, "vip": spec.vip}
     if spec.address_prefix is not None:
@@ -310,6 +330,7 @@ def _cluster_entry(
             "publish_path": str(policy.publish_root / spec.cluster),
             "node_path": spec.node_path,
             "traffic_logging": logging,
+            "vrrp_router_id": vrrp_router_id,
             "nodes": [
                 {"name": enrollment.name, "mgmt_host": host} for enrollment, host in spec.nodes
             ],
@@ -792,6 +813,7 @@ def plan_add(
         spec,
         validation_certs=validation_certs,
         logging=locations.collector_config.exists(),
+        vrrp_router_id=_free_router_id(runtime),
     )
     clusters_after = yaml.safe_dump(document, sort_keys=False).encode()
     registry_before = _read(policy.certificate_registry)

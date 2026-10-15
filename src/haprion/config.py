@@ -359,6 +359,12 @@ class Cluster:
     # (B276). Only from the registry; empty without one.
     #
     authority_ids: tuple[str, ...] = ()
+    #
+    # The VRRP instance's router ID, when the product writes the nodes'
+    # keepalived.conf (B313). Set when the cluster is created; a cluster from
+    # before has none, and its nodes keep a keepalived.conf a person wrote.
+    #
+    vrrp_router_id: int | None = None
 
     def network(self) -> Network:
         """This cluster's network description, from the repository if it has one.
@@ -1478,6 +1484,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 "certificate_ids",
                 "trusted_proxy_cidrs",
                 "traffic_logging",
+                "vrrp_router_id",
                 "nodes",
             },
             location,
@@ -1588,6 +1595,13 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
         traffic_logging = raw.get("traffic_logging", False)
         if not isinstance(traffic_logging, bool):
             raise ConfigError(f"{location}.traffic_logging must be true or false")
+        vrrp_router_id = raw.get("vrrp_router_id")
+        if vrrp_router_id is not None and (
+            not isinstance(vrrp_router_id, int)
+            or isinstance(vrrp_router_id, bool)
+            or not 1 <= vrrp_router_id <= 255
+        ):
+            raise ConfigError(f"{location}.vrrp_router_id must be a number between 1 and 255")
 
         clusters[cluster_id] = Cluster(
             cluster_id=cluster_id,
@@ -1626,7 +1640,23 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             nodes=tuple(nodes),
             traffic_logging=traffic_logging,
             authority_ids=registry.authorities_for(cluster_id) if registry is not None else (),
+            vrrp_router_id=vrrp_router_id,
         )
+    #
+    # Two clusters on one segment with one router ID would take each other's
+    # adverts were they ever to meet; the IDs this manager hands out are its
+    # own to keep apart (B313).
+    #
+    taken: dict[int, str] = {}
+    for cluster_id, cluster in clusters.items():
+        if cluster.vrrp_router_id is None:
+            continue
+        if cluster.vrrp_router_id in taken:
+            raise ConfigError(
+                f"clusters.{cluster_id}.vrrp_router_id {cluster.vrrp_router_id} is also "
+                f"{taken[cluster.vrrp_router_id]}'s"
+            )
+        taken[cluster.vrrp_router_id] = cluster_id
     if registry is not None:
         #
         # A certificate naming a cluster that does not exist is the one

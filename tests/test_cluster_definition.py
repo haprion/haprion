@@ -265,6 +265,31 @@ class CreatingACluster(unittest.TestCase):
             self.assertIn(f"sudoedit {site.config_root}/gamma/core/haproxy.cfg, \\", sudoers)
             self.assertTrue(sudoers.rstrip().endswith("HAPROXY_EDITORS ALL = (root) HAPROXY_EDIT"))
 
+    def test_each_new_cluster_gets_the_lowest_router_id_none_has(self) -> None:
+        """B313: the product writes keepalived.conf for clusters it created."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+            self.assertIsNone(site.runtime().cluster("alpha").vrrp_router_id)
+
+            site.add()
+            site.add(
+                cluster_definition.definition(
+                    "delta",
+                    display_name="Delta",
+                    vip="198.51.100.40",
+                    node_path="delta",
+                    default_certificate=None,
+                    blocks=[block("node-e", 30, cluster="delta")],
+                    hosts=["node-e.example.com"],
+                ),
+                ask=answering_as("delta"),
+            )
+
+            runtime = site.runtime()
+            self.assertEqual(runtime.cluster("gamma").vrrp_router_id, 1)
+            self.assertEqual(runtime.cluster("delta").vrrp_router_id, 2)
+
     def test_the_cluster_its_repository_and_its_nodes_exist_as_one(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = Site(Path(raw))

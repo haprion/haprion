@@ -34,6 +34,14 @@ the reload the commands are sent only on a connection whose `show info` names
 another pid - in the same connection, so the answer proves which process took
 them.
 
+**And why it waits for that pid every time.** `systemctl reload` answers as
+soon as the signal is sent; its `haproxy -c` binds nothing. A configuration
+that cannot bind - a port another program holds - fails in the new worker,
+the master keeps the old one, and the reload still said 0 (26-10-15: a tcp
+object on port 22 beside sshd, on every node, for two days). A reload counts
+only once a new worker answers; otherwise it fails with HAProxy's own reason
+and the deploy rolls back.
+
 One lock covers `set` and `reload`/`reapply`, so a drain asked for during a
 deploy is either in the file the reload reads or set on the new worker, never
 lost between the two.
@@ -96,6 +104,8 @@ CONFIG_PENDING = Path("/run/haprion-pull-deploy.pending")
 #
 UNAPPLIED = Path("/run/haprion-server-state.unapplied")
 SYSTEMCTL = "/usr/bin/systemctl"
+JOURNALCTL = "/usr/bin/journalctl"
+MAX_ALERTS = 10
 
 STATES = ("ready", "drain", "maint")
 #
@@ -436,6 +446,39 @@ def put_back(replacing: str | None) -> bool:
     return not unapplied
 
 
+def new_worker(replacing: str) -> bool:
+    """Whether a worker other than `replacing` answers before the deadline."""
+
+    deadline = time.monotonic() + WAIT_FOR_WORKER_SECONDS
+    while True:
+        try:
+            pid = worker_pid(ask(["show info"]))
+        except Unavailable:
+            pid = None
+        if pid is not None and pid != replacing:
+            return True
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+
+
+def haproxy_alerts(since: float) -> list[str]:
+    """HAProxy's `[ALERT]` lines since `since`: why the new worker exited."""
+
+    try:
+        read = subprocess.run(  # noqa: S603 - fixed path, a number
+            [JOURNALCTL, "-u", "haproxy", "--since", f"@{int(since)}", "-o", "cat", "--no-pager"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    alerts = [line.strip() for line in read.stdout.splitlines() if "[ALERT]" in line]
+    return alerts[-MAX_ALERTS:]
+
+
 def command_reload() -> int:
     held = lock()
     try:
@@ -443,11 +486,24 @@ def command_reload() -> int:
             before = worker_pid(ask(["show info"]))
         except Unavailable:
             before = None
+        started = time.time()
         reload = subprocess.run([SYSTEMCTL, "reload", "haproxy"], check=False)  # noqa: S603 - fixed path
         if reload.returncode != 0:
             return reload.returncode
         #
-        # The reload itself worked, so the deploy did: its exit stays 0. What
+        # Unverifiable without a pid from before - the socket did not answer -
+        # and then the reload's own answer is all there is, as it was.
+        #
+        if before is not None and not new_worker(before):
+            log(
+                f"ERROR: HAProxy did not start a new worker within {WAIT_FOR_WORKER_SECONDS} s; "
+                "the old one still serves the previous configuration"
+            )
+            for line in haproxy_alerts(started):
+                log(f"HAProxy: {line}")
+            return 1
+        #
+        # The new worker answers, so the deploy worked: its exit stays 0. What
         # did not take is in UNAPPLIED, which the node's status reports.
         #
         try:

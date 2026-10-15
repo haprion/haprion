@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import signal
+import socket as socket_module
 import subprocess
 import sys
 import tempfile
@@ -294,6 +295,43 @@ class TheHelperKeepsAServerWhereItWasPut(RunningHaproxy):
             with self.subTest(argv):
                 code, _out = self.run_helper(*argv)
                 self.assertEqual(code, self.helper.EXIT_USAGE)
+
+
+@unittest.skipUnless(HAPROXY, "haproxy is not installed where the tests run")
+class AReloadCountsOnlyWhenANewWorkerAnswers(RunningHaproxy):
+    """26-10-15: a port sshd held, the old worker kept serving, the deploy said done."""
+
+    def test_a_configuration_that_cannot_bind_fails_the_reload(self) -> None:
+        held = socket_module.socket(socket_module.AF_INET, socket_module.SOCK_STREAM)
+        self.addCleanup(held.close)
+        held.bind(("127.0.0.1", 0))
+        held.listen()
+        port = held.getsockname()[1]
+        before = self.helper.worker_pid(self.helper.ask(["show info"]))
+        with self.config.open("a") as config:
+            config.write(f"frontend held\n    bind 127.0.0.1:{port}\n    default_backend mgd-api\n")
+        journal = self.root / "journalctl"
+        journal.write_text(
+            "#!/bin/sh\necho '[ALERT]    (1) : Binding for frontend held: cannot bind socket'\n"
+        )
+        journal.chmod(0o755)
+        self.helper.JOURNALCTL = str(journal)
+        self.helper.WAIT_FOR_WORKER_SECONDS = 3
+
+        code, out = self.run_helper("reload")
+
+        self.assertEqual(code, 1, out)
+        self.assertIn("did not start a new worker", out)
+        self.assertIn("HAProxy: [ALERT]", out)
+        self.assertEqual(self.helper.worker_pid(self.helper.ask(["show info"])), before)
+
+    def test_a_reload_that_starts_a_worker_still_succeeds_with_nothing_kept(self) -> None:
+        before = self.helper.worker_pid(self.helper.ask(["show info"]))
+
+        code, out = self.run_helper("reload")
+
+        self.assertEqual(code, 0, out)
+        self.assertNotEqual(self.helper.worker_pid(self.helper.ask(["show info"])), before)
 
 
 @unittest.skipUnless(HAPROXY, "haproxy is not installed where the tests run")

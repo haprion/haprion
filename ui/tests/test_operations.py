@@ -8,6 +8,7 @@ own, not a second copy built here.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import unittest
@@ -19,6 +20,7 @@ from haprion.cli import (
     cert_receiver_helper,
     changes_publish,
     deploy,
+    node_ask,
     server_state_helper,
 )
 
@@ -852,6 +854,23 @@ class DefiningClusters(unittest.TestCase):
         request = json.loads(prepared.request)
         self.assertEqual((request["operation"], request["cluster"]), ("cluster_define", "gamma"))
         self.assertEqual(request["parameters"], self.CREATION)
+
+    def test_the_client_carries_every_request_built_for_it_to_the_helper(self) -> None:
+        built = [
+            self.prepare(self.CREATION),
+            self.prepare({"action": "remove"}),
+            operations.prepare(
+                operation="cluster_node",
+                cluster="gamma",
+                request_id=REQUEST,
+                payload={"action": "add", "block": "block-one", "host": "node-c.example.com"},
+            ),
+        ]
+        for prepared in built:
+            with self.subTest(request=prepared.request[:60]):
+                self.assertEqual(prepared.argv, operations.NODE_CLIENT)
+                carried = node_ask._request(io.BytesIO(prepared.request.encode()))
+                self.assertEqual(carried, json.loads(prepared.request))
 
     def test_a_removal_carries_nothing_but_its_action(self) -> None:
         request = json.loads(self.prepare({"action": "remove"}).request)

@@ -13,7 +13,7 @@ import sys
 from typing import Any, BinaryIO, TextIO
 
 from haprion import helper_socket
-from haprion.cli.node_helper import OPERATION
+from haprion.cli.node_helper import PARAMETERS
 from haprion.envelope import failure
 from haprion.helper_protocol import MAX_REQUEST_BYTES, write_document
 
@@ -30,8 +30,12 @@ def _request(stream: BinaryIO) -> dict[str, Any]:
     if len(raw) > MAX_REQUEST_BYTES:
         raise ValueError("the request is larger than a request")
     document = json.loads(raw.decode("utf-8"))
-    if not isinstance(document, dict) or document.get("operation") != OPERATION:
-        raise ValueError("the request is not a node change")
+    #
+    # Both operations the helper answers on this socket: a node of a cluster,
+    # and a whole cluster (Create cluster refused here until Fas 18 found it).
+    #
+    if not isinstance(document, dict) or document.get("operation") not in PARAMETERS:
+        raise ValueError("the request is not a node or cluster change")
     return document
 
 

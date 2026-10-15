@@ -1,0 +1,499 @@
+#!/usr/bin/env python3
+"""A whole installation on empty machines, in containers: the release's acceptance.
+
+    tools/install-test --packages <dir> --distribution debian13|ubuntu26.04|all
+                       [--source <repository>] [--keep] [--logs <dir>]
+
+Every new installation found its faults one at a time on a lab VM (Fas 18:
+a missing dependency, a step that could not be rerun, a check that refused a
+new installation) because nothing ran the installation the way an operator
+does before a release. This does, on machines that have nothing but systemd
+and sshd - so a package that leans on something a test machine happened to
+have fails here, not on a person's first node:
+
+  * a manager and two nodes per distribution, rootless podman, systemd as PID 1,
+    on a network of their own (RFC 5737 addresses)
+  * the manager: the CLI and UI packages with apt, `haprion-setup` from the
+    commit's source tree, step 03's lines
+  * each node: the node package with apt, `04-node-prepare`, the lines pasted
+  * `haprion-cluster add` with both blocks, an object published with
+    `haprion-objects apply`, `haprion-deploy`
+  * then what an operator checks: keepalived running on both, the virtual
+    address on exactly one, the object answering there, the address moving
+    when its holder's keepalived stops and staying where it went when that
+    comes back, and a second deploy that changes nothing
+
+The packages are the ones a release ships, in one directory: `haprion-cli`,
+`haprion-node` and each distribution's `haprion-ui`. The source tree is the
+commit's, taken with `git archive` from the commit their version names.
+
+Not here: syslog objects' IPVS (a rootless container may not load the kernel
+table; measured 26-10-15), certbot (step 14 downloads from pypi.org, and a
+release's own check of it runs on the manager), and the web interface's
+pages - the CLI drives the same root helpers.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+PODMAN = "podman"
+CLUSTER = "alpha"
+OBJECT = """\
+schema: 1
+name: shop
+hostnames: [shop.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: {backend}
+        port: 8080
+"""
+BACKEND_BODY = "install-test backend"
+#
+# Two units a container cannot run, and the kernel filesystems it cannot
+# mount: masked, so that a failed unit after boot is the product's.
+#
+CONTAINER_UNITS = (
+    "sys-kernel-config.mount",
+    "sys-kernel-debug.mount",
+    "sys-kernel-tracing.mount",
+    "proc-sys-fs-binfmt_misc.automount",
+    "systemd-modules-load.service",
+)
+#
+# A server as a distribution installs it, and nothing more: systemd and sshd.
+# Docker's images forbid starting services from a package's scripts
+# (policy-rc.d) and carry one set of host keys for every container; a real
+# machine does neither, so both are undone.
+#
+CONTAINERFILE = """\
+FROM {image}
+RUN apt-get update -q \\
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \\
+      systemd systemd-sysv openssh-server \\
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \\
+ && rm -f /usr/sbin/policy-rc.d /etc/ssh/ssh_host_* \\
+ && systemctl mask {masked} \\
+ && printf '%s\\n' '[Unit]' 'Description=This machine'"'"'s SSH host keys' \\
+      'Before=ssh.service ssh.socket' 'ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key' \\
+      '[Service]' 'Type=oneshot' 'ExecStart=/usr/bin/ssh-keygen -A' \\
+      '[Install]' 'WantedBy=multi-user.target' > /etc/systemd/system/ssh-host-keys.service \\
+ && systemctl enable ssh-host-keys.service
+CMD ["/sbin/init"]
+"""
+
+
+@dataclass(frozen=True)
+class Distribution:
+    name: str
+    image: str
+    ui_suffix: str
+    subnet: str
+
+
+DISTRIBUTIONS = {
+    "debian13": Distribution("debian13", "docker.io/library/debian:13", "~deb13", "198.51.100"),
+    "ubuntu26.04": Distribution(
+        "ubuntu26.04", "docker.io/library/ubuntu:26.04", "~ubuntu26.04", "203.0.113"
+    ),
+}
+NODES = ("node-a", "node-b")
+
+
+class Failed(Exception):
+    """A step that did not do what it says; the message is what it printed."""
+
+
+class Run:
+    def __init__(self, distribution: Distribution, logs: Path) -> None:
+        self.distribution = distribution
+        self.logs = logs
+        self.prefix = f"haprion-it-{distribution.name.replace('.', '')}"
+        self.network = self.prefix
+        self.step = 0
+
+    # --- the machines -------------------------------------------------------
+
+    def container(self, role: str) -> str:
+        return f"{self.prefix}-{role}"
+
+    def address(self, role: str) -> str:
+        last = {"mgr": 10, "node-a": 11, "node-b": 12, "vip": 20}[role]
+        return f"{self.distribution.subnet}.{last}"
+
+    def podman(self, *arguments: str, check: bool = True, stdin: str | None = None) -> str:
+        done = subprocess.run(  # noqa: S603 - podman with arguments built here
+            [PODMAN, *arguments], input=stdin, capture_output=True, text=True, check=False
+        )
+        if check and done.returncode != 0:
+            raise Failed(f"podman {' '.join(arguments[:3])}: {done.stderr.strip()}")
+        return done.stdout
+
+    def on(
+        self, role: str, command: str, *, stdin: str | None = None, check: bool = True
+    ) -> tuple[int, str]:
+        """A shell command on one machine, as root; its output goes to the log too."""
+
+        done = subprocess.run(  # noqa: S603 - podman exec of a command built here
+            [PODMAN, "exec", "-i", self.container(role), "/bin/bash", "-c", command],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        output = done.stdout + done.stderr
+        with (self.logs / f"{role}.log").open("a") as log:
+            log.write(f"\n### {command}\n{output}")
+        if check and done.returncode != 0:
+            raise Failed(f"{role}: `{command}` exited {done.returncode}\n{output[-6000:]}")
+        return done.returncode, output
+
+    def heading(self, title: str) -> None:
+        self.step += 1
+        print(f"  [{self.distribution.name} {self.step:2d}] {title} ... ", end="", flush=True)
+
+    def remove(self) -> None:
+        for role in ("mgr", *NODES):
+            self.podman("rm", "-f", "-t", "1", self.container(role), check=False)
+        self.podman("network", "rm", "-f", self.network, check=False)
+
+    def image(self) -> str:
+        tag = f"localhost/haprion-install-test:{self.distribution.name}"
+        containerfile = CONTAINERFILE.format(
+            image=self.distribution.image, masked=" ".join(CONTAINER_UNITS)
+        )
+        with tempfile.TemporaryDirectory() as context:
+            (Path(context) / "Containerfile").write_text(containerfile)
+            self.podman("build", "-q", "--pull=newer", "-t", tag, context)
+        return tag
+
+    def start(self, image: str) -> None:
+        self.remove()
+        self.podman(
+            "network", "create", "--subnet", f"{self.distribution.subnet}.0/24", self.network
+        )
+        for role in ("mgr", *NODES):
+            self.podman(
+                "run",
+                "-d",
+                "--name",
+                self.container(role),
+                "--hostname",
+                role,
+                "--network",
+                self.network,
+                "--network-alias",
+                role,
+                "--ip",
+                self.address(role),
+                "--privileged",
+                "--systemd=always",
+                image,
+            )
+        for role in ("mgr", *NODES):
+            _, state = self.on(role, "systemctl is-system-running --wait", check=False)
+            if state.strip() != "running":
+                _, failed = self.on(role, "systemctl --failed --no-legend", check=False)
+                raise Failed(f"{role} booted {state.strip()}:\n{failed}")
+
+    # --- the installation ---------------------------------------------------
+
+    def copy(self, role: str, path: Path) -> str:
+        self.on(role, "mkdir -p /root/install")
+        self.podman("cp", str(path), f"{self.container(role)}:/root/install/{path.name}")
+        return f"/root/install/{path.name}"
+
+    def install_manager(self, cli: Path, ui: Path, source: Path) -> str:
+        names = [self.copy("mgr", path) for path in (cli, ui, source)]
+        self.on(
+            "mgr",
+            "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
+            f"&& apt-get install -y -q {shlex.quote(names[0])} {shlex.quote(names[1])}",
+        )
+        self.on("mgr", f"cd /root/install && tar xzf {shlex.quote(names[2])}")
+        _, output = self.on("mgr", "/root/install/haprion-src/install/haprion-setup")
+        if "The manager is installed" not in output:
+            raise Failed(f"haprion-setup ended without saying the manager is installed:\n{output}")
+        _, keys = self.on("mgr", "/root/install/haprion-src/install/03-manager-keys")
+        return keys
+
+    def prepare_node(self, role: str, package: Path, keys: str) -> str:
+        name = self.copy(role, package)
+        self.on(
+            role,
+            "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
+            f"&& apt-get install -y -q {shlex.quote(name)}",
+        )
+        pubkey = re.search(r"^SERVER_STATE_PUBKEY=.*$", keys, re.M)
+        if not pubkey:
+            raise Failed("step 03 printed no SERVER_STATE_PUBKEY line")
+        answers = (
+            "MANAGER_HOST=mgr\n"
+            "NODE_CONFIG_PULL_KEY=/root/.ssh/id_ed25519_config_pull\n"
+            "NODE_CERT_PULL_KEY=/root/.ssh/id_ed25519_cert_pull\n"
+            f"{pubkey.group(0)}\n"
+        )
+        self.on(role, "cat > /root/install/answers.env", stdin=answers)
+        _, output = self.on(
+            role,
+            "/usr/share/haprion-node/install/04-node-prepare /root/install/answers.env " + CLUSTER,
+        )
+        warnings = [line for line in output.splitlines() if line.startswith("WARNING")]
+        if warnings:
+            raise Failed("04-node-prepare warned on an empty node:\n" + "\n".join(warnings))
+        for target, line in authorized_lines(keys):
+            self.on(
+                role,
+                f"grep -qxF -- {shlex.quote(line)} {target} || printf '%s\\n' {shlex.quote(line)} >> {target}",
+            )
+        #
+        # What the operator does by answering yes once: the manager's host
+        # key into root's known_hosts, for the pulls.
+        #
+        self.on(role, "ssh-keyscan -t ed25519 mgr >> /root/.ssh/known_hosts 2>/dev/null")
+        block = re.search(r"^(haproxy-node-v1:.*?)(?:\n\s*\n|\Z)", output, re.M | re.S)
+        if not block:
+            raise Failed("04-node-prepare printed no enrollment block")
+        return "".join(block.group(1).split())
+
+    def create_cluster(self, blocks: list[str]) -> None:
+        hosts = " ".join(f"--host {role}" for role in NODES)
+        self.on(
+            "mgr",
+            f"haprion-cluster add -c {CLUSTER} --display-name Alpha --vip {self.address('vip')} "
+            f"--node-path {CLUSTER} {hosts}",
+            stdin="\n".join(blocks) + "\n",
+        )
+
+    def publish(self) -> None:
+        self.on(
+            "mgr",
+            "mkdir -p /srv/install-test && printf '%s\\n' "
+            f"{shlex.quote(BACKEND_BODY)} > /srv/install-test/index.html "
+            "&& systemd-run --unit install-test-backend --property=Restart=always "
+            "/usr/bin/python3 -m http.server 8080 --directory /srv/install-test",
+        )
+        self.on(
+            "mgr",
+            "mkdir -p /root/install/objects && cat > /root/install/objects/shop.yaml",
+            stdin=OBJECT.format(backend=self.address("mgr")),
+        )
+        self.on(
+            "mgr", f"haprion-objects apply -c {CLUSTER} /root/install/objects -m 'install test'"
+        )
+
+    def deploy(self) -> str:
+        _, output = self.on("mgr", f"haprion-deploy -c {CLUSTER}")
+        return output
+
+    # --- what an operator checks --------------------------------------------
+
+    def holders(self) -> list[str]:
+        vip = self.address("vip")
+        found = []
+        for role in NODES:
+            _, addresses = self.on(role, "ip -4 -o addr show")
+            if f" {vip}/" in addresses:
+                found.append(role)
+        return found
+
+    def wait_for_one_holder(self, seconds: int = 20) -> str:
+        deadline = time.monotonic() + seconds
+        holders: list[str] = []
+        while time.monotonic() < deadline:
+            holders = self.holders()
+            if len(holders) == 1:
+                return holders[0]
+            time.sleep(1)
+        raise Failed(f"the virtual address is held by {holders or 'no node'} after {seconds} s")
+
+    def answers_on_the_vip(self) -> None:
+        _, body = self.on(
+            "mgr",
+            f"curl -fsS --max-time 5 -H 'Host: shop.example.com' http://{self.address('vip')}/",
+        )
+        if BACKEND_BODY not in body:
+            raise Failed(f"the virtual address answered something else:\n{body}")
+
+    def services_running(self) -> None:
+        for role in NODES:
+            self.on(role, "systemctl is-active haproxy keepalived")
+
+    def status(self) -> dict[str, object]:
+        _, output = self.on("mgr", f"haprion-status -c {CLUSTER} --json")
+        return dict(json.loads(output))
+
+    def save_logs(self) -> None:
+        for role in ("mgr", *NODES):
+            self.on(role, "journalctl -b --no-pager -p warning", check=False)
+        self.on("mgr", "cat /var/log/haprion/setup.log", check=False)
+
+
+def authorized_lines(keys: str) -> list[tuple[str, str]]:
+    """Step 03's lines for every node, by the file each goes into."""
+
+    section = keys.split("--- every node", 1)[-1].split("The server state line need not", 1)[0]
+    found: list[tuple[str, str]] = []
+    target = None
+    for line in section.splitlines():
+        heading = re.match(r"\s+(/home/\S+/authorized_keys)\s", line)
+        if heading:
+            target = heading.group(1)
+        elif line.startswith("restrict,") and target and "server-state-trigger" not in line:
+            # The server state key's line is written by 04-node-prepare itself.
+            found.append((target, line))
+    if not found:
+        raise Failed("step 03 printed no lines for the nodes")
+    return found
+
+
+def package(directory: Path, pattern: str) -> Path:
+    found = sorted(directory.glob(pattern))
+    if len(found) != 1:
+        raise SystemExit(f"install-test: expected one {pattern} in {directory}, found {len(found)}")
+    return found[0]
+
+
+def source_archive(repository: Path, cli: Path, directory: Path) -> Path:
+    """The source tree of the commit the packages were built from."""
+
+    match = re.search(r"\.([0-9a-f]{12})_all\.deb$", cli.name)
+    if not match:
+        raise SystemExit(f"install-test: {cli.name} names no commit")
+    archive = directory / "haprion-src.tar.gz"
+    subprocess.run(  # noqa: S603 - git with a commit read from the package's name
+        [
+            "/usr/bin/git",
+            "-C",
+            str(repository),
+            "archive",
+            "--prefix=haprion-src/",
+            "-o",
+            str(archive),
+            match.group(1),
+        ],
+        check=True,
+    )
+    return archive
+
+
+def run_one(
+    distribution: Distribution, packages: Path, source: Path, logs: Path, keep: bool
+) -> bool:
+    cli = package(packages, "haprion-cli_*_all.deb")
+    node = package(packages, "haprion-node_*_all.deb")
+    ui = package(packages, f"haprion-ui_*{distribution.ui_suffix}_amd64.deb")
+    logs.mkdir(parents=True, exist_ok=True)
+    run = Run(distribution, logs)
+    steps = []
+
+    def step(title: str, action) -> object:  # type: ignore[no-untyped-def]
+        run.heading(title)
+        started = time.monotonic()
+        result = action()
+        print(f"ok ({time.monotonic() - started:.0f} s)")
+        steps.append(title)
+        return result
+
+    try:
+        image = step("an empty server image", run.image)
+        step("a manager and two nodes booted", lambda: run.start(image))
+        with tempfile.TemporaryDirectory() as directory:
+            archive = source_archive(source, cli, Path(directory))
+            keys = step(
+                "the manager: packages, haprion-setup, step 03",
+                lambda: run.install_manager(cli, ui, archive),
+            )
+        blocks = [
+            step(
+                f"{role}: package, 04-node-prepare, the key lines",
+                lambda role=role: run.prepare_node(role, node, keys),
+            )
+            for role in NODES
+        ]
+        step("haprion-cluster add with both blocks", lambda: run.create_cluster(blocks))
+        step("an object published", run.publish)
+        step("haprion-deploy", run.deploy)
+        step("haproxy and keepalived running on both nodes", run.services_running)
+        holder = step("the virtual address on exactly one node", run.wait_for_one_holder)
+        step("the object answers on the virtual address", run.answers_on_the_vip)
+
+        def failover() -> None:
+            run.on(holder, "systemctl stop keepalived")
+            other = run.wait_for_one_holder()
+            if other == holder:
+                raise Failed(f"the address stayed on {holder} with its keepalived stopped")
+            run.answers_on_the_vip()
+            run.on(holder, "systemctl start keepalived")
+            time.sleep(5)
+            if run.wait_for_one_holder() != other:
+                raise Failed(f"the address went back to {holder}; nopreempt should keep it")
+
+        step("the address moves when its holder stops, and stays", failover)
+
+        def converged() -> None:
+            output = run.deploy()
+            if "skip" not in output.lower():
+                raise Failed(f"a second deploy did not skip the current nodes:\n{output}")
+
+        step("a second deploy changes nothing", converged)
+    except Failed as failure:
+        print("FAILED")
+        print()
+        print(str(failure))
+        run.save_logs()
+        print(f"\n  The whole output of every machine is in {logs}")
+        if keep:
+            print(f"  The machines are left running: podman exec -it {run.container('mgr')} bash")
+        else:
+            run.remove()
+        return False
+    run.save_logs()
+    if not keep:
+        run.remove()
+    print(f"  [{distribution.name}] installed and serving: {len(steps)} steps")
+    return True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="install-test")
+    parser.add_argument("--packages", type=Path, required=True)
+    parser.add_argument("--distribution", choices=[*DISTRIBUTIONS, "all"], default="all")
+    parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--logs", type=Path)
+    parser.add_argument("--keep", action="store_true")
+    args = parser.parse_args()
+    logs = args.logs or Path(tempfile.mkdtemp(prefix="haprion-install-test-"))
+    chosen = list(DISTRIBUTIONS) if args.distribution == "all" else [args.distribution]
+    results = {
+        name: run_one(
+            DISTRIBUTIONS[name], args.packages.resolve(), args.source, logs / name, args.keep
+        )
+        for name in chosen
+    }
+    print()
+    for name, passed in results.items():
+        print(f"  {name}: {'PASSED' if passed else 'FAILED'}")
+    return 0 if all(results.values()) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -121,6 +121,34 @@ set those variables by hand against an installed database.
 therefore fails instead of being silently refreshed. The local project is installed editable, so
 tests do not depend on an implicit `PYTHONPATH`.
 
+## Installation gate
+
+The unit suite runs on a developer's machine, which has every tool the packages need for other
+reasons. A release's packages are therefore installed the way an operator installs them, on
+machines that have only systemd and sshd, before they go anywhere else:
+
+```bash
+tools/install-test --packages /path/to/release-packages --distribution all
+```
+
+The command runs as the developer, with rootless podman. For each of Debian 13 and Ubuntu 26.04 it
+starts a manager and two nodes on a private network with RFC 5737 addresses, installs the CLI, UI
+and node packages with apt, runs `haprion-setup`, step 3 and `04-node-prepare`, pastes the key
+lines, creates a cluster with `haprion-cluster add`, publishes an object and deploys it. It then
+checks what an operator would: keepalived and HAProxy running on both nodes, the virtual address on
+exactly one, the object answering there, the address moving when its holder's keepalived stops and
+staying where it went when it comes back, and a second deploy that changes nothing. The first step
+that does not hold stops the run with its output; every machine's output and journal are kept in
+the logs directory. `--keep` leaves the machines running for a look inside.
+
+Not covered: syslog objects' IPVS (a rootless container may not load the kernel table), certbot's
+environment (it downloads from pypi.org) and the web pages, whose root helpers the CLI drives the
+same way.
+
+`tests/test_package_commands.py` is the quick half in the ordinary suite: it reads every script a
+package carries and every module the engine imports, and fails when one names a package the
+package does not depend on.
+
 ## Local CodeQL gate
 
 Use the pinned CodeQL bundle documented by the private build environment. Results and the database

@@ -109,11 +109,19 @@ FILES: dict[str, int] = {
     BUILD_FILE: 0o644,
 }
 #
-# keepalived is a dependency since the product writes its configuration on the
-# nodes of a cluster it created (B313); before, a person did, and it was only
-# recommended.
+# Every package whose command the node's scripts run, named directly as
+# Debian policy asks rather than left to arrive with something else: a new
+# node stopped on its first deploy on `rsync: command not found` (Fas 18,
+# finding 37). tests/test_package_commands.py reads the scripts and holds
+# this list to them. keepalived is here since the product writes its
+# configuration on the nodes of a cluster it created (B313). dnsdist is not:
+# 04-node-prepare installs it from PowerDNS's repository.
 #
-DEPENDS = "python3, sudo, rsyslog, rsyslog-gnutls, haproxy, ipvsadm, keepalived"
+DEPENDS = (
+    "python3, sudo, rsyslog, rsyslog-gnutls, haproxy, ipvsadm, keepalived, rsync, "
+    "openssh-client, openssh-server, iproute2, procps, passwd, openssl, systemd, apt, "
+    "mawk | awk"
+)
 #
 # Nothing to start and nothing to stop: the scripts run when the manager asks.
 # The first installation says what comes next, and an upgrade is complete when

@@ -324,11 +324,20 @@ def assemble(
     write(root, "DEBIAN/postrm", POSTRM.encode(), 0o755)
 
 
+#
+# Every package whose command the platform steps and haprion-setup run,
+# beside the engine's (tests/test_package_commands.py holds it to them).
+#
+UI_DEPENDS = (
+    "nginx, postgresql, postgresql-client, sudo, curl, iproute2, openssl, openssh-client, "
+    "git, passwd, systemd, apt, mawk | awk"
+)
+
+
 def depends(python: str) -> str:
     major, minor = (int(part) for part in python.split("."))
     return (
-        f"python3 (>= {major}.{minor}), python3 (<< {major}.{minor + 1}), "
-        "haprion-cli, nginx, postgresql, sudo, curl"
+        f"python3 (>= {major}.{minor}), python3 (<< {major}.{minor + 1}), haprion-cli, {UI_DEPENDS}"
     )
 
 

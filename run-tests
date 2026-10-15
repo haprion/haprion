@@ -44,11 +44,12 @@ ruff check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools" "$base
 ruff format --check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools" "$base/ui"
 #
 # And the Python scripts installed without a .py ending - the nodes' status,
-# probe and server state helpers - which a directory walk never offers ruff.
+# probe and server state helpers, tools/install-test - which a directory walk
+# never offers ruff.
 # Found by their first line, so a new one is linted the day it is added; until
 # 2026-10-09 eleven findings sat in them unseen.
 #
-python_scripts=$(find "$base/install" "$base/examples" -type f ! -name '*.py' ! -path '*/__pycache__/*' \
+python_scripts=$(find "$base/install" "$base/examples" "$base/tools" -type f ! -name '*.py' ! -path '*/__pycache__/*' \
     -exec sh -c 'head -n 1 "$1" | grep -q "^#!.*python"' _ {} \; -print | sort)
 if [ -z "$python_scripts" ]; then
     echo "run-tests: found no Python scripts under install/ - the search is broken" >&2

@@ -21,6 +21,7 @@ FIELD_ORDER = (
     "Installed-Size",
     "Depends",
     "Recommends",
+    "Suggests",
     "Conflicts",
     "Replaces",
     "Section",

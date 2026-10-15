@@ -49,13 +49,28 @@ LIB = "usr/lib/haprion/cli"
 TARGET = "/opt/haprion"
 SUDOERS = "etc/sudoers.d/haprion"
 #
-# libcrypt1 is loaded through ctypes for an https receiver's yescrypt hash
-# (cert_receiver.secret_hash), which no shared-library scan would see.
+# What the engine imports and runs, named directly (tests/test_package_commands.py
+# holds the list to the code). libcrypt1 is loaded through ctypes for an https
+# receiver's yescrypt hash (cert_receiver.secret_hash), which no shared-library
+# scan would see. python3-cryptography is PyJWT's `crypto` extra, which
+# Debian's python3-jwt only recommends: OIDC's signatures need it. The system
+# bus is systemd-run's, which the candidate's sandbox is started with.
 #
 DEPENDS = (
-    "python3 (>= 3.12), python3-yaml, python3-nacl, python3-psycopg, sudo, git, rsync, "
-    "openssh-client, haproxy, libcrypt1"
+    "python3 (>= 3.12), python3-yaml, python3-nacl, python3-psycopg, python3-jwt, "
+    "python3-cryptography, sudo, git, rsync, openssh-client, openssl, haproxy, passwd, "
+    "iproute2, systemd, default-dbus-system-bus | dbus-system-bus, libcrypt1"
 )
+#
+# sshd checks a certificate receiver's account (cert_receiver) - a manager
+# without receivers never runs it.
+#
+RECOMMENDS = "openssh-server"
+#
+# Countries in address groups read the Location database (geo.py), imported
+# only when an object names a country.
+#
+SUGGESTS = "location, python3-location"
 #
 # Entry points that are not operator commands, besides every `-helper`: what
 # the worker runs to reach a socket, and what a service or timer runs.
@@ -240,6 +255,8 @@ def build(source: Path, output_dir: Path, uv: Path, waf_engine_deb: Path) -> Pat
                 "Version": facts.version,
                 "Architecture": "all",
                 "Depends": DEPENDS,
+                "Recommends": RECOMMENDS,
+                "Suggests": SUGGESTS,
                 "Section": "net",
                 "Priority": "optional",
                 "Description": "Haprion command line: the engine that manages HAProxy clusters\n"

@@ -13,12 +13,16 @@ make - so a form the page accepts is a request the helper reads alike.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from haprion import cluster_definition, node_enrollment
 from haprion.config import MAX_NODES, MIN_NODES
+
+from haprion_ui import jobs
+from haprion_ui.db import Job
 
 
 class FormProblem(ValueError):
@@ -37,7 +41,57 @@ class NodeRow:
 class ClusterRow:
     cluster: str
     nodes: tuple[str, ...]
-    href: str
+    href: str | None
+    # A cluster being created: the running badge until the poller has read
+    # it (finding 51).
+    creating: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Creating:
+    """A cluster asked for and not yet on the cluster list."""
+
+    cluster: str
+    running: str | None
+    failed: str | None
+    message: str | None
+    job: int
+
+
+def creations(
+    recent: Iterable[Job], listed: Collection[str], *, now: datetime, settle: timedelta
+) -> list[Creating]:
+    """Clusters whose newest cluster job is a creation the list does not show yet.
+
+    A new cluster is on no card until its job has succeeded and the poller has
+    read the cluster file, and after Create cluster the admin landed on Jobs to
+    see anything (Fas 18 finding 51). Busy while the job is queued or running,
+    and after it succeeded for as long as a poller takes to read it - two
+    intervals, the age at which a reading is called stale; past that it is
+    left to the list. A creation that failed is kept with its reason, for the
+    page that asked to be shown it.
+    """
+
+    seen: set[str] = set()
+    found: list[Creating] = []
+    for job in recent:
+        if job.operation != "cluster_define" or job.cluster is None or job.cluster in seen:
+            continue
+        seen.add(job.cluster)
+        if job.cluster in listed or job.payload.get("action") != "add":
+            continue
+        settling = (
+            job.state == "done" and job.finished_at is not None and now - job.finished_at <= settle
+        )
+        if job.state in {"pending", "running"} or settling:
+            found.append(Creating(job.cluster, jobs.running_label(job), None, None, job.id))
+        elif job.state in jobs.ATTENTION:
+            found.append(
+                Creating(
+                    job.cluster, None, jobs.failure_label(job), jobs.error_message(job), job.id
+                )
+            )
+    return found
 
 
 def _nodes(result: Mapping[str, Any] | None) -> list[NodeRow]:
@@ -66,16 +120,24 @@ def node_rows(status: Any | None) -> list[NodeRow]:
     return _nodes(status.result if status is not None else None)
 
 
-def card_rows(clusters: Iterable[str], statuses: Iterable[Any]) -> list[ClusterRow]:
+def card_rows(
+    clusters: Iterable[str], statuses: Iterable[Any], creating: Iterable[Creating] = ()
+) -> list[ClusterRow]:
     by_cluster = {row.cluster: row for row in statuses}
-    return [
+    rows = [
         ClusterRow(
             cluster=cluster,
             nodes=tuple(row.name for row in node_rows(by_cluster.get(cluster))),
             href=f"/settings/nodes/{cluster}",
         )
-        for cluster in sorted(clusters)
+        for cluster in clusters
     ]
+    rows += [
+        ClusterRow(cluster=entry.cluster, nodes=(), href=None, creating=entry.running)
+        for entry in creating
+        if entry.running
+    ]
+    return sorted(rows, key=lambda row: row.cluster)
 
 
 @dataclass(frozen=True, slots=True)

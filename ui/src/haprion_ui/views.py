@@ -535,6 +535,18 @@ def listed_clusters(request: Request, config: Config) -> tuple[str, ...]:
     return _cluster_list(request, config)[0]
 
 
+def _creations(request: Request, recent: list[Any]) -> list[cluster_nodes.Creating]:
+    """Clusters being created that the list does not show yet (finding 51)."""
+
+    config = request.app.state.config
+    return cluster_nodes.creations(
+        recent,
+        listed_clusters(request, config),
+        now=datetime.now(UTC),
+        settle=timedelta(seconds=config.poller.interval_seconds * 2),
+    )
+
+
 def _cluster_list(request: Request, config: Config) -> tuple[tuple[str, ...], bool]:
     """The live list and whether it came from the cluster file rather than `ui.toml`."""
 
@@ -1220,7 +1232,8 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return JSONResponse({"detail": "not signed in"}, status_code=401)
         with request.app.state.pool.connection() as connection:
-            busy = jobs.in_flight(db.recent_jobs(connection))
+            recent = db.recent_jobs(connection)
+            busy = jobs.in_flight(recent)
             #
             # And which clusters the poller has not read through since their
             # last job ended (0068). A job finishing is not the same moment as
@@ -1233,6 +1246,14 @@ def build_router(config: Config) -> APIRouter:
                 listed_clusters(request, config),
                 within=timedelta(seconds=config.poller.interval_seconds * 2),
             )
+        #
+        # A cluster being created is busy until the poller has read it, so a
+        # page showing its spinner waits for the list rather than redrawing
+        # without it (finding 51).
+        #
+        for entry in _creations(request, recent):
+            if entry.running:
+                busy.setdefault(entry.cluster, entry.running)
         return JSONResponse({"busy": busy, "catching_up": catching_up})
 
     @router.get("/proxies", response_class=HTMLResponse)
@@ -4473,7 +4494,17 @@ def build_router(config: Config) -> APIRouter:
         if not isinstance(gate, AuthenticatedSession):
             return gate
         switched = request.query_params.get("switched", "")[:32]
-        return _settings_page(request, gate, done=SWITCHED.get(switched, ""))
+        #
+        # Create cluster lands here (finding 51): once the new cluster is on
+        # the list, its own page, where the next node is added. A redraw that
+        # comes back redirected is reloaded, which follows it.
+        #
+        creating = request.query_params.get("creating", "")
+        if not CLUSTER_ID.fullmatch(creating):
+            creating = ""
+        if creating and creating in listed_clusters(request, config):
+            return RedirectResponse(f"/settings/nodes/{creating}", status_code=303)
+        return _settings_page(request, gate, done=SWITCHED.get(switched, ""), creating=creating)
 
     def _locked(request: Request, name: str) -> bool:
         """Whether a switch cannot be on here: cluster colours past six clusters."""
@@ -4486,6 +4517,7 @@ def build_router(config: Config) -> APIRouter:
         *,
         problem: str = "",
         done: str = "",
+        creating: str = "",
         status_code: int = 200,
     ) -> Response:
         _token, registry, context = _page_context(request, gate)
@@ -4497,6 +4529,7 @@ def build_router(config: Config) -> APIRouter:
             provider = db.oidc_provider(connection)
             recent = db.recent_jobs(connection)
             status_access = db.status_access(connection)
+        creation_rows = _creations(request, recent)
         response = TEMPLATES.TemplateResponse(
             request,
             "settings.html",
@@ -4535,7 +4568,12 @@ def build_router(config: Config) -> APIRouter:
                     running=jobs.in_flight(recent, cluster_settings_page.SETTINGS_OPERATIONS),
                 ),
                 "cluster_nodes": cluster_nodes.card_rows(
-                    *read_source(request, config, STATUS_SOURCE)
+                    *read_source(request, config, STATUS_SOURCE), creation_rows
+                ),
+                # The creation this page was asked to show, when it failed.
+                "creation_failed": next(
+                    (row for row in creation_rows if row.failed and row.cluster == creating),
+                    None,
                 ),
                 "location_data": location_data.card(
                     read_source(request, config, OBJECTS_SOURCE)[1]
@@ -5435,12 +5473,11 @@ def build_router(config: Config) -> APIRouter:
             ),
             operation="cluster_define",
             #
-            # To the job, not to Settings: the new cluster is on no card until the
-            # job has succeeded and the poller has read the cluster file, so a
-            # creation that was blocked would otherwise say nothing where the admin
-            # stands (review 2026-09-30 F3).
+            # To Settings, where the new cluster has a row of its own until the
+            # poller has read it, and then on to its page; a creation that failed
+            # says so there (review 2026-09-30 F3, Fas 18 finding 51).
             #
-            back="/jobs",
+            back=f"/settings?creating={creation.cluster}#nodes",
         )
 
     @router.get("/settings/new-user", response_class=HTMLResponse)

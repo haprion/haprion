@@ -37,7 +37,12 @@ PACKAGE = "haprion-node"
 ARCHITECTURE = "all"
 SBIN = "/usr/sbin"
 INSTALL_DIR = "/usr/share/haprion-node/install"
-BUILD_FILE = "usr/share/doc/haprion-node/BUILD"
+#
+# Beside the step, not under /usr/share/doc: a machine may tell dpkg not to
+# install documentation (Ubuntu's minimal images do), and the commit it names
+# is what the node reports.
+#
+BUILD_FILE = "usr/share/haprion-node/BUILD"
 COPYRIGHT_FILE = "usr/share/doc/haprion-node/copyright"
 #
 # Debian's copyright file: who, under what, and the licence in full - AGPL-3.0
@@ -114,13 +119,15 @@ FILES: dict[str, int] = {
 # node stopped on its first deploy on `rsync: command not found` (Fas 18,
 # finding 37). tests/test_package_commands.py reads the scripts and holds
 # this list to them. keepalived is here since the product writes its
-# configuration on the nodes of a cluster it created (B313). dnsdist is not:
+# configuration on the nodes of a cluster it created (B313); the system bus
+# is systemd-run's, which a node restore's rollback timer is started with.
+# dnsdist is not:
 # 04-node-prepare installs it from PowerDNS's repository.
 #
 DEPENDS = (
     "python3, sudo, rsyslog, rsyslog-gnutls, haproxy, ipvsadm, keepalived, rsync, "
     "openssh-client, openssh-server, iproute2, procps, passwd, openssl, systemd, apt, "
-    "mawk | awk"
+    "mawk | awk, default-dbus-system-bus | dbus-system-bus"
 )
 #
 # Nothing to start and nothing to stop: the scripts run when the manager asks.

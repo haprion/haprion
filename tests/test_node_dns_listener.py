@@ -158,7 +158,7 @@ class TheDnsListenerSteps(unittest.TestCase):
         code, _ = self.run_step(f'sync_dns_listener "{self.previous}"', ACTIVE="1")
 
         self.assertEqual(code, 0)
-        self.assertIn("systemctl disable --now dnsdist.service", self.calls())
+        self.assertIn("systemctl disable --quiet --now dnsdist.service", self.calls())
 
     def test_without_a_listener_a_stopped_dnsdist_is_left_alone(self) -> None:
         self.run_step(f'sync_dns_listener "{self.previous}"')
@@ -170,7 +170,7 @@ class TheDnsListenerSteps(unittest.TestCase):
 
         code, output = self.run_step(f'sync_dns_listener "{self.previous}"', ACTIVE="0", LISTEN="1")
 
-        self.assertIn("systemctl enable --now dnsdist.service", self.calls())
+        self.assertIn("systemctl enable --quiet --now dnsdist.service", self.calls())
         # The stub says inactive throughout, so the wait sees no service.
         self.assertEqual(code, 1)
         self.assertIn("did not start listening", output)

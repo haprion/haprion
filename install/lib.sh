@@ -468,6 +468,21 @@ haproxy_key() {
     die "HAProxy: the repository key ${name} is not beside this step"
 }
 
+#
+# systemd-run asks systemd over the system bus: the manager's candidate
+# sandbox and a node restore's timed rollback both start that way. The bus
+# the packages bring is not started until the next boot (measured on Debian
+# 13, 26-10-15: dbus.socket static and inactive after apt installed it).
+#
+ensure_system_bus() {
+    if systemctl is-active --quiet dbus.socket || systemctl is-active --quiet dbus.service; then
+        log "  ok       the system bus"
+        return
+    fi
+    systemctl start dbus.socket
+    log "  started  the system bus"
+}
+
 ensure_haproxy() {
     local role="${1:-}" installed id codename key keyring suite uri pin release
     installed="$(dpkg-query -W -f='${Version}' haproxy 2>/dev/null || true)"
@@ -523,6 +538,18 @@ ensure_haproxy() {
     dpkg --compare-versions "$installed" ge "${HAPROXY_BRANCH}~" \
         || die "HAProxy: expected ${HAPROXY_BRANCH} or newer, found '${installed}'"
     log "  ok       haproxy ${installed} (from ${uri})"
+    #
+    # A running HAProxy keeps the command line it was started with, and its
+    # reload runs that again: Debian's older unit reads no conf.d, so after
+    # the upgrade no release's frontend was ever loaded (measured 26-10-15 in
+    # the install test). Nothing is served here yet (above): started again,
+    # from the new unit.
+    #
+    systemctl daemon-reload
+    if systemctl is-active --quiet haproxy; then
+        systemctl restart haproxy
+        log "  restarted haproxy from the new package's unit"
+    fi
 }
 
 #

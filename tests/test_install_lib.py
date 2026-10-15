@@ -151,6 +151,32 @@ class ThePackagesOwnConfigurationFile(unittest.TestCase):
         self.assertFalse(self.packaged(self.sample_md5))
 
 
+class TheSystemBusIsStarted(unittest.TestCase):
+    """A bus apt has just installed is not running until the next boot (finding 46)."""
+
+    def run_with(self, active: bool) -> list[str]:
+        fake = (
+            'systemctl() { echo "$*" >> "$CALLS"; '
+            f'[[ "$1" != is-active ]] || {"true" if active else "false"}; }}; '
+        )
+        with tempfile.NamedTemporaryFile("r") as calls:
+            done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+                ["/bin/bash", "-c", f'source "$0"; {fake} ensure_system_bus', str(LIB)],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={**os.environ, "CALLS": calls.name},
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return calls.read().splitlines()
+
+    def test_an_inactive_bus_is_started(self) -> None:
+        self.assertIn("start dbus.socket", self.run_with(active=False))
+
+    def test_a_running_one_is_left_alone(self) -> None:
+        self.assertNotIn("start dbus.socket", self.run_with(active=True))
+
+
 class ThePackagesOwnEmptyDirectory(unittest.TestCase):
     """is_packaged_empty_dir: empty, and dpkg names the package among its owners."""
 
@@ -201,6 +227,7 @@ ENSURE_HAPROXY = (
     'source "$0"; cd "$(dirname "$0")"; '
     'install_file() { mkdir -p "$ROOT$(dirname "$1")"; printf "%s\\n" "$4" > "$ROOT$1"; }; '
     "install() { :; }; apt_update() { :; }; apt-get() { :; }; "
+    'systemctl() { echo "$*" >> "$CALLS"; }; '
     'dpkg-query() { local first; first="$(head -n 1 "$ANSWERS")"; sed -i 1d "$ANSWERS"; '
     'echo "$first"; }; '
     'ensure_haproxy "$1"'
@@ -217,6 +244,8 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
         self.addCleanup(shutil.rmtree, work)
         root = work / "root"
         root.mkdir()
+        self.calls = work / "systemctl"
+        self.calls.touch()
         answers = work / "dpkg"
         answers.write_text(f"{before}\n3.4.7-1\n")
         os_release = work / "os-release"
@@ -236,6 +265,7 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
                 "ANSWERS": str(answers),
                 "OS_RELEASE": str(os_release),
                 "HAPROXY_CURRENT": str(current),
+                "CALLS": str(self.calls),
             },
         )
         files = {
@@ -282,6 +312,19 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
         code, output, files = self.run_step("debian", "trixie", "3.0.11-1", role="node")
         self.assertEqual(code, 0, output)
         self.assertIn("/etc/apt/sources.list.d/haproxy-3.4.sources", files)
+
+    def test_the_upgraded_haproxy_is_started_again_from_its_new_unit(self) -> None:
+        # Debian's 3.0 master kept reloading 3.4 without conf.d (install test, 26-10-15).
+        code, output, _ = self.run_step("debian", "trixie", "3.0.11-1", role="node")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(
+            self.calls.read_text().splitlines(),
+            ["daemon-reload", "is-active --quiet haproxy", "restart haproxy"],
+        )
+
+    def test_one_already_on_the_branch_is_not_restarted(self) -> None:
+        self.run_step("ubuntu", "resolute", "3.4.6-1ppa1~resolute")
+        self.assertEqual(self.calls.read_text(), "")
 
     def test_another_distribution_is_refused(self) -> None:
         code, output, files = self.run_step("debian", "bookworm", "2.6.12-1")

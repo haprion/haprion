@@ -275,6 +275,23 @@ class EveryCommandIsDeclared(unittest.TestCase):
         self.assertIn("nginx", names(UI.UI_DEPENDS))
 
 
+class TheSystemBusIsDeclaredWhereSystemdRunRuns(unittest.TestCase):
+    """systemd-run needs the system bus, which systemd only recommends (finding
+    46): the engine's candidate sandbox on the manager, and the restore agent's
+    rollback timer on a node."""
+
+    def test_both_packages_name_it(self) -> None:
+        self.assertIn("systemd-run", (BASE / "src/haprion/restore_agent.py").read_text())
+        self.assertIn("systemd-run", engine_commands())
+        for depends in (CLI.DEPENDS, node_package.DEPENDS):
+            self.assertIn("default-dbus-system-bus", names(depends))
+
+    def test_steps_1_and_4_start_it(self) -> None:
+        for step in ("01-manager-prepare", "04-node-prepare"):
+            with self.subTest(step=step):
+                self.assertIn("\nensure_system_bus\n", (INSTALL / step).read_text())
+
+
 class EveryModuleIsDeclared(unittest.TestCase):
     def imports(self) -> set[str]:
         found: set[str] = set()

@@ -228,6 +228,9 @@ log "  applied  ${WAF_JOURNAL_TMPFILES}"
 step "HAProxy"
 ensure_haproxy node
 
+step "System bus"
+ensure_system_bus
+
 step "HAProxy release layout"
 
 #
@@ -436,6 +439,16 @@ if [[ "$rule_before" != "$(sha256sum "$RSYSLOG_FORWARD_RULE")" ]]; then
     log "  restarted rsyslog"
 fi
 
+#
+# What `dpkg --verify` finds changed in the package, less documentation dpkg
+# was told not to install: Ubuntu's minimal images exclude /usr/share/doc
+# (`path-exclude`, measured 26-10-15), and dpkg then reports it missing.
+#
+node_package_changes() {
+    { dpkg --verify haprion-node 2>&1 || true; } \
+        | grep -v -E '^missing +(c +)?/usr/share/doc/' || true
+}
+
 step "Node scripts"
 #
 # The node package owns them (B266, D4): dpkg put them in ${SBIN}, and this
@@ -445,7 +458,8 @@ step "Node scripts"
 #
 dpkg-query -W -f='${Status}' haprion-node 2>/dev/null | grep -q "install ok installed" \
     || die "the haprion-node package is not installed; install it with tools/install-node-package"
-if ! changed="$(dpkg --verify haprion-node 2>&1)" || [[ -n "$changed" ]]; then
+changed="$(node_package_changes)"
+if [[ -n "$changed" ]]; then
     warn "dpkg --verify haprion-node:"
     while IFS= read -r line; do warn "  ${line}"; done <<<"$changed"
     die "the node package's files are not as installed; reinstall haprion-node"

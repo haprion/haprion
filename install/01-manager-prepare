@@ -289,6 +289,9 @@ ensure_dnsdist mask
 step "HAProxy"
 ensure_haproxy
 
+step "System bus"
+ensure_system_bus
+
 log "step 1 done"
 echo
 echo "Next: ./02-manager-config${1:+ $1}"

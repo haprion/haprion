@@ -171,7 +171,7 @@ class TheWafEngineSteps(unittest.TestCase):
         code, _ = self.run_step("sync_waf_engine 1", ACTIVE="1", ENABLED="1")
 
         self.assertEqual(code, 0)
-        self.assertIn("systemctl disable --now coraza-spoa.service", self.calls())
+        self.assertIn("systemctl disable --quiet --now coraza-spoa.service", self.calls())
 
     # - a release with rules -------------------------------------------------
 
@@ -181,7 +181,7 @@ class TheWafEngineSteps(unittest.TestCase):
         code, output = self.run_step("sync_waf_engine 1", LISTEN="1")
 
         self.assertEqual(code, 0)
-        self.assertIn("systemctl enable --now coraza-spoa.service", self.calls())
+        self.assertIn("systemctl enable --quiet --now coraza-spoa.service", self.calls())
         self.assertIn("sport = :12345", self.calls())
         self.assertIn("engine listening", output)
 

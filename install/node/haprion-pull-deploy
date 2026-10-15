@@ -490,7 +490,7 @@ sync_waf_engine() {
         if systemctl is-enabled --quiet "$WAF_UNIT" 2>/dev/null \
             || systemctl is-active --quiet "$WAF_UNIT" 2>/dev/null; then
             log "WAF: the release carries no rules. Stopping the engine."
-            if ! systemctl disable --now "$WAF_UNIT"; then
+            if ! systemctl disable --quiet --now "$WAF_UNIT"; then
                 log "ERROR: the WAF engine could not be stopped."
                 return 1
             fi
@@ -500,7 +500,7 @@ sync_waf_engine() {
 
     if ! systemctl is-active --quiet "$WAF_UNIT"; then
         log "WAF: starting the engine."
-        if ! systemctl enable --now "$WAF_UNIT"; then
+        if ! systemctl enable --quiet --now "$WAF_UNIT"; then
             log "ERROR: the WAF engine could not be started."
             return 1
         fi
@@ -608,7 +608,7 @@ sync_dns_listener() {
         if systemctl is-enabled --quiet "$DNS_UNIT" 2>/dev/null \
             || systemctl is-active --quiet "$DNS_UNIT" 2>/dev/null; then
             log "DNS: the release carries no dns listener. Stopping dnsdist."
-            if ! systemctl disable --now "$DNS_UNIT"; then
+            if ! systemctl disable --quiet --now "$DNS_UNIT"; then
                 log "ERROR: dnsdist could not be stopped."
                 return 1
             fi
@@ -618,7 +618,7 @@ sync_dns_listener() {
 
     if ! systemctl is-active --quiet "$DNS_UNIT"; then
         log "DNS: starting dnsdist."
-        systemctl enable --now "$DNS_UNIT" || { log "ERROR: dnsdist could not be started."; return 1; }
+        systemctl enable --quiet --now "$DNS_UNIT" || { log "ERROR: dnsdist could not be started."; return 1; }
     elif ! cmp -s "${other}/dns/dnsdist.conf" "${CURRENT}/dns/dnsdist.conf"; then
         log "DNS: restarting dnsdist with the new listener."
         systemctl restart "$DNS_UNIT" || { log "ERROR: dnsdist could not be restarted."; return 1; }

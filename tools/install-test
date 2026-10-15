@@ -64,7 +64,7 @@ backends:
       type: disabled
     servers:
       - host: {backend}
-        port: 8080
+        port: 9080
 """
 BACKEND_BODY = "install-test backend"
 #
@@ -210,8 +210,15 @@ class Run:
             )
         for role in ("mgr", *NODES):
             _, state = self.on(role, "systemctl is-system-running --wait", check=False)
-            if state.strip() != "running":
-                _, failed = self.on(role, "systemctl --failed --no-legend", check=False)
+            if state.strip() == "running":
+                continue
+            #
+            # Degraded with no failed unit is systemd's taint, not a fault:
+            # Ubuntu's image keeps /usr/sbin apart from /usr/bin
+            # (`unmerged-bin`, measured 26-10-15).
+            #
+            _, failed = self.on(role, "systemctl --failed --no-legend", check=False)
+            if failed.strip():
                 raise Failed(f"{role} booted {state.strip()}:\n{failed}")
 
     # --- the installation ---------------------------------------------------
@@ -289,7 +296,7 @@ class Run:
             "mkdir -p /srv/install-test && printf '%s\\n' "
             f"{shlex.quote(BACKEND_BODY)} > /srv/install-test/index.html "
             "&& systemd-run --unit install-test-backend --property=Restart=always "
-            "/usr/bin/python3 -m http.server 8080 --directory /srv/install-test",
+            "/usr/bin/python3 -m http.server 9080 --directory /srv/install-test",
         )
         self.on(
             "mgr",
@@ -451,7 +458,7 @@ def run_one(
 
         def converged() -> None:
             output = run.deploy()
-            if "skip" not in output.lower():
+            if output.count("already runs this version; nothing to do") != len(NODES):
                 raise Failed(f"a second deploy did not skip the current nodes:\n{output}")
 
         step("a second deploy changes nothing", converged)

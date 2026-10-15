@@ -263,5 +263,42 @@ class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
                 self.assertEqual((done.returncode, done.stdout), (0, expected), done.stderr)
 
 
+class DocumentationDpkgLeftOutIsNoChange(unittest.TestCase):
+    """Ubuntu's minimal images exclude /usr/share/doc; dpkg --verify then
+    reported the package's own documentation missing and step 4 stopped
+    (Fas 18, the install test, 26-10-15)."""
+
+    def changes(self, report: str) -> str:
+        body = function(NODE_PREPARE.read_text(), "node_package_changes")
+        done = subprocess.run(  # noqa: S603 - fixed interpreter, the step's own function
+            [
+                "/bin/bash",
+                "-c",
+                f'dpkg() {{ printf "%s" "$REPORT"; [[ -z "$REPORT" ]]; }}; {body} node_package_changes',
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "REPORT": report},
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_excluded_documentation_is_not_a_change(self) -> None:
+        report = (
+            "missing     /usr/share/doc/haprion-node/copyright\n"
+            "missing   c /usr/share/doc/haprion-node/changelog\n"
+        )
+        self.assertEqual(self.changes(report), "")
+
+    def test_an_edited_script_still_is(self) -> None:
+        report = "missing     /usr/share/doc/haprion-node/copyright\n??5??????   /usr/sbin/haprion-pull-deploy\n"
+        self.assertEqual(self.changes(report), "??5??????   /usr/sbin/haprion-pull-deploy\n")
+
+    def test_a_missing_script_still_is(self) -> None:
+        report = "missing     /usr/sbin/haprion-pull-deploy\n"
+        self.assertEqual(self.changes(report), report)
+
+
 if __name__ == "__main__":
     unittest.main()

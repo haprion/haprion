@@ -3,10 +3,10 @@
 Five steps. Three run on the management host, one on each node, and the last one
 checks your work.
 
-Everything that can be scripted is scripted. What is left for you is the part
-that genuinely cannot be automated — pasting public keys onto machines the
-management host is not allowed to write to — and step 3 prints those lines ready
-to paste.
+Everything that can be scripted is scripted. A node needs one package: it prints
+one line, its enrollment block, which you paste into the interface (*Settings* →
+*Create cluster* or *Add node*). The management host then joins the node once,
+with a key that only works for that, and prepares it itself.
 
 [`../docs/user-manual.md`](../docs/user-manual.md) explains *why* each step
 looks the way it does. This file is what you follow.
@@ -83,54 +83,62 @@ without a root shell, checked by `visudo` before anything is written. Leave
 once: after that *Create cluster* and *Remove cluster* keep them, and a rerun
 changes only the editors.
 
-## Step 3 — keys, and the lines for the nodes
+## Step 3 — keys
 
 ```bash
 sudo ./03-manager-keys answers.env | tee keys.txt
 ```
 
-Generates the management key pairs and prints, per node, the exact
-`authorized_keys` lines to install. Keep the output — step 4 does not print them
-again.
+Generates the management key pairs. A node joined from the interface needs
+nothing from this output: the management host hands its keys over itself.
 
-**This is the manual part.** The management host cannot write to a node: every
-management identity is a forced command that can ask a node to pull and nothing
-else. So you log in to each node yourself and paste. That restriction is the
-security model, not an oversight.
+For a node prepared by hand (below), the step prints one answers line per key -
+`DEPLOY_PUBKEY=...`, `STATUS_PUBKEY=...` and so on - and `MANAGER_HOST_KEY=...`.
+Put them in that node's answers file; step 4 writes each key with `restrict` and
+its own forced command, and the management host's host key into root's
+`known_hosts`.
 
 ## Step 4 — each node
 
-The node's software is one package, `haprion-node`, built from a commit on the
-management host:
+The node package is built from the same commit on the management host:
 
 ```bash
 tools/node-package.py build --source . --output-dir /path/to/protected/staging
 ```
 
-It prints the package's path, version and SHA-256. Install it on a node, and
-configure the node with this step, from the management host as yourself:
+Copy it to the node and install it:
 
 ```bash
-tools/install-node-package --node-package /path/to/haprion-node_<version>_all.deb \
-  --sha256 <digest> --answers /path/to/answers.env --node node-a --cluster alpha
+sudo apt install ./haprion-node_<version>_all.deb
 ```
 
-The tool verifies the package, takes a state backup, copies the package and the
-answers over one SSH session, installs the package with apt and runs
-`/usr/share/haprion-node/install/04-node-prepare answers.env alpha` on the node -
-the step the package put there. That step creates the service accounts, the
-`/etc/haproxy` release layout and the sudo rules; the node scripts are the
-package's, in `/usr/sbin`.
+The package makes the node's accounts and the keys it fetches with, and prints
+its enrollment block - one line starting with `haproxy-node-v2:` - and its host
+key's fingerprint. Paste the block into *Settings* → *Create cluster* for the
+first node of a cluster, or the cluster's *Add node* for the next; on the
+command line it is `haprion-cluster add` or `haprion-node add` with the block on
+stdin. `sudo haprion-node-key` prints a block again.
 
-Then paste the `authorized_keys` lines for this node from step 3, and, on a
-cluster whose `keepalived.conf` a person writes, add the keepalived notify lines
-if the script asked for them. The server state key's line
-is the exception: with `SERVER_STATE_PUBKEY` in the answers file, this step writes
-it. Drain, maintenance and ready also need the admin socket line in each cluster's
-`core/haproxy.cfg` (`docs/user-manual.md`, 'Node scripts').
+The block holds a one-time key, valid for 24 hours. The management host connects
+with it once, as `_haprion-join`, whose only command is `haprion-node-join`: it
+hands over its keys, its host key, the cluster and the VIP, and the node runs
+`04-node-prepare` with them - the packages HAProxy and the rest need, the release
+layout, the sudo rules, `node.conf`, sshd on the address the manager came in on.
+Then the key is removed, and the manager asks the node for its status. Keep the
+block to yourself until it is used: whoever holds it may join the node to a
+manager. A node that names who may log in (`AllowUsers`, `AllowGroups`) must let
+`_haprion-join` in; the package warns when it does not.
 
-Repeat for every node. A later update is the same command with a newer package;
-see `docs/user-manual.md`, 'Installing and changing node scripts'.
+**By hand,** without the interface: an answers file with `MANAGER_HOST`, the two
+fetch-key paths and step 3's lines, then
+
+```bash
+sudo /usr/share/haprion-node/install/04-node-prepare answers.env alpha
+```
+
+which prints a block naming the cluster (`haproxy-node-v1:`), added the same way.
+Drain, maintenance and ready also need the admin socket line in each cluster's
+`core/haproxy.cfg`; a cluster made by the interface has it.
 
 ## Step 5 — check
 

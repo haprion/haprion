@@ -1839,24 +1839,42 @@ whose CLI release predates those fields shows the page without rows until the CL
 A node is known to the management host in six root-owned places: its entry in `clusters.yaml`, its
 host key in root's `known_hosts`, its two fetch keys in the pull accounts' `authorized_keys`, and -
 where the traffic-log collector is installed - its entry in the collector's node list and its host
-key in the collector's own `known_hosts`. `haprion-node` and the Nodes card under Settings change
-all six as one, through the same root helper:
+key in the collector's own `known_hosts`. The cluster's *Add node* under *Settings → Nodes &
+clusters*, and `haprion-node` on the command line, change all six as one, through the same root
+helper.
+
+On the new node, install the node package (`sudo apt install ./haprion-node_<version>_all.deb`).
+It prints the node's **enrollment block**, one line starting with `haproxy-node-v2:`, and its host
+key's fingerprint; `sudo haprion-node-key` prints a block again. Paste the block into *Add node*.
+The page reads it and shows the node's name, the host the manager will reach it at and the
+fingerprint before anything is changed; typing the node's name queues the addition.
+
+The block carries the node's name, a suggested host name, its ed25519 host key, the public halves
+of its two fetch keys and a **one-time key**. Copying it from the node's console is the trust - the
+manager takes the host key from the block, never from the network - and the fingerprint the page
+prints is the one to compare with what the node printed. The manager then joins the node once: it
+connects with the one-time key as `_haprion-join`, whose only command is `haprion-node-join`, and
+hands over its own keys, its host key, the cluster and the VIP. The node prepares itself with them
+- the packages HAProxy needs, the release layout, the sudo rules, `node.conf`, the manager's keys
+each with its own forced command, sshd on the address the manager came in on - and removes the
+key. That takes from half a minute to a few minutes, most of it apt. The key is valid for 24 hours
+and works once: keep the block to yourself until it has been used, since whoever holds it may
+join the node to a manager. The web never stores it - it is sealed for the root helper (the pair
+that seals DNS provider credentials) before the job is queued, so neither the job nor the audit
+record holds it. A node whose sshd names who may log in (`AllowUsers`, `AllowGroups`) must let
+`_haprion-join` in.
+
+On the command line the block goes on stdin, as root:
 
 ```bash
-# On the node: step 4 prints an enrollment block - one line starting with haproxy-node-v1
-# (tools/install-node-package runs it, or with the package installed:)
-sudo /usr/share/haprion-node/install/04-node-prepare answers.env alpha
-
-# On the management host, the block on stdin:
 sudo haprion-node add -c alpha --host node-c.example.com < block
 sudo haprion-node remove -c alpha node-c
 sudo haprion-node host -c alpha node-c --host lb-03.example.com
 ```
 
-The block carries the node's name, its cluster, a suggested host name, its ed25519 host key and the
-public halves of its two fetch keys. Copying it from the node's console is the trust - the manager
-takes the host key from the block, never from the network - and the fingerprint the command and the
-page print is the one to compare with what step 4 printed. `--host` is the name the manager reaches
+A node prepared by hand with `04-node-prepare` prints a block naming its cluster
+(`haproxy-node-v1:`) instead, and is added the same way without a join
+([install/README.md, step 4](../install/README.md#step-4--each-node)). `--host` is the name the manager reaches
 the node at; the block's suggestion is the node's own `hostname -f` and may not be. With `--json` either
 command prints the helper's envelope instead (`schemas/v1/haprion-cluster-node`); `haprion-cluster`
 takes it too.
@@ -1873,8 +1891,8 @@ deploy carry the new address to the nodes.
 
 After writing, the manager asks the node for its status as the status identity, with strict host
 key checking. The node reports its own host name and cluster, so an answer proves the host key, that
-the node already has the manager's key lines from step 3, and that the block described the node that
-answered. Anything short of that puts every file back and says why. The node has no certificates
+the node has the manager's keys - from the join, or from step 3's answers on a node prepared by
+hand - and that the block described the node that answered. Anything short of that puts every file back and says why. The node has no certificates
 and no release until `haprion-cert-deploy -c <cluster>` and then `haprion-deploy -c <cluster>` run
 (*Deploy certificates* and *Deploy configuration* on the dashboard); a deploy before the
 certificates stops and says so, since the node has none.
@@ -1904,14 +1922,12 @@ nodes from it rather than from the answers file. The runtime policy is kept the 
 ### Creating and removing a cluster
 
 A manager may have no clusters, and a cluster may start with one node and no certificate. A
-cluster is made by `haprion-cluster`, or *Create cluster* under Settings, through the same root
-helper as a node; its next node is added the way any node is
-([Adding and removing a node](#adding-and-removing-a-node)):
+cluster is made by *Create cluster* under *Settings → Nodes & clusters*, or `haprion-cluster`,
+through the same root helper as a node: its ID, display name and VIP, and the block its first node
+printed when its package was installed - the node is joined as any node is
+([Adding and removing a node](#adding-and-removing-a-node)). Its next node is added to it.
 
 ```bash
-# On the node: step 4 prints its enrollment block for the new cluster.
-sudo /usr/share/haprion-node/install/04-node-prepare answers.env beta
-
 # On the management host, the block on stdin (two blocks and two --host options make both nodes at once):
 sudo haprion-cluster add -c beta --display-name Beta --vip 203.0.113.10 \
     --node-path beta --host node-c.example.com [--certificate example.com] \

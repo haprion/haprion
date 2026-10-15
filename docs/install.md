@@ -20,7 +20,7 @@ Haprion is installed from Debian packages built from one commit:
 |---|---|---|
 | `haprion-cli` | the management host | the CLI engine, the node package of the same commit, the operators' commands and sudo rules |
 | `haprion-ui` | the management host, for the web interface | the interface's release for one distribution (Ubuntu 26.04 or Debian 13) and the platform steps |
-| `haprion-node` | each node | the node scripts and `04-node-prepare` |
+| `haprion-node` | each node | the node scripts, the block it prints at installation, and `04-node-prepare` |
 | `haprion-coraza-spoa` | the management host and the nodes, for the WAF | the engine; the CLI release also carries it, so a node restored to a new VM gets it back |
 | `haprion-crs` | the management host, for the WAF | the rule set; releases carry the rules to the nodes |
 
@@ -118,9 +118,10 @@ sudo ./03-manager-keys answers.env | tee keys.txt
 The answers file is optional in every step: leave it out to use the defaults. Steps 14, 15 and 17
 take `-` in its place when a source tree follows it.
 
-Install the public-key lines printed by step 3 on the corresponding prepared nodes,
-following [install/README.md](../install/README.md#step-4--each-node). Keep private keys
-on the host that generated them.
+The nodes need nothing from step 3's output when they are added in the interface: each node's
+package prints a block, and the management host joins the node with it
+([install/README.md](../install/README.md#step-4--each-node)). Step 3's answers lines are for a
+node prepared by hand. Keep private keys on the host that generated them.
 
 Check the manager installation from `install/`, as your normal account:
 

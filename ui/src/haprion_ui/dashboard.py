@@ -161,6 +161,13 @@ BEHIND = "Not on the latest version"
 # cluster card and Versions say it and offer the deploy (26-10-11).
 #
 VERSION_DRIFT = "Version drift"
+#
+# A node, or a whole cluster, that has never had a release: nothing has failed,
+# there is nothing yet (Fas 18 finding 52). Before the first deploy a new
+# cluster's nodes read keepalived not configured, no statistics and no VIP
+# owner - each true, none of them a fault, and all of them on Needs attention.
+#
+NOT_DEPLOYED = "Not deployed"
 
 
 def _vip_count(reading: Any) -> int:
@@ -287,6 +294,8 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
     detail: str
     if haproxy.get("active") is not True:
         label, tone, detail = "HAProxy stopped", "critical", "The proxy service is not active"
+    elif release.get("version") is None and release.get("hash") is None:
+        label, tone, detail = NOT_DEPLOYED, "unknown", "No release deployed yet"
     elif keepalived.get("configured") == "missing":
         #
         # Nothing has failed: there is no configuration yet. For a cluster
@@ -568,6 +577,8 @@ def _cluster_view(
         )
     elif not nodes:
         label, tone, detail = "Status unavailable", "critical", "No node returned usable status"
+    elif all(node.label == NOT_DEPLOYED for node in nodes):
+        label, tone, detail = NOT_DEPLOYED, "unknown", "No release deployed yet"
     elif vip_state in {"split_brain", "no_owner"}:
         label, tone, detail = "VIP fault", "critical", f"VIP state: {vip_state.replace('_', ' ')}"
     elif any(node.tone == "critical" for node in nodes):
@@ -683,7 +694,7 @@ def build_dashboard(
             for cluster in configured_views
         ),
         online_nodes=sum(
-            node.tone in {"healthy", "warning"}
+            node.tone in {"healthy", "warning"} or node.label == NOT_DEPLOYED
             for cluster in configured_views
             for node in cluster.nodes
         ),

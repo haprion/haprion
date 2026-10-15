@@ -172,6 +172,69 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(cluster.nodes[0].label, "Keepalived not configured")
         self.assertEqual(cluster.nodes[0].tone, "warning")
 
+    def test_a_cluster_never_deployed_is_not_deployed_and_raises_nothing(self) -> None:
+        """Finding 52: before the first deploy nothing has failed; there is nothing yet."""
+
+        from haprion_ui import attention  # noqa: PLC0415
+
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = []
+        for node in result["nodes"]:
+            node = dict(node)
+            node["status"] = {
+                **node["status"],
+                "keepalived": {"active": False, "state": None, "configured": "missing"},
+                "release": {"version": None, "hash": None, "timestamp": None, "cluster": None},
+                "stats_ok": False,
+                "runtime": {"version": None, "uptime_sec": None},
+            }
+            nodes.append(node)
+        result["nodes"] = nodes
+        result["summary"] = {**result["summary"], "vip_state": "no_owner", "vip_owners": []}
+        view = self.dashboard(
+            ClusterStatus(
+                cluster=status.cluster,
+                observed_at=status.observed_at,
+                outcome=status.outcome,
+                result=result,
+                warnings=status.warnings,
+                error=status.error,
+                poll_error=None,
+            )
+        )
+        cluster = view.clusters[0]
+        self.assertEqual([node.label for node in cluster.nodes], ["Not deployed"] * len(nodes))
+        self.assertEqual((cluster.label, cluster.tone), ("Not deployed", "unknown"))
+        self.assertEqual(view.online_nodes, len(nodes))
+        self.assertEqual(attention.from_dashboard(view.clusters, drift_label="Version drift"), [])
+
+    def test_a_new_node_in_a_deployed_cluster_is_not_deployed_not_a_fault(self) -> None:
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        nodes[1]["status"] = {
+            **nodes[1]["status"],
+            "keepalived": {"active": False, "state": None, "configured": "missing"},
+            "release": {"version": None, "hash": None, "timestamp": None, "cluster": None},
+        }
+        result["nodes"] = nodes
+        cluster = self.dashboard(
+            ClusterStatus(
+                cluster=status.cluster,
+                observed_at=status.observed_at,
+                outcome=status.outcome,
+                result=result,
+                warnings=status.warnings,
+                error=status.error,
+                poll_error=None,
+            )
+        ).clusters[0]
+        self.assertEqual(
+            (cluster.nodes[1].label, cluster.nodes[1].tone), ("Not deployed", "unknown")
+        )
+        self.assertNotEqual(cluster.label, "Not deployed")
+
     def test_stats_failure_is_distinct_from_an_unreachable_node(self) -> None:
         status = reading("done-single-owner.json")
         result = dict(status.result)

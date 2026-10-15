@@ -315,11 +315,16 @@ does not already serve. A publish refuses only:
 | 80 and 443 | on a VIP that serves http or https objects |
 | a port another object takes on the same VIP | one address and port is bound once |
 | a port `manual/reservations.yaml` reserves | the handwritten half binds it |
+| a port another program holds on every address of a node | it holds the VIP's port too |
 
 The Prometheus exporter, dnsdist's statistics (9521), the shared counters' port and the WAF
-engine (9520, loopback) never take a VIP's port. A port another program on the nodes holds on
-every address is not known at publish: see
-[HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline).
+engine (9520, loopback) never take a VIP's port. The last row is the nodes' own answer: a
+publish that changes objects or the network reads each node's status, and the refusal names the
+program and the node - *agent listens on main port 6556/tcp, which cmk-agent-ctl holds on every
+address of lb-01*. Have the program listen on the node's own address, or choose another port. A
+node that does not answer does not stop the publish; the result names it under
+`ports_unchecked`, and the deploy still rolls back if the port is taken there. `haprion-status`
+on a node shows the same list as *Every address*.
 
 ### HTTP/3
 
@@ -3353,13 +3358,12 @@ better done elsewhere. The details are in the section linked.
   balanced because dnsdist understands it and passes the client on inside the query
   ([DNS objects](#dns-objects)); syslog because it is never answered
   ([Syslog objects](#syslog-objects)).
-- **A port another program on the nodes listens on is not caught at publish.** The
-  manager does not know what else runs on a node: sshd on port 22, or an exporter, on
-  every address. HAProxy validates the configuration without binding anything, so the
-  publish passes; the deploy then fails on that node, rolls back to the previous release
-  and shows HAProxy's own reason - `cannot bind socket (Address already in use)`. Pick
-  another port for the object, or make the program listen only on the node's own address
-  ([HAProxy and keepalived baseline](#haproxy-and-keepalived-baseline)).
+- **A port another program takes on a node after the publish is caught only by the
+  deploy.** The publish refuses a port a node reports held on every address
+  ([Ports the cluster takes itself](#ports-the-cluster-takes-itself)), but a node that
+  did not answer then, or a program started since, is found when HAProxy binds: the
+  deploy fails on that node, rolls back to the previous release and shows HAProxy's own
+  reason - `cannot bind socket (Address already in use)`.
 - **A pool's own counters start again on every reload**, while its servers' and the
   frontends' are kept: HAProxy 3.4.6 does not carry a backend's own counters correctly
   ([Counters across a reload](#counters-across-a-reload)).
@@ -4606,7 +4610,8 @@ restarting sshd it checks that sshd answers on the address and no longer on ever
 otherwise it removes the file, puts sshd back as it was and stops. Open sessions survive the
 restart. On Ubuntu sshd is socket activated, and the restart is of `ssh.socket`;
 `ip_nonlocal_bind` above is what lets it come up at boot before the address does. Any other
-program on every address is reported, not changed.
+program on every address is reported, not changed, and a publish refuses an object on its port
+([Ports the cluster takes itself](#ports-the-cluster-takes-itself)).
 
 **HAProxy's log socket outlives rsyslog.** HAProxy runs chrooted in `/var/lib/haproxy`, so its
 `log /dev/log` is `/var/lib/haproxy/dev/log`, the socket Ubuntu's `/etc/rsyslog.d/49-haproxy.conf`

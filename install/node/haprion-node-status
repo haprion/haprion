@@ -156,6 +156,59 @@ def service_active(name):
 
 
 #
+# Ports another program holds on every address of this node, which are then
+# held on the VIP too: an object there cannot bind them, and the publish says
+# so before a deploy fails on it (26-10-15: Checkmk's agent on 0.0.0.0:6556).
+# HAProxy's are the publish's own to keep apart. One bound to an interface
+# (`0.0.0.0%eth0`) holds the VIP's port as well when the VIP is on it.
+#
+WILDCARD_LOCAL = re.compile(r"^(?:0\.0\.0\.0|\*|\[::\])(?:%[\w.-]+)?:(\d+)$")
+WILDCARD_PROGRAM = re.compile(r'\(\("([^"]+)"')
+
+
+def parse_wildcard_listeners(text):
+    """`ss -Hlntup` as [{protocol, port, program}], once per protocol and port."""
+
+    found = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 5 or fields[0] not in ("tcp", "udp"):
+            continue
+        local = WILDCARD_LOCAL.match(fields[4])
+        if local is None:
+            continue
+        named = WILDCARD_PROGRAM.search(fields[6]) if len(fields) > 6 else None
+        program = named.group(1)[:64] if named else None
+        if program == "haproxy":
+            continue
+        found.setdefault((fields[0], int(local.group(1))), program)
+    return [
+        {"protocol": protocol, "port": port, "program": program}
+        for (protocol, port), program in sorted(found.items())
+    ]
+
+
+def read_wildcard_listeners():
+    """The ports other programs hold on every address, or None if `ss` gave nothing to read."""
+
+    result = run("/usr/bin/ss", "-Hlntup")
+    if result.returncode != 0:
+        return None
+    return parse_wildcard_listeners(result.stdout)
+
+
+def wildcard_summary(listeners):
+    if listeners is None:
+        return "unknown (ss could not be read)"
+    if not listeners:
+        return "nothing but HAProxy"
+    return ", ".join(
+        f"{entry['port']}/{entry['protocol']} {entry['program'] or 'unnamed'}"
+        for entry in listeners
+    )
+
+
+#
 # The WAF engine is a package of its own, installed by a person (B229), and the
 # manager offers the engine on an object only when every node of its cluster
 # has it (B231). The package's version says which engine; `active` says whether
@@ -1825,6 +1878,7 @@ result = {
     "packages": read_packages(),
     "log_forwarding": read_log_forwarding(),
     "forward_file": read_forward_file(),
+    "wildcard_listeners": read_wildcard_listeners(),
 }
 
 if args.json:
@@ -1862,6 +1916,7 @@ else:
             f"  refused={pool['refused']}  answered={pool['answered']}"
         )
     print(f"Log forwarding:    {forward_file_summary(result['forward_file'])}")
+    print(f"Every address:     {wildcard_summary(result['wildcard_listeners'])}")
     ipvs = result["ipvs"]
     print(f"Syslog IPVS:       {ipvs_summary(ipvs)}")
     for service in ipvs["services"] or []:

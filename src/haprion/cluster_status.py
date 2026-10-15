@@ -176,6 +176,12 @@ class NodeStatus:
     # fingerprint). None on a node whose status script predates them.
     #
     authorities: tuple[tuple[str, str], ...] | None = None
+    #
+    # Ports another program holds on every address of the node, and so on its
+    # VIPs (26-10-15), as (protocol, port, program or None). None on a node that
+    # did not say - an older status script, or `ss` it could not read.
+    #
+    wildcard_listeners: tuple[tuple[str, int, str | None], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,6 +521,24 @@ def _peers(status: Mapping[str, Any]) -> tuple[tuple[str, bool], ...] | None:
     )
 
 
+def _wildcard_listeners(
+    status: Mapping[str, Any],
+) -> tuple[tuple[str, int, str | None], ...] | None:
+    reported = status.get("wildcard_listeners")
+    if not isinstance(reported, list):
+        return None
+    found: list[tuple[str, int, str | None]] = []
+    for entry in reported:
+        if not isinstance(entry, Mapping):
+            continue
+        protocol = entry.get("protocol")
+        port = _count(entry.get("port"))
+        if protocol not in ("tcp", "udp") or port is None:
+            continue
+        found.append((str(protocol), port, _text(entry.get("program"))))
+    return tuple(found)
+
+
 def _node(entry: Mapping[str, Any]) -> NodeStatus:
     status = _mapping(entry.get("status"))
     #
@@ -541,6 +565,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         servers=_servers(status),
         frontends=_frontends(status),
         peers=_peers(status),
+        wildcard_listeners=_wildcard_listeners(status),
         error_code=_text(_mapping(entry.get("error")).get("code"))
         or (None if usable else "node_status_invalid"),
     )

@@ -18,9 +18,9 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import BinaryIO, TextIO
+from typing import Any, BinaryIO, TextIO
 
-from haprion import cluster_settings, crs, geo, peers
+from haprion import cluster_settings, crs, geo, held_ports, peers
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     SandboxValidator,
@@ -40,6 +40,7 @@ from haprion.cli.managed_helper import (
 )
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT
 from haprion.config import DEFAULT_POLICY_PATH, Cluster, ConfigError, PathPolicy
+from haprion.held_ports import HeldPorts
 from haprion.helper_protocol import HelperProtocolError, JsonValue
 from haprion.managed_network import MAX_NETWORK_BYTES, load_document
 from haprion.managed_network import location as network_location
@@ -201,6 +202,13 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             else None
         )
 
+        named: dict[str, Any] = {
+            "objects": sorted(name for name, document in objects.items() if document is not None),
+            "removed": sorted(name for name, document in objects.items() if document is None),
+            "network": network is not None,
+            "settings": settings is not None,
+        }
+
         def apply(base_files: Mapping[str, bytes]) -> Mapping[str, bytes]:
             #
             # Each document the package carries is read on its own first, so a
@@ -228,6 +236,15 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     )
                 except ConfigError as exc:
                     raise Refusal("settings_invalid", str(exc), 65) from exc
+            #
+            # Asked when objects or the network change, as coverage is: what
+            # binds on a VIP is decided there. A node that did not answer is
+            # named in the result, not a refusal (26-10-15).
+            #
+            held = HeldPorts()
+            if objects or network is not None:
+                held = held_ports.read(policy, cluster)
+                named["ports_unchecked"] = list(held.unread)
             try:
                 return managed_files(
                     base_files,
@@ -240,6 +257,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     allow_certificate_mismatch=allow_certificate_mismatch,
                     settings_document=canonical,
                     node_addresses=lambda: peers.addresses(cluster),
+                    held_ports=held.held,
                 )
             except ConfigError as exc:
                 raise Refusal("changes_invalid", str(exc), 65) from exc
@@ -250,16 +268,10 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
             apply=apply,
             #
             # What this version did, named, for the audit record and the job
-            # page: "version 26 changed shop, removed staging and the network".
+            # page: "version 26 changed shop, removed staging and the network" -
+            # and, filled in by `apply`, the nodes whose ports were not checked.
             #
-            named={
-                "objects": sorted(
-                    name for name, document in objects.items() if document is not None
-                ),
-                "removed": sorted(name for name, document in objects.items() if document is None),
-                "network": network is not None,
-                "settings": settings is not None,
-            },
+            named=named,
         )
 
     return change

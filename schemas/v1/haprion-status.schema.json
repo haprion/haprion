@@ -421,6 +421,21 @@
           "propertyNames": { "pattern": "^srv:[a-z][a-z0-9_-]{0,39}\\.[0-9a-f]{16}$" },
           "additionalProperties": { "enum": ["drain", "maint"] }
         },
+        "wildcard_listeners": {
+          "description": "Ports another program than HAProxy holds on every address of the node (0.0.0.0, [::], *, or bound to an interface), and so on its VIPs too: an object cannot bind them there (26-10-15). program is null when ss did not name one. null when ss could not be read; absent from nodes installed before it was reported.",
+          "type": ["array", "null"],
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "required": ["protocol", "port", "program"],
+            "additionalProperties": false,
+            "properties": {
+              "protocol": { "enum": ["tcp", "udp"] },
+              "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+              "program": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 }
+            }
+          }
+        },
         "forward_file": {
           "description": "The log forwarding the release carries (current/rsyslog/forward.conf) against the one rsyslog reads (/etc/rsyslog.d/haprion/forward.conf), each present or not with its sha256; present null when it could not be looked at, sha256 null when present and unreadable (review 26-10-13, A1). A release without the file asks for none, so an installed file is then behind. Absent from nodes installed before it was reported, which are not held to it.",
           "type": "object",

@@ -122,6 +122,7 @@ def managed_files(
     country_reader: geo.CountryReader | None = None,
     rule_set: Callable[[], crs.RuleSet | None] | None = None,
     node_addresses: Callable[[], Sequence[tuple[str, str]]] | None = None,
+    held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
 ) -> dict[str, bytes]:
     """Return the complete managed snapshot created by one network document.
 
@@ -226,6 +227,7 @@ def managed_files(
             and node_addresses is not None
             else ()
         ),
+        held_ports=held_ports,
         rule_definitions=crs.definitions(rules) if rules is not None else None,
     )
     result.update(

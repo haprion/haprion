@@ -383,6 +383,7 @@ def generate(
     settings: ClusterSettings = NO_SETTINGS,
     countries: geo.Countries | None = None,
     node_addresses: Sequence[tuple[str, str]] = (),
+    held_ports: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]] | None = None,
     rule_definitions: Mapping[int, crs.Definition] | None = None,
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
@@ -439,6 +440,7 @@ def generate(
     _refuse_reserved(everything, reservations, ports)
     _refuse_udp_conflicts(everything, ports)
     _refuse_shared_listeners(everything, ports)
+    _refuse_held_ports(everything, held_ports or {}, ports)
     if settings.metrics is not None:
         _refuse_metrics_port(settings.metrics, reservations)
     if (settings.metrics is not None or settings.peers is not None) and not node_addresses:
@@ -1351,6 +1353,46 @@ def _serves_shared(proxy: Proxy, protocol: str) -> bool:
     if proxy.listen.protocol == protocol:
         return True
     return protocol == "http" and proxy.listen.redirect_http
+
+
+def _refuse_held_ports(
+    placed: Sequence[tuple[Vip, Proxy]],
+    held: Mapping[tuple[str, int], Sequence[tuple[str, str | None]]],
+    ports: Mapping[str, int],
+) -> None:
+    """A port another program holds on every address of a node, as the nodes said (26-10-15).
+
+    Held on every address is held on the VIP too, and HAProxy or dnsdist then
+    cannot bind it there: the deploy fails on that node and rolls back. Said
+    here instead, with the program and the node, which is what decides what to
+    change. A syslog object is not asked: IPVS takes its datagrams before any
+    socket, and binds nothing.
+    """
+
+    if not held:
+        return
+    for vip, proxy in placed:
+        protocol = proxy.listen.protocol
+        wanted: list[tuple[str, int]] = []
+        if protocol == "tcp" and proxy.listen.port is not None:
+            wanted.append(("tcp", proxy.listen.port))
+        elif protocol == "dns" and proxy.listen.port is not None:
+            wanted += [("udp", proxy.listen.port), ("tcp", proxy.listen.port)]
+        elif protocol in ports:
+            wanted.append(("tcp", ports[protocol]))
+        if proxy.listen.redirect_http:
+            wanted.append(("tcp", ports["http"]))
+        for key in wanted:
+            holders = held.get(key)
+            if not holders:
+                continue
+            node, program = holders[0]
+            who = program or "another program"
+            raise GeneratorError(
+                f"{proxy.name} listens on {vip.name} port {key[1]}/{key[0]}, which {who} holds on "
+                f"every address of {node}, so it cannot bind there. Have {who} listen on the "
+                "node's own address, or choose another port"
+            )
 
 
 def _refuse_shared_listeners(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]) -> None:

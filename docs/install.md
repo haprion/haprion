@@ -12,7 +12,7 @@ On the management host, install:
 - `python3-yaml` (major version 6), `python3-nacl` (major version 1) and
   `python3-psycopg` (major version 3)
 - `git`, `rsync`, `openssh-client` and `sudo` supporting no-argument rules
-- for the web interface: PostgreSQL 16 or newer, nginx and `uv`
+- for the web interface: PostgreSQL 16 or newer, nginx 1.25.1 or newer and `uv`
 
 Haprion is installed from Debian packages built from one commit:
 

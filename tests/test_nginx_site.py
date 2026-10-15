@@ -3,12 +3,16 @@
 Nothing ran the template through `nginx -t` before an installation did, so a
 directive in the wrong context was found by step 05 on a manager (added with
 the sign-in limit, B305). Skipped where nginx is not installed; the gate's
-machine has it.
+machine has it. The site needs nginx 1.25.1 or newer (`http2 on;`), which the
+supported distributions ship (Ubuntu 26.04, Debian 13); the check is skipped on
+an older one, such as the CI runner's (1.24 on Ubuntu 24.04, 26-10-15), rather
+than failing on a version the product does not run on.
 """
 
 from __future__ import annotations
 
 import base64
+import re
 import shutil
 import socket
 import subprocess
@@ -22,6 +26,18 @@ from haprion import cert_receiver
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "install" / "platform" / "examples"
 NGINX = shutil.which("nginx") or "/usr/sbin/nginx"
+#
+# `http2 on;`, the form the site uses: older versions know only `listen ... http2`.
+#
+NGINX_MINIMUM = (1, 25, 1)
+
+
+def nginx_version() -> tuple[int, ...] | None:
+    answer = subprocess.run(  # noqa: S603 - fixed binary
+        [NGINX, "-v"], capture_output=True, text=True, check=False
+    )
+    found = re.search(r"nginx/(\d+)\.(\d+)\.(\d+)", answer.stderr + answer.stdout)
+    return tuple(int(part) for part in found.groups()) if found else None
 
 
 def free_port() -> int:
@@ -76,6 +92,9 @@ class TheSiteParses(unittest.TestCase):
         return conf
 
     def test_the_rendered_site_passes_nginx_t(self) -> None:
+        version = nginx_version()
+        if version is None or version < NGINX_MINIMUM:
+            self.skipTest(f"nginx {version} is older than the site needs, 1.25.1")
         with tempfile.TemporaryDirectory() as raw:
             conf = self.render(Path(raw))
             checked = subprocess.run(  # noqa: S603 - fixed binary, a file made above

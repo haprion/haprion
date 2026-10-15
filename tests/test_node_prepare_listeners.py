@@ -192,5 +192,61 @@ class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
         self.assertEqual(self.restarts(), ["restart ssh.service", "restart ssh.service"])
 
 
+class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
+    """Fas 18 findings 23 and 24, on a node with nothing on it but the packages."""
+
+    def setUp(self) -> None:
+        self.script = NODE_PREPARE.read_text()
+        self.etc = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.etc)
+
+    def link(self, packaged: bool) -> subprocess.CompletedProcess[str]:
+        body = function(self.script, "link_into_current").replace("/etc/haproxy/", f"{self.etc}/")
+        verdict = "true" if packaged else "false"
+        return subprocess.run(  # noqa: S603 - fixed interpreter, the step's own function
+            [
+                "/bin/bash",
+                "-c",
+                f'log() {{ echo "$*"; }}; warn() {{ echo "WARNING: $*"; }}; '
+                f"is_packaged_conffile() {{ {verdict}; }}; {body} link_into_current haproxy.cfg",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_the_package_s_sample_is_kept_beside_and_the_link_made(self) -> None:
+        (self.etc / "haproxy.cfg").write_text("sample\n")
+        done = self.link(packaged=True)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(os.readlink(self.etc / "haproxy.cfg"), "current/haproxy.cfg")
+        self.assertEqual((self.etc / "haproxy.cfg.packaged").read_text(), "sample\n")
+
+    def test_an_operator_s_file_is_left_alone(self) -> None:
+        (self.etc / "haproxy.cfg").write_text("mine\n")
+        done = self.link(packaged=False)
+        self.assertIn("not touching it", done.stdout)
+        self.assertEqual((self.etc / "haproxy.cfg").read_text(), "mine\n")
+        self.assertFalse((self.etc / "haproxy.cfg.packaged").exists())
+
+    def test_without_a_node_path_the_node_takes_the_cluster_id(self) -> None:
+        found = re.search(r'^node_path="\$\(cluster_value .*?\n(?=\n)', self.script, re.M | re.S)
+        assert found, "04-node-prepare no longer looks the node path up where the test reads it"
+        for answers, expected in (("", "alpha"), ("NODE_PATH_alpha=a", "a")):
+            with self.subTest(answers=answers):
+                done = subprocess.run(  # noqa: S603 - fixed interpreter, the step's own lines
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f'source "{LIB}"; CLUSTER=alpha; {answers}\n{found.group(0)}\n'
+                        'printf %s "$node_path"',
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual((done.returncode, done.stdout), (0, expected), done.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -289,6 +289,19 @@ ensure_dir() {
     log "  created  ${path}"
 }
 
+#
+# True when PATH is still exactly the configuration file PACKAGE installed:
+# dpkg records each conffile's MD5, and nothing else could have written those
+# bytes. A file somebody changed is theirs and stays where it is.
+#
+is_packaged_conffile() {
+    local package="$1" path="$2" recorded
+    recorded="$(dpkg-query -W -f='${Conffiles}\n' "$package" 2>/dev/null \
+        | awk -v path="$path" '$1 == path { print $2; exit }')"
+    [[ -n "$recorded" && -f "$path" && ! -L "$path" ]] \
+        && [[ "$(md5sum < "$path" | cut -d' ' -f1)" == "$recorded" ]]
+}
+
 ensure_group() {
     local group="$1"
     if getent group "$group" >/dev/null; then
@@ -338,6 +351,10 @@ install_file() {
         return
     fi
     [[ -f "$path" ]] && cp -a "$path" "${path}.replaced-$(date +%Y%m%d-%H%M%S)"
+    # A fresh machine may not have the directory yet (/etc/haprion on a new
+    # node, Fas 18 finding 22); the caller's own ensure_dir, where there is
+    # one, still sets what it should be.
+    [[ -d "${path%/*}" ]] || ensure_dir "${path%/*}" root:root 755
     printf '%s\n' "$content" > "$path"
     chown "$owner" "$path"
     chmod "$mode" "$path"

@@ -335,6 +335,15 @@ link_into_current() {
         log "  ok       ${path}"
         return
     fi
+    #
+    # The haproxy package (a dependency of haprion-node) installs its sample
+    # haproxy.cfg on every new node (Fas 18 finding 23). Untouched, it is
+    # nobody's configuration: it is kept beside, and the release's takes over.
+    #
+    if [[ "$name" == haproxy.cfg ]] && is_packaged_conffile haproxy "$path"; then
+        mv "$path" "${path}.packaged"
+        log "  moved    ${path} -> ${path}.packaged  (the haproxy package's sample, unchanged)"
+    fi
     if [[ -e "$path" ]]; then
         warn "${path} exists and is not a symlink - not touching it"
         warn "  move it aside, then run this step again"
@@ -482,8 +491,12 @@ for extra in "${extra_paths[@]}"; do
 done
 EXTRA_BACKUP_PATHS="${extra_paths[*]}"
 
+#
+# The same default as Create cluster's form: the cluster's ID (Fas 18
+# finding 24). A cluster created with another node path names it here.
+#
 node_path="$(cluster_value NODE_PATH "$CLUSTER")"
-[[ -n "$node_path" ]] || die "NODE_PATH_${CLUSTER} is not set in the answers file"
+node_path="${node_path:-$CLUSTER}"
 
 node_conf="$(render_node_conf "$CLUSTER" "$node_path" "$LOGS_GROUP")"
 

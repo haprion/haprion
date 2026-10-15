@@ -66,6 +66,11 @@ from haprion.node_enrollment import (
 
 ARCHIVE = ".removed"
 SUDOERS_EDIT = Path("/etc/sudoers.d/haprion-config-edit")
+#
+# Who a cluster's versions are recorded as: the product, in the repository's
+# own configuration. Install step 1 sets the same for the clusters it creates.
+#
+REPOSITORY_IDENTITY = (("user.name", "haprion"), ("user.email", "haprion@localhost"))
 ROOT_GITCONFIG = Path("/root/.gitconfig")
 RETENTION_ROOT = Path("/etc/haprion/backup-retention")
 GIT_CONFIG_NOTHING_TO_UNSET = 5
@@ -693,6 +698,15 @@ def _create_repository(policy: PathPolicy, spec: Definition, tools: Tools) -> li
             "git init",
         )
         made.append(bare)
+        #
+        # The identity every version is recorded under, kept in the repository:
+        # a publish refuses one without it rather than sign with whatever the
+        # environment holds (`repo_snapshot._identity`). The seed's commit used
+        # it only for itself, and the first publish on a new cluster stopped
+        # (Fas 18, 26-10-15).
+        #
+        for setting, value in REPOSITORY_IDENTITY:
+            _checked(tools.run([GIT, "-C", str(bare), "config", setting, value]), "git config")
         with tempfile.TemporaryDirectory() as raw:
             seed = Path(raw) / "seed"
             for relative, content in seed_files(spec.vip).items():
@@ -700,10 +714,9 @@ def _create_repository(policy: PathPolicy, spec: Definition, tools: Tools) -> li
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
             identity = [
-                "-c",
-                "user.name=haprion",
-                "-c",
-                "user.email=haprion@localhost",
+                argument
+                for setting, value in REPOSITORY_IDENTITY
+                for argument in ("-c", f"{setting}={value}")
             ]
             _checked(
                 tools.run([GIT, "-C", str(seed), "init", "--quiet", "--initial-branch=main"]),

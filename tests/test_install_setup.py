@@ -154,6 +154,15 @@ class Step3MakesTheFileANodeChangeEdits(unittest.TestCase):
             self.assertEqual(known.read_text(), "node-a ssh-ed25519 AAAAexample\n")
 
 
+class Step1GivesARepositoryItsIdentity(unittest.TestCase):
+    def test_the_same_identity_create_cluster_keeps(self) -> None:
+        from haprion.cluster_definition import REPOSITORY_IDENTITY  # noqa: PLC0415
+
+        text = (INSTALL / "01-manager-prepare").read_text()
+        for setting, value in REPOSITORY_IDENTITY:
+            self.assertIn(f'git -C "$bare" config {setting} {value}', text)
+
+
 class TheExampleShowsTheDefaults(unittest.TestCase):
     """answers.example.env says its values are the defaults; this keeps it true."""
 

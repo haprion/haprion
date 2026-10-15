@@ -313,6 +313,15 @@ class CreatingACluster(unittest.TestCase):
                 check=True,
             ).stdout
             self.assertEqual(log.strip(), "Initial layout for cluster gamma")
+            # A publish refuses a repository without its own identity (Fas 18, 26-10-15).
+            for setting, value in cluster_definition.REPOSITORY_IDENTITY:
+                kept = subprocess.run(
+                    [GIT, "-C", str(site.config_root / "gamma.git"), "config", "--get", setting],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout.strip()
+                self.assertEqual(kept, value)
             self.assertTrue((site.publish_root / "gamma/releases").is_dir())
             sudoers = site.sudoers.read_text()
             self.assertIn(f"sudoedit {site.config_root}/gamma/core/haproxy.cfg", sudoers)

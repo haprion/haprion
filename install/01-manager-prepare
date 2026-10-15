@@ -230,7 +230,14 @@ RESERVATIONS
 
             git -C "$seed" init --initial-branch=main >/dev/null
             git -C "$seed" add -A
-            git -C "$seed" -c user.name=install -c user.email=install@localhost \
+            #
+            # The identity versions are recorded under, kept in the repository:
+            # a publish refuses one without it. The same as Create cluster's
+            # (cluster_definition.REPOSITORY_IDENTITY).
+            #
+            git -C "$bare" config user.name haprion
+            git -C "$bare" config user.email haprion@localhost
+            git -C "$seed" -c user.name=haprion -c user.email=haprion@localhost \
                 commit -m "Initial layout for cluster ${cluster}" >/dev/null
             git -C "$seed" push --quiet "$bare" main
             rm -rf "$seed"

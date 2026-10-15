@@ -671,6 +671,33 @@ class TheNodeWritesTheServerStateKeyFromTheAnswers(unittest.TestCase):
         self.assertEqual(self.keys.read_text(), "")
 
 
+class TheLineStep3PrintsIsAnAnswer(unittest.TestCase):
+    """03-manager-keys prints SERVER_STATE_PUBKEY for the nodes' answers file, which
+    lib.sh sources as shell: pasted as printed, it must give the key back whole."""
+
+    def test_the_printed_line_sourced_is_the_key(self) -> None:
+        text = (BASE / "install" / "03-manager-keys").read_text()
+        found = re.search(r"^SERVER_STATE_PUBKEY=.*$", text, re.MULTILINE)
+        assert found, "03-manager-keys no longer prints SERVER_STATE_PUBKEY"
+        printed = found.group(0).replace('$(pub "$SERVER_STATE_KEY")', KEY_A)
+        with tempfile.TemporaryDirectory() as raw:
+            answers = Path(raw) / "answers.env"
+            answers.write_text(printed + "\n")
+            done = subprocess.run(  # noqa: S603 - sourcing the line under test
+                [
+                    "/bin/bash",
+                    "-c",
+                    'set -e; source "$1"; printf %s "$SERVER_STATE_PUBKEY"',
+                    "-",
+                    str(answers),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual((done.returncode, done.stdout), (0, KEY_A), done.stderr)
+
+
 class TheSocketIsTheOneTheCoreNames(unittest.TestCase):
     def test_the_helper_and_the_core_template_agree(self) -> None:
         from haprion import cluster_definition  # noqa: PLC0415

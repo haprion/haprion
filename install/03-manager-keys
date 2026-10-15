@@ -135,7 +135,7 @@ The server state line need not be pasted: put this in the answers file the
 nodes are prepared with, and 04-node-prepare (run by tools/install-node-package)
 writes it:
 
-SERVER_STATE_PUBKEY=$(pub "$SERVER_STATE_KEY")
+SERVER_STATE_PUBKEY="$(pub "$SERVER_STATE_KEY")"
 
 SERVER_STATE
 fi

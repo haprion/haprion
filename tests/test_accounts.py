@@ -40,6 +40,7 @@ SHELL_NAMES = {
     "STATUS": "STATUS_USER",
     "BACKUP": "BACKUP_USER",
     "LOGREAD": "LOGREAD_USER",
+    "JOIN": "JOIN_USER",
     "LOGS_GROUP": "LOGS_GROUP",
     "WAF_GROUP": "WAF_GROUP",
     "DNS_GROUP": "DNS_GROUP",
@@ -129,7 +130,8 @@ class TheNamesAgree(unittest.TestCase):
     def test_the_node_fragment_creates_exactly_the_node_accounts(self) -> None:
         users, groups, members = sysusers(NODE)
         self.assertEqual(
-            users, {accounts.TRIGGER, accounts.STATUS, accounts.BACKUP, accounts.LOGREAD}
+            users,
+            {accounts.TRIGGER, accounts.STATUS, accounts.BACKUP, accounts.LOGREAD, accounts.JOIN},
         )
         self.assertEqual(groups, {accounts.LOGS_GROUP, accounts.WAF_GROUP, accounts.DNS_GROUP})
         self.assertEqual(members, {(accounts.LOGREAD, accounts.LOGS_GROUP)})

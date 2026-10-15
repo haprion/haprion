@@ -13,13 +13,15 @@ make - so a form the page accepts is a request the helper reads alike.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from haprion import cluster_definition, node_enrollment
+from haprion import cluster_definition, node_enrollment, node_join
 from haprion.config import MAX_NODES, MIN_NODES
+from haprion.dns_profile_keys import DnsProfilePublicKey
 
 from haprion_ui import jobs
 from haprion_ui.db import Job
@@ -158,7 +160,7 @@ def read_addition(block: str, *, cluster: str, host: str, count: int) -> Additio
         chosen = node_enrollment.host_name(host) if host.strip() else enrollment.host
     except node_enrollment.EnrollmentError as refused:
         raise FormProblem(str(refused)) from None
-    if enrollment.cluster != cluster:
+    if not node_enrollment.made_for(enrollment, cluster):
         raise FormProblem(
             f"This block was made for {enrollment.cluster}. Run 04-node-prepare on the node "
             f"with {cluster}."
@@ -173,6 +175,34 @@ def read_addition(block: str, *, cluster: str, host: str, count: int) -> Additio
         fingerprint=node_enrollment.fingerprint(enrollment.host_key),
         certificates=enrollment.cert_pull_key is not None,
     )
+
+
+def sealed_block(
+    block: str, *, cluster: str, public_key: DnsProfilePublicKey | None
+) -> tuple[str, dict[str, str] | None]:
+    """The block as a job may store it, and its one-time key sealed for root (B317).
+
+    A v1 block goes as it is. A v2 block goes without its key, and the key goes
+    sealed against the installation's public key, bound to the cluster and the
+    node: neither the job row nor the audit holds it in the clear.
+    """
+
+    try:
+        enrollment = node_enrollment.parse(block)
+    except node_enrollment.EnrollmentError as refused:
+        raise FormProblem(str(refused)) from None
+    if enrollment.join_key is None:
+        return "".join(block.split()), None
+    if public_key is None:
+        raise FormProblem(
+            "This installation has no key to seal the node's one-time key with (platform "
+            "step 15). Add the node on the manager with haprion-node instead."
+        )
+    box = node_join.seal_join_key(
+        public_key, cluster=cluster, node=enrollment.name, key=enrollment.join_key
+    )
+    stored = node_enrollment.render(node_enrollment.without_join_key(enrollment))
+    return stored, {"key_id": public_key.key_id, "ciphertext": base64.b64encode(box).decode()}
 
 
 def removable(rows: list[NodeRow], name: str) -> str | None:
@@ -237,15 +267,21 @@ class Creation:
     blocks: tuple[str, ...]
     nodes: tuple[NewNode, ...]
 
-    def payload(self) -> dict[str, Any]:
+    def payload(self, public_key: DnsProfilePublicKey | None = None) -> dict[str, Any]:
+        sealed = [
+            sealed_block(block, cluster=self.cluster, public_key=public_key)
+            for block in self.blocks
+        ]
         payload: dict[str, Any] = {
             "action": "add",
             "display_name": self.display_name,
             "vip": self.vip,
             "node_path": self.node_path,
-            "blocks": list(self.blocks),
+            "blocks": [stored for stored, _key in sealed],
             "hosts": [node.host for node in self.nodes],
         }
+        if any(key is not None for _stored, key in sealed):
+            payload["join_keys"] = [key for _stored, key in sealed]
         if self.default_certificate is not None:
             payload["default_certificate"] = self.default_certificate
         if self.address_prefix is not None:

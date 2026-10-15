@@ -28,16 +28,18 @@ directly, as root.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import cert_registry, change_journal, cluster_definition, node_enrollment
+from haprion import cert_registry, change_journal, cluster_definition, node_enrollment, node_join
 from haprion.cert_lock import DEFAULT_LOCK_PATH as CERTIFICATE_LOCK
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.config import (
@@ -61,14 +63,14 @@ from haprion.helper_protocol import (
     require_no_arguments,
     write_document,
 )
-from haprion.node_enrollment import AskNode, EnrollmentError, Locations
+from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, JoinNode, Locations
 from haprion.status_collect import NodeResponse, ask_node
 
 OPERATION = "cluster_node"
 DEFINE = "cluster_define"
 HELPER = "/opt/haprion/current/bin/haprion-node-helper"
 PARAMETERS = {
-    OPERATION: frozenset({"action", "block", "host", "node"}),
+    OPERATION: frozenset({"action", "block", "host", "node", "join_key"}),
     DEFINE: frozenset(
         {
             "action",
@@ -78,6 +80,7 @@ PARAMETERS = {
             "default_certificate",
             "blocks",
             "hosts",
+            "join_keys",
             "address_prefix",
             "address_interface",
         }
@@ -122,6 +125,7 @@ def build_request(
     block: str | None = None,
     host: str | None = None,
     node: str | None = None,
+    join_key: Mapping[str, str] | None = None,
 ) -> str:
     """The exact bounded node request the worker and `haprion-node` send."""
 
@@ -129,6 +133,8 @@ def build_request(
     for name, value in (("block", block), ("host", host), ("node", node)):
         if value is not None:
             parameters[name] = value
+    if join_key is not None:
+        parameters["join_key"] = dict(join_key)
     return _request(OPERATION, cluster, request_id, parameters)
 
 
@@ -145,6 +151,7 @@ def build_define_request(
     hosts: Sequence[str] = (),
     address_prefix: int | None = None,
     address_interface: str | None = None,
+    join_keys: Sequence[Mapping[str, str] | None] | None = None,
 ) -> str:
     """The exact bounded cluster request the worker and `haprion-cluster` send."""
 
@@ -165,6 +172,8 @@ def build_define_request(
             parameters["address_prefix"] = address_prefix
         if address_interface is not None:
             parameters["address_interface"] = address_interface
+        if join_keys is not None:
+            parameters["join_keys"] = [None if key is None else dict(key) for key in join_keys]
     return _request(DEFINE, cluster, request_id, parameters)
 
 
@@ -206,7 +215,66 @@ def _only(parameters: Mapping[str, JsonValue], allowed: set[str], what: str) -> 
         raise HelperProtocolError(f"{what} takes no {', '.join(extra)}", exit_code=65)
 
 
-type Work = Callable[[PathPolicy, RuntimeConfig, AskNode], Any]
+type Work = Callable[[PathPolicy, RuntimeConfig, AskNode, JoinNode], Any]
+
+
+def _sealed(value: JsonValue, what: str) -> tuple[str, bytes] | None:
+    """A one-time key as the web seals it (B317): its key ID and the box."""
+
+    if value is None:
+        return None
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"key_id", "ciphertext"}
+        or not all(isinstance(value[name], str) and value[name] for name in value)
+    ):
+        raise HelperProtocolError(f"{what} must be a key_id and a ciphertext", exit_code=65)
+    try:
+        box = base64.b64decode(str(value["ciphertext"]), validate=True)
+    except ValueError:
+        raise HelperProtocolError(f"{what}'s ciphertext is not base64", exit_code=65) from None
+    return str(value["key_id"]), box
+
+
+def _keyed(
+    policy: PathPolicy,
+    enrollment: Enrollment,
+    sealed: tuple[str, bytes] | None,
+    *,
+    cluster: str,
+    require_secure: bool,
+) -> Enrollment:
+    """A v2 block with its one-time key: in the block as typed, or opened from its seal."""
+
+    if enrollment.cluster is not None:
+        if sealed is not None:
+            raise EnrollmentError("enrollment_invalid", "a v1 block carries no one-time key")
+        return enrollment
+    if sealed is None:
+        if enrollment.join_key is None:
+            raise EnrollmentError(
+                "enrollment_invalid", f"the block for {enrollment.name} has no one-time key"
+            )
+        return enrollment
+    if enrollment.join_key is not None:
+        raise EnrollmentError(
+            "enrollment_invalid", "a block is sent with its key or sealed, not both"
+        )
+    profiles = policy.acme.dns_profiles if policy.acme is not None else None
+    if profiles is None:
+        raise EnrollmentError(
+            "dependency_unavailable",
+            "runtime policy.acme.dns_profiles is not configured, so a sealed key cannot be opened",
+            78,
+        )
+    key_id, box = sealed
+    for key in node_join.private_keys(profiles.private_keys, require_secure=require_secure):
+        if key.key_id == key_id:
+            opened = node_join.open_join_key(key, box, cluster=cluster, node=enrollment.name)
+            return replace(enrollment, join_key=opened)
+    raise EnrollmentError(
+        "profile_key_unavailable", "the one-time key's sealing key is not here", 78
+    )
 
 
 def _node_work(request: HelperRequest, locations: Locations | None, require_secure: bool) -> Work:
@@ -220,7 +288,7 @@ def _node_work(request: HelperRequest, locations: Locations | None, require_secu
         if not NAME.fullmatch(moved):
             raise HelperProtocolError("parameters.node is not a node name", exit_code=65)
         new_host = node_enrollment.host_name(_text(parameters, "host"))
-        return lambda policy, runtime, ask: node_enrollment.change_host(
+        return lambda policy, runtime, ask, _join: node_enrollment.change_host(
             policy,
             runtime,
             cluster=request.cluster,
@@ -231,16 +299,24 @@ def _node_work(request: HelperRequest, locations: Locations | None, require_secu
             require_secure=require_secure,
         )
     if action == "add":
-        _only(parameters, {"action", "block", "host"}, "an addition")
+        _only(parameters, {"action", "block", "host", "join_key"}, "an addition")
         host = node_enrollment.host_name(_text(parameters, "host"))
         enrollment = node_enrollment.parse(_text(parameters, "block"))
-        return lambda policy, runtime, ask: node_enrollment.add(
+        sealed = _sealed(parameters.get("join_key"), "parameters.join_key")
+        return lambda policy, runtime, ask, join: node_enrollment.add(
             policy,
             runtime,
-            enrollment,
+            _keyed(
+                policy,
+                enrollment,
+                sealed,
+                cluster=request.cluster,
+                require_secure=require_secure,
+            ),
             cluster=request.cluster,
             host=host,
             ask=ask,
+            join_node=join,
             locations=locations,
             require_secure=require_secure,
         )
@@ -248,7 +324,7 @@ def _node_work(request: HelperRequest, locations: Locations | None, require_secu
     name = _text(parameters, "node")
     if not NAME.fullmatch(name):
         raise HelperProtocolError("parameters.node is not a node name", exit_code=65)
-    return lambda policy, runtime, ask: node_enrollment.remove(
+    return lambda policy, runtime, ask, _join: node_enrollment.remove(
         policy,
         runtime,
         cluster=request.cluster,
@@ -272,7 +348,7 @@ def _define_work(
         raise HelperProtocolError("parameters.action must be add or remove", exit_code=65)
     if action == "remove":
         _only(parameters, {"action"}, "a removal")
-        return lambda policy, runtime, _ask: cluster_definition.remove(
+        return lambda policy, runtime, _ask, _join: cluster_definition.remove(
             policy,
             runtime,
             cluster=request.cluster,
@@ -299,11 +375,40 @@ def _define_work(
         address_prefix=cluster_definition.parse_prefix(parameters.get("address_prefix")),
         address_interface=interface,
     )
-    return lambda policy, runtime, ask: cluster_definition.add(
+    raw_keys = parameters.get("join_keys")
+    if raw_keys is not None and (
+        not isinstance(raw_keys, list) or len(raw_keys) != len(spec.nodes)
+    ):
+        raise HelperProtocolError("parameters.join_keys must be one per block", exit_code=65)
+    sealed_keys = [
+        _sealed(value, "parameters.join_keys")
+        for value in (raw_keys if raw_keys is not None else [None] * len(spec.nodes))
+    ]
+
+    def keyed(policy: PathPolicy) -> cluster_definition.Definition:
+        return replace(
+            spec,
+            nodes=tuple(
+                (
+                    _keyed(
+                        policy,
+                        enrollment,
+                        sealed,
+                        cluster=request.cluster,
+                        require_secure=require_secure,
+                    ),
+                    host,
+                )
+                for (enrollment, host), sealed in zip(spec.nodes, sealed_keys, strict=True)
+            ),
+        )
+
+    return lambda policy, runtime, ask, join: cluster_definition.add(
         policy,
         runtime,
-        spec,
+        keyed(policy),
         ask=ask,
+        join_node=join,
         locations=locations,
         places=places,
         tools=tools,
@@ -327,6 +432,7 @@ def main(
     places: cluster_definition.Places | None = None,
     tools: cluster_definition.Tools | None = None,
     ask: AskNode | None = None,
+    join_node: JoinNode | None = None,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     output: TextIO = output_stream or sys.stdout
@@ -391,6 +497,14 @@ def main(
 
         ask = ask_with_status
 
+    if join_node is None:
+        known_hosts = (locations or Locations()).root_known_hosts
+
+        def join_over_ssh(node: Node, key: str, document: dict[str, Any]) -> NodeResponse:
+            return node_join.ssh_join(node.mgmt_host, key, document, known_hosts=known_hosts)
+
+        join_node = join_over_ssh
+
     journal = journal or (locations or Locations()).journal
     try:
         pending = change_journal.read(journal)
@@ -429,7 +543,7 @@ def main(
                         f"did not finish and was put back: {', '.join(recovered.files)}\n"
                     )
                 runtime = load_runtime_config(policy, require_secure=require_secure)
-            outcome = work(policy, runtime, ask)
+            outcome = work(policy, runtime, ask, join_node)
     except LockBusy as exc:
         return _refuse(request, output, errors, "operation_locked", str(exc), exc.exit_code)
     except cert_registry.RegistryError as exc:

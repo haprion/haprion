@@ -33,7 +33,7 @@ from typing import TextIO
 from haprion.cli import node_helper
 from haprion.cli.node import RunHelper, _answer, json_answer, run_helper
 from haprion.envelope import new_request_id
-from haprion.node_enrollment import BLOCK_PREFIX, MAX_BLOCK_BYTES
+from haprion.node_enrollment import BLOCK_PREFIX, BLOCK_V2_PREFIX, MAX_BLOCK_BYTES
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -59,7 +59,14 @@ def split_blocks(text: str) -> list[str]:
     """The blocks on stdin, however a terminal folded them."""
 
     compact = "".join(text.split())
-    return [BLOCK_PREFIX + part for part in compact.split(BLOCK_PREFIX) if part]
+    #
+    # Split before each prefix, v1 or v2 (B317): base64 has no colon, so a
+    # prefix is never inside a block.
+    #
+    marked = compact.replace(BLOCK_PREFIX, "\n" + BLOCK_PREFIX).replace(
+        BLOCK_V2_PREFIX, "\n" + BLOCK_V2_PREFIX
+    )
+    return [part for part in marked.split("\n") if part]
 
 
 def main(

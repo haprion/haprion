@@ -264,7 +264,7 @@ def definition(
         for block, host in zip(blocks, hosts, strict=True)
     )
     for enrollment, _host in nodes:
-        if enrollment.cluster != cluster:
+        if not node_enrollment.made_for(enrollment, cluster):
             raise EnrollmentError(
                 "enrollment_mismatch",
                 f"the block for {enrollment.name} was made for {enrollment.cluster!r}, not "
@@ -903,6 +903,7 @@ def add(
     spec: Definition,
     *,
     ask: AskNode,
+    join_node: node_enrollment.JoinNode | None = None,
     locations: Locations | None = None,
     places: Places | None = None,
     tools: Tools | None = None,
@@ -926,6 +927,20 @@ def add(
     with change_journal.transaction(record, locations.journal):
         _create_repository(policy, spec, tools)
         change_journal.apply(changes)
+        #
+        # A v2 node is joined first (B317): it learns the manager's keys from
+        # the manager, and only then can it answer the status question below.
+        #
+        if any(enrollment.join_key for enrollment, _host in spec.nodes):
+            document = node_enrollment.join_document(
+                policy,
+                cluster=spec.cluster,
+                node_path=spec.node_path,
+                vip=spec.vip,
+                host_key=locations.manager_host_key,
+            )
+            for node, (enrollment, _host) in zip(nodes, spec.nodes, strict=True):
+                node_enrollment.join(node, enrollment, document, join_node)
         for node in nodes:
             problem = node_enrollment.verify(node, spec.cluster, ask)
             if problem is not None:

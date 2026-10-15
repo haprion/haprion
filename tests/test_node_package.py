@@ -187,6 +187,8 @@ class NodeCommandPathTests(unittest.TestCase):
     FILES = (
         "install/03-manager-keys",
         "install/04-node-prepare",
+        # The table of the manager's keys and their forced commands (B317).
+        "install/lib.sh",
         "install/platform/13-platform-traffic-collector",
         "install/examples/keepalived.conf.example",
     )

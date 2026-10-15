@@ -14,10 +14,11 @@ have fails here, not on a person's first node:
   * a manager and two nodes per distribution, rootless podman, systemd as PID 1,
     on a network of their own (RFC 5737 addresses)
   * the manager: the CLI and UI packages with apt, `haprion-setup` from the
-    commit's source tree, step 03's lines
-  * each node: the node package with apt, `04-node-prepare`, the lines pasted
-  * `haprion-cluster add` with both blocks, an object published with
-    `haprion-objects apply`, `haprion-deploy`
+    commit's source tree
+  * each node: the node package with apt and nothing else - its postinst
+    prints the block, with the node's one-time key (B317)
+  * `haprion-cluster add` with both blocks, which joins both nodes over SSH,
+    an object published with `haprion-objects apply`, `haprion-deploy`
   * then what an operator checks: keepalived running on both, the virtual
     address on exactly one, the object answering there, the address moving
     when its holder's keepalived stops and staying where it went when that
@@ -229,7 +230,7 @@ class Run:
         self.podman("cp", str(path), f"{self.container(role)}:/root/install/{path.name}")
         return f"/root/install/{path.name}"
 
-    def install_manager(self, cli: Path, ui: Path, source: Path) -> str:
+    def install_manager(self, cli: Path, ui: Path, source: Path) -> None:
         names = [self.copy("mgr", path) for path in (cli, ui, source)]
         self.on(
             "mgr",
@@ -240,47 +241,29 @@ class Run:
         _, output = self.on("mgr", "/root/install/haprion-src/install/haprion-setup")
         if "The manager is installed" not in output:
             raise Failed(f"haprion-setup ended without saying the manager is installed:\n{output}")
-        _, keys = self.on("mgr", "/root/install/haprion-src/install/03-manager-keys")
-        return keys
 
-    def prepare_node(self, role: str, package: Path, keys: str) -> str:
+    def prepare_node(self, role: str, package: Path) -> str:
+        """The node package, installed as a person would, and the block it printed."""
+
         name = self.copy(role, package)
-        self.on(
+        _, output = self.on(
             role,
             "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
             f"&& apt-get install -y -q {shlex.quote(name)}",
         )
-        pubkey = re.search(r"^SERVER_STATE_PUBKEY=.*$", keys, re.M)
-        if not pubkey:
-            raise Failed("step 03 printed no SERVER_STATE_PUBKEY line")
-        answers = (
-            "MANAGER_HOST=mgr\n"
-            "NODE_CONFIG_PULL_KEY=/root/.ssh/id_ed25519_config_pull\n"
-            "NODE_CERT_PULL_KEY=/root/.ssh/id_ed25519_cert_pull\n"
-            f"{pubkey.group(0)}\n"
-        )
-        self.on(role, "cat > /root/install/answers.env", stdin=answers)
-        _, output = self.on(
-            role,
-            "/usr/share/haprion-node/install/04-node-prepare /root/install/answers.env " + CLUSTER,
-        )
-        warnings = [line for line in output.splitlines() if line.startswith("WARNING")]
-        if warnings:
-            raise Failed("04-node-prepare warned on an empty node:\n" + "\n".join(warnings))
-        for target, line in authorized_lines(keys):
-            self.on(
-                role,
-                f"grep -qxF -- {shlex.quote(line)} {target} || printf '%s\\n' {shlex.quote(line)} >> {target}",
-            )
-        #
-        # What the operator does by answering yes once: the manager's host
-        # key into root's known_hosts, for the pulls.
-        #
-        self.on(role, "ssh-keyscan -t ed25519 mgr >> /root/.ssh/known_hosts 2>/dev/null")
-        block = re.search(r"^(haproxy-node-v1:.*?)(?:\n\s*\n|\Z)", output, re.M | re.S)
+        block = re.search(r"^(haproxy-node-v2:\S+)$", output, re.M)
         if not block:
-            raise Failed("04-node-prepare printed no enrollment block")
-        return "".join(block.group(1).split())
+            raise Failed(f"the node package printed no enrollment block:\n{output[-3000:]}")
+        return block.group(1)
+
+    def joined_quietly(self) -> None:
+        """Step 4, run by the join, warned of nothing on an empty node."""
+
+        for role in NODES:
+            _, log = self.on(role, "cat /var/log/haprion-node/join.log")
+            warnings = [line for line in log.splitlines() if line.startswith("WARNING")]
+            if warnings:
+                raise Failed(f"{role}: the join warned on an empty node:\n" + "\n".join(warnings))
 
     def create_cluster(self, blocks: list[str]) -> None:
         hosts = " ".join(f"--host {role}" for role in NODES)
@@ -369,24 +352,8 @@ class Run:
         for role in ("mgr", *NODES):
             self.on(role, "journalctl -b --no-pager -p warning", check=False)
         self.on("mgr", "cat /var/log/haprion/setup.log", check=False)
-
-
-def authorized_lines(keys: str) -> list[tuple[str, str]]:
-    """Step 03's lines for every node, by the file each goes into."""
-
-    section = keys.split("--- every node", 1)[-1].split("The server state line need not", 1)[0]
-    found: list[tuple[str, str]] = []
-    target = None
-    for line in section.splitlines():
-        heading = re.match(r"\s+(/home/\S+/authorized_keys)\s", line)
-        if heading:
-            target = heading.group(1)
-        elif line.startswith("restrict,") and target and "server-state-trigger" not in line:
-            # The server state key's line is written by 04-node-prepare itself.
-            found.append((target, line))
-    if not found:
-        raise Failed("step 03 printed no lines for the nodes")
-    return found
+        for role in NODES:
+            self.on(role, "cat /var/log/haprion-node/*.log", check=False)
 
 
 def package(directory: Path, pattern: str) -> Path:
@@ -442,18 +409,21 @@ def run_one(
         step("a manager and two nodes booted", lambda: run.start(image))
         with tempfile.TemporaryDirectory() as directory:
             archive = source_archive(source, cli, Path(directory))
-            keys = step(
-                "the manager: packages, haprion-setup, step 03",
+            step(
+                "the manager: packages, haprion-setup",
                 lambda: run.install_manager(cli, ui, archive),
             )
         blocks = [
             step(
-                f"{role}: package, 04-node-prepare, the key lines",
-                lambda role=role: run.prepare_node(role, node, keys),
+                f"{role}: the package, and the block it printed",
+                lambda role=role: run.prepare_node(role, node),
             )
             for role in NODES
         ]
-        step("haprion-cluster add with both blocks", lambda: run.create_cluster(blocks))
+        step(
+            "haprion-cluster add with both blocks: both joined", lambda: run.create_cluster(blocks)
+        )
+        step("the joins warned of nothing", run.joined_quietly)
         step("an object published", run.publish)
         step("haprion-deploy", run.deploy)
         step("haproxy and keepalived running on both nodes", run.services_running)

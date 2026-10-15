@@ -10,7 +10,7 @@
   status and takes all of it back if either does not answer as itself.
 #}
 <section class="page-heading">
-  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Create cluster</h1>{% if not creation %}<p class="page-lede">Run 04-node-prepare on the new node first, then paste the block it prints.</p>{% endif %}</div>
+  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Create cluster</h1>{% if not creation %}<p class="page-lede">Install the haprion-node package on the new node, then paste the block it prints.</p>{% endif %}</div>
 </section>
 
 {% if problem %}
@@ -41,7 +41,7 @@
     </table></div>
     <ul class="removal-consequences">
       <li>{{ creation.display_name }} · VIP {{ creation.vip }}{% if creation.address_prefix %}/{{ creation.address_prefix }}{% endif %}{% if creation.address_interface %} on {{ creation.address_interface }}{% endif %} · node path {{ creation.node_path }}{% if creation.default_certificate %} · certificate {{ creation.default_certificate }}{% endif %}</li>
-      <li>Compare each host key with the one 04-node-prepare printed on the node. The change is taken back if either node does not answer as itself.</li>
+      <li>Compare each host key with the one the node printed. The change is taken back if either node does not answer as itself.</li>
     </ul>
     <div class="form-grid">
       <label><span class="field-title">Type {{ creation.cluster }} to create it</span><input name="confirm" maxlength="64" spellcheck="false" autocomplete="off" required></label>
@@ -65,9 +65,9 @@
       <label><span class="field-title">Default certificate <span class="optional">(optional)</span></span><select name="default_certificate"><option value=""></option>{% for identifier in certificates %}<option value="{{ identifier }}"{% if identifier == form.default_certificate %} selected{% endif %}>{{ identifier }}</option>{% endfor %}</select></label>
     </div>
     <div class="form-grid">
-      <label><span class="field-title">First node's block</span><textarea name="block_1" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…" required>{{ form.block_1 }}</textarea></label>
+      <label><span class="field-title">First node's block</span><textarea name="block_1" rows="4" spellcheck="false" placeholder="haproxy-node-v2:…" required>{{ form.block_1 }}</textarea></label>
       <label><span class="field-title">First node's DNS name or IP <span class="optional">(optional)</span></span><input name="host_1" value="{{ form.host_1 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
-      <label><span class="field-title">Second node's block <span class="optional">(optional)</span></span><textarea name="block_2" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…">{{ form.block_2 }}</textarea></label>
+      <label><span class="field-title">Second node's block <span class="optional">(optional)</span></span><textarea name="block_2" rows="4" spellcheck="false" placeholder="haproxy-node-v2:…">{{ form.block_2 }}</textarea></label>
       <label><span class="field-title">Second node's DNS name or IP <span class="optional">(optional)</span></span><input name="host_2" value="{{ form.host_2 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
     </div>
     <div class="editor-actions editor-submit">

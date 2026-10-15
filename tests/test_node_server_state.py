@@ -614,72 +614,80 @@ KEY_A = "ssh-ed25519 AAAAexampleKeyA"
 KEY_B = "ssh-ed25519 AAAAexampleKeyB"
 
 
-class TheNodeWritesTheServerStateKeyFromTheAnswers(unittest.TestCase):
-    """04-node-prepare's block for SERVER_STATE_PUBKEY (B263), run on a scratch file."""
+class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
+    """Step 4 writes each of the manager's keys from the answers, by the table in
+    lib.sh (B263 for the server state key, B317 for the rest), on scratch files."""
 
     def setUp(self) -> None:
         text = INSTALLER.read_text()
-        start = text.index('if [[ -n "${SERVER_STATE_PUBKEY:-}" ]]; then')
-        end = text.index("\nfi\n", start) + len("\nfi\n")
+        start = text.index('for purpose_line in "${NODE_KEY_PURPOSES[@]}"; do')
+        end = text.index("\ndone\n", start) + len("\ndone\n")
+        self.loop = text[start:end]
         self.root = Path(tempfile.mkdtemp(prefix="srvkeys-"))
         self.addCleanup(shutil.rmtree, self.root, True)
-        self.keys = self.root / "authorized_keys"
-        self.block = (
-            text[start:end]
-            .replace("/home/${TRIGGER_USER}/.ssh/authorized_keys", str(self.keys))
-            .replace("install -o root -g root -m 644", "install -m 644")
-        )
+        for user in ("_haprion-trigger", "_haprion-status", "_haprion-backup"):
+            (self.root / user / ".ssh").mkdir(parents=True)
+            (self.root / user / ".ssh" / "authorized_keys").write_text("")
 
-    def run_block(self, pubkey: str) -> subprocess.CompletedProcess[str]:
+    def keys(self, user: str) -> list[str]:
+        return (self.root / user / ".ssh" / "authorized_keys").read_text().splitlines()
+
+    def run_loop(self, **answers: str) -> subprocess.CompletedProcess[str]:
+        assigned = "".join(f'{name}="{value}"\n' for name, value in answers.items())
         script = (
-            'set -Eeuo pipefail\nlog() { echo "$*"; }\ndie() { echo "DIE $*"; exit 1; }\n'
-            f'SBIN=/usr/sbin\nSERVER_STATE_PUBKEY="{pubkey}"\n{self.block}'
+            f'source "{BASE / "install" / "lib.sh"}"\nKEYS_HOME="{self.root}"\n'
+            f"{assigned}{self.loop}"
         )
-        return subprocess.run(  # noqa: S603 - the block under test
+        return subprocess.run(  # noqa: S603 - the loop under test
             ["/bin/bash", "-c", script], capture_output=True, text=True, check=False
         )
 
-    def test_the_line_is_written_and_a_rotated_key_replaces_the_old_one(self) -> None:
-        other = 'restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" ' + KEY_B
-        self.keys.write_text(other + "\n")
-
-        first = self.run_block(KEY_A)
-        again = self.run_block(KEY_A)
-        rotated = self.run_block(KEY_B)
-
-        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-        self.assertIn("ok", again.stdout)
-        self.assertEqual(rotated.returncode, 0, rotated.stdout)
-        lines = self.keys.read_text().splitlines()
+    def test_each_key_gets_its_account_and_forced_command(self) -> None:
+        done = self.run_loop(DEPLOY_PUBKEY=KEY_A, SERVER_STATE_PUBKEY=KEY_B, STATUS_PUBKEY=KEY_A)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(
-            lines,
-            [other, f'restrict,command="/usr/sbin/haprion-server-state-trigger" {KEY_B}'],
+            self.keys("_haprion-trigger"),
+            [
+                f'restrict,command="sudo -n /usr/sbin/haprion-pull-deploy" {KEY_A}',
+                f'restrict,command="/usr/sbin/haprion-server-state-trigger" {KEY_B}',
+            ],
+        )
+        self.assertEqual(
+            self.keys("_haprion-status"),
+            [f'restrict,command="sudo -n /usr/sbin/haprion-node-status --json" {KEY_A}'],
+        )
+        self.assertEqual(self.keys("_haprion-backup"), [])
+
+    def test_a_rotated_key_replaces_the_old_one_and_again_is_ok(self) -> None:
+        self.run_loop(SERVER_STATE_PUBKEY=KEY_A)
+        again = self.run_loop(SERVER_STATE_PUBKEY=KEY_A)
+        self.run_loop(SERVER_STATE_PUBKEY=KEY_B)
+        self.assertIn("ok", again.stdout)
+        self.assertEqual(
+            self.keys("_haprion-trigger"),
+            [f'restrict,command="/usr/sbin/haprion-server-state-trigger" {KEY_B}'],
         )
 
     def test_anything_but_one_ed25519_key_is_refused(self) -> None:
-        self.keys.write_text("")
-        for pubkey in (
-            "ssh-rsa AAAAB3NzaC1yc2E",
-            f"{KEY_A} comment",
-            f'{KEY_A}\nrestrict,command="/bin/sh" {KEY_B}',
-            'command="/bin/sh" ' + KEY_A,
-        ):
-            with self.subTest(pubkey):
-                done = self.run_block(pubkey)
-                self.assertNotEqual(done.returncode, 0)
-                self.assertIn("DIE", done.stdout)
-        self.assertEqual(self.keys.read_text(), "")
+        for bad in ("ssh-rsa AAAAB3Nza", f"{KEY_A} comment", f"{KEY_A}\\nssh-ed25519 AAAA", ""):
+            with self.subTest(key=bad):
+                done = self.run_loop(DEPLOY_PUBKEY=bad)
+                if bad:
+                    self.assertNotEqual(done.returncode, 0)
+                self.assertEqual(self.keys("_haprion-trigger"), [])
 
 
-class TheLineStep3PrintsIsAnAnswer(unittest.TestCase):
-    """03-manager-keys prints SERVER_STATE_PUBKEY for the nodes' answers file, which
-    lib.sh sources as shell: pasted as printed, it must give the key back whole."""
+class TheLinesStep3PrintsAreAnswers(unittest.TestCase):
+    """03-manager-keys prints each key as <PURPOSE>_PUBKEY for the nodes' answers
+    file, which lib.sh sources as shell: pasted as printed, it gives the key back."""
 
     def test_the_printed_line_sourced_is_the_key(self) -> None:
         text = (BASE / "install" / "03-manager-keys").read_text()
-        found = re.search(r"^SERVER_STATE_PUBKEY=.*$", text, re.MULTILINE)
-        assert found, "03-manager-keys no longer prints SERVER_STATE_PUBKEY"
-        printed = found.group(0).replace('$(pub "$SERVER_STATE_KEY")', KEY_A)
+        found = re.search(r'^    echo "\$\{purpose\}_PUBKEY=(.*)"$', text, re.MULTILINE)
+        assert found, "03-manager-keys no longer prints <PURPOSE>_PUBKEY"
+        printed = "SERVER_STATE_PUBKEY=" + found.group(1).replace(
+            '\\"$(pub "${!manager_var}")\\"', f'"{KEY_A}"'
+        )
         with tempfile.TemporaryDirectory() as raw:
             answers = Path(raw) / "answers.env"
             answers.write_text(printed + "\n")
@@ -696,6 +704,16 @@ class TheLineStep3PrintsIsAnAnswer(unittest.TestCase):
                 check=False,
             )
         self.assertEqual((done.returncode, done.stdout), (0, KEY_A), done.stderr)
+
+    def test_the_join_hands_over_the_purposes_the_table_writes(self) -> None:
+        lib = (BASE / "install" / "lib.sh").read_text()
+        table = re.search(r"^NODE_KEY_PURPOSES=\((.*?)^\)", lib, re.MULTILINE | re.DOTALL)
+        assert table
+        purposes = {line.split()[0] for line in re.findall(r'"([^"]+)"', table.group(1))}
+        join = (BASE / "install" / "node" / "haprion-node-join").read_text()
+        handed = dict(re.findall(r'^    "([a-z_]+)": "([A-Z_]+_PUBKEY)",$', join, re.MULTILINE))
+        self.assertEqual({purpose.upper() for purpose in handed}, purposes)
+        self.assertTrue(all(var == f"{p.upper()}_PUBKEY" for p, var in handed.items()))
 
 
 class TheSocketIsTheOneTheCoreNames(unittest.TestCase):

@@ -1,0 +1,156 @@
+#!/bin/bash
+#
+# This node's enrollment block, for a manager to join it with (B317).
+#
+#     sudo haprion-node-key             the block; a new one-time key when the last is used or old
+#     sudo haprion-node-key --again     the same on a node already joined, to join it again
+#     haprion-node-key --package        what the package runs: nothing on a joined node
+#
+# Makes what does not depend on any manager - the accounts, the keys this node
+# fetches with, and a one-time key pair - and prints one line,
+# haproxy-node-v2:..., to paste into Create cluster or Add node. Nothing is
+# asked, nothing is installed and nothing reaches the network: the package
+# runs this from its postinst, where dpkg holds the lock.
+#
+# The private half of the one-time key is in that line. Whoever holds it for
+# the next 24 hours may join this node to a manager, once: the manager
+# connects with it as _haprion-join, whose only command is haprion-node-join,
+# and the join removes the key when it has used it. The manager takes this
+# node's host key from the same line, never from the network.
+#
+set -Eeuo pipefail
+cd "${HAPRION_NODE_INSTALL:-/usr/share/haprion-node/install}"
+# shellcheck source=../lib.sh
+source ./lib.sh
+
+need_root
+MODE="${1:-}"
+case "$MODE" in
+    "" | --again | --package) ;;
+    *) die "usage: haprion-node-key [--again | --package]" ;;
+esac
+load_answers ""
+
+NODE_CONF="${NODE_CONF:-/etc/haprion/node.conf}"
+JOIN_DIR="${JOIN_DIR:-/var/lib/haprion-node}"
+JOIN_KEY="${JOIN_DIR}/join_key"
+JOIN_SUDOERS="${JOIN_SUDOERS:-/etc/sudoers.d/haprion-node-join}"
+HOST_KEY_FILE="${HOST_KEY_FILE:-/etc/ssh/ssh_host_ed25519_key.pub}"
+SETUP_LOG="${SETUP_LOG:-/var/log/haprion-node/node-key.log}"
+#
+# The keys this node fetches with, at the places a joined node's node.conf
+# names: fixed here, because the package makes them before any answers exist.
+#
+NODE_CONFIG_PULL_KEY=/root/.ssh/id_ed25519_config_pull
+NODE_CERT_PULL_KEY=/root/.ssh/id_ed25519_cert_pull
+#
+# How long a block may be used. The key carries it (sshd's expiry-time), so
+# nothing has to run to end it.
+#
+VALID_HOURS=24
+
+if [[ -f "$NODE_CONF" && "$MODE" != --again ]]; then
+    joined="$(sed -n 's/^CLUSTER="\(.*\)"$/\1/p' "$NODE_CONF")"
+    [[ "$MODE" == --package ]] && exit 0
+    echo "This node is joined to cluster ${joined:-?}. To join it again, to this or another"
+    echo "manager:  sudo haprion-node-key --again"
+    exit 0
+fi
+
+install -d -m 755 "${SETUP_LOG%/*}"
+#
+# A subshell, so a step that stops ends here and is said below, not only in the log.
+#
+(
+    step "Accounts and keys"
+    apply_sysusers sysusers/haprion-node.conf
+    for user in "$TRIGGER_USER" "$STATUS_USER" "$BACKUP_USER" "$LOGREAD_USER" "$JOIN_USER"; do
+        ensure_dir "/home/${user}" root:root 755
+        ensure_dir "/home/${user}/.ssh" root:root 755
+        [[ -f "/home/${user}/.ssh/authorized_keys" ]] \
+            || install -o root -g root -m 644 /dev/null "/home/${user}/.ssh/authorized_keys"
+    done
+    generate_pull_key "$NODE_CONFIG_PULL_KEY" "haprion config pull"
+    generate_pull_key "$NODE_CERT_PULL_KEY" "haprion cert pull"
+
+    step "One-time key"
+    ensure_dir "$JOIN_DIR" root:root 700
+    rm -f "$JOIN_KEY" "${JOIN_KEY}.pub"
+    ssh-keygen -t ed25519 -N "" -C "haprion join" -f "$JOIN_KEY" >/dev/null
+    chmod 600 "$JOIN_KEY"
+    expires="$(date -u -d "+${VALID_HOURS} hours" '+%Y%m%d%H%M')"
+    #
+    # Only the join, only once (it removes this line), only until it expires.
+    # sudo keeps SSH_CONNECTION for this one command (below): which address the
+    # manager came from, and on which of this node's addresses.
+    #
+    install -o root -g root -m 644 /dev/null "/home/${JOIN_USER}/.ssh/authorized_keys.new"
+    printf 'restrict,expiry-time="%sZ",command="sudo -n /usr/sbin/haprion-node-join" %s\n' \
+        "$expires" "$(cut -d' ' -f1,2 < "${JOIN_KEY}.pub")" \
+        > "/home/${JOIN_USER}/.ssh/authorized_keys.new"
+    mv "/home/${JOIN_USER}/.ssh/authorized_keys.new" "/home/${JOIN_USER}/.ssh/authorized_keys"
+    log "  written  one-time key, valid until ${expires} UTC"
+
+    tmp="$(mktemp)"
+    cat > "$tmp" <<SUDOERS
+# Installed by haprion-node-key (B317). The one command the one-time key runs.
+Defaults!/usr/sbin/haprion-node-join env_keep += "SSH_CONNECTION"
+${JOIN_USER} ALL=(root) NOPASSWD: /usr/sbin/haprion-node-join ""
+SUDOERS
+    visudo -cqf "$tmp" || { rm -f "$tmp"; die "the join's sudo rule is invalid - nothing installed"; }
+    install -o root -g root -m 440 "$tmp" "$JOIN_SUDOERS"
+    rm -f "$tmp"
+    log "  installed ${JOIN_SUDOERS}"
+) >>"$SETUP_LOG" 2>&1 || die "the node's keys could not be made; ${SETUP_LOG} says why"
+
+[[ -r "$HOST_KEY_FILE" ]] || die "${HOST_KEY_FILE} is missing; sshd has no ed25519 host key"
+
+#
+# sshd must let the join account in. A node that names who may log in
+# (AllowUsers, AllowGroups) keeps it out, and the join would fail on a refusal
+# that says nothing about why.
+#
+if command -v sshd >/dev/null && settings="$(sshd -T 2>/dev/null)"; then
+    if grep -qE '^(allowusers|allowgroups) ' <<<"$settings" \
+        && ! grep -qE "^allowusers .*\b${JOIN_USER}\b" <<<"$settings"; then
+        warn "sshd names who may log in (AllowUsers/AllowGroups); add ${JOIN_USER} or the join is refused"
+    fi
+fi
+
+BLOCK="$(/usr/bin/python3 - "$(hostname)" "$(hostname -f)" "$HOST_KEY_FILE" \
+    "${NODE_CONFIG_PULL_KEY}.pub" "${NODE_CERT_PULL_KEY}.pub" "$JOIN_KEY" <<'PY'
+import base64
+import json
+import sys
+from pathlib import Path
+
+name, host, host_key, config_key, cert_key, join_key = sys.argv[1:7]
+
+
+def public(path):
+    return " ".join(Path(path).read_text(encoding="utf-8").split()[:2])
+
+
+document = {
+    "name": name,
+    "host": host,
+    "host_key": public(host_key),
+    "config_pull_key": public(config_key),
+    "cert_pull_key": public(cert_key),
+    "join_key": base64.b64encode(Path(join_key).read_bytes()).decode(),
+}
+encoded = base64.urlsafe_b64encode(json.dumps(document, separators=(",", ":")).encode())
+print("haproxy-node-v2:" + encoded.decode())
+PY
+)"
+
+cat <<OUT
+
+Paste this line into Create cluster or Add node under Settings. It joins this
+node to the manager once, within ${VALID_HOURS} hours; keep it to yourself until then.
+
+${BLOCK}
+
+   Host key: $(ssh-keygen -lf "$HOST_KEY_FILE" | cut -d' ' -f2)
+
+OUT

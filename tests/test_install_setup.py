@@ -84,6 +84,7 @@ class RelativePathsAreTheCallers(unittest.TestCase):
     relative to where they stood must still name the same file (Fas 18, finding 21)."""
 
     LIB_SOURCE = re.compile(r'^(source|\.) .*lib\.sh"?$', re.MULTILINE)
+    FROM_THE_PACKAGE = {"node/haprion-node-key"}
 
     def test_an_answers_file_beside_the_caller_is_found(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -119,6 +120,13 @@ class RelativePathsAreTheCallers(unittest.TestCase):
                 head = texts[path][: found.start()]
                 changes = re.findall(r"^cd .*$", head, re.MULTILINE)
                 self.assertEqual(len(changes), 1, changes)
+                if path.relative_to(INSTALL).as_posix() in self.FROM_THE_PACKAGE:
+                    # In /usr/sbin, apart from lib.sh, and given no file: nothing
+                    # of the caller's to find (B317).
+                    self.assertEqual(
+                        changes[0], 'cd "${HAPRION_NODE_INSTALL:-/usr/share/haprion-node/install}"'
+                    )
+                    continue
                 self.assertRegex(changes[0], r'^cd "(\$\(dirname "\$0"\)|\$here)"$')
 
 
@@ -803,3 +811,31 @@ class NoClusterYetForTheCollector(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AClusterTheInterfaceMayCreateTheStepsAccept(unittest.TestCase):
+    """Fas 18 finding 55: valid_id took 32 characters and underscores, the engine 63
+    and no underscore; and an ID with a hyphen made no shell variable name."""
+
+    def test_valid_id_is_the_engine_s_pattern(self) -> None:
+        from haprion.config import CLUSTER_ID  # noqa: PLC0415
+
+        lib = (INSTALL / "lib.sh").read_text()
+        found = re.search(r'^valid_id\(\) \{\n    \[\[ "\$1" =~ (.*) \]\]\n\}', lib, re.MULTILINE)
+        assert found
+        self.assertEqual(found.group(1), CLUSTER_ID.pattern)
+
+    def test_an_answer_for_a_hyphenated_cluster_is_found(self) -> None:
+        done = subprocess.run(  # noqa: S603 - the helper under test
+            [
+                "/bin/bash",
+                "-c",
+                f'source "{INSTALL / "lib.sh"}"; VIP_edge_a=192.0.2.10; '
+                'cluster_value VIP edge-a; valid_id edge-a && valid_id "$(printf "a%.0s" {1..63})"; '
+                "valid_id edge_a || echo refused",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(done.stdout.split(), ["192.0.2.10", "refused"], done.stderr)

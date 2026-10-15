@@ -31,6 +31,7 @@ from haprion import (
     cert_upload,
     dns_profiles,
     ndes_profiles,
+    node_enrollment,
 )
 from haprion.cert_receiver import SECRET_HASH
 from haprion.cli import (
@@ -102,6 +103,7 @@ SUDO_FLAGS = ("-n", "--")
 RECEIVER_CLIENT = (sys.executable, "-m", cert_receiver_ask.__name__)
 NODE_CLIENT = (sys.executable, "-m", node_ask.__name__)
 DEFINITION_FIELDS = (
+    "join_keys",
     "display_name",
     "vip",
     "node_path",
@@ -909,6 +911,32 @@ def _objects(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     return objects
 
 
+def _sealed_join_key(value: Any, block: str) -> dict[str, str] | None:
+    """A v2 block's one-time key as the web sealed it, never in the clear (B317).
+
+    The block is read only for whether it carries a key: what the block means
+    is the helper's. A key in the block itself is refused here - the queue is
+    a table the web and the worker read, and a key there would outlive the job.
+    """
+
+    compact = "".join(block.split()) if isinstance(block, str) else ""
+    if compact.startswith(node_enrollment.BLOCK_V2_PREFIX):
+        try:
+            if node_enrollment.parse(compact).join_key is not None:
+                raise BadPayload("a node's one-time key is queued sealed, never in its block")
+        except node_enrollment.EnrollmentError:
+            pass
+    if value is None:
+        return None
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"key_id", "ciphertext"}
+        or not all(isinstance(value[name], str) and value[name] for name in value)
+    ):
+        raise BadPayload("a sealed one-time key is its key ID and its ciphertext")
+    return {"key_id": value["key_id"], "ciphertext": value["ciphertext"]}
+
+
 def prepare(
     *,
     operation: str,
@@ -1099,7 +1127,7 @@ def prepare(
         # sudo, for the receiver's reason: the helper writes root's
         # known_hosts and the pull accounts' keys, outside this unit's sandbox.
         #
-        _only(payload, "action", "block", "host", "node")
+        _only(payload, "action", "block", "host", "node", "join_key")
         action = payload.get("action")
         if action == "remove":
             node = payload.get("node")
@@ -1137,10 +1165,11 @@ def prepare(
             raise BadPayload("an addition needs the node's enrollment block")
         if not isinstance(host, str) or not host:
             raise BadPayload("an addition needs the host name to reach the node at")
+        join_key = _sealed_join_key(payload.get("join_key"), block)
         return Prepared(
             argv=NODE_CLIENT,
             request=node_helper.build_request(
-                cluster, str(request_id), action="add", block=block, host=host
+                cluster, str(request_id), action="add", block=block, host=host, join_key=join_key
             ),
         )
 
@@ -1185,6 +1214,22 @@ def prepare(
             pairs[name] = [str(item) for item in value]
         if len(pairs["blocks"]) != len(pairs["hosts"]):
             raise BadPayload("a cluster's blocks and hosts must pair up")
+        raw_keys = payload.get("join_keys")
+        if raw_keys is not None and (
+            not isinstance(raw_keys, list) or len(raw_keys) != len(pairs["blocks"])
+        ):
+            raise BadPayload("a cluster's one-time keys must pair up with its blocks")
+        join_keys = (
+            [
+                _sealed_join_key(value, block)
+                for value, block in zip(raw_keys, pairs["blocks"], strict=True)
+            ]
+            if raw_keys is not None
+            else None
+        )
+        if join_keys is None:
+            for block in pairs["blocks"]:
+                _sealed_join_key(None, block)
         prefix = payload.get("address_prefix")
         if prefix is not None and (isinstance(prefix, bool) or not isinstance(prefix, int)):
             raise BadPayload("the address prefix must be a number")
@@ -1202,6 +1247,7 @@ def prepare(
                 address_prefix=prefix,
                 address_interface=interface,
                 default_certificate=certificate,
+                join_keys=join_keys,
                 **texts,
             ),
         )

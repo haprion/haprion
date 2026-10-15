@@ -10,7 +10,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "install/node/haprion-node-status"
-KEYS = ROOT / "install/03-manager-keys"
+# The table of the manager's keys and their forced commands (B317).
+KEYS = ROOT / "install/lib.sh"
 PREPARE = ROOT / "install/04-node-prepare"
 READING = re.compile(r"^def read_cluster\(\):.*?(?=^parser = )", re.DOTALL | re.MULTILINE)
 CLUSTER_LINE = re.compile(r"^CLUSTER_LINE = (.*)$", re.MULTILINE)
@@ -52,7 +53,7 @@ class ReadClusterTests(unittest.TestCase):
 class StatusRuleTests(unittest.TestCase):
     def test_the_forced_command_is_what_sudo_allows_and_names_no_cluster(self) -> None:
         forced = re.search(
-            r'command=\\"sudo -n (\S*haprion-node-status[^\\]*)\\"', KEYS.read_text()
+            r'^    "STATUS \S+ STATUS_USER sudo -n ([^"]+)"$', KEYS.read_text(), re.M
         )
         allowed = re.search(
             r"NOPASSWD: \$\{SBIN\}/(haprion-node-status.*)$", PREPARE.read_text(), re.M

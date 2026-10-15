@@ -219,12 +219,20 @@ print(load(Path(sys.argv[2])).listen.port)' "$module" "$UI_CONFIG"
 
 cluster_value() {
     local prefix="$1" cluster="$2" var
-    var="${prefix}_${cluster}"
+    #
+    # A cluster ID may hold a hyphen, which no shell variable name may: the
+    # answer for cluster `edge-a` is NODE_PATH_edge_a.
+    #
+    var="${prefix}_${cluster//-/_}"
     echo "${!var:-}"
 }
 
+#
+# The engine's CLUSTER_ID (config.py), held to it by a test: a cluster the
+# interface may create, a step on the node must accept (Fas 18 finding 55).
+#
 valid_id() {
-    [[ "$1" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]]
+    [[ "$1" =~ ^[a-z][a-z0-9-]{0,62}$ ]]
 }
 
 valid_abs_path() {
@@ -620,12 +628,12 @@ clusters:"
 
     for cluster in $(each_cluster); do
         nodes="$(cluster_value NODES "$cluster")"
-        [[ -n "$nodes" ]] || die "NODES_${cluster} is not set"
+        [[ -n "$nodes" ]] || die "NODES_${cluster//-/_} is not set"
         node_path="$(cluster_value NODE_PATH "$cluster")"
-        [[ -n "$node_path" ]] || die "NODE_PATH_${cluster} is not set"
+        [[ -n "$node_path" ]] || die "NODE_PATH_${cluster//-/_} is not set"
         vip="$(cluster_value VIP "$cluster")"
         # The engine reads every cluster's VIP: it is what deploy checks ownership of.
-        [[ -n "$vip" ]] || die "VIP_${cluster} is not set; every cluster needs its virtual address"
+        [[ -n "$vip" ]] || die "VIP_${cluster//-/_} is not set; every cluster needs its virtual address"
         cert_ids="$(cluster_value CERTIFICATE_IDS "$cluster")"
         default_cert="$(cluster_value DEFAULT_CERTIFICATE "$cluster")"
 
@@ -839,6 +847,70 @@ render_certificate_registry() {
 schema_version: 1
 receivers: {}
 certificates: {}"
+}
+
+#
+# The manager's keys on a node (B317), one table for step 3, which prints them,
+# step 4, which writes them, and the join, which is step 4 with the manager's
+# answers: the purpose, the manager's key in step 3's answers, the node account
+# the key reaches and the forced command it runs there. A node's answers carry
+# each key as <PURPOSE>_PUBKEY. The node decides what a key may run; nothing
+# the manager sends names a command.
+#
+# shellcheck disable=SC2034 # read by the steps that source lib.sh
+NODE_KEY_PURPOSES=(
+    "DEPLOY CONFIG_DEPLOY_KEY TRIGGER_USER sudo -n /usr/sbin/haprion-pull-deploy"
+    "CERT_DEPLOY CERT_DEPLOY_KEY TRIGGER_USER /usr/sbin/haprion-cert-trigger"
+    "SERVER_STATE SERVER_STATE_KEY TRIGGER_USER /usr/sbin/haprion-server-state-trigger"
+    "STATUS NODE_STATUS_KEY STATUS_USER sudo -n /usr/sbin/haprion-node-status --json"
+    "PROBE NODE_PROBE_KEY STATUS_USER /usr/sbin/haprion-health-probe"
+    "BACKUP NODE_BACKUP_KEY BACKUP_USER sudo -n /usr/sbin/haprion-state-export"
+)
+PUBKEY_PATTERN='^ssh-ed25519 [A-Za-z0-9+/]+=*$'
+
+#
+# One key's line in its account's authorized_keys, written as root. A line
+# for the same forced command is replaced, so a rotated key does not leave the
+# old one able to ask.
+#
+write_key_line() {
+    local user="$1" command="$2" key="$3"
+    [[ "$key" =~ $PUBKEY_PATTERN ]] \
+        || die "a key for ${command} must be one ssh-ed25519 public key (type and key, no comment)"
+    local keys="${KEYS_HOME:-/home}/${user}/.ssh/authorized_keys"
+    local forced="command=\"${command}\""
+    local line="restrict,${forced} ${key}"
+    if grep -qxF "$line" "$keys"; then
+        log "  ok       ${command} in ${keys}"
+        return
+    fi
+    local tmp
+    tmp="$(mktemp)"
+    grep -vF "$forced" "$keys" > "$tmp" || true
+    printf '%s\n' "$line" >> "$tmp"
+    install -m 644 "$tmp" "$keys"
+    rm -f "$tmp"
+    # Root's, as the whole home is (step 4, ensure_account); KEYS_HOME is for tests.
+    [[ "$EUID" -ne 0 ]] || chown root:root "$keys"
+    log "  written  ${command} in ${keys}"
+}
+
+#
+# A key pair this node authenticates with, made here and never anywhere else:
+# a private key a node uses has no reason to exist on the management host.
+#
+generate_pull_key() {
+    local path="$1" comment="$2"
+    if [[ -f "$path" ]]; then
+        log "  ok       ${path}"
+        return
+    fi
+    install -o root -g root -m 700 -d "$(dirname "$path")"
+    ssh-keygen -t ed25519 -N "" -C "$comment" -f "$path" >/dev/null
+    chown root:root "$path" "${path}.pub"
+    chmod 600 "$path"
+    chmod 644 "${path}.pub"
+    log "  created  ${path}"
 }
 
 #

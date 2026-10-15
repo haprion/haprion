@@ -5279,7 +5279,17 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        payload = {"action": "add", "block": addition.block, "host": addition.host}
+        try:
+            stored, join_key = cluster_nodes.sealed_block(
+                addition.block, cluster=cluster, public_key=_dns_public_key()
+            )
+        except cluster_nodes.FormProblem as problem:
+            return _nodes_page(
+                request, gate, cluster, addition=addition, problem=str(problem), status_code=400
+            )
+        payload: dict[str, Any] = {"action": "add", "block": stored, "host": addition.host}
+        if join_key is not None:
+            payload["join_key"] = join_key
         return _queue_node_job(
             request,
             gate,
@@ -5552,11 +5562,17 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
+        try:
+            creation_payload = creation.payload(_dns_public_key())
+        except cluster_nodes.FormProblem as problem:
+            return _new_cluster_page(
+                request, gate, form=form, creation=creation, problem=str(problem), status_code=400
+            )
         return _queue_node_job(
             request,
             gate,
             creation.cluster,
-            creation.payload(),
+            creation_payload,
             key,
             None,
             lambda problem: _new_cluster_page(

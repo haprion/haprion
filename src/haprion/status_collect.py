@@ -127,6 +127,8 @@ class NodeResponse:
 
     exit_code: int
     stdout: str
+    # What the node said on the way, where a caller keeps it (a join, B317).
+    stderr: str = ""
 
 
 type ReadNode = Callable[[Node], NodeResponse]

@@ -51,6 +51,11 @@ TRIGGER = "_haprion-trigger"
 STATUS = "_haprion-status"
 BACKUP = "_haprion-backup"
 LOGREAD = "_haprion-logread"
+#
+# Reached once, by the one-time key a new node's package makes (B317): the
+# manager joins the node through it, and the key is gone afterwards.
+#
+JOIN = "_haprion-join"
 LOGS_GROUP = "_haprion-logs"
 WAF_GROUP = "_haprion-waf"
 DNS_GROUP = "_haprion-dns"

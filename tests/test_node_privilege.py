@@ -17,17 +17,14 @@ import unittest
 from pathlib import Path
 
 INSTALL = Path(__file__).resolve().parents[1] / "install"
-FORCED = re.compile(r'command=\\"(sudo -n )?/usr/sbin/(haprion-[a-z-]+)')
+# lib.sh's table of the manager's keys: purpose, key, account, forced command (B317).
+FORCED = re.compile(r'^    "[A-Z_]+ \S+ \S+ (sudo -n )?/usr/sbin/(haprion-[a-z-]+)', re.MULTILINE)
 ASSIGNED = re.compile(r'^([A-Z_]+)="([^"$]+)"$', re.MULTILINE)
 ENSURED = re.compile(r"^\s*ensure_dir\s+(\S+)\s+\S+\s+([0-7]{3,4})\s*$", re.MULTILINE)
 
 
 def run_without_sudo() -> set[str]:
-    return {
-        script
-        for sudo, script in FORCED.findall((INSTALL / "03-manager-keys").read_text())
-        if not sudo
-    }
+    return {script for sudo, script in FORCED.findall((INSTALL / "lib.sh").read_text()) if not sudo}
 
 
 def closed_directories() -> set[str]:

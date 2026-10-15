@@ -166,31 +166,6 @@ ensure_account() {
 }
 
 ensure_account "$TRIGGER_USER"
-#
-# The server state key's line (Fas 20, B263), written from the answers file
-# rather than pasted by hand: a public key is no secret, and this still runs
-# only under the operator's own sudo on the node - the manager gains no way to
-# write here. Its own forced command and `restrict`, like every other key; a
-# line already there for the same command is replaced, so rotating the key
-# does not leave the old one able to ask.
-#
-if [[ -n "${SERVER_STATE_PUBKEY:-}" ]]; then
-    [[ "$SERVER_STATE_PUBKEY" =~ ^ssh-ed25519\ [A-Za-z0-9+/]+=*$ ]] \
-        || die "SERVER_STATE_PUBKEY must be one ssh-ed25519 public key (type and key, no comment)"
-    keys="/home/${TRIGGER_USER}/.ssh/authorized_keys"
-    forced="command=\"${SBIN}/haprion-server-state-trigger\""
-    line="restrict,${forced} ${SERVER_STATE_PUBKEY}"
-    if grep -qxF "$line" "$keys"; then
-        log "  ok       server state key in ${keys}"
-    else
-        tmp="$(mktemp)"
-        grep -vF "$forced" "$keys" > "$tmp" || true
-        printf '%s\n' "$line" >> "$tmp"
-        install -o root -g root -m 644 "$tmp" "$keys"
-        rm -f "$tmp"
-        log "  written  server state key in ${keys}"
-    fi
-fi
 ensure_account "$STATUS_USER"
 ensure_account "$BACKUP_USER"
 ensure_group "$LOGS_GROUP"
@@ -209,6 +184,19 @@ usermod -a -G "$LOGS_GROUP" "$LOGREAD_USER"
 #
 ensure_dir "$TRAFFIC_LOG_ROOT" "${RSYSLOG_WRITER}:${LOGS_GROUP}" 2750
 log "  member    ${LOGREAD_USER} -> ${LOGS_GROUP}"
+#
+# The manager's keys, from the answers rather than pasted by hand (B263 for the
+# server state key, B317 for the rest): a public key is no secret, and this
+# runs only under the node's own root - the operator's sudo, or the join the
+# node's one-time key allowed - so the manager gains no way to write here. Each
+# with `restrict` and the forced command the table in lib.sh gives its purpose.
+#
+for purpose_line in "${NODE_KEY_PURPOSES[@]}"; do
+    read -r purpose _ account_var command <<<"$purpose_line"
+    key_var="${purpose}_PUBKEY"
+    [[ -n "${!key_var:-}" ]] || continue
+    write_key_line "${!account_var}" "$command" "${!key_var}"
+done
 #
 # The WAF engine logs into a journal namespace of its own (its package, from
 # revision 2), and the reader reads it there. The same group is granted read on
@@ -849,23 +837,47 @@ step "Keys this node fetches with"
 # The public halves are printed for the operator to paste on the management
 # host, which is the mirror image of step 3 - and manual for the same reason.
 #
-generate_pull_key() {
-    local path="$1" comment="$2"
-    if [[ -f "$path" ]]; then
-        log "  ok       ${path}"
-        return
-    fi
-    install -o root -g root -m 700 -d "$(dirname "$path")"
-    ssh-keygen -t ed25519 -N "" -C "$comment" -f "$path" >/dev/null
-    chown root:root "$path" "${path}.pub"
-    chmod 600 "$path"
-    chmod 644 "${path}.pub"
-    log "  created  ${path}"
-}
-
 generate_pull_key "$NODE_CONFIG_PULL_KEY" "haprion config pull"
 [[ -n "${NODE_CERT_PULL_KEY:-}" ]] \
     && generate_pull_key "$NODE_CERT_PULL_KEY" "haprion cert pull"
+
+step "The management host's host key"
+
+#
+# What the fetches check the management host by. Given in the answers (B317),
+# it is written as given - the join brings it from the manager itself, over
+# the connection the node's one-time key allowed; without it the operator
+# accepts it once by hand (Fas 18 finding 25).
+#
+ROOT_KNOWN_HOSTS="${ROOT_KNOWN_HOSTS:-/root/.ssh/known_hosts}"
+if [[ -n "${MANAGER_HOST_KEY:-}" ]]; then
+    [[ "$MANAGER_HOST_KEY" =~ $PUBKEY_PATTERN ]] \
+        || die "MANAGER_HOST_KEY must be one ssh-ed25519 public key (type and key, no comment)"
+    ensure_dir "${ROOT_KNOWN_HOSTS%/*}" root:root 700
+    [[ -f "$ROOT_KNOWN_HOSTS" ]] || install -o root -g root -m 644 /dev/null "$ROOT_KNOWN_HOSTS"
+    if grep -qxF "${MANAGER_HOST} ${MANAGER_HOST_KEY}" "$ROOT_KNOWN_HOSTS"; then
+        log "  ok       ${MANAGER_HOST} in ${ROOT_KNOWN_HOSTS}"
+    else
+        ssh-keygen -R "$MANAGER_HOST" -f "$ROOT_KNOWN_HOSTS" >/dev/null 2>&1 || true
+        rm -f "${ROOT_KNOWN_HOSTS}.old"
+        printf '%s %s\n' "$MANAGER_HOST" "$MANAGER_HOST_KEY" >> "$ROOT_KNOWN_HOSTS"
+        chown root:root "$ROOT_KNOWN_HOSTS"
+        chmod 644 "$ROOT_KNOWN_HOSTS"
+        log "  written  ${MANAGER_HOST} in ${ROOT_KNOWN_HOSTS}"
+    fi
+else
+    log "  pending  accept ${MANAGER_HOST}'s host key once as root (below)"
+fi
+
+#
+# Joined by the manager (haprion-node-join): it has the node's block already,
+# and it asks the node for its status next. Nothing to print.
+#
+if [[ "${JOINED_BY_MANAGER:-}" == yes ]]; then
+    echo
+    log "step 4 done on this node: joined to cluster ${CLUSTER}"
+    exit 0
+fi
 
 step "Enrollment block"
 
@@ -911,17 +923,20 @@ PY
 echo
 log "step 4 done on this node"
 
+if [[ -z "${DEPLOY_PUBKEY:-}" ]]; then
+    cat <<'PASTE'
+
+On THIS node: the manager's keys were not in the answers. Add the *_PUBKEY
+lines step 3 printed to the answers file and run this step again.
+PASTE
+fi
+
 cat <<INTRO
 
-Two things left, both on machines this node cannot write to.
-
-1. On THIS node: paste the authorized_keys lines printed by step 3. The file is
-   root's, as is the whole home; edit it with sudo.
-
-2. On the MANAGEMENT host: paste this block into the cluster's Nodes card under
-   Settings, or give it to  sudo haprion-node add -c ${CLUSTER} --host <name>
-   on stdin. The manager then asks this node for its status, and takes the
-   change back if the node does not answer as itself.
+On the MANAGEMENT host: paste this block into the cluster's Nodes card under
+Settings, or give it to  sudo haprion-node add -c ${CLUSTER} --host <name>
+on stdin. The manager then asks this node for its status, and takes the
+change back if the node does not answer as itself.
 
 ${ENROLLMENT_BLOCK}
 
@@ -949,12 +964,14 @@ fi
 cat <<'OUTRO'
 One line per NODE, not one per cluster: each node has its own key, so a node
 that is rebuilt or compromised is revoked on its own.
+OUTRO
+if [[ -z "${MANAGER_HOST_KEY:-}" ]]; then
+    cat <<HOSTKEY
 
 Accept the management host's host key once from this node, as root, or the first
-fetch fails on an unknown host:
+fetch fails on an unknown host - or add the MANAGER_HOST_KEY line step 3 printed
+to the answers file and run this step again:
 
-  ssh -o StrictHostKeyChecking=ask <management-host> true
-
-When every node is done, back on the management host:
-  ./05-verify answers.env
-OUTRO
+  ssh -o StrictHostKeyChecking=ask ${MANAGER_HOST} true
+HOSTKEY
+fi

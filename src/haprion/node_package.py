@@ -76,13 +76,22 @@ NODE_SCRIPTS = (
     "haprion-server-state-trigger",
 )
 #
+# Shipped, but not among the scripts a node attests or a state backup carries
+# (B317): they join a new node once, and a node restored from an archive is
+# joined already. An archive from before them still restores.
+#
+JOIN_SCRIPTS = ("haprion-node-key", "haprion-node-join")
+#
 # Path in the package -> (path in the commit, mode). Data rather than programs
 # is 0644: the shell library the step sources, the fixed account names and the
 # defaults it reads (B266, B302), the node's sysusers fragment, and the repository key `lib.sh`
 # installs dnsdist with (B249).
 #
 CONTENTS: dict[str, tuple[str, int]] = {
-    **{f"usr/sbin/{name}": (f"install/node/{name}", 0o755) for name in NODE_SCRIPTS},
+    **{
+        f"usr/sbin/{name}": (f"install/node/{name}", 0o755)
+        for name in (*NODE_SCRIPTS, *JOIN_SCRIPTS)
+    },
     f"{INSTALL_DIR[1:]}/04-node-prepare": ("install/04-node-prepare", 0o755),
     f"{INSTALL_DIR[1:]}/lib.sh": ("install/lib.sh", 0o644),
     f"{INSTALL_DIR[1:]}/accounts.sh": ("install/accounts.sh", 0o644),
@@ -131,14 +140,18 @@ DEPENDS = (
 )
 #
 # Nothing to start and nothing to stop: the scripts run when the manager asks.
-# The first installation says what comes next, and an upgrade is complete when
-# dpkg has replaced the files - 04-node-prepare reruns to record their digests.
+# On a node no manager has joined yet, the package makes the accounts and keys
+# and prints the block to paste into the interface (B317); on a joined node it
+# says nothing, and an upgrade is complete when dpkg has replaced the files.
+# A block that could not be made does not leave the package half installed:
+# the same command says why when it is run again.
 #
 POSTINST = f"""\
 #!/bin/sh
 set -e
-if [ "$1" = configure ] && [ -z "$2" ]; then
-    echo "{PACKAGE}: next, {INSTALL_DIR}/04-node-prepare <answers-file> <cluster-id>"
+if [ "$1" = configure ]; then
+    {SBIN}/haprion-node-key --package \\
+        || echo "{PACKAGE}: the block was not made; run  sudo {SBIN}/haprion-node-key" >&2
 fi
 """
 

@@ -71,6 +71,30 @@ from haprion.config import (
 from haprion.status_collect import NodeResponse
 
 BLOCK_PREFIX = "haproxy-node-v1:"
+#
+# The block a node's package prints (B317): no cluster - the request names it -
+# and the private half of the node's one-time key, which the manager joins the
+# node with once. Never written back out: not in a result, not in an audit row.
+#
+BLOCK_V2_PREFIX = "haproxy-node-v2:"
+JOIN_USER = "_haprion-join"
+MANAGER_HOST_KEY = Path("/etc/ssh/ssh_host_ed25519_key.pub")
+PRIVATE_KEY = re.compile(
+    r"^-----BEGIN (OPENSSH) PRIVATE KEY-----\n[A-Za-z0-9+/=\n]{100,1800}"
+    r"-----END OPENSSH PRIVATE KEY-----\n?$"
+)
+#
+# The manager's identities by the purpose the node knows them as (lib.sh's
+# NODE_KEY_PURPOSES, haprion-node-join's PURPOSES; a test holds the three).
+#
+JOIN_PURPOSES = {
+    "deploy_identity": "deploy",
+    "cert_deploy_identity": "cert_deploy",
+    "server_state_identity": "server_state",
+    "status_identity": "status",
+    "probe_identity": "probe",
+    "backup_identity": "backup",
+}
 RRSYNC = "/usr/bin/rrsync"
 ROOT_KNOWN_HOSTS = Path("/root/.ssh/known_hosts")
 COLLECTOR_CONFIG = Path("/etc/haprion/traffic-collector.json")
@@ -139,14 +163,19 @@ def host_name(value: object, what: str = "the host") -> str:
 
 @dataclass(frozen=True, slots=True)
 class Enrollment:
-    """What a node says about itself. `host` is its suggestion, not a fact."""
+    """What a node says about itself. `host` is its suggestion, not a fact.
 
-    cluster: str
+    A v1 block names its cluster; a v2 block names none and carries the
+    node's one-time key instead (B317).
+    """
+
+    cluster: str | None
     name: str
     host: str
     host_key: str
     config_pull_key: str
     cert_pull_key: str | None = None
+    join_key: str | None = field(default=None, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -161,8 +190,29 @@ class Enrollment:
 
 
 def render(enrollment: Enrollment) -> str:
-    """The block `04-node-prepare` prints: one line, so a terminal cannot fold it."""
+    """The block a node prints: one line, so a terminal cannot fold it.
 
+    v2, from the node's package, names no cluster and carries the one-time key
+    - left out where the block is stored and the key travels sealed; v1, from
+    `04-node-prepare`, names its cluster.
+    """
+
+    if enrollment.cluster is None:
+        joined: dict[str, Any] = {
+            "name": enrollment.name,
+            "host": enrollment.host,
+            "host_key": enrollment.host_key,
+            "config_pull_key": enrollment.config_pull_key,
+            **(
+                {}
+                if enrollment.cert_pull_key is None
+                else {"cert_pull_key": enrollment.cert_pull_key}
+            ),
+        }
+        if enrollment.join_key is not None:
+            joined["join_key"] = base64.b64encode(enrollment.join_key.encode()).decode()
+        encoded = base64.urlsafe_b64encode(json.dumps(joined, separators=(",", ":")).encode())
+        return BLOCK_V2_PREFIX + encoded.decode()
     document = {
         "cluster": enrollment.cluster,
         "name": enrollment.name,
@@ -181,23 +231,28 @@ def parse(text: object) -> Enrollment:
     if not isinstance(text, str) or len(text.encode()) > MAX_BLOCK_BYTES:
         raise EnrollmentError("enrollment_invalid", "the enrollment block is missing or too long")
     compact = "".join(text.split())
-    if not compact.startswith(BLOCK_PREFIX):
+    version2 = compact.startswith(BLOCK_V2_PREFIX)
+    if not version2 and not compact.startswith(BLOCK_PREFIX):
         raise EnrollmentError(
             "enrollment_invalid",
-            f"this is not an enrollment block; it starts with {BLOCK_PREFIX}",
+            f"this is not an enrollment block; it starts with {BLOCK_V2_PREFIX}",
         )
+    prefix = BLOCK_V2_PREFIX if version2 else BLOCK_PREFIX
     try:
-        raw = base64.urlsafe_b64decode(compact[len(BLOCK_PREFIX) :].encode())
+        raw = base64.urlsafe_b64decode(compact[len(prefix) :].encode())
         document = json.loads(raw)
     except (binascii.Error, ValueError, UnicodeDecodeError):
         raise EnrollmentError(
             "enrollment_invalid", "the enrollment block is damaged; copy it again"
         ) from None
-    allowed = {"cluster", "name", "host", "host_key", "config_pull_key", "cert_pull_key"}
+    allowed = {"name", "host", "host_key", "config_pull_key", "cert_pull_key"}
+    allowed |= {"join_key"} if version2 else {"cluster"}
     if not isinstance(document, dict) or not set(document) <= allowed:
         raise EnrollmentError("enrollment_invalid", "the enrollment block has unexpected fields")
     cluster, name = document.get("cluster"), document.get("name")
-    if not isinstance(cluster, str) or not CLUSTER_ID.fullmatch(cluster):
+    if version2:
+        cluster = None
+    elif not isinstance(cluster, str) or not CLUSTER_ID.fullmatch(cluster):
         raise EnrollmentError("enrollment_invalid", "the block names no valid cluster")
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise EnrollmentError("enrollment_invalid", "the block names no valid node")
@@ -209,7 +264,36 @@ def parse(text: object) -> Enrollment:
         host_key=public_key(document.get("host_key"), "the host key"),
         config_pull_key=public_key(document.get("config_pull_key"), "the config pull key"),
         cert_pull_key=None if cert is None else public_key(cert, "the certificate pull key"),
+        join_key=(
+            private_key(document["join_key"]) if version2 and "join_key" in document else None
+        ),
     )
+
+
+def private_key(value: object) -> str:
+    """The one-time key a v2 block carries: one OpenSSH private key, nothing else."""
+
+    try:
+        if not isinstance(value, str):
+            raise ValueError
+        text = base64.b64decode(value.encode(), validate=True).decode("ascii")
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        raise EnrollmentError("enrollment_invalid", "the block's one-time key is damaged") from None
+    if not PRIVATE_KEY.fullmatch(text):
+        raise EnrollmentError("enrollment_invalid", "the block's one-time key is not one")
+    return text if text.endswith("\n") else text + "\n"
+
+
+def without_join_key(enrollment: Enrollment) -> Enrollment:
+    """The block as it may be stored: everything but the one-time key."""
+
+    return replace(enrollment, join_key=None)
+
+
+def made_for(enrollment: Enrollment, cluster: str) -> bool:
+    """A v1 block names its cluster and must name this one; a v2 block names none."""
+
+    return enrollment.cluster is None or enrollment.cluster == cluster
 
 
 # --------------------------------------------------------------- known_hosts
@@ -361,6 +445,8 @@ class Locations:
     collector_known_hosts: Path = COLLECTOR_KNOWN_HOSTS
     journal: Path = change_journal.JOURNAL
     home: Callable[[str], Path] = field(default=lambda account: Path(pwd.getpwnam(account).pw_dir))
+    # The manager's own host key, which a joining node is given (B317).
+    manager_host_key: Path = MANAGER_HOST_KEY
 
     def authorized_keys(self, account: str) -> Path:
         return self.home(account) / ".ssh" / "authorized_keys"
@@ -410,7 +496,7 @@ def plan_add(
 ) -> list[Change]:
     if cluster not in runtime.clusters:
         raise EnrollmentError("cluster_unknown", f"there is no cluster {cluster!r}")
-    if enrollment.cluster != cluster:
+    if not made_for(enrollment, cluster):
         raise EnrollmentError(
             "enrollment_mismatch",
             f"the block was made for cluster {enrollment.cluster!r}, not {cluster!r}; "
@@ -647,6 +733,73 @@ def plan_change_host(
 
 
 type AskNode = Callable[[Node], NodeResponse]
+#
+# How the manager joins a v2 node (B317): the node, the one-time key and the
+# document `haprion-node-join` reads. The helper's goes over SSH as
+# _haprion-join; tests give their own.
+#
+type JoinNode = Callable[[Node, str, dict[str, Any]], NodeResponse]
+
+
+def _public(path: Path) -> str:
+    try:
+        return " ".join(path.read_text(encoding="ascii").split()[:2])
+    except (OSError, UnicodeDecodeError) as exc:
+        raise EnrollmentError(
+            "dependency_unavailable", f"{path} could not be read ({exc})", 78
+        ) from None
+
+
+def join_document(
+    policy: PathPolicy, *, cluster: str, node_path: str, vip: str, host_key: Path
+) -> dict[str, Any]:
+    """What a joining node is given: the manager's public keys and where it belongs."""
+
+    keys = {
+        purpose: _public(Path(f"{identity.key}.pub"))
+        for name, purpose in JOIN_PURPOSES.items()
+        if (identity := getattr(policy, name)) is not None
+    }
+    if not {"deploy", "status"} <= set(keys):
+        raise EnrollmentError(
+            "dependency_unavailable",
+            "the runtime policy names no deploy_identity or status_identity to hand a node",
+            78,
+        )
+    return {
+        "version": 1,
+        "cluster": cluster,
+        "node_path": node_path,
+        "vip": vip,
+        "manager_host_key": _public(host_key),
+        "keys": keys,
+    }
+
+
+def join(
+    node: Node,
+    enrollment: Enrollment,
+    document: dict[str, Any],
+    join_node: JoinNode | None,
+) -> None:
+    """Join a v2 node once with its one-time key; nothing to do for a v1 block."""
+
+    if enrollment.join_key is None:
+        return
+    if join_node is None:
+        raise EnrollmentError(
+            "dependency_unavailable", "a v2 block needs the helper's join, and there is none", 78
+        )
+    response = join_node(node, enrollment.join_key, document)
+    if response.exit_code != 0:
+        said = " ".join((response.stderr or "").strip().splitlines()[-3:])
+        raise EnrollmentError(
+            "node_join_failed",
+            f"{node.mgmt_host} did not join (exit {response.exit_code}){': ' + said if said else ''}. "
+            "Nothing was changed here; a block not yet used works again, a used one is made "
+            "anew on the node with  sudo haprion-node-key --again",
+            75,
+        )
 
 
 def verify(node: Node, cluster: str, ask: AskNode) -> str | None:
@@ -715,6 +868,7 @@ def add(
     cluster: str,
     host: str,
     ask: AskNode,
+    join_node: JoinNode | None = None,
     locations: Locations | None = None,
     require_secure: bool = True,
 ) -> Outcome:
@@ -732,6 +886,20 @@ def add(
         Record("node add", cluster, tuple(changes)), (locations or Locations()).journal
     ):
         change_journal.apply(changes)
+        if enrollment.join_key is not None:
+            target = runtime.cluster(cluster)
+            join(
+                node,
+                enrollment,
+                join_document(
+                    policy,
+                    cluster=cluster,
+                    node_path=target.node_path,
+                    vip=target.vip,
+                    host_key=(locations or Locations()).manager_host_key,
+                ),
+                join_node,
+            )
         problem = verify(node, cluster, ask)
         if problem is not None:
             raise EnrollmentError("node_unverified", f"{problem}. Nothing was changed.", 75)

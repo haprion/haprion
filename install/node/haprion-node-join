@@ -1,0 +1,190 @@
+#!/usr/bin/python3
+"""Join this node to the manager that is asking (B317).
+
+Run as root through sudo, by the one command the node's one-time key allows
+(haprion-node-key): the manager connects as _haprion-join with the key from
+the block this node printed and sends one JSON document on stdin -
+
+    {"version": 1, "cluster": "alpha", "node_path": "alpha", "vip": "192.0.2.10",
+     "manager_host_key": "ssh-ed25519 AAAA...",
+     "keys": {"deploy": "ssh-ed25519 AAAA...", "status": "ssh-ed25519 AAAA...", ...}}
+
+Every value is checked against the pattern its use needs, and the document is
+turned into the answers of step 4, which then runs as it would by hand: the
+packages HAProxy and the rest need, the release layout, the sudo rules,
+node.conf, the manager's keys with the forced commands this node gives each
+purpose, the manager's host key, and sshd on the address the manager came in
+on. The manager is reached at the address it connected from (SSH_CONNECTION,
+kept by sudo for this command alone), so no name has to resolve.
+
+When step 4 has finished the one-time key is removed, and the node's status is
+the answer. A step that stops leaves the key, so the same block may be tried
+again until it expires; what it said is on stderr and in the log.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+INSTALL = Path(os.environ.get("HAPRION_NODE_INSTALL", "/usr/share/haprion-node/install"))
+JOIN_DIR = Path(os.environ.get("JOIN_DIR", "/var/lib/haprion-node"))
+JOIN_USER = "_haprion-join"
+JOIN_KEYS = Path(os.environ.get("JOIN_KEYS", f"/home/{JOIN_USER}/.ssh/authorized_keys"))
+LOG = Path(os.environ.get("JOIN_LOG", "/var/log/haprion-node/join.log"))
+STATUS = os.environ.get("NODE_STATUS", "/usr/sbin/haprion-node-status")
+MAX_DOCUMENT = 64 * 1024
+TIMEOUT = 840
+
+# The engine's patterns (config.py), held to them by a test.
+CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+NODE_PATH = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
+PUBKEY = re.compile(r"^ssh-ed25519 [A-Za-z0-9+/]{68}$")
+#
+# The manager's purposes and step 4's answer for each; what each key may run
+# is the table in lib.sh, on this node. Deploy and status are what a node
+# cannot be managed without.
+#
+PURPOSES = {
+    "deploy": "DEPLOY_PUBKEY",
+    "cert_deploy": "CERT_DEPLOY_PUBKEY",
+    "server_state": "SERVER_STATE_PUBKEY",
+    "status": "STATUS_PUBKEY",
+    "probe": "PROBE_PUBKEY",
+    "backup": "BACKUP_PUBKEY",
+}
+REQUIRED = {"deploy", "status"}
+FIELDS = {"version", "cluster", "node_path", "vip", "manager_host_key", "keys"}
+
+
+class Refused(Exception):
+    """What was wrong with the request, in a sentence."""
+
+
+def manager_address() -> str:
+    """The manager's address, as this connection came from it."""
+
+    fields = os.environ.get("SSH_CONNECTION", "").split()
+    if len(fields) != 4:
+        raise Refused("not run through the join key's connection (no SSH_CONNECTION)")
+    try:
+        address = ipaddress.ip_address(fields[0])
+    except ValueError:
+        raise Refused("SSH_CONNECTION names no client address") from None
+    if address.version != 4:
+        raise Refused("the manager connected over IPv6, which the node scripts do not reach yet")
+    return str(address)
+
+
+def answers(document: object, manager: str) -> tuple[str, str]:
+    """Step 4's answers file and the cluster, from the manager's document."""
+
+    if not isinstance(document, dict) or set(document) - FIELDS:
+        raise Refused(f"the document has fields other than {sorted(FIELDS)}")
+    if document.get("version") != 1:
+        raise Refused("the document is not version 1")
+    cluster = document.get("cluster")
+    node_path = document.get("node_path")
+    vip = document.get("vip")
+    host_key = document.get("manager_host_key")
+    keys = document.get("keys")
+    if not isinstance(cluster, str) or not CLUSTER_ID.fullmatch(cluster):
+        raise Refused("the cluster is not a cluster ID")
+    if not isinstance(node_path, str) or not NODE_PATH.fullmatch(node_path):
+        raise Refused("the node path is not one")
+    try:
+        if not isinstance(vip, str) or ipaddress.ip_address(vip).version != 4:
+            raise ValueError
+    except ValueError:
+        raise Refused("the VIP is not an IPv4 address") from None
+    if not isinstance(host_key, str) or not PUBKEY.fullmatch(host_key):
+        raise Refused("the manager's host key is not one ssh-ed25519 key")
+    if not isinstance(keys, dict) or set(keys) - set(PURPOSES) or REQUIRED - set(keys):
+        raise Refused(f"the keys are not a subset of {sorted(PURPOSES)} with deploy and status")
+    for purpose, key in keys.items():
+        if not isinstance(key, str) or not PUBKEY.fullmatch(key):
+            raise Refused(f"the {purpose} key is not one ssh-ed25519 key")
+    #
+    # Shell, sourced by step 4: every value above has passed a pattern with no
+    # quote, space-free but for the key's one, and none of $ ` \ - so single
+    # quotes hold each as it is.
+    #
+    variable = cluster.replace("-", "_")
+    lines = [
+        f"MANAGER_HOST='{manager}'",
+        f"MANAGER_HOST_KEY='{host_key}'",
+        "NODE_CONFIG_PULL_KEY=/root/.ssh/id_ed25519_config_pull",
+        "NODE_CERT_PULL_KEY=/root/.ssh/id_ed25519_cert_pull",
+        f"NODE_PATH_{variable}='{node_path}'",
+        f"VIP_{variable}='{vip}'",
+        "JOINED_BY_MANAGER=yes",
+        *(f"{PURPOSES[purpose]}='{key}'" for purpose, key in sorted(keys.items())),
+    ]
+    return "\n".join(lines) + "\n", cluster
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        print("haprion-node-join: run as root, through the join key", file=sys.stderr)
+        return 77
+    try:
+        manager = manager_address()
+        raw = sys.stdin.buffer.read(MAX_DOCUMENT + 1)
+        if len(raw) > MAX_DOCUMENT:
+            raise Refused("the document is too large")
+        try:
+            document = json.loads(raw)
+        except ValueError:
+            raise Refused("the document is not JSON") from None
+        text, cluster = answers(document, manager)
+    except Refused as refused:
+        print(f"haprion-node-join: {refused}", file=sys.stderr)
+        return 64
+
+    JOIN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    answers_file = JOIN_DIR / "join.env"
+    answers_file.write_text(text)
+    answers_file.chmod(0o600)
+    LOG.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    with LOG.open("ab") as log:
+        log.write(f"\n### join of cluster {cluster} from {manager}\n".encode())
+        log.flush()
+        try:
+            done = subprocess.run(  # noqa: S603 - step 4 of this package, with checked answers
+                [str(INSTALL / "04-node-prepare"), str(answers_file), cluster],
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=TIMEOUT,
+                check=False,
+            )
+            code = done.returncode
+        except subprocess.TimeoutExpired:
+            code = 124
+    if code != 0:
+        tail = LOG.read_text(errors="replace").splitlines()[-30:]
+        print("\n".join(tail), file=sys.stderr)
+        print(
+            f"haprion-node-join: step 4 stopped (exit {code}); {LOG} has all of it", file=sys.stderr
+        )
+        return 75
+    #
+    # Used: the key goes, and with it the only way in this account had.
+    #
+    JOIN_KEYS.write_text("")
+    for leftover in (JOIN_DIR / "join_key", JOIN_DIR / "join_key.pub"):
+        leftover.unlink(missing_ok=True)
+    status = subprocess.run(  # noqa: S603 - the node's own status
+        [STATUS, "--json"], capture_output=True, check=False, timeout=60
+    )
+    sys.stdout.buffer.write(status.stdout)
+    return status.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

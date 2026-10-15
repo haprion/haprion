@@ -74,105 +74,40 @@ else
     log "  created  ${ROOT_KNOWN_HOSTS}  (empty - adding a node pins its host key here)"
 fi
 
-step "Lines to install on the nodes"
+step "The manager's keys, for each node's answers file"
 
 pub() { cut -d' ' -f1,2 < "${KEY_DIR}/$1.pub"; }
 
 #
-# restrict turns off everything: no port forwarding, no agent forwarding, no X11,
-# no pty, no user rc file. The forced command is then the only thing the key can
-# do. Both halves matter - a forced command without restrict still allows
-# forwarding, which is a way around it.
+# One table (lib.sh, B317) says which node account each key reaches and the
+# forced command it runs there; step 4 writes the lines from these answers.
+# A node a manager joins itself, with the block its package prints, needs
+# none of this: the manager hands the same keys over.
 #
-cat <<INTRO
+cat <<'INTRO'
+A node joined from the interface (Settings - Create cluster or Add node) needs
+none of the lines below: the manager hands them over itself.
 
-Each key below is restricted to exactly one command on the node. Install them as
-shown, one file per account, on EVERY node.
-
-There is no way to do this from here: no management identity can write to a node.
-Log in to each node yourself and paste.
+For a node prepared by hand with 04-node-prepare, put these lines in its answers
+file. Step 4 writes each key with `restrict` and its own forced command, and the
+management host's host key into root's known_hosts.
 
 INTRO
-
-#
-# The lines are the same on every node; they are printed per node so each
-# paste has a heading. With no cluster yet (B302) they are printed once, for
-# every node that will be added.
-#
-targets=()
-for cluster in $(each_cluster); do
-    for pair in $(cluster_value NODES "$cluster"); do
-        targets+=("$(node_name "$pair")  ($(node_host "$pair"), cluster ${cluster})")
-    done
+for purpose_line in "${NODE_KEY_PURPOSES[@]}"; do
+    read -r purpose manager_var _ <<<"$purpose_line"
+    [[ -n "${!manager_var:-}" && -f "${KEY_DIR}/${!manager_var}.pub" ]] || continue
+    [[ "$purpose" != BACKUP || -n "${BACKUP_ROOT:-}" ]] || continue
+    echo "${purpose}_PUBKEY=\"$(pub "${!manager_var}")\""
 done
-(( ${#targets[@]} > 0 )) || targets=("every node")
-
-for target in "${targets[@]}"; do
-    echo "--- ${target} ------------------------------"
-    echo
-    echo "  /home/${TRIGGER_USER}/.ssh/authorized_keys    (owner root, mode 644)"
-    echo
-    echo "restrict,command=\"sudo -n /usr/sbin/haprion-pull-deploy\" $(pub "$CONFIG_DEPLOY_KEY")"
-    if [[ -n "${CERT_DEPLOY_KEY:-}" ]]; then
-        echo "restrict,command=\"/usr/sbin/haprion-cert-trigger\" $(pub "$CERT_DEPLOY_KEY")"
-    fi
-    if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
-        echo "restrict,command=\"/usr/sbin/haprion-server-state-trigger\" $(pub "$SERVER_STATE_KEY")"
-        echo "    (written by 04-node-prepare when the node's answers file has SERVER_STATE_PUBKEY)"
-    fi
-    echo
-    echo "  /home/${STATUS_USER}/.ssh/authorized_keys     (owner root, mode 644)"
-    echo
-    echo "restrict,command=\"sudo -n /usr/sbin/haprion-node-status --json\" $(pub "$NODE_STATUS_KEY")"
-    #
-    # The probe rides on the status account and not on the trigger account,
-    # and it is still its own key with its own forced command. It needs no
-    # sudo at all: opening an outbound connection, and binding an address
-    # this node already carries, are unprivileged.
-    #
-    if [[ -n "${NODE_PROBE_KEY:-}" ]]; then
-        echo "restrict,command=\"/usr/sbin/haprion-health-probe\" $(pub "$NODE_PROBE_KEY")"
-    fi
-    if [[ -n "${BACKUP_ROOT:-}" ]]; then
-        echo
-        echo "  /home/${BACKUP_USER}/.ssh/authorized_keys     (owner root, mode 644)"
-        echo
-        echo "restrict,command=\"sudo -n /usr/sbin/haprion-state-export\" $(pub "$NODE_BACKUP_KEY")"
-    fi
-    echo
-done
-
-if [[ -n "${SERVER_STATE_KEY:-}" ]]; then
-    cat <<SERVER_STATE
-
-The server state line need not be pasted: put this in the answers file the
-nodes are prepared with, and 04-node-prepare (run by tools/install-node-package)
-writes it:
-
-SERVER_STATE_PUBKEY="$(pub "$SERVER_STATE_KEY")"
-
-SERVER_STATE
+HOST_KEY_FILE="${HOST_KEY_FILE:-/etc/ssh/ssh_host_ed25519_key.pub}"
+if [[ -r "$HOST_KEY_FILE" ]]; then
+    echo "MANAGER_HOST_KEY=\"$(cut -d' ' -f1,2 < "$HOST_KEY_FILE")\""
+else
+    warn "${HOST_KEY_FILE} is missing: the nodes accept this host's key once by hand"
 fi
-
-cat <<'OUTRO'
-Two things to check after pasting, on every node:
-
-  * every key line starts with `restrict` and carries its OWN forced command.
-    Two keys sharing a command makes them interchangeable and undoes the
-    separation they exist for
-  * the certificate line goes through haprion-cert-trigger, NOT straight to the
-    pull script. The wrapper is what validates the certificate IDs before
-    anything runs as root
-
-Then accept each node's host key once, from this host, as root:
-
-  ssh -o StrictHostKeyChecking=ask <node-hostname> true
-
-Every later connection uses StrictHostKeyChecking=yes, so this first acceptance
-is what makes them mean anything.
-OUTRO
 
 echo
 log "step 3 done"
 echo
-echo "Next, on each node: ./04-node-prepare answers.env <cluster-id>"
+echo "Next, on each node prepared by hand:"
+echo "  sudo /usr/share/haprion-node/install/04-node-prepare answers.env <cluster-id>"

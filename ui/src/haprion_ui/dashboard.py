@@ -367,6 +367,39 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
     )
 
 
+#
+# How long after a reading is due the page asks for itself again, and how soon
+# it asks again when the reading has not come yet: a pass reads every cluster
+# over SSH, so a reading lands a little after its interval.
+#
+READING_MARGIN = 2.0
+READING_RETRY = 3.0
+
+
+def next_reading(
+    rows: Iterable[ClusterStatus], interval: int, now: datetime | None = None
+) -> float | None:
+    """Seconds until the page should look for the poller's next reading, or None.
+
+    A page that redrew on its own clock fell out of step with the poller's:
+    every redraw came some 17 s after the reading it showed, and a change on a
+    node took up to two intervals to appear (Fas 18, 26-10-16). Timed from the
+    newest reading instead, the page shows one a couple of seconds after it is
+    taken. None when there is no reading, or when the newest is older than two
+    intervals - a poller that has stopped is not asked after every few seconds.
+    """
+
+    moment = now or datetime.now(UTC)
+    newest = max((row.observed_at for row in rows), default=None)
+    if newest is None:
+        return None
+    age = (moment - newest).total_seconds()
+    if age > 2 * interval:
+        return None
+    due = interval - age + READING_MARGIN
+    return due if due > 0 else READING_RETRY
+
+
 def not_deployed(reading: Any | None) -> bool:
     """The cluster's card would say *Not deployed*: nodes, none with a release yet."""
 

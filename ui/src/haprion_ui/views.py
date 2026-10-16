@@ -916,14 +916,27 @@ def build_router(config: Config) -> APIRouter:
                 #
                 #
                 # Sooner when a block runs out before the next poll (B271), so
-                # the card's warning goes when the block does.
+                # the card's warning goes when the block does; and timed from
+                # the newest reading, so the next one is shown when it lands.
                 #
                 "live_seconds": (
                     None
                     if config.demo_fixture
                     else blocked.live_seconds(
                         config.poller.interval_seconds,
-                        blocked.next_change(status_rows, clusters),
+                        min(
+                            (
+                                change
+                                for change in (
+                                    blocked.next_change(status_rows, clusters),
+                                    dashboard.next_reading(
+                                        status_rows, config.poller.interval_seconds
+                                    ),
+                                )
+                                if change is not None
+                            ),
+                            default=None,
+                        ),
                     )
                 ),
             },

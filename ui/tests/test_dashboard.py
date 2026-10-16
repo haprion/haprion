@@ -614,3 +614,22 @@ class NodeResources(unittest.TestCase):
 
         self.assertIsNone(cluster.cpu)
         self.assertIsNone(cluster.memory)
+
+
+class ThePageLooksForTheNextReading(unittest.TestCase):
+    """Fas 18, 26-10-16: a redraw every interval came ~17 s after the reading it showed."""
+
+    def rows(self, *ages: int) -> list[ClusterStatus]:
+        status = reading("done-single-owner.json")
+        return [replace(status, observed_at=NOW - timedelta(seconds=age)) for age in ages]
+
+    def test_the_redraw_comes_just_after_the_next_reading_is_due(self) -> None:
+        self.assertEqual(dashboard.next_reading(self.rows(17), 20, NOW), 5.0)
+        self.assertEqual(dashboard.next_reading(self.rows(0), 20, NOW), 22.0)
+        # The newest reading decides: one pass writes every cluster.
+        self.assertEqual(dashboard.next_reading(self.rows(30, 5), 20, NOW), 17.0)
+
+    def test_a_late_reading_is_asked_after_soon_and_a_stopped_poller_is_not(self) -> None:
+        self.assertEqual(dashboard.next_reading(self.rows(25), 20, NOW), dashboard.READING_RETRY)
+        self.assertIsNone(dashboard.next_reading(self.rows(41), 20, NOW))
+        self.assertIsNone(dashboard.next_reading([], 20, NOW))

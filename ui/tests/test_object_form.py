@@ -106,7 +106,12 @@ class ReadingAnObjectBackIntoTheForm(unittest.TestCase):
         """Split by what the cluster defines, never by what a name looks like."""
 
         document = build_document(
-            dict(DEFAULTS, servers="198.51.100.10:8080", allow_from=("office",), allow_ranges="203.0.113.0/24")
+            dict(
+                DEFAULTS,
+                servers="198.51.100.10:8080",
+                allow_from=("office",),
+                allow_ranges="203.0.113.0/24",
+            )
         )
 
         read = form_from_document(document, networks=("office",))
@@ -123,7 +128,9 @@ class ReadingAnObjectBackIntoTheForm(unittest.TestCase):
         widening who may reach the site.
         """
 
-        document = build_document(dict(DEFAULTS, servers="198.51.100.10:8080", allow_from=("office",)))
+        document = build_document(
+            dict(DEFAULTS, servers="198.51.100.10:8080", allow_from=("office",))
+        )
 
         read = form_from_document(document, networks=())
 
@@ -132,7 +139,14 @@ class ReadingAnObjectBackIntoTheForm(unittest.TestCase):
 
     def test_a_tcp_object_opens(self) -> None:
         document = build_document(
-            dict(DEFAULTS, servers="198.51.100.10:8080", protocol="tcp", tcp_port="5432", hostnames="", certificate="")
+            dict(
+                DEFAULTS,
+                servers="198.51.100.10:8080",
+                protocol="tcp",
+                tcp_port="5432",
+                hostnames="",
+                certificate="",
+            )
         )
 
         read = form_from_document(document)

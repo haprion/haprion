@@ -11,6 +11,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from haprion_ui import attention
 from haprion_ui.backups import BackupOverview, ScheduleView, build_backup_overview
 from haprion_ui.db import ClusterBackups
 
@@ -121,6 +122,25 @@ class NodeStateTests(unittest.TestCase):
         self.assertEqual(empty.label, "No backups")
         self.assertEqual(unreadable.tone, "critical")
         self.assertEqual(unreadable.detail, "permission denied")
+
+    def test_a_cluster_whose_backups_have_not_started_is_not_a_fault(self) -> None:
+        """Fas 18, finding 71: a new cluster's empty nodes read as an error."""
+
+        never = schedule(scheduled=False, enabled=False, active=False, last_run=None)
+        view = overview(reading(nodes=[node("node-a", backups=[])], timer=never))
+        cluster = view.clusters[0]
+        self.assertEqual(
+            (cluster.nodes[0].label, cluster.nodes[0].tone), ("No backups yet", "unknown")
+        )
+        self.assertEqual((cluster.label, cluster.tone), ("No backups yet", "unknown"))
+        self.assertEqual(cluster.nodes[0].latest, "")
+        self.assertEqual(timer_of(view).outcome, "—")
+        self.assertEqual(attention.from_backups(view.clusters), [])
+
+        # Due and still nothing is the fault it always was.
+        ran = overview(reading(nodes=[node("node-a", backups=[])], timer=schedule()))
+        self.assertEqual(ran.clusters[0].nodes[0].tone, "critical")
+        self.assertEqual(timer_of(ran).outcome, "success")
 
     def test_a_missed_run_warns_and_a_week_without_one_does_not(self) -> None:
         overdue = (

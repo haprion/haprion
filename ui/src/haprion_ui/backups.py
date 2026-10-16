@@ -68,6 +68,16 @@ class AgeLimits:
     critical: timedelta
 
 
+NOT_YET = "No backups yet"
+
+
+def _started(schedule: Any) -> bool:
+    """Whether backups were ever due: unknown counts as yes, a timer that never ran as no."""
+
+    reported = _mapping(schedule)
+    return not reported.get("unit") or _moment(reported.get("last_run")) is not None
+
+
 def _age_limits(schedule: Any) -> AgeLimits:
     reported = _mapping(schedule)
     shape = None
@@ -290,9 +300,17 @@ def _node_state(
     newest_at: datetime | None,
     now: datetime,
     limits: AgeLimits,
+    started: bool = True,
 ) -> tuple[str, Tone, str]:
     if not available:
         return "Unreadable", "critical", error or "The backup directory could not be read"
+    if not archives and not started:
+        #
+        # A new cluster: no schedule has run yet, so there is nothing missing
+        # either (Fas 18, finding 71). Red here read as a fault on the first
+        # visit; the getting-started list is what asks for the schedule.
+        #
+        return NOT_YET, "unknown", ""
     if not archives:
         #
         # No error, no archives. Nothing on this row looks wrong, and there is
@@ -314,7 +332,7 @@ def _node_state(
 
 
 def _node_view(
-    value: Any, *, now: datetime, limits: AgeLimits
+    value: Any, *, now: datetime, limits: AgeLimits, started: bool = True
 ) -> tuple[NodeBackupsView, tuple[ArchiveView, ...]]:
     node = _mapping(value)
     name = _text(node.get("name"), "Unnamed node")
@@ -336,6 +354,7 @@ def _node_view(
         newest_at=newest_at,
         now=now,
         limits=limits,
+        started=started,
     )
     listed_size = sum((_integer(_mapping(entry).get("size_bytes")) or 0) for entry in listed)
     retained_size = _integer(node.get("retained_size_bytes"))
@@ -347,7 +366,7 @@ def _node_view(
             label=label,
             tone=tone,
             detail=detail,
-            latest=_text(node.get("latest_version"), "—"),
+            latest=_text(node.get("latest_version"), "—") if archives else "",
             age_label="—" if newest_at is None else relative_age(newest_at, now),
             count=retained_count,
             shown_count=len(archives),
@@ -442,7 +461,11 @@ def _schedule_view(
         # have had. Showing it would promise a run that is not going to happen.
         #
         next_run=next_run if schedule.get("enabled") is True and tone != "critical" else "—",
-        outcome=outcome or "—",
+        #
+        # systemd reports `success` for a timer that has never fired; beside
+        # "last backup —" it claimed a run that did not happen.
+        #
+        outcome=outcome if outcome and _moment(schedule.get("last_run")) is not None else "—",
         #
         # A cluster nobody has scheduled carries the template's default calendar.
         # Saying "Every day at 05:00" under *Not scheduled* would describe a run
@@ -557,6 +580,8 @@ def _state(
     if not nodes:
         return "No nodes listed", "unknown", "The listing named no node"
 
+    if all(node.label == NOT_YET for node in nodes):
+        return NOT_YET, "unknown", ""
     severity = ("critical", "warning", "unknown", "healthy")
     worst = min(nodes, key=lambda node: severity.index(node.tone))
     if worst.tone == "healthy":
@@ -576,9 +601,10 @@ def _cluster_view(
     nodes: list[NodeBackupsView] = []
     archives: list[ArchiveView] = []
     limits = _age_limits(result.get("schedule"))
+    started = _started(result.get("schedule"))
     if isinstance(entries, list):
         for entry in entries:
-            node, node_archives = _node_view(entry, now=now, limits=limits)
+            node, node_archives = _node_view(entry, now=now, limits=limits, started=started)
             nodes.append(node)
             archives.extend(node_archives)
     stale = now - reading.observed_at > stale_after

@@ -1918,6 +1918,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 /* Cancel beside the submit, as a button rather than a link the eye has to find. */
 .editor-submit .form-buttons { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .editor-submit .table-note { margin: 0; padding: 0; }
+/* A submit row that is its card's only content: as much above the buttons as under them (Fas 18, 26-10-16). */
+.cluster-card > .editor-submit:only-child { padding-top: 20px; }
 /* The way back from a list page: a button where a form's Cancel would be, not a
    link in the heading the eye has to find (2026-09-19). */
 .list-actions { justify-content: flex-end; padding-top: 12px; }

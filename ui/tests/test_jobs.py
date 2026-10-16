@@ -585,3 +585,29 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
             result={"result": {"publication": {"version": 2, "hash": "c" * 40, "changed": True}}},
         )
         self.assertIsNone(jobs.publication_note(job))
+        stopped = replace(
+            job,
+            result={
+                "result": {
+                    "publication": {"version": 2, "hash": "c" * 40, "changed": True},
+                    "step_down": {"stopped": True},
+                }
+            },
+        )
+        self.assertIsNone(jobs.publication_note(stopped))
+
+    def test_a_removed_node_that_did_not_stop_is_the_note(self) -> None:
+        """B319: started again, it takes the cluster's addresses; the job says so."""
+
+        message = "node-b did not answer (exit 255). Stop keepalived and HAProxy on node-b."
+        job = replace(
+            queued(operation="cluster_node", cluster="alpha"),
+            result={
+                "result": {
+                    "action": "removed",
+                    "publication": {"version": 4, "hash": "d" * 40, "changed": True},
+                    "step_down": {"stopped": False, "message": message},
+                }
+            },
+        )
+        self.assertEqual(jobs.publication_note(job), message)

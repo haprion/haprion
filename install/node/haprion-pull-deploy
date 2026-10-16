@@ -778,6 +778,59 @@ if [[ ! -d "${STAGE}/maps" ]]; then
     exit 1
 fi
 
+#
+# A node removed from its cluster (B319, Fas 18 finding 73). The manager
+# publishes the cluster without it and asks it for this one last deploy before
+# its keys go. Left running, its keepalived kept the old peers; once the nodes
+# that stayed had their new list they stopped hearing it, and it took the
+# cluster's addresses beside them.
+#
+# Removed means: the release carries the product's keepalived files (B313) and
+# none for this node - neither by name nor by the address this node's own
+# file sends from, so a renamed host is not mistaken for a removed one - and
+# the keepalived.conf here is the product's. A person's keepalived.conf (B57)
+# is theirs, and so is what it peers with.
+#
+# Stopped and disabled, with a marker: the node is no longer this cluster's,
+# and a reboot must not bring it back. Added again, the first release that
+# names it starts both and takes the marker away.
+#
+LEFT_MARKER="/etc/haprion/left-cluster"
+
+removed_from_release() {
+    local own
+    [[ -f "$KEEPALIVED_CONF" ]] || return 1
+    [[ "$(head -n 1 "$KEEPALIVED_CONF")" == "$KEEPALIVED_MARK" ]] || return 1
+    compgen -G "${STAGE}/keepalived/node-*.conf" >/dev/null || return 1
+    [[ ! -f "${STAGE}/keepalived/node-$(hostname).conf" ]] || return 1
+    own="$(awk '$1 == "unicast_src_ip" { print $2; exit }' "$KEEPALIVED_CONF")"
+    [[ -n "$own" ]] || return 1
+    ! awk -v own="$own" '$1 == "unicast_src_ip" && $2 == own { found = 1 } END { exit !found }' \
+        "${STAGE}"/keepalived/node-*.conf
+}
+
+if removed_from_release; then
+    log "This node is not in the published release: it was removed from the cluster."
+    if ! systemctl disable --quiet --now keepalived; then
+        log "ERROR: keepalived could not be stopped."
+        exit 1
+    fi
+    if ! systemctl disable --quiet --now haproxy; then
+        log "ERROR: HAProxy could not be stopped."
+        exit 1
+    fi
+    touch "$LEFT_MARKER"
+    log "keepalived and HAProxy stopped, and will not start at boot."
+    exit 0
+fi
+
+if [[ -e "$LEFT_MARKER" ]]; then
+    log "This node is in the published release again: starting HAProxy and keepalived."
+    systemctl enable --quiet --now haproxy || { log "ERROR: HAProxy could not be started."; exit 1; }
+    systemctl enable --quiet --now keepalived || { log "ERROR: keepalived could not be started."; exit 1; }
+    rm -f "$LEFT_MARKER"
+fi
+
 # Nothing changed?
 if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
     if [[ -e "$PENDING" ]]; then

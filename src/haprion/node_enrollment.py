@@ -62,6 +62,7 @@ from haprion.config import (
     MAX_NODES,
     MIN_NODES,
     NAME,
+    Cluster,
     ConfigError,
     Node,
     PathPolicy,
@@ -609,7 +610,7 @@ def plan_remove(
     name: str,
     locations: Locations,
     require_secure: bool = True,
-) -> tuple[Node, list[Change]]:
+) -> tuple[Node, list[Change], Cluster]:
     if cluster not in runtime.clusters:
         raise EnrollmentError("cluster_unknown", f"there is no cluster {cluster!r}")
     nodes = runtime.clusters[cluster].nodes
@@ -626,7 +627,7 @@ def plan_remove(
 
     clusters_before = _read(policy.cluster_file)
     clusters_after = clusters_without(clusters_before, cluster, name)
-    _candidate_runtime(policy, clusters_after, require_secure=require_secure)
+    candidate = _candidate_runtime(policy, clusters_after, require_secure=require_secure)
     changes = [Change(policy.cluster_file, clusters_before, clusters_after, "clusters.yaml")]
     known = _read(locations.root_known_hosts)
     changes.append(
@@ -665,7 +666,7 @@ def plan_remove(
                 "the traffic collector's known_hosts",
             )
         )
-    return node, changes
+    return node, changes, candidate.cluster(cluster)
 
 
 def plan_change_host(
@@ -746,6 +747,14 @@ type AskNode = Callable[[Node], NodeResponse]
 # _haprion-join; tests give their own.
 #
 type JoinNode = Callable[[Node, str, dict[str, Any]], NodeResponse]
+#
+# A node being removed is asked to deploy once more, over the deploy identity
+# it already trusts (B319): the release it fetches no longer names it, and the
+# node stops keepalived and HAProxy. The node list's publication, for the
+# cluster as it will be, is what makes that release.
+#
+type LeaveNode = Callable[[Node], NodeResponse]
+type PublishCluster = Callable[[Cluster], dict[str, Any]]
 
 
 def _public(path: Path) -> str:
@@ -860,6 +869,52 @@ def owns_vip(node: Node, ask: AskNode) -> bool | None:
     return owner if isinstance(owner, bool) else None
 
 
+def serving(node: Node, ask: AskNode) -> bool | None:
+    """Whether keepalived or HAProxy still runs on the node; None when it cannot be asked."""
+
+    response = ask(node)
+    if response.exit_code != 0:
+        return None
+    try:
+        status = json.loads(response.stdout)
+        keepalived = status["keepalived"]["active"]
+        haproxy = status["haproxy"]["active"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(keepalived, bool) or not isinstance(haproxy, bool):
+        return None
+    return keepalived or haproxy
+
+
+def step_down(
+    node: Node, publication: dict[str, Any] | None, leave: LeaveNode, ask: AskNode
+) -> str | None:
+    """None when the node has stopped serving; otherwise what is left to do, in words.
+
+    Read back from the node's status rather than believed from the deploy's
+    exit code, as a deploy's own result is. A node that cannot be reached is
+    the usual reason somebody removes one; it is removed all the same, and the
+    sentence says what it will do if it is started again.
+    """
+
+    afterwards = (
+        f"Stop keepalived and HAProxy on {node.name}, or shut it down: started again, "
+        "it takes the cluster's addresses."
+    )
+    if publication is None or "error" in publication:
+        return (
+            f"{node.name} was not asked to stop, because the node list was not published. "
+            + afterwards
+        )
+    asked = leave(node)
+    still = serving(node, ask)
+    if still is False:
+        return None
+    if still is None:
+        return f"{node.name} did not answer (exit {asked.exit_code}). " + afterwards
+    return f"{node.name} still runs keepalived or HAProxy (exit {asked.exit_code}). " + afterwards
+
+
 @dataclass(frozen=True, slots=True)
 class Outcome:
     node: Node
@@ -868,6 +923,13 @@ class Outcome:
     fingerprint: str | None = None
 
     previous_host: str | None = None
+    #
+    # A removal publishes before its files are written (B319), so it carries
+    # its publication and whether the node stepped down; None elsewhere.
+    #
+    publication: dict[str, Any] | None = None
+    step_down: str | None = None
+    stepped_down: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -877,6 +939,16 @@ class Outcome:
             "files": list(self.files),
             "host_key_fingerprint": self.fingerprint,
             **({} if self.previous_host is None else {"previous_host": self.previous_host}),
+            **({} if self.publication is None else {"publication": self.publication}),
+            **(
+                {}
+                if self.stepped_down is None
+                else {
+                    "step_down": {"stopped": True}
+                    if self.stepped_down
+                    else {"stopped": False, "message": self.step_down}
+                }
+            ),
         }
 
 
@@ -943,10 +1015,12 @@ def remove(
     cluster: str,
     name: str,
     ask: AskNode,
+    publish: PublishCluster | None = None,
+    leave: LeaveNode | None = None,
     locations: Locations | None = None,
     require_secure: bool = True,
 ) -> Outcome:
-    node, changes = plan_remove(
+    node, changes, remaining = plan_remove(
         policy,
         runtime,
         cluster=cluster,
@@ -966,11 +1040,30 @@ def remove(
             f"{name} holds the VIP right now. Move the address to another node first.",
             75,
         )
+    #
+    # Before a file is written (B319, Fas 18 finding 73). Removed and left
+    # running, the node kept its keepalived and its peers; once the nodes that
+    # stayed had their new list they stopped hearing it and it took the
+    # address beside them. So the cluster as it will be is published first, the
+    # node fetches that release with the key it still has and stops, and only
+    # then do its keys go. A removal run again after a stop between the two -
+    # the release already without the node - publishes nothing new and asks
+    # the node again.
+    #
+    publication = publish(remaining) if publish is not None else None
+    problem = step_down(node, publication, leave, ask) if leave is not None else None
     with change_journal.transaction(
         Record("node removal", cluster, tuple(changes)), (locations or Locations()).journal
     ):
         change_journal.apply(changes)
-    return Outcome(node=node, cluster=cluster, files=tuple(change.what for change in changes))
+    return Outcome(
+        node=node,
+        cluster=cluster,
+        files=tuple(change.what for change in changes),
+        publication=publication,
+        step_down=problem,
+        stepped_down=None if leave is None else problem is None,
+    )
 
 
 def change_host(

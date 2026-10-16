@@ -7,8 +7,8 @@
   One cluster's nodes (Fas 16, B211). Adding reads the block 04-node-prepare
   printed on the node; the root helper writes six files, asks the node for its
   status and puts everything back if it does not answer as itself. Removing
-  takes the node's keys away; the node itself keeps running until it is shut
-  down. Change host moves the node to another name or address, proven by the
+  publishes the cluster without the node, lets the node read that release and
+  stop keepalived and HAProxy (B319), then takes its keys away. Change host moves the node to another name or address, proven by the
   host key it already has (B295). Both are confirmed with the node's name. Removing the whole cluster
   archives it and is confirmed with its ID.
 #}
@@ -86,7 +86,7 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Remove {{ removal }}</h3></div></div></header>
     <ul class="removal-consequences">
       <li>Its line in the cluster file, its host key and both of its fetch keys are removed; it can no longer fetch configuration or certificates.</li>
-      <li>The node itself is not touched and keeps serving until it is shut down.</li>
+      <li>The node stops keepalived and HAProxy, so it does not take the cluster's addresses.</li>
     </ul>
     <div class="form-grid">
       <label><span class="field-title">Type {{ removal }} to remove it</span><input name="confirm" maxlength="64" spellcheck="false" autocomplete="off" required></label>

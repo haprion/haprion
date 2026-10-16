@@ -49,6 +49,7 @@ from haprion import (
     peers,
 )
 from haprion.cert_lock import DEFAULT_LOCK_PATH as CERTIFICATE_LOCK
+from haprion.cli import deploy_helper
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.config import (
     DEFAULT_POLICY_PATH,
@@ -285,7 +286,38 @@ def _keyed(
     )
 
 
-def _node_work(request: HelperRequest, locations: Locations | None, require_secure: bool) -> Work:
+def _leave_with(policy: PathPolicy) -> node_enrollment.LeaveNode | None:
+    """The removed node's last deploy (B319), over the deploy identity; None without one."""
+
+    identity = policy.deploy_identity
+    if identity is None:
+        return None
+
+    def leave(node: Node) -> NodeResponse:
+        said = io.StringIO()
+        code = deploy_helper.run_trigger(
+            [
+                deploy_helper.SSH,
+                *deploy_helper.SSH_OPTIONS,
+                "-i",
+                str(identity.key),
+                f"{identity.user}@{node.mgmt_host}",
+            ],
+            node.name,
+            said,
+        )
+        return NodeResponse(exit_code=code, stdout=said.getvalue())
+
+    return leave
+
+
+def _node_work(
+    request: HelperRequest,
+    locations: Locations | None,
+    require_secure: bool,
+    publisher: Publish,
+    leave: node_enrollment.LeaveNode | None = None,
+) -> Work:
     parameters = request.parameters
     action = _text(parameters, "action")
     if action not in NODE_ACTIONS:
@@ -332,12 +364,20 @@ def _node_work(request: HelperRequest, locations: Locations | None, require_secu
     name = _text(parameters, "node")
     if not NAME.fullmatch(name):
         raise HelperProtocolError("parameters.node is not a node name", exit_code=65)
+
+    def publish(remaining: Any) -> dict[str, Any]:
+        return publisher(
+            request, remaining, comment=f"{name} removed", require_secure=require_secure
+        )
+
     return lambda policy, runtime, ask, _join: node_enrollment.remove(
         policy,
         runtime,
         cluster=request.cluster,
         name=name,
         ask=ask,
+        publish=publish,
+        leave=leave or _leave_with(policy),
         locations=locations,
         require_secure=require_secure,
     )
@@ -470,6 +510,7 @@ def main(
     join_node: JoinNode | None = None,
     addresses: node_publish.Addresses = peers.addresses,
     publish: Publish | None = None,
+    leave: node_enrollment.LeaveNode | None = None,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     output: TextIO = output_stream or sys.stdout
@@ -499,7 +540,9 @@ def main(
 
     try:
         work = (
-            _node_work(request, locations, require_secure)
+            _node_work(
+                request, locations, require_secure, publish or _publish_with(addresses), leave
+            )
             if request.operation == OPERATION
             else _define_work(request, locations, places, tools, require_secure, addresses)
         )
@@ -587,8 +630,11 @@ def main(
             # removed has nothing left to publish.
             #
             comment = _comment(request, outcome)
-            publication = None
-            if comment is not None:
+            #
+            # A removal has published already, before its files (B319).
+            #
+            publication = getattr(outcome, "publication", None)
+            if comment is not None and request.parameters.get("action") != "remove":
                 changed = load_runtime_config(policy, require_secure=require_secure)
                 publication = (publish or _publish_with(addresses))(
                     request,

@@ -487,7 +487,7 @@ def diagnostics_of(job: Job) -> str | None:
 
 
 def publication_note(job: Job) -> str | None:
-    """A node change whose node list could not be published, in the helper's words (B318).
+    """An unpublished node list (B318) or a removed node still running (B319), in the helper's words.
 
     The change itself stands, so the job is done; what it did not do is said
     here, or the cluster's release would quietly lack the node.
@@ -499,9 +499,18 @@ def publication_note(job: Job) -> str | None:
     publication = body.get("publication") if isinstance(body, dict) else None
     error = publication.get("error") if isinstance(publication, dict) else None
     message = error.get("message") if isinstance(error, dict) else None
-    if not isinstance(message, str) or not message.strip():
-        return None
-    return f"The node list was not published: {message.strip()}"
+    #
+    # A removed node that did not stop (B319): it takes the cluster's
+    # addresses if it is started again, which is what the job must say.
+    #
+    step_down = body.get("step_down") if isinstance(body, dict) else None
+    left = step_down.get("message") if isinstance(step_down, dict) else None
+    notes = []
+    if isinstance(message, str) and message.strip():
+        notes.append(f"The node list was not published: {message.strip()}")
+    if isinstance(left, str) and left.strip():
+        notes.append(left.strip())
+    return " ".join(notes) or None
 
 
 def deletion_note(job: Job) -> str | None:

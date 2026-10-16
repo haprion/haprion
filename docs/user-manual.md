@@ -1905,11 +1905,21 @@ certificates until `haprion-cert-deploy -c <cluster>` runs (*Deploy certificates
 dashboard); a deploy before the certificates stops and says so, since the node has none.
 
 A removal takes the node's lines out of all six files, so it can no longer fetch configuration or
-certificates. It is refused for the node that reports holding the VIP and for a cluster's last node; the node
-itself is not touched and keeps serving until it is shut down. A cluster has one to eight nodes
-([Cluster definitions](#cluster-definitions)). On a cluster created in the interface the version the removal
-publishes carries every remaining node's `keepalived.conf` with the new peer list, and the next
-deploy rolls it out ([keepalived on the nodes](#keepalived-on-the-nodes)).
+certificates. It is refused for the node that reports holding the VIP and for a cluster's last node. A
+cluster has one to eight nodes ([Cluster definitions](#cluster-definitions)). On a cluster created in the
+interface the version the removal publishes carries every remaining node's `keepalived.conf` with the new
+peer list, and the next deploy rolls it out ([keepalived on the nodes](#keepalived-on-the-nodes)).
+
+That version is published before the files change, and the node is asked for one last deploy while
+its keys still work. The release it reads no longer names it, so it stops keepalived and HAProxy,
+disables both so a reboot does not bring them back, and leaves the marker `/etc/haprion/left-cluster`.
+Left running, its keepalived would keep the old peers: once the remaining nodes had their new list
+they would stop hearing it, and it would take the cluster's addresses beside them. The job says
+whether the node stopped. A node that cannot be reached - usually why it is being removed - is
+removed all the same, and the job says to stop keepalived and HAProxy on it or shut it down before it
+is started again. Added back later, the first release that names it starts both and removes the
+marker. A `keepalived.conf` somebody wrote (one whose first line is not the product's) is left alone,
+as it is by every deploy.
 
 A change cut short - a reboot, a killed process, power - cannot leave the files half changed for
 long. Before the first file is touched, the whole change (every file's content before and after, and

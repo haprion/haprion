@@ -27,6 +27,26 @@
         "files": { "type": "array", "maxItems": 6, "items": { "type": "string", "maxLength": 128 } },
         "host_key_fingerprint": { "oneOf": [{ "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$" }, { "type": "null" }] },
         "previous_host": { "description": "After a host change: the name the node was reached at before.", "type": "string", "maxLength": 253 },
+        "step_down": {
+          "description": "B319, after a removal: whether the node stopped keepalived and HAProxy on reading the release without it, or what is left to do. The removal stands either way.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["stopped"],
+              "properties": { "stopped": { "const": true } },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["stopped", "message"],
+              "properties": {
+                "stopped": { "const": false },
+                "message": { "type": "string", "minLength": 1, "maxLength": 2048 }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
         "publication": {
           "description": "B318: the version the node list was published as, or why it was not. The change above stands either way.",
           "oneOf": [

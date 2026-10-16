@@ -174,10 +174,20 @@ def main(
         writer.write(
             f"Removed {result.get('node')} from {cluster}.\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
-            "The node itself is untouched: it keeps serving what it has until it is shut down.\n"
+            + _stepped_down(result.get("step_down"), str(result.get("node")))
             + node_publish.said(result.get("publication"), cluster)
         )
     return 0
+
+
+def _stepped_down(step_down: object, node: str) -> str:
+    """Whether the removed node stopped serving (B319), in a line."""
+
+    if not isinstance(step_down, dict):
+        return ""
+    if step_down.get("stopped") is True:
+        return f"{node} stopped keepalived and HAProxy and will not start them at boot.\n"
+    return f"WARNING: {step_down.get('message')}\n"
 
 
 if __name__ == "__main__":

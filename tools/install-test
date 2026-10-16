@@ -512,6 +512,29 @@ def run_one(
                 raise Failed(f"a second deploy did not skip the current nodes:\n{output}")
 
         step("a second deploy changes nothing", converged)
+
+        def removed_steps_down() -> None:
+            """B319, Fas 18 finding 73: a removed node left running took the address."""
+
+            holder = run.wait_for_one_holder()
+            leaving = next(role for role in NODES if role != holder)
+            _, output = run.on("mgr", f"haprion-node remove -c {CLUSTER} {leaving}")
+            if "stopped keepalived and HAProxy" not in output:
+                raise Failed(f"removing {leaving} did not say it stepped down:\n{output}")
+            _, active = run.on(leaving, "systemctl is-active haproxy keepalived", check=False)
+            _, enabled = run.on(leaving, "systemctl is-enabled haproxy keepalived", check=False)
+            if active.split() != ["inactive", "inactive"] or enabled.split() != [
+                "disabled",
+                "disabled",
+            ]:
+                raise Failed(f"{leaving} still runs or starts at boot:\n{active}\n{enabled}")
+            run.deploy()
+            time.sleep(8)
+            if run.holders() != [holder]:
+                raise Failed(f"after the removal the address is on {run.holders()}")
+            run.answers_on_the_vip()
+
+        step("a removed node steps down, and the address stays on one node", removed_steps_down)
     except Failed as failure:
         print("FAILED")
         print()

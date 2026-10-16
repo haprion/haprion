@@ -413,6 +413,129 @@ class RemovingANode(unittest.TestCase):
                 self.remove(site, name=last)
 
 
+def node_status(*, serving: bool, owner: bool = False) -> AskNode:
+    def ask(_node: Node) -> NodeResponse:
+        return NodeResponse(
+            exit_code=0,
+            stdout=json.dumps(
+                {
+                    "node": "node-c",
+                    "cluster": "alpha",
+                    "vip": {"owner": owner},
+                    "keepalived": {"active": serving},
+                    "haproxy": {"active": serving},
+                }
+            ),
+        )
+
+    return ask
+
+
+class ARemovedNodeStepsDown(unittest.TestCase):
+    """B319, Fas 18 finding 73: removed and left running, the node took the VIP."""
+
+    def setUp(self) -> None:
+        self.events: list[str] = []
+        self.serving = True
+
+    def added(self, raw: str) -> Installation:
+        site = Installation(Path(raw))
+        site.add()
+        return site
+
+    def keys_held(self, site: Installation) -> bool:
+        return "node-c" in (site.root / "_haprion-pull/.ssh/authorized_keys").read_text()
+
+    def remove(
+        self, site: Installation, *, publication: dict[str, object] | None = None
+    ) -> Outcome:
+        def publish(remaining: Cluster) -> dict[str, object]:
+            self.events.append(
+                f"publish {','.join(node.name for node in remaining.nodes)} "
+                f"keys={self.keys_held(site)}"
+            )
+            return publication or {"version": 4, "hash": "d" * 40, "changed": True}
+
+        def leave(node: Node) -> NodeResponse:
+            self.events.append(f"leave {node.name} keys={self.keys_held(site)}")
+            self.serving = False
+            return NodeResponse(exit_code=0, stdout="stopped")
+
+        def ask(node: Node) -> NodeResponse:
+            return node_status(serving=self.serving)(node)
+
+        return enrollment.remove(
+            site.policy,
+            site.runtime(),
+            cluster="alpha",
+            name="node-c",
+            ask=ask,
+            publish=publish,
+            leave=leave,
+            locations=site.locations,
+            require_secure=False,
+        )
+
+    def test_the_cluster_without_it_is_published_and_it_leaves_before_its_keys_go(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = self.added(raw)
+
+            outcome = self.remove(site)
+
+            self.assertEqual(
+                self.events,
+                ["publish node-a,node-b keys=True", "leave node-c keys=True"],
+            )
+            self.assertFalse(self.keys_held(site))
+            self.assertEqual(outcome.as_dict()["step_down"], {"stopped": True})
+            self.assertEqual(outcome.as_dict()["publication"]["version"], 4)
+
+    def test_a_node_that_does_not_stop_is_removed_and_named(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = self.added(raw)
+
+            def stubborn(node: Node) -> NodeResponse:
+                return NodeResponse(exit_code=255, stdout="")
+
+            outcome = enrollment.remove(
+                site.policy,
+                site.runtime(),
+                cluster="alpha",
+                name="node-c",
+                ask=node_status(serving=True),
+                publish=lambda _cluster: {"version": 4, "hash": "d" * 40, "changed": True},
+                leave=stubborn,
+                locations=site.locations,
+                require_secure=False,
+            )
+
+            self.assertFalse(self.keys_held(site))
+            step = outcome.as_dict()["step_down"]
+            self.assertFalse(step["stopped"])
+            self.assertIn("node-c still runs keepalived or HAProxy (exit 255)", step["message"])
+            self.assertIn("takes the cluster's addresses", step["message"])
+
+            unreachable = enrollment.step_down(
+                Node(name="node-c", mgmt_host="node-c.example.com"),
+                {"version": 4},
+                stubborn,
+                silent,
+            )
+            self.assertIn("did not answer (exit 255)", str(unreachable))
+
+    def test_without_a_publication_the_node_is_not_asked_and_it_is_said(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = self.added(raw)
+
+            outcome = self.remove(
+                site, publication={"error": {"code": "publish_incomplete", "message": "busy"}}
+            )
+
+            self.assertEqual(self.events, ["publish node-a,node-b keys=True"])
+            self.assertFalse(self.keys_held(site))
+            self.assertIn("was not asked to stop", outcome.as_dict()["step_down"]["message"])
+
+
 class ChangingAHost(unittest.TestCase):
     """The same node at another name (B295): the pinned key moves, or nothing does."""
 
@@ -647,6 +770,43 @@ class TheHelper(unittest.TestCase):
             assert isinstance(error, dict)
             self.assertEqual(error["code"], "enrollment_invalid")
             self.assertEqual(site.snapshot(), before)
+
+    def test_a_removal_publishes_once_and_says_the_node_stepped_down(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Installation(Path(raw))
+            site.add()
+            request = node_helper.build_request("alpha", REQUEST_ID, action="remove", node="node-c")
+            left: list[str] = []
+            serving = [True]
+
+            def leave(node: Node) -> NodeResponse:
+                left.append(node.name)
+                serving[0] = False
+                return NodeResponse(exit_code=0, stdout="")
+
+            out, err = io.StringIO(), io.StringIO()
+            code = node_helper.main(
+                [],
+                policy_path=site.root / "runtime-policy.yaml",
+                input_stream=io.BytesIO(request.encode()),
+                output_stream=out,
+                error_stream=err,
+                require_secure=False,
+                require_root=False,
+                lock_root=site.root / "locks",
+                locations=site.locations,
+                ask=lambda node: node_status(serving=serving[0])(node),
+                publish=self.publishing,
+                leave=leave,
+            )
+
+            self.assertEqual((code, err.getvalue()), (0, ""))
+            answer = assert_contract("haprion-cluster-node", out.getvalue())
+            self.assertEqual(answer["result"]["step_down"], {"stopped": True})
+            self.assertEqual(left, ["node-c"])
+            self.assertEqual(len(self.published), 1)
+            self.assertEqual([node.name for node in self.published[0][0]], ["node-a", "node-b"])
+            self.assertEqual(self.published[0][1]["comment"], "node-c removed")
 
     def test_a_removal_names_its_node_and_nothing_else(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

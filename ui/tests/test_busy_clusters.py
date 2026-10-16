@@ -8,6 +8,7 @@ from unittest import mock
 
 from haprion_ui.db import Job
 from tests.test_certificates import reading as certificate_reading
+from tests.test_dashboard import reading as status_reading
 from tests.test_history import reading as history_reading
 from tests.test_job_page import job
 from tests.test_login import LoginTestCase, configuration
@@ -30,6 +31,9 @@ class BusyPagesTestCase(LoginTestCase):
             return [history_reading(cluster="alpha")]
         if source.endswith("cluster_certificates"):
             return [certificate_reading(cluster="alpha")]
+        if source.endswith("cluster_statuses"):
+            # A release is published: without one the button is not drawn (finding 60).
+            return [status_reading("done-single-owner.json")]
         return []
 
     def page(self, path: str, source: str, jobs: list[Job]) -> Any:
@@ -58,6 +62,24 @@ class EveryPageThatDeploysSaysTheClusterIsBusy(BusyPagesTestCase):
                 page = self.page(path, source, [])
                 self.assertEqual(page.status_code, 200)
                 self.assertIn(label, page.text)
+
+    def test_no_deploy_is_offered_while_nothing_is_published(self) -> None:
+        """Fas 18 finding 60: a deploy without a release failed on the first node."""
+
+        client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
+        self.sign_in(client)
+        unpublished = status_reading("done-single-owner.json")
+        result = dict(unpublished.result)
+        result["summary"] = {**result["summary"], "target": None}
+        with (
+            mock.patch(
+                "haprion_ui.db.cluster_statuses", return_value=[replace(unpublished, result=result)]
+            ),
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
+        ):
+            page = client.get("/")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn(">Deploy configuration</button>", page.text)
 
     def test_the_button_is_replaced_by_what_the_cluster_is_doing(self) -> None:
         running = [job(state="running", operation="deploy", cluster="alpha")]

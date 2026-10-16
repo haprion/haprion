@@ -10,6 +10,7 @@ from unittest import mock
 from uuid import uuid4
 
 from haprion_ui import db, jobs
+from tests.test_dashboard import reading as status_reading
 from tests.test_login import LoginTestCase, configuration
 
 FIXTURES = Path(__file__).parents[2] / "fixtures"
@@ -762,7 +763,14 @@ class TheBlockReachesThePages(LoginTestCase):
             replace(configuration(), management_writes=writes, clusters=("alpha",))
         )
         self.sign_in(client)
-        with mock.patch("haprion_ui.db.recent_jobs", return_value=rows):
+        with (
+            mock.patch("haprion_ui.db.recent_jobs", return_value=rows),
+            # A release is published: without one there is no deploy to offer (finding 60).
+            mock.patch(
+                "haprion_ui.db.cluster_statuses",
+                return_value=[status_reading("done-single-owner.json")],
+            ),
+        ):
             return str(client.get(path).text)
 
     def test_the_jobs_page_names_the_block_on_the_refused_job_without_a_button(self) -> None:

@@ -46,6 +46,8 @@ class ClusterFacts:
     vips: tuple[Vip, ...]
     logs_forwarded: bool
     backups_scheduled: bool
+    # The published version; None when nothing is published (Fas 18, finding 60).
+    target_version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +71,10 @@ class Item:
     action: str
     href: str
     optional: bool = False
+    # A row whose next step is a deploy: the cluster and the version it rolls
+    # out, drawn as the deploy form rather than a link (Fas 18, finding 59).
+    deploy: str | None = None
+    deploy_version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,12 +107,23 @@ def _cluster_item(clusters: tuple[ClusterFacts, ...]) -> Item:
             state += f" · {_plural(len(clusters), 'cluster')}"
         return Item("Nodes and a cluster", True, state, "", "")
     if clusters:
+        first = clusters[0]
+        if first.target_version is None:
+            return Item(
+                "Nodes and a cluster",
+                False,
+                f"{first.name} · nothing published yet",
+                "Proxies",
+                "/proxies",
+            )
         return Item(
             "Nodes and a cluster",
             False,
-            f"{clusters[0].name} · not deployed yet",
-            "Dashboard",
-            "/",
+            f"{first.name} · not deployed yet",
+            "Deploy configuration",
+            "",
+            deploy=first.name,
+            deploy_version=first.target_version,
         )
     return Item(
         "Nodes and a cluster", False, "No cluster yet", "Create cluster", "/settings/new-cluster"

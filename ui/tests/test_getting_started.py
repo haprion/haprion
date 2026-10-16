@@ -65,9 +65,23 @@ class TheTicks(unittest.TestCase):
         serving = item(facts(clusters=(cluster(),)), "Nodes and a cluster")
         self.assertTrue(serving.done)
         self.assertEqual(serving.state, "alpha · node-a, node-b · 203.0.113.10 on node-a")
-        undeployed = item(facts(clusters=(cluster(owner=None),)), "Nodes and a cluster")
+        unpublished = item(facts(clusters=(cluster(owner=None),)), "Nodes and a cluster")
+        self.assertFalse(unpublished.done)
+        self.assertEqual(unpublished.state, "alpha · nothing published yet")
+        self.assertEqual((unpublished.action, unpublished.deploy), ("Proxies", None))
+
+    def test_a_published_cluster_s_next_step_is_its_deploy(self) -> None:
+        """Fas 18 finding 59: the row said Dashboard and led to the page it was on."""
+
+        undeployed = item(
+            facts(clusters=(cluster(owner=None, target_version=1),)), "Nodes and a cluster"
+        )
         self.assertFalse(undeployed.done)
         self.assertEqual(undeployed.state, "alpha · not deployed yet")
+        self.assertEqual(
+            (undeployed.action, undeployed.deploy, undeployed.deploy_version),
+            ("Deploy configuration", "alpha", 1),
+        )
 
     def test_tls_is_done_when_every_vip_has_it_chosen(self) -> None:
         unset = (Vip("203.0.113.10", None, None), Vip("203.0.113.11", "modern", "198.51.100.5"))

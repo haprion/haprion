@@ -4520,6 +4520,7 @@ def build_router(config: Config) -> APIRouter:
                     ),
                     logs_forwarded=getattr(settings_views.get(view.cluster), "logs_set", False),
                     backups_scheduled=view.cluster in scheduled,
+                    target_version=view.target_version,
                 )
                 for view in dashboard_view.clusters
                 if view.configured

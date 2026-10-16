@@ -133,6 +133,14 @@ class OnTheDashboard(LoginTestCase):
         self.getting_started_hidden = True
         self.assertNotIn("Getting started", self.signed_in().get("/").text)
 
+    def test_without_a_cluster_it_replaces_the_empty_cluster_card(self) -> None:
+        page = self.signed_in().get("/").text
+        self.assertEqual(page.count('href="/settings/new-cluster"'), 1)
+        self.assertNotIn("No clusters configured", page)
+
+        self.getting_started_hidden = True
+        self.assertIn("No clusters configured", self.signed_in().get("/").text)
+
     def test_a_reader_does_not_see_it(self) -> None:
         self.assertNotIn("Getting started", self.signed_in(role="reader").get("/").text)
 

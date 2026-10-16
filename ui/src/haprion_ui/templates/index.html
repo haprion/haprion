@@ -76,6 +76,8 @@
   </ul>
 </section>
 {% endif %}
+{# Without a cluster the list's first row is the way to make one; the empty card below would only repeat it. #}
+{% if dashboard.clusters or not getting_started %}
 <section class="section-heading">
   <h2>Clusters</h2>
 </section>
@@ -226,4 +228,5 @@
   {% include "_no-clusters.html" %}
   {% endfor %}
 </div>
+{% endif %}
 {% endblock %}

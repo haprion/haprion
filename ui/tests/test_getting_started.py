@@ -150,6 +150,7 @@ class OnTheDashboard(LoginTestCase):
         page = self.signed_in().get("/").text
         self.assertIn("Getting started", page)
         self.assertIn('action="/getting-started/hide"', page)
+        self.assertIn(">Hide getting started</button>", page)
         self.assertIn("Enable the features you want to use", page)
 
         self.getting_started_hidden_at = datetime.now(UTC)

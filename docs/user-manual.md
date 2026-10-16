@@ -2698,9 +2698,9 @@ each, with the page that does it. A line is ticked when the installation shows i
 being pressed - a cluster whose VIP a node holds, a TLS version chosen on every VIP, an interface
 certificate that is not self-signed, a second account or sign-in through SSO, a certificate from
 ACME or NDES, every cluster's traffic log forwarded and backed up on a schedule. External monitoring
-and the features are optional. *Hide* removes the list for the whole installation. For seven days
-after, *Show getting started* beside *Clusters* brings it back; then the button goes too. The audit
-record says who did either.
+and the features are optional. *Hide getting started* removes the list for the whole installation.
+For seven days after, *Show getting started* beside *Clusters* brings it back; then the button goes
+too. The audit record says who did either.
 
 ### Needs attention, and external monitoring
 

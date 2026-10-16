@@ -297,6 +297,20 @@ class HelperBehaviourTests(HelperFixture):
         self.assertIn("now v8, not v7", err)
         self.assertEqual(self.triggered, [])
 
+    def test_nothing_published_is_refused_before_any_node(self) -> None:
+        """Fas 18 finding 60: a new cluster's first deploy failed on a node, in rsync's words."""
+
+        code, out, err = self.run_helper(
+            request(json=True), policy_path=self.runtime(published_hash=None)
+        )
+
+        self.assertEqual(code, 75)
+        document = assert_contract("haprion-deploy", out)
+        self.assertEqual(document["outcome"], "blocked")
+        self.assertEqual(document["error"]["code"], "nothing_published")
+        self.assertIn("publish a change first", err)
+        self.assertEqual(self.triggered, [])
+
     def test_without_an_expected_version_the_published_one_is_deployed(self) -> None:
         code, _shown, _ = self.run_helper(request())
 

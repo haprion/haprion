@@ -397,10 +397,21 @@ def main(
             # version was A cannot roll out B that somebody published since.
             #
             target = read_target(Path(cluster.publish_path), cluster.node_path)
-            if expected_version is not None and (
-                target is None or target.version != expected_version
-            ):
-                now = f"v{target.version}" if target is not None else "nothing readable"
+            #
+            # Nothing published is nothing to roll out (Fas 18, finding 60): a
+            # node asked to fetch a release that does not exist failed with
+            # rsync's words, after the first node had been touched. Said here,
+            # before any node is asked anything.
+            #
+            if target is None:
+                return refuse(
+                    "nothing_published",
+                    f"nothing is published for {request.cluster} yet. No node was touched; "
+                    "publish a change first.",
+                    EXIT_TARGET_CHANGED,
+                )
+            if expected_version is not None and (target.version != expected_version):
+                now = f"v{target.version}"
                 return refuse(
                     "expected_target_changed",
                     f"the published version is now {now}, not v{expected_version}, which this "

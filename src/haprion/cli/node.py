@@ -30,6 +30,7 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
+from haprion import node_publish
 from haprion.cli import node_helper
 from haprion.cli.caller import usage
 from haprion.envelope import new_request_id
@@ -158,6 +159,7 @@ def main(
             f"(was {result.get('previous_host')}).\n"
             f"Host key: {result.get('host_key_fingerprint')}\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
+            + node_publish.said(result.get("publication"), cluster)
         )
         return 0
     if result.get("action") == "added":
@@ -165,14 +167,15 @@ def main(
             f"Added {result.get('node')} ({result.get('host')}) to {cluster}.\n"
             f"Host key: {result.get('host_key_fingerprint')}\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
-            f"The node has no certificates or release yet: haprion-cert-deploy -c {cluster}, "
-            f"then haprion-deploy -c {cluster}\n"
+            f"The node has no certificates yet: haprion-cert-deploy -c {cluster}\n"
+            + node_publish.said(result.get("publication"), cluster)
         )
     else:
         writer.write(
             f"Removed {result.get('node')} from {cluster}.\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
             "The node itself is untouched: it keeps serving what it has until it is shut down.\n"
+            + node_publish.said(result.get("publication"), cluster)
         )
     return 0
 

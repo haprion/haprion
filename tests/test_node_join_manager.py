@@ -32,6 +32,7 @@ from haprion.config import Node, load_policy
 from haprion.dns_profile_keys import generate, render_private_key
 from haprion.node_enrollment import Enrollment, EnrollmentError
 from haprion.status_collect import NodeResponse
+from tests.contract_schema import published
 from tests.test_node_enrollment import (
     CERT_KEY,
     CONFIG_KEY,
@@ -305,6 +306,7 @@ class TheHelperOpensTheSeal(unittest.TestCase):
             locations=self.site.locations,
             ask=answering(),
             join_node=join,
+            publish=published,
         )
         return code, err.getvalue()
 

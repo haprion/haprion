@@ -20,10 +20,10 @@ from haprion import change_journal
 from haprion import node_enrollment as enrollment
 from haprion.cli import node as node_command
 from haprion.cli import node_helper
-from haprion.config import Node, RuntimeConfig, load_policy, load_runtime_config
+from haprion.config import Cluster, Node, RuntimeConfig, load_policy, load_runtime_config
 from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, Locations, Outcome
 from haprion.status_collect import NodeResponse
-from tests.contract_schema import assert_contract
+from tests.contract_schema import assert_contract, published
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "77777777-7777-4777-8777-777777777777"
@@ -513,6 +513,13 @@ class ChangingAHost(unittest.TestCase):
 class TheHelper(unittest.TestCase):
     """The request the worker and the terminal send, answered in an envelope."""
 
+    def publishing(self, request: object, cluster: Cluster, **options: object) -> dict[str, object]:
+        """The publication that follows a node change (B318), recorded rather than run."""
+
+        self.published = getattr(self, "published", [])
+        self.published.append((cluster.nodes, options))
+        return published(request, cluster, **options)
+
     def run_helper(
         self, site: Installation, request: str, *, ask: AskNode | None = None
     ) -> tuple[int, dict[str, object] | None, str]:
@@ -529,6 +536,7 @@ class TheHelper(unittest.TestCase):
             lock_root=site.root / "locks",
             locations=site.locations,
             ask=ask or answering(),
+            publish=self.publishing,
         )
         printed = out.getvalue()
         return code, json.loads(printed) if printed else None, err.getvalue()
@@ -554,6 +562,17 @@ class TheHelper(unittest.TestCase):
             self.assertEqual(result["action"], "added")
             self.assertEqual(result["node"], "node-c")
             self.assertEqual(result["host_key_fingerprint"], enrollment.fingerprint(HOST_KEY))
+            assert_contract("haprion-cluster-node", json.dumps(document))
+            #
+            # B318: the node list with the new node is published, as a version
+            # saying what it did, and the result says which.
+            #
+            self.assertEqual(
+                result["publication"], {"version": 2, "hash": "c" * 40, "changed": True}
+            )
+            [(nodes, options)] = self.published
+            self.assertEqual(nodes[-1].name, "node-c")
+            self.assertEqual(options["comment"], "node-c added")
 
     def interrupted_addition(self, site: Installation) -> None:
         """An addition killed after its files were written, before the node answered."""
@@ -678,6 +697,7 @@ class TheCommand(unittest.TestCase):
                     "host": "node-c.example.com",
                     "files": ["clusters.yaml"],
                     "host_key_fingerprint": "SHA256:x",
+                    "publication": {"version": 5, "hash": "c" * 40, "changed": True},
                 },
             }
             return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
@@ -694,7 +714,8 @@ class TheCommand(unittest.TestCase):
         parameters = json.loads(sent[0])["parameters"]
         self.assertEqual(parameters["host"], "node-c.example.com")
         self.assertEqual(enrollment.parse(parameters["block"]), block())
-        self.assertIn("haprion-cert-deploy -c alpha, then haprion-deploy -c alpha", out.getvalue())
+        self.assertIn("no certificates yet: haprion-cert-deploy -c alpha", out.getvalue())
+        self.assertIn("Published as version 5; haprion-deploy -c alpha", out.getvalue())
 
     def test_a_refusal_is_printed_as_its_sentence(self) -> None:
         def run(_request: str) -> subprocess.CompletedProcess[str]:

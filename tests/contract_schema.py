@@ -50,3 +50,9 @@ def assert_contract(command: str, stdout: str) -> dict[str, Any]:
     if not isinstance(document, dict):
         raise AssertionError(f"{command} document is not an object")
     return document
+
+
+def published(_request: object, _cluster: object, **_options: object) -> dict[str, object]:
+    """A node helper's publication in a test that is about the node change (B318)."""
+
+    return {"version": 2, "hash": "c" * 40, "changed": True}

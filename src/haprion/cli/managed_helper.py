@@ -64,6 +64,7 @@ from haprion.repo_snapshot import (
     read_tree_files,
     resolve_head,
 )
+from haprion.status_collect import read_target
 from haprion.version_history import (
     count_versions,
     recorded_on,
@@ -321,18 +322,9 @@ def _publish(
     if short is not None:
         return refuse("stick_counters_short", short, BLOCKED_EXIT)
 
-    if snapshot.unchanged:
-        problem = stale()
-        if problem is not None:
-            return refuse("tls_defaults_stale", problem, BLOCKED_EXIT)
-        metadata = ReleaseMetadata(
-            cluster=request.cluster,
-            version=count_versions(repo, head),
-            commit=head,
-            timestamp=clock().strftime(TIMESTAMP_FORMAT),
-        )
-        published_at = None
-    else:
+    def invalid() -> int | None:
+        """The sandbox's verdict on the artifact, as a refusal; None when it passes."""
+
         certificate = read_validation_certificate(
             cluster.validation_certs / VALIDATION_CERTIFICATE, require_secure=require_secure
         )
@@ -375,6 +367,35 @@ def _publish(
                 65,
                 {"diagnostics": diagnostics},
             )
+        return None
+
+    if snapshot.unchanged:
+        #
+        # A version whose release was never installed has never been checked
+        # either: a new cluster's first version is committed when the cluster
+        # is made and published after (B318, 26-10-16). Checked here before it
+        # goes out; a retry of a version that was already checked and
+        # installed is not checked again.
+        #
+        published = read_target(cluster.publish_path, cluster.node_path)
+        if published is None or published.hash != head:
+            refused = invalid()
+            if refused is not None:
+                return refused
+        problem = stale()
+        if problem is not None:
+            return refuse("tls_defaults_stale", problem, BLOCKED_EXIT)
+        metadata = ReleaseMetadata(
+            cluster=request.cluster,
+            version=count_versions(repo, head),
+            commit=head,
+            timestamp=clock().strftime(TIMESTAMP_FORMAT),
+        )
+        published_at = None
+    else:
+        refused = invalid()
+        if refused is not None:
+            return refused
         problem = stale()
         if problem is not None:
             return refuse("tls_defaults_stale", problem, BLOCKED_EXIT)

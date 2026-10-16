@@ -278,14 +278,32 @@ class Run:
             if warnings:
                 raise Failed(f"{role}: the join warned on an empty node:\n" + "\n".join(warnings))
 
-    def create_cluster(self, blocks: list[str]) -> None:
-        hosts = " ".join(f"--host {role}" for role in NODES)
-        self.on(
+    def create_cluster(self, block: str) -> None:
+        """The cluster with its first node: its first version is published with it (B318)."""
+
+        _, output = self.on(
             "mgr",
             f"haprion-cluster add -c {CLUSTER} --display-name Alpha --vip {self.address('vip')} "
-            f"--node-path {CLUSTER} {hosts}",
-            stdin="\n".join(blocks) + "\n",
+            f"--node-path {CLUSTER} --host {NODES[0]}",
+            stdin=block + "\n",
         )
+        if "Published as version 1;" not in output:
+            raise Failed(f"the new cluster's first version was not published:\n{output}")
+
+    def first_deploy_is_version_one(self) -> None:
+        self.deploy()
+        target = (self.status().get("result") or {}).get("summary", {}).get("target") or {}
+        if target.get("version") != 1:
+            raise Failed(f"the first deploy did not roll out version 1: {target}")
+
+    def add_node(self, role: str, block: str) -> None:
+        """A node added to a cluster that is serving: the node list is the next version."""
+
+        _, output = self.on(
+            "mgr", f"haprion-node add -c {CLUSTER} --host {role}", stdin=block + "\n"
+        )
+        if "Published as version 2;" not in output:
+            raise Failed(f"adding {role} published no new version:\n{output}")
 
     def publish(self) -> None:
         self.on(
@@ -455,7 +473,13 @@ def run_one(
             for role in NODES
         ]
         step(
-            "haprion-cluster add with both blocks: both joined", lambda: run.create_cluster(blocks)
+            f"haprion-cluster add with {NODES[0]}: joined, version 1 published",
+            lambda: run.create_cluster(blocks[0]),
+        )
+        step("the first deploy rolls out version 1", run.first_deploy_is_version_one)
+        step(
+            f"haprion-node add {NODES[1]}: joined, version 2 published",
+            lambda: run.add_node(NODES[1], blocks[1]),
         )
         step("the joins warned of nothing", run.joined_quietly)
         step("an object published", run.publish)

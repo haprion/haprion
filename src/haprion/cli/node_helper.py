@@ -39,7 +39,15 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import cert_registry, change_journal, cluster_definition, node_enrollment, node_join
+from haprion import (
+    cert_registry,
+    change_journal,
+    cluster_definition,
+    node_enrollment,
+    node_join,
+    node_publish,
+    peers,
+)
 from haprion.cert_lock import DEFAULT_LOCK_PATH as CERTIFICATE_LOCK
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.config import (
@@ -341,6 +349,7 @@ def _define_work(
     places: cluster_definition.Places | None,
     tools: cluster_definition.Tools | None,
     require_secure: bool,
+    addresses: node_publish.Addresses,
 ) -> Work:
     parameters = request.parameters
     action = _text(parameters, "action")
@@ -413,7 +422,33 @@ def _define_work(
         places=places,
         tools=tools,
         require_secure=require_secure,
+        addresses=addresses,
     )
+
+
+type Publish = Callable[..., dict[str, Any]]
+
+
+def _publish_with(addresses: node_publish.Addresses) -> Publish:
+    def publish(request: HelperRequest, cluster: Any, **options: Any) -> dict[str, Any]:
+        return node_publish.publish(request, cluster, addresses=addresses, **options)
+
+    return publish
+
+
+def _comment(request: HelperRequest, outcome: Any) -> str | None:
+    """What the version a node change publishes says it did; None when it publishes none."""
+
+    parameters = request.parameters
+    action = parameters.get("action")
+    if request.operation == DEFINE:
+        return f"cluster {request.cluster} created" if action == "add" else None
+    node = getattr(getattr(outcome, "node", None), "name", parameters.get("node"))
+    if action == "add":
+        return f"{node} added"
+    if action == "remove":
+        return f"{node} removed"
+    return f"{node} moved to {parameters.get('host')}"
 
 
 def main(
@@ -433,6 +468,8 @@ def main(
     tools: cluster_definition.Tools | None = None,
     ask: AskNode | None = None,
     join_node: JoinNode | None = None,
+    addresses: node_publish.Addresses = peers.addresses,
+    publish: Publish | None = None,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     output: TextIO = output_stream or sys.stdout
@@ -464,7 +501,7 @@ def main(
         work = (
             _node_work(request, locations, require_secure)
             if request.operation == OPERATION
-            else _define_work(request, locations, places, tools, require_secure)
+            else _define_work(request, locations, places, tools, require_secure, addresses)
         )
     except HelperProtocolError as exc:
         return _refuse(request, output, errors, "bad_input", str(exc), exc.exit_code)
@@ -544,6 +581,21 @@ def main(
                     )
                 runtime = load_runtime_config(policy, require_secure=require_secure)
             outcome = work(policy, runtime, ask, join_node)
+            #
+            # The node list changed, so the configuration did: published as a
+            # version while the cluster's lock is still held (B318). A cluster
+            # removed has nothing left to publish.
+            #
+            comment = _comment(request, outcome)
+            publication = None
+            if comment is not None:
+                changed = load_runtime_config(policy, require_secure=require_secure)
+                publication = (publish or _publish_with(addresses))(
+                    request,
+                    changed.cluster(request.cluster),
+                    comment=comment,
+                    require_secure=require_secure,
+                )
     except LockBusy as exc:
         return _refuse(request, output, errors, "operation_locked", str(exc), exc.exit_code)
     except cert_registry.RegistryError as exc:
@@ -572,6 +624,8 @@ def main(
             "action": DONE[str(request.parameters["action"])],
             **result,
         }
+    if publication is not None:
+        result["publication"] = publication
     write_document(
         output,
         envelope(

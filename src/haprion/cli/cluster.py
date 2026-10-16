@@ -30,6 +30,7 @@ import argparse
 import sys
 from typing import TextIO
 
+from haprion import node_publish
 from haprion.cli import node_helper
 from haprion.cli.node import RunHelper, _answer, json_answer, run_helper
 from haprion.envelope import new_request_id
@@ -113,8 +114,8 @@ def main(
             f"Created {args.cluster} with {names}.\n"
             f"Host keys: {', '.join(str(item) for item in result.get('host_key_fingerprints', []))}\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
-            f"Next: publish its network and objects, then haprion-cert-deploy -c {args.cluster} "
-            f"and haprion-deploy -c {args.cluster}\n"
+            f"The nodes have no certificates yet: haprion-cert-deploy -c {args.cluster}\n"
+            + node_publish.said(result.get("publication"), args.cluster)
         )
     else:
         writer.write(

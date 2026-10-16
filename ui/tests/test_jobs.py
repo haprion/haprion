@@ -28,6 +28,7 @@ import psycopg
 
 from haprion_ui import db, jobs, operations
 from haprion_ui.db import Job
+from tests.test_queue_route import queued
 
 TOKEN = uuid4()
 
@@ -551,3 +552,36 @@ class WhatAFailureIsAllowedToSay(unittest.TestCase):
         )
 
         self.assertEqual(jobs.diagnostics_of(job), "ERROR: [x] y")
+
+
+class ANodeChangeThatWasNotPublished(unittest.TestCase):
+    """B318: the change stands and the job is done; the page says what did not happen."""
+
+    def test_the_helper_s_reason_is_the_note(self) -> None:
+        job = replace(
+            queued(operation="cluster_node", cluster="alpha"),
+            state="done",
+            outcome="done",
+            result={
+                "result": {
+                    "action": "added",
+                    "publication": {
+                        "error": {
+                            "code": "dirty_worktree",
+                            "message": "there are unsaved changes in the cluster worktree.",
+                        }
+                    },
+                }
+            },
+        )
+        self.assertEqual(
+            jobs.publication_note(job),
+            "The node list was not published: there are unsaved changes in the cluster worktree.",
+        )
+
+    def test_a_published_list_needs_no_note(self) -> None:
+        job = replace(
+            queued(operation="cluster_node", cluster="alpha"),
+            result={"result": {"publication": {"version": 2, "hash": "c" * 40, "changed": True}}},
+        )
+        self.assertIsNone(jobs.publication_note(job))

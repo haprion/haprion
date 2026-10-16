@@ -19,11 +19,12 @@ from haprion import candidate_validation, change_journal, cluster_definition, no
 from haprion.cli import cluster as cluster_command
 from haprion.cli import node_helper
 from haprion.cluster_definition import Places, Tools
-from haprion.config import RuntimeConfig, load_policy, load_runtime_config
+from haprion.config import ConfigError, RuntimeConfig, load_policy, load_runtime_config
 from haprion.git_command import GIT
 from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, Locations
 from haprion.status_collect import NodeResponse
-from tests.contract_schema import assert_contract
+from haprion.version_history import count_versions
+from tests.contract_schema import assert_contract, published
 from tests.test_node_enrollment import key
 
 BASE = Path(__file__).resolve().parents[1]
@@ -213,7 +214,10 @@ class Site:
         return cluster_definition.definition("gamma", **fields)
 
     def add(
-        self, spec: cluster_definition.Definition | None = None, ask: AskNode | None = None
+        self,
+        spec: cluster_definition.Definition | None = None,
+        ask: AskNode | None = None,
+        addresses: Any = None,
     ) -> Any:
         return cluster_definition.add(
             self.policy,
@@ -224,6 +228,7 @@ class Site:
             places=self.places,
             tools=self.tools,
             require_secure=False,
+            addresses=addresses,
         )
 
     def remove(self, cluster: str = "alpha") -> Any:
@@ -313,7 +318,7 @@ class CreatingACluster(unittest.TestCase):
                 text=True,
                 check=True,
             ).stdout
-            self.assertEqual(log.strip(), "Initial layout for cluster gamma")
+            self.assertEqual(log.strip(), "Cluster gamma created")
             # A publish refuses a repository without its own identity (Fas 18, 26-10-15).
             for setting, value in cluster_definition.REPOSITORY_IDENTITY:
                 kept = subprocess.run(
@@ -342,6 +347,40 @@ class CreatingACluster(unittest.TestCase):
                 (site.root / "_haprion-cert-pull/.ssh/authorized_keys").read_text(),
             )
             self.assertEqual(len(outcome.fingerprints), 2)
+
+    def test_the_first_version_carries_the_files_its_nodes_need(self) -> None:
+        """B318: version 1 is the cluster being made, keepalived for each node included."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+
+            site.add(
+                addresses=lambda cluster: tuple(
+                    (node.name, f"198.51.100.{number}")
+                    for number, node in enumerate(cluster.nodes, start=1)
+                )
+            )
+
+            work = site.config_root / "gamma"
+            tracked = subprocess.run(
+                [GIT, "-C", str(work), "ls-files"], capture_output=True, text=True, check=True
+            ).stdout.split()
+            self.assertIn("managed/keepalived/node-node-c.conf", tracked)
+            self.assertIn("managed/keepalived/node-node-d.conf", tracked)
+            self.assertEqual(count_versions(work), 1)
+
+    def test_nodes_that_cannot_be_looked_up_leave_the_layout_alone(self) -> None:
+        def unresolved(_cluster: Any) -> tuple[tuple[str, str], ...]:
+            raise ConfigError("node-c.example.com does not resolve")
+
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+
+            site.add(addresses=unresolved)
+
+            work = site.config_root / "gamma"
+            self.assertFalse((work / "managed/keepalived").exists())
+            self.assertTrue((work / "managed/network.yaml").exists())
 
     def test_each_node_gets_an_empty_backup_directory(self) -> None:
         """Fas 18 (26-10-16): a new node's backups read as none yet, not as unreadable."""
@@ -592,6 +631,7 @@ class TheHelper(unittest.TestCase):
             places=site.places,
             tools=site.tools,
             ask=ask or answering_as("gamma"),
+            publish=published,
         )
         return code, assert_contract("haprion-cluster-define", out.getvalue())
 
@@ -681,6 +721,7 @@ class TheCommand(unittest.TestCase):
                     "nodes": [{"name": "node-c"}, {"name": "node-d"}],
                     "files": ["clusters.yaml"],
                     "host_key_fingerprints": ["SHA256:x", "SHA256:y"],
+                    "publication": {"version": 1, "hash": "c" * 40, "changed": False},
                 },
             }
             return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
@@ -721,7 +762,8 @@ class TheCommand(unittest.TestCase):
         self.assertEqual(parameters["address_prefix"], 24)
         self.assertNotIn("address_interface", parameters)
         self.assertIn("Created gamma with node-c, node-d.", out.getvalue())
-        self.assertIn("haprion-cert-deploy -c gamma and haprion-deploy -c gamma", out.getvalue())
+        self.assertIn("no certificates yet: haprion-cert-deploy -c gamma", out.getvalue())
+        self.assertIn("Published as version 1; haprion-deploy -c gamma", out.getvalue())
 
     def test_remove_names_the_archive_and_says_the_nodes_keep_serving(self) -> None:
         def run(request: str) -> subprocess.CompletedProcess[str]:

@@ -486,6 +486,24 @@ def diagnostics_of(job: Job) -> str | None:
     return job.stderr_excerpt or None
 
 
+def publication_note(job: Job) -> str | None:
+    """A node change whose node list could not be published, in the helper's words (B318).
+
+    The change itself stands, so the job is done; what it did not do is said
+    here, or the cluster's release would quietly lack the node.
+    """
+
+    if job.operation not in {"cluster_node", "cluster_define"} or not isinstance(job.result, dict):
+        return None
+    body = job.result.get("result")
+    publication = body.get("publication") if isinstance(body, dict) else None
+    error = publication.get("error") if isinstance(publication, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    if not isinstance(message, str) or not message.strip():
+        return None
+    return f"The node list was not published: {message.strip()}"
+
+
 def deletion_note(job: Job) -> str | None:
     """One sentence per state for a `cert_delete` or `cert_target` result, or None.
 
@@ -608,7 +626,7 @@ def _view(
         # row would bury the ones that mean something.
         #
         diagnostics=diagnostics_of(job) if diagnostics and ended_badly else None,
-        note=deletion_note(job),
+        note=deletion_note(job) or publication_note(job),
     )
 
 

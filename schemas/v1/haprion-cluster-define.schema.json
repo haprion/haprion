@@ -43,7 +43,38 @@
           "maxItems": 8,
           "items": { "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$" }
         },
-        "warnings": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 2048 } }
+        "warnings": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 2048 } },
+        "publication": {
+          "description": "B318: the version the node list was published as, or why it was not. The change above stands either way.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["version", "hash", "changed"],
+              "properties": {
+                "version": { "type": "integer", "minimum": 1 },
+                "hash": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+                "changed": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["error"],
+              "properties": {
+                "error": {
+                  "type": "object",
+                  "required": ["code", "message"],
+                  "properties": {
+                    "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+                    "message": { "type": "string", "minLength": 1, "maxLength": 2048 }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
       },
       "additionalProperties": false
     }

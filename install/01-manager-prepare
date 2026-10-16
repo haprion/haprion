@@ -157,7 +157,7 @@ for cluster in $(each_cluster); do
             git -C "$bare" config user.name haprion
             git -C "$bare" config user.email haprion@localhost
             git -C "$seed" -c user.name=haprion -c user.email=haprion@localhost \
-                commit -m "Initial layout for cluster ${cluster}" >/dev/null
+                commit -m "Cluster ${cluster} created" >/dev/null
             git -C "$seed" push --quiet "$bare" main
             rm -rf "$seed"
             log "  seeded   ${bare} with the initial layout"

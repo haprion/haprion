@@ -43,7 +43,15 @@ from typing import Any
 
 import yaml
 
-from haprion import backups, cert_registry, change_journal, node_enrollment, safe_yaml, tls_policy
+from haprion import (
+    backups,
+    cert_registry,
+    change_journal,
+    node_enrollment,
+    node_publish,
+    safe_yaml,
+    tls_policy,
+)
 from haprion.change_journal import FileChange as Change
 from haprion.change_journal import Record
 from haprion.config import (
@@ -702,8 +710,16 @@ def _repository_paths(policy: PathPolicy, cluster: str) -> tuple[Path, Path, Pat
     )
 
 
-def _create_repository(policy: PathPolicy, spec: Definition, tools: Tools) -> list[Path]:
-    """The bare history and its worktree, seeded, as step 1 makes them. Returns what it made."""
+def _create_repository(
+    policy: PathPolicy,
+    spec: Definition,
+    tools: Tools,
+    files: Mapping[str, bytes] | None = None,
+) -> list[Path]:
+    """The bare history and its worktree, seeded, as step 1 makes them. Returns what it made.
+
+    `files` is the first version's tree; the layout alone when not given.
+    """
 
     bare, work, publish = _repository_paths(policy, spec.cluster)
     made: list[Path] = []
@@ -724,7 +740,7 @@ def _create_repository(policy: PathPolicy, spec: Definition, tools: Tools) -> li
             _checked(tools.run([GIT, "-C", str(bare), "config", setting, value]), "git config")
         with tempfile.TemporaryDirectory() as raw:
             seed = Path(raw) / "seed"
-            for relative, content in seed_files(spec.vip).items():
+            for relative, content in (files or seed_files(spec.vip)).items():
                 path = seed / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
@@ -748,7 +764,7 @@ def _create_repository(policy: PathPolicy, spec: Definition, tools: Tools) -> li
                         "commit",
                         "--quiet",
                         "-m",
-                        f"Initial layout for cluster {spec.cluster}",
+                        f"Cluster {spec.cluster} created",
                     ]
                 ),
                 "git commit",
@@ -908,7 +924,15 @@ def add(
     places: Places | None = None,
     tools: Tools | None = None,
     require_secure: bool = True,
+    addresses: node_publish.Addresses | None = None,
 ) -> Outcome:
+    """Create the cluster with its first nodes.
+
+    With `addresses` (the node helper's), the first version carries the files
+    generated for those nodes, so publishing it after is version 1 going out
+    (B318); without, the layout alone.
+    """
+
     tools = tools or Tools()
     locations = locations or Locations()
     changes = plan_add(
@@ -931,8 +955,15 @@ def add(
         made=_repository_paths(policy, spec.cluster),
         created=backup_directories,
     )
+    files = seed_files(spec.vip)
+    if addresses is not None:
+        clusters_after, registry_after = (change.after for change in changes[:2])
+        created = _candidate(
+            policy, clusters_after, registry_after, require_secure=require_secure
+        ).cluster(spec.cluster)
+        files = node_publish.seed(files, created, addresses=addresses)
     with change_journal.transaction(record, locations.journal):
-        _create_repository(policy, spec, tools)
+        _create_repository(policy, spec, tools, files)
         for directory in backup_directories:
             directory.mkdir(mode=0o700)
         change_journal.apply(changes)

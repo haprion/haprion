@@ -88,6 +88,7 @@ ESSENTIAL = frozenset(
         "tac",
         "tail",
         "tar",
+        "touch",
         "tr",
         "wc",
     ]

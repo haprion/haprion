@@ -5140,8 +5140,10 @@ def build_router(config: Config) -> APIRouter:
         _token, _registry, context = _page_context(request, gate)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
+            hidden_at = db.getting_started_hidden_at(connection)
         listed = listed_clusters(request, config)
-        rows = cluster_nodes.node_rows(_status_row(request, cluster))
+        status = _status_row(request, cluster)
+        rows = cluster_nodes.node_rows(status)
         return TEMPLATES.TemplateResponse(
             request,
             "settings-nodes.html",
@@ -5149,6 +5151,12 @@ def build_router(config: Config) -> APIRouter:
                 **context,
                 # Arrived from Create cluster: what was joined (finding 57).
                 "joined": [row.name for row in rows] if joined else [],
+                #
+                # Nothing deployed yet: where to go next is the Dashboard, and
+                # Getting started there when an admin still has it (finding 69).
+                #
+                "undeployed": dashboard.not_deployed(status),
+                "getting_started_listed": gate.role == "admin" and hidden_at is None,
                 "section": "settings",
                 "cluster": cluster,
                 "accent": cluster_identity.accent_index(cluster),

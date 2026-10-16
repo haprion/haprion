@@ -102,6 +102,28 @@ class ThePage(NodesPage):
             self.client_for(writes=False).get("/settings/nodes/edge-demo").status_code, 404
         )
 
+    def test_before_the_first_deploy_the_page_says_where_to_go(self) -> None:
+        """Finding 69: after Joined it was not plain what comes next."""
+
+        def undeployed(row: Any) -> Any:
+            if row.cluster != "edge-demo":
+                return row
+            result = copy.deepcopy(dict(row.result))
+            for node in result["nodes"]:
+                node["status"]["release"] = {"version": None, "hash": None}
+            return replace(row, result=result)
+
+        self.rows = [undeployed(row) for row in demo.status_rows(NOW)]
+        page = self.client_for().get("/settings/nodes/edge-demo").text
+        self.assertIn("Nothing is deployed yet", page)
+        self.assertIn('<a href="/">Dashboard</a>, where Getting started continues.', page)
+        self.getting_started_hidden_at = NOW
+        page = self.client_for().get("/settings/nodes/edge-demo").text
+        self.assertIn('<a href="/">Dashboard</a>.</p>', page)
+        self.assertNotIn(
+            "Nothing is deployed yet", self.client_for().get("/settings/nodes/service-demo").text
+        )
+
     def test_the_settings_card_lists_each_cluster_s_nodes(self) -> None:
         card = self.client_for().get("/settings").text.split('id="nodes"')[1].split("</section>")[0]
         self.assertIn("edge-a, edge-b", card)

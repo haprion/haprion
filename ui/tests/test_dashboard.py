@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -192,19 +193,22 @@ class HealthDerivation(unittest.TestCase):
             nodes.append(node)
         result["nodes"] = nodes
         result["summary"] = {**result["summary"], "vip_state": "no_owner", "vip_owners": []}
-        view = self.dashboard(
-            ClusterStatus(
-                cluster=status.cluster,
-                observed_at=status.observed_at,
-                outcome=status.outcome,
-                result=result,
-                warnings=status.warnings,
-                error=status.error,
-                poll_error=None,
-            )
+        undeployed = ClusterStatus(
+            cluster=status.cluster,
+            observed_at=status.observed_at,
+            outcome=status.outcome,
+            result=result,
+            warnings=status.warnings,
+            error=status.error,
+            poll_error=None,
         )
+        view = self.dashboard(undeployed)
         cluster = view.clusters[0]
         self.assertEqual([node.label for node in cluster.nodes], ["Not deployed"] * len(nodes))
+        # The nodes page reads the same rule (Fas 18, finding 69).
+        self.assertTrue(dashboard.not_deployed(undeployed))
+        self.assertFalse(dashboard.not_deployed(status))
+        self.assertFalse(dashboard.not_deployed(None))
         self.assertEqual((cluster.label, cluster.tone), ("Not deployed", "unknown"))
         #
         # Said once: no failover state, address, runtime or statistics to
@@ -243,6 +247,7 @@ class HealthDerivation(unittest.TestCase):
             (cluster.nodes[1].label, cluster.nodes[1].tone), ("Not deployed", "unknown")
         )
         self.assertNotEqual(cluster.label, "Not deployed")
+        self.assertFalse(dashboard.not_deployed(replace(status, result=result)))
 
     def test_stats_failure_is_distinct_from_an_unreachable_node(self) -> None:
         status = reading("done-single-owner.json")

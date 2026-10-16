@@ -367,6 +367,15 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
     )
 
 
+def not_deployed(reading: Any | None) -> bool:
+    """The cluster's card would say *Not deployed*: nodes, none with a release yet."""
+
+    values = _mapping(reading.result if reading is not None else None).get("nodes")
+    if not isinstance(values, list) or not values:
+        return False
+    return all(_node_view(value).label == NOT_DEPLOYED for value in values)
+
+
 def _empty_cluster(cluster: str, *, configured: bool) -> ClusterView:
     return ClusterView(
         cluster=cluster,

@@ -1892,16 +1892,24 @@ deploy carry the new address to the nodes.
 After writing, the manager asks the node for its status as the status identity, with strict host
 key checking. The node reports its own host name and cluster, so an answer proves the host key, that
 the node has the manager's keys - from the join, or from step 3's answers on a node prepared by
-hand - and that the block described the node that answered. Anything short of that puts every file back and says why. The node has no certificates
-and no release until `haprion-cert-deploy -c <cluster>` and then `haprion-deploy -c <cluster>` run
-(*Deploy certificates* and *Deploy configuration* on the dashboard); a deploy before the
-certificates stops and says so, since the node has none.
+hand - and that the block described the node that answered. Anything short of that puts every file back and says why.
+
+A change to the node list is a change to the configuration: every node's `keepalived.conf` names
+its peers. So an addition, a removal and a host change are each published as a version of their
+own - *Nodes: node-c added* in the cluster's history - through the same path an object change
+takes, generated, checked with `haproxy -c` and released. The cluster then shows as behind until
+it is deployed. A publish that is refused - somebody's unsaved edit in the cluster's worktree, a
+configuration that does not validate - leaves the node change made and says why on the job and in
+the terminal; the release keeps the nodes it had until a change is published. The new node has no
+certificates until `haprion-cert-deploy -c <cluster>` runs (*Deploy certificates* on the
+dashboard); a deploy before the certificates stops and says so, since the node has none.
 
 A removal takes the node's lines out of all six files, so it can no longer fetch configuration or
 certificates. It is refused for the node that reports holding the VIP and for a cluster's last node; the node
 itself is not touched and keeps serving until it is shut down. A cluster has one to eight nodes
-([Cluster definitions](#cluster-definitions)). On a cluster created in the interface the next deploy rewrites every
-node's `keepalived.conf` with the new peer list ([keepalived on the nodes](#keepalived-on-the-nodes)).
+([Cluster definitions](#cluster-definitions)). On a cluster created in the interface the version the removal
+publishes carries every remaining node's `keepalived.conf` with the new peer list, and the next
+deploy rolls it out ([keepalived on the nodes](#keepalived-on-the-nodes)).
 
 A change cut short - a reboot, a killed process, power - cannot leave the files half changed for
 long. Before the first file is touched, the whole change (every file's content before and after, and
@@ -1949,10 +1957,13 @@ must all be free; a certificate named must already be in the registry. A cluster
 plain HTTP and TCP; an HTTPS object waits for a certificate issued or uploaded for it.
 
 The new cluster is polled and drawn from the poller's next pass ([Which clusters get
-polled](#which-clusters-get-polled)). It has no release until its network description and objects
-are published and `haprion-cert-deploy -c <cluster>` and then `haprion-deploy -c <cluster>` run, and no backup schedule until one is set on
-the Backups page; its retention is the default until then. The first deploy also writes each node's
-`keepalived.conf` and starts keepalived ([keepalived on the nodes](#keepalived-on-the-nodes)).
+polled](#which-clusters-get-polled)). Its first version, *Cluster alpha created*, is the layout
+and the files generated for its nodes, and it is published as the cluster is made: version 1, with
+no objects yet, checked like any other. The first deploy rolls it out - it writes each node's
+`keepalived.conf` and starts keepalived, so the VIP is held before there is anything to serve
+([keepalived on the nodes](#keepalived-on-the-nodes)). A deploy with nothing published is refused
+before any node is asked (`nothing_published`). There is no backup schedule until one is set on
+the Backups page; its retention is the default until then.
 
 A removal takes the cluster out of `clusters.yaml`, out of every
 certificate's targets, out of the editing policy and `safe.directory`, and takes its nodes out of the
@@ -4076,8 +4087,8 @@ Its first line, `# Written by Haprion - a deploy replaces this file.`, is how th
 the file is the product's. Delete that line and the file is yours: the deploy leaves it as it is from then on, and only the
 address list below is written.
 
-Adding a node changes the peer lists, which reach the nodes with the next deploy as a reload: the
-address stays where it is. Until the first deploy a node has no `keepalived.conf`; the dashboard
+Adding a node changes the peer lists. The addition is published as a version, and the next deploy
+takes it to the nodes as a reload: the address stays where it is. Until the first deploy a node has no `keepalived.conf`; the dashboard
 says *Keepalived not configured*, and since no node carries the address the deploy proceeds with
 *no node currently owns the VIP*.
 

@@ -54,7 +54,7 @@ from typing import Any
 
 import yaml
 
-from haprion import change_journal, safe_yaml
+from haprion import backups, change_journal, safe_yaml
 from haprion.change_journal import FileChange as Change
 from haprion.change_journal import Record
 from haprion.config import (
@@ -882,9 +882,13 @@ def add(
         require_secure=require_secure,
     )
     node = Node(name=enrollment.name, mgmt_host=host)
+    backup_directories = backups.directories_to_make(policy.backup_root, (node.name,))
     with change_journal.transaction(
-        Record("node add", cluster, tuple(changes)), (locations or Locations()).journal
+        Record("node add", cluster, tuple(changes), created=backup_directories),
+        (locations or Locations()).journal,
     ):
+        for directory in backup_directories:
+            directory.mkdir(mode=0o700)
         change_journal.apply(changes)
         if enrollment.join_key is not None:
             target = runtime.cluster(cluster)

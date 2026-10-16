@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -342,6 +343,19 @@ class CreatingACluster(unittest.TestCase):
             )
             self.assertEqual(len(outcome.fingerprints), 2)
 
+    def test_each_node_gets_an_empty_backup_directory(self) -> None:
+        """Fas 18 (26-10-16): a new node's backups read as none yet, not as unreadable."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+
+            site.add()
+
+            directory = site.backup_root / "node-c"
+            self.assertTrue(directory.is_dir())
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+            self.assertEqual(list(directory.iterdir()), [])
+
     def test_a_node_that_does_not_answer_leaves_the_installation_as_it_was(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = Site(Path(raw))
@@ -354,6 +368,7 @@ class CreatingACluster(unittest.TestCase):
             self.assertEqual(site.snapshot(), before)
             self.assertFalse((site.config_root / "gamma").exists())
             self.assertFalse((site.publish_root / "gamma").exists())
+            self.assertFalse((site.backup_root / "node-c").exists())
 
     def test_an_editing_policy_visudo_refuses_changes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

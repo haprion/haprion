@@ -43,7 +43,7 @@ from typing import Any
 
 import yaml
 
-from haprion import cert_registry, change_journal, node_enrollment, safe_yaml, tls_policy
+from haprion import backups, cert_registry, change_journal, node_enrollment, safe_yaml, tls_policy
 from haprion.change_journal import FileChange as Change
 from haprion.change_journal import Record
 from haprion.config import (
@@ -921,11 +921,20 @@ def add(
         require_secure=require_secure,
     )
     nodes = tuple(Node(name=enrollment.name, mgmt_host=host) for enrollment, host in spec.nodes)
+    backup_directories = backups.directories_to_make(
+        policy.backup_root, (node.name for node in nodes)
+    )
     record = Record(
-        "cluster add", spec.cluster, tuple(changes), made=_repository_paths(policy, spec.cluster)
+        "cluster add",
+        spec.cluster,
+        tuple(changes),
+        made=_repository_paths(policy, spec.cluster),
+        created=backup_directories,
     )
     with change_journal.transaction(record, locations.journal):
         _create_repository(policy, spec, tools)
+        for directory in backup_directories:
+            directory.mkdir(mode=0o700)
         change_journal.apply(changes)
         #
         # A v2 node is joined first (B317): it learns the manager's keys from

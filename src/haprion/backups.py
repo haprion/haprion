@@ -101,6 +101,20 @@ def _archives(directory: Path) -> list[tuple[str, int, datetime]]:
     return found
 
 
+def directories_to_make(root: Path | None, names: Iterable[str]) -> tuple[Path, ...]:
+    """The empty backup directory each joined node gets, where it has none yet.
+
+    Made when a node joins (Fas 18, 26-10-16), not by its first backup: until
+    then the listing found no directory and called a new node's backups
+    unreadable. A directory that is missing later is a fault again. One that
+    exists - archives kept from a node joined before - is left as it is.
+    """
+
+    if root is None or not root.is_dir():
+        return ()
+    return tuple(root / name for name in names if not (root / name).exists())
+
+
 def node_backups(root: Path, node: Node, *, limit: int | None) -> NodeBackups:
     """One node's backups, or why they could not be read.
 

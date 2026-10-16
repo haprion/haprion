@@ -7,6 +7,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -77,6 +78,9 @@ class Installation:
         self.cluster_file.write_text(yaml.safe_dump(clusters, sort_keys=False))
         policy = yaml.safe_load((BASE / "examples" / "runtime-policy.yaml").read_text())
         policy["cluster_file"] = str(self.cluster_file)
+        self.backup_root = root / "backups"
+        self.backup_root.mkdir()
+        policy["backup_root"] = str(self.backup_root)
         if certificates:
             policy["certificate_root"] = "/srv/certdist"
         policy_file = root / "runtime-policy.yaml"
@@ -240,6 +244,31 @@ class AddingANode(unittest.TestCase):
 
             self.assertEqual(caught.exception.code, "node_unverified")
             self.assertEqual(site.snapshot(), before)
+            self.assertFalse((site.backup_root / "node-c").exists())
+
+    def test_the_node_gets_an_empty_backup_directory(self) -> None:
+        """Fas 18 (26-10-16): a new node's backups read as none yet, not as unreadable."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            site = Installation(Path(raw))
+
+            site.add()
+
+            directory = site.backup_root / "node-c"
+            self.assertTrue(directory.is_dir())
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+    def test_archives_kept_from_before_stay_where_they_are(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Installation(Path(raw))
+            kept = site.backup_root / "node-c"
+            kept.mkdir(mode=0o700)
+            (kept / "2026-10-01_04-00-00.tar.gz").write_bytes(b"archive")
+
+            with self.assertRaises(EnrollmentError):
+                site.add(ask=silent)
+
+            self.assertEqual((kept / "2026-10-01_04-00-00.tar.gz").read_bytes(), b"archive")
 
     def test_a_node_answering_as_another_node_is_undone(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

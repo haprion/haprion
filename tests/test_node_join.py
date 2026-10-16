@@ -74,6 +74,11 @@ class TheDocument(unittest.TestCase):
             ],
         )
 
+    def test_the_collector_s_key_is_an_answer_like_the_others(self) -> None:
+        keys = {"deploy": KEY, "status": OTHER, "traffic_log": OTHER}
+        text, _ = JOIN.answers(document(keys=keys), "198.51.100.5")
+        self.assertIn(f"TRAFFIC_LOG_PUBKEY='{OTHER}'", text.splitlines())
+
     def test_the_answers_source_back_as_they_were_sent(self) -> None:
         text, _ = JOIN.answers(document(), "198.51.100.5")
         with tempfile.TemporaryDirectory() as raw:

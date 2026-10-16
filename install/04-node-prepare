@@ -426,6 +426,20 @@ if [[ "$rule_before" != "$(sha256sum "$RSYSLOG_FORWARD_RULE")" ]]; then
     systemctl restart rsyslog.service || die "rsyslog could not be restarted"
     log "  restarted rsyslog"
 fi
+#
+# The traffic log is a base function (Fas 18, 26-10-16): a node given the
+# collector's key turns its own route on, so the records reach the manager
+# with nothing done by hand. Run only when the rule is not already the one the
+# script writes, since turning it on restarts rsyslog.
+#
+TRAFFIC_RULE="/etc/rsyslog.d/48-haprion-traffic.conf"
+if [[ -n "${TRAFFIC_LOG_PUBKEY:-}" ]]; then
+    if cmp -s <("${SBIN}/haprion-traffic-log-enable" --print) "$TRAFFIC_RULE"; then
+        log "  ok       ${TRAFFIC_RULE}"
+    else
+        "${SBIN}/haprion-traffic-log-enable" || die "the traffic log could not be turned on"
+    fi
+fi
 
 #
 # What `dpkg --verify` finds changed in the package, less documentation dpkg

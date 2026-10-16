@@ -99,6 +99,11 @@ RRSYNC = "/usr/bin/rrsync"
 ROOT_KNOWN_HOSTS = Path("/root/.ssh/known_hosts")
 COLLECTOR_CONFIG = Path("/etc/haprion/traffic-collector.json")
 COLLECTOR_KNOWN_HOSTS = Path("/etc/haprion/traffic-collector/known_hosts")
+# The collector's public key, made by platform step 13 (Fas 18, 26-10-16), and
+# the purpose it is handed over as: not a runtime policy identity, so not in
+# JOIN_PURPOSES.
+COLLECTOR_KEY = Path("/etc/haprion/traffic-collector/id_ed25519.pub")
+COLLECTOR_PURPOSE = "traffic_log"
 
 #
 # The comments the fetch lines carry, one per purpose. They are how a node's
@@ -447,6 +452,8 @@ class Locations:
     home: Callable[[str], Path] = field(default=lambda account: Path(pwd.getpwnam(account).pw_dir))
     # The manager's own host key, which a joining node is given (B317).
     manager_host_key: Path = MANAGER_HOST_KEY
+    # The traffic-log collector's key, which a joining node is given when there is one.
+    collector_key: Path = COLLECTOR_KEY
 
     def authorized_keys(self, account: str) -> Path:
         return self.home(account) / ".ssh" / "authorized_keys"
@@ -751,15 +758,28 @@ def _public(path: Path) -> str:
 
 
 def join_document(
-    policy: PathPolicy, *, cluster: str, node_path: str, vip: str, host_key: Path
+    policy: PathPolicy,
+    *,
+    cluster: str,
+    node_path: str,
+    vip: str,
+    host_key: Path,
+    collector_key: Path | None = None,
 ) -> dict[str, Any]:
-    """What a joining node is given: the manager's public keys and where it belongs."""
+    """What a joining node is given: the manager's public keys and where it belongs.
+
+    The traffic-log collector's key goes with them when the collector is
+    installed: the traffic log is a base function (Fas 18, 26-10-16), and the
+    node turns its route on when it is given the key.
+    """
 
     keys = {
         purpose: _public(Path(f"{identity.key}.pub"))
         for name, purpose in JOIN_PURPOSES.items()
         if (identity := getattr(policy, name)) is not None
     }
+    if collector_key is not None and os.path.isfile(collector_key):
+        keys[COLLECTOR_PURPOSE] = _public(collector_key)
     if not {"deploy", "status"} <= set(keys):
         raise EnrollmentError(
             "dependency_unavailable",
@@ -901,6 +921,7 @@ def add(
                     node_path=target.node_path,
                     vip=target.vip,
                     host_key=(locations or Locations()).manager_host_key,
+                    collector_key=(locations or Locations()).collector_key,
                 ),
                 join_node,
             )

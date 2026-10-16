@@ -947,6 +947,7 @@ def add(
                 node_path=spec.node_path,
                 vip=spec.vip,
                 host_key=locations.manager_host_key,
+                collector_key=locations.collector_key,
             )
             for node, (enrollment, _host) in zip(nodes, spec.nodes, strict=True):
                 node_enrollment.join(node, enrollment, document, join_node)

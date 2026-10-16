@@ -5604,9 +5604,12 @@ proves neither the web account nor the collector can enter it. The mirror direct
 set-group-id, because the collector is deliberately outside the web account's
 group and could not otherwise create a file the interface can read.
 
-The step fetches nothing on its own. It prints one `authorized_keys` line to add
-to `_haprion-logread` on each node, and each node also needs its own log route
-switched on with `sudo haprion-traffic-log-enable`.
+The traffic log is on from the start. The step adds `[traffic_logs]` to `ui.toml` when it has none
+(a table that is there, `enabled = false` included, is left alone); a cluster made by *Create
+cluster* logs this way from its first publish; and a node joined from the interface is given the
+collector's key and turns its own route on. Nothing is done by hand. A node prepared by hand gets
+the key from its answers file - the step prints the `TRAFFIC_LOG_PUBKEY=` line - and step 4 writes
+it and turns the route on.
 
 Enabling or disabling that node route restarts rsyslog; a reload does not apply
 the rule. HAProxy does not buffer log lines during the brief restart, so apply
@@ -5614,11 +5617,11 @@ the change to the node that does not own the VIP first, verify it, remeasure VIP
 ownership and only then change the owner. A request landing in the restart
 window can be absent from both the structured and classic local logs.
 
-The stream is also opt-in per cluster. Set `traffic_logging: true` in that
-cluster's entry in `clusters.yaml`, then publish an actual object change so the
-generator's log profile reaches the nodes. Rerun platform step 13 whenever a
-node is added to or removed from `clusters.yaml`; `check-compatibility` refuses
-a running traffic-log view while the collector's installed node list differs.
+A cluster defined before the collector was installed has `traffic_logging: false` in its entry in
+`clusters.yaml`. Set it to `true`, then publish an actual object change so the generator's log
+profile reaches the nodes. Adding or removing a node keeps the collector's node list; a node added to
+`clusters.yaml` by hand needs platform step 13 again, and `check-compatibility` refuses a running
+traffic-log view while the collector's installed node list differs.
 
 Only the structured stream removes query strings, and only that stream is
 mirrored to the manager and shown in the interface. HAProxy's ordinary

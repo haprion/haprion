@@ -51,7 +51,7 @@
   <div><button class="secondary-button" type="button" data-log-page-previous disabled>Previous</button><button class="secondary-button" type="button" data-log-page-next{% if reading.entries | length <= 50 %} disabled{% endif %}>Next</button></div>
 </nav>{% endif %}
 {% else %}
-<div class="empty-page"><h2>Traffic logging is disabled</h2><p>Run platform step 13, switch each node's route on with <code>haprion-traffic-log-enable</code>, and enable <code>[traffic_logs]</code> in the platform configuration.</p></div>
+<div class="empty-page"><h2>Traffic logging is off</h2><p>Turned off by <code>[traffic_logs]</code> in the platform configuration, or platform step 13 has not run.</p></div>
 {% endif %}
 </div>
 {% endblock %}

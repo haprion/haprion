@@ -324,6 +324,27 @@ class Run:
         if BACKEND_BODY not in body:
             raise Failed(f"the virtual address answered something else:\n{body}")
 
+    def traffic_log_reaches_the_manager(self, holder: str) -> None:
+        """A base function (Fas 18, 26-10-16): on from setup and the join, nothing by hand."""
+
+        _, config = self.on("mgr", "cat /etc/haprion/ui.toml")
+        if not re.search(r"^\[traffic_logs\]\nenabled = true$", config, re.M):
+            raise Failed(f"setup left the traffic log page off:\n{config}")
+        self.answers_on_the_vip()
+        _, lines = self.on(
+            holder, "cat /var/log/haprion/traffic-*.jsonl 2>/dev/null || true", check=False
+        )
+        if "shop.example.com" not in lines:
+            raise Failed(f"{holder} wrote no traffic record for the request:\n{lines[-2000:]}")
+        self.on("mgr", "systemctl start haprion-traffic-collector.service")
+        _, count = self.on(
+            "mgr",
+            "sudo -u postgres psql -d haprion -tAc "
+            "\"select count(*) from traffic_log where host = 'shop.example.com'\"",
+        )
+        if int(count.strip() or 0) < 1:
+            raise Failed("the collector imported no record from the nodes")
+
     def services_running(self) -> None:
         for role in NODES:
             self.on(role, "systemctl is-active haproxy keepalived")
@@ -430,6 +451,10 @@ def run_one(
         step("both nodes report HAProxy's statistics", run.statistics_reported)
         holder = step("the virtual address on exactly one node", run.wait_for_one_holder)
         step("the object answers on the virtual address", run.answers_on_the_vip)
+        step(
+            "the traffic log reaches the manager",
+            lambda: run.traffic_log_reaches_the_manager(holder),
+        )
 
         def failover() -> None:
             run.on(holder, "systemctl stop keepalived")

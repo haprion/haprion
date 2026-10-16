@@ -163,7 +163,12 @@ class Site(Installation):
         self.policy = load_policy(policy_file, require_secure=False)
         self.manager_host_key = root / "ssh_host_ed25519_key.pub"
         self.manager_host_key.write_text(f"{key(40)} root@mgr\n")
-        self.locations = replace(self.locations, manager_host_key=self.manager_host_key)
+        self.collector_key = root / "traffic-collector.pub"
+        self.locations = replace(
+            self.locations,
+            manager_host_key=self.manager_host_key,
+            collector_key=self.collector_key,
+        )
 
 
 class JoiningOnAdd(unittest.TestCase):
@@ -219,6 +224,17 @@ class JoiningOnAdd(unittest.TestCase):
                 "manager_host_key": key(40),
                 "keys": self.site.handed,
             },
+        )
+
+    def test_the_collector_s_key_goes_with_the_others_when_it_is_installed(self) -> None:
+        """Fas 18 (26-10-16): the traffic log is a base function; the node turns it on."""
+
+        self.site.collector_key.write_text(f"{key(41)} haprion traffic collector\n")
+        self.add(v2(), self.joining())
+        _node, _private, document = self.joined
+        self.assertEqual(
+            document["keys"],
+            {**self.site.handed, node_enrollment.COLLECTOR_PURPOSE: key(41)},
         )
 
     def test_a_join_that_fails_puts_every_file_back(self) -> None:

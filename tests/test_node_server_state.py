@@ -715,6 +715,14 @@ class TheLinesStep3PrintsAreAnswers(unittest.TestCase):
         self.assertEqual({purpose.upper() for purpose in handed}, purposes)
         self.assertTrue(all(var == f"{p.upper()}_PUBKEY" for p, var in handed.items()))
 
+    def test_the_node_takes_every_purpose_the_manager_hands_over(self) -> None:
+        from haprion import node_enrollment  # noqa: PLC0415
+
+        join = (BASE / "install" / "node" / "haprion-node-join").read_text()
+        taken = set(re.findall(r'^    "([a-z_]+)": "[A-Z_]+_PUBKEY",$', join, re.MULTILINE))
+        handed = {*node_enrollment.JOIN_PURPOSES.values(), node_enrollment.COLLECTOR_PURPOSE}
+        self.assertEqual(handed, taken)
+
 
 class TheSocketIsTheOneTheCoreNames(unittest.TestCase):
     def test_the_helper_and_the_core_template_agree(self) -> None:

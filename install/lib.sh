@@ -865,6 +865,7 @@ NODE_KEY_PURPOSES=(
     "STATUS NODE_STATUS_KEY STATUS_USER sudo -n /usr/sbin/haprion-node-status --json"
     "PROBE NODE_PROBE_KEY STATUS_USER /usr/sbin/haprion-health-probe"
     "BACKUP NODE_BACKUP_KEY BACKUP_USER sudo -n /usr/sbin/haprion-state-export"
+    "TRAFFIC_LOG TRAFFIC_COLLECTOR_KEY LOGREAD_USER /usr/sbin/haprion-traffic-log-read"
 )
 PUBKEY_PATTERN='^ssh-ed25519 [A-Za-z0-9+/]+=*$'
 

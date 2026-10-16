@@ -43,9 +43,10 @@ the only thing here that touches rows in a live table, and it deletes nothing
 itself: it reports what the first run would remove and leaves that to the timer.
 
 Step 13 mirrors each node's structured traffic log onto this host and imports it
-into daily PostgreSQL partitions. It fetches nothing until
-each node has accepted the key it prints. The nodes are the cluster file's; with
-no cluster yet the collector starts with none, and adding a node adds it.
+into daily PostgreSQL partitions, and turns the interface's traffic log page on.
+The nodes are the cluster file's; with no cluster yet the collector starts with
+none, and adding a node adds it - a node joined from the interface is given the
+collector's key and turns its own log route on.
 
 Step 14 builds the locked certbot environment - certbot and every DNS plugin
 the web interface offers - under `/opt/haprion-certbot`, proves it with the

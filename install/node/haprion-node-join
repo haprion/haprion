@@ -57,6 +57,7 @@ PURPOSES = {
     "status": "STATUS_PUBKEY",
     "probe": "PROBE_PUBKEY",
     "backup": "BACKUP_PUBKEY",
+    "traffic_log": "TRAFFIC_LOG_PUBKEY",
 }
 REQUIRED = {"deploy", "status"}
 FIELDS = {"version", "cluster", "node_path", "vip", "manager_host_key", "keys"}

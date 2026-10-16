@@ -204,6 +204,29 @@ log "  reloaded systemd"
 systemctl enable --quiet --now "${UNIT}.timer"
 systemctl list-timers --no-pager --no-legend "${UNIT}.timer" | sed 's/^/  /'
 
+step "The web interface"
+#
+# The traffic log is a base function (Fas 18, 26-10-16): the page is turned
+# on by the step that installs what fills it. Added to ui.toml only when it has
+# no [traffic_logs] table, as its own table at the end - a TOML file may always
+# end with a new one. A table that is there is the operator's and is left as
+# it is, `enabled = false` included.
+#
+if grep -Eq '^\s*\[traffic_logs\]\s*$' "$UI_CONFIG"; then
+    log "  ok       ${UI_CONFIG} has a [traffic_logs] table"
+else
+    install_file "$UI_CONFIG" "root:${PLATFORM_GROUP}" 640 "$(cat "$UI_CONFIG")
+
+[traffic_logs]
+enabled = true
+directory = \"${MIRROR}\""
+    log "  added    [traffic_logs] enabled = true"
+    if systemctl is-active --quiet "$WEB_UNIT"; then
+        systemctl restart "$WEB_UNIT"
+        log "  restarted ${WEB_UNIT}, which reads it at start"
+    fi
+fi
+
 step "What must not be able to do this"
 
 #
@@ -281,22 +304,18 @@ fi
 
 step "Done"
 log "  ${UNIT}.timer runs every minute and mirrors into ${MIRROR}"
-log "  nothing is fetched yet: each node must accept this key first"
+log "  a node joined from the interface is given this key and turns its log on"
 
-cat <<INTRO
+cat <<'INTRO'
 
-One thing left, by hand, on each NODE - this host cannot write to them.
-
-Add the line below to the traffic-log reader's authorized_keys, then enable the
-node's own log route with 'sudo haprion-traffic-log-enable'.
-
-  /home/${LOGREAD_USER}/.ssh/authorized_keys   (owner ${LOGREAD_USER}, mode 600)
+A node prepared by hand with 04-node-prepare takes the key from its answers
+file: add this line, and step 4 writes it with `restrict` and the reader's
+forced command, and turns the node's log route on.
 
 INTRO
-echo "restrict,command=\"/usr/sbin/haprion-traffic-log-read\" $(cut -d' ' -f1,2 < "${COLLECTOR_KEY}.pub")"
+echo "TRAFFIC_LOG_PUBKEY=\"$(cut -d' ' -f1,2 < "${COLLECTOR_KEY}.pub")\""
 cat <<'OUTRO'
 
-One line, the same on every node: the manager decides which node a fetch is
-written under, so a node cannot claim to be another one. `restrict` and the
-forced command are what make the key unable to do anything but answer.
+One key, the same on every node: the manager decides which node a fetch is
+written under, so a node cannot claim to be another one.
 OUTRO

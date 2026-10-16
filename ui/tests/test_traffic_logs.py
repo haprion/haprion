@@ -1010,7 +1010,7 @@ class TheTrafficLogPage(LoginTestCase):
 
         page = self.page(enabled=False)
 
-        self.assertIn("Traffic logging is disabled", page)
+        self.assertIn("Traffic logging is off", page)
         self.assertNotIn("/hidden", page)
 
     def test_signing_out_is_required(self) -> None:

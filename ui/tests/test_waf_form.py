@@ -66,7 +66,7 @@ class TheFormSaysWhatTheObjectSays(unittest.TestCase):
         self.assertEqual(form_from_document(stored("waf: {}\n"))["waf_mode"], "log")
 
     def test_off_with_nothing_to_keep_is_an_object_without_the_engine(self) -> None:
-        self.assertNotIn("waf", yaml.safe_load(build_document(dict(DEFAULTS, name="shop"))))
+        self.assertNotIn("waf", yaml.safe_load(build_document(dict(DEFAULTS, name="shop", servers="198.51.100.10:8080"))))
         form = form_from_document(stored("waf: {mode: 'off'}\n"))
         self.assertNotIn("waf", yaml.safe_load(build_document(form)))
 
@@ -88,7 +88,7 @@ class TheFormSaysWhatTheObjectSays(unittest.TestCase):
     def test_exceptions_the_form_cannot_read_are_refused(self) -> None:
         for carried in ("{", '{"rule": 1}', "[1"):
             with self.subTest(carried=carried), self.assertRaises(ValueError):
-                build_document(dict(DEFAULTS, name="shop", waf_mode="log", waf_exceptions=carried))
+                build_document(dict(DEFAULTS, name="shop", servers="198.51.100.10:8080", waf_mode="log", waf_exceptions=carried))
 
     def test_the_closed_group_says_mode_strictness_and_exceptions_with_a_shield(self) -> None:
         def line(**fields: str) -> tuple[str, tuple[tuple[str, str, str], ...]]:

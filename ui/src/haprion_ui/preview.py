@@ -137,7 +137,11 @@ DEFAULTS = {
     "balance": "roundrobin",
     "balance_key": "",
     "cookie": "",
-    "servers": "198.51.100.10:8080",
+    #
+    # Empty for the reason the hostnames are (Fas 18, 26-10-16): the address is
+    # the placeholder's, and an example saved unread points traffic nowhere.
+    #
+    "servers": "",
     #
     # No check until somebody asks for one. The field is optional and the model
     # agrees - `disabled` is its own default - and a form that arrived with a

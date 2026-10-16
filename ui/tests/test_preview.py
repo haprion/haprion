@@ -29,14 +29,19 @@ from haprion_ui.preview import (
 
 def form(**overrides: object) -> dict[str, object]:
     #
-    # A hostname is supplied here rather than taken from `DEFAULTS`. The form
-    # deliberately opens with that field empty so the placeholder can show what
-    # several names look like, and a prefilled value is one that can be saved
-    # by not being looked at - but every object below has to have one.
+    # A hostname and a server are supplied here rather than taken from
+    # `DEFAULTS`. The form deliberately opens with both fields empty so the
+    # placeholders can show what goes there, and a prefilled value is one that
+    # can be saved by not being looked at - but every object below has to have
+    # them.
     #
     return (
         dict(DEFAULTS)
-        | {"hostnames": "app.example.com", "certificate": "wildcard-example-com"}
+        | {
+            "hostnames": "app.example.com",
+            "certificate": "wildcard-example-com",
+            "servers": "198.51.100.10:8080",
+        }
         | overrides
     )
 

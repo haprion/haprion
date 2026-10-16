@@ -147,6 +147,9 @@ These rules are shared by config deploy and certificate deploy:
   report its peers connected before it touches the next, so the reloaded node can take the counts
   back. A node that has not connected by then is named in a `counters_not_shared` warning and the
   deploy goes on.
+- A deploy that has updated a node and ends with no node owning the VIP waits up to 15 seconds for
+  one to take it before its final status - the first deploy starts keepalived, and every node starts
+  as BACKUP. Still none by then is a `vip_not_owned` warning.
 
 ## Publish and revert invariants
 

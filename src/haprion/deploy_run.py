@@ -44,6 +44,7 @@ from haprion.deploy_plan import (
     Progress,
     Step,
     Target,
+    VipState,
     certificate_gaps,
     next_step,
     record,
@@ -334,6 +335,18 @@ def run(
                 return blocked
 
         if step.action is Action.FINISHED:
+            if any(entry.outcome == "updated" for entry in report.nodes.values()):
+                try:
+                    status = _await_vip_owner(status, read_status, writer, report, pause)
+                except StatusError as exc:
+                    writer.write(f"\nERROR: {exc}\n")
+                    writer.write(
+                        "The nodes were deployed, but the cluster could not be read while "
+                        "waiting for a node to take the VIP.\n"
+                    )
+                    report.outcome = Outcome.FAILED
+                    report.error = Message(code="status_unavailable", message=str(exc))
+                    return DeployRun(exc.exit_code, report)
             _settle(status, report, target)
             return DeployRun(_report(writer, status, step, report), report)
 
@@ -489,6 +502,44 @@ def _await_peers(
         )
         writer.write(f"WARNING: {warning}\n")
         report.warnings.append(Message(code="counters_not_shared", message=warning, node=node_name))
+    return status
+
+
+#
+# How long a deploy that ends with no VIP owner waits for one (Fas 18,
+# 26-10-16). Every node starts keepalived as BACKUP with `nopreempt`, so the
+# first deploy - the one that starts it - ends before any node has stopped
+# listening for a MASTER: about three advertisement intervals and the skew, a
+# few seconds. Read then, the cluster says the VIP is down, and so did the
+# dashboard, woken by the finished job.
+#
+VIP_WAIT_SECONDS = 15
+
+
+def _await_vip_owner(
+    status: ClusterStatus,
+    read_status: ReadStatus,
+    writer: TextIO,
+    report: DeployReport,
+    pause: Callable[[float], None],
+) -> ClusterStatus:
+    """The status once a node owns the VIP, or after the wait.
+
+    Only `no_owner` is waited out: split brain, unknown and an unreadable node
+    are not what a starting keepalived looks like, and the final status says
+    them as they are. One that still has no owner when the wait ends is named
+    and the deploy ends as it would have.
+    """
+
+    for _ in range(VIP_WAIT_SECONDS):
+        if status.vip_state is not VipState.NO_OWNER:
+            return status
+        pause(1.0)
+        status = read_status()
+    if status.vip_state is VipState.NO_OWNER:
+        warning = f"no node took the VIP within {VIP_WAIT_SECONDS} s of the deploy"
+        writer.write(f"WARNING: {warning}\n")
+        report.warnings.append(Message(code="vip_not_owned", message=warning))
     return status
 
 

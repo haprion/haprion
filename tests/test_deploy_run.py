@@ -867,3 +867,78 @@ class CertificatePreflightTests(unittest.TestCase):
         code, _ = deploy(cluster)
 
         self.assertEqual(code, 0)
+
+
+class TheFirstDeployWaitsForTheVip(unittest.TestCase):
+    """Fas 18, 26-10-16: the first deploy ended before keepalived had chosen a MASTER."""
+
+    def nobody(self) -> FakeCluster:
+        cluster = pair()
+        cluster.move_vip(None)
+        return cluster
+
+    def test_a_deploy_that_ends_without_an_owner_waits_for_one(self) -> None:
+        cluster = self.nobody()
+        paused: list[float] = []
+
+        def pause(seconds: float) -> None:
+            paused.append(seconds)
+            if len(paused) == 3:
+                cluster.move_vip("node-a")
+
+        code, shown = deploy(cluster, pause=pause)
+
+        self.assertEqual(code, 0, shown)
+        self.assertEqual(paused, [1.0, 1.0, 1.0])
+        self.assertIn("Final status: VIP=single_owner, owner=node-a", shown)
+        codes = [warning.code for warning in LAST_REPORT[0].warnings]
+        self.assertNotIn("vip_not_owned", codes)
+
+    def test_no_owner_by_the_end_of_the_wait_is_named(self) -> None:
+        paused: list[float] = []
+        code, shown = deploy(self.nobody(), pause=paused.append)
+
+        self.assertEqual(code, 0, shown)
+        self.assertEqual(len(paused), deploy_run.VIP_WAIT_SECONDS)
+        self.assertIn("no node took the VIP within 15 s", shown)
+        codes = [warning.code for warning in LAST_REPORT[0].warnings]
+        self.assertIn("vip_not_owned", codes)
+
+    def test_nothing_deployed_is_not_waited_for(self) -> None:
+        cluster = self.nobody()
+        for node in cluster.nodes:
+            node.release_hash = TARGET_HASH
+        paused: list[float] = []
+        deploy(cluster, expected_hash=TARGET_HASH, pause=paused.append)
+
+        self.assertEqual(cluster.triggered, [])
+        self.assertEqual(paused, [])
+
+    def test_an_owner_at_the_end_is_not_waited_for(self) -> None:
+        paused: list[float] = []
+        code, _ = deploy(pair(), pause=paused.append)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(paused, [])
+
+    def test_a_reading_that_fails_while_waiting_fails_the_deploy(self) -> None:
+        cluster = self.nobody()
+        readable = cluster.read_status
+
+        def failing() -> dict[str, Any]:
+            if len(cluster.triggered) == len(cluster.nodes):
+                cluster.reads += 1
+                if cluster.reads > 4:
+                    return {"operation": "status"}
+            return readable()
+
+        cluster.read_status = failing  # type: ignore[method-assign]
+        paused: list[float] = []
+        code, shown = deploy(cluster, pause=paused.append)
+
+        self.assertEqual(code, 68, shown)
+        self.assertTrue(paused)
+        self.assertIn("waiting for a node to take the VIP", shown)
+        report = LAST_REPORT[0]
+        assert report.error is not None  # noqa: S101 - asserted by the exit code
+        self.assertEqual(report.error.code, "status_unavailable")

@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% from "_back.html" import back_button %}
-{% block title %}Nodes — {{ cluster }} — Haprion{% endblock %}
+{% block title %}Cluster {{ cluster }} — Nodes — Haprion{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 {#
@@ -13,7 +13,7 @@
   archives it and is confirmed with its ID.
 #}
 <section class="page-heading">
-  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Nodes — {{ cluster }}</h1></div>
+  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Cluster {{ cluster }} — Nodes</h1></div>
 </section>
 
 {% if problem %}

@@ -92,6 +92,8 @@ class ThePage(NodesPage):
         page = self.client_for().get("/settings/nodes/edge-demo")
         self.assertEqual(page.status_code, 200)
         self.assertIn("edge-a", page.text)
+        # Which cluster the page is for, in words (Fas 18, finding 58).
+        self.assertIn("<h1>Cluster edge-demo — Nodes</h1>", page.text)
         self.assertEqual(self.client_for().get("/settings/nodes/elsewhere").status_code, 404)
         self.assertEqual(
             self.client_for(role="reader").get("/settings/nodes/edge-demo").status_code, 403

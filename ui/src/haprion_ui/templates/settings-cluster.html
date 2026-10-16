@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% from "_back.html" import back_button %}
-{% block title %}Logs & metrics — {{ cluster }} — Haprion{% endblock %}
+{% block title %}Cluster {{ cluster }} — Logs & metrics — Haprion{% endblock %}
 {% block content %}
 {#
   One cluster's log targets, metrics exporter and shared counters (Fas 15, B209; B270). Saved
@@ -9,7 +9,7 @@
   IP address: a name that fails to resolve at a reload would fail the deploy.
 #}
 <section class="page-heading">
-  <div class="heading-title">{{ back_button('/settings#logs-metrics', 'Settings') }}<h1>Logs &amp; metrics — {{ cluster }}</h1></div>
+  <div class="heading-title">{{ back_button('/settings#logs-metrics', 'Settings') }}<h1>Cluster {{ cluster }} — Logs &amp; metrics</h1></div>
 </section>
 
 {% if problem %}

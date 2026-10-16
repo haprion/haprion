@@ -1821,12 +1821,16 @@ def forget_attention_acks(connection: Connection[Any], gone: set[AttentionKey]) 
             )
 
 
-def getting_started_hidden(connection: Connection[Any]) -> bool:
-    """Whether an admin has hidden the getting started list (0075)."""
+def getting_started_hidden_at(connection: Connection[Any]) -> datetime | None:
+    """When an admin hid the getting started list (0075); None while it shows."""
 
     with connection.cursor() as cursor:
-        cursor.execute("select hidden from getting_started")
-        return cursor.fetchone() is not None
+        cursor.execute("select hidden_at from getting_started")
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        hidden_at: datetime = row[0]
+        return hidden_at
 
 
 def hide_getting_started(connection: Connection[Any], *, actor: str) -> bool:
@@ -1836,6 +1840,14 @@ def hide_getting_started(connection: Connection[Any], *, actor: str) -> bool:
         cursor.execute(
             "insert into getting_started (hidden_by) values (%s) on conflict do nothing", (actor,)
         )
+        return cursor.rowcount == 1
+
+
+def show_getting_started(connection: Connection[Any]) -> bool:
+    """Show the list again (0076); False when it was not hidden."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("delete from getting_started")
         return cursor.rowcount == 1
 
 

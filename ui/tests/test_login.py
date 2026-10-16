@@ -131,8 +131,9 @@ class LoginTestCase(unittest.TestCase):
         self.switches: dict[str, Any] = {}
         self.acks: set[tuple[str, str, str]] = set()
         # The getting started list (B316) is shown until a test hides it.
-        self.getting_started_hidden = False
+        self.getting_started_hidden_at: datetime | None = None
         self.hidden_by: list[str] = []
+        self.shown_again = 0
         self.provider: Any = None
         self.id_tokens: dict[bytes, str | None] = {}
 
@@ -200,10 +201,11 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.attention_acks", side_effect=lambda _c: set(self.acks)),
             mock.patch("haprion_ui.db.forget_attention_acks"),
             mock.patch(
-                "haprion_ui.db.getting_started_hidden",
-                side_effect=lambda _c: self.getting_started_hidden,
+                "haprion_ui.db.getting_started_hidden_at",
+                side_effect=lambda _c: self.getting_started_hidden_at,
             ),
             mock.patch("haprion_ui.db.hide_getting_started", side_effect=self._hide),
+            mock.patch("haprion_ui.db.show_getting_started", side_effect=self._show),
             # Every cluster read through since its last job (0068).
             mock.patch("haprion_ui.db.clusters_catching_up", return_value=[]),
             #
@@ -264,6 +266,10 @@ class LoginTestCase(unittest.TestCase):
 
     def _hide(self, _connection: object, *, actor: str) -> bool:
         self.hidden_by.append(actor)
+        return True
+
+    def _show(self, _connection: object) -> bool:
+        self.shown_again += 1
         return True
 
     def _account(self, _connection: object, username: str) -> Account | None:

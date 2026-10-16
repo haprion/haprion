@@ -12,6 +12,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+#
+# How long the dashboard offers a hidden list back (26-10-16). Hide asks
+# nothing, so a press by mistake has a way back; after a week the list is
+# taken to be done with and the button goes too.
+#
+OFFERED_AGAIN_FOR = timedelta(days=7)
 
 TLS_LABELS = {
     "intermediate": "TLS 1.2 and 1.3",
@@ -202,3 +210,9 @@ def checklist(facts: Facts) -> Checklist:
         ),
     )
     return Checklist(items)
+
+
+def offered_again(hidden_at: datetime, now: datetime) -> bool:
+    """Whether a list hidden at `hidden_at` may still be shown again from the dashboard."""
+
+    return now - hidden_at < OFFERED_AGAIN_FOR

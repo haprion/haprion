@@ -856,6 +856,11 @@ def build_router(config: Config) -> APIRouter:
             if config.management_writes and session.role == "admin"
             else {}
         )
+        checklist = (
+            _getting_started(request, dashboard_view, network_rows)
+            if session.role == "admin"
+            else None
+        )
         return TEMPLATES.TemplateResponse(
             request,
             "index.html",
@@ -864,9 +869,11 @@ def build_router(config: Config) -> APIRouter:
                 # What needs doing, under the four cards (B274).
                 #
                 "attention": _attention(request, config),
-                "getting_started": _getting_started(request, dashboard_view, network_rows)
-                if session.role == "admin"
-                else None,
+                "getting_started": checklist,
+                "show_getting_started": checklist is None
+                and session.role == "admin"
+                and config.management_writes
+                and _getting_started_offered_again(request),
                 "pending": pending,
                 "traffic": traffic,
                 "username": session.username,
@@ -4436,13 +4443,40 @@ def build_router(config: Config) -> APIRouter:
             connection.commit()
         return RedirectResponse("/", status_code=303)
 
+    @router.post("/getting-started/show")
+    def show_getting_started(
+        request: Request, csrf_token: Annotated[str, Form(max_length=128)]
+    ) -> Response:
+        """Show a hidden getting started list again (0076)."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        with request.app.state.pool.connection() as connection:
+            if db.show_getting_started(connection):
+                db.record_audit_event(
+                    connection, actor=gate.username, action="getting_started_shown", detail={}
+                )
+            connection.commit()
+        return RedirectResponse("/", status_code=303)
+
+    def _getting_started_offered_again(request: Request) -> bool:
+        """A hidden list's way back, for a week after it was hidden."""
+
+        with request.app.state.pool.connection() as connection:
+            hidden_at = db.getting_started_hidden_at(connection)
+        return hidden_at is not None and getting_started.offered_again(hidden_at, datetime.now(UTC))
+
     def _getting_started(
         request: Request, dashboard_view: dashboard.DashboardView, network_rows: Any
     ) -> getting_started.Checklist | None:
         """The list for an admin, until it is hidden (B316); every tick read, none stored."""
 
         with request.app.state.pool.connection() as connection:
-            if db.getting_started_hidden(connection):
+            if db.getting_started_hidden_at(connection) is not None:
                 return None
             provider = db.oidc_provider(connection)
             switches = db.feature_switches(connection)

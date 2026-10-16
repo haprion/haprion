@@ -7609,7 +7609,7 @@ class AcknowledgedAttention(unittest.TestCase):
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class GettingStartedHidden(unittest.TestCase):
-    """0075 (B316): the web hides the list once, for good; it cannot take it back."""
+    """0075 (B316): the web hides the list once; 0076 lets it show it again."""
 
     def connect(self, role: str = "HAPRION_UI_TEST_WEB_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role]}")
@@ -7621,12 +7621,23 @@ class GettingStartedHidden(unittest.TestCase):
 
     def test_hidden_once_and_for_good(self) -> None:
         with self.connect() as connection:
-            self.assertFalse(db.getting_started_hidden(connection))
+            self.assertIsNone(db.getting_started_hidden_at(connection))
             self.assertTrue(db.hide_getting_started(connection, actor="operator"))
             self.assertFalse(db.hide_getting_started(connection, actor="other"))
-            self.assertTrue(db.getting_started_hidden(connection))
+            self.assertIsNotNone(db.getting_started_hidden_at(connection))
             connection.commit()
             by = connection.execute("select hidden_by from getting_started").fetchall()
         self.assertEqual(by, [("operator",)])
         with self.connect() as connection, self.assertRaises(psycopg.errors.InsufficientPrivilege):
-            connection.execute("delete from getting_started")
+            connection.execute("update getting_started set hidden_at = now()")
+
+    def test_shown_again_and_hidden_anew(self) -> None:
+        with self.connect() as connection:
+            self.assertFalse(db.show_getting_started(connection))
+            db.hide_getting_started(connection, actor="operator")
+            self.assertTrue(db.show_getting_started(connection))
+            self.assertIsNone(db.getting_started_hidden_at(connection))
+            self.assertTrue(db.hide_getting_started(connection, actor="other"))
+            connection.commit()
+            by = connection.execute("select hidden_by from getting_started").fetchall()
+        self.assertEqual(by, [("other",)])

@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haprion_ui import auth
-from haprion_ui.getting_started import ClusterFacts, Facts, Vip, checklist
+from haprion_ui.getting_started import ClusterFacts, Facts, Vip, checklist, offered_again
 from tests.test_login import LoginTestCase, configuration
 
 
@@ -117,6 +118,13 @@ class TheTicks(unittest.TestCase):
         self.assertEqual((off.state, off.action), ("Off under Features", "Features"))
 
 
+class TheWayBack(unittest.TestCase):
+    def test_a_week_and_not_longer(self) -> None:
+        hidden = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
+        self.assertTrue(offered_again(hidden, hidden + timedelta(days=7) - timedelta(seconds=1)))
+        self.assertFalse(offered_again(hidden, hidden + timedelta(days=7)))
+
+
 class OnTheDashboard(LoginTestCase):
     def signed_in(self, *, role: str = "admin") -> Any:
         self.account = replace(self.account, role=role)
@@ -130,16 +138,55 @@ class OnTheDashboard(LoginTestCase):
         self.assertIn('action="/getting-started/hide"', page)
         self.assertIn("Enable the features you want to use", page)
 
-        self.getting_started_hidden = True
-        self.assertNotIn("Getting started", self.signed_in().get("/").text)
+        self.getting_started_hidden_at = datetime.now(UTC)
+        self.assertNotIn("Getting started</h3>", self.signed_in().get("/").text)
 
     def test_without_a_cluster_it_replaces_the_empty_cluster_card(self) -> None:
         page = self.signed_in().get("/").text
         self.assertEqual(page.count('href="/settings/new-cluster"'), 1)
         self.assertNotIn("No clusters configured", page)
 
-        self.getting_started_hidden = True
+        self.getting_started_hidden_at = datetime.now(UTC)
         self.assertIn("No clusters configured", self.signed_in().get("/").text)
+
+    def test_a_hidden_list_is_offered_back_for_a_week(self) -> None:
+        self.getting_started_hidden_at = datetime.now(UTC) - timedelta(days=6)
+        self.assertIn('action="/getting-started/show"', self.signed_in().get("/").text)
+        self.assertNotIn(
+            'action="/getting-started/show"', self.signed_in(role="reader").get("/").text
+        )
+
+        self.getting_started_hidden_at = datetime.now(UTC) - timedelta(days=8)
+        self.assertNotIn('action="/getting-started/show"', self.signed_in().get("/").text)
+
+    def test_a_list_that_shows_offers_nothing_back(self) -> None:
+        self.assertNotIn('action="/getting-started/show"', self.signed_in().get("/").text)
+
+    def test_show_is_audited_and_an_admin_s(self) -> None:
+        self.getting_started_hidden_at = datetime.now(UTC)
+        client = self.signed_in()
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        refused = client.post(
+            "/getting-started/show", data={"csrf_token": "x"}, follow_redirects=False
+        )
+        self.assertEqual(refused.status_code, 403)
+        self.assertEqual(self.shown_again, 0)
+
+        answer = client.post(
+            "/getting-started/show", data={"csrf_token": token}, follow_redirects=False
+        )
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(self.shown_again, 1)
+        self.assertIn("getting_started_shown", self.audit)
+
+        reader = self.signed_in(role="reader")
+        reader_token = auth.csrf_token(reader.cookies[auth.SESSION_COOKIE])
+        self.assertEqual(
+            reader.post(
+                "/getting-started/show", data={"csrf_token": reader_token}, follow_redirects=False
+            ).status_code,
+            403,
+        )
 
     def test_a_reader_does_not_see_it(self) -> None:
         self.assertNotIn("Getting started", self.signed_in(role="reader").get("/").text)

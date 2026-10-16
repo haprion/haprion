@@ -168,6 +168,7 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
         f"Acknowledged {_text(detail, 'subject', 'a row')}: {_text(detail, 'message', '')}"
     ),
     "getting_started_hidden": lambda _detail: "Hid the getting started list",
+    "getting_started_shown": lambda _detail: "Showed the getting started list again",
     "status_access_changed": lambda detail: (
         "Changed the external monitoring addresses"
         if detail.get("networks")

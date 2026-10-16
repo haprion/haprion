@@ -80,6 +80,7 @@
 {% if dashboard.clusters or not getting_started %}
 <section class="section-heading">
   <h2>Clusters</h2>
+  {% if show_getting_started %}<form method="post" action="/getting-started/show"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary-button" type="submit">Show getting started</button></form>{% endif %}
 </section>
 
 <div class="cluster-list">

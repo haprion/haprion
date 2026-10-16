@@ -222,6 +222,19 @@ class Run:
             _, failed = self.on(role, "systemctl --failed --no-legend", check=False)
             if failed.strip():
                 raise Failed(f"{role} booted {state.strip()}:\n{failed}")
+        #
+        # A real machine has its host keys from its installation. The image's
+        # unit makes them at boot, and on 26-10-16 one container of three came
+        # up without it ever starting (twice, Ubuntu 26.04, node-b): the
+        # package then rightly refused to print a block. Made here when
+        # missing, and said so in the log.
+        #
+        for role in ("mgr", *NODES):
+            self.on(
+                role,
+                "test -s /etc/ssh/ssh_host_ed25519_key.pub "
+                "|| { echo 'host keys missing after boot; made with ssh-keygen -A'; ssh-keygen -A; }",
+            )
 
     # --- the installation ---------------------------------------------------
 

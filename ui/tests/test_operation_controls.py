@@ -8,6 +8,7 @@ from unittest import mock
 from uuid import uuid4
 
 from haprion_ui import auth
+from tests.test_dashboard import reading as status_reading
 from tests.test_login import LoginTestCase, configuration
 
 
@@ -16,7 +17,12 @@ class OperationControlsTests(LoginTestCase):
         client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
         self.sign_in(client)
 
-        page = client.get("/")
+        # A release is published: without one there is no deploy to offer (finding 60).
+        with mock.patch(
+            "haprion_ui.db.cluster_statuses",
+            return_value=[status_reading("done-single-owner.json")],
+        ):
+            page = client.get("/")
 
         self.assertEqual(page.status_code, 200)
         #

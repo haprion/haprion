@@ -4620,17 +4620,7 @@ def build_router(config: Config) -> APIRouter:
         if not isinstance(gate, AuthenticatedSession):
             return gate
         switched = request.query_params.get("switched", "")[:32]
-        #
-        # Create cluster lands here (finding 51): once the new cluster is on
-        # the list, its own page, where the next node is added. A redraw that
-        # comes back redirected is reloaded, which follows it.
-        #
-        creating = request.query_params.get("creating", "")
-        if not CLUSTER_ID.fullmatch(creating):
-            creating = ""
-        if creating and creating in listed_clusters(request, config):
-            return RedirectResponse(f"/settings/nodes/{creating}", status_code=303)
-        return _settings_page(request, gate, done=SWITCHED.get(switched, ""), creating=creating)
+        return _settings_page(request, gate, done=SWITCHED.get(switched, ""))
 
     def _locked(request: Request, name: str) -> bool:
         """Whether a switch cannot be on here: cluster colours past six clusters."""
@@ -4643,7 +4633,6 @@ def build_router(config: Config) -> APIRouter:
         *,
         problem: str = "",
         done: str = "",
-        creating: str = "",
         status_code: int = 200,
     ) -> Response:
         _token, registry, context = _page_context(request, gate)
@@ -4695,11 +4684,6 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 "cluster_nodes": cluster_nodes.card_rows(
                     *read_source(request, config, STATUS_SOURCE), creation_rows
-                ),
-                # The creation this page was asked to show, when it failed.
-                "creation_failed": next(
-                    (row for row in creation_rows if row.failed and row.cluster == creating),
-                    None,
                 ),
                 "location_data": location_data.card(
                     read_source(request, config, OBJECTS_SOURCE)[1]
@@ -5150,6 +5134,7 @@ def build_router(config: Config) -> APIRouter:
         block: str = "",
         host: str = "",
         problem: str = "",
+        joined: bool = False,
         status_code: int = 200,
     ) -> Response:
         _token, _registry, context = _page_context(request, gate)
@@ -5162,6 +5147,8 @@ def build_router(config: Config) -> APIRouter:
             "settings-nodes.html",
             {
                 **context,
+                # Arrived from Create cluster: what was joined (finding 57).
+                "joined": [row.name for row in rows] if joined else [],
                 "section": "settings",
                 "cluster": cluster,
                 "accent": cluster_identity.accent_index(cluster),
@@ -5260,7 +5247,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
-        return _nodes_page(request, gate, cluster)
+        return _nodes_page(request, gate, cluster, joined=request.query_params.get("joined") == "1")
 
     @router.post("/settings/nodes/{cluster}/add", response_class=HTMLResponse)
     def cluster_node_add(
@@ -5503,6 +5490,7 @@ def build_router(config: Config) -> APIRouter:
         *,
         form: Mapping[str, str] | None = None,
         creation: cluster_nodes.Creation | None = None,
+        creating: cluster_nodes.Creating | None = None,
         problem: str = "",
         status_code: int = 200,
     ) -> Response:
@@ -5512,6 +5500,7 @@ def build_router(config: Config) -> APIRouter:
             "settings-cluster-new.html",
             {
                 **context,
+                "creating": creating,
                 "section": "settings",
                 "form": {field: "" for field in cluster_nodes.CREATION_FIELDS} | dict(form or {}),
                 "certificates": sorted(
@@ -5528,6 +5517,24 @@ def build_router(config: Config) -> APIRouter:
         gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
+        #
+        # Create cluster stays here while the cluster is made, as the guide's
+        # first-node step does (Fas 18, finding 57), and goes on to the
+        # cluster's own page once the list has it, where the next node is
+        # added. A redraw that comes back redirected is reloaded, which
+        # follows it.
+        #
+        creating = request.query_params.get("creating", "")
+        if CLUSTER_ID.fullmatch(creating):
+            if creating in listed_clusters(request, config):
+                return RedirectResponse(f"/settings/nodes/{creating}?joined=1", status_code=303)
+            with request.app.state.pool.connection() as connection:
+                recent = db.recent_jobs(connection)
+            shown = next(
+                (row for row in _creations(request, recent) if row.cluster == creating), None
+            )
+            if shown is not None:
+                return _new_cluster_page(request, gate, creating=shown)
         return _new_cluster_page(request, gate)
 
     @router.post("/settings/new-cluster", response_class=HTMLResponse)
@@ -5615,11 +5622,12 @@ def build_router(config: Config) -> APIRouter:
             ),
             operation="cluster_define",
             #
-            # To Settings, where the new cluster has a row of its own until the
-            # poller has read it, and then on to its page; a creation that failed
-            # says so there (review 2026-09-30 F3, Fas 18 finding 51).
+            # Back to this page, which shows the cluster being made until the
+            # poller has read it and then goes on to the cluster's page; a
+            # creation that failed says so here (review 2026-09-30 F3, Fas 18
+            # findings 51 and 57).
             #
-            back=f"/settings?creating={creation.cluster}#nodes",
+            back=f"/settings/new-cluster?creating={creation.cluster}",
         )
 
     @router.get("/settings/new-user", response_class=HTMLResponse)

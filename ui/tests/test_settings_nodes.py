@@ -422,7 +422,7 @@ class CreatingACluster(ClusterPage):
         )
 
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertEqual(response.headers["location"], "/settings?creating=gamma#nodes")
+        self.assertEqual(response.headers["location"], "/settings/new-cluster?creating=gamma")
         (queued,) = self.queued
         self.assertEqual((queued["operation"], queued["cluster"]), ("cluster_define", "gamma"))
         self.assertEqual(
@@ -570,64 +570,72 @@ def creation_job(state: str, *, finished: datetime | None = None, result: Any = 
 class AClusterBeingCreated(NodesPage):
     """After Create cluster the admin landed on Jobs to see anything (Fas 18 finding 51).
 
-    Held here: the new cluster has a row with a running badge on Nodes &
-    clusters until the poller has read it, and is busy for the page's waiting
-    loop as long; once listed, the page that asked goes on to the cluster's
-    own; a creation that failed says why on the card that asked for it.
+    Held on the page it was made from, as the guide's first-node step does
+    (finding 57): the cluster with a running badge until the poller has read
+    it, busy for the page's waiting loop as long; once listed, the cluster's
+    own page, saying what was joined; a creation that failed says why there.
+    The Settings card has the cluster's row and badge too.
     """
 
-    def settings(self, jobs: list[db.Job], query: str = "") -> Any:
+    def page(self, jobs: list[db.Job], path: str) -> Any:
         with mock.patch("haprion_ui.db.recent_jobs", return_value=jobs):
             client = self.client_for()
-            page = client.get(f"/settings{query}", follow_redirects=False)
+            page = client.get(path, follow_redirects=False)
             busy = client.get("/clusters/busy").json()["busy"]
         return page, busy
 
     def card(self, page: Any) -> str:
         return str(page.text.split('id="nodes"')[1].split("</section>")[0])
 
-    def test_a_queued_creation_has_a_row_with_its_badge(self) -> None:
+    def test_a_queued_creation_is_shown_where_it_was_made(self) -> None:
         for state in ("pending", "running"):
             with self.subTest(state=state):
-                page, busy = self.settings([creation_job(state)], "?creating=gamma")
-                card = self.card(page)
-                self.assertIn("<strong>gamma</strong>", card)
-                self.assertIn('data-busy="gamma"', card)
-                self.assertIn("Creating cluster", card)
+                page, busy = self.page(
+                    [creation_job(state)], "/settings/new-cluster?creating=gamma"
+                )
+                self.assertIn("<h3>gamma</h3>", page.text)
+                self.assertIn('data-busy="gamma"', page.text)
+                self.assertIn("Creating cluster", page.text)
+                self.assertNotIn('name="block_1"', page.text)
                 self.assertEqual(busy.get("gamma"), "Creating cluster")
+                card = self.card(self.page([creation_job(state)], "/settings")[0])
+                self.assertIn('data-busy="gamma"', card)
 
     def test_a_finished_creation_waits_for_the_poller_and_then_lets_go(self) -> None:
         just = creation_job("done", finished=datetime.now(UTC))
-        page, busy = self.settings([just])
+        page, busy = self.page([just], "/settings")
         self.assertIn('data-busy="gamma"', self.card(page))
         self.assertIn("gamma", busy)
 
         long_ago = creation_job("done", finished=NOW)
-        page, busy = self.settings([long_ago])
+        page, busy = self.page([long_ago], "/settings")
         self.assertNotIn("gamma", self.card(page))
         self.assertNotIn("gamma", busy)
 
-    def test_once_listed_the_page_that_asked_goes_to_the_cluster(self) -> None:
-        page, _ = self.settings([], "?creating=edge-demo")
+    def test_once_listed_it_goes_to_the_cluster_and_says_what_was_joined(self) -> None:
+        page, _ = self.page([], "/settings/new-cluster?creating=edge-demo")
         self.assertEqual(page.status_code, 303)
-        self.assertEqual(page.headers["location"], "/settings/nodes/edge-demo")
+        self.assertEqual(page.headers["location"], "/settings/nodes/edge-demo?joined=1")
+        joined, _ = self.page([], "/settings/nodes/edge-demo?joined=1")
+        self.assertIn("Joined edge-a, edge-b", joined.text)
+        plain, _ = self.page([], "/settings/nodes/edge-demo")
+        self.assertNotIn("Joined", plain.text)
         for odd in ("?creating=gamma", "?creating=../x", "?creating="):
             with self.subTest(query=odd):
-                self.assertEqual(self.settings([], odd)[0].status_code, 200)
+                page, _ = self.page([], f"/settings/new-cluster{odd}")
+                self.assertEqual(page.status_code, 200)
+                self.assertIn('name="block_1"', page.text)
 
-    def test_a_failed_creation_says_why_where_it_was_asked_for(self) -> None:
+    def test_a_failed_creation_says_why_where_it_was_made(self) -> None:
         failed = creation_job(
             "blocked",
             finished=NOW,
             result={"error": {"code": "node_unreachable", "message": "gamma-a did not answer"}},
         )
-        page, busy = self.settings([failed], "?creating=gamma")
-        card = self.card(page)
-        self.assertIn("Creating the cluster failed: gamma", card)
-        self.assertIn("gamma-a did not answer", card)
-        self.assertIn('href="/jobs#job-41"', card)
-        self.assertNotIn('data-busy="gamma"', card)
+        page, busy = self.page([failed], "/settings/new-cluster?creating=gamma")
+        self.assertIn("Creating the cluster failed: gamma", page.text)
+        self.assertIn("gamma-a did not answer", page.text)
+        self.assertIn('href="/jobs#job-41"', page.text)
+        self.assertIn('name="block_1"', page.text)
+        self.assertNotIn('data-busy="gamma"', page.text)
         self.assertNotIn("gamma", busy)
-
-        page, _ = self.settings([failed])
-        self.assertNotIn("gamma", self.card(page))

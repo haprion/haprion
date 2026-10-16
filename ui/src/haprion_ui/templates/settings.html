@@ -123,9 +123,6 @@
 #}
 <section class="cluster-card settings-card" id="nodes">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Nodes &amp; clusters</h3></div></div><div class="cluster-state"><a class="secondary-button" href="/settings/new-cluster">Create cluster</a></div></header>
-  {% if creation_failed %}
-  <p class="preview-notice settings-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ creation_failed.failed }}: {{ creation_failed.cluster }}</strong>{% if creation_failed.message %} — {{ creation_failed.message }}{% endif %} <a class="text-link" href="/jobs#job-{{ creation_failed.job }}">Show job</a></p>
-  {% endif %}
   {% if cluster_nodes %}
   <div class="table-scroll"><table class="node-table settings-cluster-table settings-nodes-table">
     <thead><tr><th>Cluster</th><th>Nodes</th><th><span class="visually-hidden">Action</span></th></tr></thead>

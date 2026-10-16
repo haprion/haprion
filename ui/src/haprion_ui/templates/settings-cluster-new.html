@@ -2,6 +2,7 @@
 {% from "_back.html" import back_button %}
 {% block title %}Create cluster — Haprion{% endblock %}
 {% block content %}
+<script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 {#
   A new cluster with its first node or two (Fas 16, B211, B302) - `haprion-cluster add`.
   The form and both blocks are read by the engine's own check and shown with
@@ -10,7 +11,7 @@
   status and takes all of it back if either does not answer as itself.
 #}
 <section class="page-heading">
-  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Create cluster</h1>{% if not creation %}<p class="page-lede">Install the haprion-node package on the new node, then paste the block it prints.</p>{% endif %}</div>
+  <div class="heading-title">{{ back_button('/settings#nodes', 'Settings') }}<h1>Create cluster</h1>{% if not creation and not (creating and creating.running) %}<p class="page-lede">Install the haprion-node package on the new node, then paste the block it prints.</p>{% endif %}</div>
 </section>
 
 {% if problem %}
@@ -18,6 +19,14 @@
 {% endif %}
 
 <div class="cluster-list">
+{% if creating and creating.running %}
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ creating.cluster }}</h3></div></div><span class="status-badge status-badge-info" data-busy="{{ creating.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ creating.running }}</span></header>
+</section>
+{% else %}
+{% if creating and creating.failed %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ creating.failed }}: {{ creating.cluster }}</strong>{% if creating.message %} — {{ creating.message }}{% endif %} <a class="text-link" href="/jobs#job-{{ creating.job }}">Show job</a></p>
+{% endif %}
 {% if creation %}
 <form method="post" action="/settings/new-cluster" class="preview-form nodes-form" autocomplete="off">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -75,6 +84,7 @@
     </div>
   </section>
 </form>
+{% endif %}
 {% endif %}
 </div>
 {% endblock %}

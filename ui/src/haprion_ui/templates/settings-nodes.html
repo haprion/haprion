@@ -18,6 +18,8 @@
 
 {% if problem %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% elif joined %}
+<p class="preview-notice notice-done"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>Joined {{ joined | join(', ') }}</strong></p>
 {% endif %}
 
 <div class="cluster-list">

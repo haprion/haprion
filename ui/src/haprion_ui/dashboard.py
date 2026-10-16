@@ -330,6 +330,26 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
     else:
         label, tone, detail = "Online", "healthy", "Serving and reporting normally"
 
+    if label == NOT_DEPLOYED:
+        #
+        # Said once. Before its first release a node has no failover state, no
+        # address, no runtime and no statistics to report, and the row said so
+        # four more times in four other words (Fas 18, finding 61).
+        #
+        return NodeView(
+            name=name,
+            management_host=management_host,
+            label=label,
+            tone=tone,
+            detail="",
+            keepalived="",
+            vip="",
+            version="—",
+            runtime="",
+            stats="",
+            current=current,
+        )
+
     return NodeView(
         name=name,
         management_host=management_host,

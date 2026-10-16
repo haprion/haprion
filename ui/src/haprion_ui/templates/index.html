@@ -135,11 +135,11 @@
           {% for node in cluster.nodes %}
           <tr>
             <td data-label="Node"><strong>{{ node.name }}</strong><small>{{ node.management_host }}</small></td>
-            <td data-label="Service"><span class="inline-status"><span class="status-dot status-{{ node.tone }}"></span>{{ node.label }}</span><small>{{ node.detail }}</small></td>
+            <td data-label="Service"><span class="inline-status"><span class="status-dot status-{{ node.tone }}"></span>{{ node.label }}</span>{% if node.detail %}<small>{{ node.detail }}</small>{% endif %}</td>
             <td data-label="Failover">{{ node.keepalived }}</td>
             <td data-label="VIP">{{ node.vip }}</td>
             <td data-label="Release"><span class="release-value">{{ node.version }}</span>{% if node.release_behind %}<small class="warning-text">Behind target</small>{% endif %}</td>
-            <td data-label="Runtime">{{ node.runtime }}{% if node.runtime_note %}<small class="warning-text"{% if node.runtime_title %} title="{{ node.runtime_title }}"{% endif %}>{{ node.runtime_note }}</small>{% endif %}<small>Stats {{ node.stats | lower }}</small></td>
+            <td data-label="Runtime">{{ node.runtime }}{% if node.runtime_note %}<small class="warning-text"{% if node.runtime_title %} title="{{ node.runtime_title }}"{% endif %}>{{ node.runtime_note }}</small>{% endif %}{% if node.stats %}<small>Stats {{ node.stats | lower }}</small>{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>

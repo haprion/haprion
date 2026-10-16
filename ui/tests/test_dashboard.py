@@ -206,6 +206,15 @@ class HealthDerivation(unittest.TestCase):
         cluster = view.clusters[0]
         self.assertEqual([node.label for node in cluster.nodes], ["Not deployed"] * len(nodes))
         self.assertEqual((cluster.label, cluster.tone), ("Not deployed", "unknown"))
+        #
+        # Said once: no failover state, address, runtime or statistics to
+        # report before a first release (Fas 18, finding 61).
+        #
+        for node in cluster.nodes:
+            self.assertEqual(
+                (node.detail, node.keepalived, node.vip, node.version, node.runtime, node.stats),
+                ("", "", "", "—", "", ""),
+            )
         self.assertEqual(view.online_nodes, len(nodes))
         self.assertEqual(attention.from_dashboard(view.clusters, drift_label="Version drift"), [])
 

@@ -29,29 +29,10 @@ of shell myself; the rest was done by AI.
 
 ## How an installation looks
 
-```mermaid
-flowchart LR
-    clients([Clients]) --> vip{{"Virtual address<br/>keepalived"}}
-    subgraph cluster["HAProxy cluster, two to eight nodes"]
-        direction TB
-        a["node-a<br/>HAProxy and WAF"]
-        b["node-b<br/>HAProxy and WAF, standing by"]
-    end
-    vip --> a
-    vip -. "moves on failure" .-> b
-    a --> servers[("Your servers")]
-    b -.-> servers
-    admin([Administrator]) -- browser --> manager
-    subgraph manager["Manager, outside the traffic path"]
-        direction TB
-        web["Web interface"] --> engine["Engine and command line"]
-        engine --- db[("PostgreSQL")]
-    end
-    manager -- "asks to pull, reads status" --> cluster
-    cluster -- "fetches releases and certificates" --> manager
-    ca["ACME CA or Microsoft CA over NDES"] -- certificates --> manager
-    receivers["Other hosts"] -- "fetch certificates" --> manager
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/installation-dark.svg">
+  <img src="docs/images/installation-light.svg" width="900" alt="Clients reach the virtual address, which keepalived keeps on node-a of the HAProxy cluster; node-a forwards to your servers, and node-b stands by to take the address over. The manager, outside the traffic path, runs the web interface and engine with PostgreSQL. It asks the nodes to fetch over SSH, and the nodes fetch releases and certificates from it; other hosts fetch their certificates from it too.">
+</picture>
 
 The **manager** is a machine of its own. It holds the configuration, the published versions, the
 keys and the certificates, and runs the web interface; one manager can look after several

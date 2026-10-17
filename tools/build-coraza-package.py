@@ -285,6 +285,9 @@ def go_environment(go_root: Path, work: Path) -> dict[str, str]:
         "GOPATH": str(work / "gopath"),
         "GOCACHE": str(work / "gocache"),
         "GOMODCACHE": str(work / "gomodcache"),
+        # The compiler's own scratch files, which are otherwise in /tmp - a
+        # tmpfs too small for them on the build host (26-10-17).
+        "GOTMPDIR": str(work),
         "GOTOOLCHAIN": "local",
         "GOFLAGS": "-mod=readonly",
         "GOOS": "linux",

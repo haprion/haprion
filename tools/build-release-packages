@@ -113,7 +113,7 @@ def go_root(cache: Path, version: str) -> Path:
     return root / "go"
 
 
-def run(*command: str | Path, env: dict[str, str] | None = None) -> None:
+def run(*command: str | Path, env: dict[str, str]) -> None:
     print("+", " ".join(str(part) for part in command), flush=True)
     subprocess.run([str(part) for part in command], check=True, env=env)  # noqa: S603 - fixed tools from the tree
 
@@ -133,6 +133,15 @@ def build(
     if any(output_dir.iterdir()):
         raise BuildError(f"{output_dir} is not empty")
     cache.mkdir(parents=True, exist_ok=True)
+    #
+    # Every step's temporary files under the cache, not in /tmp: the engine and
+    # the two Python environments take gigabytes there, and /tmp is a small
+    # tmpfs on some build hosts (measured 26-10-17: 5.9 GB, mostly in use).
+    #
+    scratch = cache / "tmp"
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir()
+    environment = {**os.environ, "TMPDIR": str(scratch)}
     tool = engine_tool(source)
     sources = cache / "sources"
     sources.mkdir(exist_ok=True)
@@ -143,7 +152,8 @@ def build(
     govulncheck = bin_dir / "govulncheck"
     if not govulncheck.exists():
         env = {
-            **os.environ,
+            **environment,
+            "GOTMPDIR": str(scratch),
             "GOBIN": str(bin_dir),
             "GOTOOLCHAIN": "local",
             "GOPATH": str(cache / "gopath"),
@@ -156,9 +166,12 @@ def build(
             env=env,
         )
 
+    def step(*command: str | Path) -> None:
+        run(*command, env=environment)
+
     tools = source / "tools"
     python = sys.executable
-    run(
+    step(
         python,
         tools / "build-coraza-package.py",
         "crs",
@@ -167,7 +180,7 @@ def build(
         "--output-dir",
         output_dir,
     )
-    run(
+    step(
         python,
         tools / "build-coraza-package.py",
         "coraza",
@@ -183,7 +196,7 @@ def build(
     (engine,) = output_dir.glob("haprion-coraza-spoa_*_amd64.deb")
     if waf_only:
         return write_sums(output_dir)
-    run(
+    step(
         python,
         tools / "build-cli-package.py",
         "--source",
@@ -195,10 +208,10 @@ def build(
         "--waf-engine-package",
         engine,
     )
-    run(python, tools / "node-package.py", "build", "--source", source, "--output-dir", output_dir)
+    step(python, tools / "node-package.py", "build", "--source", source, "--output-dir", output_dir)
     for distribution in DISTRIBUTIONS:
         for builder in ("build-ui-package.py", "build-certbot-package.py"):
-            run(
+            step(
                 python,
                 tools / builder,
                 "--source",
@@ -212,7 +225,7 @@ def build(
                 "--podman",
                 podman,
             )
-    run(python, tools / "build-keyring-package.py", "--source", source, "--output-dir", output_dir)
+    step(python, tools / "build-keyring-package.py", "--source", source, "--output-dir", output_dir)
     return write_sums(output_dir)
 
 

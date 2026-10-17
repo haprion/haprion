@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import io
 import json
 import os
@@ -24,6 +25,8 @@ from haprion.config import Cluster, Node, RuntimeConfig, load_policy, load_runti
 from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, Locations, Outcome
 from haprion.status_collect import NodeResponse
 from tests.contract_schema import assert_contract, published
+from tests.test_status_addresses import addresses
+from tests.test_status_addresses import node_status as reported_status
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "77777777-7777-4777-8777-777777777777"
@@ -633,6 +636,58 @@ class ChangingAHost(unittest.TestCase):
             self.assertEqual(site.snapshot(), before)
 
 
+class WhetherTheChangeIsAllADeployWouldRollOut(unittest.TestCase):
+    """B321: a node change is deployed in its own job only when the cluster was converged."""
+
+    HASH = "a" * 40
+
+    def converged(self, raw: str, *, hashes: dict[str, str | None], published: bool = True) -> bool:
+        site = Installation(Path(raw))
+        runtime = site.runtime()
+        root = Path(raw) / "published"
+        cluster = dataclasses.replace(runtime.cluster("alpha"), publish_path=root)
+        if published:
+            stamp = root / "current" / cluster.node_path / "RELEASE"
+            stamp.parent.mkdir(parents=True)
+            stamp.write_text(f"version=3\nhash={self.HASH}\n")
+
+        def ask(node: Node) -> NodeResponse:
+            status = reported_status(addresses())
+            status["node"] = node.name
+            release = hashes.get(node.name)
+            status["release"] = None if release is None else {"version": 3, "hash": release}
+            return NodeResponse(exit_code=0, stdout=json.dumps(status))
+
+        return node_helper._converged(
+            dataclasses.replace(runtime, clusters={"alpha": cluster}), "alpha", ask
+        )
+
+    def test_every_node_on_the_published_version_is_converged(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertIs(
+                self.converged(raw, hashes={"node-a": self.HASH, "node-b": self.HASH}), True
+            )
+
+    def test_a_node_behind_is_not(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertIs(
+                self.converged(raw, hashes={"node-a": self.HASH, "node-b": "b" * 40}), False
+            )
+
+    def test_a_node_that_does_not_say_is_not(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertIs(self.converged(raw, hashes={"node-a": self.HASH}), False)
+
+    def test_nothing_published_is_not(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertIs(
+                self.converged(
+                    raw, hashes={"node-a": self.HASH, "node-b": self.HASH}, published=False
+                ),
+                False,
+            )
+
+
 class TheHelper(unittest.TestCase):
     """The request the worker and the terminal send, answered in an envelope."""
 
@@ -696,6 +751,11 @@ class TheHelper(unittest.TestCase):
             [(nodes, options)] = self.published
             self.assertEqual(nodes[-1].name, "node-c")
             self.assertEqual(options["comment"], "node-c added")
+            # B321: nothing is published in the fixture, so not converged; the
+            # version is owed a deploy, and the job page offers it.
+            self.assertIs(result["converged_before"], False)
+            self.assertIs(result["deployment_required"], True)
+            self.assertEqual(result["next_command"], "haprion-deploy -c alpha")
 
     def interrupted_addition(self, site: Installation) -> None:
         """An addition killed after its files were written, before the node answered."""
@@ -876,6 +936,54 @@ class TheCommand(unittest.TestCase):
         self.assertEqual(enrollment.parse(parameters["block"]), block())
         self.assertIn("no certificates yet: haprion-cert-deploy -c alpha", out.getvalue())
         self.assertIn("Published as version 5; haprion-deploy -c alpha", out.getvalue())
+
+    def removal(self, *, converged: bool, deploying: bool = True) -> tuple[int, str, list[object]]:
+        def run(_request: str) -> subprocess.CompletedProcess[str]:
+            answer = {
+                "operation": "cluster_node",
+                "result": {
+                    "action": "removed",
+                    "node": "node-b",
+                    "files": ["clusters.yaml"],
+                    "publication": {"version": 6, "hash": "d" * 40, "changed": True},
+                    "converged_before": converged,
+                },
+            }
+            return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
+
+        deployed: list[object] = []
+
+        def then_deploy(cluster: str, version: int, action: str) -> int:
+            deployed.append((cluster, version, action))
+            return 3
+
+        out = io.StringIO()
+        arguments = ["remove", "-c", "alpha", "node-b", *(["--deploy"] if deploying else [])]
+        code = node_command.main(arguments, stdout=out, run=run, then_deploy=then_deploy)
+        return code, out.getvalue(), deployed
+
+    def test_deploy_follows_a_change_that_is_all_it_would_roll_out(self) -> None:
+        """B321, as the interface does: bound to the version the change published."""
+
+        code, _, deployed = self.removal(converged=True)
+
+        self.assertEqual(deployed, [("alpha", 6, "remove")])
+        self.assertEqual(code, 3)
+
+    def test_deploy_is_left_to_the_operator_otherwise(self) -> None:
+        code, printed, deployed = self.removal(converged=False)
+
+        self.assertEqual((code, deployed), (0, []))
+        self.assertIn("Not deployed: not every node ran the published version", printed)
+        self.assertEqual(self.removal(converged=True, deploying=False)[2], [])
+
+    def test_deploy_is_not_for_json_or_a_host_change(self) -> None:
+        for arguments in (
+            ["remove", "-c", "alpha", "node-b", "--deploy", "--json"],
+            ["host", "-c", "alpha", "node-b", "--host", "lb-02", "--deploy"],
+        ):
+            with self.subTest(arguments), self.assertRaises(SystemExit):
+                node_command.main(arguments, stdout=io.StringIO(), stderr=io.StringIO())
 
     def test_a_refusal_is_printed_as_its_sentence(self) -> None:
         def run(_request: str) -> subprocess.CompletedProcess[str]:

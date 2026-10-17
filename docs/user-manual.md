@@ -1906,6 +1906,15 @@ the terminal; the release keeps the nodes it had until a change is published. Th
 certificates until `haprion-cert-deploy -c <cluster>` runs (*Deploy certificates* on the
 dashboard); a deploy before the certificates stops and says so, since the node has none.
 
+When every node ran the published version before an addition or a removal, the change is the
+only thing a deploy would roll out, and the interface deploys it in the same job: the
+certificates and then the configuration after an addition, the configuration after a removal.
+The job ends as the deploy ended, and says what the node change did beside it. When the cluster
+was behind already - a version somebody published and did not deploy, a node that could not be
+read - nothing is deployed, since that would roll out the other change as well, and the job
+offers *Deploy configuration*. In the terminal, `haprion-node add` and `remove` take `--deploy`
+for the same, under the same rule.
+
 A removal takes the node's lines out of all six files, so it can no longer fetch configuration or
 certificates. It is refused for the node that reports holding the VIP and for a cluster's last node. A
 cluster has one to eight nodes ([Cluster definitions](#cluster-definitions)). On a cluster created in the
@@ -4099,8 +4108,9 @@ Its first line, `# Written by Haprion - a deploy replaces this file.`, is how th
 the file is the product's. Delete that line and the file is yours: the deploy leaves it as it is from then on, and only the
 address list below is written.
 
-Adding a node changes the peer lists. The addition is published as a version, and the next deploy
-takes it to the nodes as a reload: the address stays where it is. Until the first deploy a node has no `keepalived.conf`; the dashboard
+Adding a node changes the peer lists. The addition is published as a version, and the deploy
+(in the same job, or the next one) takes it to the nodes as a reload: the address stays where it
+is. The new node is deployed after the owner, so it starts as a standby. Until the first deploy a node has no `keepalived.conf`; the dashboard
 says *Keepalived not configured*, and since no node carries the address the deploy proceeds with
 *no node currently owns the VIP*.
 

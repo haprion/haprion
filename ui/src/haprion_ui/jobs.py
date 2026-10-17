@@ -495,7 +495,13 @@ def publication_note(job: Job) -> str | None:
 
     if job.operation not in {"cluster_node", "cluster_define"} or not isinstance(job.result, dict):
         return None
-    body = job.result.get("result")
+    #
+    # A node change deployed in the same job (B321) ends as the deploy ended,
+    # with its own answer beside it under `node`.
+    #
+    embedded = job.result.get("node")
+    envelope = embedded if isinstance(embedded, dict) else job.result
+    body = envelope.get("result")
     publication = body.get("publication") if isinstance(body, dict) else None
     error = publication.get("error") if isinstance(publication, dict) else None
     message = error.get("message") if isinstance(error, dict) else None

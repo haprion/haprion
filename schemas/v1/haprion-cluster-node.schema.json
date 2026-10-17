@@ -47,6 +47,19 @@
             }
           ]
         },
+        "deployment_required": {
+          "description": "B321: the change was published as a version the nodes do not run until a deploy.",
+          "type": "boolean"
+        },
+        "next_command": {
+          "description": "The command that deploys it.",
+          "type": "string",
+          "maxLength": 256
+        },
+        "converged_before": {
+          "description": "B321, after an addition or a removal: whether every node ran the published version before the change. When true the change is the only thing a deploy rolls out, and the interface deploys it in the same job.",
+          "type": "boolean"
+        },
         "publication": {
           "description": "B318: the version the node list was published as, or why it was not. The change above stands either way.",
           "oneOf": [

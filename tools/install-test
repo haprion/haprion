@@ -542,9 +542,14 @@ def run_one(
 
             holder = run.wait_for_one_holder()
             leaving = next(role for role in NODES if role != holder)
-            _, output = run.on("mgr", f"haprion-node remove -c {CLUSTER} {leaving}")
+            _, output = run.on("mgr", f"haprion-node remove -c {CLUSTER} {leaving} --deploy")
             if "stopped keepalived and HAProxy" not in output:
                 raise Failed(f"removing {leaving} did not say it stepped down:\n{output}")
+            #
+            # B321: converged before, so the removal is deployed with it.
+            #
+            if f"=== Deploy: {holder} ===" not in output or "RESULT: OK" not in output:
+                raise Failed(f"the removal was not deployed with it:\n{output}")
             _, active = run.on(leaving, "systemctl is-active haproxy keepalived", check=False)
             _, enabled = run.on(leaving, "systemctl is-enabled haproxy keepalived", check=False)
             if active.split() != ["inactive", "inactive"] or enabled.split() != [
@@ -552,13 +557,49 @@ def run_one(
                 "disabled",
             ]:
                 raise Failed(f"{leaving} still runs or starts at boot:\n{active}\n{enabled}")
-            run.deploy()
             time.sleep(8)
             if run.holders() != [holder]:
                 raise Failed(f"after the removal the address is on {run.holders()}")
             run.answers_on_the_vip()
+            return holder, leaving
 
-        step("a removed node steps down, and the address stays on one node", removed_steps_down)
+        holder, leaving = step(
+            "haprion-node remove --deploy: the node steps down, the rest is deployed, "
+            "the address stays on one node",
+            removed_steps_down,
+        )
+
+        def added_back_and_deployed() -> None:
+            """B321 and B320: added back with --deploy, after the owner, as a standby."""
+
+            _, since = run.on(leaving, "date +%s")
+            _, printed = run.on(leaving, "haprion-node-key --again")
+            block = re.search(r"^(haproxy-node-v2:\S+)$", printed, re.M)
+            if not block:
+                raise Failed(f"haprion-node-key --again printed no block:\n{printed}")
+            _, output = run.on(
+                "mgr",
+                f"haprion-node add -c {CLUSTER} --host {leaving} --deploy",
+                stdin=block.group(1) + "\n",
+            )
+            order = re.findall(r"^=== Deploy: (\S+) ===$", output, re.MULTILINE)
+            if order[-2:] != [holder, leaving] or "RESULT: OK" not in output:
+                raise Failed(f"the addition was not deployed after the owner:\n{output}")
+            _, log = run.on(
+                leaving,
+                f"journalctl -u keepalived --no-pager -o cat --since @{since.strip()}",
+                check=False,
+            )
+            if "Entering BACKUP STATE" not in log or "Entering MASTER STATE" in log:
+                raise Failed(f"{leaving} did not start as a standby:\n{log}")
+            if run.holders() != [holder]:
+                raise Failed(f"after the addition the address is on {run.holders()}")
+            run.answers_on_the_vip()
+
+        step(
+            "haprion-node add --deploy: certificates and configuration, the node a standby",
+            added_back_and_deployed,
+        )
     except Failed as failure:
         print("FAILED")
         print()

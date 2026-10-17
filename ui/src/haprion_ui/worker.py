@@ -544,6 +544,13 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
         if deployed is None:
             return
         state, outcome, result, exit_code, stderr = deployed
+    elif state == "done" and job.operation == "cluster_node":
+        version = _node_change_deploys(job, result)
+        if version is not None:
+            followed = _node_deploy_after(job, cast(dict[str, Any], result), version, lease_is_ours)
+            if followed is None:
+                return
+            state, outcome, result, exit_code, stderr = followed
 
     _finish(
         connection,
@@ -560,9 +567,113 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
 #
 # The deploy that follows a publish asked for with Publish & deploy (B257) is
 # its own request to the deploy helper, so it has its own ID - derived from the
-# job's, so the retry of an interrupted job asks the same question again.
+# job's, so the retry of an interrupted job asks the same question again. The
+# certificate deploy before an added node's deploy (B321) likewise.
 #
 DEPLOY_AFTER = UUID("4f6c1d2e-8b7a-4c3d-9e1f-2a5b6c7d8e9f")
+CERT_DEPLOY_AFTER = UUID("8d2a7c41-3e5b-4f69-a0c8-1b7e9d2f4a63")
+
+type Followed = tuple[str, str, dict[str, Any] | None, int | None, str]
+
+
+def _run_after(
+    job: db.ClaimedJob,
+    operation: str,
+    payload: dict[str, Any],
+    salt: UUID,
+    still_ours: Callable[[], bool],
+) -> Followed | None:
+    """One more helper run inside a job that has already done its own (B257, B321).
+
+    The state, outcome, answer, exit code and stderr of that run; None when the
+    lease was lost and nothing may be written.
+    """
+
+    request_id = uuid5(salt, str(job.request_id))
+    try:
+        prepared = operations.prepare(
+            operation=operation, cluster=job.cluster, request_id=request_id, payload=payload
+        )
+    except (operations.UnknownOperation, operations.BadPayload) as refusal:
+        logger.error("job %s: the %s after it was refused: %s", job.id, operation, refusal)
+        return "blocked", "blocked", _internal_error(), None, ""
+    logger.info("job %s: %s on %s", job.id, operation, job.cluster)
+    completed = execution.run(
+        prepared.argv,
+        request=prepared.request,
+        timeout_seconds=prepared.timeout_seconds,
+        still_ours=still_ours,
+        lifeline=prepared.lifeline,
+    )
+    if completed.ending == "lease_lost":
+        logger.error("job %s was taken over during its %s; writing nothing", job.id, operation)
+        return None
+    envelope = (
+        _envelope(completed.stdout, job, operation=operation, request_id=str(request_id))
+        if completed.stdout_error is None
+        else None
+    )
+    if envelope is None or completed.ending == "timeout":
+        state = outcome = "unknown"
+        answer: dict[str, Any] = {} if completed.ending == "timeout" else _internal_error()
+    else:
+        state, outcome, answer = _judged(envelope, completed)
+    return state, outcome, answer, completed.exit_code, completed.stderr
+
+
+def _node_change_deploys(job: db.ClaimedJob, result: dict[str, Any] | None) -> int | None:
+    """The version a node change published, when it is to be deployed in the same job (B321).
+
+    Asked for by the page (`deploy`), and only when the helper read every node
+    on the published version before the change: then the change is the only
+    thing the deploy rolls out. Anything else - a version somebody published
+    and did not deploy, a node that could not be read, a publication that
+    failed - is left to a person, and the job says a deploy is owed.
+    """
+
+    if job.payload.get("deploy") is not True or job.payload.get("action") not in ("add", "remove"):
+        return None
+    body = (result or {}).get("result")
+    if not isinstance(body, dict) or body.get("converged_before") is not True:
+        return None
+    publication = body.get("publication")
+    version = publication.get("version") if isinstance(publication, dict) else None
+    if "error" in (publication or {}) or not isinstance(version, int) or isinstance(version, bool):
+        return None
+    return version
+
+
+def _node_deploy_after(
+    job: db.ClaimedJob, changed: dict[str, Any], version: int, still_ours: Callable[[], bool]
+) -> Followed | None:
+    """Deploy a node change in its own job (B321), as Publish & deploy does a publish (B257).
+
+    An added node has no certificates, and a deploy refuses a node without
+    them, so a certificate deploy goes first; one that does not finish ends
+    the job there. The job ends as its last run ended, with the node change's
+    own answer beside it under `node`: the change stands either way.
+    """
+
+    if job.payload.get("action") == "add":
+        certificates = _run_after(
+            job, "cert_deploy", {"allow_vip_unknown": False}, CERT_DEPLOY_AFTER, still_ours
+        )
+        if certificates is None:
+            return None
+        state, outcome, answer, exit_code, stderr = certificates
+        if state != "done":
+            return state, outcome, {**(answer or {}), "node": changed}, exit_code, stderr
+    deployed = _run_after(
+        job,
+        "deploy",
+        {"allow_vip_unknown": False, "expected_version": version},
+        DEPLOY_AFTER,
+        still_ours,
+    )
+    if deployed is None:
+        return None
+    state, outcome, answer, exit_code, stderr = deployed
+    return state, outcome, {**(answer or {}), "node": changed}, exit_code, stderr
 
 
 def _deploy_after(
@@ -570,7 +681,7 @@ def _deploy_after(
     job: db.ClaimedJob,
     published: dict[str, Any],
     still_ours: Callable[[], bool],
-) -> tuple[str, str, dict[str, Any] | None, int | None, str] | None:
+) -> Followed | None:
     """Deploy the version a publish of saved changes just recorded, in the same job (B257).
 
     Asked for with Publish & deploy. The worker may not queue a job of its own -
@@ -587,39 +698,17 @@ def _deploy_after(
 
     body = published.get("result")
     version = body.get("version") if isinstance(body, dict) else None
-    request_id = uuid5(DEPLOY_AFTER, str(job.request_id))
-    try:
-        prepared = operations.prepare(
-            operation="deploy",
-            cluster=job.cluster,
-            request_id=request_id,
-            payload={"allow_vip_unknown": False, "expected_version": version},
-        )
-    except (operations.UnknownOperation, operations.BadPayload) as refusal:
-        logger.error("job %s published but its deploy was refused: %s", job.id, refusal)
-        return "blocked", "blocked", {**_internal_error(), "publish": published}, None, ""
-    logger.info("job %s: deploy of version %s on %s", job.id, version, job.cluster)
-    completed = execution.run(
-        prepared.argv,
-        request=prepared.request,
-        timeout_seconds=prepared.timeout_seconds,
-        still_ours=still_ours,
-        lifeline=prepared.lifeline,
+    deployed = _run_after(
+        job,
+        "deploy",
+        {"allow_vip_unknown": False, "expected_version": version},
+        DEPLOY_AFTER,
+        still_ours,
     )
-    if completed.ending == "lease_lost":
-        logger.error("job %s was taken over while it deployed; writing nothing", job.id)
+    if deployed is None:
         return None
-    envelope = (
-        _envelope(completed.stdout, job, operation="deploy", request_id=str(request_id))
-        if completed.stdout_error is None
-        else None
-    )
-    if envelope is None or completed.ending == "timeout":
-        state = outcome = "unknown"
-        answer: dict[str, Any] = {} if completed.ending == "timeout" else _internal_error()
-    else:
-        state, outcome, answer = _judged(envelope, completed)
-    return state, outcome, {**answer, "publish": published}, completed.exit_code, completed.stderr
+    state, outcome, answer, exit_code, stderr = deployed
+    return state, outcome, {**(answer or {}), "publish": published}, exit_code, stderr
 
 
 def _wait_for_work(listener: Any, stopping: StopRequest, seconds: int) -> None:

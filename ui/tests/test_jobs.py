@@ -611,3 +611,25 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
             },
         )
         self.assertEqual(jobs.publication_note(job), message)
+
+    def test_a_removal_deployed_in_its_job_is_read_beside_the_deploy(self) -> None:
+        """B321: the job ends as its deploy ended, with the node change under `node`."""
+
+        message = "node-b did not answer (exit 255). Stop keepalived and HAProxy on node-b."
+        job = replace(
+            queued(operation="cluster_node", cluster="alpha"),
+            state="done",
+            outcome="done",
+            result={
+                "operation": "deploy",
+                "result": {"converged": True},
+                "node": {
+                    "result": {
+                        "action": "removed",
+                        "publication": {"version": 4, "hash": "d" * 40, "changed": True},
+                        "step_down": {"stopped": False, "message": message},
+                    }
+                },
+            },
+        )
+        self.assertEqual(jobs.publication_note(job), message)

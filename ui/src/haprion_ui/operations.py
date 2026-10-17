@@ -1127,11 +1127,24 @@ def prepare(
         # sudo, for the receiver's reason: the helper writes root's
         # known_hosts and the pull accounts' keys, outside this unit's sandbox.
         #
-        _only(payload, "action", "block", "host", "node", "join_key")
+        _only(payload, "action", "block", "host", "node", "join_key", "deploy")
         action = payload.get("action")
+        #
+        # Whether the change is deployed in the same job when it is the only
+        # thing a deploy would roll out (B321). The worker's to act on; the
+        # helper is never told.
+        #
+        if not isinstance(payload.get("deploy", False), bool):
+            raise BadPayload("deploy must be true or false")
+        if "deploy" in payload and action not in ("add", "remove"):
+            raise BadPayload("only an addition or a removal is deployed with it")
         if action == "remove":
             node = payload.get("node")
-            if set(payload) != {"action", "node"} or not isinstance(node, str) or not node:
+            if (
+                set(payload) - {"deploy"} != {"action", "node"}
+                or not isinstance(node, str)
+                or not node
+            ):
                 raise BadPayload("a removal names one node and nothing else")
             return Prepared(
                 argv=NODE_CLIENT,

@@ -1,7 +1,7 @@
 """``haprion-node`` - add a node to a cluster, or take one away (B211).
 
-    haprion-node add -c <cluster> --host <name> [--json] < block
-    haprion-node remove -c <cluster> <node> [--json]
+    haprion-node add -c <cluster> --host <name> [--deploy | --json] < block
+    haprion-node remove -c <cluster> <node> [--deploy | --json]
     haprion-node host -c <cluster> <node> --host <new name> [--json]
 
 `--json` prints the helper's envelope (`schemas/v1/haprion-cluster-node`) and
@@ -18,7 +18,10 @@ of them, as itself, or nothing is changed. Changing the machine is not this:
 that is a restore, or a removal and an addition.
 
 A new node has no certificates and no release until `haprion-cert-deploy -c <cluster>`
-and then `haprion-deploy -c <cluster>`.
+and then `haprion-deploy -c <cluster>`. `--deploy` runs both after an addition, and the
+deploy after a removal, when every node ran the published version before the change - then
+the change is the only thing the deploy rolls out (B321), as in the interface. Otherwise it
+says why it did not, and the commands are left to the operator.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
 from haprion import node_publish
-from haprion.cli import node_helper
+from haprion.cli import cert_deploy, deploy, node_helper
 from haprion.cli.caller import usage
 from haprion.envelope import new_request_id
 from haprion.node_enrollment import MAX_BLOCK_BYTES
@@ -39,12 +42,13 @@ from haprion.node_enrollment import MAX_BLOCK_BYTES
 SUDO = "/usr/bin/sudo"
 USAGE = (
     "Usage:\n"
-    "  haprion-node add -c <cluster> --host <name> [--json] < block\n"
-    "  haprion-node remove -c <cluster> <node> [--json]\n"
+    "  haprion-node add -c <cluster> --host <name> [--deploy | --json] < block\n"
+    "  haprion-node remove -c <cluster> <node> [--deploy | --json]\n"
     "  haprion-node host -c <cluster> <node> --host <new name> [--json]\n"
 )
 
 type RunHelper = Callable[[str], subprocess.CompletedProcess[str]]
+type DeployAfter = Callable[[str, int, str], int]
 
 
 def run_helper(request: str) -> subprocess.CompletedProcess[str]:
@@ -54,6 +58,46 @@ def run_helper(request: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
         argv, input=request, capture_output=True, text=True, check=False
     )
+
+
+def deploy_after(cluster: str, version: int, action: str) -> int:
+    """The certificates (after an addition) and then the version, streamed as the commands print them.
+
+    The deploy is bound to the version the change published, as the
+    interface's is: one published after it is refused rather than rolled out.
+    """
+
+    if action == "add":
+        code = cert_deploy.main(["-c", cluster])
+        if code != 0:
+            return code
+    request = deploy.build_request(
+        cluster,
+        new_request_id(),
+        allow_vip_unknown=False,
+        json_mode=False,
+        expected_version=version,
+    )
+    return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
+        [deploy.SUDO, "--", deploy.HELPER], input=request.encode(), check=False
+    ).returncode
+
+
+def _deployable(result: Mapping[str, Any]) -> tuple[int | None, str]:
+    """The version to deploy after a change, or None and why not (B321)."""
+
+    publication = result.get("publication")
+    if not isinstance(publication, Mapping):
+        publication = {}
+    version = publication.get("version")
+    if not isinstance(version, int) or isinstance(version, bool) or "error" in publication:
+        return None, "Not deployed: the node list was not published.\n"
+    if result.get("converged_before") is not True:
+        return None, (
+            "Not deployed: not every node ran the published version before the change, "
+            "so a deploy would roll out more than it.\n"
+        )
+    return version, ""
 
 
 def _parse(argv: list[str]) -> tuple[str, str, str, str | None]:
@@ -126,12 +170,18 @@ def main(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
     run: RunHelper = run_helper,
+    then_deploy: DeployAfter = deploy_after,
 ) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     writer = stdout or sys.stdout
     errors = stderr or sys.stderr
     json_mode = "--json" in arguments
-    action, cluster, value, new_host = _parse([item for item in arguments if item != "--json"])
+    deploying = "--deploy" in arguments
+    action, cluster, value, new_host = _parse(
+        [item for item in arguments if item not in ("--json", "--deploy")]
+    )
+    if deploying and (json_mode or action == "host" or arguments.count("--deploy") > 1):
+        usage(USAGE)
     if action == "add":
         block = (stdin or sys.stdin).read(MAX_BLOCK_BYTES + 1)
         request = node_helper.build_request(
@@ -177,7 +227,14 @@ def main(
             + _stepped_down(result.get("step_down"), str(result.get("node")))
             + node_publish.said(result.get("publication"), cluster)
         )
-    return 0
+    if not deploying:
+        return 0
+    version, refusal = _deployable(result)
+    if version is None:
+        writer.write(refusal)
+        return 0
+    writer.flush()
+    return then_deploy(cluster, version, action)
 
 
 def _stepped_down(step_down: object, node: str) -> str:

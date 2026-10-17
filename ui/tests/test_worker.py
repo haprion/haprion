@@ -656,6 +656,110 @@ class TheWorkerKeepsOutOfTheDraftTable(unittest.TestCase):
         self.assertNotIn("live_drafts", source)
 
 
+class NodeChangeAndDeploy(WorkerTestCase):
+    """B321: a node change that is all a deploy would roll out is deployed in the same job."""
+
+    def run_job(self, job: db.ClaimedJob, answers: list[Any]) -> list[dict[str, Any]]:
+        calls: list[dict[str, Any]] = []
+
+        def run(_argv: Any, **kwargs: Any) -> execution.Completed:
+            request = json.loads(kwargs["request"])
+            calls.append(request)
+            return cast(execution.Completed, answers.pop(0)(request))
+
+        with mock.patch.object(execution, "run", side_effect=run):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+        return calls
+
+    @staticmethod
+    def changed(
+        job: db.ClaimedJob, *, converged: bool = True, publication: dict[str, Any] | None = None
+    ) -> Any:
+        def answer_for(_request: dict[str, Any]) -> execution.Completed:
+            document = result_document(job)
+            document["result"] = {
+                "action": "added" if job.payload["action"] == "add" else "removed",
+                "converged_before": converged,
+                "publication": publication or {"version": 5, "hash": "c" * 40, "changed": True},
+            }
+            return completed(stdout=json.dumps(document))
+
+        return answer_for
+
+    @staticmethod
+    def ran(operation: str, outcome: str = "done") -> Any:
+        def answer_for(request: dict[str, Any]) -> execution.Completed:
+            document = {
+                **result_document(claimed(operation=operation), outcome),
+                "request_id": request["request_id"],
+            }
+            return completed(stdout=json.dumps(document), exit_code=0 if outcome == "done" else 1)
+
+        return answer_for
+
+    def job(self, action: str, **payload: Any) -> db.ClaimedJob:
+        fields: dict[str, Any] = {"action": action, "deploy": True}
+        fields.update(payload)
+        if action == "remove":
+            fields.setdefault("node", "node-b")
+        else:
+            fields.setdefault("block", "block")
+            fields.setdefault("host", "node-c.example.com")
+        return claimed(operation="cluster_node", payload=fields)
+
+    def test_a_removal_is_deployed_and_the_job_ends_as_the_deploy(self) -> None:
+        job = self.job("remove")
+
+        calls = self.run_job(job, [self.changed(job), self.ran("deploy")])
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]["parameters"]["expected_version"], 5)
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "done")
+        self.assertEqual(finished["result"]["operation"], "deploy")
+        self.assertEqual(finished["result"]["node"]["result"]["action"], "removed")
+
+    def test_an_addition_deploys_certificates_first(self) -> None:
+        job = self.job("add")
+
+        calls = self.run_job(job, [self.changed(job), self.ran("cert_deploy"), self.ran("deploy")])
+
+        self.assertEqual(
+            [call["operation"] for call in calls[1:]], ["cert_deploy_cluster", "deploy_cluster"]
+        )
+        self.assertNotEqual(calls[1]["request_id"], calls[2]["request_id"])
+        self.assertEqual(self.finished[0]["result"]["operation"], "deploy")
+
+    def test_certificates_that_did_not_deploy_end_the_job_there(self) -> None:
+        job = self.job("add")
+
+        calls = self.run_job(job, [self.changed(job), self.ran("cert_deploy", "failed")])
+
+        self.assertEqual(len(calls), 2)
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "failed")
+        self.assertEqual(finished["result"]["node"]["result"]["action"], "added")
+
+    def test_what_is_left_to_a_person(self) -> None:
+        cases: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+            "not converged before": ({}, {"converged": False}),
+            "publication failed": (
+                {},
+                {"publication": {"error": {"code": "dirty_worktree", "message": "unsaved"}}},
+            ),
+            "not asked for": ({"deploy": False}, {}),
+        }
+        for name, (payload, answer) in cases.items():
+            with self.subTest(name):
+                self.finished.clear()
+                job = self.job("remove", **payload)
+
+                calls = self.run_job(job, [self.changed(job, **answer)])
+
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(self.finished[0]["result"]["operation"], "cluster_node")
+
+
 class PublishAndDeploy(WorkerTestCase):
     """B257: a publish of saved changes asked to deploy runs the deploy in the same job."""
 

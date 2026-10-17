@@ -73,7 +73,7 @@ from haprion.helper_protocol import (
     write_document,
 )
 from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, JoinNode, Locations
-from haprion.status_collect import NodeResponse, ask_node
+from haprion.status_collect import NodeResponse, ask_node, collect, read_target
 
 OPERATION = "cluster_node"
 DEFINE = "cluster_define"
@@ -491,6 +491,28 @@ def _comment(request: HelperRequest, outcome: Any) -> str | None:
     return f"{node} moved to {parameters.get('host')}"
 
 
+def _converged(runtime: Any, cluster: str, ask: AskNode) -> bool:
+    """Whether every node of the cluster runs its published version, read as `haprion-status` reads it.
+
+    Asked before a node is added or removed (B321): when it holds, the node
+    change is the only difference a deploy would roll out, so the change may be
+    deployed in the same job. Anything else - a version published and not
+    deployed, a node that cannot be read, nothing published - is not, and the
+    deploy is left to a person.
+    """
+
+    if cluster not in runtime.clusters:
+        return False
+    definition = runtime.clusters[cluster]
+    report = collect(
+        definition.nodes,
+        ask,
+        target=read_target(Path(definition.publish_path), definition.node_path),
+    )
+    summary = report.result.get("summary")
+    return isinstance(summary, dict) and summary.get("release_state") == "converged"
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -623,6 +645,12 @@ def main(
                         f"did not finish and was put back: {', '.join(recovered.files)}\n"
                     )
                 runtime = load_runtime_config(policy, require_secure=require_secure)
+            converged_before = (
+                _converged(runtime, request.cluster, ask)
+                if request.operation == OPERATION
+                and request.parameters.get("action") in ("add", "remove")
+                else None
+            )
             outcome = work(policy, runtime, ask, join_node)
             #
             # The node list changed, so the configuration did: published as a
@@ -672,6 +700,16 @@ def main(
         }
     if publication is not None:
         result["publication"] = publication
+        #
+        # A version the nodes do not run yet: owed until a deploy, which the
+        # interface runs in the same job when the change is all it would roll
+        # out (B321), and which the job page offers otherwise.
+        #
+        if request.operation == OPERATION and "error" not in publication:
+            result["deployment_required"] = True
+            result["next_command"] = f"haprion-deploy -c {request.cluster}"
+    if converged_before is not None:
+        result["converged_before"] = converged_before
     write_document(
         output,
         envelope(

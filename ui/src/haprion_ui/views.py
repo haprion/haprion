@@ -5330,7 +5330,12 @@ def build_router(config: Config) -> APIRouter:
             return _nodes_page(
                 request, gate, cluster, addition=addition, problem=str(problem), status_code=400
             )
-        payload: dict[str, Any] = {"action": "add", "block": stored, "host": addition.host}
+        payload: dict[str, Any] = {
+            "action": "add",
+            "block": stored,
+            "host": addition.host,
+            "deploy": True,
+        }
         if join_key is not None:
             payload["join_key"] = join_key
         return _queue_node_job(
@@ -5388,7 +5393,7 @@ def build_router(config: Config) -> APIRouter:
             request,
             gate,
             cluster,
-            {"action": "remove", "node": node},
+            {"action": "remove", "node": node, "deploy": True},
             key,
             node,
             lambda problem: _nodes_page(

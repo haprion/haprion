@@ -879,6 +879,35 @@ class DefiningClusters(unittest.TestCase):
         with self.assertRaisesRegex(operations.BadPayload, "nothing else"):
             self.prepare({"action": "remove", "vip": "198.51.100.30"})
 
+    def test_a_node_change_asked_to_deploy_tells_the_helper_nothing_of_it(self) -> None:
+        """B321: `deploy` is the worker's to act on; the helper's request is as before."""
+
+        def node(payload: dict[str, object]) -> operations.Prepared:
+            return operations.prepare(
+                operation="cluster_node", cluster="gamma", request_id=REQUEST, payload=payload
+            )
+
+        removal = json.loads(node({"action": "remove", "node": "node-b", "deploy": True}).request)
+        self.assertEqual(removal["parameters"], {"action": "remove", "node": "node-b"})
+        addition = json.loads(
+            node(
+                {
+                    "action": "add",
+                    "block": "block-one",
+                    "host": "node-c.example.com",
+                    "deploy": True,
+                }
+            ).request
+        )
+        self.assertNotIn("deploy", addition["parameters"])
+        refused: tuple[tuple[dict[str, object], str], ...] = (
+            ({"action": "remove", "node": "node-b", "deploy": "yes"}, "true or false"),
+            ({"action": "host", "node": "node-b", "host": "lb-02", "deploy": True}, "only an"),
+        )
+        for payload, message in refused:
+            with self.subTest(payload), self.assertRaisesRegex(operations.BadPayload, message):
+                node(payload)
+
     def test_a_creation_short_of_its_shape_is_refused(self) -> None:
         for change, message in (
             ({"hosts": ["node-c.example.com"]}, "pair up"),

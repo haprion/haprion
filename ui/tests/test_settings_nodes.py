@@ -221,7 +221,8 @@ class AddingANode(NodesPage):
         self.assertEqual((queued["operation"], queued["cluster"]), ("cluster_node", "edge-demo"))
         self.assertEqual(
             queued["payload"],
-            {"action": "add", "block": block(), "host": "lb-edge-c.example.com"},
+            # B321: deployed in the same job when it is all a deploy would roll out.
+            {"action": "add", "block": block(), "host": "lb-edge-c.example.com", "deploy": True},
         )
 
     def test_a_wrong_name_queues_nothing(self) -> None:
@@ -293,7 +294,7 @@ class RemovingANode(NodesPage):
         )
         self.assertEqual(response.status_code, 303, response.text)
         (queued,) = self.queued
-        self.assertEqual(queued["payload"], {"action": "remove", "node": "edge-c"})
+        self.assertEqual(queued["payload"], {"action": "remove", "node": "edge-c", "deploy": True})
 
     def test_the_vip_holder_is_not_offered_and_is_refused(self) -> None:
         self.rows = with_third_node()

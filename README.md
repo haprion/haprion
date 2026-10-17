@@ -123,9 +123,9 @@ the installation, and the [user manual](docs/user-manual.md) is the reference fo
   `haprion-node` for the nodes, and the WAF engine and rule set; installing a newer package is the
   update
 
-The interface reads for everyone and writes only for an admin on an installation that sets
-`management_writes = true`. With it off, the interface is read-only and the worker claims nothing;
-that is the state turning the switch off returns to, so it is a rollback rather than a pause.
+Everyone signed in can read; an admin can change things. Writing can also be switched off for the
+whole installation with `management_writes = false` in `ui.toml`: the interface is then read-only
+and the worker claims nothing, which is how to stop every change while something is looked into.
 What the product deliberately leaves to others is listed under
 [What it does not do](docs/user-manual.md#what-it-does-not-do).
 
@@ -147,8 +147,6 @@ Coming from another load-balancer interface, a few choices here are deliberate a
   configuration path of its own for the clusters, and every change to one is a job with a
   recorded outcome. Accounts, settings and drafts belong to the interface: they are written to its
   database and audited there.
-- **Writing is off until it is turned on.** A new installation reads only; `management_writes`
-  turns writing on, and turning it off again is a rollback.
 - **The screen never asks the nodes.** What the interface shows comes from a poller, so a page
   load cannot overload or hang on a node.
 - **Certificates are renewed by their own clients.** Certbot and the NDES enrollment renew on

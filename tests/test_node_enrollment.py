@@ -965,10 +965,12 @@ class TheCommand(unittest.TestCase):
     def test_deploy_follows_a_change_that_is_all_it_would_roll_out(self) -> None:
         """B321, as the interface does: bound to the version the change published."""
 
-        code, _, deployed = self.removal(converged=True)
+        code, printed, deployed = self.removal(converged=True)
 
         self.assertEqual(deployed, [("alpha", 6, "remove")])
         self.assertEqual(code, 3)
+        self.assertIn("Published as version 6; deploying it now.", printed)
+        self.assertNotIn("haprion-deploy -c alpha", printed)
 
     def test_deploy_is_left_to_the_operator_otherwise(self) -> None:
         code, printed, deployed = self.removal(converged=False)

@@ -212,24 +212,32 @@ def main(
             + node_publish.said(result.get("publication"), cluster)
         )
         return 0
+    version, refusal = _deployable(result) if deploying else (None, "")
+    #
+    # What is left to run, unless --deploy is about to run it (B321).
+    #
+    published = node_publish.said(result.get("publication"), cluster)
+    if version is not None and "error" not in (result.get("publication") or {}):
+        published = f"Published as version {version}; deploying it now.\n"
     if result.get("action") == "added":
         writer.write(
             f"Added {result.get('node')} ({result.get('host')}) to {cluster}.\n"
             f"Host key: {result.get('host_key_fingerprint')}\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
-            f"The node has no certificates yet: haprion-cert-deploy -c {cluster}\n"
-            + node_publish.said(result.get("publication"), cluster)
+            + (
+                ""
+                if version is not None
+                else f"The node has no certificates yet: haprion-cert-deploy -c {cluster}\n"
+            )
+            + published
         )
     else:
         writer.write(
             f"Removed {result.get('node')} from {cluster}.\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
             + _stepped_down(result.get("step_down"), str(result.get("node")))
-            + node_publish.said(result.get("publication"), cluster)
+            + published
         )
-    if not deploying:
-        return 0
-    version, refusal = _deployable(result)
     if version is None:
         writer.write(refusal)
         return 0

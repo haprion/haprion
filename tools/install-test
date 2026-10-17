@@ -25,12 +25,15 @@ have fails here, not on a person's first node:
     comes back, and a second deploy that changes nothing
 
 The packages are the ones a release ships, in one directory: `haprion-cli`,
-`haprion-node` and each distribution's `haprion-ui`. The source tree is the
+`haprion-node`, each distribution's `haprion-ui` and `haprion-certbot`, and the
+WAF engine's `haprion-coraza-spoa` and `haprion-crs` - on the manager, and the
+engine beside the node package on each node, until the packages come from a
+repository that resolves them as dependencies (B323). The source tree is the
 commit's, taken with `git archive` from the commit their version names.
 
 Not here: syslog objects' IPVS (a rootless container may not load the kernel
-table; measured 26-10-15), certbot (step 14 downloads from pypi.org, and a
-release's own check of it runs on the manager), and the web interface's
+table; measured 26-10-15), certbot's dry-run renewal (it asks Let's Encrypt's
+staging server; with no lineage it renews nothing), and the web interface's
 pages - the CLI drives the same root helpers.
 """
 
@@ -243,26 +246,27 @@ class Run:
         self.podman("cp", str(path), f"{self.container(role)}:/root/install/{path.name}")
         return f"/root/install/{path.name}"
 
-    def install_manager(self, cli: Path, ui: Path, source: Path) -> None:
-        names = [self.copy("mgr", path) for path in (cli, ui, source)]
+    def install_manager(self, packages: list[Path], source: Path) -> None:
+        names = [self.copy("mgr", path) for path in packages]
+        archive = self.copy("mgr", source)
         self.on(
             "mgr",
             "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
-            f"&& apt-get install -y -q {shlex.quote(names[0])} {shlex.quote(names[1])}",
+            f"&& apt-get install -y -q {' '.join(shlex.quote(name) for name in names)}",
         )
-        self.on("mgr", f"cd /root/install && tar xzf {shlex.quote(names[2])}")
+        self.on("mgr", f"cd /root/install && tar xzf {shlex.quote(archive)}")
         _, output = self.on("mgr", "/root/install/haprion-src/install/haprion-setup")
         if "The manager is installed" not in output:
             raise Failed(f"haprion-setup ended without saying the manager is installed:\n{output}")
 
-    def prepare_node(self, role: str, package: Path) -> str:
-        """The node package, installed as a person would, and the block it printed."""
+    def prepare_node(self, role: str, package: Path, engine: Path) -> str:
+        """The node package and the WAF engine, installed as a person would, and the block printed."""
 
-        name = self.copy(role, package)
+        name, motor = self.copy(role, package), self.copy(role, engine)
         _, output = self.on(
             role,
             "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
-            f"&& apt-get install -y -q {shlex.quote(name)}",
+            f"&& apt-get install -y -q {shlex.quote(motor)} {shlex.quote(name)}",
         )
         block = re.search(r"^(haproxy-node-v2:\S+)$", output, re.M)
         if not block:
@@ -390,7 +394,7 @@ class Run:
                 "the WAF rule set",
                 "dpkg-query -W -f='${Status}' haprion-crs | grep -q 'ok installed'",
             ),
-            ("certbot", "/opt/haprion-certbot/current/bin/certbot --version"),
+            ("certbot", "/opt/haprion-certbot/current/venv/bin/certbot --version"),
             (
                 "the Location database",
                 "python3 -c 'import location' && test -r /var/lib/location/database.db",
@@ -478,6 +482,9 @@ def run_one(
     cli = package(packages, "haprion-cli_*_all.deb")
     node = package(packages, "haprion-node_*_all.deb")
     ui = package(packages, f"haprion-ui_*{distribution.ui_suffix}_amd64.deb")
+    certbot = package(packages, f"haprion-certbot_*{distribution.ui_suffix}_amd64.deb")
+    engine = package(packages, "haprion-coraza-spoa_*_amd64.deb")
+    rules = package(packages, "haprion-crs_*_all.deb")
     logs.mkdir(parents=True, exist_ok=True)
     run = Run(distribution, logs)
     steps = []
@@ -497,12 +504,12 @@ def run_one(
             archive = source_archive(source, cli, Path(directory))
             step(
                 "the manager: packages, haprion-setup",
-                lambda: run.install_manager(cli, ui, archive),
+                lambda: run.install_manager([cli, ui, certbot, engine, rules], archive),
             )
         blocks = [
             step(
                 f"{role}: the package, and the block it printed",
-                lambda role=role: run.prepare_node(role, node),
+                lambda role=role: run.prepare_node(role, node, engine),
             )
             for role in NODES
         ]

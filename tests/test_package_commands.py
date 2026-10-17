@@ -136,7 +136,7 @@ PACKAGE_OF = {
 #
 INSTALLED_BY_THE_PRODUCT = {
     "dnsdist": "lib.sh's ensure_dnsdist installs it from PowerDNS's repository",
-    "certbot": "platform step 14 builds its environment",
+    "certbot": "the haprion-certbot package carries its environment; step 14 makes it current",
     "pg_dump": "ensure-postgresql installs the server, and its client with it",
     "pg_restore": "ensure-postgresql installs the server, and its client with it",
     "psql": "ensure-postgresql installs the server, and its client with it",

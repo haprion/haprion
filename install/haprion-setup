@@ -173,12 +173,14 @@ add_step "sign-in through an identity provider" \
     "read the log for the line before the error" \
     "./platform/17-platform-oidc ${ans} ${source_tree}"
 #
-# certbot is built with uv until the package carries it ready-built
-# (B302, step 2): without uv the step is left for later, and said so.
+# certbot comes ready-built in the haprion-certbot package (B322, 26-10-17);
+# UV_BIN builds it from the source tree's lock instead. Without either the step
+# is left for later, and said so.
 #
-if [[ -n "${UV_BIN:-}" ]]; then
+CERTBOT_PAYLOAD="/usr/lib/haprion/certbot/PAYLOAD"
+if [[ -n "${UV_BIN:-}" || -r "$CERTBOT_PAYLOAD" ]]; then
     add_step "certbot, for issuing certificates" \
-        "read the log: a download error means this machine does not reach pypi.org; a failed check names its plugin" \
+        "read the log: a failed dry run names the lineage; with UV_BIN a download error means this machine does not reach pypi.org" \
         "./platform/14-platform-certbot ${ans} ${source_tree}"
 fi
 add_step "the whole installation" \
@@ -218,7 +220,8 @@ for entry in "${STEPS[@]}"; do
     exit 1
 done
 
-[[ -n "${UV_BIN:-}" ]] || warn "certbot was not installed: set UV_BIN to the uv executable and run haprion-setup again"
+[[ -n "${UV_BIN:-}" || -r "$CERTBOT_PAYLOAD" ]] \
+    || warn "certbot was not installed: install the haprion-certbot package and run haprion-setup again"
 
 #
 # The first account last, when everything it signs in to is in place, and on

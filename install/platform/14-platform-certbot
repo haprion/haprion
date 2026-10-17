@@ -2,10 +2,13 @@
 #
 # Platform step 14 - the locked certbot environment and its renewal timer.
 #
+#     sudo ./14-platform-certbot [answers-file|-] [source-tree]
 #     sudo UV_BIN=/path/to/uv ./14-platform-certbot [answers-file|-] [source-tree]
 #
-# Builds certbot and every DNS plugin the product offers, from the source
-# tree's certbot/uv.lock, into an immutable release under /opt/haprion-certbot;
+# Makes the release the haprion-certbot package carries current - certbot and
+# every DNS plugin the product offers, built from certbot/uv.lock - or, with
+# UV_BIN, builds one from the source tree's lock into an immutable release
+# under /opt/haprion-certbot;
 # proves it against this host's lineages with a dry-run renewal; and moves
 # renewal from the distribution's timer to one that runs the release. Rerun it
 # with a newer lock to upgrade: the same gate, and the previous release is
@@ -33,17 +36,27 @@ source_tree="$(caller_path "${2:-}")"
 [[ -d "$source_tree" ]] || die "usage: $0 [answers-file|-] [source-tree]"
 source_tree="$(cd "$source_tree" && pwd)"
 uv="${UV_BIN:-}"
-[[ -n "$uv" && -x "$uv" ]] || die "set UV_BIN to the uv executable"
+[[ -z "$uv" || -x "$uv" ]] || die "UV_BIN names ${uv}, which is not an executable"
+#
+# What the haprion-certbot package unpacked (B322, 26-10-17): the release to
+# make current when no uv is named to build one.
+#
+PAYLOAD="/usr/lib/haprion/certbot/PAYLOAD"
 
 TARGET="/opt/haprion-certbot"
 CERTBOT="${TARGET}/current/venv/bin/certbot"
 POLICY="/etc/haprion/runtime-policy.yaml"
 UNIT="haprion-certbot-renew"
 
-[[ -f "${source_tree}/certbot/uv.lock" ]] \
-    || die "${source_tree}/certbot/uv.lock is missing; this is not a source tree with the certbot environment"
-[[ -f "${source_tree}/tools/install-certbot-env.py" ]] \
-    || die "${source_tree}/tools/install-certbot-env.py is missing"
+if [[ -n "$uv" ]]; then
+    [[ -f "${source_tree}/certbot/uv.lock" ]] \
+        || die "${source_tree}/certbot/uv.lock is missing; this is not a source tree with the certbot environment"
+    [[ -f "${source_tree}/tools/install-certbot-env.py" ]] \
+        || die "${source_tree}/tools/install-certbot-env.py is missing"
+else
+    [[ -r "$PAYLOAD" ]] \
+        || die "the haprion-certbot package is not installed; install it, or set UV_BIN to build from the lock"
+fi
 
 step "The worker's sandbox"
 #
@@ -64,10 +77,21 @@ for path in /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt $policy_p
 done
 log "  ok       ${worker_unit_file} opens certbot's directories"
 
-step "Building the environment"
 previous="$(readlink "${TARGET}/current" 2>/dev/null || true)"
-/usr/bin/python3 "${source_tree}/tools/install-certbot-env.py" \
-    --project "${source_tree}/certbot" --uv "$uv" --target "$TARGET"
+if [[ -n "$uv" ]]; then
+    step "Building the environment"
+    /usr/bin/python3 "${source_tree}/tools/install-certbot-env.py" \
+        --project "${source_tree}/certbot" --uv "$uv" --target "$TARGET"
+else
+    step "The packaged environment"
+    # shellcheck source=/dev/null
+    RELEASE_ID="$(. "$PAYLOAD" && echo "$RELEASE_ID")"
+    [[ "$RELEASE_ID" =~ ^[A-Za-z0-9.+_-]+$ && -d "${TARGET}/releases/${RELEASE_ID}" ]] \
+        || die "the package's release ${RELEASE_ID} is not unpacked; reinstall haprion-certbot"
+    ln -sfn "releases/${RELEASE_ID}" "${TARGET}/.current.$$"
+    mv -T "${TARGET}/.current.$$" "${TARGET}/current"
+    log "  ok       ${RELEASE_ID} from the package"
+fi
 release="$(readlink "${TARGET}/current")"
 
 restore_previous() {

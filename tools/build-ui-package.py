@@ -337,7 +337,8 @@ UI_DEPENDS = (
 def depends(python: str) -> str:
     major, minor = (int(part) for part in python.split("."))
     return (
-        f"python3 (>= {major}.{minor}), python3 (<< {major}.{minor + 1}), haprion-cli, {UI_DEPENDS}"
+        f"python3 (>= {major}.{minor}), python3 (<< {major}.{minor + 1}), haprion-cli, "
+        f"haprion-certbot, {UI_DEPENDS}"
     )
 
 

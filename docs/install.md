@@ -12,7 +12,9 @@ On the management host, install:
 - `python3-yaml` (major version 6), `python3-nacl` (major version 1) and
   `python3-psycopg` (major version 3)
 - `git`, `rsync`, `openssh-client` and `sudo` supporting no-argument rules
-- for the web interface: PostgreSQL 16 or newer, nginx 1.25.1 or newer and `uv`
+- for the web interface: nginx 1.25.1 or newer. PostgreSQL is installed by the setup: 18 where none
+  runs - from the distribution on Ubuntu 26.04, from the PostgreSQL project's repository on
+  Debian 13 - and a running 16 or newer is kept
 
 Haprion is installed from Debian packages built from one commit:
 
@@ -20,13 +22,14 @@ Haprion is installed from Debian packages built from one commit:
 |---|---|---|
 | `haprion-cli` | the management host | the CLI engine, the node package of the same commit, the operators' commands and sudo rules |
 | `haprion-ui` | the management host, for the web interface | the interface's release for one distribution (Ubuntu 26.04 or Debian 13) and the platform steps |
+| `haprion-certbot` | the management host, for the web interface | certbot and the DNS plugins the interface offers, as one locked environment for one distribution |
 | `haprion-node` | each node | the node scripts, the block it prints at installation, and `04-node-prepare` |
 | `haprion-coraza-spoa` | the management host and the nodes, for the WAF | the engine; the CLI release also carries it, so a node restored to a new VM gets it back |
 | `haprion-crs` | the management host, for the WAF | the rule set; releases carry the rules to the nodes |
 
 Keep the source tree of the same commit for the manager steps in `install/`. The steps need no
 answers file: without one they use the defaults in `install/defaults.sh`. An answers file sets only
-what should differ, such as `UV_BIN`, which names the uv the certbot step uses.
+what should differ.
 
 HAProxy nodes must already be prepared before the application can manage them. The
 [node preparation instructions](user-manual.md#part-2--the-nodes) are in the manual.
@@ -83,8 +86,8 @@ the steps run, the database server, that the server name resolves to this machin
 and 443 are free for nginx - and names every problem it found before it changes anything. A step
 that fails is reported in words: what went wrong, why, what to do, and where its whole output is
 (`/var/log/haprion/setup.log`). Every step is safe to run again, so the same command continues an
-installation that stopped. Certbot is installed when `UV_BIN` names a uv; the command says so when
-it does not. When everything else is done, it creates the first administrator, `admin`, and asks
+installation that stopped. Certbot comes from the `haprion-certbot` package; the command says so
+when it is not installed. When everything else is done, it creates the first administrator, `admin`, and asks
 for its password at the terminal; without a terminal it ends with the command that does it.
 
 ## 2. Install the CLI engine
@@ -139,14 +142,16 @@ release is built inside a container of that distribution with rootless podman:
 ```bash
 tools/build-ui-package.py --source "$(pwd)" --output-dir /path/to/protected/staging \
   --distribution ubuntu26.04 --uv /path/to/uv
+tools/build-certbot-package.py --source "$(pwd)" --output-dir /path/to/protected/staging \
+  --distribution ubuntu26.04 --uv /path/to/uv
 ```
 
-Install the package; it unpacks the release and prints its ID. Then, with the same answers
+Install both packages; the interface's unpacks its release and prints its ID. Then, with the same answers
 file, from `/usr/share/haprion-ui/install/platform/`, prepare the platform, migrate its
 database and verify the candidate before activating it:
 
 ```bash
-sudo apt install ./haprion-ui_<version>~ubuntu26.04_amd64.deb
+sudo apt install ./haprion-ui_<version>~ubuntu26.04_amd64.deb ./haprion-certbot_<version>~ubuntu26.04_amd64.deb
 cd /usr/share/haprion-ui/install/platform
 sudo ./01-platform-prepare /path/to/answers.env
 sudo ./02-platform-database /path/to/answers.env
@@ -183,7 +188,7 @@ Run the installers for the components your installation needs, from
 | Platform database backups | `sudo ./06-platform-backup /path/to/answers.env` |
 | History and metrics retention | `sudo ./11-platform-retention /path/to/answers.env` |
 | Traffic-log collection | `sudo ./13-platform-traffic-collector /path/to/answers.env` |
-| Certbot and DNS plugins | `sudo UV_BIN=/path/to/uv ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui` |
+| Certbot and DNS plugins | `sudo ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui` (with `UV_BIN=/path/to/uv`, builds the environment from the lock instead of the package's) |
 | Certificate and provider sealing keys | `sudo ./15-platform-dns-keys /path/to/answers.env /usr/share/haprion-ui` |
 | OpenID Connect helper | `sudo ./17-platform-oidc /path/to/answers.env /usr/share/haprion-ui` |
 

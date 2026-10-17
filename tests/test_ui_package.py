@@ -133,6 +133,34 @@ class TheTree(unittest.TestCase):
                 self.assertEqual(
                     (root / f"usr/sbin/haprion-{command}").stat().st_mode & 0o777, 0o755
                 )
+            # The manager is installed from the packages alone: haprion-setup
+            # runs from beside its steps, which the package carries.
+            setup = root / "usr/sbin/haprion-setup"
+            self.assertEqual(setup.stat().st_mode & 0o777, 0o755)
+            self.assertIn(
+                'exec /usr/share/haprion-ui/install/haprion-setup "$@"', setup.read_text()
+            )
+            for step in (
+                "haprion-setup",
+                "01-manager-prepare",
+                "02-manager-config",
+                "03-manager-keys",
+            ):
+                self.assertTrue((share / "install" / step).is_file(), step)
+            self.assertIn("sudo haprion-setup", postinst)
+
+    def test_what_the_manager_steps_read_beside_them_is_carried(self) -> None:
+        carried = {relative for relative, _ in TOOL.shared_files(BASE)}
+        for needed in (
+            "install/sysusers/haprion.conf",
+            "install/tmpfiles/haprion.conf",
+            "install/apt-keys/powerdns-dnsdist.asc",
+            "src/haprion/apt-keys/haproxy-debian-net.asc",
+            "src/haprion/apt-keys/haproxy-ubuntu-ppa.asc",
+            "tools/dns-profile-keys.py",
+            "certbot/uv.lock",
+        ):
+            self.assertIn(needed, carried)
 
 
 if __name__ == "__main__":

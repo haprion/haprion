@@ -2,7 +2,7 @@
 """A whole installation on empty machines, in containers: the release's acceptance.
 
     tools/install-test --packages <dir> --distribution debian13|ubuntu26.04|all
-                       [--source <repository>] [--keep] [--logs <dir>]
+                       [--keep] [--logs <dir>]
 
 Every new installation found its faults one at a time on a lab VM (Fas 18:
 a missing dependency, a step that could not be rerun, a check that refused a
@@ -13,8 +13,8 @@ have fails here, not on a person's first node:
 
   * a manager and two nodes per distribution, rootless podman, systemd as PID 1,
     on a network of their own (RFC 5737 addresses)
-  * the manager: the CLI and UI packages with apt, `haprion-setup` from the
-    commit's source tree
+  * the manager: the CLI and UI packages with apt, then `haprion-setup` as the
+    UI package installs it - no source tree on the machine
   * each node: the node package with apt and nothing else - its postinst
     prints the block, with the node's one-time key (B317)
   * `haprion-cluster add` with both blocks, which joins both nodes over SSH,
@@ -28,8 +28,7 @@ The packages are the ones a release ships, in one directory: `haprion-cli`,
 `haprion-node`, each distribution's `haprion-ui` and `haprion-certbot`, and the
 WAF engine's `haprion-coraza-spoa` and `haprion-crs` - on the manager, and the
 engine beside the node package on each node, until the packages come from a
-repository that resolves them as dependencies (B323). The source tree is the
-commit's, taken with `git archive` from the commit their version names.
+repository that resolves them as dependencies (B323).
 
 Not here: syslog objects' IPVS (a rootless container may not load the kernel
 table; measured 26-10-15), certbot's dry-run renewal (it asks Let's Encrypt's
@@ -246,16 +245,14 @@ class Run:
         self.podman("cp", str(path), f"{self.container(role)}:/root/install/{path.name}")
         return f"/root/install/{path.name}"
 
-    def install_manager(self, packages: list[Path], source: Path) -> None:
+    def install_manager(self, packages: list[Path]) -> None:
         names = [self.copy("mgr", path) for path in packages]
-        archive = self.copy("mgr", source)
         self.on(
             "mgr",
             "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
             f"&& apt-get install -y -q {' '.join(shlex.quote(name) for name in names)}",
         )
-        self.on("mgr", f"cd /root/install && tar xzf {shlex.quote(archive)}")
-        _, output = self.on("mgr", "/root/install/haprion-src/install/haprion-setup")
+        _, output = self.on("mgr", "haprion-setup")
         if "The manager is installed" not in output:
             raise Failed(f"haprion-setup ended without saying the manager is installed:\n{output}")
 
@@ -453,32 +450,7 @@ def package(directory: Path, pattern: str) -> Path:
     return found[0]
 
 
-def source_archive(repository: Path, cli: Path, directory: Path) -> Path:
-    """The source tree of the commit the packages were built from."""
-
-    match = re.search(r"\.([0-9a-f]{12})_all\.deb$", cli.name)
-    if not match:
-        raise SystemExit(f"install-test: {cli.name} names no commit")
-    archive = directory / "haprion-src.tar.gz"
-    subprocess.run(  # noqa: S603 - git with a commit read from the package's name
-        [
-            "/usr/bin/git",
-            "-C",
-            str(repository),
-            "archive",
-            "--prefix=haprion-src/",
-            "-o",
-            str(archive),
-            match.group(1),
-        ],
-        check=True,
-    )
-    return archive
-
-
-def run_one(
-    distribution: Distribution, packages: Path, source: Path, logs: Path, keep: bool
-) -> bool:
+def run_one(distribution: Distribution, packages: Path, logs: Path, keep: bool) -> bool:
     cli = package(packages, "haprion-cli_*_all.deb")
     node = package(packages, "haprion-node_*_all.deb")
     ui = package(packages, f"haprion-ui_*{distribution.ui_suffix}_amd64.deb")
@@ -500,12 +472,10 @@ def run_one(
     try:
         image = step("an empty server image", run.image)
         step("a manager and two nodes booted", lambda: run.start(image))
-        with tempfile.TemporaryDirectory() as directory:
-            archive = source_archive(source, cli, Path(directory))
-            step(
-                "the manager: packages, haprion-setup",
-                lambda: run.install_manager([cli, ui, certbot, engine, rules], archive),
-            )
+        step(
+            "the manager: packages, haprion-setup",
+            lambda: run.install_manager([cli, ui, certbot, engine, rules]),
+        )
         blocks = [
             step(
                 f"{role}: the package, and the block it printed",
@@ -664,16 +634,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="install-test")
     parser.add_argument("--packages", type=Path, required=True)
     parser.add_argument("--distribution", choices=[*DISTRIBUTIONS, "all"], default="all")
-    parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--logs", type=Path)
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
     logs = args.logs or Path(tempfile.mkdtemp(prefix="haprion-install-test-"))
     chosen = list(DISTRIBUTIONS) if args.distribution == "all" else [args.distribution]
     results = {
-        name: run_one(
-            DISTRIBUTIONS[name], args.packages.resolve(), args.source, logs / name, args.keep
-        )
+        name: run_one(DISTRIBUTIONS[name], args.packages.resolve(), logs / name, args.keep)
         for name in chosen
     }
     print()

@@ -131,11 +131,38 @@ tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owne
 SHARE = "usr/share/haprion-ui"
 #
 # What the package carries of the source tree besides the release: the platform
-# steps with the library they source, the tools and lock the optional steps
-# read from beside them (`<source-tree>` is then /usr/share/haprion-ui), and
-# the commands, under /usr/sbin.
+# steps with the library they source, the manager's steps and `haprion-setup`
+# that runs them all (26-10-17: a manager is installed from packages alone, no
+# source tree on the machine), what those steps read from beside them - the
+# accounts, the tmpfiles rule and the repository keys - the tools and lock the
+# optional steps read (`<source-tree>` is then /usr/share/haprion-ui), and the
+# commands, under /usr/sbin.
 #
-SHARED = ("install/lib.sh", "install/accounts.sh", "install/defaults.sh", "install/platform/")
+SHARED = (
+    "install/lib.sh",
+    "install/accounts.sh",
+    "install/defaults.sh",
+    "install/setup.sh",
+    "install/haprion-setup",
+    "install/01-manager-prepare",
+    "install/02-manager-config",
+    "install/03-manager-keys",
+    "install/05-verify",
+    "install/answers.example.env",
+    "install/apt-keys/",
+    "install/sysusers/",
+    "install/tmpfiles/",
+    "install/platform/",
+    "src/haprion/apt-keys/",
+)
+#
+# haprion-setup finds its steps beside itself (`readlink -f "$0"`), so the
+# command under /usr/sbin hands over to the copy among them.
+#
+SETUP_COMMAND = f"""\
+#!/bin/sh
+exec /{SHARE}/install/haprion-setup "$@"
+"""
 TOOLS = (
     "tools/dns-profile-keys.py",
     "tools/install-certbot-env.py",
@@ -180,7 +207,7 @@ if [ "$1" = configure ]; then
         /{SHARE}/install/platform/update-platform-release "$RELEASE_ID"
     else
         echo "haprion-ui: release $RELEASE_ID is prepared in $release"
-        echo "haprion-ui: a first installation continues with /{SHARE}/install/platform/README.md"
+        echo "haprion-ui: a first installation continues with: sudo haprion-setup"
     fi
 fi
 """
@@ -320,6 +347,7 @@ def assemble(
     for command in COMMANDS:
         source = tree / f"install/platform/bin/haprion-{command}"
         write(root, f"usr/sbin/haprion-{command}", source.read_bytes(), 0o755)
+    write(root, "usr/sbin/haprion-setup", SETUP_COMMAND.encode(), 0o755)
     write(root, "DEBIAN/postinst", POSTINST.encode(), 0o755)
     write(root, "DEBIAN/postrm", POSTRM.encode(), 0o755)
 

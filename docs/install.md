@@ -78,10 +78,11 @@ backups or deploys no certificates.
 sections 3 and 4 run in order with
 
 ```bash
-sudo install/haprion-setup [--answers answers.env] [--release <release-id>]
+sudo haprion-setup [--answers answers.env] [--release <release-id>]
 ```
 
-from the source tree. It first checks what it can know in advance - the distribution, the commands
+The `haprion-ui` package installs the command together with the steps it runs, so the manager
+needs no source tree. It first checks what it can know in advance - the distribution, the commands
 the steps run, the database server, that the server name resolves to this machine, that ports 80
 and 443 are free for nginx - and names every problem it found before it changes anything. A step
 that fails is reported in words: what went wrong, why, what to do, and where its whole output is

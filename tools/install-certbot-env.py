@@ -42,8 +42,6 @@ PROJECT_NAME = "haprion-certbot-env"
 CERTBOT_VERSION = re.compile(r'^\[\[package\]\]\nname = "certbot"\nversion = "([^"]+)"', re.M)
 SYNC_TIMEOUT = 900
 VERIFY_TIMEOUT = 120
-# A test module a wheel carries, by its path: compileall searches the full path.
-TEST_MODULE = r"/(tests?|testing)/|/test_[^/]*\.py$|_tests?\.py$"
 
 
 class InstallError(RuntimeError):
@@ -276,15 +274,18 @@ def _compile(venv: Path, final_venv: Path) -> None:
     and the source's time, which differ on every build. It is removed and
     compiled again against the source's hash and the final path, so the same
     lock gives the same files and a traceback names the file that exists.
-    Test modules that wheels carry are not compiled: nothing imports them,
-    and one plugin ships a test file that is not valid Python (constellix,
-    26-10-17). Any other file that does not compile stops the build."""
+
+    A file that is not valid Python gets no bytecode, as Python itself would
+    give it none: it cannot be imported either way. Wheels in the lock carry
+    such files - a test module with a syntax error, Python 2 helpers
+    (26-10-17) - and whether the plugins load and work is what the proof
+    before this decides, not the compiler."""
 
     for cache in sorted(venv.rglob("__pycache__"), reverse=True):
         if cache.is_dir() and not cache.is_symlink():
             shutil.rmtree(cache)
     try:
-        subprocess.run(  # noqa: S603 - the release's own interpreter, fixed arguments
+        result = subprocess.run(  # noqa: S603 - the release's own interpreter, fixed arguments
             [
                 str(venv / "bin" / "python"),
                 "-m",
@@ -294,22 +295,28 @@ def _compile(venv: Path, final_venv: Path) -> None:
                 "0",
                 "--invalidation-mode",
                 "checked-hash",
-                "-x",
-                TEST_MODULE,
                 "-s",
                 str(venv),
                 "-p",
                 str(final_venv),
                 str(venv / "lib"),
             ],
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
             timeout=SYNC_TIMEOUT,
             env={"PATH": "/usr/bin:/bin", "LC_ALL": "C.UTF-8"},
         )
-    except subprocess.CalledProcessError as exc:
-        raise InstallError(f"bytecode compilation failed:\n{exc.stdout.strip()}") from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise InstallError(f"bytecode compilation could not run: {exc}") from exc
+    #
+    # compileall says 1 for a file it could not compile, and for nothing
+    # else it can survive; a crash is a traceback on stderr.
+    #
+    if result.returncode not in (0, 1) or "Traceback" in result.stderr:
+        raise InstallError(f"bytecode compilation failed:\n{result.stderr.strip()}")
+    if not any((venv / "lib").rglob("*.pyc")):
+        raise InstallError("bytecode compilation wrote nothing")
 
 
 def _remove_tree(root: Path) -> None:

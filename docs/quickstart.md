@@ -17,16 +17,18 @@ something fails.
 - A DNS name for the manager that resolves to it, and SSH from the manager to the nodes.
 
 Download the packages from the [latest release](https://github.com/haprion/haprion/releases/latest).
-The web interface and certbot are built per distribution: take the `~ubuntu26.04` or the `~deb13`
-files to match the manager.
+The web interface and certbot are built per distribution: their file names end in
+`ubuntu26.04_amd64.deb` or `deb13_amd64.deb`. `SHA256SUMS` in the release lists every file's
+digest; `sha256sum --ignore-missing -c SHA256SUMS` checks the ones you downloaded.
 
 ## 1. Install the manager
 
-On the manager, install the packages and run the setup:
+On the manager, install the packages and run the setup - on Debian 13, `deb13` in place of
+`ubuntu26.04`:
 
 ```bash
-sudo apt install ./haprion-cli_*_all.deb ./haprion-ui_*_amd64.deb ./haprion-certbot_*_amd64.deb \
-  ./haprion-coraza-spoa_*_amd64.deb ./haprion-crs_*_all.deb
+sudo apt install ./haprion-cli_*_all.deb ./haprion-ui_*ubuntu26.04_amd64.deb \
+  ./haprion-certbot_*ubuntu26.04_amd64.deb ./haprion-coraza-spoa_*_amd64.deb ./haprion-crs_*_all.deb
 sudo haprion-setup
 ```
 

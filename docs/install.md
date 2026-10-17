@@ -50,8 +50,9 @@ but which networks can reach it at all is decided by the firewall in front of it
 
 Haprion is installed from Debian packages built from one commit. Download them from the
 [latest release](https://github.com/haprion/haprion/releases/latest); the web interface and
-certbot are built per distribution, so take the `~ubuntu26.04` or the `~deb13` files to match the
-manager. To build them yourself, see [Building the packages](#building-the-packages).
+certbot are built per distribution, so take the files whose names end in `ubuntu26.04_amd64.deb`
+or `deb13_amd64.deb` to match the manager. `SHA256SUMS` in the release lists every file's digest.
+To build them yourself, see [Building the packages](#building-the-packages).
 
 | Package | Installed on | Carries |
 |---|---|---|
@@ -87,13 +88,13 @@ backups or deploys no certificates.
 ## 2. Install the manager
 
 ```bash
-sudo apt install ./haprion-cli_<version>_all.deb \
-  ./haprion-ui_<version>~ubuntu26.04_amd64.deb ./haprion-certbot_<version>~ubuntu26.04_amd64.deb \
-  ./haprion-coraza-spoa_<version>_amd64.deb ./haprion-crs_<version>_all.deb
+sudo apt install ./haprion-cli_*_all.deb \
+  ./haprion-ui_*ubuntu26.04_amd64.deb ./haprion-certbot_*ubuntu26.04_amd64.deb \
+  ./haprion-coraza-spoa_*_amd64.deb ./haprion-crs_*_all.deb
 sudo haprion-setup [--answers answers.env]
 ```
 
-(`~deb13` in place of `~ubuntu26.04` on Debian.) The `haprion-ui` package installs `haprion-setup`
+(`deb13` in place of `ubuntu26.04` on Debian.) The `haprion-ui` package installs `haprion-setup`
 together with the steps it runs, so the manager needs no source tree. It first checks what it can
 know in advance - the distribution, the commands the steps run, the database server, that the
 server name resolves to this machine, that ports 80 and 443 are free for nginx - and names every

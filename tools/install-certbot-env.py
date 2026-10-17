@@ -8,7 +8,8 @@ Reads `certbot/pyproject.toml` and `certbot/uv.lock`, lets uv install exactly
 that set - `--locked`, so a lock file that no longer matches the project is a
 refusal, not a re-resolve - into `<target>/releases/<certbot version>-<lock
 hash>/venv`, proves that every plugin in it loads and runs the catalogue's
-mocked integration checks through the installed plugins, freezes the tree
+mocked integration checks through the installed plugins, compiles its
+bytecode against the sources' hashes, freezes the tree
 root-owned and read-only, and only then points `<target>/current` at it. A release that is
 already installed from the same lock is not rebuilt; the link is moved back to
 it, which is the rollback.
@@ -22,6 +23,8 @@ the catalogue, at the next bump.
 from __future__ import annotations
 
 import argparse
+import base64
+import csv
 import hashlib
 import json
 import os
@@ -194,14 +197,46 @@ def verify_integrations(venv_python: Path, project: Path, scratch: Path) -> list
     return [str(item) for item in report["passed"]]
 
 
+def _record_digest(data: bytes) -> str:
+    return "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+
+
+def _site_packages(venv: Path) -> list[Path]:
+    return sorted(path for path in (venv / "lib").glob("python3*/site-packages") if path.is_dir())
+
+
+def _rewrite_records(venv: Path, change: dict[str, tuple[str, int] | None]) -> None:
+    """Each package's RECORD names its files with their digest and size: a
+    file changed after installation gets its new digest, one removed loses
+    its line, so the record stays true for whatever reads it."""
+
+    for site in _site_packages(venv):
+        for record in sorted(site.glob("*.dist-info/RECORD")):
+            rows = list(csv.reader(record.read_text(encoding="utf-8").splitlines()))
+            kept = []
+            for row in rows:
+                path = os.path.normpath(site / row[0]) if row else ""
+                if path in change:
+                    replacement = change[path]
+                    if replacement is None:
+                        continue
+                    row = [row[0], replacement[0], str(replacement[1])]
+                kept.append(row)
+            if kept != rows:
+                with record.open("w", encoding="utf-8", newline="") as stream:
+                    csv.writer(stream, lineterminator="\n").writerows(kept)
+
+
 def _relocate_scripts(venv: Path, final_venv: Path) -> None:
     """The venv is built in a staging directory and renamed into place, and uv
     writes the staging path into every script's interpreter line - as a
     shebang, or as an `exec` header when the path is too long for one.
     Rewriting that path, in the scripts and nowhere else, is what makes the
-    rename a move."""
+    rename a move. The scripts' RECORD lines follow: they held the digest of
+    the script with the staging path, which is a new random name each time."""
 
     staging_path = str(venv)
+    changed: dict[str, tuple[str, int] | None] = {}
     for script in (venv / "bin").iterdir():
         if script.is_symlink() or not script.is_file():
             continue
@@ -210,7 +245,64 @@ def _relocate_scripts(venv: Path, final_venv: Path) -> None:
         except UnicodeDecodeError:
             continue
         if staging_path in text:
-            script.write_text(text.replace(staging_path, str(final_venv)), encoding="utf-8")
+            data = text.replace(staging_path, str(final_venv)).encode()
+            script.write_bytes(data)
+            changed[os.path.normpath(script)] = (_record_digest(data), len(data))
+    _rewrite_records(venv, changed)
+
+
+def _drop_stray_tests(venv: Path) -> None:
+    """Some DNS plugins' wheels install their own test suite as a top-level
+    `tests` package, and two of them a `tests/conftest.py` each - so which
+    one the environment holds depends on the order uv happened to install in
+    (26-10-17). Nothing imports it; it goes, with its RECORD lines, before
+    the plugins are proved to load."""
+
+    for site in _site_packages(venv):
+        stray = site / "tests"
+        if stray.is_symlink() or not stray.exists():
+            continue
+        removed: dict[str, tuple[str, int] | None] = {
+            os.path.normpath(path): None for path in stray.rglob("*") if path.is_file()
+        }
+        shutil.rmtree(stray)
+        _rewrite_records(venv, removed)
+
+
+def _compile(venv: Path, final_venv: Path) -> None:
+    """Bytecode written while the plugins were proved names the staging path
+    and the source's time, which differ on every build. It is removed and
+    compiled again against the source's hash and the final path, so the same
+    lock gives the same files and a traceback names the file that exists."""
+
+    for cache in sorted(venv.rglob("__pycache__"), reverse=True):
+        if cache.is_dir() and not cache.is_symlink():
+            shutil.rmtree(cache)
+    try:
+        subprocess.run(  # noqa: S603 - the release's own interpreter, fixed arguments
+            [
+                str(venv / "bin" / "python"),
+                "-m",
+                "compileall",
+                "-q",
+                "-j",
+                "0",
+                "--invalidation-mode",
+                "checked-hash",
+                "-s",
+                str(venv),
+                "-p",
+                str(final_venv),
+                str(venv / "lib"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=SYNC_TIMEOUT,
+            env={"PATH": "/usr/bin:/bin", "LC_ALL": "C.UTF-8"},
+        )
+    except subprocess.CalledProcessError as exc:
+        raise InstallError(f"bytecode compilation failed:\n{exc.stdout.strip()}") from exc
 
 
 def _remove_tree(root: Path) -> None:
@@ -328,9 +420,11 @@ def install_environment(
         try:
             venv = staging / "venv"
             _sync(uv, project, venv, python)
+            _drop_stray_tests(venv)
             plugins = verify_plugins(venv / "bin" / "python", staging)
             integrations = verify_integrations(venv / "bin" / "python", project, staging)
             _relocate_scripts(venv, final_release / "venv")
+            _compile(venv, final_release / "venv")
             installation = {
                 "project": PROJECT_NAME,
                 "certbot": certbot_version,

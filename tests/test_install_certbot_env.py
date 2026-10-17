@@ -243,3 +243,67 @@ class OfflineVerifierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheSameLockGivesTheSameTree(unittest.TestCase):
+    """Two builds of one lock differed (26-10-17): bytecode carried the staging
+    path and the source's time, the scripts' RECORD lines the staging path's
+    digest, and two plugins' stray `tests/conftest.py` the install order."""
+
+    def venv(self, root: Path) -> Path:
+        venv = root / "venv"
+        site = venv / "lib" / PYTHON_TAG / "site-packages"
+        (site / "pkg").mkdir(parents=True)
+        (site / "pkg" / "__init__.py").write_text("VALUE = 1\n")
+        (site / "tests").mkdir()
+        (site / "tests" / "conftest.py").write_text("x = 1\n")
+        (site / "pkg-1.0.dist-info").mkdir()
+        (venv / "bin").mkdir()
+        (venv / "bin" / "python").symlink_to(BASE_PYTHON)
+        (venv / "bin" / "tool").write_text(f"#!{venv}/bin/python\nimport pkg\n")
+        (site / "pkg-1.0.dist-info" / "RECORD").write_text(
+            "pkg/__init__.py,sha256=x,10\n"
+            "tests/conftest.py,sha256=y,6\n"
+            "../../../bin/tool,sha256=stale,40\n"
+            "pkg-1.0.dist-info/RECORD,,\n"
+        )
+        return venv
+
+    def test_the_stray_tests_go_with_their_record_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            venv = self.venv(Path(directory))
+            installer._drop_stray_tests(venv)
+            site = venv / "lib" / PYTHON_TAG / "site-packages"
+            self.assertFalse((site / "tests").exists())
+            self.assertNotIn("tests/", (site / "pkg-1.0.dist-info" / "RECORD").read_text())
+
+    def test_a_relocated_script_has_its_true_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            venv = self.venv(Path(directory))
+            final = Path("/opt/haprion-certbot/releases/x/venv")
+            installer._relocate_scripts(venv, final)
+            script = (venv / "bin" / "tool").read_bytes()
+            self.assertTrue(script.startswith(f"#!{final}/bin/python\n".encode()))
+            record = (
+                venv / "lib" / PYTHON_TAG / "site-packages/pkg-1.0.dist-info/RECORD"
+            ).read_text()
+            self.assertIn(
+                f"../../../bin/tool,{installer._record_digest(script)},{len(script)}\n", record
+            )
+
+    def test_bytecode_is_the_same_from_two_staging_paths(self) -> None:
+        final = Path("/opt/haprion-certbot/releases/x/venv")
+        compiled = []
+        for name in ("one", "two"):
+            with tempfile.TemporaryDirectory(prefix=name) as directory:
+                venv = self.venv(Path(directory))
+                stale = venv / "lib" / PYTHON_TAG / "site-packages/pkg/__pycache__"
+                stale.mkdir()
+                (stale / "junk.pyc").write_bytes(b"old")
+                installer._compile(venv, final)
+                caches = sorted((venv / "lib").rglob("*.pyc"))
+                self.assertNotIn("junk.pyc", [path.name for path in caches])
+                pyc = next(path for path in caches if path.name.startswith("__init__."))
+                compiled.append(pyc.read_bytes())
+        self.assertEqual(compiled[0], compiled[1])
+        self.assertIn(str(final).encode(), compiled[0])

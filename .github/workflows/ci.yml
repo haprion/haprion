@@ -112,3 +112,38 @@ jobs:
           # to start rather than reporting a pass it did not earn.
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
         run: ./run-checks
+
+  # A Dependabot update merges itself once the gates above pass (B323): patch
+  # and minor only, never a major one, and never one labelled `hold`. The
+  # waiting period is Dependabot's own `cooldown` (.github/dependabot.yml): it
+  # opens the pull request only once the release is two days old, so a
+  # hijacked release has those days to be found before it gets here.
+  dependabot-merge:
+    name: Merge a Dependabot update
+    needs: checks
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && github.repository == 'haprion/haprion'
+      && !contains(github.event.pull_request.labels.*.name, 'hold')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # the merge writes the update to main
+      pull-requests: write # and closes its pull request
+
+    steps:
+      - name: Read what the update is
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      # A grouped update reports its largest change, so one major version in
+      # the group keeps the whole group for a person.
+      - name: Merge a patch or minor update
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch'
+          || steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --merge "${PR_URL}"

@@ -6,6 +6,12 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # A release is proposed only once it is two days old: a hijacked release
+    # of an action has been found within a day or two, and the CI workflow
+    # then merges a patch or minor update by itself when the gates pass.
+    # Major updates wait for a person.
+    cooldown:
+      default-days: 2
     groups:
       actions:
         patterns: ["*"]

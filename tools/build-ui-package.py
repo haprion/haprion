@@ -153,8 +153,14 @@ SHARED = (
     "install/sysusers/",
     "install/tmpfiles/",
     "install/platform/",
-    "src/haprion/apt-keys/",
 )
+#
+# HAProxy's repository keys live with the engine in the source tree; in the
+# package they go beside dnsdist's, where lib.sh looks first. Never under
+# src/: the tools take a src/haprion beside them for a source tree and would
+# import the engine from it rather than from the installed CLI release.
+#
+MOVED = (("src/haprion/apt-keys/", "install/apt-keys/"),)
 #
 # haprion-setup finds its steps beside itself (`readlink -f "$0"`), so the
 # command under /usr/sbin hands over to the copy among them.
@@ -296,6 +302,15 @@ def shared_files(tree: Path) -> list[tuple[str, Path]]:
     """The source tree's files the package carries, by their path in the tree."""
 
     found: list[tuple[str, Path]] = []
+    for entry, published in MOVED:
+        path = tree / entry
+        if not path.is_dir():
+            raise BuildError(f"the source tree has no {entry}")
+        found += [
+            (published + f.relative_to(path).as_posix(), f)
+            for f in sorted(path.rglob("*"))
+            if f.is_file()
+        ]
     for entry in (*SHARED, *TOOLS):
         path = tree / entry
         if entry.endswith("/"):

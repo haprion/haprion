@@ -77,7 +77,8 @@ class TheTree(unittest.TestCase):
             archive.write_bytes(b"release")
             root = work / "root"
             tree = work / "src"
-            for relative, *_ in [(e, None) for e in (*TOOL.SHARED, *TOOL.TOOLS)]:
+            moved = [entry for entry, _ in TOOL.MOVED]
+            for relative, *_ in [(e, None) for e in (*TOOL.SHARED, *TOOL.TOOLS, *moved)]:
                 path = tree / relative
                 if relative.endswith("/"):
                     path.mkdir(parents=True)
@@ -155,12 +156,15 @@ class TheTree(unittest.TestCase):
             "install/sysusers/haprion.conf",
             "install/tmpfiles/haprion.conf",
             "install/apt-keys/powerdns-dnsdist.asc",
-            "src/haprion/apt-keys/haproxy-debian-net.asc",
-            "src/haprion/apt-keys/haproxy-ubuntu-ppa.asc",
+            "install/apt-keys/haproxy-debian-net.asc",
+            "install/apt-keys/haproxy-ubuntu-ppa.asc",
             "tools/dns-profile-keys.py",
             "certbot/uv.lock",
         ):
             self.assertIn(needed, carried)
+        # A src/haprion in the package would pass for a source tree: the
+        # tools would import the engine from it (install test, 26-10-17).
+        self.assertEqual({path for path in carried if path.startswith("src/")}, set())
 
 
 if __name__ == "__main__":

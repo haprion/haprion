@@ -10,6 +10,7 @@ it, in words rather than an exit code.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -17,6 +18,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -706,10 +708,14 @@ class WhatLibShReadsShipsWithIt(unittest.TestCase):
         self.assertEqual({f"install/{name}" for name in self.sourced()} - shipped, set())
 
     def test_the_ui_package_carries_them(self) -> None:
-        tool = (INSTALL.parent / "tools" / "build-ui-package.py").read_text()
-        shared = re.search(r"^SHARED = \((.*)\)$", tool, re.MULTILINE)
-        assert shared is not None
-        listed = set(re.findall(r'"([^"]+)"', shared.group(1)))
+        spec = importlib.util.spec_from_file_location(
+            "build_ui_package", INSTALL.parent / "tools" / "build-ui-package.py"
+        )
+        assert spec is not None and spec.loader is not None  # noqa: S101 - local tool must exist
+        tool = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = tool
+        spec.loader.exec_module(tool)
+        listed = {relative for relative, _ in tool.shared_files(INSTALL.parent)}
         self.assertEqual({f"install/{name}" for name in self.sourced()} - listed, set())
 
 

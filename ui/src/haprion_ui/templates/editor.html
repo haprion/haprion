@@ -18,6 +18,9 @@
 {% if notice %}
 <p class="preview-notice"><strong>{{ notice }}</strong></p>
 {% endif %}
+{% for warning in unresolved_servers %}
+<p class="preview-notice" data-unresolved>{{ warning }}.</p>
+{% endfor %}
 
 {% if not available %}
 <p class="preview-notice"><strong>The stored objects could not be read.</strong> The form below is still usable, but nothing here has been checked against what the cluster actually holds.</p>

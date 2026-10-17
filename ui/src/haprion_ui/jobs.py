@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from haprion import server_names
 from haprion.deploy_run import CERTIFICATES_NOT_DEPLOYED
 from haprion.restore_agent import RUN_ID
 
@@ -519,6 +520,26 @@ def publication_note(job: Job) -> str | None:
     return " ".join(notes) or None
 
 
+def unresolved_note(job: Job) -> str | None:
+    """A published server name the manager cannot resolve (finding 72), in the engine's words.
+
+    The publish stands; a node that cannot resolve the name either stops the
+    deploy, and this says so before somebody presses it. A *Publish & deploy*
+    keeps the publish's own answer under `publish` (B257).
+    """
+
+    if job.operation != "changes_publish" or not isinstance(job.result, dict):
+        return None
+    embedded = job.result.get("publish")
+    envelope = embedded if isinstance(embedded, dict) else job.result
+    body = envelope.get("result")
+    names = body.get("unresolved_servers") if isinstance(body, dict) else None
+    if not isinstance(names, list):
+        return None
+    said = [server_names.warning(name) for name in names if isinstance(name, str) and name]
+    return ". ".join(said) + "." if said else None
+
+
 def deletion_note(job: Job) -> str | None:
     """One sentence per state for a `cert_delete` or `cert_target` result, or None.
 
@@ -641,7 +662,7 @@ def _view(
         # row would bury the ones that mean something.
         #
         diagnostics=diagnostics_of(job) if diagnostics and ended_badly else None,
-        note=deletion_note(job) or publication_note(job),
+        note=deletion_note(job) or publication_note(job) or unresolved_note(job),
     )
 
 

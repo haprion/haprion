@@ -55,6 +55,7 @@ from haprion import (
     dnsdist_config,
     proxy_model,
     resolve_socket,
+    server_names,
     server_state,
     status_collect,
 )
@@ -9104,6 +9105,24 @@ def _state_reading(state: EditorState) -> ObjectsReading:
     return ObjectsReading({view.name for view in state.stored}, state.commit)
 
 
+def _unresolved_servers(name: str, document: str) -> list[str]:
+    """The pool members' names the manager cannot resolve, as warnings (finding 72).
+
+    Never a refusal: the nodes may resolve what the manager does not, and their
+    own check before a release is switched to stays the gate. An object the
+    model does not read yet, and a lookup service that cannot be asked, say
+    nothing here - the first is said by the check, the second is the
+    installation's.
+    """
+
+    try:
+        proxy = load_proxy(name or "editor", document.encode())
+    except proxy_model.ModelError:
+        return []
+    missing = resolve_socket.unresolved(server_names.names([proxy])) or []
+    return [server_names.warning(host) for host in missing]
+
+
 def _editor_page(
     request: Request,
     config: Config,
@@ -9239,6 +9258,11 @@ def _editor_page(
     )
     dns_form = fields.get("protocol") == "dns"
     held = blocked.object_card(status_rows, cluster=cluster, name=name) if name else None
+    unresolved = (
+        _unresolved_servers(str(fields.get("name", "") or name), result.document)
+        if result.document and not dns_form
+        else []
+    )
     return TEMPLATES.TemplateResponse(
         request,
         "editor.html",
@@ -9293,6 +9317,7 @@ def _editor_page(
             #
             "syslog_offered": health.syslog_everywhere(status_rows, cluster=cluster),
             "check_protocols": preview_module.CHECK_PROTOCOLS,
+            "unresolved_servers": unresolved,
             "result": result,
             "draft": draft,
             "work": work,
@@ -9878,7 +9903,16 @@ def _editor_submit(
     # rather than back on the empty form. A save is finished: back to the list,
     # as *Save and publish* went before B257, where the row says it is waiting.
     #
-    if form.action == "draft":
+    #
+    # Unless a server's name does not resolve from the manager (finding 72):
+    # then back to the editor, which says so, rather than to a list that does
+    # not - found before the deploy that a node would stop.
+    #
+    if form.action == "draft" or (
+        result.document
+        and form.fields().get("protocol") != "dns"
+        and _unresolved_servers(key, result.document)
+    ):
         return RedirectResponse(
             _proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303
         )

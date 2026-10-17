@@ -31,7 +31,13 @@
         "objects": { "$ref": "#/$defs/object_names" },
         "removed": { "$ref": "#/$defs/object_names" },
         "network": { "type": "boolean" },
-        "settings": { "type": "boolean" }
+        "settings": { "type": "boolean" },
+        "unresolved_servers": {
+          "description": "Finding 72: the published objects' server names the manager cannot resolve. A warning; a node that cannot resolve one either stops the deploy.",
+          "type": "array",
+          "maxItems": 256,
+          "items": { "type": "string", "minLength": 1, "maxLength": 253 }
+        }
       },
       "additionalProperties": true
     },

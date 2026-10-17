@@ -127,5 +127,53 @@ class TheClient(unittest.TestCase):
             resolve_socket.lookup("ns1.example.com")
 
 
+def run_any(names: list[str]) -> str:
+    """Finding 72: a pool member's names, asked whether they give any address."""
+
+    request = {
+        "schema_version": 1,
+        "operation": "resolve",
+        "cluster": None,
+        "request_id": str(uuid.uuid4()),
+        "parameters": {"names": names, "any": True},
+    }
+    out = io.StringIO()
+    code = resolve_helper.main(
+        [],
+        input_stream=io.BytesIO(json.dumps(request).encode() + b"\n"),
+        output_stream=out,
+        error_stream=io.StringIO(),
+        first=lambda host: {"app.example.com": "198.51.100.10"}.get(host),
+    )
+    assert_contract("haprion-resolve", out.getvalue())
+    if code != 0:
+        raise AssertionError(out.getvalue())
+    return out.getvalue()
+
+
+class APoolMembersName(unittest.TestCase):
+    def test_any_address_will_do_and_none_is_the_warning(self) -> None:
+        raw = run_any(["app.example.com", "typo.example.com"])
+        names = json.loads(raw)["result"]["names"]
+
+        self.assertEqual(
+            names[0], {"name": "app.example.com", "address": "198.51.100.10", "problem": None}
+        )
+        self.assertIsNone(names[1]["address"])
+        self.assertIn("cannot be resolved from the manager", names[1]["problem"])
+        with mock.patch.object(helper_socket, "ask", return_value=raw):
+            self.assertEqual(
+                resolve_socket.unresolved(["app.example.com", "typo.example.com"]),
+                ["typo.example.com"],
+            )
+
+    def test_a_service_nobody_answers_says_nothing_about_the_names(self) -> None:
+        with mock.patch.object(
+            helper_socket, "ask", side_effect=helper_socket.HelperUnavailable("nothing listens")
+        ):
+            self.assertIsNone(resolve_socket.unresolved(["typo.example.com"]))
+        self.assertEqual(resolve_socket.unresolved([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()

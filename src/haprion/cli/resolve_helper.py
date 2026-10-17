@@ -19,16 +19,17 @@ host name pattern before anything is asked.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from typing import Any, BinaryIO, TextIO
 
-from haprion import dnsdist_config
+from haprion import dnsdist_config, server_names
 from haprion.cli import cert_job
 from haprion.envelope import envelope
 from haprion.helper_protocol import HelperProtocolError, write_document
 from haprion.proxy_model import HOSTNAME
 
 OPERATION = "resolve"
-PARAMETERS = frozenset({"names"})
+PARAMETERS = frozenset({"names", "any"})
 #
 # One object's pool, as the probe bounds it: a request with hundreds of names
 # would be a resolver for anybody who can reach the socket.
@@ -57,6 +58,21 @@ def answer(name: str, lookup: dnsdist_config.Lookup) -> dict[str, str | None]:
         return {"name": name, "address": None, "problem": str(exc)}
 
 
+def answer_any(name: str, first: Callable[[str], str | None]) -> dict[str, str | None]:
+    """A pool member's name (finding 72): whether it gives any address at all.
+
+    Several are fine - HAProxy takes one - so the address is only the first,
+    as proof; the sentence is the editor's warning, not a refusal.
+    """
+
+    address = first(name)
+    return {
+        "name": name,
+        "address": address,
+        "problem": None if address is not None else server_names.warning(name),
+    }
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -64,6 +80,7 @@ def main(
     output_stream: TextIO | None = None,
     error_stream: TextIO | None = None,
     lookup: dnsdist_config.Lookup = dnsdist_config.lookup,
+    first: Callable[[str], str | None] = server_names.first_address,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -85,6 +102,9 @@ def main(
     refuse = cert_job.Refuse(OPERATION, request, writer, errors)
     try:
         names = _names(request.parameters)
+        any_address = request.parameters.get("any", False)
+        if not isinstance(any_address, bool):
+            raise HelperProtocolError("parameters.any must be true or false", exit_code=65)
     except HelperProtocolError as exc:
         return refuse("bad_input", str(exc), exc.exit_code)
 
@@ -99,7 +119,12 @@ def main(
             outcome="done",
             cluster=None,
             request_id=request.request_id,
-            result={"names": [answer(name, lookup) for name in names]},
+            result={
+                "names": [
+                    answer_any(name, first) if any_address else answer(name, lookup)
+                    for name in names
+                ]
+            },
         ),
     )
     return 0

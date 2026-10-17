@@ -164,7 +164,12 @@ over DNS-01, NDES and an import as for any name.
 ### A pool's servers
 
 The *Servers* field takes one `address:port` or `hostname:port` per line, and two words after
-it where wanted, in either order:
+it where wanted, in either order. A host name is resolved by HAProxy on each node, and a name a
+node cannot resolve stops the deploy on that node. The editor and the publish therefore look
+each name up with the management host's resolver and warn - never refuse, since the nodes may
+resolve names the manager does not - when it gives no address: *app.example.com cannot be
+resolved from the manager*; a *Save* then stays in the editor so the warning is seen, and
+`haprion-objects apply` prints it as a `WARNING:` line.
 
 ```
 198.51.100.10:8080 weight 50

@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import cluster_settings, crs, geo, held_ports, peers
+from haprion import cluster_settings, crs, geo, held_ports, peers, server_names
 from haprion.candidate_validation import (
     DEFAULT_RUN_ROOT,
     SandboxValidator,
@@ -45,7 +45,7 @@ from haprion.helper_protocol import HelperProtocolError, JsonValue
 from haprion.managed_network import MAX_NETWORK_BYTES, load_document
 from haprion.managed_network import location as network_location
 from haprion.managed_publish import managed_files
-from haprion.proxy_model import MAX_MODEL_BYTES, NAME, NAME_RULE, name_refusal
+from haprion.proxy_model import MAX_MODEL_BYTES, NAME, NAME_RULE, load_proxy, name_refusal
 from haprion.release_install import PUBLISH_GROUP, ChangeOwner, default_change_owner
 
 OPERATION = "changes_publish"
@@ -246,7 +246,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                 held = held_ports.read(policy, cluster)
                 named["ports_unchecked"] = list(held.unread)
             try:
-                return managed_files(
+                files = managed_files(
                     base_files,
                     network_document=network_document,
                     cluster=cluster,
@@ -261,6 +261,18 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                 )
             except ConfigError as exc:
                 raise Refusal("changes_invalid", str(exc), 65) from exc
+            #
+            # The changed objects' server names the manager cannot resolve
+            # (finding 72): said, never refused - the node's check decides.
+            # Read once the objects have been accepted above.
+            #
+            if objects:
+                named["unresolved_servers"] = server_names.unresolved(
+                    load_proxy(name, document)
+                    for name, document in objects.items()
+                    if document is not None
+                )
+            return files
 
         return Change(
             expected_head=expected_head,

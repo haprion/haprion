@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+from haprion import server_names
 from haprion.cli import changes_publish
 from haprion.cli.apply_common import (
     EXIT_NOT_FOUND,
@@ -257,6 +258,13 @@ def _summary(plan: Plan, *, check: bool, versions: Sequence[Mapping[str, Any]]) 
             for v in versions
         ],
         "deployment_required": bool(versions) and any(v.get("changed") for v in versions),
+        #
+        # As each publish reported them (finding 72); a check publishes nothing
+        # and so looks nothing up.
+        #
+        "unresolved_servers": list(
+            dict.fromkeys(str(name) for v in versions for name in v.get("unresolved_servers") or ())
+        ),
     }
 
 
@@ -272,6 +280,8 @@ def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO
         writer.write(plan.diffs.get(name, ""))
     for version in summary["versions"]:
         writer.write(f"Published version {version['version']} of {cluster}.\n")
+    for name in summary["unresolved_servers"]:
+        writer.write(f"WARNING: {server_names.warning(name)}\n")
     if summary["deployment_required"]:
         writer.write(f"Deploy it with: haprion-deploy -c {cluster}\n")
 

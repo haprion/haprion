@@ -22,6 +22,11 @@ SOCKET_PATH = "/run/haprion/resolve.sock"
 # Bounded so a resolver that never answers becomes a sentence.
 #
 TIMEOUT_SECONDS = 15.0
+#
+# What the helper takes at once (its MAX_NAMES); the rest of a very large
+# object is not looked up rather than refused.
+#
+MAX_ASKED = 20
 
 
 def lookup(host: str, *, path: str = SOCKET_PATH) -> str:
@@ -67,3 +72,39 @@ def lookup(host: str, *, path: str = SOCKET_PATH) -> str:
     if isinstance(address, str) and dnsdist_config.is_address(address):
         return address
     raise dnsdist_config.Unresolved(str(found.get("problem") or f"{host} did not resolve"))
+
+
+def unresolved(hosts: list[str], *, path: str = SOCKET_PATH) -> list[str] | None:
+    """The pool members' names the manager cannot resolve (finding 72), asked in one request.
+
+    None when the service could not be asked: that is the installation, and
+    the editor then says nothing about the names rather than something wrong.
+    """
+
+    if not hosts:
+        return []
+    request = {
+        "schema_version": 1,
+        "operation": "resolve",
+        "cluster": None,
+        "request_id": str(uuid.uuid4()),
+        "parameters": {"names": hosts[:MAX_ASKED], "any": True},
+    }
+    try:
+        raw = helper_socket.ask(
+            request, path=path, timeout=TIMEOUT_SECONDS, what="the name lookup service"
+        )
+        document = json.loads(raw)
+    except (helper_socket.HelperUnavailable, ValueError):
+        return None
+    result = document.get("result") if isinstance(document, dict) else None
+    names = result.get("names") if isinstance(result, dict) else None
+    if not isinstance(names, list):
+        return None
+    return [
+        str(entry["name"])
+        for entry in names
+        if isinstance(entry, dict)
+        and isinstance(entry.get("name"), str)
+        and entry.get("address") is None
+    ]

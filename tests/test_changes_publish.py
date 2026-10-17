@@ -110,6 +110,25 @@ class ChangesPublishTests(ObjectsPublishFixture):
             )
             self.assertEqual(git(self.repo, "status", "--porcelain"), "")
 
+    def test_a_server_name_the_manager_cannot_resolve_is_said_not_refused(self) -> None:
+        """Finding 72: found where it is published, not first by a node's deploy."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            document = proxy("shop", "shop.example.com", address="typo.example.com")
+            with mock.patch(
+                "haprion.server_names.resolves", side_effect=lambda host: host != "typo.example.com"
+            ):
+                code, published, err = self.publish(
+                    policy, self.changes(objects={"shop": document})
+                )
+
+            self.assertEqual((code, err), (0, ""))
+            assert_contract("haprion-changes-publish", json.dumps(published))
+            self.assertEqual(published["result"]["unresolved_servers"], ["typo.example.com"])
+            self.assertTrue((self.repo / "managed/proxies/shop.yaml").exists())
+
     def test_an_object_on_a_vip_the_package_does_not_add_is_refused(self) -> None:
         """The other half of the case above: the network is read from the base."""
 

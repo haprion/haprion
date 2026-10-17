@@ -1401,6 +1401,23 @@ class SavingSaysSo(EditorTestCase):
                     (answer.status_code, answer.headers["location"]), (303, "/proxies")
                 )
 
+    def test_a_server_name_the_manager_cannot_resolve_keeps_the_save_in_the_editor(self) -> None:
+        """Finding 72: said where it is typed, not first by a node's deploy; never refused."""
+
+        with mock.patch("haprion.resolve_socket.unresolved", side_effect=lambda hosts: list(hosts)):
+            answer = self.save(
+                "/proxies/alpha/shop/edit", action="save", servers="typo.example.com:8080"
+            )
+            page = self.save(
+                "/proxies/alpha/shop/edit", action="check", servers="typo.example.com:8080"
+            )
+            clean = self.save("/proxies/alpha/shop/edit", action="check")
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/shop/edit?saved=1")
+        self.assertIn("typo.example.com cannot be resolved from the manager", page.text)
+        self.assertNotIn("data-unresolved", clean.text)
+
     def test_the_editor_shows_the_notice_that_url_asks_for(self) -> None:
         client = self.editor()
 

@@ -1,0 +1,78 @@
+#!/bin/bash
+#
+# PostgreSQL for the interface's database: kept when one runs, installed when
+# none does. Run by step 02 and by every update of the UI package.
+#
+#     sudo ./ensure-postgresql
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+
+#
+# PostgreSQL for the interface's database (Fas 18, 26-10-17): one major version
+# on every new installation, so a manager's database dump reads back into any
+# other, and a release is tested against the version it runs on. Ubuntu 26.04
+# ships 18; Debian 13 ships 17, so there it comes from the PostgreSQL project's
+# own repository - set up by the script the distribution's postgresql-common
+# carries, with the key the distribution signed, rather than a key of ours.
+#
+# Never the `postgresql` metapackage: from that repository it names the newest
+# major, and an `apt upgrade` would install the next one beside the database.
+# A major version is a deliberate step (pg_upgradecluster), and this one is
+# raised here when it is taken.
+#
+# A host whose PostgreSQL already runs a cluster of 16 or newer keeps it, from
+# whatever source. Its server package is marked as installed by hand: the UI
+# package named PostgreSQL as a dependency before, and without that mark
+# `apt autoremove` would offer to take the database server away.
+#
+PG_MAJOR=18
+PG_OLDEST=16
+PGDG_SCRIPT="${PGDG_SCRIPT:-/usr/share/postgresql-common/pgdg/apt.postgresql.org.sh}"
+PGDG_UNATTENDED="/etc/apt/apt.conf.d/52haprion-postgresql"
+
+running_postgresql() {
+    pg_lsclusters --no-header 2>/dev/null | awk '$4 == "online" { print $1 }' | sort -n | tail -n 1
+}
+
+ensure_postgresql() {
+    local running candidate
+    running="$(running_postgresql)"
+    if [[ -n "$running" ]]; then
+        (( ${running%%.*} >= PG_OLDEST )) \
+            || fail "PostgreSQL ${running} runs here" \
+                    "the interface needs ${PG_OLDEST} or newer" \
+                    "upgrade the cluster (pg_upgradecluster) and run this step again"
+        apt-mark manual "postgresql-${running}" >/dev/null
+        log "  ok       PostgreSQL ${running} (kept, marked as installed by hand)"
+        return 0
+    fi
+    candidate="$(apt-cache policy "postgresql-${PG_MAJOR}" 2>/dev/null | awk '/Candidate:/ { print $2 }')"
+    if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
+        [[ -x "$PGDG_SCRIPT" ]] \
+            || die "PostgreSQL: ${PGDG_SCRIPT} is missing (the postgresql-common package carries it)"
+        "$PGDG_SCRIPT" -y >/dev/null || die "PostgreSQL: the project's repository could not be set up"
+        #
+        # Its updates as unattended-upgrades takes the distribution's, on a host
+        # where that runs at all - otherwise every package but the database.
+        #
+        install_file "$PGDG_UNATTENDED" root:root 644 \
+            "$(printf 'Unattended-Upgrade::Origins-Pattern {\n    "origin=apt.postgresql.org";\n};')"
+        log "  ok       the PostgreSQL project's repository"
+    fi
+    DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q "postgresql-${PG_MAJOR}" >/dev/null \
+        || die "PostgreSQL: postgresql-${PG_MAJOR} could not be installed"
+    apt-mark manual "postgresql-${PG_MAJOR}" >/dev/null
+    systemctl start postgresql
+    running="$(running_postgresql)"
+    [[ "${running%%.*}" == "$PG_MAJOR" ]] \
+        || die "PostgreSQL: expected a running ${PG_MAJOR} cluster, found '${running:-none}'"
+    log "  ok       PostgreSQL ${PG_MAJOR} ($(dpkg-query -W -f='${Version}' "postgresql-${PG_MAJOR}"))"
+}
+
+step "PostgreSQL"
+ensure_postgresql

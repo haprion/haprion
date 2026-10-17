@@ -41,6 +41,12 @@ step "Preparing ${release_id}"
 
 step "Checking prerequisites and rollback-safe schema transition"
 ./check-compatibility --release "$release_id" --before-migration
+#
+# This package no longer names PostgreSQL as a dependency (26-10-17); the
+# server it brought is marked as installed by hand before apt can count it
+# as unneeded. On a running cluster this changes nothing else.
+#
+./ensure-postgresql
 
 step "Migrating from the prepared release"
 ./migrate --release "$release_id"

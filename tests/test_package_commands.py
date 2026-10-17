@@ -94,6 +94,7 @@ ESSENTIAL = frozenset(
     ]
 )
 PACKAGE_OF = {
+    "apt-cache": "apt",
     "apt-get": "apt",
     "apt-mark": "apt",
     "awk": "mawk",
@@ -108,9 +109,7 @@ PACKAGE_OF = {
     "nginx": "nginx",
     "openssl": "openssl",
     "passwd": "passwd",
-    "pg_dump": "postgresql-client",
-    "pg_restore": "postgresql-client",
-    "psql": "postgresql-client",
+    "pg_lsclusters": "postgresql-common",
     "python3": "python3",
     "rrsync": "rsync",
     "rsync": "rsync",
@@ -138,6 +137,9 @@ PACKAGE_OF = {
 INSTALLED_BY_THE_PRODUCT = {
     "dnsdist": "lib.sh's ensure_dnsdist installs it from PowerDNS's repository",
     "certbot": "platform step 14 builds its environment",
+    "pg_dump": "ensure-postgresql installs the server, and its client with it",
+    "pg_restore": "ensure-postgresql installs the server, and its client with it",
+    "psql": "ensure-postgresql installs the server, and its client with it",
     "coraza-spoa": "the WAF engine package the CLI release carries",
     "nologin": "a login shell written for an account, never run",
     "policy-rc.d": "a file the restore agent writes on a node, never run here",
@@ -307,14 +309,15 @@ class EveryModuleIsDeclared(unittest.TestCase):
     def test_each_import_is_a_package_the_cli_names(self) -> None:
         imported = self.imports()
         self.assertEqual(sorted(imported - set(MODULE_PACKAGES)), [], "add their Debian package")
-        declared = names(CLI.DEPENDS) | names(CLI.SUGGESTS)
+        declared = names(CLI.DEPENDS) | names(CLI.RECOMMENDS)
         for module in sorted(imported):
             with self.subTest(module=module):
                 self.assertIn(MODULE_PACKAGES[module], declared)
 
-    def test_the_lazy_import_is_only_suggested(self) -> None:
-        # geo.py imports location inside the function that needs it.
-        self.assertIn("python3-location", names(CLI.SUGGESTS))
+    def test_the_lazy_import_is_recommended_not_required(self) -> None:
+        # geo.py imports location inside the function that needs it (B322).
+        self.assertIn("python3-location", names(CLI.RECOMMENDS))
+        self.assertIn("location", names(CLI.RECOMMENDS))
         self.assertNotIn("python3-location", names(CLI.DEPENDS))
 
     def test_each_runtime_requirement_has_its_package(self) -> None:

@@ -20,8 +20,7 @@ load_answers "${1:-}"
 
 [[ "$DB_NAME" =~ ^[a-z][a-z0-9_]{0,62}$ ]] || die "invalid database name: ${DB_NAME}"
 
-systemctl is-active --quiet postgresql \
-    || die "PostgreSQL is not running. Install and start it before this step."
+./ensure-postgresql
 
 psql_super() { sudo -u postgres psql -v ON_ERROR_STOP=1 -qtAX "$@"; }
 

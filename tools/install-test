@@ -46,7 +46,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 PODMAN = "podman"
 CLUSTER = "alpha"
@@ -376,6 +376,40 @@ class Run:
         if int(count.strip() or 0) < 1:
             raise Failed("the collector imported no record from the nodes")
 
+    #
+    # What each function the product offers needs on each machine, and the
+    # command that proves it is there (B322, Fas 18 26-10-17). The WAF engine,
+    # certbot and the Location database were never in the packages, and every
+    # lab round passed without them: the gate asked whether what the packages
+    # carry works, never whether every function does.
+    #
+    NEEDS: ClassVar[dict[str, tuple[tuple[str, str], ...]]] = {
+        "mgr": (
+            ("the WAF engine", "test -x /usr/sbin/coraza-spoa"),
+            (
+                "the WAF rule set",
+                "dpkg-query -W -f='${Status}' haprion-crs | grep -q 'ok installed'",
+            ),
+            ("certbot", "/opt/haprion-certbot/current/bin/certbot --version"),
+            (
+                "the Location database",
+                "python3 -c 'import location' && test -r /var/lib/location/database.db",
+            ),
+            ("PostgreSQL 18", "pg_lsclusters --no-header | awk '{print $1}' | grep -qx 18"),
+        ),
+        "node": (("the WAF engine", "test -x /usr/sbin/coraza-spoa"),),
+    }
+
+    def every_function_has_what_it_needs(self) -> None:
+        missing = [
+            f"{role}: {what}"
+            for role in ("mgr", *NODES)
+            for what, command in self.NEEDS["mgr" if role == "mgr" else "node"]
+            if self.on(role, command, check=False)[0] != 0
+        ]
+        if missing:
+            raise Failed("missing after installation:\n  " + "\n  ".join(missing))
+
     def services_running(self) -> None:
         for role in NODES:
             self.on(role, "systemctl is-active haproxy keepalived")
@@ -482,6 +516,7 @@ def run_one(
             lambda: run.add_node(NODES[1], blocks[1]),
         )
         step("the joins warned of nothing", run.joined_quietly)
+        step("every function has what it needs", run.every_function_has_what_it_needs)
         step("an object published", run.publish)
 
         def added_node_starts_as_standby() -> None:

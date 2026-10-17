@@ -329,7 +329,7 @@ def assemble(
 # beside the engine's (tests/test_package_commands.py holds it to them).
 #
 UI_DEPENDS = (
-    "nginx, postgresql, postgresql-client, sudo, curl, iproute2, openssl, openssh-client, "
+    "nginx, postgresql-common, ca-certificates, sudo, curl, iproute2, openssl, openssh-client, "
     "git, passwd, systemd, apt, mawk | awk"
 )
 

@@ -925,15 +925,18 @@ host and writes them to `managed/maps/geo-se.lst`; the nodes receive the file
 with the release, in `maps/`, as they receive every map file. A country the
 database does not know refuses the publish.
 
-The database is installed and kept current on the management host:
+The database comes with the CLI package, which recommends `location` and `python3-location`, so
+apt installs both unless recommended packages are turned off. The package starts with the
+distribution's copy of the database and enables `location-update.timer`, which fetches a new,
+signed database once a day; the management host needs to reach `location.ipfire.org` for that,
+and without it the database ages but keeps working. On a host installed without recommended
+packages, a publish that names a country says what is missing:
 
 ```bash
 sudo apt install location python3-location
-sudo location update
-sudo systemctl enable --now location-update.timer
 ```
 
-The timer fetches a new, signed database once a day. A cluster takes it up at
+A cluster takes the new database up at
 its next publish, whatever that publish changes, and not on its own; *Settings → Location data* shows the
 database's date and, for each cluster that names a country, the date its
 published lists were made from. The data is IPFire Location, licensed under

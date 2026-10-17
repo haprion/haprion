@@ -63,14 +63,14 @@ DEPENDS = (
 )
 #
 # sshd checks a certificate receiver's account (cert_receiver) - a manager
-# without receivers never runs it.
+# without receivers never runs it. Countries in address groups read the
+# Location database (geo.py), imported only when an object names a country:
+# recommended, so apt installs it unless told not to, and the package's own
+# timer keeps the database current from then on (B322, 26-10-17). Nothing
+# installs it later, when a country is first named - that would be root running
+# apt in the middle of a publish.
 #
-RECOMMENDS = "openssh-server"
-#
-# Countries in address groups read the Location database (geo.py), imported
-# only when an object names a country.
-#
-SUGGESTS = "location, python3-location"
+RECOMMENDS = "openssh-server, location, python3-location"
 #
 # Entry points that are not operator commands, besides every `-helper`: what
 # the worker runs to reach a socket, and what a service or timer runs.
@@ -256,7 +256,6 @@ def build(source: Path, output_dir: Path, uv: Path, waf_engine_deb: Path) -> Pat
                 "Architecture": "all",
                 "Depends": DEPENDS,
                 "Recommends": RECOMMENDS,
-                "Suggests": SUGGESTS,
                 "Section": "net",
                 "Priority": "optional",
                 "Description": "Haprion command line: the engine that manages HAProxy clusters\n"

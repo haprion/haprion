@@ -1890,7 +1890,7 @@ command prints the helper's envelope instead (`schemas/v1/haprion-cluster-node`)
 takes it too.
 
 **Changing a node's host.** A node that is renamed or given another address is the same machine,
-and is moved rather than rebuilt: *Change host* on its row under *Settings → Nodes*, or
+and is moved rather than rebuilt: *Change host* on its row under *Settings → Nodes & clusters*, or
 `haprion-node host`. The host keys pinned for the node move to the new name in root's
 `known_hosts` and the collector's, its line in `clusters.yaml` follows, and the manager asks the
 node at the new name. The answer must come with a key already pinned and name the node and its
@@ -3021,7 +3021,7 @@ refusals, and their writes are audited and versioned the same way.
 | A cluster's *Logs & metrics* | `haprion-cluster-settings apply` |
 | *Versions*: deploy, revert | `haprion-deploy`, `haprion-revert` |
 | Drain, maintenance, unblock | `haprion-server-state` |
-| *Settings → Nodes*: nodes and clusters | `haprion-node`, `haprion-cluster` |
+| *Settings → Nodes & clusters*: nodes and clusters | `haprion-node`, `haprion-cluster` |
 | *Certificates*: issue, import, request, NDES, publish | `haprion-cert-issue`, `-import`, `-request`, `-scep`, `-publish`, `-deploy` |
 | *Certificates*: renew | certbot's: `haprion-cert-issue --domain <id> --renew`; NDES: `haprion-cert-scep --id <id> …` |
 | *Certificates*: publish to, remove from, delete | `haprion-cert-target`, `haprion-cert-delete` |
@@ -3319,8 +3319,8 @@ Package sources and pinning are described under
 
 ### Releasing a change
 
-Three things install independently — the CLI engine, the web platform, and the
-node scripts — and a release ships only the ones a change actually touched.
+Four things install independently — the CLI engine, the web platform, certbot and
+the node scripts — and a release ships only the ones a change actually touched.
 Which of them a change touched is a question with a measurable answer, so
 measure it rather than deciding by feel:
 
@@ -3330,8 +3330,9 @@ git show --stat <commit>
 
 | What the commit touched | What to release |
 |---|---|
-| `src/haprion/`, `tools/`, `install/` | the `haprion-cli` package — [Part 3](#part-3--the-versioned-cli-release) |
-| `ui/` | the `haprion-ui` package; installing it runs `update-platform-release` |
+| `src/haprion/`, `tools/` | the `haprion-cli` package — [Part 3](#part-3--the-versioned-cli-release) |
+| `ui/`, `install/` apart from the node's | the `haprion-ui` package; installing it runs `update-platform-release` |
+| `certbot/` | the `haprion-certbot` package; installing it runs platform step 14 |
 | `install/node/`, node scripts | the `haprion-node` package on every node, per [Part 2](#part-2--the-nodes) |
 | more than one of those | **the CLI package first**, then the platform, then the nodes |
 
@@ -3522,37 +3523,25 @@ Three properties drive the whole design, and every step below follows from one o
 
 ### Prerequisites
 
-Haprion manages HAProxy's configuration; it does not install, patch or upgrade
-HAProxy itself. Before starting, you need:
+The manager and the nodes run **Ubuntu 26.04 or Debian 13** on amd64: the packages are built and
+tested for those two, and `haprion-setup` refuses any other. Sizes are in the
+[installation guide](install.md#requirements) and, for the nodes, under *Size* in
+[Part 2](#part-2--the-nodes).
 
-**On the management host**
+Everything else is installed with the packages or by the installation steps:
 
-- a current Linux distribution with `systemd`
-- Python 3.12 or newer at `/usr/bin/python3`
-- the operating-system PyYAML package (`python3-yaml`), major version 6
-- the operating-system PyNaCl package (`python3-nacl`), major version 1 - the CLI release's
-  installer refuses a host without it, as it does without PyYAML
-- the operating-system psycopg package (`python3-psycopg`), major version 3 - the collector uses
-  it for transactional PostgreSQL COPY and the CLI installer refuses a host without it
-- `git`, `rsync`, `openssh-client`
-- `sudo` new enough to support the no-argument sudoers form (`command ""`)
-
-**On the management host, only for the web platform (Part 4)**
-
-- PostgreSQL 16 or newer. 16 is the floor rather than a preference: role
-  membership carries its own `INHERIT` setting from that version, and the
-  installation states it explicitly instead of depending on a role attribute as
-  it happened to be when a grant was made
-- nginx
-- `uv`, for building a release environment from the committed lockfile
-
-**On every node**
-
-- HAProxy, installed and managed by `systemd`, from the source you choose ([Where the package comes
-  from](#where-the-package-comes-from))
-- `keepalived`, if the cluster uses a virtual address
-- `rsync` and `openssh-server`
-- `sudo`
+- **On the manager**, `haprion-cli` depends on the distribution's Python (3.12 or newer at
+  `/usr/bin/python3`) with PyYAML 6, PyNaCl 1 and psycopg 3, and on `git`, `rsync`, `openssh-client`
+  and `sudo`; `haprion-ui` on nginx; `haprion-certbot` carries its own certbot. The setup installs
+  PostgreSQL 18 where no cluster runs - from the distribution on Ubuntu 26.04, from the PostgreSQL
+  project's repository on Debian 13 - and keeps a running 16 or newer. 16 is the floor rather than a
+  preference: role membership carries its own `INHERIT` setting from that version, and the
+  installation states it explicitly instead of depending on a role attribute as it happened to be
+  when a grant was made.
+- **On every node**, the `haprion-node` package and the join install HAProxy, keepalived, rsyslog,
+  dnsdist and what the scripts need.
+- **HAProxy 3.4 or newer** on both: where the distribution's is older, the steps add the HAProxy
+  maintainer's repository and install it from there ([Keeping HAProxy current](#keeping-haproxy-current)).
 
 **Names and addresses you decide before you start**
 
@@ -3595,8 +3584,10 @@ the repository's own `Release` file, or from `apt-cache policy` once the source 
 mistyped matches nothing, and the pin then silently does nothing. `apt-cache policy haproxy` shows
 the pin working: the repository's version at priority 1001, the distribution's at -1.
 
-The installation steps do not set this up. The dashboard's *Runtime* column shows the version each
-node's HAProxy process is running, read from its runtime socket - after an upgrade, the new version
+The installation steps set this up where a host's HAProxy is older than 3.4 (step 1 on the
+manager, `04-node-prepare` on a node), with the repository's key shipped beside the steps; a host
+already on 3.4 or newer keeps the source it has. The dashboard's *Runtime* column shows the version
+each node's HAProxy process is running, read from its runtime socket - after an upgrade, the new version
 appears there once the service has restarted.
 
 ### Part 1 — the management host
@@ -4354,14 +4345,17 @@ names certbot and every DNS plugin the web interface can offer, and `certbot/uv.
 whole set, with hashes, as resolved together. What the interface can offer is what that lock
 resolved. Nothing installs a plugin at runtime.
 
-Platform step 14 builds it:
+The `haprion-certbot` package carries that environment, built from the lock for one distribution
+and unpacked under `/opt/haprion-certbot/releases/`. Platform step 14 - which `haprion-setup` runs -
+makes it current; a newer package runs the step itself when it is installed. To build the
+environment from a source tree's lock instead, give the step a `uv`:
 
 ```bash
 cd /usr/share/haprion-ui/install/platform
 sudo UV_BIN=/path/to/uv ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui
 ```
 
-The step hands the lock to [`../tools/install-certbot-env.py`](../tools/install-certbot-env.py),
+Built that way, the step hands the lock to [`../tools/install-certbot-env.py`](../tools/install-certbot-env.py),
 which lets uv install exactly the locked set into `/opt/haprion-certbot/releases/<certbot
 version>-<lock hash>/venv` and proves that every plugin in it loads. It then runs
 `certbot/verify-integrations.py` with the new environment's interpreter. Those checks feed the
@@ -4391,11 +4385,10 @@ and without those paths every issuance from the web interface fails on a write s
 log lock. Step 07 installs the unit; rerun it from a `haprion-ui` package that has them before
 running step 14.
 
-Point the runtime policy at the release afterwards - `acme.certbot` in [ACME configuration and challenge routing](#acme-configuration-and-challenge-routing) - and the issue
-helper runs it too. Upgrading is the same step with a newer lock, a few times a year: bump
-`certbot/uv.lock` in the source tree (`uv lock --upgrade` in `certbot/`), commit it, install the
-`haprion-ui` package built from that commit, and run the step with `/usr/share/haprion-ui`; read its
-gate. A plugin that no longer resolves against the newer certbot falls out of the lock, and so out
+The runtime policy names the release's certbot - `acme.certbot` in [ACME configuration and challenge routing](#acme-configuration-and-challenge-routing), written
+by step 2 - so the issue helper runs it too. Upgrading is a newer `haprion-certbot` package, a few
+times a year: it is built from a bumped `certbot/uv.lock` (`uv lock --upgrade` in `certbot/`), and
+installing it runs step 14 with the same gate. A plugin that no longer resolves against the newer certbot falls out of the lock, and so out
 of what the interface offers; a release that fails the dry run is never made current. Rolling back
 by hand is one symlink, which the step prints, followed by the same dry run.
 
@@ -5037,6 +5030,18 @@ Platform installers, examples, caches and the source tree do not belong in it. E
 remain a separate root-owned input; putting them in the code artifact would make two installations
 of the same commit produce different packages.
 
+**Updating a node** is installing the newer package from the release on it, the node that does not
+hold the VIP first:
+
+```bash
+haprion-status -c alpha                                  # on the manager: which node holds the VIP
+sudo apt install ./haprion-node_<version>_all.deb        # on that cluster's other node, then the holder
+```
+
+On a node already joined, the package replaces the node scripts and changes nothing else; it does
+not run `04-node-prepare`. The installation from the manager below does - with a state backup on
+each side - and is the way when a release changes what that step reconciles.
+
 ##### Build and verify the package
 
 Use a clean, committed source tree that has passed the complete repository gate. Build into a
@@ -5100,8 +5105,7 @@ node. Another cluster's roll-out is its own pair of backups. The tool:
 3. uses one multiplexed, strictly host-key-checked SSH session for staging and installation;
 4. copies only the package and the separate answers file to a random mode-700 directory under
    `/tmp`, then verifies the package digest again on the node;
-5. installs the package with apt - without recommended packages, so keepalived stays the operator's
-   choice - and runs its `/usr/share/haprion-node/install/04-node-prepare` through the operator's
+5. installs the package with apt, without recommended packages, and runs its `/usr/share/haprion-node/install/04-node-prepare` through the operator's
    interactive `sudo` path. That step checks the package's files with `dpkg --verify` and stops on
    a script edited by hand;
 6. takes another state backup and runs `haprion-status` for the cluster; and
@@ -5154,11 +5158,12 @@ development path.
 
 #### The `haprion-cli` package
 
-This is how the CLI is installed and updated. The package carries the wheel, the node package of
-the same commit, the WAF engine package, the release installer and the operators' sudo rules, and
-its `postinst` runs the installer described below. Run the complete repository gate first, then
-build it from the clean commit, with the `uv` the repository is locked with and the engine package
-built by `tools/build-coraza-package.py`:
+This is how the CLI is installed and updated: `sudo apt install ./haprion-cli_<version>_all.deb`
+with the package from the release. The package carries the wheel, the node package of the same
+commit, the WAF engine package, the release installer and the operators' sudo rules, and its
+`postinst` runs the installer described below. To build it yourself, run the complete repository
+gate first, then build it from the clean commit, with the `uv` the repository is locked with and
+the engine package built by `tools/build-coraza-package.py`:
 
 ```bash
 tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv \
@@ -5255,8 +5260,9 @@ policy, not only the new one.
 
 Optional, and separate on purpose. The command line is the authoritative engine
 and installs and runs without any of this; a management host that only ever uses
-the CLI never needs the platform at all. [`../install/platform/`](../install/platform/)
-is what you follow; this section explains the shape.
+the CLI never needs the platform at all. `haprion-setup` installs it
+([installation guide](install.md#2-install-the-manager)), and
+[`../install/platform/`](../install/platform/) describes each step; this section explains the shape.
 
 #### What is installed where
 

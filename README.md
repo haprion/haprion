@@ -112,7 +112,8 @@ configuration outside the installed source package.
 The web, worker, and poller processes use separate operating-system identities. Application
 identities do not own or read SSH private keys, certificate private keys, or unrestricted secrets.
 Privileged operations cross narrow, allowlisted helper interfaces. See
-[`docs/PRIVILEGE.md`](docs/PRIVILEGE.md) for the frozen target contract.
+[`docs/PRIVILEGE.md`](docs/PRIVILEGE.md) for the frozen target contract. Vulnerabilities are
+reported privately, as [`SECURITY.md`](SECURITY.md) describes.
 
 Certificate issuance runs through an exact root helper around Certbot; DNS provider credentials
 entered in the web interface are sealed against a host key the web process cannot open. A

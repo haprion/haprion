@@ -288,8 +288,13 @@ def _compile(venv: Path, final_venv: Path) -> None:
         result = subprocess.run(  # noqa: S603 - the release's own interpreter, fixed arguments
             [
                 str(venv / "bin" / "python"),
+                # Without site, the interpreter does not import the venv's
+                # .pth helpers at start and write their bytecode by time before
+                # compileall gets to them; -f rewrites any that are there.
+                "-S",
                 "-m",
                 "compileall",
+                "-f",
                 "-q",
                 "-j",
                 "0",

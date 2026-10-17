@@ -302,6 +302,20 @@ class TheSameLockGivesTheSameTree(unittest.TestCase):
             self.assertTrue(any(name.startswith("__init__.") for name in names))
             self.assertFalse(any(name.startswith(("broken_test.", "legacy.")) for name in names))
 
+    def test_what_the_interpreter_imports_at_start_is_compiled_by_hash(self) -> None:
+        # A .pth line runs at start: its module's bytecode was written by time,
+        # before compileall reached it, and differed between builds (26-10-17).
+        with tempfile.TemporaryDirectory() as directory:
+            venv = self.venv(Path(directory))
+            site = venv / "lib" / PYTHON_TAG / "site-packages"
+            (site / "early.py").write_text("X = 1\n")
+            (site / "early.pth").write_text("import early\n")
+            (venv / "pyvenv.cfg").write_text(f"home = {BASE_PYTHON.parent}\n")
+            installer._compile(venv, Path("/opt/x/venv"))
+            (pyc,) = (site / "__pycache__").glob("early.*.pyc")
+            flags = int.from_bytes(pyc.read_bytes()[4:8], "little")
+            self.assertEqual(flags, 0b11, "checked-hash bytecode")
+
     def test_bytecode_is_the_same_from_two_staging_paths(self) -> None:
         final = Path("/opt/haprion-certbot/releases/x/venv")
         compiled = []

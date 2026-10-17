@@ -1,0 +1,5 @@
+# GitHub's Ubuntu 26.04 image (actions/runner-images#14748, from 2026-10-19) is
+# newer than the label list of the pinned actionlint 1.7.12. Remove this when
+# actionlint knows the label.
+self-hosted-runner:
+  labels: [ubuntu-26.04]

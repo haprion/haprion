@@ -130,13 +130,15 @@ FILES: dict[str, int] = {
 # this list to them. keepalived is here since the product writes its
 # configuration on the nodes of a cluster it created (B313); the system bus
 # is systemd-run's, which a node restore's rollback timer is started with.
-# dnsdist is not:
+# The WAF engine comes from the project's apt repository, with the key that
+# signs it (B325). dnsdist is not here:
 # 04-node-prepare installs it from PowerDNS's repository.
 #
 DEPENDS = (
     "python3, sudo, rsyslog, rsyslog-gnutls, haproxy, ipvsadm, keepalived, rsync, "
     "openssh-client, openssh-server, iproute2, procps, passwd, openssl, systemd, apt, "
-    "mawk | awk, default-dbus-system-bus | dbus-system-bus"
+    "mawk | awk, default-dbus-system-bus | dbus-system-bus, haprion-coraza-spoa, "
+    "haprion-archive-keyring"
 )
 #
 # Nothing to start and nothing to stop: the scripts run when the manager asks.

@@ -48,23 +48,50 @@ but which networks can reach it at all is decided by the firewall in front of it
 
 ## The packages
 
-Haprion is installed from Debian packages built from one commit. Download them from the
-[latest release](https://github.com/haprion/haprion/releases/latest); the web interface and
-certbot are built per distribution, so take the files whose names end in `ubuntu26.04_amd64.deb`
-or `deb13_amd64.deb` to match the manager. `SHA256SUMS` in the release lists every file's digest.
-To build them yourself, see [Building the packages](#building-the-packages).
+Haprion is installed with apt from the project's repository, `https://haprion.github.io/haprion/`,
+which holds every package for Debian 13 (`deb13`) and Ubuntu 26.04 (`ubuntu26.04`), amd64. Add it
+once on the manager and on each node - the key first, then the source (`deb13` in place of
+`ubuntu26.04` on Debian; `sudo apt install curl` if the machine has no curl):
+
+```bash
+sudo curl -fsSLo /usr/share/keyrings/haprion-archive-keyring.asc \
+  https://haprion.github.io/haprion/haprion-archive-keyring.asc
+sudo tee /etc/apt/sources.list.d/haprion.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://haprion.github.io/haprion/
+Suites: ubuntu26.04
+Components: main
+Signed-By: /usr/share/keyrings/haprion-archive-keyring.asc
+EOF
+sudo apt update
+```
+
+The key's fingerprint is `927422B0C5F005E0B710E4FFF30F5055A9FC0A53`
+(`gpg --show-keys /usr/share/keyrings/haprion-archive-keyring.asc` shows it). `Signed-By` makes
+apt trust the key for this repository and no other. The key file then belongs to the
+`haprion-archive-keyring` package, so a renewed signing key arrives with `apt upgrade` before
+the old one expires.
+
+The packages are also files in each [release](https://github.com/haprion/haprion/releases/latest),
+with `SHA256SUMS`, for a machine that cannot reach the repository: install them together with
+`sudo apt install ./<file> ...`, taking the web interface and certbot files whose names end in
+`ubuntu26.04_amd64.deb` or `deb13_amd64.deb`. To build them yourself, see
+[Building the packages](#building-the-packages).
 
 | Package | Installed on | Carries |
 |---|---|---|
+| `haprion-ui` | the manager | the interface's release for one distribution, `haprion-setup` and the installation steps it runs; depends on the rest of the manager's packages |
 | `haprion-cli` | the manager | the CLI engine, the node package of the same commit, the operators' commands and sudo rules |
-| `haprion-ui` | the manager, for the web interface | the interface's release for one distribution, `haprion-setup` and the installation steps it runs |
-| `haprion-certbot` | the manager, for the web interface | certbot and the DNS plugins the interface offers, as one locked environment for one distribution |
+| `haprion-certbot` | the manager | certbot and the DNS plugins the interface offers, as one locked environment for one distribution |
+| `haprion-crs` | the manager | the WAF rule set; releases carry the rules to the nodes |
 | `haprion-node` | each node | the node scripts, the block it prints at installation, and `04-node-prepare` |
-| `haprion-coraza-spoa` | the manager and the nodes, for the WAF | the engine; the CLI release also carries it, so a node restored to a new VM gets it back |
-| `haprion-crs` | the manager, for the WAF | the rule set; releases carry the rules to the nodes |
+| `haprion-coraza-spoa` | the manager and the nodes | the WAF engine; the CLI release also carries it, so a node restored to a new VM gets it back |
+| `haprion-archive-keyring` | the manager and the nodes | the key the repository is signed with |
 
-A later version of a package is the whole update: installing it updates what it carries, and the
-web interface's package updates the running platform itself.
+`sudo apt update && sudo apt upgrade` is the whole update: the web interface's package updates the
+running platform itself, and a new engine restarts the engine on a node - so update the nodes one
+at a time, the standby first. Leave the repository out of unattended-upgrades (it is not in it
+unless you add it): an update is a step you choose the moment for.
 
 ## 1. Choose the answers, or keep the defaults
 
@@ -88,13 +115,11 @@ backups or deploys no certificates.
 ## 2. Install the manager
 
 ```bash
-sudo apt install ./haprion-cli_*_all.deb \
-  ./haprion-ui_*ubuntu26.04_amd64.deb ./haprion-certbot_*ubuntu26.04_amd64.deb \
-  ./haprion-coraza-spoa_*_amd64.deb ./haprion-crs_*_all.deb
+sudo apt install haprion-ui
 sudo haprion-setup [--answers answers.env]
 ```
 
-(`deb13` in place of `ubuntu26.04` on Debian.) The `haprion-ui` package installs `haprion-setup`
+`haprion-ui` brings the CLI, certbot, the WAF engine and its rules with it. The package installs `haprion-setup`
 together with the steps it runs, so the manager needs no source tree. It first checks what it can
 know in advance - the distribution, the commands the steps run, the database server, that the
 server name resolves to this machine, that ports 80 and 443 are free for nginx - and names every
@@ -109,11 +134,13 @@ without a terminal it ends with the command that does it.
 
 On each node:
 
+With the repository added:
+
 ```bash
-sudo apt install ./haprion-coraza-spoa_<version>_amd64.deb ./haprion-node_<version>_all.deb
+sudo apt install haprion-node
 ```
 
-The package makes the node's accounts and the keys it fetches with, and prints its enrollment
+The WAF engine comes with it. The package makes the node's accounts and the keys it fetches with, and prints its enrollment
 block - one line starting with `haproxy-node-v2:` - and its host key's fingerprint. A new
 installation's dashboard walks through the first cluster with these blocks; later nodes are added
 under *Settings* → *Nodes & clusters*, and on the command line it is `haprion-cluster add` or
@@ -261,7 +288,7 @@ interface, or to see one step's whole output.
 ### The CLI engine
 
 ```bash
-sudo apt install ./haprion-cli_<version>_all.deb
+sudo apt install haprion-cli
 ```
 
 The package's `postinst` verifies the wheel, the node package and the WAF engine package it carries
@@ -299,12 +326,12 @@ For a command-line-only installation, the application is now installed.
 
 ### The web interface
 
-Install both packages; the interface's unpacks its release and prints its ID. Then, with the same answers
+Install the interface's package; it unpacks its release and prints its ID. Then, with the same answers
 file, from `/usr/share/haprion-ui/install/platform/`, prepare the platform, migrate its
 database and verify the candidate before activating it:
 
 ```bash
-sudo apt install ./haprion-ui_<version>~ubuntu26.04_amd64.deb ./haprion-certbot_<version>~ubuntu26.04_amd64.deb
+sudo apt install haprion-ui
 cd /usr/share/haprion-ui/install/platform
 sudo ./01-platform-prepare /path/to/answers.env
 sudo ./02-platform-database /path/to/answers.env
@@ -345,7 +372,16 @@ but does not refuse. The database is read when the package is built, so rebuild 
 check again. Install govulncheck with the pinned Go
 (`GOBIN=<dir> <go>/bin/go install golang.org/x/vuln/cmd/govulncheck@<version>`).
 Both go on the manager, where publishing compiles the rules before they leave it, and the engine
-on every node. Then the rest, in this order:
+on every node.
+
+One command builds every package in that order, fetching the pinned Go toolchain, govulncheck and
+the engine's sources into a cache and checking each against its digest:
+
+```bash
+tools/build-release-packages --source "$(pwd)" --output-dir <out> --uv /path/to/uv
+```
+
+It writes `SHA256SUMS` beside the packages. The steps it runs, for building one package alone:
 
 ```bash
 python3 tools/build-coraza-package.py crs --source-dir <dir> --output-dir <out>
@@ -356,7 +392,20 @@ tools/build-cli-package.py --source "$(pwd)" --output-dir <out> --uv /path/to/uv
 tools/node-package.py build --source . --output-dir <out>
 tools/build-ui-package.py --source "$(pwd)" --output-dir <out> --distribution ubuntu26.04 --uv /path/to/uv
 tools/build-certbot-package.py --source "$(pwd)" --output-dir <out> --distribution ubuntu26.04 --uv /path/to/uv
+tools/build-keyring-package.py --source "$(pwd)" --output-dir <out>
 ```
 
 The web interface and certbot are built inside a container of the distribution they are for, with
 rootless podman (`ubuntu26.04` or `debian13`).
+
+### How a release reaches the repository
+
+The repository is published by the workflow `.github/workflows/apt-repo.yml`. A release tag builds
+every package twice, on two runners, with `tools/build-release-packages`; the repository is
+published only when both builds, and the files the release already carries, are the same bytes. A
+change to the engine's pins on `main` builds the engine and the rules the same way, without a
+release. `tools/build-apt-repo` then starts from what the site serves - each suite's `InRelease`
+checked against the key, each index and package against what signs it - adds the new packages,
+keeps the two newest versions of each, and signs `Release` with the repository's signing subkey,
+which only the workflow's Pages environment holds. The primary key that certifies it is kept
+offline.

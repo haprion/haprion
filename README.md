@@ -120,7 +120,8 @@ the installation, and the [user manual](docs/user-manual.md) is the reference fo
   and a worker that records how every job ended, including one whose worker died
 - Debian packages from one commit: `haprion-cli` for the engine, `haprion-ui` for the web
   interface on Ubuntu 26.04 or Debian 13, `haprion-certbot` for certificate issuance,
-  `haprion-node` for the nodes, and the WAF engine and rule set; installing a newer package is the
+  `haprion-node` for the nodes, and the WAF engine and rule set - from a signed apt repository,
+  built twice in CI and published only when both builds are the same bytes; `apt upgrade` is the
   update
 
 Everyone signed in can read; an admin can change things. Writing can also be switched off for the

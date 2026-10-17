@@ -16,19 +16,18 @@ something fails.
   over. One node works too, without failover; a cluster has up to eight.
 - A DNS name for the manager that resolves to it, and SSH from the manager to the nodes.
 
-Download the packages from the [latest release](https://github.com/haprion/haprion/releases/latest).
-The web interface and certbot are built per distribution: their file names end in
-`ubuntu26.04_amd64.deb` or `deb13_amd64.deb`. `SHA256SUMS` in the release lists every file's
-digest; `sha256sum --ignore-missing -c SHA256SUMS` checks the ones you downloaded.
+The packages come from the project's apt repository. On the manager and on each node, add its key
+and source as [Installing](install.md#the-packages) shows - two commands - and `sudo apt update`.
+(The same packages are files in each [release](https://github.com/haprion/haprion/releases/latest)
+for a machine that cannot reach the repository.)
 
 ## 1. Install the manager
 
-On the manager, install the packages and run the setup - on Debian 13, `deb13` in place of
-`ubuntu26.04`:
+On the manager, install the web interface - it brings the rest of the manager with it - and run
+the setup:
 
 ```bash
-sudo apt install ./haprion-cli_*_all.deb ./haprion-ui_*ubuntu26.04_amd64.deb \
-  ./haprion-certbot_*ubuntu26.04_amd64.deb ./haprion-coraza-spoa_*_amd64.deb ./haprion-crs_*_all.deb
+sudo apt install haprion-ui
 sudo haprion-setup
 ```
 
@@ -48,7 +47,7 @@ a self-signed certificate for the web interface until you replace it
 On each node:
 
 ```bash
-sudo apt install ./haprion-coraza-spoa_*_amd64.deb ./haprion-node_*_all.deb
+sudo apt install haprion-node
 ```
 
 The node package prepares the machine and prints an **enrollment block**: a line starting with

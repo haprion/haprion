@@ -295,6 +295,23 @@ class TheSystemBusIsDeclaredWhereSystemdRunRuns(unittest.TestCase):
                 self.assertIn("\nensure_system_bus\n", (INSTALL / step).read_text())
 
 
+class TheRepositoryResolvesTheRest(unittest.TestCase):
+    """`apt install haprion-ui` is the whole manager and `apt install haprion-node`
+    a node with its engine, from the project's repository (B325)."""
+
+    def test_the_manager_brings_engine_rules_and_key(self) -> None:
+        for package in ("haprion-coraza-spoa", "haprion-crs", "haprion-archive-keyring"):
+            with self.subTest(package=package):
+                self.assertIn(package, names(CLI.DEPENDS))
+        self.assertTrue({"haprion-cli", "haprion-certbot"} <= names(UI.depends("3.14")))
+
+    def test_a_node_brings_its_engine_and_key(self) -> None:
+        for package in ("haprion-coraza-spoa", "haprion-archive-keyring"):
+            with self.subTest(package=package):
+                self.assertIn(package, names(node_package.DEPENDS))
+        self.assertNotIn("haprion-crs", names(node_package.DEPENDS))
+
+
 class EveryModuleIsDeclared(unittest.TestCase):
     def imports(self) -> set[str]:
         found: set[str] = set()

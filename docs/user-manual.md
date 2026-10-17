@@ -1853,7 +1853,7 @@ key in the collector's own `known_hosts`. The cluster's *Add node* under *Settin
 clusters*, and `haprion-node` on the command line, change all six as one, through the same root
 helper.
 
-On the new node, install the node package (`sudo apt install ./haprion-node_<version>_all.deb`).
+On the new node, install the node package (`sudo apt install haprion-node`).
 It prints the node's **enrollment block**, one line starting with `haproxy-node-v2:`, and its host
 key's fingerprint; `sudo haprion-node-key` prints a block again. Paste the block into *Add node*.
 The page reads it and shows the node's name, the host the manager will reach it at and the
@@ -3528,7 +3528,10 @@ tested for those two, and `haprion-setup` refuses any other. Sizes are in the
 [installation guide](install.md#requirements) and, for the nodes, under *Size* in
 [Part 2](#part-2--the-nodes).
 
-Everything else is installed with the packages or by the installation steps:
+Everything else is installed with the packages or by the installation steps. The packages come
+from the project's signed apt repository ([The packages](install.md#the-packages)); `haprion-cli`
+and `haprion-node` depend on the WAF engine and the repository key, and `haprion-ui` on the rest
+of the manager's packages, so one `apt install` on each machine brings them:
 
 - **On the manager**, `haprion-cli` depends on the distribution's Python (3.12 or newer at
   `/usr/bin/python3`) with PyYAML 6, PyNaCl 1 and psycopg 3, and on `git`, `rsync`, `openssh-client`
@@ -5030,12 +5033,11 @@ Platform installers, examples, caches and the source tree do not belong in it. E
 remain a separate root-owned input; putting them in the code artifact would make two installations
 of the same commit produce different packages.
 
-**Updating a node** is installing the newer package from the release on it, the node that does not
-hold the VIP first:
+**Updating a node** is `apt upgrade` on it, the node that does not hold the VIP first:
 
 ```bash
 haprion-status -c alpha                                  # on the manager: which node holds the VIP
-sudo apt install ./haprion-node_<version>_all.deb        # on that cluster's other node, then the holder
+sudo apt update && sudo apt upgrade                      # on that cluster's other node, then the holder
 ```
 
 On a node already joined, the package replaces the node scripts and changes nothing else; it does
@@ -5158,8 +5160,8 @@ development path.
 
 #### The `haprion-cli` package
 
-This is how the CLI is installed and updated: `sudo apt install ./haprion-cli_<version>_all.deb`
-with the package from the release. The package carries the wheel, the node package of the same
+This is how the CLI is installed and updated: `sudo apt install haprion-cli` from the project's
+repository (`haprion-ui` depends on it), or the package file from a release. The package carries the wheel, the node package of the same
 commit, the WAF engine package, the release installer and the operators' sudo rules, and its
 `postinst` runs the installer described below. To build it yourself, run the complete repository
 gate first, then build it from the clean commit, with the `uv` the repository is locked with and

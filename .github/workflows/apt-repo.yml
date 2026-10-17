@@ -1,0 +1,163 @@
+name: apt repository
+
+# The packages are built twice, on two runners, and the repository is
+# published only when both builds - and, for a release, the files the release
+# already carries - are the same bytes (B323, B325). A release tag builds every
+# package; an engine update merged on main builds the engine and the rules
+# only, and the release packages the site already serves stay beside them.
+# Path filters are not evaluated for tags.
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+    paths: [tools/build-coraza-package.py]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apt-repo
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the packages (${{ matrix.copy }})
+    if: github.repository == 'haprion/haprion'
+    # The distribution the packages are built on here too; ubuntu-latest moves
+    # between versions on GitHub's schedule.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        copy: [a, b]
+
+    steps:
+      # The whole history: the keyring package is dated by the commit that
+      # last changed the key, which a shallow clone does not have.
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          enable-cache: false
+
+      - name: Build
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          only=()
+          if [[ "${REF_TYPE}" == branch ]]; then
+            only=(--only waf)
+          fi
+          python3 tools/build-release-packages --source . --output-dir "${RUNNER_TEMP}/out" \
+            --uv "$(command -v uv)" --cache "${RUNNER_TEMP}/cache" "${only[@]}"
+          cat "${RUNNER_TEMP}/out/SHA256SUMS"
+
+      - name: Keep the packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-${{ matrix.copy }}
+          path: ${{ runner.temp }}/out/
+          retention-days: 7
+          if-no-files-found: error
+
+  compare:
+    name: Compare the builds
+    needs: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Fetch both builds
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: packages-*
+          path: ${{ runner.temp }}/builds
+
+      - name: The same bytes twice
+        shell: bash
+        working-directory: ${{ runner.temp }}/builds
+        run: |
+          set -euo pipefail
+          diff packages-a/SHA256SUMS packages-b/SHA256SUMS
+          cat packages-a/SHA256SUMS
+
+      # GitHub names a release's files with `.` where the package has `~`, so
+      # the comparison is by digest and normalised name.
+      - name: The same bytes as the release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        working-directory: ${{ runner.temp }}/builds
+        run: |
+          set -euo pipefail
+          mkdir release
+          gh release download "${TAG}" --repo "${REPOSITORY}" --pattern '*.deb' --dir release
+          (cd release && sha256sum -- *.deb | sort -k2) > release.sums
+          sed 's/~/./g' packages-a/SHA256SUMS | sort -k2 > built.sums
+          diff built.sums release.sums
+
+  publish:
+    name: Publish the repository
+    needs: compare
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write # the deployment
+      id-token: write # which Pages verifies
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages-a
+          path: ${{ runner.temp }}/packages
+
+      # The signing subkey only; the primary key is offline. It is in a file
+      # for as long as the signing takes and in the job's own temporary
+      # directory, which the runner removes with the job.
+      - name: Assemble and sign
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.HAPRION_APT_SIGNING_KEY }}
+          SITE: https://haprion.github.io/haprion
+        run: |
+          set -euo pipefail
+          if [[ -z "${SIGNING_KEY}" ]]; then
+            echo "apt-repo: the environment secret HAPRION_APT_SIGNING_KEY is missing" >&2
+            exit 2
+          fi
+          umask 077
+          key="${RUNNER_TEMP}/signing-key.asc"
+          printf '%s\n' "${SIGNING_KEY}" > "${key}"
+          trap 'rm -f "${key}"' EXIT
+          python3 tools/build-apt-repo --packages "${RUNNER_TEMP}/packages" \
+            --previous-site "${SITE}" --key-file "${key}" --output-dir "${RUNNER_TEMP}/site"
+
+      - name: Hand the site to Pages
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

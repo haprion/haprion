@@ -1,0 +1,402 @@
+#!/usr/bin/env python3
+"""Assemble and sign the apt repository the site serves (B323, B325).
+
+    tools/build-apt-repo --packages <dir> [--packages <dir> ...] --output-dir <site>
+                         --key-file <armored secret key> [--keep 2]
+
+The packages come from releases' files, one directory per release. Each
+suite is a distribution, named as the packages' version suffix, so no
+codename is guessed:
+
+    dists/deb13/        Debian 13
+    dists/ubuntu26.04/  Ubuntu 26.04
+
+A package with a suffix (`~deb13`, `~ubuntu26.04`) is in its distribution's
+suite only; one without (`_all`, the engine's `_amd64`) is in both. Of each
+package the newest `--keep` versions stay, ordered as dpkg orders them, so a
+manager can go back one version with `apt install <package>=<version>`
+while the site stays far below its size limit.
+
+`Release` lists each index with its size and SHA-256, and is signed twice
+with the key given: inline as `InRelease`, which apt reads first, and
+detached as `Release.gpg`. The key is used in a keyring of its own, made for
+this run and removed after it. `Release` carries no `Valid-Until`: a repository
+CI stopped refreshing would otherwise refuse every update after the date.
+
+With `--previous-site`, the packages the site serves now are the starting
+point: each suite's `InRelease` is checked against the repository key, each
+index against `Release`, and each package against its index, before any of
+it is kept. That is how an engine update built on `main` - which no release
+carries - stays in the repository when the next release is published. A site
+that answers 404 for its first `InRelease` has nothing yet; any other failure
+stops the build.
+
+Everything else on the site is fixed: the public key, for an installation's
+first `Signed-By`, and a page that says how to add the source.
+"""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import format_datetime
+from functools import cmp_to_key
+from pathlib import Path
+
+SUITES = {"deb13": "Debian 13", "ubuntu26.04": "Ubuntu 26.04"}
+ARCHITECTURE = "amd64"
+COMPONENT = "main"
+SUFFIX = re.compile(r"~(deb13|ubuntu26\.04)$")
+KEY_FILE = "keys/haprion-archive.asc"
+SITE_KEY = "haprion-archive-keyring.asc"
+CONTROL_FIELDS = (
+    "Package",
+    "Version",
+    "Architecture",
+    "Maintainer",
+    "Installed-Size",
+    "Depends",
+    "Recommends",
+    "Suggests",
+    "Conflicts",
+    "Replaces",
+    "Provides",
+    "Section",
+    "Priority",
+    "Homepage",
+    "Description",
+)
+
+
+class RepoError(RuntimeError):
+    """A repository that cannot be assembled."""
+
+
+@dataclass(frozen=True)
+class Deb:
+    path: Path
+    package: str
+    version: str
+    architecture: str
+    control: dict[str, str]
+    suites: tuple[str, ...]
+
+
+def dpkg_deb_field(path: Path) -> dict[str, str]:
+    text = subprocess.run(  # noqa: S603 - fixed tool, a file we were given
+        ["/usr/bin/dpkg-deb", "--field", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+    ).stdout
+    fields: dict[str, str] = {}
+    name = ""
+    for line in text.splitlines():
+        if line[:1] in (" ", "\t") and name:
+            fields[name] += "\n" + line
+        elif ":" in line:
+            name, value = line.split(":", 1)
+            fields[name] = value.strip()
+    return fields
+
+
+def read(path: Path) -> Deb:
+    """The package as its control file names it; the file name is not read (GitHub renames `~`)."""
+    control = dpkg_deb_field(path)
+    if control.get("Architecture") not in ("all", ARCHITECTURE):
+        raise RepoError(f"{path.name}: architecture {control.get('Architecture')!r}")
+    version = control["Version"]
+    suffix = SUFFIX.search(version)
+    suites = (suffix.group(1),) if suffix else tuple(SUITES)
+    return Deb(path, control["Package"], version, control["Architecture"], control, suites)
+
+
+def compare(a: str, b: str) -> int:
+    for op, result in (("lt", -1), ("gt", 1)):
+        if (
+            subprocess.run(  # noqa: S603 - fixed tools, files this run made
+                ["/usr/bin/dpkg", "--compare-versions", a, op, b], check=False
+            ).returncode
+            == 0
+        ):  # noqa: S603
+            return result
+    return 0
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def chosen(debs: list[Deb], keep: int) -> dict[str, list[Deb]]:
+    """Per suite, the newest `keep` versions of each package, sorted by name and version."""
+    by_suite: dict[str, dict[str, dict[str, Deb]]] = {suite: {} for suite in SUITES}
+    for deb in debs:
+        for suite in deb.suites:
+            versions = by_suite[suite].setdefault(deb.package, {})
+            same = versions.get(deb.version)
+            if same is not None and sha256(same.path) != sha256(deb.path):
+                raise RepoError(f"{deb.package} {deb.version} comes with two different files")
+            versions[deb.version] = deb
+    result: dict[str, list[Deb]] = {}
+    for suite, packages in by_suite.items():
+        kept: list[Deb] = []
+        for package in sorted(packages):
+            ordered = sorted(packages[package], key=cmp_to_key(compare), reverse=True)[:keep]
+            kept += [packages[package][version] for version in reversed(ordered)]
+        result[suite] = kept
+    return result
+
+
+def pool_path(deb: Deb) -> str:
+    return f"pool/{COMPONENT}/{deb.package}/{deb.package}_{deb.version}_{deb.architecture}.deb"
+
+
+def stanza(deb: Deb, filename: str, path: Path) -> str:
+    lines = [f"{field}: {deb.control[field]}" for field in CONTROL_FIELDS if field in deb.control]
+    lines += [f"Filename: {filename}", f"Size: {path.stat().st_size}", f"SHA256: {sha256(path)}"]
+    return "\n".join(lines) + "\n"
+
+
+def sign(release: Path, key_file: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="haprion-apt-sign-") as home:
+        os.chmod(home, 0o700)
+        env = {"PATH": "/usr/bin:/bin", "GNUPGHOME": home, "LC_ALL": "C"}
+        gpg = [
+            "/usr/bin/gpg",
+            "--batch",
+            "--quiet",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase",
+            "",
+        ]
+        try:
+            subprocess.run([*gpg, "--import", str(key_file)], check=True, env=env)  # noqa: S603
+            common = [*gpg, "--yes", "--digest-algo", "SHA512"]
+            subprocess.run(  # noqa: S603 - fixed tools, files this run made
+                [*common, "--clearsign", "-o", str(release.with_name("InRelease")), str(release)],
+                check=True,
+                env=env,
+            )  # noqa: S603
+            subprocess.run(  # noqa: S603 - fixed tools, files this run made
+                [
+                    *common,
+                    "--armor",
+                    "--detach-sign",
+                    "-o",
+                    str(release.with_name("Release.gpg")),
+                    str(release),
+                ],
+                check=True,
+                env=env,
+            )  # noqa: S603
+        finally:
+            subprocess.run(["/usr/bin/gpgconf", "--kill", "all"], check=False, env=env)  # noqa: S603
+
+
+FETCH_TIMEOUT = 120
+
+
+def _get(url: str) -> bytes:
+    if not url.startswith("https://"):
+        raise RepoError(f"refusing a non-https site: {url}")
+    with urllib.request.urlopen(url, timeout=FETCH_TIMEOUT) as response:  # noqa: S310 - https only, checked above
+        return bytes(response.read())
+
+
+def verified_release(signed: bytes, public_key: Path) -> str:
+    """The text of an `InRelease`, refused unless the repository key signed it."""
+    with tempfile.TemporaryDirectory(prefix="haprion-apt-verify-") as home:
+        os.chmod(home, 0o700)
+        env = {"PATH": "/usr/bin:/bin", "GNUPGHOME": home, "LC_ALL": "C"}
+        keyring = Path(home) / "keyring.gpg"
+        subprocess.run(  # noqa: S603 - fixed tools, files this run made
+            [
+                "/usr/bin/gpg",
+                "--batch",
+                "--quiet",
+                "--yes",
+                "--dearmor",
+                "-o",
+                str(keyring),
+                str(public_key),
+            ],
+            check=True,
+            env=env,
+        )  # noqa: S603
+        inrelease = Path(home) / "InRelease"
+        inrelease.write_bytes(signed)
+        result = subprocess.run(  # noqa: S603 - fixed tool
+            ["/usr/bin/gpgv", "--keyring", str(keyring), "--output", "-", str(inrelease)],
+            check=False,
+            capture_output=True,
+            env=env,
+        )
+        if result.returncode != 0:
+            raise RepoError("the site's InRelease is not signed by the repository key")
+        return result.stdout.decode()
+
+
+def listed(release: str, name: str) -> tuple[str, int]:
+    for line in release.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and line.startswith(" ") and fields[2] == name:
+            return fields[0], int(fields[1])
+    raise RepoError(f"Release does not name {name}")
+
+
+def fetch_site(url: str, public_key: Path, into: Path) -> int:
+    """Copy the packages the site serves into `into`, each checked; the number fetched."""
+    base = url.rstrip("/")
+    into.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    for number, suite in enumerate(SUITES):
+        try:
+            signed = _get(f"{base}/dists/{suite}/InRelease")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 and number == 0:
+                return 0
+            raise RepoError(f"{suite}: InRelease: HTTP {exc.code}") from exc
+        release = verified_release(signed, public_key)
+        name = f"{COMPONENT}/binary-{ARCHITECTURE}/Packages"
+        digest, size = listed(release, name)
+        index = _get(f"{base}/dists/{suite}/{name}")
+        if len(index) != size or hashlib.sha256(index).hexdigest() != digest:
+            raise RepoError(f"{suite}: Packages does not match Release")
+        for block in index.decode().strip().split("\n\n"):
+            fields = dict(
+                line.split(": ", 1)
+                for line in block.splitlines()
+                if ": " in line and not line.startswith(" ")
+            )
+            filename, expected = fields["Filename"], fields["SHA256"]
+            if filename in seen:
+                continue
+            if not filename.startswith(f"pool/{COMPONENT}/") or ".." in filename:
+                raise RepoError(f"{suite}: unexpected path {filename}")
+            data = _get(f"{base}/{filename}")
+            if hashlib.sha256(data).hexdigest() != expected:
+                raise RepoError(f"{filename} does not match its index")
+            (into / Path(filename).name).write_bytes(data)
+            seen.add(filename)
+    return len(seen)
+
+
+def index_page(base_key: str) -> str:
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>haprion apt repository</title></head>
+<body><h1>haprion apt repository</h1>
+<p>Packages for Debian 13 (<code>deb13</code>) and Ubuntu 26.04 (<code>ubuntu26.04</code>), amd64.
+The repository key is <a href="{base_key}">{base_key}</a>.
+How to add the source: <a href="https://github.com/haprion/haprion/blob/main/docs/install.md">docs/install.md</a>.</p>
+</body></html>
+"""
+
+
+def build(
+    sources: list[Path], site: Path, key_file: Path, public_key: Path, keep: int, now: datetime
+) -> dict[str, int]:
+    if site.exists() and any(site.iterdir()):
+        raise RepoError(f"{site} is not empty")
+    debs = [read(path) for source in sources for path in sorted(source.glob("*.deb"))]
+    if not debs:
+        raise RepoError("no packages given")
+    suites = chosen(debs, keep)
+    site.mkdir(parents=True, exist_ok=True)
+    counts: dict[str, int] = {}
+    for suite, kept in suites.items():
+        entries = []
+        for deb in kept:
+            filename = pool_path(deb)
+            target = site / filename
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(deb.path, target)
+            entries.append(stanza(deb, filename, target))
+        directory = site / "dists" / suite / COMPONENT / f"binary-{ARCHITECTURE}"
+        directory.mkdir(parents=True)
+        packages = "\n".join(entries).encode()
+        (directory / "Packages").write_bytes(packages)
+        (directory / "Packages.gz").write_bytes(gzip.compress(packages, mtime=0))
+        lines = [
+            "Origin: haprion",
+            "Label: haprion",
+            f"Suite: {suite}",
+            f"Codename: {suite}",
+            f"Date: {format_datetime(now, usegmt=True)}",
+            f"Architectures: {ARCHITECTURE}",
+            f"Components: {COMPONENT}",
+            f"Description: haprion for {SUITES[suite]}",
+            "SHA256:",
+        ]
+        for name in ("Packages", "Packages.gz"):
+            path = directory / name
+            lines.append(
+                f" {sha256(path)} {path.stat().st_size:>10} {COMPONENT}/binary-{ARCHITECTURE}/{name}"
+            )
+        release = site / "dists" / suite / "Release"
+        release.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        sign(release, key_file)
+        counts[suite] = len(kept)
+    shutil.copyfile(public_key, site / SITE_KEY)
+    (site / "index.html").write_text(index_page(SITE_KEY), encoding="utf-8")
+    (site / ".nojekyll").write_bytes(b"")
+    return counts
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--packages", type=Path, action="append", required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--key-file", type=Path, required=True, help="the armored signing key, without a passphrase"
+    )
+    parser.add_argument(
+        "--public-key", type=Path, default=Path(__file__).resolve().parents[1] / KEY_FILE
+    )
+    parser.add_argument("--keep", type=int, default=2)
+    parser.add_argument("--previous-site", help="the site's https URL, whose packages are kept")
+    args = parser.parse_args()
+    if args.keep < 1:
+        parser.error("--keep must be at least 1")
+    try:
+        sources = list(args.packages)
+        with tempfile.TemporaryDirectory(prefix="haprion-apt-previous-") as previous:
+            if args.previous_site:
+                fetched = fetch_site(args.previous_site, args.public_key, Path(previous))
+                print(f"{args.previous_site}: {fetched} packages kept from the site")
+                sources.append(Path(previous))
+            counts = build(
+                sources,
+                args.output_dir,
+                args.key_file,
+                args.public_key,
+                args.keep,
+                datetime.now(UTC),
+            )
+    except (RepoError, OSError, KeyError, ValueError, subprocess.CalledProcessError) as exc:
+        parser.exit(1, f"repository build failed: {exc}\n")
+    for suite, count in counts.items():
+        print(f"{suite}: {count} packages")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

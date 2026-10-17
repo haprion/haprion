@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """A whole installation on empty machines, in containers: the release's acceptance.
 
-    tools/install-test --packages <dir> --distribution debian13|ubuntu26.04|all
-                       [--keep] [--logs <dir>]
+    tools/install-test --packages <dir> | --apt-repo <site>
+                       --distribution debian13|ubuntu26.04|all [--keep] [--logs <dir>]
 
 Every new installation found its faults one at a time on a lab VM (Fas 18:
 a missing dependency, a step that could not be rerun, a check that refused a
@@ -24,11 +24,15 @@ have fails here, not on a person's first node:
     when its holder's keepalived stops and staying where it went when that
     comes back, and a second deploy that changes nothing
 
-The packages are the ones a release ships, in one directory: `haprion-cli`,
-`haprion-node`, each distribution's `haprion-ui` and `haprion-certbot`, and the
-WAF engine's `haprion-coraza-spoa` and `haprion-crs` - on the manager, and the
-engine beside the node package on each node, until the packages come from a
-repository that resolves them as dependencies (B323).
+The packages are the ones a release ships. With `--packages`, the files in one
+directory, as a person installs them from a release: `haprion-cli`, each
+distribution's `haprion-ui` and `haprion-certbot`, the WAF engine's
+`haprion-coraza-spoa` and `haprion-crs` and `haprion-archive-keyring` on the
+manager, and the node package with the engine and the key on each node. With
+`--apt-repo`, a site `tools/build-apt-repo` assembled, as the public
+instructions install it: the key and the source, then `apt install
+haprion-ui` and `apt install haprion-node` - so a dependency the repository
+does not resolve fails here (B325).
 
 Not here: syslog objects' IPVS (a rootless container may not load the kernel
 table; measured 26-10-15), certbot's dry-run renewal (it asks Let's Encrypt's
@@ -51,6 +55,14 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 PODMAN = "podman"
+REPO_DIR = "/srv/haprion-repo"
+SITE_KEY = "haprion-archive-keyring.asc"
+#
+# A site built here is signed with a key of the test's own, not the
+# repository's (which only CI holds), so its key goes where
+# haprion-archive-keyring - installed with the rest - does not replace it.
+#
+KEYRING = "/etc/apt/keyrings/haprion-install-test.asc"
 CLUSTER = "alpha"
 OBJECT = """\
 schema: 1
@@ -245,8 +257,33 @@ class Run:
         self.podman("cp", str(path), f"{self.container(role)}:/root/install/{path.name}")
         return f"/root/install/{path.name}"
 
-    def install_manager(self, packages: list[Path]) -> None:
-        names = [self.copy("mgr", path) for path in packages]
+    def add_repository(self, role: str, site: Path) -> None:
+        """The source and its key, as docs/install.md has a person write them."""
+
+        self.podman("cp", str(site), f"{self.container(role)}:{REPO_DIR}")
+        suite = self.distribution.ui_suffix.removeprefix("~")
+        source = (
+            f"Types: deb\nURIs: file:{REPO_DIR}\nSuites: {suite}\nComponents: main\n"
+            f"Signed-By: {KEYRING}\n"
+        )
+        self.on(
+            role,
+            f"chmod -R a+rX {REPO_DIR} && install -D -m 0644 {REPO_DIR}/{SITE_KEY} {KEYRING} "
+            f"&& printf %s {shlex.quote(source)} > /etc/apt/sources.list.d/haprion.sources",
+        )
+
+    def names(
+        self, role: str, packages: list[Path] | None, site: Path | None, package: str
+    ) -> list[str]:
+        if site is not None:
+            self.add_repository(role, site)
+            return [package]
+        if packages is None:
+            raise Failed("neither package files nor a repository")
+        return [self.copy(role, path) for path in packages]
+
+    def install_manager(self, packages: list[Path] | None, site: Path | None = None) -> None:
+        names = self.names("mgr", packages, site, "haprion-ui")
         self.on(
             "mgr",
             "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
@@ -256,14 +293,14 @@ class Run:
         if "The manager is installed" not in output:
             raise Failed(f"haprion-setup ended without saying the manager is installed:\n{output}")
 
-    def prepare_node(self, role: str, package: Path, engine: Path) -> str:
-        """The node package and the WAF engine, installed as a person would, and the block printed."""
+    def prepare_node(self, role: str, packages: list[Path] | None, site: Path | None = None) -> str:
+        """The node package with what it depends on, installed as a person would, and the block printed."""
 
-        name, motor = self.copy(role, package), self.copy(role, engine)
+        names = self.names(role, packages, site, "haprion-node")
         _, output = self.on(
             role,
             "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
-            f"&& apt-get install -y -q {shlex.quote(motor)} {shlex.quote(name)}",
+            f"&& apt-get install -y -q {' '.join(shlex.quote(name) for name in names)}",
         )
         block = re.search(r"^(haproxy-node-v2:\S+)$", output, re.M)
         if not block:
@@ -450,13 +487,22 @@ def package(directory: Path, pattern: str) -> Path:
     return found[0]
 
 
-def run_one(distribution: Distribution, packages: Path, logs: Path, keep: bool) -> bool:
-    cli = package(packages, "haprion-cli_*_all.deb")
-    node = package(packages, "haprion-node_*_all.deb")
-    ui = package(packages, f"haprion-ui_*{distribution.ui_suffix}_amd64.deb")
-    certbot = package(packages, f"haprion-certbot_*{distribution.ui_suffix}_amd64.deb")
-    engine = package(packages, "haprion-coraza-spoa_*_amd64.deb")
-    rules = package(packages, "haprion-crs_*_all.deb")
+def run_one(
+    distribution: Distribution, packages: Path | None, site: Path | None, logs: Path, keep: bool
+) -> bool:
+    manager_files = node_files = None
+    if packages is not None:
+        key = package(packages, "haprion-archive-keyring_*_all.deb")
+        engine = package(packages, "haprion-coraza-spoa_*_amd64.deb")
+        manager_files = [
+            package(packages, "haprion-cli_*_all.deb"),
+            package(packages, f"haprion-ui_*{distribution.ui_suffix}_amd64.deb"),
+            package(packages, f"haprion-certbot_*{distribution.ui_suffix}_amd64.deb"),
+            engine,
+            package(packages, "haprion-crs_*_all.deb"),
+            key,
+        ]
+        node_files = [engine, key, package(packages, "haprion-node_*_all.deb")]
     logs.mkdir(parents=True, exist_ok=True)
     run = Run(distribution, logs)
     steps = []
@@ -474,12 +520,12 @@ def run_one(distribution: Distribution, packages: Path, logs: Path, keep: bool) 
         step("a manager and two nodes booted", lambda: run.start(image))
         step(
             "the manager: packages, haprion-setup",
-            lambda: run.install_manager([cli, ui, certbot, engine, rules]),
+            lambda: run.install_manager(manager_files, site),
         )
         blocks = [
             step(
                 f"{role}: the package, and the block it printed",
-                lambda role=role: run.prepare_node(role, node, engine),
+                lambda role=role: run.prepare_node(role, node_files, site),
             )
             for role in NODES
         ]
@@ -632,7 +678,9 @@ def run_one(distribution: Distribution, packages: Path, logs: Path, keep: bool) 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="install-test")
-    parser.add_argument("--packages", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--packages", type=Path, help="a release's package files")
+    source.add_argument("--apt-repo", type=Path, help="a site tools/build-apt-repo assembled")
     parser.add_argument("--distribution", choices=[*DISTRIBUTIONS, "all"], default="all")
     parser.add_argument("--logs", type=Path)
     parser.add_argument("--keep", action="store_true")
@@ -640,7 +688,13 @@ def main() -> int:
     logs = args.logs or Path(tempfile.mkdtemp(prefix="haprion-install-test-"))
     chosen = list(DISTRIBUTIONS) if args.distribution == "all" else [args.distribution]
     results = {
-        name: run_one(DISTRIBUTIONS[name], args.packages.resolve(), logs / name, args.keep)
+        name: run_one(
+            DISTRIBUTIONS[name],
+            args.packages.resolve() if args.packages else None,
+            args.apt_repo.resolve() if args.apt_repo else None,
+            logs / name,
+            args.keep,
+        )
         for name in chosen
     }
     print()

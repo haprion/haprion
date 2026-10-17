@@ -54,12 +54,15 @@ SUDOERS = "etc/sudoers.d/haprion"
 # receiver's yescrypt hash (cert_receiver.secret_hash), which no shared-library
 # scan would see. python3-cryptography is PyJWT's `crypto` extra, which
 # Debian's python3-jwt only recommends: OIDC's signatures need it. The system
-# bus is systemd-run's, which the candidate's sandbox is started with.
+# bus is systemd-run's, which the candidate's sandbox is started with. The WAF
+# engine and rules compile an object's rules before they leave the manager, and
+# come from the project's apt repository with the key that signs it (B325).
 #
 DEPENDS = (
     "python3 (>= 3.12), python3-yaml, python3-nacl, python3-psycopg, python3-jwt, "
     "python3-cryptography, sudo, git, rsync, openssh-client, openssl, haproxy, passwd, "
-    "iproute2, systemd, default-dbus-system-bus | dbus-system-bus, libcrypt1"
+    "iproute2, systemd, default-dbus-system-bus | dbus-system-bus, libcrypt1, "
+    "haprion-coraza-spoa, haprion-crs, haprion-archive-keyring"
 )
 #
 # sshd checks a certificate receiver's account (cert_receiver) - a manager

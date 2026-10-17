@@ -84,9 +84,11 @@ Screenshots will be added.
 
 ## Getting started
 
-**Start with the [quickstart](docs/quickstart.md)**: from an installed manager to a site served by
-your HAProxy pair, in the web interface. A new installation's dashboard walks through the first
-cluster - its name and address, the nodes, the first deploy. [Installing](docs/install.md) covers
+**Start with the [quickstart](docs/quickstart.md)**: from empty machines to a site served by your
+HAProxy pair. The manager is installed with its packages and one command, `sudo haprion-setup`;
+each node with its package, which prints the block the manager joins it with. From there a new
+installation's dashboard walks through the first cluster - its name and address, the nodes, the
+first deploy. [Installing](docs/install.md) covers
 the installation, and the [user manual](docs/user-manual.md) is the reference for everything else.
 
 ## What it does

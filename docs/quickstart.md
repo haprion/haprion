@@ -1,18 +1,78 @@
 # Haprion quickstart
 
-The short way through Haprion: from an installed manager to a site served by your HAProxy pair.
-Everything here is done in the web interface. The [user manual](user-manual.md) is the reference
-for each step: why it works the way it does, every option, and what to do when something fails.
+The short way through Haprion: from empty machines to a site served by your HAProxy pair. After the
+installation everything here is done in the web interface. The [user manual](user-manual.md) is
+the reference for each step: why it works the way it does, every option, and what to do when
+something fails.
 
-## What you have
+## What you need
 
-- **A management host** with Haprion installed ([installation](install.md)). It holds the
-  configuration, the certificates and the history, and runs the web interface.
-- **One or more clusters.** A cluster is two to eight HAProxy nodes sharing one or more virtual
-  addresses (VIPs) through keepalived. One node holds a VIP at a time; if it fails, another takes
-  it over.
-- **Nodes** with the `haprion-node` package installed. The manager never pushes to a node: it
-  asks the node to fetch, and the node fetches what has been published for its cluster.
+- **A manager**: one machine with Ubuntu 26.04 or Debian 13, 2 vCPU and 4 GB of memory. It holds
+  the configuration, the certificates and the history, and runs the web interface. It is not in
+  the traffic path.
+- **Two nodes** with Ubuntu 26.04 or Debian 13, 1 vCPU and 1 GB of memory each - 2 GB with the
+  WAF - on one network segment, and a free address on that segment for the virtual address (VIP)
+  your sites will answer on. One node holds the VIP at a time; if it fails, the other takes it
+  over. One node works too, without failover; a cluster has up to eight.
+- A DNS name for the manager that resolves to it, and SSH from the manager to the nodes.
+
+Download the packages from the [latest release](https://github.com/haprion/haprion/releases/latest).
+The web interface and certbot are built per distribution: take the `~ubuntu26.04` or the `~deb13`
+files to match the manager.
+
+## 1. Install the manager
+
+On the manager, install the packages and run the setup:
+
+```bash
+sudo apt install ./haprion-cli_*_all.deb ./haprion-ui_*_amd64.deb ./haprion-certbot_*_amd64.deb \
+  ./haprion-coraza-spoa_*_amd64.deb ./haprion-crs_*_all.deb
+sudo haprion-setup
+```
+
+`haprion-setup` first checks what it can know in advance - the distribution, the database server,
+that the manager's name resolves to it, that ports 80 and 443 are free - and names every problem
+before it changes anything. Then it installs the manager step by step, one line each, and asks
+last for the password of the first administrator, `admin`. A run that stopped is continued by
+running it again.
+
+It uses sensible defaults: a local PostgreSQL database, the machine's own name (`hostname -f`) and
+a self-signed certificate for the web interface until you replace it
+([step 10](#10-replace-the-interfaces-certificate)). To choose differently, see
+[Installing](install.md#1-choose-the-answers-or-keep-the-defaults).
+
+## 2. Install the nodes
+
+On each node:
+
+```bash
+sudo apt install ./haprion-coraza-spoa_*_amd64.deb ./haprion-node_*_all.deb
+```
+
+The node package prepares the machine and prints an **enrollment block**: a line starting with
+`haproxy-node-v2:`. Keep it at hand; the manager joins the node with it. The node package can also
+be downloaded from the manager, on the page the next step opens.
+
+## 3. Set up the first cluster
+
+Open `https://<your manager>` and sign in as `admin`. Your browser may ask you to accept the
+interface's certificate until you replace it.
+
+A new installation's **Dashboard** is *Set up your first cluster*, in five steps:
+
+1. **Name and address**: a cluster ID (for example `edge`), a display name and the VIP. Press
+   **Continue**.
+2. **First node**: paste the first node's block and press **Add node**. Compare the host key the
+   page shows with the one the node printed, then press the button with the node's name, for
+   example **Add node-a**. The cluster is created with it.
+3. **Second node**: the same with the second node's block, or **Skip** for a cluster of one.
+4. **Deploy**: starts keepalived on the nodes, and the VIP lands on one of them.
+5. **Done** says which node holds the VIP and which stands by.
+
+The manager checks that it can reach each node before it keeps anything, and every step is a job
+you can follow on *Events → Jobs*. A guide left half-way continues where it was.
+
+## How changes go out
 
 A change to what the nodes serve - proxies, the network, a cluster's logging - goes **edit → save →
 publish → deploy**. Saving keeps your work; publishing turns everything saved into a numbered
@@ -20,39 +80,16 @@ version; deploying brings the nodes to that version, one node at a time, the VIP
 The rest takes effect at once: users and settings, and what is done to a running server
 (drain, maintenance, unblock).
 
-## 1. Sign in
-
-Open `https://<your manager>` and sign in as `admin` with the password set during installation.
-Your browser may ask you to accept the interface's certificate until you replace it
-([step 9](#9-replace-the-interfaces-certificate)).
-
 The **Dashboard** shows each cluster: its nodes, who holds the VIP, which version they run, and
 whether anything is waiting to go out. Come back here after every change.
 
-## 2. Add your nodes
-
-*Settings → Nodes* lists each cluster's nodes.
-
-1. On the new node, install the node package and run its preparation step
-   ([installation, step 4](../install/README.md#step-4--each-node)). It prints an **enrollment
-   block**: a few lines starting with `haproxy-node-v1`.
-2. In *Settings → Nodes*, choose **Add node** on the cluster, paste the block and press
-   **Read block**.
-3. Compare the fingerprint the page shows with the one the node printed, enter the name the
-   manager reaches the node at, and add it.
-
-The manager checks that it can reach the node before it keeps anything. A new node has no
-certificates and no configuration yet; step 6 gives it both.
-
-A new cluster is made the same way, with **Create cluster** under *Settings*.
-
-## 3. Describe the network
+## 4. Describe the network
 
 *Network* holds each cluster's virtual addresses: the VIPs your sites listen on, and any source
 addresses the nodes use towards the servers. Add what you need and press **Save**. Like an
 object, the network is saved first and goes out with the next publish.
 
-## 4. Get a certificate
+## 5. Get a certificate
 
 An HTTPS site needs a certificate. Open *Certificates*.
 
@@ -68,7 +105,7 @@ the cluster under **Targets**, and press **Request the certificate**.
 The certificate is published to the clusters you ticked. Renewal is automatic for Let's Encrypt
 and NDES certificates.
 
-## 5. Create a proxy object
+## 6. Create a proxy object
 
 An object is one site or service: what listens, and where the traffic goes. *Proxies →
 New object*.
@@ -82,7 +119,7 @@ New object*.
 | Hostnames | the names the site answers to, for example `shop.example.com` |
 | Port | usually 443 for HTTPS |
 | VIP | the address it listens on; the default VIP unless you chose another |
-| Certificate | the certificate from step 4 |
+| Certificate | the certificate from step 5 |
 
 **Backend**
 
@@ -97,19 +134,16 @@ New object*.
 **Validate the object** checks the whole object. **Save** stores it; the object list shows it as
 *New · not published*. **Save as draft** keeps unfinished work that will not be published.
 
-## 6. Publish and deploy
+## 7. Publish and deploy
 
 On the **Dashboard**, the cluster's card now offers **Publish & deploy 1 change**. Press it,
 read the list of changes, write a short comment, and confirm. One job publishes a new version
 and rolls it out: the nodes without the VIP first, the VIP holder last.
 
-A brand-new node needs its certificates before its first configuration: press
-**Deploy certificates**, then **Deploy configuration**, on the cluster's card.
-
 Follow the job on *Events → Jobs*. When it ends, the card says every node runs the published version.
 Your site now answers on the VIP.
 
-## 7. Day-to-day
+## 8. Day-to-day
 
 **Change something.** Edit the object in *Proxies*, **Save**, then **Publish & deploy** on the
 Dashboard. Several saved changes go out together as one version.
@@ -122,10 +156,15 @@ without a deploy, and lasts until you press **Ready**.
 what each one changed. **Publish this version** on an older one makes it the newest version again;
 then **Deploy configuration**. Nothing in the history is lost.
 
+**Add or remove a node.** *Settings → Nodes*: **Add node** takes the new node's block, shows its
+host key and adds it; its certificates and configuration are deployed to it in the same job.
+**Remove node** takes one out the same way. A new cluster is made with **Create cluster** under
+*Settings*.
+
 **See what is happening.** *Metrics* shows traffic per site and server, *Traffic logs* the recent
 requests, and *WAF logs* what the web application firewall matched, if you use it.
 
-## 8. Back up the nodes
+## 9. Back up the nodes
 
 Node backups are **off on a new installation**, and the *Node backups* page is not in the menu
 until they are turned on. Turn them on under *Settings → Features → Node backups*. Then, on the
@@ -142,12 +181,12 @@ first ([restoring a node](user-manual.md#restoring-a-node-onto-an-empty-vm)).
 The manager itself is not backed up by Haprion. Back it up like any other server; the web
 interface's database is also dumped daily under `/var/lib/haprion-ui/dumps/`.
 
-## 9. Replace the interface's certificate
+## 10. Replace the interface's certificate
 
 *Settings → Interface certificate*: **Import** a certificate you have, or **New certificate** to
 make one from the certificate registry.
 
-## 10. Add people
+## 11. Add people
 
 *Settings → Users → Add user*. A **Reader** sees everything and changes nothing; an **Admin**
 can make changes. To sign in through your organisation's identity provider instead, see

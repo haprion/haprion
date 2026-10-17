@@ -42,6 +42,8 @@ PROJECT_NAME = "haprion-certbot-env"
 CERTBOT_VERSION = re.compile(r'^\[\[package\]\]\nname = "certbot"\nversion = "([^"]+)"', re.M)
 SYNC_TIMEOUT = 900
 VERIFY_TIMEOUT = 120
+# A test module a wheel carries, by its path: compileall searches the full path.
+TEST_MODULE = r"/(tests?|testing)/|/test_[^/]*\.py$|_tests?\.py$"
 
 
 class InstallError(RuntimeError):
@@ -273,7 +275,10 @@ def _compile(venv: Path, final_venv: Path) -> None:
     """Bytecode written while the plugins were proved names the staging path
     and the source's time, which differ on every build. It is removed and
     compiled again against the source's hash and the final path, so the same
-    lock gives the same files and a traceback names the file that exists."""
+    lock gives the same files and a traceback names the file that exists.
+    Test modules that wheels carry are not compiled: nothing imports them,
+    and one plugin ships a test file that is not valid Python (constellix,
+    26-10-17). Any other file that does not compile stops the build."""
 
     for cache in sorted(venv.rglob("__pycache__"), reverse=True):
         if cache.is_dir() and not cache.is_symlink():
@@ -289,6 +294,8 @@ def _compile(venv: Path, final_venv: Path) -> None:
                 "0",
                 "--invalidation-mode",
                 "checked-hash",
+                "-x",
+                TEST_MODULE,
                 "-s",
                 str(venv),
                 "-p",

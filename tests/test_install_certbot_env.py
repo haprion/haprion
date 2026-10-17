@@ -291,6 +291,23 @@ class TheSameLockGivesTheSameTree(unittest.TestCase):
                 f"../../../bin/tool,{installer._record_digest(script)},{len(script)}\n", record
             )
 
+    def test_a_test_module_that_does_not_compile_is_left_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            venv = self.venv(Path(directory))
+            site = venv / "lib" / PYTHON_TAG / "site-packages"
+            (site / "pkg" / "broken_test.py").write_text('{"a", 1, "b": 2}\n')
+            installer._compile(venv, Path("/opt/x/venv"))
+            self.assertTrue(list((site / "pkg" / "__pycache__").glob("__init__.*.pyc")))
+
+    def test_code_that_does_not_compile_stops_the_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            venv = self.venv(Path(directory))
+            (venv / "lib" / PYTHON_TAG / "site-packages/pkg/broken.py").write_text(
+                '{"a", 1, "b": 2}\n'
+            )
+            with self.assertRaises(installer.InstallError):
+                installer._compile(venv, Path("/opt/x/venv"))
+
     def test_bytecode_is_the_same_from_two_staging_paths(self) -> None:
         final = Path("/opt/haprion-certbot/releases/x/venv")
         compiled = []

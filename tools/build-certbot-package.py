@@ -221,7 +221,13 @@ def main() -> int:
     args = parser.parse_args()
     if args.uv is None or args.podman is None:
         parser.error("uv and podman are needed to build")
-    built = build(args.source, args.output_dir, args.distribution, args.uv, args.podman)
+    try:
+        built = build(args.source, args.output_dir, args.distribution, args.uv, args.podman)
+    except (ui.BuildError, node_package.PackageError, ValueError, OSError) as exc:
+        parser.exit(1, f"package build failed: {exc}\n")
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or b"").decode(errors="replace").strip().splitlines()[-3:]
+        parser.exit(1, f"package build failed: {' / '.join(detail) or exc}\n")
     print(json.dumps({"package": str(built), "sha256": ui.sha256(built)}))
     return 0
 

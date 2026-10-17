@@ -156,10 +156,10 @@ without a deploy, and lasts until you press **Ready**.
 what each one changed. **Publish this version** on an older one makes it the newest version again;
 then **Deploy configuration**. Nothing in the history is lost.
 
-**Add or remove a node.** *Settings → Nodes*: **Add node** takes the new node's block, shows its
-host key and adds it; its certificates and configuration are deployed to it in the same job.
-**Remove node** takes one out the same way. A new cluster is made with **Create cluster** under
-*Settings*.
+**Add or remove a node.** *Settings → Nodes & clusters*: **Add node** takes the new node's block,
+shows its host key and adds it; its certificates and configuration are deployed to it in the same
+job. **Remove node** takes one out the same way. A new cluster is made with **Create cluster**
+under *Settings*.
 
 **See what is happening.** *Metrics* shows traffic per site and server, *Traffic logs* the recent
 requests, and *WAF logs* what the web application firewall matched, if you use it.
@@ -190,7 +190,7 @@ make one from the certificate registry.
 
 *Settings → Users → Add user*. A **Reader** sees everything and changes nothing; an **Admin**
 can make changes. To sign in through your organisation's identity provider instead, see
-*Settings → OIDC configuration* ([OpenID Connect](user-manual.md#signing-in-through-an-openid-connect-provider)).
+*Settings → Users → OIDC configuration* ([OpenID Connect](user-manual.md#signing-in-through-an-openid-connect-provider)).
 Keep the local `admin` account: it is the way in when the provider is down.
 
 ## When something goes wrong

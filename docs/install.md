@@ -70,7 +70,7 @@ web interface's package updates the running platform itself.
 Without an answers file the installation uses its defaults: the fixed accounts, the places under
 `/srv/haprion` and `/srv/certdist`, a local PostgreSQL database, this machine's own name
 (`hostname -f`) for the web interface, and no cluster. Clusters and their nodes are created in the
-interface, under *Settings* → *Create cluster*.
+interface, under *Settings* → *Nodes & clusters* → *Create cluster*.
 
 To choose differently, copy the example from the source tree's `install/` directory and keep the
 lines you change:
@@ -115,7 +115,7 @@ sudo apt install ./haprion-coraza-spoa_<version>_amd64.deb ./haprion-node_<versi
 The package makes the node's accounts and the keys it fetches with, and prints its enrollment
 block - one line starting with `haproxy-node-v2:` - and its host key's fingerprint. A new
 installation's dashboard walks through the first cluster with these blocks; later nodes are added
-under *Settings* → *Nodes*, and on the command line it is `haprion-cluster add` or
+under *Settings* → *Nodes & clusters*, and on the command line it is `haprion-cluster add` or
 `haprion-node add` with the block on stdin. `sudo haprion-node-key` prints a block again. What the
 block holds, and preparing a node without the interface, are in
 [install/README.md](../install/README.md#step-4--each-node).

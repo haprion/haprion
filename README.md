@@ -151,10 +151,10 @@ Coming from another load-balancer interface, a few choices here are deliberate a
   load cannot overload or hang on a node.
 - **Certificates are renewed by their own clients.** Certbot and the NDES enrollment renew on
   their own timers; the manager issues, imports and distributes what they renew.
-- **Beyond HAProxy, optional capabilities are switched on per installation.** Distributing
-  certificates to other services - hosts that fetch them over rsync, SFTP or HTTPS - and node
-  backups are off on a new installation; node backups include restoring a node onto an empty VM
-  or over itself.
+- **Optional capabilities are switched on per installation**, under *Settings → Features*. The
+  WAF engine, the advanced configuration layer, distributing certificates to other services -
+  hosts that fetch them over rsync, SFTP or HTTPS - and node backups are off on a new
+  installation; node backups include restoring a node onto an empty VM or over itself.
 - **Nothing is fetched from the internet at run time.** Fonts, scripts and icons are local, so the
   interface works while the network it manages is broken.
 - **Built to be scripted.** Commands answer with `--json`; making every setting the interface

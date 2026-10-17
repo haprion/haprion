@@ -1,38 +1,29 @@
 # Installing Haprion
 
-These are the steps for a first installation of the application: the CLI engine and the
-optional web interface. Configuration, usage, administration and maintenance are in the
-[user manual](user-manual.md).
+These are the steps for a first installation: a manager with the web interface, and its nodes.
+Configuration, usage, administration and maintenance are in the [user manual](user-manual.md);
+the [quickstart](quickstart.md) is the same installation in short, continued in the interface.
 
 ## Requirements
 
-On the management host, install:
+| Machine | How many | Operating system | Size to start from |
+|---|---|---|---|
+| Manager | one | Ubuntu 26.04 or Debian 13, amd64 | 2 vCPU, 4 GB memory |
+| HAProxy node | one to eight per cluster, two for failover | Ubuntu 26.04 or Debian 13, amd64 | 1 vCPU, 1 GB memory; 2 GB with the WAF |
 
-- a Linux distribution with systemd and Python 3.12 or newer at `/usr/bin/python3`
-- `python3-yaml` (major version 6), `python3-nacl` (major version 1) and
-  `python3-psycopg` (major version 3)
-- `git`, `rsync`, `openssh-client` and `sudo` supporting no-argument rules
-- for the web interface: nginx 1.25.1 or newer. PostgreSQL is installed by the setup: 18 where none
-  runs - from the distribution on Ubuntu 26.04, from the PostgreSQL project's repository on
-  Debian 13 - and a running 16 or newer is kept
+The packages are built and tested for those two distributions only, and `haprion-setup` refuses
+any other. Everything else the manager and the nodes run - Python and its libraries, nginx,
+PostgreSQL, HAProxy, keepalived, dnsdist - is installed with the packages or by the setup:
+PostgreSQL 18 where none runs, from the distribution on Ubuntu 26.04 and from the PostgreSQL
+project's repository on Debian 13, while a running 16 or newer is kept. HAProxy comes from its
+3.4 branch where the distribution's is older, and dnsdist from PowerDNS's repository, so the
+machines need to reach those repositories while they are installed.
 
-Haprion is installed from Debian packages built from one commit:
-
-| Package | Installed on | Carries |
-|---|---|---|
-| `haprion-cli` | the management host | the CLI engine, the node package of the same commit, the operators' commands and sudo rules |
-| `haprion-ui` | the management host, for the web interface | the interface's release for one distribution (Ubuntu 26.04 or Debian 13) and the platform steps |
-| `haprion-certbot` | the management host, for the web interface | certbot and the DNS plugins the interface offers, as one locked environment for one distribution |
-| `haprion-node` | each node | the node scripts, the block it prints at installation, and `04-node-prepare` |
-| `haprion-coraza-spoa` | the management host and the nodes, for the WAF | the engine; the CLI release also carries it, so a node restored to a new VM gets it back |
-| `haprion-crs` | the management host, for the WAF | the rule set; releases carry the rules to the nodes |
-
-Keep the source tree of the same commit for the manager steps in `install/`. The steps need no
-answers file: without one they use the defaults in `install/defaults.sh`. An answers file sets only
-what should differ.
-
-HAProxy nodes must already be prepared before the application can manage them. The
-[node preparation instructions](user-manual.md#part-2--the-nodes) are in the manual.
+- The manager needs a DNS name that resolves to it, and ports 80 and 443 free for nginx.
+- The nodes of a cluster share one network segment: keepalived moves the virtual address (VIP)
+  between them with VRRP. The manager reaches each node over SSH.
+- How far one vCPU goes, with and without the WAF, is under *Size* in
+  [the manual's part on the nodes](user-manual.md#part-2--the-nodes).
 
 **Disk on the nodes.** What grows on a node's root filesystem is the traffic log: fourteen days of
 day files under `/var/log/haprion` at about 800 bytes a request, and, per external receiver, a
@@ -55,6 +46,25 @@ on a network only its administrators reach - a management network, or a VPN into
 on the one the proxied sites face. Haprion limits sign-in attempts and refuses what it should,
 but which networks can reach it at all is decided by the firewall in front of it.
 
+## The packages
+
+Haprion is installed from Debian packages built from one commit. Download them from the
+[latest release](https://github.com/haprion/haprion/releases/latest); the web interface and
+certbot are built per distribution, so take the `~ubuntu26.04` or the `~deb13` files to match the
+manager. To build them yourself, see [Building the packages](#building-the-packages).
+
+| Package | Installed on | Carries |
+|---|---|---|
+| `haprion-cli` | the manager | the CLI engine, the node package of the same commit, the operators' commands and sudo rules |
+| `haprion-ui` | the manager, for the web interface | the interface's release for one distribution, `haprion-setup` and the installation steps it runs |
+| `haprion-certbot` | the manager, for the web interface | certbot and the DNS plugins the interface offers, as one locked environment for one distribution |
+| `haprion-node` | each node | the node scripts, the block it prints at installation, and `04-node-prepare` |
+| `haprion-coraza-spoa` | the manager and the nodes, for the WAF | the engine; the CLI release also carries it, so a node restored to a new VM gets it back |
+| `haprion-crs` | the manager, for the WAF | the rule set; releases carry the rules to the nodes |
+
+A later version of a package is the whole update: installing it updates what it carries, and the
+web interface's package updates the running platform itself.
+
 ## 1. Choose the answers, or keep the defaults
 
 Without an answers file the installation uses its defaults: the fixed accounts, the places under
@@ -74,115 +84,57 @@ The file and every default are described in [install/answers.example.env](../ins
 A line that sets a value to nothing keeps it empty, which is how an installation takes no node
 backups or deploys no certificates.
 
-**The whole manager in one command.** With both packages installed (sections 2 and 4), the steps of
-sections 3 and 4 run in order with
+## 2. Install the manager
 
 ```bash
-sudo haprion-setup [--answers answers.env] [--release <release-id>]
+sudo apt install ./haprion-cli_<version>_all.deb \
+  ./haprion-ui_<version>~ubuntu26.04_amd64.deb ./haprion-certbot_<version>~ubuntu26.04_amd64.deb \
+  ./haprion-coraza-spoa_<version>_amd64.deb ./haprion-crs_<version>_all.deb
+sudo haprion-setup [--answers answers.env]
 ```
 
-The `haprion-ui` package installs the command together with the steps it runs, so the manager
-needs no source tree. It first checks what it can know in advance - the distribution, the commands
-the steps run, the database server, that the server name resolves to this machine, that ports 80
-and 443 are free for nginx - and names every problem it found before it changes anything. A step
-that fails is reported in words: what went wrong, why, what to do, and where its whole output is
-(`/var/log/haprion/setup.log`). Every step is safe to run again, so the same command continues an
-installation that stopped. Certbot comes from the `haprion-certbot` package; the command says so
-when it is not installed. When everything else is done, it creates the first administrator, `admin`, and asks
-for its password at the terminal; without a terminal it ends with the command that does it.
+(`~deb13` in place of `~ubuntu26.04` on Debian.) The `haprion-ui` package installs `haprion-setup`
+together with the steps it runs, so the manager needs no source tree. It first checks what it can
+know in advance - the distribution, the commands the steps run, the database server, that the
+server name resolves to this machine, that ports 80 and 443 are free for nginx - and names every
+problem it found before it changes anything. A step that fails is reported in words: what went
+wrong, why, what to do, and where its whole output is (`/var/log/haprion/setup.log`). Every step is
+safe to run again, so the same command continues an installation that stopped. Certbot comes from
+the `haprion-certbot` package; the command says so when it is not installed. When everything else
+is done, it creates the first administrator, `admin`, and asks for its password at the terminal;
+without a terminal it ends with the command that does it.
 
-## 2. Install the CLI engine
+## 3. Install the nodes
 
-Build from a clean, committed source tree that has passed the repository checks, into a
-protected directory outside the repository, with the `uv` the repository is locked with and the
-WAF engine package (`tools/build-coraza-package.py`), which the release carries for restored nodes:
+On each node:
 
 ```bash
-tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv \
-    --waf-engine-package /path/to/protected/staging/haprion-coraza-spoa_<version>_amd64.deb
-sudo apt-get install /path/to/protected/staging/haprion-cli_<version>_all.deb
+sudo apt install ./haprion-coraza-spoa_<version>_amd64.deb ./haprion-node_<version>_all.deb
 ```
 
-The package's `postinst` verifies the wheel, the node package and the WAF engine package it carries
-against their digests, installs the release under `/opt/haprion/releases/` and switches `/opt/haprion/current`.
-The operator commands are in `/usr/bin`. A later version of the package is the whole update.
-What the installer does, and installing without the package, are in the manual's
-[Part 3](user-manual.md#part-3--the-versioned-cli-release).
+The package makes the node's accounts and the keys it fetches with, and prints its enrollment
+block - one line starting with `haproxy-node-v2:` - and its host key's fingerprint. A new
+installation's dashboard walks through the first cluster with these blocks; later nodes are added
+under *Settings* → *Nodes*, and on the command line it is `haprion-cluster add` or
+`haprion-node add` with the block on stdin. `sudo haprion-node-key` prints a block again. What the
+block holds, and preparing a node without the interface, are in
+[install/README.md](../install/README.md#step-4--each-node).
 
-## 3. Install the manager configuration and keys
+## 4. Verify access
 
-From `install/`:
+Open `https://<SERVER_NAME>` and sign in with the administrator account created during
+installation. If no certificate was supplied, the nginx installer generates a self-signed
+one and the browser asks you to accept it.
 
-```bash
-sudo ./01-manager-prepare answers.env
-sudo ./02-manager-config answers.env
-sudo ./03-manager-keys answers.env | tee keys.txt
-```
+If an installation step fails, correct the error it reports and rerun that step.
+The installation scripts support repeated runs.
 
-The answers file is optional in every step: leave it out to use the defaults. Steps 14, 15 and 17
-take `-` in its place when a source tree follows it.
+## Optional components
 
-The nodes need nothing from step 3's output when they are added in the interface: each node's
-package prints a block, and the management host joins the node with it
-([install/README.md](../install/README.md#step-4--each-node)). Step 3's answers lines are for a
-node prepared by hand. Keep private keys on the host that generated them.
-
-Check the manager installation from `install/`, as your normal account:
-
-```bash
-./05-verify answers.env
-```
-
-For a command-line-only installation, the application is now installed.
-
-## 4. Install the web interface
-
-Build the package for the management host's distribution (`ubuntu26.04` or `debian13`); the
-release is built inside a container of that distribution with rootless podman:
-
-```bash
-tools/build-ui-package.py --source "$(pwd)" --output-dir /path/to/protected/staging \
-  --distribution ubuntu26.04 --uv /path/to/uv
-tools/build-certbot-package.py --source "$(pwd)" --output-dir /path/to/protected/staging \
-  --distribution ubuntu26.04 --uv /path/to/uv
-```
-
-Install both packages; the interface's unpacks its release and prints its ID. Then, with the same answers
-file, from `/usr/share/haprion-ui/install/platform/`, prepare the platform, migrate its
-database and verify the candidate before activating it:
-
-```bash
-sudo apt install ./haprion-ui_<version>~ubuntu26.04_amd64.deb ./haprion-certbot_<version>~ubuntu26.04_amd64.deb
-cd /usr/share/haprion-ui/install/platform
-sudo ./01-platform-prepare /path/to/answers.env
-sudo ./02-platform-database /path/to/answers.env
-sudo ./migrate --release <release-id>
-sudo ./03-verify
-sudo ./check-compatibility --release <release-id> --first-install
-sudo ./install-ui-release <release-id>
-sudo ./04-platform-service /path/to/answers.env
-sudo ./05-platform-nginx /path/to/answers.env
-sudo ./07-platform-services /path/to/answers.env
-sudo ./check-compatibility
-```
-
-Before step 7, ensure the `clusters` list in the generated `ui.toml` names the configured
-clusters. Later versions of the package update the running platform themselves: their
-`postinst` runs `update-platform-release` with the release they carry, reads no answers file,
-and leaves the previous release running if it fails.
-
-The first activation creates the `admin` account if no account exists and asks for its
-password at the terminal. If installation ran without a terminal, create it afterwards:
-
-```bash
-sudo haprion-user init-admin
-```
-
-## 5. Install optional components
-
-Run the installers for the components your installation needs, from
-`/usr/share/haprion-ui/install/platform/`. The steps that take a tree take the package's
-`/usr/share/haprion-ui`, which carries the tools and the certbot lock they read:
+`haprion-setup` installs all of these but the SCEP client. Each is also an installer of its own, to
+run again alone after a change to the answers, from `/usr/share/haprion-ui/install/platform/`. The
+steps that take a tree take the package's `/usr/share/haprion-ui`, which carries the tools and the
+certbot lock they read:
 
 | Component | Installer |
 |---|---|
@@ -202,25 +154,7 @@ sudo ./16-platform-scep /path/to/bundle.zip <verified-bundle-sha256>
 See [install/platform/README.md](../install/platform/README.md) for each component's
 installation inputs and follow-up setup.
 
-The WAF engine (Coraza SPOA with the OWASP Core Rule Set) comes as two Debian packages,
-built from pinned upstream sources by `tools/build-coraza-package.py`; building the same
-version twice gives the same bytes. Before the engine is built, the tool runs
-govulncheck (the version it names in `GOVULNCHECK_VERSION`) over the source with the pinned
-Go, and refuses the build if the engine can reach a known vulnerability in its modules or
-in Go's standard library; a vulnerability only in code the engine never calls is reported
-but does not refuse. The database is read when the package is built, so rebuild to
-check again. Install govulncheck with the pinned Go
-(`GOBIN=<dir> <go>/bin/go install golang.org/x/vuln/cmd/govulncheck@<version>`).
-Install both packages on the manager, where publishing compiles the rules before they
-leave it, and the engine package on every node:
-
-```bash
-python3 tools/build-coraza-package.py crs --source-dir <dir> --output-dir <out>
-python3 tools/build-coraza-package.py coraza --source-dir <dir> --go-root <go> \
-    --govulncheck <dir>/govulncheck --output-dir <out>
-sudo apt install ./haprion-crs_<version>_all.deb ./haprion-coraza-spoa_<version>_amd64.deb  # manager
-sudo apt install ./haprion-coraza-spoa_<version>_amd64.deb                                      # each node
-```
+## What the nodes run
 
 Installing the packages starts nothing. On a node, the deploy starts the engine when a
 release carries rules (`/etc/haproxy/waf`, a link into the release like `maps`) and stops
@@ -318,11 +252,110 @@ already loads `impstats` itself gets a refusal from `rsyslogd -N1` when `04-node
 restart of rsyslog loses no lines; taking the socket over restarts rsyslog once
 ([HAProxy and keepalived baseline](user-manual.md#haproxy-and-keepalived-baseline)).
 
-## 6. Verify access
+## Step by step, without haprion-setup
 
-Open `https://<SERVER_NAME>` and sign in with the administrator account created during
-installation. If no certificate was supplied, the nginx installer generates a self-signed
-one and the browser asks you to accept it.
+`haprion-setup` runs these steps in order. Run them by hand for an installation without the web
+interface, or to see one step's whole output.
 
-If an installation step fails, correct the error it reports and rerun that step.
-The installation scripts support repeated runs.
+### The CLI engine
+
+```bash
+sudo apt install ./haprion-cli_<version>_all.deb
+```
+
+The package's `postinst` verifies the wheel, the node package and the WAF engine package it carries
+against their digests, installs the release under `/opt/haprion/releases/` and switches `/opt/haprion/current`.
+The operator commands are in `/usr/bin`. A later version of the package is the whole update.
+What the installer does, and installing without the package, are in the manual's
+[Part 3](user-manual.md#part-3--the-versioned-cli-release).
+
+### The manager's configuration and keys
+
+From `/usr/share/haprion-ui/install/`, or from `install/` in a source tree of the same commit
+for an installation without the web interface:
+
+```bash
+sudo ./01-manager-prepare answers.env
+sudo ./02-manager-config answers.env
+sudo ./03-manager-keys answers.env | tee keys.txt
+```
+
+The answers file is optional in every step: leave it out to use the defaults. Steps 14, 15 and 17
+take `-` in its place when a source tree follows it.
+
+The nodes need nothing from step 3's output when they are added in the interface: each node's
+package prints a block, and the management host joins the node with it
+([install/README.md](../install/README.md#step-4--each-node)). Step 3's answers lines are for a
+node prepared by hand. Keep private keys on the host that generated them.
+
+Check the manager installation from the same directory, as your normal account:
+
+```bash
+./05-verify answers.env
+```
+
+For a command-line-only installation, the application is now installed.
+
+### The web interface
+
+Install both packages; the interface's unpacks its release and prints its ID. Then, with the same answers
+file, from `/usr/share/haprion-ui/install/platform/`, prepare the platform, migrate its
+database and verify the candidate before activating it:
+
+```bash
+sudo apt install ./haprion-ui_<version>~ubuntu26.04_amd64.deb ./haprion-certbot_<version>~ubuntu26.04_amd64.deb
+cd /usr/share/haprion-ui/install/platform
+sudo ./01-platform-prepare /path/to/answers.env
+sudo ./02-platform-database /path/to/answers.env
+sudo ./migrate --release <release-id>
+sudo ./03-verify
+sudo ./check-compatibility --release <release-id> --first-install
+sudo ./install-ui-release <release-id>
+sudo ./04-platform-service /path/to/answers.env
+sudo ./05-platform-nginx /path/to/answers.env
+sudo ./07-platform-services /path/to/answers.env
+sudo ./check-compatibility
+```
+
+Later versions of the package update the running platform themselves: their
+`postinst` runs `update-platform-release` with the release they carry, reads no answers file,
+and leaves the previous release running if it fails.
+
+The first activation creates the `admin` account if no account exists and asks for its
+password at the terminal. If installation ran without a terminal, create it afterwards:
+
+```bash
+sudo haprion-user init-admin
+```
+
+## Building the packages
+
+Build from a clean, committed source tree that has passed the repository checks, into a
+protected directory outside the repository, with the `uv` the repository is locked with. The CLI
+package carries the WAF engine package, for restored nodes, so the engine is built first.
+
+The WAF engine (Coraza SPOA with the OWASP Core Rule Set) comes as two Debian packages,
+built from pinned upstream sources by `tools/build-coraza-package.py`; building the same
+version twice gives the same bytes. Before the engine is built, the tool runs
+govulncheck (the version it names in `GOVULNCHECK_VERSION`) over the source with the pinned
+Go, and refuses the build if the engine can reach a known vulnerability in its modules or
+in Go's standard library; a vulnerability only in code the engine never calls is reported
+but does not refuse. The database is read when the package is built, so rebuild to
+check again. Install govulncheck with the pinned Go
+(`GOBIN=<dir> <go>/bin/go install golang.org/x/vuln/cmd/govulncheck@<version>`).
+Both go on the manager, where publishing compiles the rules before they leave it, and the engine
+on every node. Then the rest, in this order:
+
+```bash
+python3 tools/build-coraza-package.py crs --source-dir <dir> --output-dir <out>
+python3 tools/build-coraza-package.py coraza --source-dir <dir> --go-root <go> \
+    --govulncheck <dir>/govulncheck --output-dir <out>
+tools/build-cli-package.py --source "$(pwd)" --output-dir <out> --uv /path/to/uv \
+    --waf-engine-package <out>/haprion-coraza-spoa_<version>_amd64.deb
+tools/node-package.py build --source . --output-dir <out>
+tools/build-ui-package.py --source "$(pwd)" --output-dir <out> --distribution ubuntu26.04 --uv /path/to/uv
+tools/build-certbot-package.py --source "$(pwd)" --output-dir <out> --distribution ubuntu26.04 --uv /path/to/uv
+```
+
+The web interface and certbot are built inside a container of the distribution they are for, with
+rootless podman (`ubuntu26.04` or `debian13`).

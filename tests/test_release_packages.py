@@ -43,6 +43,13 @@ class TheToolchainIsPinned(unittest.TestCase):
         for digest in RELEASE.GO_ARCHIVES.values():
             self.assertRegex(digest, r"^[0-9a-f]{64}$")
 
+    def test_the_engine_tool_is_read_from_the_tree(self) -> None:
+        # The build reads the pins from the tree it builds; a loader that could
+        # not import the tool stopped the first full build (26-10-17).
+        tool = RELEASE.engine_tool(BASE)
+        self.assertEqual(tool.GO_VERSION, ENGINE.GO_VERSION)
+        self.assertEqual(tool.CORAZA.sha256, ENGINE.CORAZA.sha256)
+
     def test_only_https_is_fetched(self) -> None:
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(RELEASE.BuildError):
             RELEASE.fetched(Path(directory), "x", "http://example.org/x", "0" * 64)

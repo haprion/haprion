@@ -67,6 +67,7 @@ def engine_tool(source: Path) -> ModuleType:
     if spec is None or spec.loader is None:
         raise BuildError(f"cannot read {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # its dataclasses look themselves up here
     spec.loader.exec_module(module)
     return module
 

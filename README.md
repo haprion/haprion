@@ -1,20 +1,93 @@
 # Haprion
 
-Haprion is an environment-neutral management engine and web interface for operating
-small HAProxy clusters safely. The command-line engine is the authoritative control plane; the
-web application calls the same versioned commands rather than implementing a second
-configuration path.
-
-**Start with the [quickstart](docs/quickstart.md)**: from an installed manager to a site served by
-your HAProxy pair, in the web interface. [Installing](docs/install.md) covers the installation, and
-the [user manual](docs/user-manual.md) is the reference for everything else.
+A web interface and command-line engine for running small HAProxy clusters: load balancing, a
+virtual address that moves between the nodes, a WAF and certificates, from one place - without
+having to work with HAProxy every day.
 
 ## Project status
+
+Haprion is a personal hobby project. I had outgrown Nginx Proxy Manager and wanted something in
+the same spirit that also understood high availability: two or more nodes sharing a virtual
+address, certificates issued and distributed from one place, load balancing to the servers behind,
+and a WAF in front of them - while staying reasonably easy to use for someone who does not work
+with networks, proxies or load balancers on a daily basis. In practice that means a home lab, and
+possibly a smaller company.
+
+It is useful to me, and I hope it may be useful to others too, but expectations should be adjusted
+accordingly. This is not a commercial product: there is no SLA, no support agreement and no
+guaranteed response time, and maintenance is best-effort. There will be bugs.
 
 The project has not reached 1.0 and is **not yet declared ready for production deployment**.
 Everything listed below is built and tested, and everything the interface sets is also a command.
 What remains before 1.0 is a full re-verification of an installation built from this repository,
 and documentation.
+
+**Built with AI.** The code is written by [Claude](https://claude.ai) and
+[Codex](https://openai.com/codex/). The design, the product decisions and the direction are mine -
+I describe what I want, review the results and decide what stays. I have written perhaps ten lines
+of shell myself; the rest was done by AI.
+
+## How an installation looks
+
+```mermaid
+flowchart LR
+    clients([Clients]) --> vip{{"Virtual address<br/>keepalived"}}
+    subgraph cluster["HAProxy cluster, two to eight nodes"]
+        direction TB
+        a["node-a<br/>HAProxy and WAF"]
+        b["node-b<br/>HAProxy and WAF, standing by"]
+    end
+    vip --> a
+    vip -. "moves on failure" .-> b
+    a --> servers[("Your servers")]
+    b -.-> servers
+    admin([Administrator]) -- browser --> manager
+    subgraph manager["Manager, outside the traffic path"]
+        direction TB
+        web["Web interface"] --> engine["Engine and command line"]
+        engine --- db[("PostgreSQL")]
+    end
+    manager -- "asks to pull, reads status" --> cluster
+    cluster -- "fetches releases and certificates" --> manager
+    ca["ACME CA or Microsoft CA over NDES"] -- certificates --> manager
+    receivers["Other hosts"] -- "fetch certificates" --> manager
+```
+
+The **manager** is a machine of its own. It holds the configuration, the published versions, the
+keys and the certificates, and runs the web interface; one manager can look after several
+clusters. The **nodes** carry the traffic: the one holding the virtual address answers, and when it
+fails keepalived moves the address to another. Clients never pass through the manager, so without
+it the nodes go on serving - what stops is changing anything.
+
+The manager never pushes to a node. It asks the node to fetch, and the node checks a release before
+it switches to it. Other hosts that need a certificate - a mail server, a NAS, a hypervisor - can
+be registered to fetch theirs from the manager the same way.
+
+## What you need
+
+| Machine | How many | Operating system | Size to start from |
+|---|---|---|---|
+| Manager | one | Ubuntu 26.04 or Debian 13, amd64 | 2 vCPU, 4 GB memory |
+| HAProxy node | two to eight per cluster | Ubuntu 26.04 or Debian 13, amd64 | 1 vCPU, 1 GB memory; 2 GB with the WAF |
+
+- Virtual machines are fine, and are what Haprion is tested on. A single node also works, without
+  failover.
+- The nodes of a cluster share one network segment: keepalived moves the virtual address between
+  them with VRRP. The manager reaches each node over SSH.
+- A node's disk grows with its traffic log; [Installing](docs/install.md#requirements) has the
+  sum. How far one vCPU goes, with and without the WAF, is under
+  *Size* under [the nodes](docs/user-manual.md#part-2--the-nodes) in the manual.
+
+## Screenshots
+
+Screenshots will be added.
+
+## Getting started
+
+**Start with the [quickstart](docs/quickstart.md)**: from an installed manager to a site served by
+your HAProxy pair, in the web interface. A new installation's dashboard walks through the first
+cluster - its name and address, the nodes, the first deploy. [Installing](docs/install.md) covers
+the installation, and the [user manual](docs/user-manual.md) is the reference for everything else.
 
 ## What it does
 
@@ -25,6 +98,10 @@ and documentation.
 - DNS load balancing through dnsdist, and syslog over UDP
 - a cluster's network and virtual addresses, carried by keepalived
 - draining a server, maintenance, and replacing a certificate without reloading HAProxy
+- a server written as a name the manager cannot resolve is pointed out where it is typed and where
+  it is published, before a deploy finds it on a node
+- adding or removing a node, which publishes the new membership and, when the cluster was up to
+  date, deploys it in the same job
 - counters shared between a cluster's nodes, so a failover or a deploy does not start them again
 
 **Access and protection**
@@ -59,8 +136,9 @@ and documentation.
 - every change to a cluster is a job: an immutable queue, an atomic claim under a renewable lease,
   and a worker that records how every job ended, including one whose worker died
 - Debian packages from one commit: `haprion-cli` for the engine, `haprion-ui` for the web
-  interface on Ubuntu 26.04 or Debian 13, `haprion-node` for the nodes, and the WAF engine and rule
-  set; installing a newer package is the update
+  interface on Ubuntu 26.04 or Debian 13, `haprion-certbot` for certificate issuance,
+  `haprion-node` for the nodes, and the WAF engine and rule set; installing a newer package is the
+  update
 
 The interface reads for everyone and writes only for an admin on an installation that sets
 `management_writes = true`. With it off, the interface is read-only and the worker claims nothing;

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import unittest
 
+from haprion.cluster_status import parse_status
 from haprion.deploy_plan import (
     EXIT_INCOMPLETE,
     Action,
@@ -25,6 +26,7 @@ from haprion.deploy_plan import (
     warnings_for,
 )
 from tests.plan_harness import BEHIND, TARGET, drive, node, pair
+from tests.test_status_addresses import envelope, node_status
 
 
 class MoreThanTwoNodesTests(unittest.TestCase):
@@ -58,6 +60,83 @@ class MoreThanTwoNodesTests(unittest.TestCase):
         self.assertEqual(trace, ["skip:node-b", "deploy:node-c", "deploy:node-a"])
         self.assertIs(outcome, Outcome.PARTIAL)
         self.assertEqual(code, 69)
+
+
+class ANodeThatStartsKeepalivedGoesLast(unittest.TestCase):
+    """B320, Fas 18 finding 75: the node whose deploy starts keepalived goes after the owner.
+
+    Deployed first, an added node started keepalived before the owner had it as
+    a peer, heard nobody, and would have taken the addresses three advertisement
+    intervals later had the owner's deploy not come within one second.
+    """
+
+    def test_an_added_node_goes_after_the_owner(self) -> None:
+        state = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, keepalived=True),
+            node("node-b", owner=False, keepalived=False),
+        )
+
+        trace, outcome, code = drive([state] * 3)
+
+        self.assertEqual(trace, ["deploy:node-a", "deploy:node-b"])
+        self.assertIs(outcome, Outcome.DONE)
+        self.assertEqual(code, 0)
+
+    def test_the_running_standbys_still_go_before_the_owner(self) -> None:
+        state = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, keepalived=True),
+            node("node-b", owner=False, keepalived=False),
+            node("node-c", owner=False, keepalived=True),
+        )
+
+        trace, _, _ = drive([state] * 4)
+
+        self.assertEqual(trace, ["deploy:node-c", "deploy:node-a", "deploy:node-b"])
+
+    def test_a_new_cluster_keeps_its_configured_order(self) -> None:
+        state = pair(
+            VipState.NO_OWNER,
+            node("node-a", owner=False, keepalived=False),
+            node("node-b", owner=False, keepalived=False),
+        )
+
+        trace, _, _ = drive([state] * 3)
+
+        self.assertEqual(trace, ["deploy:node-a", "deploy:node-b"])
+
+    def test_a_node_that_did_not_say_is_ordered_as_before(self) -> None:
+        state = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, keepalived=None),
+            node("node-b", owner=False, keepalived=None),
+        )
+
+        trace, _, _ = drive([state] * 3)
+
+        self.assertEqual(trace, ["deploy:node-b", "deploy:node-a"])
+
+    def test_an_owner_whose_keepalived_reads_stopped_is_still_an_owner(self) -> None:
+        state = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, keepalived=False),
+            node("node-b", owner=False, keepalived=True),
+        )
+
+        trace, _, _ = drive([state] * 3)
+
+        self.assertEqual(trace, ["deploy:node-b", "deploy:node-a"])
+
+    def test_the_deploy_reads_it_from_the_status_it_parsed(self) -> None:
+        for active, expected in ((True, True), (False, False), ("yes", None)):
+            with self.subTest(active=active):
+                status = node_status({"active": active, "state": "BACKUP"})
+                observed = parse_status(envelope(status)).observation().nodes[0]
+                self.assertIs(observed.keepalived_active, expected)
+
+        observed = parse_status(envelope(node_status(None))).observation().nodes[0]
+        self.assertIsNone(observed.keepalived_active)
 
 
 class AnObservedConflictIsNeverDeployedInto(unittest.TestCase):

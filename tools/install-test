@@ -483,7 +483,31 @@ def run_one(
         )
         step("the joins warned of nothing", run.joined_quietly)
         step("an object published", run.publish)
-        step("haprion-deploy", run.deploy)
+
+        def added_node_starts_as_standby() -> None:
+            """B320, Fas 18 finding 75: the added node deploys after the owner and never leads.
+
+            Deployed first, it started keepalived before the owner had it as a
+            peer and became MASTER beside it when the owner's deploy was slow.
+            The order is what is held to; the journal says it held.
+            """
+
+            output = run.deploy()
+            order = re.findall(r"^=== Deploy: (\S+) ===$", output, re.MULTILINE)
+            if order != [NODES[0], NODES[1]]:
+                raise Failed(
+                    f"the deploy went {order}, not the owner before the added node:\n{output}"
+                )
+            _, log = run.on(NODES[1], "journalctl -u keepalived --no-pager -o cat", check=False)
+            if "Entering BACKUP STATE" not in log:
+                raise Failed(f"{NODES[1]}'s keepalived did not start as a standby:\n{log}")
+            if "Entering MASTER STATE" in log:
+                raise Failed(f"{NODES[1]} took the address when it was added:\n{log}")
+
+        step(
+            f"haprion-deploy: {NODES[1]}, added to a serving cluster, after the owner and as a standby",
+            added_node_starts_as_standby,
+        )
         step("haproxy and keepalived running on both nodes", run.services_running)
         step("both nodes report HAProxy's statistics", run.statistics_reported)
         holder = step("the virtual address on exactly one node", run.wait_for_one_holder)

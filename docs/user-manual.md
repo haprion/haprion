@@ -101,9 +101,11 @@ asked when the network is saved. Publishing and deploying are separate operation
 *Deploy certificates* installs the certificates and *Deploy configuration* installs the
 published configuration. A rollout deploys the nodes that do not own the VIP first and
 the owner last - also when another node cannot be read, and a node whose ownership is
-unknown goes between the two. Two nodes that both report the VIP stop the rollout
-before anything is changed, whatever else could not be read, and no override lets it
-past.
+unknown goes between the two. A node whose keepalived is not running - one just added or
+added back - goes after the owner: by then every other node has it as a peer, so it starts
+as a standby instead of taking the VIP while it hears nobody. Two nodes that both report
+the VIP stop the rollout before anything is changed, whatever else could not be read, and
+no override lets it past.
 
 A node counts as running a release once HAProxy has reloaded it, not once the files are
 in place: the node marks the switch in `/run/haprion-pull-deploy.pending` until the
@@ -4818,7 +4820,8 @@ Three details carry weight:
   the address. Without them the state file is never written, node status cannot report an owner, and
   a deploy has no way to order the nodes.
 
-**Why the ordering matters.** A rollout deploys the non-owner first and the address owner last. If
+**Why the ordering matters.** A rollout deploys the non-owner first and the address owner last (a
+node whose keepalived is not running yet goes after the owner, so it starts as a standby). If
 the new configuration breaks, it breaks on the node not carrying traffic, and the run stops before
 reaching the other one. That protection is only real if the owner is actually known — which is why
 the three points above are part of the installation and not an operational detail.

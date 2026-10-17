@@ -38,6 +38,7 @@ def node(
     hash_: str | None = BEHIND,
     addresses: bool | None = True,
     forwarding: bool | None = True,
+    keepalived: bool | None = None,
 ) -> NodeObservation:
     """One node as the status read saw it.
 
@@ -54,6 +55,7 @@ def node(
         release_hash=hash_,
         addresses_current=addresses,
         forwarding_current=forwarding,
+        keepalived_active=keepalived,
     )
 
 

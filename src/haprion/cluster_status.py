@@ -166,6 +166,11 @@ class NodeStatus:
     #
     forwarding_current: bool | None = True
     #
+    # Whether keepalived runs on the node, as it said (B320); None when it did
+    # not say.
+    #
+    keepalived_active: bool | None = None
+    #
     # The other nodes this one shares its stick tables with, by name, and
     # whether each is connected (B270). None when the node did not say - an
     # older status script, or a runtime socket it could not read.
@@ -213,6 +218,7 @@ class ClusterStatus:
                     addresses_current=node.addresses_current,
                     ipvs_current=node.ipvs_current,
                     forwarding_current=node.forwarding_current,
+                    keepalived_active=node.keepalived_active,
                     certificates=node.certificates,
                     authorities=node.authorities,
                 )
@@ -236,6 +242,10 @@ def _mapping(value: object) -> Mapping[str, Any]:
 
 def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _flag(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _certificates(
@@ -560,6 +570,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         ipvs_current=ipvs_current(status),
         ipvs_included=ipvs_included(status),
         forwarding_current=forwarding_current(status),
+        keepalived_active=_flag(_mapping(status.get("keepalived")).get("active")),
         certificates=_certificates(status),
         authorities=_certificates(status, "authorities"),
         servers=_servers(status),

@@ -98,6 +98,11 @@ class NodeObservation:
     # The same for the log forwarding rsyslog reads (review 26-10-13, A1).
     #
     forwarding_current: bool | None = True
+    #
+    # Whether keepalived runs on the node (B320). None when the node did not
+    # say, which orders it as before the field existed.
+    #
+    keepalived_active: bool | None = None
     certificates: tuple[tuple[str, str], ...] | None = None
     #
     # The CA files the node carries for its pools (B276), as (id, bundle
@@ -451,7 +456,8 @@ def _candidates(observation: ClusterObservation, progress: Progress) -> tuple[No
 def _ordered(
     candidates: tuple[NodeObservation, ...], vip_state: VipState
 ) -> tuple[NodeObservation, ...]:
-    """Known standbys first, nodes of unknown ownership next, a known owner last.
+    """Known standbys first, nodes of unknown ownership next, a known owner,
+    and after it every node whose keepalived is not running.
 
     Decided from the ownership seen just now, and from what is known rather
     than from the cluster's summary: with one node unreadable the summary is
@@ -460,11 +466,27 @@ def _ordered(
     configured order holds, so with no owner, or with every node unknown, the
     order is the cluster configuration's as before. A node that could not be
     read is only ever skipped, never changed, and keeps its place.
+
+    A node without a running keepalived - one just added, one added back, one
+    somebody stopped - starts it in its deploy. Deployed before the others it
+    started while they did not yet have it as a peer, heard nobody, and took
+    the addresses after about three advertisement intervals unless the owner's
+    own deploy came first (B320, Fas 18 finding 75: one second to spare). Last,
+    every other node already sends to it, and it starts as the standby it is.
+    It carries no traffic, so going after the owner touches nothing that does.
     """
 
     del vip_state  # what is known about each node decides; kept for the callers
     rank = {False: 0, None: 1, True: 2}
-    return tuple(sorted(candidates, key=lambda node: rank[node.owns_vip] if node.status_ok else 0))
+
+    def place(node: NodeObservation) -> int:
+        if not node.status_ok:
+            return 0
+        if node.keepalived_active is False and node.owns_vip is not True:
+            return 3
+        return rank[node.owns_vip]
+
+    return tuple(sorted(candidates, key=place))
 
 
 def next_step(

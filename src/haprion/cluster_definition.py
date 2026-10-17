@@ -225,6 +225,31 @@ class Definition:
     address_interface: str | None = None
 
 
+def check_name(
+    cluster: str, *, display_name: str, vip: str
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """The ID, display name and VIP a cluster is created with, checked; the VIP as an address.
+
+    On its own for the first cluster's guide (B315), which asks for these
+    before there is a block to create the cluster with.
+    """
+
+    if not CLUSTER_ID.fullmatch(cluster):
+        raise EnrollmentError("cluster_invalid", f"{cluster!r} is not a cluster ID")
+    if (
+        not display_name.strip()
+        or len(display_name) > MAX_DISPLAY_NAME
+        or CONTROL.search(display_name)
+    ):
+        raise EnrollmentError(
+            "cluster_invalid", f"the display name must be 1-{MAX_DISPLAY_NAME} printable characters"
+        )
+    try:
+        return ipaddress.ip_address(vip)
+    except ValueError:
+        raise EnrollmentError("cluster_invalid", "the VIP must be an IP address") from None
+
+
 def definition(
     cluster: str,
     *,
@@ -239,20 +264,7 @@ def definition(
 ) -> Definition:
     """Read and check a request's fields; the files are checked by `plan_add`."""
 
-    if not CLUSTER_ID.fullmatch(cluster):
-        raise EnrollmentError("cluster_invalid", f"{cluster!r} is not a cluster ID")
-    if (
-        not display_name.strip()
-        or len(display_name) > MAX_DISPLAY_NAME
-        or CONTROL.search(display_name)
-    ):
-        raise EnrollmentError(
-            "cluster_invalid", f"the display name must be 1-{MAX_DISPLAY_NAME} printable characters"
-        )
-    try:
-        address = ipaddress.ip_address(vip)
-    except ValueError:
-        raise EnrollmentError("cluster_invalid", "the VIP must be an IP address") from None
+    address = check_name(cluster, display_name=display_name, vip=vip)
     if not NODE_PATH.fullmatch(node_path):
         raise EnrollmentError("cluster_invalid", f"{node_path!r} is not a node path")
     if address_prefix is not None and not 1 <= address_prefix <= address.max_prefixlen:

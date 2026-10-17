@@ -393,9 +393,13 @@ class SigningIn(LoginTestCase):
         """A new installation has no cluster; the empty pages pointed at a
         configuration file and the poller, not at Create cluster (26-10-14)."""
 
-        pages = ("/", "/proxies", "/certificates", "/network", "/history", "/backups")
+        pages = ("/proxies", "/certificates", "/network", "/history", "/backups")
         client = self.client(replace(configuration(), management_writes=True))
         self.sign_in(client)
+        #
+        # The dashboard is the first cluster's guide (B315).
+        #
+        self.assertIn('action="/first-cluster/name"', client.get("/").text)
         for path in pages:
             with self.subTest(path=path):
                 text = client.get(path).text

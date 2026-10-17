@@ -2528,3 +2528,21 @@ a.attention-row:hover { background: var(--row-hover); }
 .attention-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .attention-text time { color: var(--text-secondary); margin-left: 6px; }
 .attention-go { flex: none; color: var(--text-secondary); }
+
+/* The guide through the first cluster (B315, mock approved 26-10-15): its steps,
+   the body of the current one, and a node that has joined. */
+.guide-steps { display: flex; gap: 6px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.guide-step { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.guide-step b { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-strong); font-weight: 600; font-size: 12px; }
+.guide-step.is-current { color: var(--text-strong); background: var(--panel-soft); }
+.guide-step.is-current b { border-color: var(--text-strong); }
+.guide-step.is-done { color: var(--healthy-text); }
+.guide-step.is-done b { border-color: transparent; background: var(--healthy-soft); }
+.guide-body { padding: 18px 20px 6px; display: flex; flex-direction: column; gap: 14px; max-width: 900px; }
+.guide-body h3 { margin: 0; font-size: 15px; }
+.guide-body p { margin: 0; color: var(--text-secondary); }
+.guide-body .receiver-command { margin: 0; font-size: 13px; }
+.guide-body textarea { width: 100%; }
+.guide-body .form-grid { padding: 0; }
+.guide-joined { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.guide-joined code { color: var(--muted); font-size: 12px; }

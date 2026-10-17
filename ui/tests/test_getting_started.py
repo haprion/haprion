@@ -140,9 +140,9 @@ class TheWayBack(unittest.TestCase):
 
 
 class OnTheDashboard(LoginTestCase):
-    def signed_in(self, *, role: str = "admin") -> Any:
+    def signed_in(self, *, role: str = "admin", clusters: tuple[str, ...] = ("alpha",)) -> Any:
         self.account = replace(self.account, role=role)
-        client = self.client(replace(configuration(), management_writes=True))
+        client = self.client(replace(configuration(), management_writes=True, clusters=clusters))
         self.sign_in(client)
         return client
 
@@ -156,13 +156,13 @@ class OnTheDashboard(LoginTestCase):
         self.getting_started_hidden_at = datetime.now(UTC)
         self.assertNotIn("Getting started</h3>", self.signed_in().get("/").text)
 
-    def test_without_a_cluster_it_replaces_the_empty_cluster_card(self) -> None:
-        page = self.signed_in().get("/").text
-        self.assertEqual(page.count('href="/settings/new-cluster"'), 1)
-        self.assertNotIn("No clusters configured", page)
+    def test_without_a_cluster_the_first_cluster_s_guide_takes_its_place(self) -> None:
+        """B315: a new installation's dashboard is the guide, for an admin who may write."""
 
-        self.getting_started_hidden_at = datetime.now(UTC)
-        self.assertIn("No clusters configured", self.signed_in().get("/").text)
+        page = self.signed_in(clusters=()).get("/").text
+        self.assertIn("Set up your first cluster", page)
+        self.assertNotIn("Getting started</h3>", page)
+        self.assertNotIn("Set up your first cluster", self.signed_in(role="reader").get("/").text)
 
     def test_a_hidden_list_is_offered_back_for_a_week(self) -> None:
         self.getting_started_hidden_at = datetime.now(UTC) - timedelta(days=6)

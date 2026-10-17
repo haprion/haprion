@@ -131,6 +131,13 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
         "haprion-cluster remove", "haprion-cluster-define"
     ),
     "/settings/new-cluster": Command("haprion-cluster add", "haprion-cluster-define"),
+    #
+    # The first cluster's guide (B315): the same two operations, one node at a
+    # time; its first step only reads the form.
+    #
+    "/first-cluster/name": NotASetting("checks the guide's first step; nothing is written"),
+    "/first-cluster/first-node": Command("haprion-cluster add", "haprion-cluster-define"),
+    "/first-cluster/second-node": Command("haprion-node add", "haprion-cluster-node"),
     "/settings/new-user": Command("haprion-user apply", "haprion-user-apply"),
     "/settings/users/{name}": Command("haprion-user apply", "haprion-user-apply"),
     "/settings/oidc": Command("haprion-settings apply", "haprion-settings-apply"),

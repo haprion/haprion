@@ -1964,6 +1964,14 @@ through the same root helper as a node: its ID, display name and VIP, and the bl
 printed when its package was installed - the node is joined as any node is
 ([Adding and removing a node](#adding-and-removing-a-node)). Its next node is added to it.
 
+On a new installation the dashboard is *Set up your first cluster*, for an admin, in five steps:
+*Name and address* (ID, display name, VIP), *First node* (the command to run on it, with the node
+package offered for download from the manager, and its block pasted back), *Second node* (the
+same, or *Skip*), *Deploy*, and *Done*, which says which node carries the VIP. Each step is the
+operation above or *Add node* and the deploy, so a guide left half-way is continued from the
+dashboard, or finished under *Settings → Nodes & clusters*. Once the cluster is deployed, the
+dashboard is the dashboard.
+
 ```bash
 # On the management host, the block on stdin (two blocks and two --host options make both nodes at once):
 sudo haprion-cluster add -c beta --display-name Beta --vip 203.0.113.10 \

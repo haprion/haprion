@@ -566,7 +566,15 @@ class TheAcknowledgement(LoginTestCase):
         return counts
 
     def signed_in(self) -> Any:
-        client = self.client(replace(configuration(), management_writes=True))
+        #
+        # With a cluster: a new installation's dashboard is the first cluster's
+        # guide (B315), and the rows are the dashboard's.
+        #
+        client = self.client(
+            replace(
+                configuration(), management_writes=True, clusters=(self.FAILED.cluster or "alpha",)
+            )
+        )
         self.sign_in(client)
         return client
 

@@ -306,6 +306,25 @@ CREATION_FIELDS = (
 )
 
 
+def name_problem(form: Mapping[str, str], *, listed: Iterable[str]) -> str | None:
+    """Why the first cluster's ID, display name or VIP cannot be used, or None (B315).
+
+    The engine's own check, so the guide's first step refuses what *Create
+    cluster* would refuse a step later.
+    """
+
+    cluster = form.get("cluster", "").strip()
+    if cluster in set(listed):
+        return f"There is already a cluster {cluster}."
+    try:
+        cluster_definition.check_name(
+            cluster, display_name=form.get("display_name", ""), vip=form.get("vip", "").strip()
+        )
+    except node_enrollment.EnrollmentError as refused:
+        return _sentence(str(refused))
+    return None
+
+
 def read_creation(
     form: Mapping[str, str], *, listed: Iterable[str], certificates: Iterable[str]
 ) -> Creation:

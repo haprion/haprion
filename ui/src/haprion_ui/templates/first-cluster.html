@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+{% block title %}Dashboard — Haprion{% endblock %}
+{% block head_extra %}{% if guide.busy %}<meta name="haproxy-live" content="3">{% if request.method == 'GET' %}<noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block content %}
+{#
+  The guide through the first cluster (B315, mock approved 26-10-15): each step
+  is an operation that already exists, and which one is shown is read from the
+  installation (first_cluster.py).
+#}
+{% macro node_step(which, action) %}
+<h3>Run this on the {{ which }} node</h3>
+<pre class="receiver-command"><code>sudo apt install ./{{ node_package }}</code></pre>
+<p><a class="text-link" href="/first-cluster/{{ node_package }}" download>Download {{ node_package }}</a></p>
+<label><span class="field-title">Paste what it printed</span><textarea name="block" rows="3" spellcheck="false" placeholder="haproxy-node-v2:…" required>{{ block }}</textarea></label>
+{% if preview %}<p class="preview-notice settings-notice"><strong>{{ preview.name }}</strong> — {{ preview.host }} · host key <code>{{ preview.fingerprint }}</code></p>{% endif %}
+{% endmacro %}
+{% macro joined_rows() %}{% for node in guide.joined %}<div class="guide-joined"><span class="status-badge status-badge-healthy">Joined</span><strong>{{ node.name }}</strong><code>{{ node.host }}</code></div>{% endfor %}{% endmacro %}
+<section class="page-heading"><div><h1>Dashboard</h1></div><div class="heading-badges"></div></section>
+<div class="cluster-list">
+<section class="cluster-card first-cluster" aria-label="Set up your first cluster">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Set up your first cluster</h3></div></div></header>
+  <div class="guide-steps">{% for number, name, state in guide.steps %}<span class="guide-step {{ state }}"><b>{% if state == 'is-done' %}✓{% else %}{{ number }}{% endif %}</b>{{ name }}</span>{% endfor %}</div>
+  {% if guide.busy %}
+  <div class="guide-body">{{ joined_rows() }}<div class="guide-joined"><span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ guide.busy }}</span></div></div>
+  {% elif guide.step == 1 %}
+  <form method="post" action="/first-cluster/name">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="guide-body">
+      {% if problem %}<p class="preview-notice"><strong>{{ problem }}</strong></p>{% endif %}
+      <div class="form-grid">
+        <label><span class="field-title">Cluster ID</span><input name="cluster" value="{{ form.cluster }}" placeholder="edge" required maxlength="63"></label>
+        <label><span class="field-title">Display name</span><input name="display_name" value="{{ form.display_name }}" placeholder="Edge" required maxlength="64"></label>
+        <label><span class="field-title">VIP</span><input name="vip" value="{{ form.vip }}" placeholder="203.0.113.10" required maxlength="45"></label>
+      </div>
+    </div>
+    <div class="editor-actions editor-submit"><div class="form-buttons"><button class="secondary-button" type="submit">Continue</button></div></div>
+  </form>
+  {% elif guide.step == 2 %}
+  <form method="post" action="/first-cluster/first-node">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="cluster" value="{{ form.cluster }}"><input type="hidden" name="display_name" value="{{ form.display_name }}"><input type="hidden" name="vip" value="{{ form.vip }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    <div class="guide-body">
+      {% if problem or guide.problem %}<p class="preview-notice"><strong>{{ problem or guide.problem }}</strong></p>{% endif %}
+      {{ node_step("first") }}
+    </div>
+    <div class="editor-actions editor-submit"><div class="form-buttons"><button class="secondary-button" type="submit" name="action" value="back" formnovalidate>Back</button>{% if preview %}<button class="secondary-button" type="submit" name="confirm" value="{{ preview.name }}">Add {{ preview.name }}</button>{% else %}<button class="secondary-button" type="submit" name="action" value="read">Add node</button>{% endif %}</div></div>
+  </form>
+  {% elif guide.step == 3 %}
+  <form method="post" action="/first-cluster/second-node">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="cluster" value="{{ guide.cluster }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    <div class="guide-body">
+      {% if problem or guide.problem %}<p class="preview-notice"><strong>{{ problem or guide.problem }}</strong></p>{% endif %}
+      {{ joined_rows() }}
+      {{ node_step("second") }}
+    </div>
+    <div class="editor-actions editor-submit"><div class="form-buttons"><a class="secondary-button" href="/?first-cluster=skip">Skip</a>{% if preview %}<button class="secondary-button" type="submit" name="confirm" value="{{ preview.name }}">Add {{ preview.name }}</button>{% else %}<button class="secondary-button" type="submit" name="action" value="read">Add node</button>{% endif %}</div></div>
+  </form>
+  {% elif guide.step == 4 %}
+  <form method="post" action="/operations">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ guide.cluster }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="first-cluster">
+    <div class="guide-body">
+      {% if guide.problem %}<p class="preview-notice"><strong>{{ guide.problem }}</strong></p>{% endif %}
+      {{ joined_rows() }}
+      <p>The first deploy starts keepalived on {{ 'both nodes' if guide.joined | length == 2 else 'the node' }}, and <strong>{{ guide.vip }}</strong> lands on {{ 'one of them' if guide.joined | length == 2 else 'it' }}.</p>
+    </div>
+    <div class="editor-actions editor-submit"><div class="form-buttons">{% if guide.joined | length < 2 %}<a class="secondary-button" href="/">Back</a>{% endif %}<button class="secondary-button" type="submit">Deploy</button></div></div>
+  </form>
+  {% else %}
+  <div class="guide-body"><div class="guide-joined"><span class="status-badge status-badge-healthy">Serving</span><strong>{{ guide.vip }}</strong><span>on {{ guide.owner }}{% for node in guide.standby %} · {{ node }} standing by{% endfor %}</span></div></div>
+  <div class="editor-actions editor-submit"><div class="form-buttons"><a class="secondary-button" href="/">Go to dashboard</a><a class="secondary-button" href="/proxies/{{ guide.cluster }}/new">Create your first site</a></div></div>
+  {% endif %}
+</section>
+</div>
+{% endblock %}

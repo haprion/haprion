@@ -57,9 +57,19 @@ class TheTicks(unittest.TestCase):
         self.assertEqual((first.state, first.href), ("No cluster yet", "/settings/new-cluster"))
         self.assertEqual(
             [entry.title for entry in listed.items if entry.optional],
-            ["External monitoring", "Enable the features you want to use"],
+            [
+                "Enable the features you want to use",
+                "Node backups",
+                "Traffic log off the nodes",
+                "External monitoring",
+            ],
         )
-        self.assertEqual(listed.items[-1].title, "Enable the features you want to use")
+        #
+        # The optional rows last, Features first of them: it turns backups on
+        # (finding 83, 26-10-18).
+        #
+        self.assertTrue(all(entry.optional for entry in listed.items[5:]))
+        self.assertFalse(any(entry.optional for entry in listed.items[:5]))
 
     def test_a_cluster_is_done_when_a_node_holds_its_vip(self) -> None:
         serving = item(facts(clusters=(cluster(),)), "Nodes and a cluster")
@@ -156,13 +166,21 @@ class OnTheDashboard(LoginTestCase):
         self.getting_started_hidden_at = datetime.now(UTC)
         self.assertNotIn("Getting started</h3>", self.signed_in().get("/").text)
 
-    def test_without_a_cluster_the_first_cluster_s_guide_takes_its_place(self) -> None:
-        """B315: a new installation's dashboard is the guide, for an admin who may write."""
+    def test_without_a_cluster_the_list_s_first_row_leads_to_the_guide(self) -> None:
+        """B328: the guide is the first row's next step, never the dashboard in its place."""
 
         page = self.signed_in(clusters=()).get("/").text
-        self.assertIn("Set up your first cluster", page)
-        self.assertNotIn("Getting started</h3>", page)
+        self.assertIn("Getting started</h3>", page)
+        self.assertIn('href="/first-cluster">Set up</a>', page)
+        self.assertNotIn("Set up your first cluster", page)
         self.assertNotIn("Set up your first cluster", self.signed_in(role="reader").get("/").text)
+
+    def test_a_guide_half_way_is_named_on_the_row(self) -> None:
+        first = item(facts(guide=(3, "Second node")), "Nodes and a cluster")
+        self.assertEqual(
+            (first.state, first.action, first.href),
+            ("Step 3: Second node", "Continue", "/first-cluster"),
+        )
 
     def test_a_hidden_list_is_offered_back_for_a_week(self) -> None:
         self.getting_started_hidden_at = datetime.now(UTC) - timedelta(days=6)

@@ -399,13 +399,14 @@ class SigningIn(LoginTestCase):
         client = self.client(replace(configuration(), management_writes=True))
         self.sign_in(client)
         #
-        # The dashboard is the first cluster's guide (B315).
+        # The dashboard stays the dashboard, and its list leads to the first
+        # cluster's guide (B328); so does every page with nothing to show yet.
         #
-        self.assertIn('action="/first-cluster/name"', client.get("/").text)
+        self.assertIn('href="/first-cluster">Set up</a>', client.get("/").text)
         for path in pages:
             with self.subTest(path=path):
                 text = client.get(path).text
-                self.assertIn('<a class="secondary-button" href="/settings/new-cluster">', text)
+                self.assertIn('<a class="secondary-button" href="/first-cluster">', text)
                 self.assertNotIn("before starting the poller", text)
         self.account = replace(self.account, role="reader")
         reader = self.client(replace(configuration(), management_writes=True))

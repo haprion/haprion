@@ -86,6 +86,12 @@ class Guide:
     form: Mapping[str, str] = field(default_factory=dict)
 
     @property
+    def current(self) -> tuple[int, str]:
+        """The step shown, as its number and name, for the getting started row (B328)."""
+
+        return self.step, STEPS[self.step - 1]
+
+    @property
     def steps(self) -> list[tuple[int, str, str]]:
         """(number, name, state) per step: `is-done`, `is-current` or ``."""
 

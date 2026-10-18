@@ -61,6 +61,9 @@ class Facts:
     node_backups_on: bool
     status_access: bool
     features_changed: bool
+    # The first cluster's guide, while it has a step to show (B328): the
+    # number and the name of that step.
+    guide: tuple[int, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +98,20 @@ def _every(clusters: Iterable[ClusterFacts], test: str) -> bool:
     return bool(chosen) and all(getattr(cluster, test) for cluster in chosen)
 
 
-def _cluster_item(clusters: tuple[ClusterFacts, ...]) -> Item:
+def _cluster_item(clusters: tuple[ClusterFacts, ...], guide: tuple[int, str] | None) -> Item:
+    #
+    # The guide is this row's next step while it has one (B328): the dashboard
+    # stays the dashboard, and the row leads to the guide's page.
+    #
+    if guide is not None:
+        number, name = guide
+        return Item(
+            "Nodes and a cluster",
+            False,
+            "No cluster yet" if number == 1 else f"Step {number}: {name}",
+            "Set up" if number == 1 else "Continue",
+            "/first-cluster",
+        )
     serving = [cluster for cluster in clusters if cluster.nodes and cluster.owner]
     if serving:
         first = serving[0]
@@ -160,7 +176,7 @@ def checklist(facts: Facts) -> Checklist:
     else:
         interface = "Self-signed" if facts.interface_self_signed else "Issued by a CA"
     items = (
-        _cluster_item(clusters),
+        _cluster_item(clusters, facts.guide),
         _tls_item(clusters),
         Item(
             "Interface certificate",
@@ -190,13 +206,12 @@ def checklist(facts: Facts) -> Checklist:
             "/certificates",
         ),
         Item(
-            "Traffic log off the nodes",
-            _every(clusters, "logs_forwarded"),
-            f"Forwarded from {logs} of {_plural(len(clusters), 'cluster')}"
-            if logs
-            else "Kept on the nodes only",
-            "Logs",
-            "/settings#logs-metrics",
+            "Enable the features you want to use",
+            facts.features_changed,
+            "Chosen" if facts.features_changed else "As installed",
+            "Features",
+            "/settings#features",
+            optional=True,
         ),
         Item(
             "Node backups",
@@ -208,6 +223,17 @@ def checklist(facts: Facts) -> Checklist:
             else "No schedule",
             "Features" if not facts.node_backups_on else "Schedule",
             "/settings#features" if not facts.node_backups_on else "/backups",
+            optional=True,
+        ),
+        Item(
+            "Traffic log off the nodes",
+            _every(clusters, "logs_forwarded"),
+            f"Forwarded from {logs} of {_plural(len(clusters), 'cluster')}"
+            if logs
+            else "Kept on the nodes only",
+            "Logs",
+            "/settings#logs-metrics",
+            optional=True,
         ),
         Item(
             "External monitoring",
@@ -215,14 +241,6 @@ def checklist(facts: Facts) -> Checklist:
             "Allowed" if facts.status_access else "No address may ask",
             "Allow",
             "/settings/status-access",
-            optional=True,
-        ),
-        Item(
-            "Enable the features you want to use",
-            facts.features_changed,
-            "Chosen" if facts.features_changed else "As installed",
-            "Features",
-            "/settings#features",
             optional=True,
         ),
     )

@@ -135,7 +135,7 @@ class TheSteps(NodesPage):
         queued = self.post_to(
             client, "/first-cluster/first-node", **self.first(block=pasted, confirm="gamma-a")
         )
-        self.assertEqual((queued.status_code, queued.headers["location"]), (303, "/"))
+        self.assertEqual((queued.status_code, queued.headers["location"]), (303, "/first-cluster"))
         (job,) = self.queued
         self.assertEqual((job["operation"], job["cluster"]), ("cluster_define", "gamma"))
         self.assertEqual(job["payload"]["vip"], "198.51.100.30")
@@ -164,7 +164,7 @@ class TheSteps(NodesPage):
             block=pasted,
             confirm="edge-c",
         )
-        self.assertEqual((queued.status_code, queued.headers["location"]), (303, "/"))
+        self.assertEqual((queued.status_code, queued.headers["location"]), (303, "/first-cluster"))
         (job,) = self.queued
         self.assertEqual((job["operation"], job["payload"]["action"]), ("cluster_node", "add"))
         self.assertIs(job["payload"]["deploy"], True)
@@ -195,10 +195,16 @@ class TheSteps(NodesPage):
 
 
 class OnTheDashboard(NodesPage):
-    def test_a_new_installation_s_dashboard_is_the_guide(self) -> None:
+    def test_the_dashboard_stays_the_dashboard_and_its_list_leads_to_the_guide(self) -> None:
+        """B328: the guide in the dashboard's place left no way out after an error."""
+
         with mock.patch("haprion_ui.db.cluster_statuses", return_value=[]):
             client = self.client(replace(configuration(), management_writes=True, clusters=()))
             self.sign_in(client)
             page = client.get("/").text
-        self.assertIn("Set up your first cluster", page)
-        self.assertIn('action="/first-cluster/name"', page)
+            guide = client.get("/first-cluster").text
+        self.assertIn("Getting started</h3>", page)
+        self.assertIn('<a class="secondary-button" href="/first-cluster">Set up</a>', page)
+        self.assertNotIn('action="/first-cluster/name"', page)
+        self.assertIn("Set up your first cluster", guide)
+        self.assertIn('action="/first-cluster/name"', guide)

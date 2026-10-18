@@ -91,7 +91,8 @@ be downloaded from the manager, on the page the next step opens.
 Open `https://<your manager>` and sign in as `admin`. Your browser may ask you to accept the
 interface's certificate until you replace it.
 
-A new installation's **Dashboard** is *Set up your first cluster*, in five steps:
+A new installation's **Dashboard** opens with *Getting started*. Its first line, *Nodes and a cluster*,
+has **Set up**: it opens *Set up your first cluster*, in five steps:
 
 1. **Name and address**: a cluster ID (for example `edge`), a display name and the VIP. Press
    **Continue**.

@@ -859,8 +859,9 @@ def build_router(config: Config) -> APIRouter:
             }
         running = jobs.in_flight(recent)
         #
-        # The first cluster's guide (B315) instead of the dashboard, for as
-        # long as there is no deployed cluster to show.
+        # The first cluster's guide (B315) is the getting started list's first
+        # row while it has a step to show, never the dashboard in its place
+        # (B328, 26-10-18): a guide in the dashboard's place had no way out.
         #
         first = _first_cluster(
             request,
@@ -870,8 +871,6 @@ def build_router(config: Config) -> APIRouter:
             status_rows=status_rows,
             views=dashboard_view.clusters,
         )
-        if first is not None:
-            return _first_cluster_page(request, first)
         #
         # What is saved and not published, per cluster (B257): where there is
         # any, the card's deploy becomes Publish & deploy, a dialog that lists
@@ -889,7 +888,7 @@ def build_router(config: Config) -> APIRouter:
             else {}
         )
         checklist = (
-            _getting_started(request, dashboard_view, network_rows)
+            _getting_started(request, dashboard_view, network_rows, first)
             if session.role == "admin"
             else None
         )
@@ -4572,7 +4571,10 @@ def build_router(config: Config) -> APIRouter:
         return hidden_at is not None and getting_started.offered_again(hidden_at, datetime.now(UTC))
 
     def _getting_started(
-        request: Request, dashboard_view: dashboard.DashboardView, network_rows: Any
+        request: Request,
+        dashboard_view: dashboard.DashboardView,
+        network_rows: Any,
+        guide: first_cluster.Guide | None = None,
     ) -> getting_started.Checklist | None:
         """The list for an admin, until it is hidden (B316); every tick read, none stored."""
 
@@ -4636,6 +4638,7 @@ def build_router(config: Config) -> APIRouter:
             node_backups_on=backups_on,
             status_access=bool(access),
             features_changed=any(switch.updated_by for switch in switches.values()),
+            guide=guide.current if guide is not None else None,
         )
         return getting_started.checklist(facts)
 
@@ -5894,7 +5897,7 @@ def build_router(config: Config) -> APIRouter:
                 request, step, form=form, block=block, problem=problem, status_code=409
             ),
             operation="cluster_define",
-            back="/",
+            back="/first-cluster",
         )
 
     @router.post("/first-cluster/second-node", response_class=HTMLResponse)
@@ -5955,8 +5958,37 @@ def build_router(config: Config) -> APIRouter:
             lambda problem: _first_cluster_page(
                 request, step, block=block, problem=problem, status_code=409
             ),
-            back="/",
+            back="/first-cluster",
         )
+
+    @router.get("/first-cluster", response_class=HTMLResponse)
+    def first_cluster_guide(request: Request) -> Response:
+        """The guide's page (B328): its step, or the dashboard when it has none."""
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        clusters, status_rows = read_source(request, config, STATUS_SOURCE)
+        _, network_rows = read_source(request, config, NETWORK_SOURCE)
+        dashboard_view = dashboard.build_dashboard(
+            clusters,
+            status_rows,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            network_readings=network_rows,
+        )
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+        guide = _first_cluster(
+            request,
+            session,
+            recent=recent,
+            busy=jobs.in_flight(recent),
+            status_rows=status_rows,
+            views=dashboard_view.clusters,
+        )
+        if guide is None:
+            return RedirectResponse("/", status_code=303)
+        return _first_cluster_page(request, guide)
 
     @router.get("/first-cluster/{name}")
     def first_cluster_node_package(request: Request, name: str) -> Response:
@@ -11244,7 +11276,7 @@ def _settled_drafts(connection: Any, cluster: str, reading: ObjectsReading) -> l
 #
 RETURN_PATHS = {
     "dashboard": "/",
-    "first-cluster": "/?first-cluster=deploying",
+    "first-cluster": "/first-cluster?first-cluster=deploying",
     "proxies": "/proxies",
     "certificates": "/certificates?view=registry",
     "history": "/history",

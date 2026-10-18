@@ -1978,7 +1978,8 @@ through the same root helper as a node: its ID, display name and VIP, and the bl
 printed when its package was installed - the node is joined as any node is
 ([Adding and removing a node](#adding-and-removing-a-node)). Its next node is added to it.
 
-On a new installation the dashboard is *Set up your first cluster*, for an admin, in five steps:
+On a new installation the dashboard's *Getting started* opens *Set up your first cluster* from its
+first line, for an admin, in five steps:
 *Name and address* (ID, display name, VIP), *First node* (the command to run on it, with the node
 package offered for download from the manager, and its block pasted back), *Second node* (the
 same, or *Skip*), *Deploy*, and *Done*, which says which node carries the VIP. Each step is the
@@ -2748,8 +2749,10 @@ A new installation's dashboard shows an admin *Getting started*: what is still t
 each, with the page that does it. A line is ticked when the installation shows it done, never by
 being pressed - a cluster whose VIP a node holds, a TLS version chosen on every VIP, an interface
 certificate that is not self-signed, a second account or sign-in through SSO, a certificate from
-ACME or NDES, every cluster's traffic log forwarded and backed up on a schedule. External monitoring
-and the features are optional. *Hide getting started* removes the list for the whole installation.
+ACME or NDES, every cluster's traffic log forwarded and backed up on a schedule. The features,
+node backups, the traffic log and external monitoring are optional, and last; the features first of
+them, since node backups are one. While the first cluster is not yet serving, its line says the
+guide's step and **Continue** opens it. *Hide getting started* removes the list for the whole installation.
 For seven days after, *Show getting started* beside *Clusters* brings it back; then the button goes
 too. The audit record says who did either.
 

@@ -56,7 +56,7 @@
       {{ joined_rows() }}
       {{ node_step("second") }}
     </div>
-    <div class="editor-actions editor-submit"><div class="form-buttons"><a class="secondary-button" href="/?first-cluster=skip">Skip</a>{% if preview %}<button class="secondary-button" type="submit" name="confirm" value="{{ preview.name }}">Add {{ preview.name }}</button>{% else %}<button class="secondary-button" type="submit" name="action" value="read">Add node</button>{% endif %}</div></div>
+    <div class="editor-actions editor-submit"><div class="form-buttons"><a class="secondary-button" href="/first-cluster?first-cluster=skip">Skip</a>{% if preview %}<button class="secondary-button" type="submit" name="confirm" value="{{ preview.name }}">Add {{ preview.name }}</button>{% else %}<button class="secondary-button" type="submit" name="action" value="read">Add node</button>{% endif %}</div></div>
   </form>
   {% elif guide.step == 4 %}
   <form method="post" action="/operations">
@@ -68,7 +68,7 @@
       {{ joined_rows() }}
       <p>The first deploy starts keepalived on {{ 'both nodes' if guide.joined | length == 2 else 'the node' }}, and <strong>{{ guide.vip }}</strong> lands on {{ 'one of them' if guide.joined | length == 2 else 'it' }}.</p>
     </div>
-    <div class="editor-actions editor-submit"><div class="form-buttons">{% if guide.joined | length < 2 %}<a class="secondary-button" href="/">Back</a>{% endif %}<button class="secondary-button" type="submit">Deploy</button></div></div>
+    <div class="editor-actions editor-submit"><div class="form-buttons">{% if guide.joined | length < 2 %}<a class="secondary-button" href="/first-cluster">Back</a>{% endif %}<button class="secondary-button" type="submit">Deploy</button></div></div>
   </form>
   {% else %}
   <div class="guide-body"><div class="guide-joined"><span class="status-badge status-badge-healthy">Serving</span><strong>{{ guide.vip }}</strong><span>on {{ guide.owner }}{% for node in guide.standby %} · {{ node }} standing by{% endfor %}</span></div></div>

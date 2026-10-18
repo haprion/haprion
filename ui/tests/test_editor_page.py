@@ -1418,6 +1418,20 @@ class SavingSaysSo(EditorTestCase):
         self.assertIn("typo.example.com cannot be resolved from the manager", page.text)
         self.assertNotIn("data-unresolved", clean.text)
 
+    def test_a_server_written_with_two_colons_is_refused_where_it_is_typed(self) -> None:
+        """Finding 82: `name::8080` became the host `name:`, was saved, called valid, and
+        stopped the deploy on a node."""
+
+        with mock.patch("haprion.resolve_socket.unresolved", side_effect=lambda hosts: []):
+            for action in ("save", "check"):
+                with self.subTest(action=action):
+                    page = self.save(
+                        "/proxies/alpha/shop/edit", action=action, servers="mgr.example.com::8080"
+                    )
+                    self.assertNotEqual(page.status_code, 303)
+                    self.assertIn("must be an IP address or a host name", page.text)
+                    self.assertNotIn("<strong>Valid.</strong>", page.text)
+
     def test_the_editor_shows_the_notice_that_url_asks_for(self) -> None:
         client = self.editor()
 

@@ -179,6 +179,25 @@ class RoutesAndPaths(unittest.TestCase):
 
         self.assertIn("orphan", str(caught.exception))
 
+    def test_a_server_host_that_is_neither_address_nor_name_is_refused(self) -> None:
+        """`name::8080` in the form is the host `name:`; it passed until a node refused it
+        at the deploy (Fas 18, finding 82)."""
+
+        for host in ("'mgr.example.com:'", "'shop example.com'", "'http://shop.example.com'"):
+            with self.subTest(host=host), self.assertRaises(ModelError) as caught:
+                load_proxy("shop", with_lines(("host: 192.0.2.10", f"host: {host}")))
+            self.assertIn("must be an IP address or a host name", str(caught.exception))
+
+    def test_a_server_host_may_be_an_address_or_a_name_in_any_case(self) -> None:
+        for host in (
+            "node-a.example.com",
+            "Node-A.Example.com",
+            "'[2001:db8::10]'",
+            "198.51.100.7",
+        ):
+            with self.subTest(host=host):
+                load_proxy("shop", with_lines(("host: 192.0.2.10", f"host: {host}")))
+
     def test_a_trailing_slash_is_the_same_route(self) -> None:
         """`/api` and `/api/` are one rule; what is forwarded is the prefix fields' business."""
 
@@ -1531,7 +1550,7 @@ class AResolverIsServedByDnsdist(unittest.TestCase):
         """The name is written into the file as a comment beside its address."""
 
         message = self.refused(dns((b"192.0.2.54", b"'ns2 example'")))
-        self.assertIn("must be addresses or host names", message)
+        self.assertIn("must be an IP address or a host name, not 'ns2 example'", message)
 
     def test_pool_settings_dnsdist_has_no_line_for_are_refused(self) -> None:
         for field in (

@@ -1267,6 +1267,15 @@ def _server(value: Any, location: str) -> Server:
     data = _mapping(value, location)
     _only_keys(data, {"host", "port", "backup", "address", "weight"}, location)
     host = _required_string(data, "host", location)
+    #
+    # The form takes `host:port` and splits at the last colon, so
+    # `name::8080` arrived as the host `name:` and passed: nothing but a dns
+    # pool held the host to a shape, the manager's `haproxy -c -dr` skips
+    # names, and the node refused it at the deploy (Fas 18, finding 82). A
+    # name in any case: DNS does not tell them apart.
+    #
+    if not _is_address(host) and not HOSTNAME.match(host.lower()):
+        raise ModelError(f"{location}.host must be an IP address or a host name, not {host!r}")
     port = data.get("port")
     #
     # A bool is an int in Python, and `port: true` would otherwise be port 1.
@@ -2320,25 +2329,6 @@ def _refuse_non_dns_pools(backends: Mapping[str, Backend], name: str) -> None:
             raise ModelError(f"{where}: a dns pool's servers have no weight")
         if pool.health.type not in ("dns", "disabled"):
             raise ModelError(f"{where}.health must be a dns check, or disabled")
-        #
-        # A server may be named (B252, 26-10-06): dnsdist takes addresses only,
-        # so the name is looked up when the object is saved and the address
-        # stored beside it (`dnsdist_config.with_addresses`, B261); publishing
-        # looks nothing up. The status says when the name no longer resolves to
-        # what was published. A name is held to the hostname pattern: it is
-        # written into the file as a comment beside the address.
-        #
-        unnamed = sorted(
-            {
-                server.host
-                for server in pool.servers
-                if not _is_address(server.host) and not HOSTNAME.match(server.host)
-            }
-        )
-        if unnamed:
-            raise ModelError(
-                f"{where}.servers must be addresses or host names: {', '.join(unnamed)}"
-            )
 
 
 def _refuse_countries(data: Mapping[str, Any], name: str) -> None:

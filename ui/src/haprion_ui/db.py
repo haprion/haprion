@@ -1756,6 +1756,33 @@ def account_names(connection: Connection[Any]) -> frozenset[str]:
         return frozenset(str(row[0]) for row in cursor.fetchall())
 
 
+@dataclass(frozen=True, slots=True)
+class TakenOut:
+    """The newest download or export of an external certificate (26-10-18)."""
+
+    actor: str
+    at: datetime
+    fingerprint: str
+
+
+def certificate_takeouts(connection: Connection[Any]) -> dict[str, TakenOut]:
+    """Each external certificate's newest download or export, by certificate ID (0077)."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select distinct on (detail->>'certificate') "
+            "       detail->>'certificate', actor, at, detail->>'fingerprint_sha256' "
+            "  from audit_event "
+            " where action in ('certificate_export', 'certificate_download') "
+            "   and detail->>'certificate' is not null "
+            " order by detail->>'certificate', id desc"
+        )
+        return {
+            str(certificate): TakenOut(str(actor), at, str(fingerprint or ""))
+            for certificate, actor, at, fingerprint in cursor.fetchall()
+        }
+
+
 def server_state_events(
     connection: Connection[Any], *, cluster: str, object_name: str, limit: int = 200
 ) -> list[AuditEvent]:
@@ -2592,6 +2619,27 @@ def _like_pattern(query: str) -> str:
 
     escaped = query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
+
+def backend_rows(
+    connection: Connection[Any], *, cluster: str, addresses: Sequence[str]
+) -> list[tuple[str, str, str]]:
+    """(server, object, link) for the objects in `cluster` that name any of `addresses`."""
+
+    if not addresses:
+        return []
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select value, title, href from search_entry "
+            " where cluster = %(cluster)s and source = 'objects' and kind = 'proxy' "
+            "   and label = %(label)s and value = any(%(addresses)s)",
+            {
+                "cluster": cluster,
+                "label": search_index.BACKEND_LABEL,
+                "addresses": list(addresses),
+            },
+        )
+        return [(str(value), str(title), str(href)) for value, title, href in cursor.fetchall()]
 
 
 def search(

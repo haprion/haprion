@@ -155,6 +155,8 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.cluster_inventories", return_value=[]),
             mock.patch("haprion_ui.db.cluster_histories", return_value=[]),
             mock.patch("haprion_ui.db.cluster_certificates", return_value=[]),
+            mock.patch("haprion_ui.db.certificate_takeouts", return_value={}),
+            mock.patch("haprion_ui.db.backend_rows", return_value=[]),
             #
             # From the registry the test describes, wherever it patched the
             # listings - see `tests.registry_fixture` (B304).

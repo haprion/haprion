@@ -210,6 +210,42 @@ class TheAddressesFromTheHelper(unittest.TestCase):
         )
 
 
+class TheSameServerElsewhere(unittest.TestCase):
+    """26-10-18: a server row names the other objects that reach the same host:port."""
+
+    ROWS = [
+        ("192.0.2.10:8080", "shop", "/proxies/alpha/shop"),
+        ("192.0.2.10:8080", "Reports", "/proxies/alpha/Reports"),
+        ("192.0.2.10:8080", "api", "/proxies/alpha/api"),
+        ("192.0.2.10:9090", "metrics", "/proxies/alpha/metrics"),
+    ]
+
+    def test_other_objects_by_name_never_this_one(self) -> None:
+        shared = search_index.shared_servers(self.ROWS, "shop", ["192.0.2.10:8080"])
+
+        self.assertEqual([sharer.title for sharer in shared["192.0.2.10:8080"]], ["api", "Reports"])
+
+    def test_another_port_on_the_same_host_is_not_the_same_server(self) -> None:
+        shared = search_index.shared_servers(self.ROWS, "metrics", ["192.0.2.10:9090"])
+
+        self.assertEqual(shared, {})
+
+    def test_the_rows_are_one_clusters_backends_only(self) -> None:
+        entries = search_index.object_entries("alpha", {"objects": [SHOP_ENTRY, API_ENTRY]})
+        entries += search_index.object_entries("beta", {"objects": [entry("other")]})
+
+        rows = search_index.backend_rows(entries, "alpha")
+
+        self.assertEqual(
+            sorted(rows),
+            [
+                ("192.0.2.10:8080", "shop", "/proxies/alpha/shop"),
+                ("192.0.2.11:8080", "shop", "/proxies/alpha/shop"),
+                ("203.0.113.10:8443", "api", "/proxies/alpha/api"),
+            ],
+        )
+
+
 class ThePages(LoginTestCase):
     def get(self, path: str, *, role: str = "admin", demo_fixture: bool = False) -> Any:
         self.account = replace(self.account, role=role)
@@ -230,6 +266,10 @@ class ThePages(LoginTestCase):
             ),
             mock.patch("haprion_ui.db.cluster_statuses", return_value=[]),
             mock.patch("haprion_ui.db.search", side_effect=search),
+            mock.patch(
+                "haprion_ui.db.backend_rows",
+                return_value=[("192.0.2.10:8080", "reports", "/proxies/alpha/reports")],
+            ),
             mock.patch("haprion_ui.db.read_draft", return_value=None),
             mock.patch("haprion_ui.db.recent_jobs", return_value=[]),
             mock.patch("haprion_ui.db.read_backend_series", return_value=[]),
@@ -288,6 +328,15 @@ class ThePages(LoginTestCase):
         page = self.get("/proxies/alpha/api")
 
         self.assertIn("Served on the VIP <code>partner</code> · 198.51.100.30", page.text)
+
+    def test_a_server_row_names_the_other_objects_that_reach_it(self) -> None:
+        page = self.get("/proxies/alpha/shop")
+
+        self.assertIn(
+            '<span class="server-shared">Also in '
+            '<a href="/proxies/alpha/reports#servers">reports</a></span>',
+            page.text,
+        )
 
 
 class TheLampUsesTheHelpersAnswer(LoginTestCase):

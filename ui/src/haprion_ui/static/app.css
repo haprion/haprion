@@ -2473,6 +2473,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 
 /* Who took a server out, beside it on the Servers card (B275). */
 .server-set-by { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.server-shared { color: var(--text-secondary); font-size: 12px; }
 
 /* Events → Audit (B275): the filters on one line, a row's detail behind a disclosure. */
 /* Events -> Audit: the traffic log's filter row, and four columns of its own

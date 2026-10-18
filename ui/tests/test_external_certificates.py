@@ -10,17 +10,28 @@ the export helper - with an audit row for every key given out.
 from __future__ import annotations
 
 import io
+import unittest
 import zipfile
+from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
 from haprion.cert_export import Export, ExportError
 from haprion.certificates import CERTIFICATE_OPENING, DELIMITER
 
-from haprion_ui import auth, certificate_form, operations
+from haprion_ui import attention, auth, certificate_form, operations
+from haprion_ui.certificates import build_certificate_overview
+from haprion_ui.db import TakenOut
+from tests.registry_fixture import manager_of
 from tests.test_certificate_form import CHOICES, KEY, CertificateFormRouteTestCase, form
+from tests.test_certificates import (
+    NOW,
+    STALE_AFTER,
+    registered,
+    registry_of,
+    with_registry,
+)
 from tests.test_certificates import reading as certificate_reading
-from tests.test_certificates import registered, with_registry
 
 #
 # Assembled, so the secret scanner does not take a test bundle's password for one.
@@ -158,6 +169,11 @@ class TheDownload(ExternalRowTestCase):
             },
         )
 
+    def test_the_download_is_recorded_as_a_version_taken_out(self) -> None:
+        post(self.writing_client(), f"/certificates/{DEVICE}/download")
+
+        self.assertIn("certificate_download", self.audit)
+
     def test_a_reader_is_refused(self) -> None:
         answer = post(self.writing_client(role="reader"), f"/certificates/{DEVICE}/download")
 
@@ -174,6 +190,58 @@ class TheDownload(ExternalRowTestCase):
 
         self.assertIn("not an external certificate", answer.text)
         self.assertNotEqual(answer.headers["content-type"], "application/zip")
+
+
+class TheVersionTakenOut(unittest.TestCase):
+    """26-10-18: the row says whether the version the manager holds was taken out since."""
+
+    def registry(self, taken_out: dict[str, TakenOut] | None) -> Any:
+        reading = with_registry(certificate_reading(), external())
+        view = build_certificate_overview(
+            ("alpha",),
+            (reading,),
+            now=NOW,
+            stale_after=STALE_AFTER,
+            manager=manager_of((reading,)),
+            taken_out=taken_out,
+        )
+        return registry_of(view)
+
+    def row(self, taken_out: dict[str, TakenOut] | None) -> Any:
+        return self.registry(taken_out).certificates[0]
+
+    def taken(self, fingerprint: str) -> dict[str, TakenOut]:
+        return {DEVICE: TakenOut("admin", datetime(2026, 10, 1, 9, 0, tzinfo=UTC), fingerprint)}
+
+    def test_unread_it_says_what_it_always_said(self) -> None:
+        row = self.row(None)
+
+        self.assertEqual((row.state_label, row.state_tone), ("External", "healthy"))
+
+    def test_nothing_recorded_is_said_and_not_raised(self) -> None:
+        row = self.row({})
+
+        self.assertEqual(
+            (row.state_label, row.state_detail, row.state_tone),
+            ("External", "No download recorded; installed by hand", "info"),
+        )
+
+    def test_the_version_downloaded_is_the_one_held(self) -> None:
+        row = self.row(self.taken(self.row(None).fingerprint))
+
+        self.assertEqual((row.state_label, row.state_tone), ("External", "healthy"))
+        self.assertIn("Downloaded by admin", row.state_detail)
+        self.assertNotIn("installed by admin", row.state_detail)
+
+    def test_a_renewal_since_the_download_is_raised(self) -> None:
+        row = self.row(self.taken("0" * 64))
+
+        self.assertEqual(
+            (row.state_label, row.state_tone), ("New version not downloaded", "warning")
+        )
+        self.assertIn("Renewed since admin downloaded it", row.state_detail)
+        items = attention.from_certificates(self.registry(self.taken("0" * 64)), ())
+        self.assertEqual([(item.subject, item.severity) for item in items], [(DEVICE, "warning")])
 
 
 FINGERPRINT = "c" * 64

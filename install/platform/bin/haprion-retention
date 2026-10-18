@@ -280,8 +280,19 @@ at < statement_timestamp() - make_interval(days => ${LOGIN_ATTEMPT_KEEP_DAYS})
 SQL
 }
 
+#
+# Except each external certificate's newest download or export (0077): the
+# registry row reads from it which version was last taken out, and a renewal
+# nobody fetched for two years must not start to read as no download at all.
+#
 where_audit_old() {
-    echo "at < statement_timestamp() - make_interval(days => ${AUDIT_KEEP_DAYS})"
+    cat <<SQL
+at < statement_timestamp() - make_interval(days => ${AUDIT_KEEP_DAYS})
+   and not (action in ('certificate_export', 'certificate_download')
+            and id = (select max(newest.id) from audit_event newest
+                       where newest.action in ('certificate_export', 'certificate_download')
+                         and newest.detail->>'certificate' = audit_event.detail->>'certificate'))
+SQL
 }
 
 where_node_event_old() {

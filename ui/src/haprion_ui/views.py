@@ -619,6 +619,16 @@ def read_manager_certificates(request: Request, config: Config) -> db.ManagerCer
         return db.manager_certificates(connection)
 
 
+def read_certificate_takeouts(request: Request, config: Config) -> dict[str, db.TakenOut] | None:
+    """The newest download per external certificate (26-10-18); None in the demo,
+    which has no audit trail and keeps the rows it always had."""
+
+    if config.demo_fixture:
+        return None
+    with request.app.state.pool.connection() as connection:
+        return db.certificate_takeouts(connection)
+
+
 def client_address(request: Request) -> str:
     """The address to hold responsible for this request.
 
@@ -1933,6 +1943,7 @@ def build_router(config: Config) -> APIRouter:
         figures = metrics.HTTP_FIGURES
         servers: server_card.ServerCard | None = None
         server_set_by: dict[str, str] = {}
+        server_shared: dict[str, tuple[search_index.Sharer, ...]] = {}
         proxy: proxy_model.Proxy | None = None
         if detail.stored is not None:
             try:
@@ -1970,6 +1981,40 @@ def build_router(config: Config) -> APIRouter:
                         found = asked.get((target, state))
                         if found is not None and target not in server_set_by:
                             server_set_by[target] = f"Set by {found.actor} · {found.shown_at}"
+                #
+                # The same server in other objects (26-10-18): a drain here
+                # leaves them sending to it. From the search's rows, which the
+                # demo fixture builds in memory as the search page does.
+                #
+                if servers is not None and servers.rows:
+                    addresses = sorted({row.target.rsplit("/", 1)[1] for row in servers.rows})
+                    if config.demo_fixture:
+                        _, object_rows = read_source(request, config, OBJECTS_SOURCE)
+                        backend_rows = search_index.backend_rows(
+                            (
+                                entry
+                                for row in object_rows
+                                if row.cluster == cluster
+                                and row.outcome in ("done", "partial")
+                                and isinstance(row.result, Mapping)
+                                for entry in search_index.entries_for(
+                                    "objects", row.cluster, row.result
+                                )
+                                or []
+                            ),
+                            cluster,
+                        )
+                    else:
+                        with request.app.state.pool.connection() as connection:
+                            backend_rows = db.backend_rows(
+                                connection, cluster=cluster, addresses=addresses
+                            )
+                    shared = search_index.shared_servers(backend_rows, name, addresses)
+                    server_shared = {
+                        row.target: shared[row.target.rsplit("/", 1)[1]]
+                        for row in servers.rows
+                        if row.target.rsplit("/", 1)[1] in shared
+                    }
             if proxy is not None:
                 #
                 # One card per backend the object has now, each reading the
@@ -2115,6 +2160,7 @@ def build_router(config: Config) -> APIRouter:
                 "dns_moved": moved,
                 "servers": servers,
                 "server_set_by": server_set_by,
+                "server_shared": server_shared,
                 "servers_notice": SERVER_NOTICES.get(request.query_params.get("servers", "")),
                 "servers_busy": servers_busy,
                 "blocked_busy": blocked_busy,
@@ -2957,6 +3003,7 @@ def build_router(config: Config) -> APIRouter:
             manager=read_manager_certificates(request, config),
             status_readings=status_rows,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            taken_out=read_certificate_takeouts(request, config),
         )
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection, limit=100)
@@ -3231,7 +3278,26 @@ def build_router(config: Config) -> APIRouter:
         gate = _external_certificate_gate(request, certificate_id, csrf_token)
         if not isinstance(gate, tuple):
             return gate
-        _, row = gate
+        session, row = gate
+        #
+        # Recorded like the export with its key (26-10-18): a renewed
+        # certificate taken out without one still has its version taken out,
+        # and the registry row reads which version that was.
+        #
+        with request.app.state.pool.connection() as connection:
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="certificate_download",
+                cluster=None,
+                request_id=uuid4(),
+                detail={
+                    "certificate": certificate_id,
+                    "format": "zip",
+                    "fingerprint_sha256": row.fingerprint,
+                },
+            )
+            connection.commit()
         return _zip_response(
             _public_files(certificate_id, row.fullchain_pem or ""), f"{certificate_id}.zip"
         )
@@ -11747,6 +11813,7 @@ def _attention(request: Request, config: Config) -> attention.Attention:
         manager=read_manager_certificates(request, config),
         stale_after=stale_after,
         status_readings=status_rows,
+        taken_out=read_certificate_takeouts(request, config),
     )
     items: list[attention.Item] = []
     with request.app.state.pool.connection() as connection:

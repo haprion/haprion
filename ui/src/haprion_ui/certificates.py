@@ -30,7 +30,7 @@ from haprion.certificates import CERTIFICATE_OPENING
 from haprion_ui import certificate_receivers, metrics, sorting
 from haprion_ui.cluster_identity import accent_index
 from haprion_ui.dashboard import observation_label
-from haprion_ui.db import ClusterCertificates, ManagerCertificates
+from haprion_ui.db import ClusterCertificates, ManagerCertificates, TakenOut
 
 type Tone = Literal["healthy", "warning", "critical", "unknown", "info"]
 
@@ -878,6 +878,7 @@ def _registry_state(
     identifier: str,
     fingerprint: str,
     carriage: Mapping[str, NodeCarriage],
+    taken_out: Mapping[str, TakenOut] | None = None,
 ) -> tuple[str, str, Tone]:
     """What is true about this certificate's copies, said without overreaching.
 
@@ -939,7 +940,25 @@ def _registry_state(
         # External (B255): nowhere to publish by design. It is downloaded
         # from the row and installed by hand.
         #
-        return "External", "Downloaded and installed by hand", "healthy"
+        # Which version was last taken out says whether a renewal is still
+        # waiting for that (26-10-18). Downloaded, never installed: nothing
+        # here can see the device, so it never says installed. No event is
+        # no download *recorded* - one taken out before the public half was
+        # logged is not one nobody took - and is not raised.
+        #
+        if taken_out is None:
+            return "External", "Downloaded and installed by hand", "healthy"
+        last = taken_out.get(identifier)
+        if last is None:
+            return "External", "No download recorded; installed by hand", "info"
+        when = metrics.shown(last.at).strftime(metrics.TIMESTAMP)
+        if fingerprint and last.fingerprint != fingerprint:
+            return (
+                "New version not downloaded",
+                f"Renewed since {last.actor} downloaded it ({when}); install the new one by hand",
+                "warning",
+            )
+        return "External", f"Downloaded by {last.actor} ({when}); installed by hand", "healthy"
     if not clusters and not receivers:
         return "No targets", "Registered, but published nowhere", "warning"
 
@@ -1052,6 +1071,7 @@ def _registry_certificate(
     *,
     now: datetime,
     carriage: Mapping[str, NodeCarriage],
+    taken_out: Mapping[str, TakenOut] | None = None,
 ) -> RegistryCertificateView | None:
     entry = _mapping(value)
     identifier = _text(entry.get("id"), "")
@@ -1099,6 +1119,7 @@ def _registry_certificate(
         identifier=identifier,
         fingerprint=fingerprint,
         carriage=carriage,
+        taken_out=taken_out,
     )
     cluster_targets = tuple(target.name for target in targets if target.kind == "cluster")
     older_copy_clusters = tuple(
@@ -1237,6 +1258,7 @@ def _registry_view(
     status_readings: Iterable[Any],
     *,
     now: datetime,
+    taken_out: Mapping[str, TakenOut] | None = None,
 ) -> RegistryView | None:
     """The registry as one list, from the manager's own reading (B304).
 
@@ -1254,7 +1276,9 @@ def _registry_view(
     parsed: list[RegistryCertificateView] = []
     if isinstance(entries, list):
         for value in entries:
-            certificate = _registry_certificate(value, now=now, carriage=carriage)
+            certificate = _registry_certificate(
+                value, now=now, carriage=carriage, taken_out=taken_out
+            )
             if certificate is not None:
                 parsed.append(certificate)
 
@@ -1310,6 +1334,11 @@ def build_certificate_overview(
     # served with. None draws the clusters' listings and no registry.
     #
     manager: ManagerCertificates | None = None,
+    #
+    # The newest download per external certificate (26-10-18). None where the
+    # caller did not read it: those rows say what they always said.
+    #
+    taken_out: Mapping[str, TakenOut] | None = None,
 ) -> CertificateOverview:
     """Combine configured clusters and their newest cached certificate listing.
 
@@ -1327,7 +1356,7 @@ def build_certificate_overview(
     # The registry and the node status first: the cluster rows carry the
     # registry's columns, and their state is read from the same carriage.
     #
-    registry = _registry_view(manager, status_readings, now=now)
+    registry = _registry_view(manager, status_readings, now=now, taken_out=taken_out)
     carriage = _carriage(status_readings)
     targets = registry.targets if registry is not None else None
 

@@ -177,6 +177,9 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "certificate_export": lambda detail: (
         f"Exported the key of {_text(detail, 'certificate', 'a certificate')}"
     ),
+    "certificate_download": lambda detail: (
+        f"Downloaded {_text(detail, 'certificate', 'a certificate')} without its key"
+    ),
     "job_finished": lambda detail: f"Job {detail.get('job', '?')} ended",
     "job_requeued": lambda detail: f"Job {detail.get('job', '?')} was queued again",
     "job_abandoned": lambda detail: f"Job {detail.get('job', '?')} was given up",

@@ -424,6 +424,57 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(removable, {"old"})
             connection.rollback()
 
+    def test_retention_keeps_each_external_certificate_s_newest_download(self) -> None:
+        """26-10-18: the registry reads the version last taken out from that row."""
+
+        clause = self.retention_clause("where_audit_old", "AUDIT_KEEP_DAYS")
+        with self.connect() as connection, connection.cursor() as cursor:
+            ids = {}
+            for label, age, action, certificate in (
+                ("older-download", "900 days", "certificate_download", "bmc.example.com"),
+                ("newest-export", "800 days", "certificate_export", "bmc.example.com"),
+                ("only-download", "800 days", "certificate_download", "nas.example.com"),
+                ("old-login", "800 days", "login", None),
+            ):
+                cursor.execute(
+                    "insert into audit_event (at, actor, action, detail) "
+                    "values (now() - %s::interval, 'admin', %s, %s) returning id",
+                    (age, action, Jsonb({"certificate": certificate} if certificate else {})),
+                )
+                ids[_first(cursor)] = label
+            cursor.execute(f"select id from audit_event where {clause}")  # noqa: S608 - the script's own
+            removable = {ids[row[0]] for row in cursor.fetchall() if row[0] in ids}
+            self.assertEqual(removable, {"older-download", "old-login"})
+            connection.rollback()
+
+    def test_the_newest_download_of_each_external_certificate(self) -> None:
+        """26-10-18 (0077): read by the web, either kind of event, the newest winning."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            for actor, action, certificate, fingerprint in (
+                ("alice", "certificate_download", "bmc.example.com", "a" * 64),
+                ("bob", "certificate_export", "bmc.example.com", "b" * 64),
+                ("carol", "certificate_download", "nas.example.com", "c" * 64),
+                ("dave", "queue_job", "bmc.example.com", "d" * 64),
+            ):
+                cursor.execute(
+                    "insert into audit_event (actor, action, detail) values (%s, %s, %s)",
+                    (
+                        actor,
+                        action,
+                        Jsonb({"certificate": certificate, "fingerprint_sha256": fingerprint}),
+                    ),
+                )
+            connection.commit()
+        with psycopg.connect(f"{DSN} user={os.environ['HAPRION_UI_TEST_WEB_ROLE']}") as connection:
+            taken = db.certificate_takeouts(connection)
+
+        self.assertEqual(
+            {name: (row.actor, row.fingerprint) for name, row in taken.items()
+             if name in ("bmc.example.com", "nas.example.com")},
+            {"bmc.example.com": ("bob", "b" * 64), "nas.example.com": ("carol", "c" * 64)},
+        )  # fmt: skip
+
     def test_retention_keeps_what_a_profile_s_state_is_read_from(self) -> None:
         """A profile in effect for months must not read "Not applied" after a week.
 
@@ -4593,6 +4644,20 @@ class TheSearchIndex(unittest.TestCase):
         )
         self.assertEqual(self.search("198.51.100.11", role="reader").total, 0)
         self.assertEqual(self.search("api", role="reader").groups[0].hits[0].href, "/proxies")
+
+    def test_the_objects_that_name_a_server_in_one_cluster(self) -> None:
+        """26-10-18: the object page's *Also in*, read by the web role from the same rows."""
+
+        self.write("si-a", "objects", self.objects("si-a", "shop", "api"))
+        self.write("si-b", "objects", self.objects("si-b", "shop"))
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            rows = db.backend_rows(
+                connection, cluster="si-a", addresses=["198.51.100.10:8080", "192.0.2.1:80"]
+            )
+            nothing = db.backend_rows(connection, cluster="si-a", addresses=[])
+
+        self.assertEqual(rows, [("198.51.100.10:8080", "shop", "/proxies/si-a/shop")])
+        self.assertEqual(nothing, [])
 
     def test_an_unchanged_reading_leaves_its_rows_alone(self) -> None:
         """Review 2026-10-03, D5: the same rows are not deleted and inserted again."""

@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haprion_ui import demo, metrics
+from haprion_ui import demo, metrics, search_index
 from haprion_ui.db import Job, ProxyDraft
 from tests.test_cluster_traffic import measurement
 from tests.test_login import LoginTestCase, configuration
@@ -75,6 +75,39 @@ class OpeningAnObject(DraftReading):
         self.assertEqual(page.status_code, 200)
         self.assertIn("app.demo.example", page.text)
         self.assertIn("managed/proxies/public-web.yaml", page.text)
+
+    def test_the_demo_fixture_finds_the_same_server_in_memory(self) -> None:
+        """26-10-18: no database rows in demo mode; the search's builders make them."""
+
+        original = search_index.entries_for
+
+        def with_shop_on_the_same_server(
+            source: str, cluster: str, result: Any
+        ) -> list[search_index.Entry] | None:
+            found = original(source, cluster, result)
+            if source == "objects" and cluster == "edge-demo" and found is not None:
+                found.append(
+                    search_index.Entry(
+                        cluster="edge-demo",
+                        source="objects",
+                        kind="proxy",
+                        title="shop",
+                        label=search_index.BACKEND_LABEL,
+                        value="192.0.2.10:8080",
+                        href="/proxies/edge-demo/shop",
+                        admin_only=True,
+                    )
+                )
+            return found
+
+        with (
+            mock.patch.object(search_index, "entries_for", with_shop_on_the_same_server),
+            mock.patch("haprion_ui.db.backend_rows", side_effect=AssertionError("no database")),
+        ):
+            page = self.demo_client().get("/proxies/edge-demo/public-web")  # type: ignore[attr-defined]
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('Also in <a href="/proxies/edge-demo/shop#servers">shop</a>', page.text)
 
     def test_an_object_this_version_cannot_read_shows_the_refusal_and_the_file(self) -> None:
         """It is the one somebody has to open, so it must open."""

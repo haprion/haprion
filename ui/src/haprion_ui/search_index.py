@@ -150,7 +150,9 @@ def object_entries(cluster: str, result: Mapping[str, Any]) -> list[Entry]:
             name,
             f"/proxies/{quote(cluster, safe='')}/{quote(name, safe='')}",
             values,
-            admin_only=(("Backend", _text(server)) for server in _sequence(entry.get("servers"))),
+            admin_only=(
+                (BACKEND_LABEL, _text(server)) for server in _sequence(entry.get("servers"))
+            ),
         )
     return rows
 
@@ -280,6 +282,53 @@ def entries_for(source: str, cluster: str, result: Mapping[str, Any]) -> list[En
 
     build = BUILDERS.get(source)
     return None if build is None else build(cluster, result)
+
+
+#
+# Which other objects reach the same server (26-10-18): the object page's
+# server rows say so, because a drain or maintenance is one object's and the
+# same `host:port` in another object still takes traffic. The search's own
+# Backend rows answer it - the objects helper's servers, advanced config's
+# among them - so this is not a second reader of the documents. Only the same
+# `host:port` counts: another port on the same host, or another name for the
+# same address, is not the same server and is not guessed at.
+#
+BACKEND_LABEL = "Backend"
+
+
+@dataclass(frozen=True, slots=True)
+class Sharer:
+    title: str
+    href: str
+
+
+def backend_rows(entries: Iterable[Entry], cluster: str) -> list[tuple[str, str, str]]:
+    """(server, object, link) for each object's servers in one cluster, from built rows."""
+
+    return [
+        (entry.value, entry.title, entry.href)
+        for entry in entries
+        if entry.cluster == cluster
+        and entry.source == "objects"
+        and entry.kind == "proxy"
+        and entry.label == BACKEND_LABEL
+    ]
+
+
+def shared_servers(
+    rows: Iterable[tuple[str, str, str]], object_name: str, addresses: Iterable[str]
+) -> dict[str, tuple[Sharer, ...]]:
+    """Each of `addresses` that another object also names, with those objects by name."""
+
+    wanted = set(addresses)
+    found: dict[str, dict[str, Sharer]] = {}
+    for value, title, href in rows:
+        if value in wanted and title != object_name:
+            found.setdefault(value, {}).setdefault(title, Sharer(title, href))
+    return {
+        value: tuple(sorted(sharers.values(), key=lambda sharer: sharer.title.casefold()))
+        for value, sharers in found.items()
+    }
 
 
 #

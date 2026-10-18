@@ -1683,23 +1683,33 @@ or the NDES renewal - and keeps the mark; installing the renewed certificate on 
 device is yours.
 
 **Taking it out.** Tick the row and press *Export…* (an admin; the button wakes at one
-external row and no other):
+external row and no other). The page offers two zips, one click each:
 
-- *Certificate and chain*, *Certificate* and *Chain* download the public half as PEM. A device that takes one file wants the first; one that asks for the
-  certificate and the issuer separately, the other two.
-- *Export key*: the key alone as PEM (*Key, PEM* - for a device that takes
-  certificate and key as two files, Supermicro's BMC for one), or a PKCS#12 bundle of key
-  and chain under a password you type (8-128 characters). *PKCS#12, modern* is what
-  OpenSSL writes today: AES-256, PBKDF2, a SHA-256 MAC. *PKCS#12, compatible* is 3DES and
-  a SHA-1 MAC, for older Windows, Java and embedded readers - not OpenSSL's `-legacy`,
-  whose certificate part is 40-bit RC2. Type the certificate's name to confirm.
+- `<name>.zip` - the certificate, the chain, and both together, as PEM. A device that
+  takes one file wants the one with both; one that asks for the certificate and the
+  issuer separately, the other two.
+- `<name>.with-key.zip` - the same, and the private key as PEM (for a device that takes
+  certificate and key as two files, Supermicro's BMC for one) and as two PKCS#12 bundles
+  under a password drawn for this download, written beside them. *Modern* is what
+  OpenSSL writes today: AES-256, PBKDF2, a SHA-256 MAC. *Compatible* is 3DES and a SHA-1
+  MAC, for older Windows, Java and embedded readers - not OpenSSL's `-legacy`, whose
+  certificate part is 40-bit RC2.
+
+**After a renewal.** The row says which version was last taken out, by whom and when:
+*External* while that is the version the manager holds, *New version not downloaded*
+once it has been renewed since - also under *Needs attention*. Taken out is all it can
+say: nothing here sees the device, so installing it is still yours to check. A
+certificate taken out before downloads were recorded reads *No download recorded*, and
+is not raised.
 
 The key is read by `haprion-cert-export-helper`, root, over
 `/run/haprion/cert-export.sock`, which only the web account may connect to. It
 refuses every entry without the mark, writes nothing, and says in the journal what it
 exported for whom (`journalctl -u 'haprion-cert-export-helper@*'`); the web writes a
-`certificate_export` audit event with the certificate's fingerprint. Nothing keeps a
-copy, and the password is never stored or returned. Root at the terminal can ask the
+`certificate_export` audit event with the certificate's fingerprint, and a
+`certificate_download` event for the zip without the key. Nothing keeps a
+copy, and the password is never stored: it is drawn for the download and is only in
+the zip. Root at the terminal can ask the
 helper directly with the same request document.
 
 Not every device can take a key at all. HPE iLO makes its own key and asks for its CSR
@@ -3463,6 +3473,10 @@ better done elsewhere. The details are in the section linked.
   CA directly: for an internal name, the Microsoft CA's own web enrollment signs an
   uploaded CSR. Every other device takes an
   [external certificate](#external-certificates) with its key.
+- **A publish does not show its changes before it is made.** Publishing does not touch the
+  nodes: what the new version changed is read under *Versions* before it is deployed
+  ([Configuration and deployment](#configuration-and-deployment)). *Publish & deploy* on the
+  dashboard does both at once, without that look.
 - **The VIP is not moved from the interface.** Patching a pair is restarting the standby,
   then the node holding the VIP and letting it move, which needs nothing from the manager; a
   button that stopped keepalived on a node would be the first management action able to move

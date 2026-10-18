@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.machinery
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 BASE = Path(__file__).resolve().parents[1]
@@ -49,6 +51,45 @@ class TheToolchainIsPinned(unittest.TestCase):
         tool = RELEASE.engine_tool(BASE)
         self.assertEqual(tool.GO_VERSION, ENGINE.GO_VERSION)
         self.assertEqual(tool.CORAZA.sha256, ENGINE.CORAZA.sha256)
+
+    def test_a_relative_cache_is_made_absolute_before_go_sees_it(self) -> None:
+        # `--cache packages/x` stopped `go install`: GOPATH must be absolute.
+        class Stop(Exception):
+            pass
+
+        seen: list[Path] = []
+
+        def fetched(sources: Path, *_: str) -> Path:
+            seen.append(sources)
+            raise Stop
+
+        pin = SimpleNamespace(file="x", url="https://example.org/x", sha256="0" * 64)
+        previous = Path.cwd()
+        self.addCleanup(os.chdir, previous)
+        with tempfile.TemporaryDirectory() as directory:
+            tree = Path(directory) / "tree"
+            tree.mkdir()
+            git = [
+                "/usr/bin/git",
+                "-C",
+                str(tree),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.org",
+            ]
+            subprocess.run([*git, "init", "-q"], check=True)  # noqa: S603 - fixed arguments
+            subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "t"], check=True)  # noqa: S603
+            os.chdir(directory)
+            with (
+                unittest.mock.patch.object(
+                    RELEASE, "engine_tool", return_value=SimpleNamespace(CORAZA=pin, CRS=pin)
+                ),
+                unittest.mock.patch.object(RELEASE, "fetched", side_effect=fetched),
+                self.assertRaises(Stop),
+            ):
+                RELEASE.build(tree, Path("out"), Path("uv"), Path("cache"), "podman")
+        self.assertTrue(seen[0].is_absolute())
 
     def test_only_https_is_fetched(self) -> None:
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(RELEASE.BuildError):

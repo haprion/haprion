@@ -32,9 +32,7 @@ from haprion.cluster_status import (
 from tests.test_status_addresses import envelope, node_status
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
-READING = re.compile(
-    r"^def address_list\(path\):.*?(?=^def runtime_info\()", re.DOTALL | re.MULTILINE
-)
+READING = re.compile(r"^def address_list\(.*?(?=^def runtime_info\()", re.DOTALL | re.MULTILINE)
 FORWARD = 'action(type="omfwd" name="haprion-loki" target="192.0.2.21")\n'
 OTHER = 'action(type="omfwd" name="haprion-loki" target="192.0.2.22")\n'
 DIGEST = "a1" * 32

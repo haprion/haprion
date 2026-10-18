@@ -80,7 +80,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-def _digits(text, limit=18):
+def _digits(text: str, limit: int = 18) -> bool:
     """One to `limit` ASCII digits; `isdigit()` alone passes `²`, which `int()` refuses.
 
     The engine's `haprion.digits.is_digits`, which a node script cannot import.

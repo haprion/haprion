@@ -12,7 +12,7 @@ from typing import Any
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install/node/haprion-node-status"
 INSTALLER = Path(__file__).resolve().parents[1] / "install/04-node-prepare"
-READING = re.compile(r"^def read_installation\(\):.*?(?=^def run\()", re.DOTALL | re.MULTILINE)
+READING = re.compile(r"^def read_installation\(.*?(?=^def run\()", re.DOTALL | re.MULTILINE)
 NODE_SCRIPTS = (
     "haprion-pull-deploy",
     "haprion-cert-pull",

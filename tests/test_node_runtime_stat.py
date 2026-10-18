@@ -225,7 +225,7 @@ class ReadingAdminState(unittest.TestCase):
 
 
 UNAPPLIED_READER = re.compile(
-    r"^def read_server_state_unapplied\(\):.*?(?=^def read_resources\()", re.DOTALL | re.MULTILINE
+    r"^def read_server_state_unapplied\(.*?(?=^def read_resources\()", re.DOTALL | re.MULTILINE
 )
 
 
@@ -268,7 +268,7 @@ class ReadingUnappliedStates(unittest.TestCase):
 
 
 PACKAGE_READER = re.compile(
-    r"^PACKAGES = \{.*?^def read_packages\(\):.*?^    return found\n", re.DOTALL | re.MULTILINE
+    r"^PACKAGES = \{.*?^def read_packages\(.*?^    return found\n", re.DOTALL | re.MULTILINE
 )
 
 

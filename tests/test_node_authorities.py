@@ -22,7 +22,7 @@ from haprion.certificates import DELIMITER, bundle_fingerprint
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
 READER = re.compile(
-    r"^def bundle_fingerprint\(text\):.*?(?=^def certificate_valid)", re.DOTALL | re.MULTILINE
+    r"^def bundle_fingerprint\(.*?(?=^def certificate_valid)", re.DOTALL | re.MULTILINE
 )
 
 

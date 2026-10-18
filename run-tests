@@ -85,22 +85,12 @@ zizmor --pedantic "$base/.github/workflows"
 mypy
 #
 # The same scripts' types: mypy's `files` takes only .py, and each script
-# without one is its own `__main__`, so they are checked one at a time. Three
-# node scripts are not typed yet (270 findings, 26-10-18); the plan has them
-# as a pass of their own, and a name left here after it fails the gate.
+# without one is its own `__main__`, so they are checked one at a time. Until
+# 2026-10-18 none was, and 270 findings sat in them - one a request field that
+# crashed the health probe instead of being refused.
 #
-untyped_scripts="haprion-health-probe haprion-node-status haprion-server-state"
 for script in $python_scripts; do
-    case " $untyped_scripts " in
-        *" ${script##*/} "*) continue ;;
-    esac
     mypy --no-incremental "$script"
-done
-for name in $untyped_scripts; do
-    if mypy --no-incremental "$base/install/node/$name" >/dev/null 2>&1; then
-        echo "run-tests: $name is typed now; take it off untyped_scripts" >&2
-        exit 1
-    fi
 done
 (cd "$base/ui" && "$(dirname -- "$HAPRION_UI_PYTHON")/mypy")
 python3 "$base/contract-tests/validate_contracts.py"

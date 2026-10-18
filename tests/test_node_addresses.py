@@ -23,9 +23,7 @@ from pathlib import Path
 from typing import Any
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
-READING = re.compile(
-    r"^def address_list\(path\):.*?(?=^def runtime_info\()", re.DOTALL | re.MULTILINE
-)
+READING = re.compile(r"^def address_list\(.*?(?=^def runtime_info\()", re.DOTALL | re.MULTILINE)
 
 LIST = "192.0.2.10/24 dev eth0  # vip main\n"
 OTHER = "198.51.100.10/24 dev eth0  # vip main\n"

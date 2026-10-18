@@ -20,7 +20,7 @@ from haprion import node_resources
 from haprion.cli import status
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-node-status"
-READER = re.compile(r"^def read_resources\(\):.*?(?=^#\n# A directive)", re.DOTALL | re.MULTILINE)
+READER = re.compile(r"^def read_resources\(.*?(?=^#\n# A directive)", re.DOTALL | re.MULTILINE)
 
 STAT = "cpu  1000 10 200 8000 300 0 40 50 7 0\ncpu0 1000 10 200 8000 300 0 40 50 7 0\nintr 1 2 3\n"
 MEMINFO = "MemTotal:         910336 kB\nMemFree:           39936 kB\nMemAvailable:     589824 kB\n"

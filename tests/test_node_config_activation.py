@@ -58,7 +58,7 @@ exit 0
 CHOWN_STUB = "#!/bin/sh\nexit 0\n"
 
 READER = re.compile(
-    r"^def running_release_file\(\):.*?(?=^def leaf_fingerprint)", re.DOTALL | re.MULTILINE
+    r"^def running_release_file\(.*?(?=^def leaf_fingerprint)", re.DOTALL | re.MULTILINE
 )
 
 

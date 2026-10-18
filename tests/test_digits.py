@@ -33,7 +33,7 @@ EXPLAINED = ROOT / "src" / "haprion" / "digits.py"
 # the engine, and are held to the same line and the same limit.
 #
 CHECK = "return 0 < len(text) <= limit and text.isascii() and text.isdigit()"
-NODE_COPY = f"def _digits(text, limit={MAX_DIGITS}):"
+NODE_COPY = f"def _digits(text: str, limit: int = {MAX_DIGITS}) -> bool:"
 
 
 def _sources() -> list[Path]:

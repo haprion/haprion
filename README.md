@@ -72,6 +72,41 @@ installation's dashboard walks through the first cluster - its name and address,
 first deploy. [Installing](docs/install.md) covers
 the installation, and the [user manual](docs/user-manual.md) is the reference for everything else.
 
+The packages come from the project's signed apt repository. Add it on the manager and on each node:
+
+On **Ubuntu 26.04**:
+
+```bash
+sudo curl -fsSLo /usr/share/keyrings/haprion-archive-keyring.asc \
+  https://haprion.github.io/haprion/haprion-archive-keyring.asc
+sudo tee /etc/apt/sources.list.d/haprion.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://haprion.github.io/haprion/
+Suites: ubuntu26.04
+Components: main
+Signed-By: /usr/share/keyrings/haprion-archive-keyring.asc
+EOF
+sudo apt update
+```
+
+On **Debian 13**:
+
+```bash
+sudo curl -fsSLo /usr/share/keyrings/haprion-archive-keyring.asc \
+  https://haprion.github.io/haprion/haprion-archive-keyring.asc
+sudo tee /etc/apt/sources.list.d/haprion.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://haprion.github.io/haprion/
+Suites: deb13
+Components: main
+Signed-By: /usr/share/keyrings/haprion-archive-keyring.asc
+EOF
+sudo apt update
+```
+
+Then `sudo apt install haprion-ui` and `sudo haprion-setup` on the manager, and
+`sudo apt install haprion-node` on each node.
+
 ## What it does
 
 **Proxies and clusters**

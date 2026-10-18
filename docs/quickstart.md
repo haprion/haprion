@@ -17,7 +17,39 @@ something fails.
 - A DNS name for the manager that resolves to it, and SSH from the manager to the nodes.
 
 The packages come from the project's apt repository. On the manager and on each node, add its key
-and source as [Installing](install.md#the-packages) shows - two commands - and `sudo apt update`.
+and source (`sudo apt install curl` first if the machine has no curl):
+
+On **Ubuntu 26.04**:
+
+```bash
+sudo curl -fsSLo /usr/share/keyrings/haprion-archive-keyring.asc \
+  https://haprion.github.io/haprion/haprion-archive-keyring.asc
+sudo tee /etc/apt/sources.list.d/haprion.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://haprion.github.io/haprion/
+Suites: ubuntu26.04
+Components: main
+Signed-By: /usr/share/keyrings/haprion-archive-keyring.asc
+EOF
+sudo apt update
+```
+
+On **Debian 13**:
+
+```bash
+sudo curl -fsSLo /usr/share/keyrings/haprion-archive-keyring.asc \
+  https://haprion.github.io/haprion/haprion-archive-keyring.asc
+sudo tee /etc/apt/sources.list.d/haprion.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://haprion.github.io/haprion/
+Suites: deb13
+Components: main
+Signed-By: /usr/share/keyrings/haprion-archive-keyring.asc
+EOF
+sudo apt update
+```
+
+[Installing](install.md#the-packages) has the key's fingerprint and how apt trusts it.
 (The same packages are files in each [release](https://github.com/haprion/haprion/releases/latest)
 for a machine that cannot reach the repository.)
 

@@ -50,8 +50,10 @@ but which networks can reach it at all is decided by the firewall in front of it
 
 Haprion is installed with apt from the project's repository, `https://haprion.github.io/haprion/`,
 which holds every package for Debian 13 (`deb13`) and Ubuntu 26.04 (`ubuntu26.04`), amd64. Add it
-once on the manager and on each node - the key first, then the source (`deb13` in place of
-`ubuntu26.04` on Debian; `sudo apt install curl` if the machine has no curl):
+once on the manager and on each node - the key first, then the source (`sudo apt install curl`
+if the machine has no curl).
+
+On **Ubuntu 26.04**:
 
 ```bash
 sudo curl -fsSLo /usr/share/keyrings/haprion-archive-keyring.asc \
@@ -60,6 +62,21 @@ sudo tee /etc/apt/sources.list.d/haprion.sources >/dev/null <<'EOF'
 Types: deb
 URIs: https://haprion.github.io/haprion/
 Suites: ubuntu26.04
+Components: main
+Signed-By: /usr/share/keyrings/haprion-archive-keyring.asc
+EOF
+sudo apt update
+```
+
+On **Debian 13**:
+
+```bash
+sudo curl -fsSLo /usr/share/keyrings/haprion-archive-keyring.asc \
+  https://haprion.github.io/haprion/haprion-archive-keyring.asc
+sudo tee /etc/apt/sources.list.d/haprion.sources >/dev/null <<'EOF'
+Types: deb
+URIs: https://haprion.github.io/haprion/
+Suites: deb13
 Components: main
 Signed-By: /usr/share/keyrings/haprion-archive-keyring.asc
 EOF

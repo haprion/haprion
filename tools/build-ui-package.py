@@ -124,7 +124,11 @@ for cache in Path(sys.argv[1]).glob("migration/lib/*.dist-info/uv_cache.json"):
 PY
 "$R/venv/bin/python" -B -c 'import haprion_ui.app, haprion.cluster_status, haprion.inventory'
 PYTHONPATH="$R/migration/lib" "$R/venv/bin/python" -B -c 'import alembic.config, sqlalchemy, psycopg'
+# The installed packages are copied from the mounted uv cache with the modes
+# the operator's umask gave them there, and uv leaves its .lock files 0666:
+# the archive's modes are set here, not inherited (26-10-18).
 tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
+    --mode=u+rw,go=rX \
     --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
     -cf /out/release.tar -C / "${R#/}"
 """

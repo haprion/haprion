@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,6 +61,30 @@ class TheBuild(unittest.TestCase):
         # The import proof writes no bytecode after the cleanup.
         self.assertIn('venv/bin/python" -B -c', build)
         self.assertIn('--sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0', build)
+        # Modes set, not taken from the cache the operator's umask made.
+        self.assertIn("--mode=u+rw,go=rX", build)
+
+    def test_the_archive_modes_are_set_whatever_the_files_came_with(self) -> None:
+        # What the uv cache and uv itself leave: 0664 under umask 002, 0666 locks.
+        given = {"cached.py": 0o664, ".lock": 0o666, "private": 0o600, "tool": 0o775}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tree").mkdir(mode=0o700)
+            for name, mode in given.items():
+                (root / "tree" / name).write_text("")
+                os.chmod(root / "tree" / name, mode)
+            subprocess.run(  # noqa: S603 - fixed arguments
+                ["/usr/bin/tar", "--mode=u+rw,go=rX", "-cf", str(root / "a.tar"),
+                 "-C", str(root), "tree"],
+                check=True,
+            )  # fmt: skip
+            with tarfile.open(root / "a.tar") as archive:
+                modes = {member.name: member.mode for member in archive.getmembers()}
+        self.assertEqual(
+            modes,
+            {"tree": 0o755, "tree/cached.py": 0o644, "tree/.lock": 0o644,
+             "tree/private": 0o644, "tree/tool": 0o755},
+        )  # fmt: skip
 
     def test_the_migration_bundle_travels_with_the_release(self) -> None:
         self.assertIn('cp /src/ui/alembic.ini "$R/migration/alembic.ini"', TOOL.BUILD)

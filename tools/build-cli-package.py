@@ -211,6 +211,9 @@ def build_wheel(source: Path, commit: str, epoch: int, uv: Path, work: Path) -> 
         cwd=tree,
         check=True,
         capture_output=True,
+        # setuptools copies each file anew, so the wheel's modes are the
+        # umask's: 002 and 022 gave two digests (26-10-18).
+        umask=0o022,
         env={
             "PATH": "/usr/bin:/bin",
             "SOURCE_DATE_EPOCH": str(epoch),

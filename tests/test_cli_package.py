@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -175,6 +177,27 @@ class TheOperatorsRules(unittest.TestCase):
         # rules() refuses any line that is not `%sudo ... <helper> ""`, so no
         # rule can reach %haprion, which holds the worker, or an account.
         self.assertEqual(len(rules()), 15)
+
+
+class TheWheel(unittest.TestCase):
+    def test_its_modes_are_the_builds_not_the_operators_umask(self) -> None:
+        # v0.9.1: the wheel built under umask 002 differed from CI's by its
+        # group-write bits alone. RECORD is written 0664 whatever the umask.
+        uv = shutil.which("uv")
+        self.assertIsNotNone(uv, "uv must be on PATH")
+        assert uv is not None  # noqa: S101 - narrowed for the type checker
+        previous = os.umask(0o002)
+        self.addCleanup(os.umask, previous)
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = TOOL.build_wheel(BASE, "HEAD", 0, Path(uv), Path(directory))
+            with zipfile.ZipFile(wheel) as archive:
+                writable = [
+                    entry.filename
+                    for entry in archive.infolist()
+                    if entry.external_attr >> 16 & 0o022
+                    and not entry.filename.endswith(".dist-info/RECORD")
+                ]
+        self.assertEqual(writable, [])
 
 
 if __name__ == "__main__":

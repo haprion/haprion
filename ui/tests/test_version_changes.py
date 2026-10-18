@@ -134,7 +134,7 @@ class ThePage(LoginTestCase):
         response, _ = self.page("/history")
         self.assertIn(
             f'<a class="secondary-button" href="/history/alpha/versions/{1:040d}" '
-            'data-version-changes>Diff</a><form method="post" action="/operations">',
+            'data-version-changes>Diff</a><form method="post" action="/operations" ',
             response.text,
         )
 

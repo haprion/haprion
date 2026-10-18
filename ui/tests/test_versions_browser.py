@@ -124,3 +124,74 @@ class VersionPagesInABrowser(LoginTestCase):
             page.click(f"[data-version-page-{button}]")
             with self.subTest(after=button):
                 self.assertAlmostEqual(top(), first, delta=2)
+
+
+class PublishingAnEarlierVersionAsksFirst(LoginTestCase):
+    """26-10-18: one wrong click on a row published an old version."""
+
+    playwright: ClassVar[Any]
+    browser: ClassVar[Any]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.playwright = sync_playwright().start()
+        cls.browser = cls.playwright.chromium.launch()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.browser.close()
+        cls.playwright.stop()
+
+    def page(self) -> Any:
+        with mock.patch(
+            "haprion_ui.db.cluster_histories",
+            return_value=[reading(versions=VERSIONS, published=20)],
+        ):
+            client = self.client(
+                replace(configuration(), clusters=("alpha",), management_writes=True)
+            )
+            self.sign_in(client)
+            html = client.get("/history").text
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.set_content(html)
+        page.add_script_tag(path=str(STATIC_DIRECTORY / "versions.js"))
+        page.evaluate("document.dispatchEvent(new Event('haprion:redrawn'))")
+        #
+        # What reaches the server: a submit nothing held back. Kept here, not
+        # sent - the page has no server behind it.
+        #
+        page.evaluate(
+            "window.sent = []; window.addEventListener('submit', (event) => {"
+            " if (!event.defaultPrevented) window.sent.push("
+            " event.target.querySelector('[name=version]').value); event.preventDefault(); })"
+        )
+        return page
+
+    def row_button(self, page: Any, number: int) -> Any:
+        return page.locator(f"form:has(input[name=version][value='{number}']) button[type=submit]")
+
+    def test_an_older_version_asks_and_cancel_sends_nothing(self) -> None:
+        page = self.page()
+        self.row_button(page, 18).click()
+
+        dialog = page.locator("#version-confirm")
+        self.assertTrue(dialog.is_visible())
+        self.assertIn("18", page.inner_text("[data-confirm-title]"))
+        self.assertEqual(
+            page.inner_text("[data-confirm-text]"), "It is 2 versions older than the current one."
+        )
+        page.click("[data-confirm-cancel]")
+        self.assertFalse(dialog.is_visible())
+        self.assertEqual(page.evaluate("window.sent"), [])
+
+    def test_confirming_sends_that_version(self) -> None:
+        page = self.page()
+        self.row_button(page, 23).click()
+        self.assertEqual(
+            page.inner_text("[data-confirm-text]"), "It is 3 versions newer than the current one."
+        )
+
+        page.click("[data-confirm-go]")
+
+        self.assertEqual(page.evaluate("window.sent"), ["23"])

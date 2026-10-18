@@ -103,3 +103,39 @@
   window.addEventListener("DOMContentLoaded", wireAll);
   document.addEventListener("haprion:redrawn", wireAll);
 })();
+
+(() => {
+  //
+  // Publishing an earlier version asks first (26-10-18): the button sits on
+  // every row, and one wrong click published an old version. The form says
+  // what to ask; without script it posts as it always did.
+  //
+  let pending = null;
+  document.addEventListener("submit", (event) => {
+    const form = event.target.closest("form[data-confirm-version]");
+    const dialog = document.getElementById("version-confirm");
+    if (!form || !dialog || typeof dialog.showModal !== "function") return;
+    if (form.dataset.confirmed === "yes") return;
+    event.preventDefault();
+    pending = form;
+    dialog.querySelector("[data-confirm-title]").textContent = form.dataset.confirmVersion;
+    dialog.querySelector("[data-confirm-text]").textContent = form.dataset.confirmDetail;
+    dialog.querySelector("[data-confirm-go]").textContent = form.dataset.confirmButton;
+    dialog.showModal();
+    dialog.querySelector("[data-confirm-cancel]").focus();
+  });
+  document.addEventListener("click", (event) => {
+    const dialog = document.getElementById("version-confirm");
+    if (!dialog) return;
+    if (event.target.closest("[data-confirm-cancel]")) {
+      pending = null;
+      dialog.close();
+    } else if (event.target.closest("[data-confirm-go]") && pending) {
+      const form = pending;
+      pending = null;
+      dialog.close();
+      form.dataset.confirmed = "yes";
+      form.requestSubmit();
+    }
+  });
+})();

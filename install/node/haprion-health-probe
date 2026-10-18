@@ -39,9 +39,10 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import IO, Any, NoReturn
 
 
-def _digits(text, limit=18):
+def _digits(text: str, limit: int = 18) -> bool:
     """One to `limit` ASCII digits; `isdigit()` alone passes `²`, which `int()` refuses.
 
     The engine's `haprion.digits.is_digits`, which a node script cannot import.
@@ -87,11 +88,18 @@ class Refused(Exception):
     """The request was not something this is willing to act on."""
 
 
-def refuse(message):
+def refuse(message: str) -> NoReturn:
     raise Refused(message)
 
 
-def text(payload, key, pattern, *, required=True, default=""):
+def text(
+    payload: dict[str, Any],
+    key: str,
+    pattern: re.Pattern[str],
+    *,
+    required: bool = True,
+    default: str = "",
+) -> str:
     value = payload.get(key, default)
     if value is None or value == "":
         if required:
@@ -102,14 +110,14 @@ def text(payload, key, pattern, *, required=True, default=""):
     return value
 
 
-def port_of(payload, key):
+def port_of(payload: dict[str, Any], key: str) -> int:
     value = payload.get(key)
     if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535:
         refuse(f"{key} must be a port number")
     return value
 
 
-def flag(payload, key):
+def flag(payload: dict[str, Any], key: str) -> bool:
     value = payload.get(key, False)
     if not isinstance(value, bool):
         refuse(f"{key} must be true or false")
@@ -128,7 +136,7 @@ DNS_TYPES = {"A": 1, "NS": 2, "SOA": 6, "MX": 15, "TXT": 16, "AAAA": 28}
 RCODES = {0: "NOERROR", 1: "FORMERR", 2: "SERVFAIL", 3: "NXDOMAIN", 4: "NOTIMP", 5: "REFUSED"}
 
 
-def dns_question(entry):
+def dns_question(entry: dict[str, Any]) -> dict[str, str]:
     """The question and the address it is asked of, refused unless each is exactly that."""
 
     name = entry.get("query_name")
@@ -138,36 +146,46 @@ def dns_question(entry):
     if kind not in DNS_TYPES:
         refuse(f"a target's query_type must be one of: {', '.join(DNS_TYPES)}")
     address = entry.get("address")
+    #
+    # A string first: `ip_address` takes a number too, and a number reached
+    # `":" in` below as a traceback rather than a refusal (26-10-18).
+    #
     try:
+        if not isinstance(address, str):
+            raise ValueError(address)
         ipaddress.ip_address(address)
-    except (TypeError, ValueError):
+    except ValueError:
         refuse("a dns target's address must be an IP address")
     return {"query_name": name, "query_type": kind, "address": address}
 
 
-def server_host(entry):
+def server_host(entry: dict[str, Any]) -> str:
     """A server's name, or its address - IPv6 too, which the name rule does not take."""
 
     host = entry.get("host")
+    if not isinstance(host, str):
+        return text(entry, "host", HOST)
     try:
         ipaddress.ip_address(host)
-    except (TypeError, ValueError):
+    except ValueError:
         return text(entry, "host", HOST)
     return host
 
 
-def udp_receiver(entry):
+def udp_receiver(entry: dict[str, Any]) -> str:
     """A udp check's receiver: an address, as keepalived and IPVS take it (Fas 19b B5)."""
 
     host = entry.get("host")
     try:
+        if not isinstance(host, str):
+            raise ValueError(host)
         ipaddress.ip_address(host)
-    except (TypeError, ValueError):
+    except ValueError:
         refuse("a udp target's host must be an IP address")
     return host
 
 
-def read_request(stream):
+def read_request(stream: IO[bytes]) -> dict[str, Any]:
     raw = stream.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
         refuse("the request is too large")
@@ -216,7 +234,7 @@ def read_request(stream):
         except ValueError:
             refuse("source must be an IP address")
 
-    def min_version_of(entry):
+    def min_version_of(entry: dict[str, Any]) -> str:
         """Which floor this target asks for, refusing anything not on the list.
 
         Absent is the default rather than an error: a manager older than this
@@ -227,7 +245,7 @@ def read_request(stream):
         asked = entry.get("min_version")
         if asked is None:
             return DEFAULT_MIN_VERSION
-        if asked not in MIN_VERSIONS:
+        if not isinstance(asked, str) or asked not in MIN_VERSIONS:
             refuse(f"a target's min_version must be one of: {', '.join(MIN_VERSIONS)}")
         return asked
 
@@ -251,7 +269,7 @@ def read_request(stream):
         ):
             refuse(f"the authority {name} is not a certificate bundle")
 
-    read = []
+    read: list[dict[str, Any]] = []
     for entry in targets:
         if not isinstance(entry, dict):
             refuse("a target is not an object")
@@ -289,7 +307,7 @@ ADDRESS_ARGUMENTS = ("-4", "-o", "addr", "show")
 ADDRESS_LINE = re.compile(r"\binet\s+([0-9.]+)/")
 
 
-def local_addresses():
+def local_addresses() -> set[str] | None:
     """Every IPv4 address this node carries right now, secondaries included.
 
     Empty when `ip` cannot be run at all. An empty set would make every source
@@ -334,7 +352,7 @@ MIN_VERSIONS = {
 DEFAULT_MIN_VERSION = "TLSv1.2"
 
 
-def holds(source, addresses):
+def holds(source: str | None, addresses: set[str] | None) -> bool:
     """Whether this node can answer for an object leaving from `source`.
 
     No source is every node's question. A source this node carries is its
@@ -348,7 +366,7 @@ def holds(source, addresses):
     return source in addresses
 
 
-def connect(target, timeout, source):
+def connect(target: dict[str, Any], timeout: float, source: str | None) -> socket.socket:
     """One connection, and the reason it failed if it did."""
 
     #
@@ -411,7 +429,9 @@ def connect(target, timeout, source):
     return context.wrap_socket(sock)
 
 
-def http_status(stream, target, timeout, deadline):
+def http_status(
+    stream: socket.socket, target: dict[str, Any], timeout: float, deadline: float
+) -> int | None:
     """The status line of a GET, and nothing else that came back.
 
     The body is not read and never reported. This runs on a proxy node with a
@@ -445,13 +465,13 @@ def http_status(stream, target, timeout, deadline):
         if not chunk:
             break
         line += chunk
-    parts = line.split(b"\r\n", 1)[0].split(b" ")
+    parts = line.split(b"\r\n", 1)[0].decode("latin-1").split(" ")
     if len(parts) < 2 or not _digits(parts[1]):
         return None
     return int(parts[1])
 
 
-def dns_ask(target, timeout, source):
+def dns_ask(target: dict[str, Any], timeout: float, source: str | None) -> tuple[int, str | None]:
     """One question, as dnsdist's health check asks it, and the answer's code.
 
     dnsdist 2.1 (`dnsdist-healthchecks.cc`): a query with RD set and no EDNS,
@@ -491,7 +511,7 @@ def dns_ask(target, timeout, source):
     return rcode, None
 
 
-def udp_refused(target, timeout, source):
+def udp_refused(target: dict[str, Any], timeout: float, source: str | None) -> str | None:
     """Whether the receiver's host says nothing listens there, as keepalived's `UDP_CHECK` asks.
 
     One empty datagram from this node's own address, and then a wait for the
@@ -523,7 +543,7 @@ def udp_refused(target, timeout, source):
         sock.close()
 
 
-def probe(target, timeout_ms, source):
+def probe(target: dict[str, Any], timeout_ms: int, source: str | None) -> dict[str, Any]:
     timeout = timeout_ms / 1000
     started = time.monotonic()
     #
@@ -531,7 +551,7 @@ def probe(target, timeout_ms, source):
     # the most one target may take, whatever it does (review 2026-09-28).
     #
     deadline = started + 3 * timeout
-    result = {
+    result: dict[str, Any] = {
         "host": target["host"],
         "port": target["port"],
         "ok": False,
@@ -539,7 +559,7 @@ def probe(target, timeout_ms, source):
         "error": None,
         "ms": 0,
     }
-    stream = None
+    stream: socket.socket | None = None
     try:
         if target["type"] == "udp":
             problem = udp_refused(target, timeout, source)
@@ -584,7 +604,9 @@ def probe(target, timeout_ms, source):
     return result
 
 
-def main(argv=None, stdin=None, stdout=None):
+def main(
+    argv: list[str] | None = None, stdin: IO[bytes] | None = None, stdout: IO[str] | None = None
+) -> int:
     argv = sys.argv[1:] if argv is None else argv
     stdin = stdin or sys.stdin.buffer
     stdout = stdout or sys.stdout
@@ -623,7 +645,7 @@ def main(argv=None, stdin=None, stdout=None):
     # answers in about the time of its slowest target, three timeouts at most.
     # The results keep the request's order.
     #
-    results = []
+    results: list[dict[str, Any]] = []
     if source_held and request["targets"]:
         with ThreadPoolExecutor(max_workers=len(request["targets"])) as pool:
             results = list(

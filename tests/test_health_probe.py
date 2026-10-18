@@ -320,6 +320,17 @@ class WhatTheProbeRefuses(unittest.TestCase):
     def test_something_that_is_not_a_request(self) -> None:
         self.assertIn("not an object", self.refusal(["targets"]))
 
+    def test_a_host_or_address_that_is_a_number_is_refused_not_a_traceback(self) -> None:
+        # `ip_address` takes an int; a number then met `":" in` and crashed (26-10-18).
+        for entry in (
+            {"type": "tcp", "host": 2130706433, "port": 80},
+            {"type": "udp", "host": 2130706433, "port": 514},
+            {"type": "dns", "host": "127.0.0.1", "port": 53, "address": 2130706433,
+             "query_name": "example.com", "query_type": "A"},
+        ):  # fmt: skip
+            with self.subTest(entry["type"]):
+                self.refusal({"schema_version": 1, "targets": [entry]})
+
     def test_a_host_with_a_space_in_it(self) -> None:
         self.assertIn(
             "host",

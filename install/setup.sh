@@ -81,12 +81,25 @@ setup_check_database() {
 # The name the interface answers to must lead back to this machine: step 5
 # proves HTTPS by asking that name, and a browser will ask it too.
 #
+#
+# A name that resolves can still be one only this machine knows: a short name
+# from /etc/hosts' 127.0.1.1 line passes the lookup, and the certificate and the
+# address the nodes resolve are then made for it (26-10-18). It may work on a
+# network whose DNS adds the domain, so it is a note, not a problem.
+#
 setup_check_server_name() {
-    local name="$1"
-    if ! getent ahosts "$name" >/dev/null 2>&1; then
+    local name="$1" addresses
+    if ! addresses="$(getent ahosts "$name" 2>/dev/null)"; then
         setup_problem "the name ${name} does not resolve to an address" \
             "it is the name the web interface answers to, taken from this machine's own name (hostname -f)" \
             "add it to DNS or to /etc/hosts, or name another in an answers file: SERVER_NAME=<name>"
+        return
+    fi
+    local advice="its certificate is made for that name, and the nodes look it up. To use another: SERVER_NAME=<name> in a file given with haprion-setup --answers <file>"
+    if [[ "$name" != *.* ]]; then
+        setup_note "the web interface will answer to ${name}, a name without a domain; ${advice}"
+    elif ! awk '{ print $1 }' <<<"$addresses" | grep -qvE '^(127\.|::1$)'; then
+        setup_note "the name ${name} resolves only to this machine's loopback address; other machines cannot reach the web interface at it. ${advice^}"
     fi
 }
 
@@ -268,14 +281,14 @@ in /usr/bin.
 
 DONE
     if [[ "$accounts" =~ ^[1-9][0-9]*$ ]]; then
-        echo "Sign in, and create the first cluster under Settings - Create cluster."
+        echo "Sign in: the Dashboard sets up the first cluster."
     else
         cat <<'DONE'
 There is no account to sign in with yet. Make the first administrator:
 
     sudo haprion-user init-admin
 
-Then sign in, and create the first cluster under Settings - Create cluster.
+Then sign in: the Dashboard sets up the first cluster.
 DONE
     fi
 }

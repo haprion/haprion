@@ -548,6 +548,39 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
         self.assertIn("the name mgr.invalid does not resolve", done.stdout)
         self.assertIn("SERVER_NAME=<name>", done.stdout)
 
+    def server_name(self, name: str, addresses: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            stub = Path(raw) / "getent"
+            stub.write_text(f"#!/bin/sh\nprintf '%s' '{addresses}'\n")
+            stub.chmod(0o755)
+            return bash(
+                STRICT + 'PATH="$3:$PATH"; setup_check_server_name "$2"; setup_report_problems; '
+                'printf "%s\\n" "${SETUP_NOTES[@]}"',
+                str(SETUP),
+                name,
+                raw,
+            )
+
+    def test_a_name_without_a_domain_is_a_note_not_a_problem(self) -> None:
+        done = self.server_name("mgr", "127.0.1.1       STREAM mgr\n")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("will answer to mgr, a name without a domain", done.stdout)
+        self.assertIn("haprion-setup --answers <file>", done.stdout)
+
+    def test_a_name_only_on_loopback_is_a_note(self) -> None:
+        done = self.server_name(
+            "mgr.example.com", "127.0.1.1       STREAM mgr.example.com\n::1 STREAM\n"
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("resolves only to this machine's loopback address", done.stdout)
+        self.assertIn("Its certificate is made for that name", done.stdout)
+
+    def test_a_name_with_another_address_says_nothing(self) -> None:
+        done = self.server_name(
+            "mgr.example.com", "127.0.1.1 STREAM mgr.example.com\n192.0.2.10 STREAM\n"
+        )
+        self.assertEqual((done.returncode, done.stdout), (0, "\n"))
+
     def test_not_root_changes_nothing_and_says_how(self) -> None:
         if os.geteuid() == 0:
             self.skipTest("the check is for an account that is not root")
@@ -573,7 +606,7 @@ class TheFirstAccountComesLast(unittest.TestCase):
     def test_with_an_account_the_closing_words_only_say_sign_in(self) -> None:
         shown = self.closing_words("1")
         self.assertIn("https://mgr.example.com/", shown)
-        self.assertIn("Sign in, and create the first cluster", shown)
+        self.assertIn("Sign in: the Dashboard sets up the first cluster.", shown)
         self.assertNotIn("init-admin", shown)
 
     def test_without_an_account_or_a_count_they_say_how_to_make_one(self) -> None:

@@ -71,7 +71,7 @@ if [[ -z "$release_id" ]]; then
         1) release_id="${unpacked[0]}" ;;
         0) setup_problem "the web interface's release is not on this machine" \
                "the haprion-ui package unpacks it under ${releases}" \
-               "install the package: apt install ./haprion-ui_<version>_amd64.deb" ;;
+               "install the package: apt install haprion-ui" ;;
         *) setup_problem "${#unpacked[@]} releases of the web interface are unpacked and none is active" \
                "haprion-setup cannot tell which one this installation should run" \
                "name it: haprion-setup --release <one of: ${unpacked[*]}>" ;;
@@ -85,7 +85,7 @@ fi
 [[ -x /opt/haprion/current/bin/haprion-cluster-config ]] \
     || setup_problem "the management engine is not installed" \
            "every step after the first reads the configuration through it" \
-           "install the package: apt install ./haprion-cli_<version>_all.deb"
+           "install the package: apt install haprion-cli"
 
 setup_check_distribution
 setup_check_commands

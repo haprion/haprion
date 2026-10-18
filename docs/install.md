@@ -115,7 +115,8 @@ unless you add it): an update is a step you choose the moment for.
 Without an answers file the installation uses its defaults: the fixed accounts, the places under
 `/srv/haprion` and `/srv/certdist`, a local PostgreSQL database, this machine's own name
 (`hostname -f`) for the web interface, and no cluster. Clusters and their nodes are created in the
-interface, under *Settings* → *Nodes & clusters* → *Create cluster*.
+interface: the first by the Dashboard's *Set up your first cluster*, more under *Settings* →
+*Nodes & clusters* → *Create cluster*.
 
 To choose differently, copy the example from the source tree's `install/` directory and keep the
 lines you change:

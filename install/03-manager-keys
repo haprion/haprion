@@ -85,8 +85,8 @@ pub() { cut -d' ' -f1,2 < "${KEY_DIR}/$1.pub"; }
 # none of this: the manager hands the same keys over.
 #
 cat <<'INTRO'
-A node joined from the interface (Settings - Create cluster or Add node) needs
-none of the lines below: the manager hands them over itself.
+A node joined from the interface (the first cluster's guide, Create cluster or
+Add node) needs none of the lines below: the manager hands them over itself.
 
 For a node prepared by hand with 04-node-prepare, put these lines in its answers
 file. Step 4 writes each key with `restrict` and its own forced command, and the

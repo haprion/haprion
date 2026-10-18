@@ -74,7 +74,7 @@ command -v haprion-config-status >/dev/null \
     || die "haprion-config-status is not installed - do step 2 of docs/install.md first"
 
 clusters="$(installed_clusters)"
-[[ -n "$clusters" ]] || pass "no cluster yet" "created in the interface, Settings - Create cluster"
+[[ -n "$clusters" ]] || pass "no cluster yet" "created in the interface: the Dashboard sets up the first"
 
 for cluster in $clusters; do
     if out="$(haprion-config-status -c "$cluster" 2>&1)"; then

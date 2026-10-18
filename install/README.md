@@ -4,8 +4,8 @@ Five steps. Three run on the management host, one on each node, and the last one
 checks your work.
 
 Everything that can be scripted is scripted. A node needs one package: it prints
-one line, its enrollment block, which you paste into the interface (*Settings* →
-*Create cluster* or *Add node*). The management host then joins the node once,
+one line, its enrollment block, which you paste into the interface (the
+Dashboard's *Set up your first cluster*, *Create cluster* or *Add node*). The management host then joins the node once,
 with a key that only works for that, and prepares it itself.
 
 [`../docs/user-manual.md`](../docs/user-manual.md) explains *why* each step
@@ -114,8 +114,8 @@ sudo apt install ./haprion-node_<version>_all.deb
 
 The package makes the node's accounts and the keys it fetches with, and prints
 its enrollment block - one line starting with `haproxy-node-v2:` - and its host
-key's fingerprint. Paste the block into *Settings* → *Create cluster* for the
-first node of a cluster, or the cluster's *Add node* for the next; on the
+key's fingerprint. Paste the block into the Dashboard's *Set up your first
+cluster* (or *Settings* → *Create cluster*) for the first node of a cluster, or the cluster's *Add node* for the next; on the
 command line it is `haprion-cluster add` or `haprion-node add` with the block on
 stdin. `sudo haprion-node-key` prints a block again.
 

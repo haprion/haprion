@@ -246,6 +246,24 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
     management_host = _text(node.get("mgmt_host"), "—")
     current = node.get("current") if isinstance(node.get("current"), bool) else None
 
+    if node.get("reachable") is not True and node.get("joining") is True:
+        #
+        # Added, and not answered yet (B329): the poller marks it, since the
+        # status helper only sees that the connection failed.
+        #
+        return NodeView(
+            name=name,
+            management_host=management_host,
+            label="Joining",
+            tone="unknown",
+            detail="Waiting for its first answer",
+            keepalived="—",
+            vip="—",
+            version="—",
+            runtime="—",
+            stats="—",
+            current=current,
+        )
     if node.get("reachable") is not True:
         return NodeView(
             name=name,

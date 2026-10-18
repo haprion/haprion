@@ -39,6 +39,13 @@ NODE = "node"
 VIP_SUBJECT = ""
 
 #
+# A node's state before it has ever answered (B329, 26-10-18): a node just
+# added was shown as unreachable for minutes, and its first answer was logged
+# as answering again. It is joining until it answers, and that answer is no event.
+#
+JOINING = "joining"
+
+#
 # HAProxy's `last_change_sec` is how long ago the server changed. Beyond a day
 # it is not a moment between two readings, whatever it says; the reading's own
 # time is the better answer then.
@@ -165,8 +172,13 @@ def compare(
     """
 
     changes: list[Change] = []
+    state = dict(observed.state)
     for key, value in sorted(observed.state.items()):
         before = previous.get(key)
+        if key[0] == NODE and before in (None, JOINING):
+            if value != "answering":
+                state[key] = JOINING
+            continue
         if before is None or before == value:
             continue
         kind, subject = key
@@ -191,7 +203,15 @@ def compare(
         for key in previous
         if key[0] == SERVER and observed.listed is not None and key[1] not in observed.listed
     ]
-    return changes, dict(observed.state), gone
+    return changes, state, gone
+
+
+def joining(state: Mapping[tuple[str, str], str]) -> frozenset[str]:
+    """The nodes that have not answered yet, from the state `compare` keeps."""
+
+    return frozenset(
+        subject for (kind, subject), value in state.items() if kind == NODE and value == JOINING
+    )
 
 
 def split(subject: str) -> tuple[str, str]:

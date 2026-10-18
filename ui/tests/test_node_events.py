@@ -122,7 +122,32 @@ class WhatChanged(unittest.TestCase):
         )
 
         self.assertEqual([c.event for c in compared(up, silent)], ["node_silent"])
-        self.assertEqual([c.event for c in compared(silent, up)], ["node_back"])
+        _, answered, _ = node_events.compare({}, node_events.observe(up))
+        _, gone_quiet, _ = node_events.compare(answered, node_events.observe(silent))
+        back, _, _ = node_events.compare(gone_quiet, node_events.observe(up))
+        self.assertEqual([c.event for c in back], ["node_back"])
+
+    def test_a_node_that_has_not_answered_yet_is_joining_and_its_first_answer_says_nothing(
+        self,
+    ) -> None:
+        """B329: a node added was logged as answering again minutes later, though it never had."""
+
+        up = reading(
+            node("node-a", owner=True, servers=[]),
+            node("node-b", owner=False, servers=[]),
+        )
+        silent = reading(
+            node("node-a", owner=True, servers=[]),
+            node("node-b", owner=None, servers=[], ok=False),
+        )
+        first, state, _ = node_events.compare({}, node_events.observe(silent))
+        again, state, _ = node_events.compare(state, node_events.observe(silent))
+        self.assertEqual((first, again), ([], []))
+        self.assertEqual(node_events.joining(state), {"node-b"})
+        answered, state, _ = node_events.compare(state, node_events.observe(up))
+        self.assertEqual((answered, node_events.joining(state)), ([], frozenset()))
+        quiet, _, _ = node_events.compare(state, node_events.observe(silent))
+        self.assertEqual([c.event for c in quiet], ["node_silent"])
 
     def test_a_held_server_keeps_its_state_and_says_nothing(self) -> None:
         changes = compared(

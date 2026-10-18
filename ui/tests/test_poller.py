@@ -84,6 +84,15 @@ def inventory_envelope(outcome: str = "done", operation: str = "inventory", **ex
 
 
 class GoodAnswers(unittest.TestCase):
+    def test_a_joining_node_is_marked_in_the_reading_it_stores(self) -> None:
+        """B329: the helper only sees a failed connection; the poller knows it never answered."""
+
+        result = {"nodes": [{"name": "node-a", "reachable": True}, {"name": "node-b"}]}
+        marked = poller.with_joining(result, frozenset({"node-b"}))
+        self.assertEqual(marked["nodes"][1], {"name": "node-b", "joining": True})
+        self.assertNotIn("joining", marked["nodes"][0])
+        self.assertIs(poller.with_joining(result, frozenset()), result)
+
     def test_a_healthy_cluster_is_recorded_with_its_result(self) -> None:
         reading = poller.poll_cluster("alpha", lambda *_: completed(envelope()))
         self.assertEqual(reading["outcome"], "done")

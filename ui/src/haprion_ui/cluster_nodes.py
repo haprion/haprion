@@ -37,6 +37,8 @@ class NodeRow:
     host: str
     owner: bool
     reachable: bool
+    # Added and not answered yet (B329), as the poller marks it.
+    joining: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +113,7 @@ def _nodes(result: Mapping[str, Any] | None) -> list[NodeRow]:
                 host=str(entry.get("mgmt_host", "")),
                 owner=vip.get("owner") is True,
                 reachable=bool(entry.get("reachable")),
+                joining=entry.get("joining") is True,
             )
         )
     return sorted(rows, key=lambda row: row.name)

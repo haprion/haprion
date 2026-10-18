@@ -1593,13 +1593,20 @@ def audit_count(
         return int(row[0]) if row else 0
 
 
+@dataclass(frozen=True, slots=True)
+class NodeEventsWritten:
+    events: int
+    joining: frozenset[str]
+
+
 def record_node_events(
     connection: Connection[Any], *, cluster: str, result: Mapping[str, Any]
-) -> int:
+) -> NodeEventsWritten:
     """Compare one status reading with the state kept, and write what changed (*Events → Nodes*).
 
     One transaction with the state it replaces, so two passes can never both
-    see the old state and both write the change. Returns how many events.
+    see the old state and both write the change. Returns how many events, and
+    which nodes have not answered yet (B329).
     """
 
     with connection.cursor() as cursor:
@@ -1644,7 +1651,7 @@ def record_node_events(
                 " where cluster = %(cluster)s and kind = 'server' and subject = any(%(gone)s)",
                 {"cluster": cluster, "gone": [key[1] for key in gone]},
             )
-    return len(changes)
+    return NodeEventsWritten(len(changes), node_events.joining(state))
 
 
 @dataclass(frozen=True, slots=True)

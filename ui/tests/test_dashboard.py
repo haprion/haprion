@@ -276,6 +276,17 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(unreachable.nodes[1].label, "Unreachable")
         self.assertEqual(unreachable.nodes[1].tone, "critical")
 
+    def test_a_node_that_has_not_answered_yet_is_joining_not_an_error(self) -> None:
+        """B329: the poller marks it; no red, no failed connection."""
+
+        status = reading("partial-unreachable.json")
+        nodes = [dict(entry) for entry in status.result["nodes"]]
+        nodes[1]["joining"] = True
+        joining = self.dashboard(replace(status, result={**status.result, "nodes": nodes}))
+        node = joining.clusters[0].nodes[1]
+        self.assertEqual((node.label, node.tone), ("Joining", "unknown"))
+        self.assertNotIn("connection failed", node.detail)
+
     def engine(self, *, published: bool | None, active: bool) -> Any:
         status = reading("done-single-owner.json")
         result = dict(status.result)

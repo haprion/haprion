@@ -6806,7 +6806,7 @@ class WhatTheNodesDidIsWrittenByThePollerAndReadByTheWeb(unittest.TestCase):
         ):
             with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
                 written.append(
-                    db.record_node_events(connection, cluster=self.CLUSTER, result=result)
+                    db.record_node_events(connection, cluster=self.CLUSTER, result=result).events
                 )
                 connection.commit()
 

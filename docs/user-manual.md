@@ -2932,7 +2932,8 @@ opening the dashboard.
 *Events* has three views. **Jobs** lists the newest jobs, their outcome and diagnostics, and *By*:
 who queued each one, from the record. **Nodes** is what the nodes did on their own: a server that
 went down or came back up, with the check's reason, the VIP moving from one node to the other, and a
-node that stopped answering or answers again. A server's row names its object and links to its
+node that stopped answering or answers again. A node just added is *Joining* until it answers the
+first time, and that first answer is not an event. A server's row names its object and links to its
 servers. Both roles read it; it pages and filters by cluster, a word and time as *Audit* does, and
 the nightly retention removes rows older than 90 days. It is written by the poller, which compares
 each status reading with the one before: a server's change is dated by HAProxy's own count of how

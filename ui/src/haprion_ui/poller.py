@@ -137,7 +137,7 @@ class Source:
     # as a sample is - a change not written is a line missing from a log, and
     # never a reason for the reading to be one.
     #
-    events: Callable[..., int] | None = None
+    events: Callable[..., db.NodeEventsWritten] | None = None
 
 
 def _every_version(extra: Mapping[str, Any]) -> dict[str, Any]:
@@ -338,12 +338,15 @@ def _sample(pool: Any, source: Source, *, cluster: str, result: Mapping[str, Any
     logger.debug("cluster %s: %d sample row(s)", cluster, written)
 
 
-def _events(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any]) -> None:
+def _events(
+    pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any]
+) -> frozenset[str]:
     """Write what changed since the last reading, and never let that failure reach the poll.
 
     Only from a reading the cluster answered. One the poller could not get
     says nothing about the nodes, and comparing it would read as every node
-    having stopped answering at once.
+    having stopped answering at once. Returns the nodes that have not answered
+    yet (B329).
     """
 
     result = reading.get("result")
@@ -353,16 +356,39 @@ def _events(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, An
         or not isinstance(result, Mapping)
         or not result
     ):
-        return
+        return frozenset()
     try:
         with pool.connection() as connection:
             written = source.events(connection, cluster=cluster, result=result)
             connection.commit()
     except Exception as exc:  # noqa: BLE001 - an event is never worth a failed pass
         logger.warning("cluster %s node events not written: %s", cluster, exc)
-        return
-    if written:
-        logger.info("cluster %s: %d node event(s)", cluster, written)
+        return frozenset()
+    if written.events:
+        logger.info("cluster %s: %d node event(s)", cluster, written.events)
+    return written.joining
+
+
+def with_joining(result: Mapping[str, Any], joining: frozenset[str]) -> Mapping[str, Any]:
+    """The reading with `joining: true` on each node that has not answered yet (B329).
+
+    The status helper cannot know it - it reads the nodes as they are now -
+    so the poller says it beside the reading it stores, and the cards show
+    *Joining* rather than a failed connection.
+    """
+
+    nodes = result.get("nodes")
+    if not joining or not isinstance(nodes, list):
+        return result
+    return {
+        **result,
+        "nodes": [
+            {**entry, "joining": True}
+            if isinstance(entry, Mapping) and entry.get("name") in joining
+            else entry
+            for entry in nodes
+        ],
+    }
 
 
 def _index(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any]) -> None:
@@ -661,19 +687,23 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
             partial_ok=source.partial_ok,
             request_id=request_id,
         )
+        #
+        # The events first: they say which nodes are still joining, and the
+        # reading is stored with that (B329).
+        #
+        joining = _events(pool, source, cluster=cluster, reading=reading)
         with pool.connection() as connection:
             source.record(
                 connection,
                 cluster=cluster,
                 outcome=reading["outcome"],
-                result=reading["result"],
+                result=with_joining(reading["result"], joining),
                 warnings=reading.get("warnings"),
                 error=reading.get("error"),
                 poll_error=reading.get("poll_error"),
             )
             connection.commit()
         _sample(pool, source, cluster=cluster, result=reading["result"])
-        _events(pool, source, cluster=cluster, reading=reading)
         _index(pool, source, cluster=cluster, reading=reading)
         if reading["outcome"] == "done":
             if source.operation == "status":

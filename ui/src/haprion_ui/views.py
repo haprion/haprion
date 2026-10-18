@@ -1437,7 +1437,7 @@ def build_router(config: Config) -> APIRouter:
             #
             # The card under it says which: a draft or saved changes (B257).
             #
-            notice="Saved." if saved else "",
+            notice=SAVED_NOTICE if saved else "",
         )
 
     @router.post("/proxies/{cluster}/{name}/edit", response_class=HTMLResponse)
@@ -9560,6 +9560,12 @@ def _unresolved_servers(name: str, document: str) -> list[str]:
     return [server_names.warning(host) for host in missing]
 
 
+#
+# What the editor says after a save when there is no card to say it (B330).
+#
+SAVED_NOTICE = "Saved."
+
+
 def _editor_page(
     request: Request,
     config: Config,
@@ -9785,7 +9791,13 @@ def _editor_page(
                 crs.installed_catalog() if fields.get("waf_exceptions") else {},
             ),
             "probe": report,
-            "notice": notice,
+            #
+            # Saved changes have their card, which says it (B330): the notice
+            # would be the same thing said twice.
+            #
+            "notice": ""
+            if notice == SAVED_NOTICE and getattr(draft, "stage", None) == "saved"
+            else notice,
             "action": action,
             "unchanged": editor_module.unchanged(
                 result.document, stored.document if stored else None

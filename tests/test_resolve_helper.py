@@ -160,7 +160,7 @@ class APoolMembersName(unittest.TestCase):
             names[0], {"name": "app.example.com", "address": "198.51.100.10", "problem": None}
         )
         self.assertIsNone(names[1]["address"])
-        self.assertIn("cannot be resolved from the manager", names[1]["problem"])
+        self.assertIn("is not in DNS as the manager sees it", names[1]["problem"])
         with mock.patch.object(helper_socket, "ask", return_value=raw):
             self.assertEqual(
                 resolve_socket.unresolved(["app.example.com", "typo.example.com"]),

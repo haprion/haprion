@@ -628,7 +628,7 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
         for job in (alone, deployed):
             with self.subTest(embedded=job is deployed):
                 self.assertIn(
-                    "typo.example.com cannot be resolved from the manager",
+                    "typo.example.com is not in DNS as the manager sees it",
                     jobs.unresolved_note(job) or "",
                 )
         self.assertIsNone(

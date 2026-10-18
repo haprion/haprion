@@ -660,7 +660,7 @@ class WorkingFromADraft(EditorTestCase):
         page = self.editor().get("/proxies/alpha/shop/edit")
 
         self.assertIn("A draft", page.text)
-        self.assertIn("It is not published until it is saved", page.text)
+        self.assertIn("Not published until it is saved.", page.text)
 
     def test_a_discard_names_the_revision_it_was_looking_at(self) -> None:
         client = self.editor()
@@ -1415,7 +1415,11 @@ class SavingSaysSo(EditorTestCase):
 
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(answer.headers["location"], "/proxies/alpha/shop/edit?saved=1")
-        self.assertIn("typo.example.com cannot be resolved from the manager", page.text)
+        self.assertIn("typo.example.com is not in DNS as the manager sees it", page.text)
+        #
+        # A warning, and drawn as one (B330): it stood in blue beside "Saved.".
+        #
+        self.assertIn('class="preview-notice notice-warning" data-unresolved', page.text)
         self.assertNotIn("data-unresolved", clean.text)
 
     def test_a_server_written_with_two_colons_is_refused_where_it_is_typed(self) -> None:
@@ -1779,5 +1783,6 @@ class SavedChangesAndDrafts(EditorTestCase):
 
         page = self.editor().get("/proxies/alpha/shop/edit").text
 
-        self.assertIn("<h3>Saved changes</h3>", page)
+        self.assertIn("<h3>Saved, not published</h3>", page)
+        self.assertNotIn("The form below was opened", page)
         self.assertIn("Discard the changes", page)

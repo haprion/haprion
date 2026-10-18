@@ -10,7 +10,6 @@
       while it sat on that object's own address.
     #}
     {{ back_button('/proxies/' ~ cluster ~ '/' ~ name if name else '/proxies', name if name else 'Proxies') }}<h1>{% if name %}Editing {{ name }}{% else %}A new object on {{ cluster }}{% endif %}</h1>
-    <p class="page-lede">Saved changes go out with the next publish; a draft stays here until it is saved. Publishing does not deploy.</p>
   </div>
   <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-info"></span>{{ cluster }}</span></div>
 </section>
@@ -18,9 +17,6 @@
 {% if notice %}
 <p class="preview-notice"><strong>{{ notice }}</strong></p>
 {% endif %}
-{% for warning in unresolved_servers %}
-<p class="preview-notice" data-unresolved>{{ warning }}.</p>
-{% endfor %}
 
 {% if not available %}
 <p class="preview-notice"><strong>The stored objects could not be read.</strong> The form below is still usable, but nothing here has been checked against what the cluster actually holds.</p>
@@ -39,10 +35,13 @@
 #}
 {% if draft %}
 <section class="cluster-card draft-card {{ accent | accent_class }}">
-  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>{% if draft.stage == 'saved' %}Saved changes{% else %}A draft{% endif %}</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div></header>
-  <p class="preview-notice">{% if draft.stage == 'saved' %}The form below was opened with them. They go out with the next publish.{% elif work.saved %}The form below was opened with it. It is not published until it is saved; the saved changes under it are.{% else %}The form below was opened with it. It is not published until it is saved.{% endif %}</p>
+  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>{% if draft.stage == 'saved' %}Saved, not published{% else %}A draft{% endif %}</h3><p>{{ draft.updated_by }} · revision {{ draft.revision }}</p></div></div></header>
+  {% if draft.stage != 'saved' %}<p class="preview-notice">Not published until it is saved.{% if work.saved %} The saved changes under it go out with the next publish.{% endif %}</p>{% endif %}
 </section>
 {% endif %}
+{% for warning in unresolved_servers %}
+<p class="preview-notice notice-warning" data-unresolved><span class="status-orb status-warning" aria-hidden="true"></span>{{ warning }}.</p>
+{% endfor %}
 
 {#
   Posted to the address that is being edited, which is `name` - not `existing`.

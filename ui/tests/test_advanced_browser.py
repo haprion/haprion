@@ -149,7 +149,11 @@ class TheDialogInABrowser(DraftReading):
 
         self.assertEqual(len(self.saved), 1)
         self.assertEqual(self.saved[0]["saved_revision"], 4)
-        self.assertIn("Saved. It goes out with the next publish.", page.inner_text("main"))
+        #
+        # The card says it, once (B330).
+        #
+        self.assertIn("Saved, not published", page.inner_text("main"))
+        self.assertNotIn("Saved.", page.inner_text("main"))
 
     def test_the_buttons_are_the_editors(self) -> None:
         page = self.open_page()

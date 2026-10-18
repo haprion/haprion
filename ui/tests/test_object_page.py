@@ -380,10 +380,14 @@ class TheDraftOnTheObjectPage(DraftReading):
     def test_the_save_is_confirmed_where_it_landed(self) -> None:
         """A 303 leaves nothing behind, so the page has to carry the answer."""
 
-        self.draft = self.drafted()
+        self.draft = self.drafted(stage="saved")
         body = self.page("/proxies/edge-demo/public-web?saved=1").text  # type: ignore[attr-defined]
 
-        self.assertIn("<strong>Saved.</strong> It goes out with the next publish.", body)
+        #
+        # The card says it, once (B330).
+        #
+        self.assertIn("<h3>Saved, not published</h3>", body)
+        self.assertNotIn("<strong>Saved.</strong>", body)
 
     def test_a_discard_is_confirmed_too(self) -> None:
         body = self.page("/proxies/edge-demo/public-web?discarded=1").text  # type: ignore[attr-defined]

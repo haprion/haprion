@@ -82,6 +82,6 @@ def warning(name: str) -> str:
     """What is said about one: the same sentence in the editor, the job and the terminal."""
 
     return (
-        f"{name} cannot be resolved from the manager; a node that cannot resolve it either "
-        "stops the deploy"
+        f"{name} is not in DNS as the manager sees it. If the nodes cannot find it either, "
+        "the deploy stops"
     )

@@ -44,8 +44,8 @@ class WhichNamesAreAsked(unittest.TestCase):
     def test_the_sentence_names_the_server_and_the_consequence(self) -> None:
         said = server_names.warning("typo.example.com")
 
-        self.assertIn("typo.example.com cannot be resolved from the manager", said)
-        self.assertIn("stops the deploy", said)
+        self.assertIn("typo.example.com is not in DNS as the manager sees it", said)
+        self.assertIn("the deploy stops", said)
 
 
 class TheTerminalSaysIt(unittest.TestCase):
@@ -68,4 +68,4 @@ class TheTerminalSaysIt(unittest.TestCase):
         objects_apply._render("alpha", plan, summary, out)
 
         self.assertEqual(summary["unresolved_servers"], ["typo.x"])
-        self.assertEqual(out.getvalue().count("WARNING: typo.x cannot be resolved"), 1)
+        self.assertEqual(out.getvalue().count("WARNING: typo.x is not in DNS"), 1)

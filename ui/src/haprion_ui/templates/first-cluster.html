@@ -9,7 +9,7 @@
 #}
 {% macro node_step(which, action) %}
 <h3>Run this on the {{ which }} node</h3>
-<pre class="receiver-command"><code>sudo apt install ./{{ node_package }}</code></pre>
+<pre class="receiver-command"><code>sudo apt install haprion-node</code></pre>
 <p><a class="text-link" href="/first-cluster/{{ node_package }}" download>Download {{ node_package }}</a></p>
 <label><span class="field-title">Paste what it printed</span><textarea name="block" rows="3" spellcheck="false" placeholder="haproxy-node-v2:…" required>{{ block }}</textarea></label>
 {% if preview %}<p class="preview-notice settings-notice"><strong>{{ preview.name }}</strong> — {{ preview.host }} · host key <code>{{ preview.fingerprint }}</code></p>{% endif %}

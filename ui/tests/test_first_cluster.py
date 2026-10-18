@@ -118,7 +118,7 @@ class TheSteps(NodesPage):
         page = self.post_to(client, "/first-cluster/name", **self.first())
         self.assertEqual(page.status_code, 200)
         self.assertIn("Run this on the first node", page.text)
-        self.assertIn("sudo apt install ./haprion-node_", page.text)
+        self.assertIn("sudo apt install haprion-node<", page.text)
         self.assertIn('name="vip" value="198.51.100.30"', page.text)
         self.assertEqual(self.queued, [])
 

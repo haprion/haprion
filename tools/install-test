@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A whole installation on empty machines, in containers: the release's acceptance.
 
-    tools/install-test --packages <dir> | --apt-repo <site>
+    tools/install-test --packages <dir> | --apt-repo <site> | --url <published site>
                        --distribution debian13|ubuntu26.04|all [--keep] [--logs <dir>]
 
 Every new installation found its faults one at a time on a lab VM (Fas 18:
@@ -32,7 +32,10 @@ manager, and the node package with the engine and the key on each node. With
 `--apt-repo`, a site `tools/build-apt-repo` assembled, as the public
 instructions install it: the key and the source, then `apt install
 haprion-ui` and `apt install haprion-node` - so a dependency the repository
-does not resolve fails here (B325).
+does not resolve fails here (B325). With `--url`, the published repository,
+added word for word as docs/install.md does it: curl, the real key fetched
+from the site (refused unless it is the key in this tree), the source over
+https - and afterwards the key file belongs to haprion-archive-keyring.
 
 Not here: syslog objects' IPVS (a rootless container may not load the kernel
 table; measured 26-10-15), certbot's dry-run renewal (it asks Let's Encrypt's
@@ -43,6 +46,7 @@ pages - the CLI drives the same root helpers.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import re
 import shlex
@@ -50,10 +54,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
+T = TypeVar("T")
 PODMAN = "podman"
 REPO_DIR = "/srv/haprion-repo"
 SITE_KEY = "haprion-archive-keyring.asc"
@@ -63,6 +69,12 @@ SITE_KEY = "haprion-archive-keyring.asc"
 # haprion-archive-keyring - installed with the rest - does not replace it.
 #
 KEYRING = "/etc/apt/keyrings/haprion-install-test.asc"
+#
+# Where docs/install.md has a person put the published repository's key; the
+# keyring package then owns the same path.
+#
+PUBLISHED_KEYRING = "/usr/share/keyrings/haprion-archive-keyring.asc"
+TREE_KEY = Path(__file__).resolve().parents[1] / "keys/haprion-archive.asc"
 CLUSTER = "alpha"
 OBJECT = """\
 schema: 1
@@ -272,9 +284,40 @@ class Run:
             f"&& printf %s {shlex.quote(source)} > /etc/apt/sources.list.d/haprion.sources",
         )
 
+    def add_published_repository(self, role: str, url: str) -> None:
+        """The published source and its key, word for word as docs/install.md has them."""
+
+        suite = self.distribution.ui_suffix.removeprefix("~")
+        source = (
+            f"Types: deb\nURIs: {url}\nSuites: {suite}\nComponents: main\n"
+            f"Signed-By: {PUBLISHED_KEYRING}\n"
+        )
+        self.on(
+            role,
+            "export DEBIAN_FRONTEND=noninteractive && apt-get update -q && apt-get install -y -q curl "
+            f"&& curl -fsSLo {PUBLISHED_KEYRING} {shlex.quote(url + SITE_KEY)} "
+            f"&& printf %s {shlex.quote(source)} > /etc/apt/sources.list.d/haprion.sources",
+        )
+        _, key = self.on(role, f"cat {PUBLISHED_KEYRING}")
+        if key != TREE_KEY.read_text():
+            raise Failed(f"{url}{SITE_KEY} is not the key in this tree ({TREE_KEY.name})")
+
+    def key_belongs_to_the_package(self, role: str) -> None:
+        _, owner = self.on(role, f"dpkg -S {PUBLISHED_KEYRING}")
+        if not owner.startswith("haprion-archive-keyring:"):
+            raise Failed(f"{PUBLISHED_KEYRING} is not haprion-archive-keyring's: {owner}")
+
     def names(
-        self, role: str, packages: list[Path] | None, site: Path | None, package: str
+        self,
+        role: str,
+        packages: list[Path] | None,
+        site: Path | None,
+        package: str,
+        url: str | None = None,
     ) -> list[str]:
+        if url is not None:
+            self.add_published_repository(role, url)
+            return [package]
         if site is not None:
             self.add_repository(role, site)
             return [package]
@@ -282,21 +325,31 @@ class Run:
             raise Failed("neither package files nor a repository")
         return [self.copy(role, path) for path in packages]
 
-    def install_manager(self, packages: list[Path] | None, site: Path | None = None) -> None:
-        names = self.names("mgr", packages, site, "haprion-ui")
+    def install_manager(
+        self, packages: list[Path] | None, site: Path | None = None, url: str | None = None
+    ) -> None:
+        names = self.names("mgr", packages, site, "haprion-ui", url)
         self.on(
             "mgr",
             "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
             f"&& apt-get install -y -q {' '.join(shlex.quote(name) for name in names)}",
         )
+        if url is not None:
+            self.key_belongs_to_the_package("mgr")
         _, output = self.on("mgr", "haprion-setup")
         if "The manager is installed" not in output:
             raise Failed(f"haprion-setup ended without saying the manager is installed:\n{output}")
 
-    def prepare_node(self, role: str, packages: list[Path] | None, site: Path | None = None) -> str:
+    def prepare_node(
+        self,
+        role: str,
+        packages: list[Path] | None,
+        site: Path | None = None,
+        url: str | None = None,
+    ) -> str:
         """The node package with what it depends on, installed as a person would, and the block printed."""
 
-        names = self.names(role, packages, site, "haprion-node")
+        names = self.names(role, packages, site, "haprion-node", url)
         _, output = self.on(
             role,
             "export DEBIAN_FRONTEND=noninteractive && apt-get update -q "
@@ -305,6 +358,8 @@ class Run:
         block = re.search(r"^(haproxy-node-v2:\S+)$", output, re.M)
         if not block:
             raise Failed(f"the node package printed no enrollment block:\n{output[-3000:]}")
+        if url is not None:
+            self.key_belongs_to_the_package(role)
         return block.group(1)
 
     def joined_quietly(self) -> None:
@@ -488,7 +543,12 @@ def package(directory: Path, pattern: str) -> Path:
 
 
 def run_one(
-    distribution: Distribution, packages: Path | None, site: Path | None, logs: Path, keep: bool
+    distribution: Distribution,
+    packages: Path | None,
+    site: Path | None,
+    logs: Path,
+    keep: bool,
+    url: str | None = None,
 ) -> bool:
     manager_files = node_files = None
     if packages is not None:
@@ -505,9 +565,9 @@ def run_one(
         node_files = [engine, key, package(packages, "haprion-node_*_all.deb")]
     logs.mkdir(parents=True, exist_ok=True)
     run = Run(distribution, logs)
-    steps = []
+    steps: list[str] = []
 
-    def step(title: str, action) -> object:  # type: ignore[no-untyped-def]
+    def step(title: str, action: Callable[[], T]) -> T:
         run.heading(title)
         started = time.monotonic()
         result = action()
@@ -520,12 +580,12 @@ def run_one(
         step("a manager and two nodes booted", lambda: run.start(image))
         step(
             "the manager: packages, haprion-setup",
-            lambda: run.install_manager(manager_files, site),
+            lambda: run.install_manager(manager_files, site, url),
         )
         blocks = [
             step(
                 f"{role}: the package, and the block it printed",
-                lambda role=role: run.prepare_node(role, node_files, site),
+                functools.partial(run.prepare_node, role, node_files, site, url),
             )
             for role in NODES
         ]
@@ -595,7 +655,7 @@ def run_one(
 
         step("a second deploy changes nothing", converged)
 
-        def removed_steps_down() -> None:
+        def removed_steps_down() -> tuple[str, str]:
             """B319, Fas 18 finding 73: a removed node left running took the address."""
 
             holder = run.wait_for_one_holder()
@@ -681,6 +741,9 @@ def main() -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--packages", type=Path, help="a release's package files")
     source.add_argument("--apt-repo", type=Path, help="a site tools/build-apt-repo assembled")
+    source.add_argument(
+        "--url", help="the published repository, e.g. https://haprion.github.io/haprion/"
+    )
     parser.add_argument("--distribution", choices=[*DISTRIBUTIONS, "all"], default="all")
     parser.add_argument("--logs", type=Path)
     parser.add_argument("--keep", action="store_true")
@@ -694,6 +757,7 @@ def main() -> int:
             args.apt_repo.resolve() if args.apt_repo else None,
             logs / name,
             args.keep,
+            args.url if args.url is None or args.url.endswith("/") else args.url + "/",
         )
         for name in chosen
     }

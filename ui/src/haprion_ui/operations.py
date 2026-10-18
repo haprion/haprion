@@ -715,8 +715,8 @@ def _certificate_operation(
         if not isinstance(receiver, str) or not RECEIVER_ID.fullmatch(receiver):
             raise BadPayload("receiver must be a receiver ID")
         action = payload.get("action")
-        if action not in {"add", "remove", "secret"}:
-            raise BadPayload("action must be add, remove or secret")
+        if action not in {"add", "remove", "secret", "key"}:
+            raise BadPayload("action must be add, remove, secret or key")
         transport = payload.get("transport")
         public_key = payload.get("public_key")
         allow_raw = payload.get("allow", [])
@@ -732,6 +732,23 @@ def _certificate_operation(
                 argv=RECEIVER_CLIENT,
                 request=cert_receiver_helper.build_request(
                     str(request_id), receiver=receiver, action="secret", secret_hash=hashed
+                ),
+            )
+        if action == "key":
+            #
+            # A new public key for an ssh receiver (26-10-18): the pasted line
+            # and nothing else; the helper keeps the lock it was registered with.
+            #
+            if transport is not None or allow_raw or hashed is not None:
+                raise BadPayload("a new key takes the receiver and its public_key only")
+            if not isinstance(public_key, str) or not public_key.strip():
+                raise BadPayload("a new key needs the public key")
+            if len(public_key) > cert_receiver_helper.MAX_PUBLIC_KEY:
+                raise BadPayload("the public key is too long to be one")
+            return Prepared(
+                argv=RECEIVER_CLIENT,
+                request=cert_receiver_helper.build_request(
+                    str(request_id), receiver=receiver, action="key", public_key=public_key
                 ),
             )
         if action == "remove":

@@ -303,6 +303,20 @@ class TheActivityLine(unittest.TestCase):
         )
         self.assertEqual([item.busy for item in activity], [True, False, False, False])
 
+    def test_a_new_key_is_called_what_it_is(self) -> None:
+        running = queued(
+            operation="cert_receiver",
+            cluster=None,
+            state="running",
+            payload={
+                "receiver": "lb-02.example.net",
+                "action": "key",
+                "public_key": "ssh-ed25519 A",
+            },
+        )
+        activity = certificate_receivers.recent_activity([running])
+        self.assertEqual(activity[0].label, "Replacing the key for lb-02.example.net")
+
     def test_a_new_secret_is_called_what_it_is(self) -> None:
         """26-10-14: the row said *Removing* while a new secret was set."""
 
@@ -616,6 +630,44 @@ class TheJobs(ReceiverRouteTestCase):
         self.assertNotIn(" data-answered", page.split("<head>")[0])
         self.assertEqual(self.queued[0]["payload"]["action"], "secret")
         self.assert_hash_of(self.queued[0]["payload"]["secret_hash"], password)
+
+    def test_a_new_key_is_for_an_ssh_receiver_and_keeps_the_rest(self) -> None:
+        """26-10-18: *Replace SSH key* queues the pasted line and nothing else."""
+
+        self.records.append(record("192.0.2.9", transport="https", allow=("192.0.2.9/32",)))
+        client = self.writing_client()
+        listing = client.get("/certificates/receivers").text
+        self.assertIn('href="/certificates/receivers/key?receiver=lb-02.example.net"', listing)
+        self.assertNotIn("/certificates/receivers/key?receiver=192.0.2.9", listing)
+        page = client.get("/certificates/receivers/key?receiver=lb-02.example.net").text
+        self.assertIn("<h1>Replace the SSH key</h1>", page)
+
+        def ask(receiver: str, public_key: str) -> Any:
+            return client.post(
+                "/certificates/receivers/key",
+                data={
+                    "receiver": receiver,
+                    "public_key": public_key,
+                    "idempotency_key": str(uuid4()),
+                    auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                },
+                follow_redirects=False,
+            )
+
+        self.assertIn("has no SSH key to replace", ask("192.0.2.9", KEY).text)
+        wrong = ask("lb-02.example.net", "not a key")
+        self.assertIn("The pasted text does not hold a public key in OpenSSH", wrong.text)
+        self.assertIn(">not a key</textarea>", wrong.text)
+        self.assertEqual(self.queued, [])
+
+        response = ask("lb-02.example.net", KEY)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(
+            self.queued[0]["payload"],
+            {"receiver": "lb-02.example.net", "action": "key", "public_key": KEY},
+        )
+        self.assertEqual(self.audit[-1], "queue_job")
 
     def test_a_refused_form_is_drawn_again_with_what_was_typed(self) -> None:
         response = self.add(self.writing_client(), public_key="not a key")

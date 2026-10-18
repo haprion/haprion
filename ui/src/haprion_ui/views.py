@@ -6554,6 +6554,95 @@ def build_router(config: Config) -> APIRouter:
         }
         return _queue_receiver_job(request, gate, payload, key, form=None, password=password)
 
+    #
+    # A new public key for an rsync or sftp receiver (26-10-18): a host
+    # installed again keeps its name, directory and certificates and has a new
+    # key pair. Its own page, as registering is, for the key steps and the paste.
+    #
+    def _receiver_key_page(
+        request: Request,
+        session: AuthenticatedSession,
+        receiver: str,
+        transport: str,
+        *,
+        public_key: str = "",
+        problem: str = "",
+    ) -> Response:
+        _token, _registry, context = _page_context(request, session)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-receiver-key.html",
+            {
+                **context,
+                "receiver": receiver,
+                "key_steps": certificate_receivers.key_steps(receiver),
+                "windows": transport in certificate_receivers.WINDOWS_TRANSPORTS,
+                "public_key": public_key,
+                "problem": problem,
+            },
+        )
+
+    def _ssh_transport(request: Request, receiver: str) -> str | None:
+        """The receiver's transport when it fetches over ssh, else None."""
+
+        registry = _registry_overview(request)
+        rows = registry.receiver_rows if registry else ()
+        return next(
+            (
+                row.transport
+                for row in rows
+                if row.identifier == receiver and row.transport != "https"
+            ),
+            None,
+        )
+
+    @router.get("/certificates/receivers/key", response_class=HTMLResponse)
+    def certificate_receiver_key_form(request: Request) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        receiver = request.query_params.get("receiver", "")
+        transport = _ssh_transport(request, receiver)
+        if transport is None:
+            return _receivers_page(request, gate, problem=f"{receiver} has no SSH key to replace.")
+        return _receiver_key_page(request, gate, receiver, transport)
+
+    @router.post("/certificates/receivers/key", response_class=HTMLResponse)
+    def certificate_receiver_key(
+        request: Request,
+        receiver: str = Form(default="", max_length=128),
+        public_key: str = Form(default="", max_length=8192),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue a new key for an ssh receiver; its lock, directory and certificates stay."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        transport = _ssh_transport(request, receiver)
+        if transport is None:
+            return _receivers_page(request, gate, problem=f"{receiver} has no SSH key to replace.")
+        #
+        # The helper's own shape check, here first, so a wrong paste is said
+        # beside the field rather than as a failed job.
+        #
+        try:
+            cert_receiver.parse_public_key(public_key, "The pasted text")
+        except cert_receiver.ReceiverError as refused:
+            return _receiver_key_page(
+                request, gate, receiver, transport, public_key=public_key, problem=str(refused)
+            )
+        payload = {"receiver": receiver, "action": "key", "public_key": public_key}
+        return _queue_receiver_job(request, gate, payload, key, form=None)
+
     @router.post("/certificates/receivers/remove", response_class=HTMLResponse)
     def certificate_receiver_remove(
         request: Request,

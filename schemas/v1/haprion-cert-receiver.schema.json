@@ -32,7 +32,7 @@
       "required": ["id", "action", "layers", "instructions"],
       "properties": {
         "id": { "type": "string", "maxLength": 63 },
-        "action": { "enum": ["added", "removed", "secret"] },
+        "action": { "enum": ["added", "removed", "secret", "key"] },
         "layers": { "type": "array", "items": { "$ref": "#/$defs/layer" } },
         "instructions": { "type": "array", "items": { "type": "string", "maxLength": 1024 } },
         "password": {

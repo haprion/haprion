@@ -808,6 +808,11 @@ class TheReceiverHelperIsNotReachedThroughSudo(unittest.TestCase):
                 "transport": "sftp",
                 "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample lb-02",
             },
+            {
+                "receiver": "lb-02.example.net",
+                "action": "key",
+                "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINewOne lb-02",
+            },
         ):
             with self.subTest(action=payload["action"]):
                 prepared = operations.prepare(
@@ -821,6 +826,24 @@ class TheReceiverHelperIsNotReachedThroughSudo(unittest.TestCase):
                 self.assertNotIn("/usr/bin/sudo", prepared.argv)
                 self.assertEqual(prepared.argv[1:], ("-m", "haprion.cli.cert_receiver_ask"))
                 self.assertEqual(json.loads(prepared.request)["operation"], "cert_receiver")
+
+    def test_a_new_key_takes_the_key_and_nothing_else(self) -> None:
+        """26-10-18: the lock it was registered with is the helper's to keep."""
+
+        key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINewOne lb-02"
+        for extra in (
+            {},
+            {"public_key": key, "transport": "rsync"},
+            {"public_key": key, "allow": ["192.0.2.0/24"]},
+            {"public_key": "   "},
+        ):
+            with self.subTest(extra=extra), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="cert_receiver",
+                    cluster=None,
+                    request_id=uuid4(),
+                    payload={"receiver": "lb-02.example.net", "action": "key", **extra},
+                )
 
     def test_the_sudoers_example_grants_it_nothing(self) -> None:
         granted = TheWorkerMustBeAllowedToRunWhatItIsGiven().example()

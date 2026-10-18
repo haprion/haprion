@@ -29,6 +29,7 @@ from haprion.cert_receiver import (
     new_secret,
     remove,
     secret_hash,
+    set_key,
     set_secret,
 )
 from haprion.cli.cert_publish import EXIT_NOT_ROOT
@@ -45,6 +46,7 @@ USAGE = (
     "  haprion-cert-receiver add <id> --transport https --allow <cidr>... [--path <dir>]\n"
     "                        --show-password [--json]\n"
     "  haprion-cert-receiver secret <id> --show-password [--json]\n"
+    "  haprion-cert-receiver key <id> --public-key <file> [--json]\n"
     "  haprion-cert-receiver list [--json]\n"
     "  haprion-cert-receiver remove <id> [--json]\n"
     "\n"
@@ -64,6 +66,9 @@ USAGE = (
     "                        this way, and neither is a wildcard.\n"
     "  secret <id>           A new password for an https receiver, printed once;\n"
     "                        the old one stops working at once.\n"
+    "  key <id>              A new public key for an rsync or sftp receiver, its\n"
+    "                        directory, lock and certificates kept; the old key\n"
+    "                        stops working at once.\n"
     "  --show-password       Required wherever a password is made: it is printed\n"
     "                        on stdout. The interface shows it on the page instead.\n"
     "  --public-key <file>   The .pub file the receiver's own ssh-keygen wrote.\n"
@@ -90,7 +95,7 @@ class Arguments:
 
 def _parse(argv: list[str], writer: TextIO) -> Arguments:
     parsed = Arguments()
-    if not argv or argv[0] not in {"add", "list", "remove", "secret"}:
+    if not argv or argv[0] not in {"add", "list", "remove", "secret", "key"}:
         writer.write(USAGE)
         raise SystemExit(EXIT_USAGE)
     parsed.action = argv[0]
@@ -256,7 +261,16 @@ def main(
         #
         password = new_secret() if new_credential else None
         hashed = secret_hash(password) if password is not None else None
-        if arguments.action == "secret":
+        if arguments.action == "key":
+            if arguments.public_key is None:
+                return refuse("bad_input", "a new key needs --public-key <file>", EXIT_USAGE)
+            result = set_key(
+                runtime,
+                receiver_id=arguments.receiver_id,
+                public_key=arguments.public_key,
+                tools=tools,
+            )
+        elif arguments.action == "secret":
             assert hashed is not None  # noqa: S101 - made just above
             result = set_secret(
                 runtime,

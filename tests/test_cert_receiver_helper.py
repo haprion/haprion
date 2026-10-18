@@ -115,6 +115,27 @@ class AddingThroughTheHelper(HelperFixture):
                 assert document is not None
                 self.assertEqual(document["error"]["code"], "bad_input")
 
+    def test_a_new_key_takes_the_receiver_and_the_pasted_key_only(self) -> None:
+        """26-10-18: the interface's *Replace SSH key*, through the helper."""
+
+        new_key = KEY.replace("AAAAIB5s", "AAAAIB6t")
+        self.add()
+        code, document, _ = self.run_helper(
+            {"receiver": "lb-02.example.net", "action": "key", "public_key": new_key + "\n"}
+        )
+        self.assertEqual(code, 0)
+        assert document is not None
+        self.assertEqual(document["result"]["action"], "key")
+        self.assertIn(new_key, self.keys_file().read_text(encoding="ascii"))
+        for extra in ({}, {"public_key": new_key, "transport": "rsync"}):
+            with self.subTest(extra=extra):
+                code, document, _ = self.run_helper(
+                    {"receiver": "lb-02.example.net", "action": "key", **extra}
+                )
+                self.assertEqual(code, 65)
+                assert document is not None
+                self.assertEqual(document["error"]["code"], "bad_input")
+
     def test_the_command_s_refusals_come_back_as_the_envelope_s_failure(self) -> None:
         code, document, errors = self.run_helper(
             {"receiver": "lb-02.example.net", "action": "add", "transport": "rsync"}

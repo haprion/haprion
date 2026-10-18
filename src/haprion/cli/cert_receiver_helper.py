@@ -56,7 +56,11 @@ PARAMETERS = frozenset({"receiver", "action", "transport", "public_key", "allow"
 # the password was shown to whoever made it and travels nowhere, not in this
 # request and not in the job that carries it.
 #
-ACTIONS = frozenset({"add", "remove", "secret"})
+#
+# `key` gives an rsync or sftp receiver a new public key, the rest kept
+# (26-10-18).
+#
+ACTIONS = frozenset({"add", "remove", "secret", "key"})
 MAX_SECRET_HASH = 160
 
 # A pasted key is one line; anything longer is not one.
@@ -168,7 +172,7 @@ def main(
         action = _text(parameters, "action", 8)
         if action not in ACTIONS:
             raise HelperProtocolError(
-                "parameters.action must be add, remove or secret", exit_code=65
+                "parameters.action must be add, remove, secret or key", exit_code=65
             )
         transport = public_key = hashed = None
         allow: tuple[str, ...] = ()
@@ -179,6 +183,13 @@ def main(
             if "public_key" in parameters:
                 public_key = _text(parameters, "public_key", MAX_PUBLIC_KEY)
             allow = _allow(parameters)
+        elif action == "key":
+            extra = sorted(set(parameters) - {"receiver", "action", "public_key"})
+            if extra or "public_key" not in parameters:
+                raise HelperProtocolError(
+                    "a new key takes the receiver and its public_key only", exit_code=65
+                )
+            public_key = _text(parameters, "public_key", MAX_PUBLIC_KEY)
         elif action == "secret":
             extra = sorted(set(parameters) - {"receiver", "action", "secret_hash"})
             if extra or hashed is None:
@@ -220,6 +231,11 @@ def main(
                 locations=locations,
                 require_secure=require_secure,
                 lock_path=lock_path,
+            )
+        elif action == "key":
+            assert public_key is not None  # noqa: S101 - required above
+            result = cert_receiver.set_key(
+                runtime, receiver_id=receiver_id, public_key=public_key, tools=tools
             )
         elif action == "secret":
             assert hashed is not None  # noqa: S101 - required above

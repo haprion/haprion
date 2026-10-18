@@ -107,6 +107,7 @@ PARITY: dict[str, Command | Gap | NotASetting] = {
     "/certificates/receivers/secret": Command(
         "haprion-cert-receiver secret", "haprion-cert-receiver"
     ),
+    "/certificates/receivers/key": Command("haprion-cert-receiver key", "haprion-cert-receiver"),
     "/dns-profiles/new": Command("haprion-profiles apply", "haprion-profiles-apply"),
     "/dns-profiles/{profile_id}/replace": Command(
         "haprion-profiles apply", "haprion-profiles-apply"

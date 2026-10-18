@@ -1733,6 +1733,7 @@ sudo haprion-cert-receiver add lb-03.example.net --transport sftp \
 sudo haprion-cert-receiver add 192.0.2.40 --transport https --allow 192.0.2.0/24 \
   --show-password
 sudo haprion-cert-receiver secret 192.0.2.40 --show-password   # the old one stops at once
+sudo haprion-cert-receiver key lb-02.example.net --public-key /tmp/lb-02-new.pub
 
 sudo haprion-cert-receiver list
 sudo haprion-cert-receiver remove lb-02.example.net
@@ -1751,7 +1752,10 @@ default, and then `from=` matches addresses only - a lock naming the host alone 
 host it was issued for, and the log says *correct key but not from a permitted host*. The
 address is what sshd always has; the name is what an operator reads, and what `UseDNS yes` would
 match. The addresses are resolved once, at registration, so a host that changes address is
-`remove` and `add` again. A name that does not resolve is refused, because there would be
+`remove` and `add` again. **A host installed again keeps its receiver**: *Replace SSH key* on its
+row (`haprion-cert-receiver key`) takes the new public half and changes nothing else - the
+directory, the certificates it fetches and the `from=` it was registered with stay; the old key
+stops working once the job is done. A name that does not resolve is refused, because there would be
 nothing to write into the lock; its PTR record is not looked at. One address commonly carries
 several names in a zone - the host's own and one per service it serves - and whichever of them
 the reverse lookup answers with, the address half of the lock admits the host. An IPv6 address

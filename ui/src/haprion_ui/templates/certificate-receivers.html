@@ -52,7 +52,7 @@
           <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
           <input type="hidden" name="receiver" value="{{ row.identifier }}">
           <button type="submit" class="link-button"{% if certificate_job %} disabled{% endif %}>New secret</button>
-        </form>{% endif %}
+        </form>{% else %} · <a class="link-button" href="/certificates/receivers/key?receiver={{ row.identifier | urlencode }}">Replace SSH key</a>{% endif %}
         {% if row.removable %} · <form method="post" action="/certificates/receivers/remove" class="inline-form" data-receiver-remove>
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">

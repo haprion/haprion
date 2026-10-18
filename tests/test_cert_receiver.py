@@ -586,6 +586,104 @@ class AnHttpsReceiversSecret(ReceiverFixture):
         self.assertFalse(self.secret().exists())
 
 
+NEW_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB6t root@lb-02.example.net"
+
+
+class AReceiversNewKey(ReceiverFixture):
+    """26-10-18: a host installed again keeps its receiver and gets a new key."""
+
+    def replace(self, key: str = NEW_KEY, receiver_id: str = "lb-02.example.net") -> Result:
+        _, runtime = self.loaded()
+        return cert_receiver.set_key(
+            runtime, receiver_id=receiver_id, public_key=key + "\n", tools=self.tools
+        )
+
+    def test_only_the_key_changes_and_the_lock_stays_where_it_was(self) -> None:
+        self.add()
+        before = self.keys_file().read_text(encoding="ascii").splitlines()[-1]
+        #
+        # The name has moved since it was registered: the lock is not worked
+        # out again, so the address it was issued for is the one it keeps.
+        #
+        self.tools = dataclasses.replace(self.tools, forward=lambda name: ("198.51.100.99",))
+
+        result = self.replace()
+
+        after = self.keys_file().read_text(encoding="ascii").splitlines()[-1]
+        self.assertEqual(
+            (result.action, [layer.state for layer in result.layers]), ("key", ["created"])
+        )
+        self.assertEqual(after, before.replace(KEY, NEW_KEY))
+        self.assertIn('from="lb-02.example.net,192.0.2.10"', after)
+        self.assertNotIn(KEY, self.keys_file().read_text(encoding="ascii"))
+        self.assertEqual(self.keys_file().stat().st_mode & 0o777, 0o644)
+        self.assertEqual(list(self.keys_file().parent.glob(".authorized_keys.*")), [])
+        self.assertEqual(self.registered()["lb-02.example.net"]["transport"], "rsync")
+
+    def test_an_sftp_receiver_keeps_its_lock_without_a_command(self) -> None:
+        with mock.patch.object(cert_receiver, "_own"):
+            self.add(transport="sftp")
+
+        self.replace()
+
+        line = self.keys_file().read_text(encoding="ascii").splitlines()[-1]
+        self.assertEqual(line, f'restrict,from="lb-02.example.net,192.0.2.10" {NEW_KEY}')
+
+    def test_the_same_key_again_changes_nothing(self) -> None:
+        self.add()
+        written = self.keys_file().stat().st_mtime_ns
+
+        result = self.replace(KEY)
+
+        self.assertEqual([layer.state for layer in result.layers], ["kept"])
+        self.assertEqual(self.keys_file().stat().st_mtime_ns, written)
+
+    def test_https_and_an_unknown_receiver_are_refused(self) -> None:
+        with mock.patch.object(cert_receiver, "_own"):
+            self.add(transport="https", allow=["192.0.2.0/24"], public_key=None)
+        with self.assertRaises(ReceiverError) as https:
+            self.replace()
+        with self.assertRaises(ReceiverError) as unknown:
+            self.replace(receiver_id="lb-09.example.net")
+
+        self.assertEqual(
+            (https.exception.code, unknown.exception.code), ("bad_input", "unknown_receiver")
+        )
+
+    def test_a_lock_that_is_not_the_one_written_is_refused_and_left(self) -> None:
+        self.add()
+        self.keys_file().write_text(f"{KEY}\n", encoding="ascii")
+
+        with self.assertRaises(ReceiverError) as caught:
+            self.replace()
+
+        self.assertIn("register it again", str(caught.exception))
+        self.assertEqual(self.keys_file().read_text(encoding="ascii"), f"{KEY}\n")
+
+    def test_a_write_that_fails_leaves_the_old_key_working(self) -> None:
+        self.add()
+        before = self.keys_file().read_text(encoding="ascii")
+
+        with (
+            mock.patch("os.replace", side_effect=OSError("disk full")),
+            self.assertRaises(ReceiverError) as caught,
+        ):
+            self.replace()
+
+        self.assertEqual(caught.exception.code, "write_failed")
+        self.assertEqual(self.keys_file().read_text(encoding="ascii"), before)
+        self.assertEqual(list(self.keys_file().parent.glob(".authorized_keys.*")), [])
+
+    def test_a_pasted_private_key_is_refused(self) -> None:
+        self.add()
+        header = "-----BEGIN " + "OPENSSH PRIVATE" + " KEY-----"
+
+        with self.assertRaises(ReceiverError) as caught:
+            self.replace(f"{header}\nabc\n-----END")
+
+        self.assertEqual(caught.exception.code, "bad_input")
+
+
 class RemovingAReceiver(ReceiverFixture):
     def remove(self, receiver_id: str = "lb-02.example.net") -> Result:
         policy, runtime = self.loaded()
@@ -712,6 +810,28 @@ class TheCommand(ReceiverFixture):
         self.assertEqual(document["result"]["action"], "secret")
         self.assertNotEqual(document["result"]["password"], password.group(1))
         assert_contract("haprion-cert-receiver", out)
+
+    def test_a_new_key_from_the_pub_file_keeps_the_contract(self) -> None:
+        self.add()
+        new_key = self.root / "new.pub"
+        new_key.write_text(NEW_KEY + "\n", encoding="ascii")
+
+        code, out, _ = self.run_cli(
+            "key", "lb-02.example.net", "--public-key", str(new_key), "--json"
+        )
+
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(out)["result"]["action"], "key")
+        self.assertIn(NEW_KEY, self.keys_file().read_text(encoding="ascii"))
+        assert_contract("haprion-cert-receiver", out)
+
+    def test_a_new_key_without_one_is_refused(self) -> None:
+        self.add()
+
+        code, _, err = self.run_cli("key", "lb-02.example.net")
+
+        self.assertEqual(code, 64)
+        self.assertIn("--public-key", err)
 
     def test_a_password_is_made_only_when_it_may_be_printed(self) -> None:
         """Without --show-password nothing is made, and nothing is replaced."""

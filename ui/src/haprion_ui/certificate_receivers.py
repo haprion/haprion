@@ -356,6 +356,7 @@ WORDS: Mapping[str, tuple[str, str, str]] = {
     "add": ("Registering", "Registered", "Registration failed"),
     "remove": ("Removing", "Removed", "Removal failed"),
     "secret": ("Setting a new secret", "New secret set", "New secret failed"),
+    "key": ("Replacing the key", "Key replaced", "Key replacement failed"),
 }
 
 
@@ -417,7 +418,7 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
         receiver = _text(payload.get("receiver"))
         action = _text(payload.get("action")) or "add"
         verb, done, _failed = WORDS.get(action, WORDS["add"])
-        target = f"for {receiver}" if action == "secret" else receiver
+        target = f"for {receiver}" if action in ("secret", "key") else receiver
         finished = getattr(job, "finished_at", None)
         if job.state in {"pending", "running"}:
             activity.append(Activity(job.id, receiver, action, f"{verb} {target}", "info", ""))

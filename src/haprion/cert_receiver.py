@@ -438,6 +438,10 @@ def create_directory(path: Path, owner: str) -> Layer:
     return Layer("directory", "created", str(path))
 
 
+LOCK_HEADER = "# Written by haprion-cert-receiver. One receiver, one key, one directory."
+LOCK_FROM = re.compile(r'(?:^|,)from="([^"]*)"')
+
+
 def write_authorized_keys(home: Path, line: str) -> Layer:
     """The lock itself: one root-owned line the account cannot change.
 
@@ -451,10 +455,19 @@ def write_authorized_keys(home: Path, line: str) -> Layer:
     os.chown(ssh_directory, ROOT_UID, ROOT_GID)
     os.chmod(ssh_directory, 0o755)  # noqa: S103 - root-owned, as B131 left the nodes
     keys = ssh_directory / "authorized_keys"
-    content = f"# Written by haprion-cert-receiver. One receiver, one key, one directory.\n{line}\n"
-    keys.write_text(content, encoding="ascii")
-    os.chown(keys, ROOT_UID, ROOT_GID)
-    os.chmod(keys, 0o644)
+    content = f"{LOCK_HEADER}\n{line}\n"
+    #
+    # Written beside it and moved into place (26-10-18): a key replaced over
+    # a working one must leave the old lock whole if the write stops half way.
+    #
+    staged = ssh_directory / f".authorized_keys.{os.getpid()}"
+    try:
+        staged.write_text(content, encoding="ascii")
+        os.chown(staged, ROOT_UID, ROOT_GID)
+        os.chmod(staged, 0o644)
+        os.replace(staged, keys)
+    finally:
+        staged.unlink(missing_ok=True)
     return Layer("lock", "created", str(keys))
 
 
@@ -1106,6 +1119,75 @@ def set_secret(
             _restore_secret(target, before)
         raise
     return Result(receiver_id, "secret", tuple(layers), instructions(receiver, locations))
+
+
+def set_key(
+    runtime: RuntimeConfig,
+    *,
+    receiver_id: str,
+    public_key: Path | str,
+    tools: Tools | None = None,
+) -> Result:
+    """Give an rsync or sftp receiver a new public key; the old one stops working at once.
+
+    A host installed again keeps its name, its directory and its certificates
+    and has a new key pair (26-10-18). Only the key changes: the `from=` lock
+    is read from the line already written rather than worked out again, so a
+    DNS change does not move it, and the forced command is the registry's,
+    as at registration. The same key again changes nothing.
+    """
+
+    tools = tools or Tools()
+    registry = runtime.registry
+    if registry is None:
+        raise ReceiverError(
+            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+        )
+    receiver = registry.receivers.get(receiver_id)
+    if receiver is None:
+        raise ReceiverError("unknown_receiver", f"receiver {receiver_id} is not registered")
+    if receiver.transport == "https":
+        raise ReceiverError(
+            "bad_input", f"{receiver_id} fetches over https with a password; give it a new secret"
+        )
+    key_line = (
+        read_public_key(public_key)
+        if isinstance(public_key, Path)
+        else parse_public_key(public_key, "the public key given")
+    )
+    keys = receiver.path / ".ssh" / "authorized_keys"
+    try:
+        written = [
+            line
+            for line in keys.read_text(encoding="ascii").splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReceiverError(
+            "write_failed",
+            f"{keys} could not be read ({exc}); remove the receiver and register it again",
+            exit_code=74,
+        ) from exc
+    lock = LOCK_FROM.search(written[0]) if len(written) == 1 else None
+    if lock is None:
+        raise ReceiverError(
+            "write_failed",
+            f"{keys} does not hold the one locked line it was written with; remove the "
+            "receiver and register it again",
+            exit_code=74,
+        )
+    options = ["restrict", f'from="{lock.group(1)}"']
+    if receiver.transport == "rsync":
+        options.append(f'command="{RRSYNC} -ro {receiver.path}"')
+    line = ",".join(options) + " " + key_line
+    if written[0] == line:
+        layer = Layer("lock", "kept", str(keys))
+    else:
+        try:
+            layer = write_authorized_keys(receiver.path, line)
+        except OSError as exc:
+            raise ReceiverError("write_failed", str(exc), exit_code=74) from exc
+    return Result(receiver_id, "key", (layer,), ())
 
 
 def _restore_secret(target: Path, before: str) -> None:

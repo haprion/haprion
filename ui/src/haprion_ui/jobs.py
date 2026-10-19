@@ -266,11 +266,19 @@ def _owed_sentence(job: Job) -> str:
 
 @dataclass(frozen=True, slots=True)
 class NodeGap:
-    """One node the engine named, and the certificate IDs it is behind on."""
+    """One node the engine named, and the certificate and CA IDs it is behind on."""
 
     node: str
     missing: tuple[str, ...]
     stale: tuple[str, ...]
+    missing_authorities: tuple[str, ...] = ()
+    stale_authorities: tuple[str, ...] = ()
+
+    @property
+    def behind(self) -> bool:
+        return bool(
+            self.missing or self.stale or self.missing_authorities or self.stale_authorities
+        )
 
     def describe(self) -> str:
         parts = []
@@ -278,6 +286,10 @@ class NodeGap:
             parts.append(f"is missing {', '.join(self.missing)}")
         if self.stale:
             parts.append(f"carries an older {', '.join(self.stale)}")
+        if self.missing_authorities:
+            parts.append(f"is missing the CA {', '.join(self.missing_authorities)}")
+        if self.stale_authorities:
+            parts.append(f"carries an older CA {', '.join(self.stale_authorities)}")
         return f"{self.node} {' and '.join(parts)}"
 
 
@@ -344,8 +356,10 @@ def _gaps(value: object) -> tuple[NodeGap, ...]:
                 node=node if isinstance(node, str) else "",
                 missing=_ids(entry.get("missing")),
                 stale=_ids(entry.get("stale")),
+                missing_authorities=_ids(entry.get("missing_authorities")),
+                stale_authorities=_ids(entry.get("stale_authorities")),
             )
-            if gap.node and (gap.missing or gap.stale):
+            if gap.node and gap.behind:
                 gaps.append(gap)
     return tuple(gaps)
 

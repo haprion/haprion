@@ -666,6 +666,26 @@ class ADeployBlockedOnCertificates(unittest.TestCase):
             "node-b is missing example-net",
         )
 
+    def test_a_node_behind_only_on_a_ca_file_is_named_with_it(self) -> None:
+        #
+        # Review 2026-10-18, L1: the engine names CA files apart from
+        # certificates. A gap with only those is still a gap, not a node to drop.
+        #
+        refusal = certificate_refusal(
+            [
+                {
+                    "node": "node-b",
+                    "missing": [],
+                    "stale": [],
+                    "missing_authorities": [],
+                    "stale_authorities": ["corp-root"],
+                }
+            ]
+        )
+        block = block_of(job(state="blocked", outcome="blocked", result=refusal))
+
+        self.assertEqual(block.headline, "Deploy blocked: node-b carries an older CA corp-root")
+
     def test_any_other_ending_is_not_a_block(self) -> None:
         other_code = {"error": {"code": "deploy_blocked", "message": "split brain"}}
         for row in (

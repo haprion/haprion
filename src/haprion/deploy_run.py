@@ -568,7 +568,7 @@ def _certificate_preflight(
         report.warnings.append(Message(code="certificates_unchecked", message=warning))
         return None
 
-    if not preflight.target.certificates:
+    if not preflight.target.certificates and not preflight.target.authorities:
         #
         # Nothing referenced, nothing to be behind on. Warning about nodes
         # that did not report certificates would then be noise about a
@@ -597,8 +597,8 @@ def _certificate_preflight(
         )
         return DeployRun(EXIT_BLOCKED, report)
 
-    for name in unverified_certificates(observation):
-        warning = f"{name} did not report its certificates; they were not checked"
+    for name, what in unverified_certificates(observation, preflight.target):
+        warning = f"{name} did not report its {what}; they were not checked"
         writer.write(f"WARNING: {warning}\n")
         report.warnings.append(Message(code="certificates_unverified", message=warning, node=name))
     return None

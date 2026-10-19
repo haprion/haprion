@@ -280,14 +280,30 @@ class CertificateGap:
     are read differently by the person who has to act: a missing file is a
     certificate that never reached the node, a stale one is a renewal that did
     not.
+
+    The CA files the pools verify against (B276) are judged the same way and
+    kept apart, because they live in their own directory and namespace on the
+    node. A stale CA is the worse half: HAProxy accepts the old file, the
+    release activates, and the pool's TLS fails against a backend whose
+    certificate now chains to the new one.
     """
 
     node: str
     missing: tuple[str, ...]
     stale: tuple[str, ...]
+    missing_authorities: tuple[str, ...] = ()
+    stale_authorities: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
-        return {"node": self.node, "missing": list(self.missing), "stale": list(self.stale)}
+        document: dict[str, object] = {
+            "node": self.node,
+            "missing": list(self.missing),
+            "stale": list(self.stale),
+        }
+        if self.missing_authorities or self.stale_authorities:
+            document["missing_authorities"] = list(self.missing_authorities)
+            document["stale_authorities"] = list(self.stale_authorities)
+        return document
 
     def describe(self) -> str:
         parts = []
@@ -295,7 +311,22 @@ class CertificateGap:
             parts.append(f"missing {', '.join(self.missing)}")
         if self.stale:
             parts.append(f"stale {', '.join(self.stale)}")
+        if self.missing_authorities:
+            parts.append(f"missing CA {', '.join(self.missing_authorities)}")
+        if self.stale_authorities:
+            parts.append(f"stale CA {', '.join(self.stale_authorities)}")
         return f"{self.node} ({'; '.join(parts)})"
+
+
+def _behind(
+    carried: tuple[tuple[str, str], ...], wanted: tuple[CertificateRef, ...]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The IDs a node lacks and the IDs it carries as other bytes, in `wanted` order."""
+
+    held = dict(carried)
+    missing = tuple(ref.id for ref in wanted if ref.id not in held)
+    stale = tuple(ref.id for ref in wanted if ref.id in held and held[ref.id] != ref.fingerprint)
+    return missing, stale
 
 
 def certificate_gaps(
@@ -311,32 +342,57 @@ def certificate_gaps(
     the two operations together; that is the plan's rule, so that a certificate
     rollout is always something a person asked for by name.
 
-    Only nodes that answered about certificates are judged. A node that said
-    nothing cannot be shown to be behind, and blocking on silence would make a
-    status script from before the field existed refuse every deploy. Such a
-    node is reported as unverified instead, by `unverified_certificates`.
+    The CA files are part of the same target and are judged with it, so this
+    and `CertificateTarget.is_current` cannot disagree about what a node should
+    carry.
+
+    Only what a node answered about is judged. A node that said nothing cannot
+    be shown to be behind, and blocking on silence would make a status script
+    from before the field existed refuse every deploy. Such a node is reported
+    as unverified instead, by `unverified_certificates`.
     """
 
     gaps = []
     for node in observation.usable:
-        if node.certificates is None:
-            continue
-        carried = dict(node.certificates)
-        missing = tuple(ref.id for ref in certificates.certificates if ref.id not in carried)
-        stale = tuple(
-            ref.id
-            for ref in certificates.certificates
-            if ref.id in carried and carried[ref.id] != ref.fingerprint
-        )
-        if missing or stale:
-            gaps.append(CertificateGap(node=node.name, missing=missing, stale=stale))
+        missing: tuple[str, ...] = ()
+        stale: tuple[str, ...] = ()
+        missing_authorities: tuple[str, ...] = ()
+        stale_authorities: tuple[str, ...] = ()
+        if node.certificates is not None:
+            missing, stale = _behind(node.certificates, certificates.certificates)
+        if node.authorities is not None:
+            missing_authorities, stale_authorities = _behind(
+                node.authorities, certificates.authorities
+            )
+        if missing or stale or missing_authorities or stale_authorities:
+            gaps.append(
+                CertificateGap(
+                    node=node.name,
+                    missing=missing,
+                    stale=stale,
+                    missing_authorities=missing_authorities,
+                    stale_authorities=stale_authorities,
+                )
+            )
     return tuple(gaps)
 
 
-def unverified_certificates(observation: ClusterObservation) -> tuple[str, ...]:
-    """The readable nodes that said nothing about the certificates they carry."""
+def unverified_certificates(
+    observation: ClusterObservation, certificates: CertificateTarget
+) -> tuple[tuple[str, str], ...]:
+    """The readable nodes that said nothing about what the target asks of them.
 
-    return tuple(node.name for node in observation.usable if node.certificates is None)
+    Each as (node, what it did not report): "certificates" or "CA files". A
+    node is only asked about CA files when the target has any.
+    """
+
+    silent = []
+    for node in observation.usable:
+        if certificates.certificates and node.certificates is None:
+            silent.append((node.name, "certificates"))
+        if certificates.authorities and node.authorities is None:
+            silent.append((node.name, "CA files"))
+    return tuple(silent)
 
 
 @dataclass(frozen=True, slots=True)

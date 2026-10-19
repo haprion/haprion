@@ -84,12 +84,16 @@ class HelperFixture(unittest.TestCase):
         *,
         published_hash: str | None = TARGET_HASH,
         distributed: tuple[str, ...] | None = None,
+        authorities: tuple[str, ...] = (),
     ) -> Path:
         """The policy, and with `distributed` a certificate root holding those IDs.
 
         Without it the policy names no certificate root, which is the shape
         every case before the preflight existed ran against, and which the
         preflight has to let through with a warning rather than refuse.
+
+        `authorities` moves the cluster's certificates into a registry and adds
+        those CA files to it (B276), published under the root's `ca/`.
         """
 
         config_root = self.root / "config"
@@ -102,12 +106,30 @@ class HelperFixture(unittest.TestCase):
         (config_root / "alpha").mkdir(exist_ok=True)
         for identifier in distributed or ():
             (dist_root / f"{identifier}.pem").write_text(pem(identifier), encoding="ascii")
+        (dist_root / "ca").mkdir(exist_ok=True)
+        for identifier in authorities:
+            (dist_root / "ca" / f"{identifier}.pem").write_text(pem(identifier), encoding="ascii")
 
         clusters = yaml.safe_load((BASE / "examples/clusters.yaml").read_text())
         entry = clusters["clusters"]["alpha"]
         entry["config_path"] = str(config_root / "alpha")
         entry["publish_path"] = str(publish_root / "alpha")
         entry["validation_certs"] = str(cert_root)
+        registry: dict[str, Any] | None = None
+        if authorities:
+            served = entry.pop("certificate_ids")
+            entry["default_certificate"] = served[0]
+            registry = {
+                "schema_version": 1,
+                "certificates": {
+                    **{i: {"source": {"kind": "acme"}, "clusters": ["alpha"]} for i in served},
+                    **{
+                        i: {"source": {"kind": "authority"}, "clusters": ["alpha"]}
+                        for i in authorities
+                    },
+                },
+            }
+            (self.root / "certificates.yaml").write_text(yaml.safe_dump(registry), encoding="utf-8")
         (self.root / "clusters.yaml").write_text(yaml.safe_dump(clusters), encoding="utf-8")
 
         if published_hash is not None:
@@ -128,6 +150,8 @@ class HelperFixture(unittest.TestCase):
         }
         if distributed is not None:
             policy["certificate_root"] = str(dist_root)
+        if registry is not None:
+            policy["certificate_registry"] = str(self.root / "certificates.yaml")
         policy_path = self.root / "runtime-policy.yaml"
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         return policy_path
@@ -507,6 +531,39 @@ class CertificatePreflightTests(HelperFixture):
             [warning["code"] for warning in document["warnings"]], ["certificates_unchecked"]
         )
         self.assertIn("example.com, example.net", document["warnings"][0]["message"])
+
+    def test_a_node_carrying_an_older_ca_file_blocks_like_a_certificate(self) -> None:
+        #
+        # Review 2026-10-18, L1: the CA file passes HAProxy's own check on the
+        # node, so a stale one is activated and the pool's TLS fails. It has to
+        # be caught here, before the first node is touched.
+        #
+        self.carry(*REFERENCED)
+        for node in self.cluster.nodes:
+            node.authorities = (("corp-root", fingerprint("corp-root")),)
+        self.cluster.node("node-b").authorities = (("corp-root", "c" * 64),)
+
+        code, out, _ = self.run_helper(
+            request(json=True),
+            policy_path=self.runtime(distributed=REFERENCED, authorities=("corp-root",)),
+        )
+
+        self.assertEqual(code, 65)
+        self.assertEqual(self.triggered, [])
+        document = assert_contract("haprion-deploy", out)
+        self.assertEqual(document["error"]["code"], "certificates_not_deployed")
+        self.assertEqual(
+            document["error"]["details"]["nodes"],
+            [
+                {
+                    "node": "node-b",
+                    "missing": [],
+                    "stale": [],
+                    "missing_authorities": [],
+                    "stale_authorities": ["corp-root"],
+                }
+            ],
+        )
 
     def test_the_human_mode_names_the_command_to_run_next(self) -> None:
         self.carry("example.com")

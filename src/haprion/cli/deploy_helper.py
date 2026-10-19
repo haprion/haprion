@@ -314,7 +314,7 @@ def main(
         )
 
     #
-    # The certificates the release references, resolved before the lock is
+    # The certificates and CA files the release references, resolved before the lock is
     # taken and before any node is read. This is what §6.4 calls the deploy
     # preflight: the loop compares each readable node against these bytes and
     # blocks, naming `cert-deploy`, when a node is behind. The comparison uses
@@ -330,7 +330,7 @@ def main(
     # says so, in the rollout text and in the result's warnings.
     #
     preflight: CertificatePreflight | None = None
-    if cluster.certificate_ids:
+    if cluster.certificate_ids or cluster.authority_ids:
         try:
             preflight = CertificatePreflight(
                 target=(
@@ -338,7 +338,7 @@ def main(
                     if policy.certificate_root is None
                     else target_for(cluster, policy.certificate_root)
                 ),
-                referenced=tuple(cluster.certificate_ids),
+                referenced=(*cluster.certificate_ids, *cluster.authority_ids),
                 next_command=f"haprion-cert-deploy -c {request.cluster}",
             )
         except CertificateError as exc:

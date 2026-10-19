@@ -80,6 +80,11 @@ class FakeNode:
     #
     certificates: tuple[tuple[str, str], ...] | None = ()
     #
+    # The CA files the node reports under `authorities`, in the same shape. None
+    # leaves the field out, as a node does whose status script predates it.
+    #
+    authorities: tuple[tuple[str, str], ...] | None = None
+    #
     # How this node stands on the keepalived address list its release carries.
     # A release activates HAProxy and the addresses in two steps, so the node
     # can be on the new release with the old list - the state the release hash
@@ -124,6 +129,7 @@ class FakeNode:
             "stats_ok": True,
             "runtime": {"version": "3.2.1", "uptime_sec": 3600},
             "certificates": self._certificates(),
+            **({} if self.authorities is None else {"authorities": self._listed(self.authorities)}),
             **({} if self.peers is None else {"peers": self.peers}),
         }
 
@@ -157,9 +163,13 @@ class FakeNode:
 
         if self.certificates is None:
             return None
+        return self._listed(self.certificates)
+
+    @staticmethod
+    def _listed(carried: tuple[tuple[str, str], ...]) -> list[dict[str, Any]]:
         return [
             {"id": identifier, "fingerprint_sha256": fingerprint, "valid": True}
-            for identifier, fingerprint in self.certificates
+            for identifier, fingerprint in carried
         ]
 
 

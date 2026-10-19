@@ -685,16 +685,27 @@ class TheTerminalNamesTheSameCodeAsThePage(unittest.TestCase):
 PUBLISHED = (("example-com", "a" * 64), ("example-net", "b" * 64))
 
 
-def preflight(*published: tuple[str, str], root: bool = True) -> CertificatePreflight:
+def preflight(
+    *published: tuple[str, str],
+    authorities: tuple[tuple[str, str], ...] = (),
+    root: bool = True,
+) -> CertificatePreflight:
     return CertificatePreflight(
         target=CertificateTarget(
-            certificates=tuple(CertificateRef(id=i, fingerprint=f) for i, f in published)
+            certificates=tuple(CertificateRef(id=i, fingerprint=f) for i, f in published),
+            authorities=tuple(CertificateRef(id=i, fingerprint=f) for i, f in authorities),
         )
         if root
         else None,
-        referenced=tuple(identifier for identifier, _ in published),
+        referenced=tuple(identifier for identifier, _ in (*published, *authorities)),
         next_command="haprion-cert-deploy -c alpha",
     )
+
+
+#
+# A CA file the cluster's pools verify against (B276), as the manager published it.
+#
+AUTHORITY = (("corp-root", "e" * 64),)
 
 
 def carrying(*published: tuple[str, str]) -> FakeCluster:
@@ -856,6 +867,79 @@ class CertificatePreflightTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertNotIn("certificate", shown)
         self.assertEqual(LAST_REPORT[0].warnings, [])
+
+    def test_a_cluster_with_only_a_ca_file_is_still_checked(self) -> None:
+        #
+        # Review 2026-10-18, L1: an HTTP frontend in front of an HTTPS pool
+        # references no certificate, only the CA - and the check used to stop
+        # at the empty certificate list.
+        #
+        cluster = carrying()
+        for node in cluster.nodes:
+            node.authorities = ()
+
+        code, shown = deploy(cluster, preflight=preflight(authorities=AUTHORITY))
+
+        self.assertEqual(cluster.triggered, [])
+        self.assertEqual(code, 65)
+        self.assertIn("node-a (missing CA corp-root)", shown)
+        report = LAST_REPORT[0]
+        assert report.error is not None and report.error.details is not None
+        self.assertEqual(
+            report.error.details["nodes"][0],
+            {
+                "node": "node-a",
+                "missing": [],
+                "stale": [],
+                "missing_authorities": ["corp-root"],
+                "stale_authorities": [],
+            },
+        )
+
+    def test_a_node_carrying_an_older_ca_file_blocks_beside_a_current_certificate(
+        self,
+    ) -> None:
+        #
+        # The worse half of L1: HAProxy accepts the old file, so nothing on the
+        # node would have stopped the release.
+        #
+        cluster = carrying(*PUBLISHED)
+        for node in cluster.nodes:
+            node.authorities = AUTHORITY
+        cluster.node("node-b").authorities = (("corp-root", "f" * 64),)
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED, authorities=AUTHORITY))
+
+        self.assertEqual(cluster.triggered, [])
+        self.assertEqual(code, 65)
+        self.assertIn("node-b (stale CA corp-root)", shown)
+        self.assertNotIn("node-a (", shown)
+
+    def test_nodes_carrying_the_published_ca_file_are_deployed(self) -> None:
+        cluster = carrying(*PUBLISHED)
+        for node in cluster.nodes:
+            node.authorities = AUTHORITY
+
+        code, _ = deploy(cluster, preflight=preflight(*PUBLISHED, authorities=AUTHORITY))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(cluster.triggered, ["node-b", "node-a"])
+        self.assertEqual(LAST_REPORT[0].warnings, [])
+
+    def test_a_node_that_says_nothing_about_ca_files_is_warned_about_not_blocked(
+        self,
+    ) -> None:
+        cluster = carrying(*PUBLISHED)
+        cluster.node("node-a").authorities = AUTHORITY
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED, authorities=AUTHORITY))
+
+        self.assertEqual(code, 0)
+        self.assertIn("WARNING: node-b did not report its CA files", shown)
+        self.assertEqual(
+            [(w.code, w.node) for w in LAST_REPORT[0].warnings],
+            [("certificates_unverified", "node-b")],
+        )
 
     def test_without_a_preflight_nothing_is_compared(self) -> None:
         #

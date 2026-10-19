@@ -133,16 +133,17 @@ These rules are shared by config deploy and certificate deploy:
   `outcome=not_attempted`.
 - The target version/hash or certificate fingerprints are returned even on partial results.
 - Initial and final VIP summaries use the same shape as `haprion-status`.
-- A config deploy checks the certificates the release references against what each readable node
-  reports before it touches any node. A node that lacks one, or carries other bytes, ends the run
-  as `blocked` with `certificates_not_deployed`; `error.details.nodes` lists each such node with
-  its `missing` and `stale` certificate IDs and `error.details.next_command` names the
+- A config deploy checks the certificates and CA files the release references against what each
+  readable node reports before it touches any node. A node that lacks one, or carries other bytes,
+  ends the run as `blocked` with `certificates_not_deployed`; `error.details.nodes` lists each such
+  node with its `missing` and `stale` certificate IDs (and, when a CA file is behind,
+  `missing_authorities` and `stale_authorities`) and `error.details.next_command` names the
   `haprion-cert-deploy` invocation to run first. Nothing chains the two: the certificate deploy is
   always asked for by name, and a new `haprion-deploy` follows it. A node that did not report
-  certificates is let through with a `certificates_unverified` warning; a manager without a
-  `certificate_root` skips the check with a `certificates_unchecked` warning. A referenced
-  certificate the manager itself does not hold is refused as `certificate_missing`, the code
-  `cert_deploy` uses for the same fault.
+  its certificates or CA files is let through with a `certificates_unverified` warning; a manager
+  without a `certificate_root` skips the check with a `certificates_unchecked` warning. A
+  referenced certificate the manager itself does not hold is refused as `certificate_missing`, the
+  code `cert_deploy` uses for the same fault.
 - In a cluster that shares its counters, a deploy waits up to 15 seconds after each node for it to
   report its peers connected before it touches the next, so the reloaded node can take the counts
   back. A node that has not connected by then is named in a `counters_not_shared` warning and the

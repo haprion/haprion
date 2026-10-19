@@ -420,7 +420,17 @@ class AUdpCheck(unittest.TestCase):
         self.assertEqual(receiver.recvfrom(64)[0], b"", "one empty datagram, nothing to store")
 
     def test_a_port_nothing_listens_on_is_refused(self) -> None:
-        result = self.probe(free_port())
+        #
+        # A UDP port, on a loopback address no other test binds: `free_port`
+        # hands out a TCP port on 127.0.0.1, and in the gate's parallel run a
+        # UDP receiver in another module took the same number in between
+        # (26-10-19), so the probe found something listening.
+        #
+        host = "127.42.0.27"
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind((host, 0))
+            port = int(sock.getsockname()[1])
+        result = self.probe(port, host)
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "refused: nothing listens on the port")

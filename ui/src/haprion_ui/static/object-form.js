@@ -474,7 +474,32 @@
     }
   };
 
+  //
+  // Leaving the editor after a change that was not sent asks first (B336): a
+  // link, Back or a closed tab took typed work with it without a word. Sending
+  // the form - Validate, Save, Save as draft - is not leaving.
+  //
+  const wireUnsaved = () => {
+    const form = document.querySelector("form.preview-form");
+    if (!form) return;
+    let changed = false;
+    const mark = () => {
+      changed = true;
+    };
+    form.addEventListener("input", mark);
+    form.addEventListener("change", mark);
+    form.addEventListener("submit", () => {
+      changed = false;
+    });
+    window.addEventListener("beforeunload", (event) => {
+      if (!changed) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
+    wireUnsaved();
     wireEmptyChoices();
     wireRules();
     wireRecheck();

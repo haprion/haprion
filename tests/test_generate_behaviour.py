@@ -3133,6 +3133,16 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         early = b"name=x' UNION SELECT password FROM users--&pad=" + b"a" * 20_000
         self.assertEqual(self.ask("/upload", name="blocks", body=early)[:2], (403, "crs:deny"))
 
+    def test_a_dot_segment_cannot_borrow_a_large_body_path(self) -> None:
+        """B335: `/upload/../admin` would carry a body inspected in part to `/admin`."""
+
+        padded = b"pad=" + b"a" * 20_000
+        for target in ("/upload/./x", "/upload/%2e/x"):
+            with self.subTest(target):
+                self.assertEqual(
+                    self.ask(target, name="blocks", body=padded)[:2], (413, "waf-body:deny")
+                )
+
     def test_what_the_engine_could_not_read_is_judged_as_the_rule_set_judges(self) -> None:
         """Security review S04: refused in `block`, let through and named in `log`."""
 

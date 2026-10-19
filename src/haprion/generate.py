@@ -2426,6 +2426,13 @@ def _waf_large_body(proxy: Proxy, waf: Waf) -> tuple[list[str], str | None]:
             f"    acl {acl} {ACCESS_PATH_EXPRESSION} -m str {path.lower()}",
             f"    acl {acl} {ACCESS_PATH_EXPRESSION} -m beg {path.lower()}/",
         ]
+    #
+    # Not for a path with a dot segment in it (B335): `/upload/../admin` reads
+    # as under `/upload` here and as `/admin` to a backend that resolves it,
+    # which would carry a body inspected in part past the path that expects
+    # one. Such a path is held to the limit every other path is.
+    #
+    lines.append(f"    acl {acl}-dots path,url_dec -m reg {DOT_SEGMENT}")
     return lines, acl
 
 
@@ -2441,13 +2448,21 @@ def _waf_body_rules(waf: Waf, host: str, large: str | None) -> list[str]:
 
     if large == "":
         return []
-    condition = f"{host} {WAF_BODY_SHORT}" + (f" !{large}" if large else "")
-    if waf.mode == "block":
-        return [
-            f"    http-request set-var(txn.rule) str(waf-body:deny) if {condition}",
-            f"    http-request deny deny_status 413 if {condition}",
-        ]
-    return _verdict(condition, "waf-body", "log")
+    conditions = (
+        [f"{host} {WAF_BODY_SHORT} !{large}", f"{host} {WAF_BODY_SHORT} {large}-dots"]
+        if large
+        else [f"{host} {WAF_BODY_SHORT}"]
+    )
+    lines: list[str] = []
+    for condition in conditions:
+        if waf.mode == "block":
+            lines += [
+                f"    http-request set-var(txn.rule) str(waf-body:deny) if {condition}",
+                f"    http-request deny deny_status 413 if {condition}",
+            ]
+        else:
+            lines += _verdict(condition, "waf-body", "log")
+    return lines
 
 
 #

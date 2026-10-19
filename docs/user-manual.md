@@ -1154,7 +1154,9 @@ pass. In `block` such a request is refused with 413 and recorded
 where large bodies arrive before `block` is turned on. `large_bodies` lists the
 paths that expect them - an upload, a large JSON call - each covering itself
 and what lies under it, matched as an access rule's path is: there the request
-is served with what fitted inspected. `/` covers the whole object. A body that
+is served with what fitted inspected - but not on a path with a `.` or `..` segment in it, which a
+backend may resolve to somewhere else (`/upload/./x`, `/upload/../admin`): that is held to the limit
+like any other path. `/` covers the whole object. A body that
 arrives too slowly is answered 408 after a second, as before.
 
 **A request the engine cannot read.** The rule set inspects what the engine

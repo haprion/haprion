@@ -179,7 +179,12 @@ def _cluster_view(
     elif not proxies:
         label, tone, detail = "No proxies", "unknown", "The published release defines no frontends"
     else:
-        label, tone, detail = "Current", "healthy", "Published proxy inventory"
+        #
+        # No badge: what is healthy here is the reading, and the time beside it
+        # says how fresh it is. "Current" read as the nodes running the version
+        # while the dashboard could say they did not (B331).
+        #
+        label, tone, detail = "", "healthy", "Published proxy inventory"
 
     return ProxyClusterView(
         cluster=reading.cluster,

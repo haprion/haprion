@@ -72,6 +72,14 @@ class ProxyOverviewTests(unittest.TestCase):
         )
         self.assertEqual(stale.clusters[0].label, "Stale data")
 
+    def test_a_fresh_reading_has_no_badge_only_its_time(self) -> None:
+        """B331: "Current" read as the nodes running the version; the time says what is meant."""
+
+        fresh = build_proxy_overview(
+            ("alpha",), (reading(),), now=NOW, stale_after=timedelta(minutes=2)
+        ).clusters[0]
+        self.assertEqual((fresh.label, fresh.tone), ("", "healthy"))
+
     def test_configured_cluster_without_a_reading_stays_visible(self) -> None:
         overview = build_proxy_overview(("alpha",), (), now=NOW, stale_after=timedelta(minutes=2))
         self.assertEqual(overview.clusters[0].label, "No inventory yet")

@@ -48,6 +48,10 @@ class TheReadingBecomesTheCard(unittest.TestCase):
         edge = next(view for view in overview() if view.cluster == "edge-demo")
 
         self.assertTrue(edge.editable)
+        #
+        # B331: where the network is kept, not whether this user may edit it now.
+        #
+        self.assertEqual(edge.label, "Managed here")
         self.assertEqual(edge.head, "a" * 40)
         self.assertEqual(edge.default_vip, "public")
         self.assertEqual([vip.name for vip in edge.vips], ["partner", "public"])
@@ -61,6 +65,7 @@ class TheReadingBecomesTheCard(unittest.TestCase):
         service = next(view for view in overview() if view.cluster == "service-demo")
 
         self.assertFalse(service.editable)
+        self.assertEqual(service.label, "Not managed here")
         self.assertIn("cannot write", service.detail)
 
     def test_a_cluster_that_has_never_been_read_is_a_card_rather_than_a_gap(self) -> None:

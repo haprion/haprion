@@ -503,7 +503,12 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
     return NetworkClusterView(
         cluster=reading.cluster,
         accent=accent_index(reading.cluster),
-        label="Read-only" if not editable else "Editable",
+        #
+        # Where the network is kept, not whether this user may change it now:
+        # the edit button says that, and "Editable" stood under the header's
+        # *Read-only mode* and in front of readers (B331).
+        #
+        label="Managed here" if editable else "Not managed here",
         tone="healthy" if editable else "warning",
         detail=detail,
         observed_at=metrics.shown(reading.observed_at).strftime("%Y-%m-%d %H:%M"),

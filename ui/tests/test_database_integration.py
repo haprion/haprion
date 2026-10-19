@@ -948,6 +948,26 @@ class ARealDatabase(unittest.TestCase):
         ):
             db.health(connection)
 
+    def test_a_lost_lock_session_is_seen_and_the_lock_can_be_taken_again(self) -> None:
+        """Review 2026-10-18, A1: the poller asks again before every pass."""
+
+        role = os.environ["HAPRION_UI_TEST_POLLER_ROLE"]
+        key = 0x48415052
+        with (
+            psycopg.connect(f"{DSN} user={role}", autocommit=True) as holder,
+            psycopg.connect(f"{DSN} user={role}", autocommit=True) as other,
+        ):
+            self.assertTrue(db.try_singleton_lock(holder, key))
+            self.assertTrue(db.holds_singleton_lock(holder, key))
+            self.assertFalse(db.holds_singleton_lock(other, key))
+            self.assertFalse(db.try_singleton_lock(other, key))
+
+            with contextlib.suppress(psycopg.OperationalError), holder.cursor() as cursor:
+                cursor.execute("select pg_terminate_backend(pg_backend_pid())")
+
+            self.assertFalse(db.holds_singleton_lock(holder, key))
+            self.assertTrue(db.try_singleton_lock(other, key))
+
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
             "HAPRION_UI_TEST_WEB_ROLE": "app_web",

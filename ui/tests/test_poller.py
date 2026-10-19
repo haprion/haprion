@@ -457,7 +457,11 @@ class TheSingletonLockSession(unittest.TestCase):
 class NoClusterYet(unittest.TestCase):
     """A new installation has no cluster (B302); the poller runs, it does not exit."""
 
-    def test_the_poller_records_that_there_is_none_and_keeps_polling(self) -> None:
+    def run_main(
+        self, *, holds: bool = True
+    ) -> tuple[int, list[tuple[str, ...]], list[tuple[str, ...]]]:
+        """One pass of `main` against nothing, with the lock held or lost before it."""
+
         recorded: list[tuple[str, ...]] = []
         passes: list[tuple[str, ...]] = []
 
@@ -506,6 +510,9 @@ class NoClusterYet(unittest.TestCase):
                 unittest.mock.patch.object(db, "try_singleton_lock", return_value=True)
             )
             stack.enter_context(
+                unittest.mock.patch.object(db, "holds_singleton_lock", return_value=holds)
+            )
+            stack.enter_context(
                 unittest.mock.patch.object(
                     db,
                     "record_cluster_list",
@@ -514,8 +521,16 @@ class NoClusterYet(unittest.TestCase):
             )
             stack.enter_context(unittest.mock.patch.object(service, "sleep_until_notified"))
             code = poller.main([])
-        self.assertEqual(code, 0)
-        self.assertEqual((recorded, passes), ([()], [()]))
+        return code, recorded, passes
+
+    def test_the_poller_records_that_there_is_none_and_keeps_polling(self) -> None:
+        self.assertEqual(self.run_main(), (0, [()], [()]))
+
+    def test_a_lost_lock_ends_the_poller_before_the_pass_writes_anything(self) -> None:
+        """Review 2026-10-18, A1: the lock session ended while the pool worked on."""
+
+        with self.assertLogs("haprion_ui", "ERROR"):
+            self.assertEqual(self.run_main(holds=False), (75, [], []))
 
 
 class TheClusterList(unittest.TestCase):

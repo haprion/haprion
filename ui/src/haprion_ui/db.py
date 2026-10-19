@@ -2912,6 +2912,30 @@ def try_singleton_lock(connection: Connection[Any], key: int) -> bool:
     return bool(row and row[0])
 
 
+def holds_singleton_lock(connection: Connection[Any], key: int) -> bool:
+    """Whether this session still holds the lock `try_singleton_lock` took.
+
+    False as well when the session itself is gone. A terminated lock session
+    releases the lock on the server while the pool's connections keep working,
+    so a process that never asked again would go on as if it were the only one
+    (review 2026-10-18, A1). A bigint key is held as the high and low halves in
+    `classid` and `objid`, with `objsubid` 1.
+    """
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select exists (select 1 from pg_locks "
+                " where locktype = 'advisory' and pid = pg_backend_pid() and granted "
+                "   and objsubid = 1 and classid = %s::oid and objid = %s::oid)",
+                ((key >> 32) & 0xFFFFFFFF, key & 0xFFFFFFFF),
+            )
+            row = cursor.fetchone()
+    except psycopg.Error:
+        return False
+    return bool(row and row[0])
+
+
 def cluster_drafts(connection: Connection[Any], cluster: str) -> list[ProxyDraft]:
     """Every draft and saved change for one cluster, in the order a listing shows objects."""
 

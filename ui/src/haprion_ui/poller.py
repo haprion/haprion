@@ -788,6 +788,18 @@ def main(argv: list[str] | None = None) -> int:
             #
             stopping = StopRequest(what="after this pass")
             while not stopping.requested():
+                #
+                # Asked again before every pass. The lock lives as long as its
+                # session, and that session can end on its own while the pool
+                # works on - a second poller could then take the lock while this
+                # one kept writing (review 2026-10-18, A1). Leaving with 75 lets
+                # systemd start a fresh one, which takes the lock or finds it
+                # held. A pass already under way finishes; each write is its own
+                # transaction, so that window costs a duplicate reading at most.
+                #
+                if not db.holds_singleton_lock(lock_connection, POLLER_LOCK_KEY):
+                    logger.error("the poller lock on %s was lost; exiting", database)
+                    return 75
                 listed = read_cluster_list()
                 if listed is not None:
                     if listed != known:

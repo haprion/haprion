@@ -41,7 +41,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from haprion import node_package, waf_engine_package  # noqa: E402 - the path above comes first
+from haprion import (  # noqa: E402 - the path above comes first
+    keyring_package,
+    node_package,
+    waf_engine_package,
+)
 from haprion.debian_package import package, write  # noqa: E402
 
 PACKAGE = "haprion-cli"
@@ -89,6 +93,8 @@ if [ "$1" = configure ]; then
         --node-package "/{LIB}/$NODE_PACKAGE" --node-package-sha256 "$NODE_PACKAGE_SHA256" \\
         --waf-engine-package "/{LIB}/$WAF_ENGINE_PACKAGE" \\
         --waf-engine-package-sha256 "$WAF_ENGINE_PACKAGE_SHA256" \\
+        --keyring-package "/{LIB}/$KEYRING_PACKAGE" \\
+        --keyring-package-sha256 "$KEYRING_PACKAGE_SHA256" \\
         --target {TARGET}
 fi
 """
@@ -151,6 +157,7 @@ def assemble(
     wheel: Path,
     node_deb: Path,
     waf_engine_deb: Path,
+    keyring_deb: Path,
     installer: bytes,
     sudoers: bytes,
     licence: bytes,
@@ -161,12 +168,15 @@ def assemble(
     write(root, f"{LIB}/{wheel.name}", wheel.read_bytes(), 0o644)
     write(root, f"{LIB}/{node_deb.name}", node_deb.read_bytes(), 0o644)
     write(root, f"{LIB}/{waf_engine_deb.name}", waf_engine_deb.read_bytes(), 0o644)
+    write(root, f"{LIB}/{keyring_deb.name}", keyring_deb.read_bytes(), 0o644)
     write(root, f"{LIB}/install-release.py", installer, 0o755)
     payload = (
         f"WHEEL={wheel.name}\nWHEEL_SHA256={sha256(wheel)}\n"
         f"NODE_PACKAGE={node_deb.name}\nNODE_PACKAGE_SHA256={sha256(node_deb)}\n"
         f"WAF_ENGINE_PACKAGE={waf_engine_deb.name}\n"
         f"WAF_ENGINE_PACKAGE_SHA256={sha256(waf_engine_deb)}\n"
+        f"KEYRING_PACKAGE={keyring_deb.name}\n"
+        f"KEYRING_PACKAGE_SHA256={sha256(keyring_deb)}\n"
     )
     write(root, f"{LIB}/PAYLOAD", payload.encode(), 0o644)
     for name in operator_commands(wheel):
@@ -186,6 +196,7 @@ def assemble(
             f"commit: {commit}\nwheel_sha256: {sha256(wheel)}\n"
             f"node_package_sha256: {sha256(node_deb)}\n"
             f"waf_engine_package_sha256: {sha256(waf_engine_deb)}\n"
+            f"keyring_package_sha256: {sha256(keyring_deb)}\n"
         ).encode(),
         0o644,
     )
@@ -228,7 +239,9 @@ def build_wheel(source: Path, commit: str, epoch: int, uv: Path, work: Path) -> 
     return wheels[0]
 
 
-def build(source: Path, output_dir: Path, uv: Path, waf_engine_deb: Path) -> Path:
+def build(
+    source: Path, output_dir: Path, uv: Path, waf_engine_deb: Path, keyring_deb: Path
+) -> Path:
     source = source.resolve(strict=True)
     commit = node_package.source_commit(source)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -243,12 +256,18 @@ def build(source: Path, output_dir: Path, uv: Path, waf_engine_deb: Path) -> Pat
         # restored to a new VM. Checked here so a wrong file never ships.
         #
         waf_engine_package.verify_package(waf_engine_deb)
+        #
+        # The node package depends on the repository key package; a node
+        # restored from a release's files gets it from here (B339).
+        #
+        keyring_package.verify_package(keyring_deb)
         root = work / "root"
         assemble(
             root,
             wheel=wheel,
             node_deb=node_deb,
             waf_engine_deb=waf_engine_deb,
+            keyring_deb=keyring_deb,
             installer=_git(source, "show", f"{commit}:tools/install-release.py"),
             sudoers=_git(source, "show", f"{commit}:install/sudoers/haprion"),
             licence=_git(source, "show", f"{commit}:LICENSE"),
@@ -286,15 +305,24 @@ def main() -> int:
         required=True,
         help="the haprion-coraza-spoa package (tools/build-coraza-package.py) restored nodes get",
     )
+    parser.add_argument(
+        "--keyring-package",
+        type=Path,
+        required=True,
+        help="the haprion-archive-keyring package (tools/build-keyring-package.py) restored nodes get",
+    )
     args = parser.parse_args()
     if args.uv is None:
         parser.error("no uv on PATH; pass --uv")
     try:
-        target = build(args.source, args.output_dir, args.uv, args.waf_engine_package)
+        target = build(
+            args.source, args.output_dir, args.uv, args.waf_engine_package, args.keyring_package
+        )
     except (
         BuildError,
         node_package.PackageError,
         waf_engine_package.PackageError,
+        keyring_package.PackageError,
         ValueError,
         OSError,
     ) as exc:

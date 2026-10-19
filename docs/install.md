@@ -309,7 +309,8 @@ interface, or to see one step's whole output.
 sudo apt install haprion-cli
 ```
 
-The package's `postinst` verifies the wheel, the node package and the WAF engine package it carries
+The package's `postinst` verifies the wheel, the node package, the WAF engine package and the repository key
+package it carries
 against their digests, installs the release under `/opt/haprion/releases/` and switches `/opt/haprion/current`.
 The operator commands are in `/usr/bin`. A later version of the package is the whole update.
 What the installer does, and installing without the package, are in the manual's
@@ -378,7 +379,7 @@ sudo haprion-user init-admin
 
 Build from a clean, committed source tree that has passed the repository checks, into a
 protected directory outside the repository, with the `uv` the repository is locked with. The CLI
-package carries the WAF engine package, for restored nodes, so the engine is built first.
+package carries the WAF engine and repository key packages, for restored nodes, so those are built first.
 
 The WAF engine (Coraza SPOA with the OWASP Core Rule Set) comes as two Debian packages,
 built from pinned upstream sources by `tools/build-coraza-package.py`; building the same
@@ -405,12 +406,13 @@ It writes `SHA256SUMS` beside the packages. The steps it runs, for building one 
 python3 tools/build-coraza-package.py crs --source-dir <dir> --output-dir <out>
 python3 tools/build-coraza-package.py coraza --source-dir <dir> --go-root <go> \
     --govulncheck <dir>/govulncheck --output-dir <out>
+tools/build-keyring-package.py --source "$(pwd)" --output-dir <out>
 tools/build-cli-package.py --source "$(pwd)" --output-dir <out> --uv /path/to/uv \
-    --waf-engine-package <out>/haprion-coraza-spoa_<version>_amd64.deb
+    --waf-engine-package <out>/haprion-coraza-spoa_<version>_amd64.deb \
+    --keyring-package <out>/haprion-archive-keyring_<version>_all.deb
 tools/node-package.py build --source . --output-dir <out>
 tools/build-ui-package.py --source "$(pwd)" --output-dir <out> --distribution ubuntu26.04 --uv /path/to/uv
 tools/build-certbot-package.py --source "$(pwd)" --output-dir <out> --distribution ubuntu26.04 --uv /path/to/uv
-tools/build-keyring-package.py --source "$(pwd)" --output-dir <out>
 ```
 
 The web interface and certbot are built inside a container of the distribution they are for, with

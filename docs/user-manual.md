@@ -2293,11 +2293,11 @@ even when nothing on the management host ever runs again.
 host key fingerprint; the name and address the VM will have; every file written, and every archived
 file that is not - the VM's own in a directory it shares with the image, the archive's APT sources,
 and old `.replaced-` copies (kept on the node, 30 days - see
-[What a node keeps and for how long](#what-a-node-keeps-and-for-how-long)); the node package that will prepare the node, and the WAF engine package when the node ran it; every account with its IDs
+[What a node keeps and for how long](#what-a-node-keeps-and-for-how-long)); the node package that will prepare the node; for a node that had the project's repository, that repository on the VM, from which the WAF engine and the repository key come; for one installed from files, the WAF engine package when the node ran it and the repository key package; every account with its IDs
 and groups; and, in test mode, every rewritten field with its old and new value. It stops on: this
 manager's CLI release carrying no node package, or one that does not verify (see
 [Part 3](#part-3--the-versioned-cli-release)); for a node that ran the WAF engine and a target
-without it, the release carrying no engine package, or one that does not verify; a `node.conf` in the archive that cannot be read back
+without it, the release carrying no engine package, or one that does not verify; for a node without the repository, the release carrying no repository key package, which the node package depends on; a `node.conf` in the archive that cannot be read back
 into answers; a fingerprint that is not the one
 given (nothing is sent at all); a target whose clock is more than five minutes from the manager's -
 a VM put back from a snapshot often runs days behind, and apt then refuses every repository; an archive that is not of the chosen node; a target that is not
@@ -5204,14 +5204,15 @@ development path.
 
 This is how the CLI is installed and updated: `sudo apt install haprion-cli` from the project's
 repository (`haprion-ui` depends on it), or the package file from a release. The package carries the wheel, the node package of the same
-commit, the WAF engine package, the release installer and the operators' sudo rules, and its
+commit, the WAF engine and repository key packages, the release installer and the operators' sudo rules, and its
 `postinst` runs the installer described below. To build it yourself, run the complete repository
 gate first, then build it from the clean commit, with the `uv` the repository is locked with and
-the engine package built by `tools/build-coraza-package.py`:
+the engine and key packages built by `tools/build-coraza-package.py` and `tools/build-keyring-package.py`:
 
 ```bash
 tools/build-cli-package.py --source "$(pwd)" --output-dir /path/to/protected/staging --uv /path/to/uv \
-    --waf-engine-package /path/to/protected/staging/haprion-coraza-spoa_0.9.0-7_amd64.deb
+    --waf-engine-package /path/to/protected/staging/haprion-coraza-spoa_0.9.0-7_amd64.deb \
+    --keyring-package /path/to/protected/staging/haprion-archive-keyring_2026.10.17_all.deb
 sudo apt-get install /path/to/protected/staging/haprion-cli_0.1.0+git20261009120000.0123456789ab_all.deb
 ```
 
@@ -5219,7 +5220,7 @@ The same commit gives the same bytes. It installs:
 
 | Path | What |
 |---|---|
-| `/usr/lib/haprion/cli/` | the wheel, the node package, `install-release.py` and `PAYLOAD` with their digests |
+| `/usr/lib/haprion/cli/` | the wheel, the node package, the WAF engine and repository key packages, `install-release.py` and `PAYLOAD` with their digests |
 | `/usr/bin/haprion-*` | one line per operator command, into `/opt/haprion/current/bin` |
 | `/etc/sudoers.d/haprion` | the operators' rules: `%sudo` may run each read helper without a password and each write helper with one; never `%haprion`, which holds the worker. Checked with `visudo` when the package is built |
 

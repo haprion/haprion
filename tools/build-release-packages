@@ -11,10 +11,10 @@ that differs, wherever it ran, publishes nothing. The order is the one
 `docs/install.md` gives, because the CLI package carries the engine package:
 
     haprion-crs, haprion-coraza-spoa   tools/build-coraza-package.py
+    haprion-archive-keyring             tools/build-keyring-package.py
     haprion-cli                         tools/build-cli-package.py
     haprion-node                        tools/node-package.py
     haprion-ui, haprion-certbot         per distribution, in podman
-    haprion-archive-keyring             tools/build-keyring-package.py
 
 Every input that is not in the tree is fetched into the cache and checked
 against a digest before it is used: the Coraza and CRS archives against the
@@ -198,6 +198,9 @@ def build(
     (engine,) = output_dir.glob("haprion-coraza-spoa_*_amd64.deb")
     if waf_only:
         return write_sums(output_dir)
+    # Before the CLI package, which carries it for restored nodes (B339).
+    step(python, tools / "build-keyring-package.py", "--source", source, "--output-dir", output_dir)
+    (keyring,) = output_dir.glob("haprion-archive-keyring_*_all.deb")
     step(
         python,
         tools / "build-cli-package.py",
@@ -209,6 +212,8 @@ def build(
         uv,
         "--waf-engine-package",
         engine,
+        "--keyring-package",
+        keyring,
     )
     step(python, tools / "node-package.py", "build", "--source", source, "--output-dir", output_dir)
     for distribution in DISTRIBUTIONS:
@@ -227,7 +232,6 @@ def build(
                 "--podman",
                 podman,
             )
-    step(python, tools / "build-keyring-package.py", "--source", source, "--output-dir", output_dir)
     return write_sums(output_dir)
 
 

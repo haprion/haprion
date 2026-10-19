@@ -17,6 +17,8 @@ from unittest import mock
 
 from haprion import (
     cluster_lock,
+    haprion_repository,
+    keyring_package,
     node_package,
     node_restore,
     restore_plan,
@@ -27,7 +29,7 @@ from haprion.cli import node_restore as cli
 from haprion.config import Node
 from haprion.node_restore import Clock, Request, RestoreError
 from haprion.restore_plan import Target, TestProfile
-from tests.restore_fixture import build
+from tests.restore_fixture import FILES, build
 
 VERSION = "2026-01-01_04-00-00"
 PUBLISH_ROOT = Path("/srv/haprion/published")
@@ -86,6 +88,7 @@ def members(payload: bytes) -> list[str]:
 
 class RestoreTest(unittest.TestCase):
     engine: waf_engine_package.ReleasePackage | None = None
+    keyring: keyring_package.ReleasePackage | None = None
 
     def setUp(self) -> None:
         work = Path(tempfile.mkdtemp())
@@ -106,6 +109,17 @@ class RestoreTest(unittest.TestCase):
             commit="0123456789ab" + "0" * 28,
             sha256=hashlib.sha256(carried.read_bytes()).hexdigest(),
         )
+        # The node package depends on it; a release carries it (B339).
+        key = work / "haprion-archive-keyring.deb"
+        key.write_bytes(b"the release's repository key package")
+        self.keyring = keyring_package.ReleasePackage(
+            path=key, version="2026.10.17", sha256=hashlib.sha256(key.read_bytes()).hexdigest()
+        )
+        patch = mock.patch.object(
+            keyring_package, "release_package", side_effect=lambda: self.keyring
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def answering(self, address: str) -> bool:
         return address not in self.silent
@@ -1085,6 +1099,72 @@ class WafEngineToANewVm(Run):
         with mock.patch.object(waf_engine_package, "release_package", side_effect=broken):
             summary = self.preview(self.prepare())
         self.assertIn("WAF engine package cannot be used", " ".join(summary["problems"]))
+
+
+class KeyringToANewVm(Run):
+    """B339: the node package depends on the key package; a new VM without the
+    repository gets the release's, or the restore says why not before it writes."""
+
+    def test_the_run_carries_it(self) -> None:
+        self.assertEqual(self.preview(self.prepare())["problems"], [])
+        run = self.previewed()
+        self.carry_out(run)
+        header, carried = FakeSession.calls[1][1], FakeSession.calls[1][2]
+        assert self.keyring is not None
+        self.assertEqual(
+            header["keyring"], {"version": "2026.10.17", "sha256": self.keyring.sha256}
+        )
+        self.assertIn(
+            f"/var/lib/haprion-restore/{run}/haprion-archive-keyring.deb", members(carried)
+        )
+
+    def test_a_release_without_it_stops_the_restore(self) -> None:
+        self.keyring = None
+        summary = self.preview(self.prepare())
+        self.assertIn(
+            "carries none; install the release with --keyring-package",
+            " ".join(summary["problems"]),
+        )
+
+
+#
+# A node installed from the project's repository (B339): the new VM gets the
+# repository, and the engine and the key come from there, as new as it has them.
+#
+HAPRION_SOURCE = (
+    "Types: deb\nURIs: https://haprion.github.io/haprion/\nSuites: deb13\n"
+    "Components: main\nSigned-By: /usr/share/keyrings/haprion-archive-keyring.asc\n"
+)
+
+
+class FromTheRepository(Run):
+    def setUp(self) -> None:
+        super().setUp()
+        _with_engine(self)
+        archive = self.backups / "node-a" / f"{VERSION}.tar.gz"
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        files = {**FILES, haprion_repository.SOURCE_PATH: (HAPRION_SOURCE, 0o644)}
+        shutil.move(build(work, files=files, meta=ENGINE_VERSIONS), archive)
+
+    def test_the_target_gets_the_repository_and_no_carried_engine_or_key(self) -> None:
+        summary = self.preview(self.prepare())
+        self.assertEqual(summary["problems"], [])
+        self.assertNotIn("waf_engine", summary)
+        run = self.previewed()
+        self.carry_out(run)
+        header, carried = FakeSession.calls[1][1], FakeSession.calls[1][2]
+        self.assertIsNone(header["waf_engine"])
+        self.assertIsNone(header["keyring"])
+        written = members(carried)
+        self.assertIn(haprion_repository.SOURCE_PATH, written)
+        self.assertIn(haprion_repository.KEY_PATH, written)
+        self.assertNotIn(f"/var/lib/haprion-restore/{run}/haprion-coraza-spoa.deb", written)
+
+    def test_a_release_without_carried_packages_does_not_matter(self) -> None:
+        self.engine = None
+        self.keyring = None
+        self.assertEqual(self.preview(self.prepare())["problems"], [])
 
 
 class WafEngineNotRun(Run):

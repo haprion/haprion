@@ -634,6 +634,80 @@ class WafEngine(AgentTest):
         )
 
 
+KEY_PACKAGE = b"the release's repository key package"
+KEY_HEADER = dict(
+    APPLY_HEADER,
+    keyring={"version": "2026.10.17", "sha256": hashlib.sha256(KEY_PACKAGE).hexdigest()},
+)
+KEY_FILE: Member = (
+    f"/var/lib/haprion-restore/{RUN}/{restore_agent.KEYRING_FILE}",
+    "file",
+    0o600,
+    0,
+    0,
+    KEY_PACKAGE,
+)
+
+
+class Keyring(AgentTest):
+    """B339: the node package depends on the repository key package."""
+
+    def test_it_is_installed_before_the_node_package(self) -> None:
+        result = self.serve(KEY_HEADER, payload([*APPLY_FILES, KEY_FILE]))
+        self.assertTrue(result["ok"], result)
+        work = self.host.path(f"/var/lib/haprion-restore/{RUN}/keyring")
+        install = [
+            "apt-get",
+            "install",
+            "-y",
+            "--no-install-recommends",
+            *restore_agent.APT_WAIT,
+            str(work / restore_agent.KEYRING_FILE),
+        ]
+        node = next(
+            argv
+            for argv in self.host.commands
+            if argv[:2] == ["apt-get", "install"] and argv[-1].endswith("haprion-node.deb")
+        )
+        self.assertLess(self.host.commands.index(install), self.host.commands.index(node))
+        self.assertIn("keyring", [step["step"] for step in result["steps"]])
+
+    def test_one_that_does_not_match_its_digest_stops_before_anything_is_written(self) -> None:
+        header = dict(KEY_HEADER, keyring={"version": "2026.10.17", "sha256": "0" * 64})
+        result = self.serve(header, payload([*APPLY_FILES, KEY_FILE]))
+        self.assertFalse(result["ok"])
+        self.assertIn("repository key package does not match", result["error"])
+        self.assertEqual(self.host.commands, [])
+
+    def test_a_package_without_its_description_is_refused(self) -> None:
+        result = self.serve(APPLY_HEADER, payload([*APPLY_FILES, KEY_FILE]))
+        self.assertFalse(result["ok"])
+        self.assertIn("do not come together", result["error"])
+
+    def test_the_repository_key_is_in_place_before_apt_reads_the_source(self) -> None:
+        key = (restore_agent.REPOSITORY_KEYS[0], "file", 0o644, 0, 0, "the key\n")
+        source = ("/etc/apt/sources.list.d/haprion.sources", "file", 0o644, 0, 0, "haprion\n")
+        seen: list[bool] = []
+        original = self.host.run
+
+        def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if argv[0] == "apt-get" and argv[-1] == "update":
+                seen.append(self.host.path(restore_agent.REPOSITORY_KEYS[0]).exists())
+            return original(argv, **kwargs)
+
+        self.host.run = run  # type: ignore[method-assign]
+        result = self.serve(APPLY_HEADER, payload([*APPLY_FILES, key, source]))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(seen, [True])
+
+    def test_the_names_are_the_release_s_and_the_repository_s(self) -> None:
+        from haprion import haprion_repository, keyring_package
+
+        self.assertEqual(restore_agent.KEYRING_FILE, keyring_package.RELEASE_PACKAGE)
+        self.assertEqual(restore_agent.KEYRING_VERSION.pattern, keyring_package.VERSION.pattern)
+        self.assertEqual(restore_agent.REPOSITORY_KEYS, (haprion_repository.KEY_PATH,))
+
+
 class Network(AgentTest):
     NETPLAN: ClassVar[list[Member]] = [
         ("/etc/netplan/50-cloud-init.yaml", "file", 0o600, 0, 0, "network: {}\n")

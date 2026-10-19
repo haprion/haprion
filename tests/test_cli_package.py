@@ -85,6 +85,8 @@ class TheTree(unittest.TestCase):
         node.write_bytes(b"node package")
         engine = self.root / "haprion-coraza-spoa_0.9.0-7_amd64.deb"
         engine.write_bytes(b"engine package")
+        keyring = self.root / "haprion-archive-keyring_2026.10.17_all.deb"
+        keyring.write_bytes(b"key package")
         tree = self.root / "tree"
 
         TOOL.assemble(
@@ -92,6 +94,7 @@ class TheTree(unittest.TestCase):
             wheel=wheel,
             node_deb=node,
             waf_engine_deb=engine,
+            keyring_deb=keyring,
             installer=b"#!/usr/bin/python3\n",
             sudoers=SUDOERS.read_bytes(),
             licence=b"licence text\n",
@@ -105,6 +108,10 @@ class TheTree(unittest.TestCase):
         self.assertIn(f"WAF_ENGINE_PACKAGE={engine.name}\n", payload)
         self.assertEqual((lib / engine.name).read_bytes(), b"engine package")
         self.assertIn("--waf-engine-package", (tree / "DEBIAN/postinst").read_text())
+        # The node package depends on it; a node restored from files gets it here (B339).
+        self.assertIn(f"KEYRING_PACKAGE={keyring.name}\n", payload)
+        self.assertEqual((lib / keyring.name).read_bytes(), b"key package")
+        self.assertIn("--keyring-package", (tree / "DEBIAN/postinst").read_text())
         self.assertEqual(
             (tree / "usr/bin/haprion-status").read_text(),
             '#!/bin/sh\nexec /opt/haprion/current/bin/haprion-status "$@"\n',
@@ -129,6 +136,7 @@ class TheTree(unittest.TestCase):
                 wheel=wheel,
                 node_deb=node,
                 waf_engine_deb=node,
+                keyring_deb=node,
                 installer=b"",
                 sudoers=b"%sudo ALL=(root) NOPASSWD /broken\n",
                 licence=b"",

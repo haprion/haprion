@@ -11,12 +11,21 @@ import zipfile
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
-from haprion import debian_package, node_package, waf_engine_package
+from haprion import (
+    carried_package,
+    debian_package,
+    keyring_package,
+    node_package,
+    waf_engine_package,
+)
+from tests.test_keyring_package import deb as keyring_deb
 from tests.test_waf_engine_package import deb as engine_deb
 
 INSTALLER_PATH = Path(__file__).resolve().parents[1] / "tools" / "install-release.py"
 NODE_PACKAGE_SOURCE = Path(node_package.__file__).read_text(encoding="utf-8")
 WAF_ENGINE_SOURCE = Path(waf_engine_package.__file__).read_text(encoding="utf-8")
+KEYRING_SOURCE = Path(keyring_package.__file__).read_text(encoding="utf-8")
+CARRIED_SOURCE = Path(carried_package.__file__).read_text(encoding="utf-8")
 DEBIAN_PACKAGE_SOURCE = Path(debian_package.__file__).read_text(encoding="utf-8")
 EPOCH = 1_790_000_000
 COMMIT = "0123456789ab" + "0" * 28
@@ -39,6 +48,8 @@ class InstallReleaseTests(unittest.TestCase):
             # The release verifies its node package with its own verifier.
             archive.writestr("haprion/node_package.py", NODE_PACKAGE_SOURCE)
             archive.writestr("haprion/waf_engine_package.py", WAF_ENGINE_SOURCE)
+            archive.writestr("haprion/keyring_package.py", KEYRING_SOURCE)
+            archive.writestr("haprion/carried_package.py", CARRIED_SOURCE)
             archive.writestr("haprion/debian_package.py", DEBIAN_PACKAGE_SOURCE)
             archive.writestr("haprion/cli/__init__.py", "")
             archive.writestr(
@@ -144,6 +155,53 @@ class InstallReleaseTests(unittest.TestCase):
                     target=work / "target",
                     python=Path(sys.executable),
                     require_root=False,
+                )
+            for path in sorted(release.rglob("*"), reverse=True):
+                path.chmod(0o700 if path.is_dir() else 0o600)
+            release.chmod(0o700)
+
+    def test_the_key_package_travels_in_the_release_and_is_found_there(self) -> None:
+        """B339: the node package depends on it; a node restored from files gets the release's."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw).resolve()
+            wheel, digest = self.make_wheel(work)
+            key = keyring_deb(work)
+            key_digest = hashlib.sha256(key.read_bytes()).hexdigest()
+            release_id = install_release_module.install_release(
+                wheel=wheel,
+                expected_sha256=digest,
+                target=work / "target",
+                python=Path(sys.executable),
+                require_root=False,
+                keyring_package=key,
+                keyring_package_sha256=key_digest,
+            )
+            release = work / "target" / "releases" / release_id
+            metadata = json.loads((release / "INSTALLATION.json").read_text())
+            self.assertEqual(
+                metadata["keyring_package"],
+                {
+                    "file": "haprion-archive-keyring.deb",
+                    "version": "2026.10.17",
+                    "sha256": key_digest,
+                },
+            )
+            found = keyring_package.release_package(release)
+            assert found is not None
+            self.assertEqual(found.sha256, key_digest)
+            wrong = keyring_deb(work, name="something-else")
+            with self.assertRaisesRegex(
+                install_release_module.InstallError, "repository key package verification failed"
+            ):
+                install_release_module.install_release(
+                    wheel=wheel,
+                    expected_sha256=digest,
+                    target=work / "other",
+                    python=Path(sys.executable),
+                    require_root=False,
+                    keyring_package=wrong,
+                    keyring_package_sha256=hashlib.sha256(wrong.read_bytes()).hexdigest(),
                 )
             for path in sorted(release.rglob("*"), reverse=True):
                 path.chmod(0o700 if path.is_dir() else 0o600)

@@ -33,6 +33,8 @@ DEFAULT_KEEP = 10
 NODE_PACKAGE_NAME = "haprion-node.deb"
 # And the WAF engine's; `haprion.waf_engine_package` finds it there.
 WAF_ENGINE_PACKAGE_NAME = "haprion-coraza-spoa.deb"
+# And the repository key's, which the node package depends on (B339).
+KEYRING_PACKAGE_NAME = "haprion-archive-keyring.deb"
 EXPECTED_PROJECT = "haprion"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -280,16 +282,16 @@ def _verify_node_package(
     return {"version": str(facts["version"]), "commit": str(facts["commit"]), "sha256": expected}
 
 
-def _verify_waf_engine_package(
-    python: Path, lib_dir: Path, package: Path, expected: str
+def _verify_carried_package(
+    python: Path, lib_dir: Path, module: str, label: str, package: Path, expected: str
 ) -> dict[str, str]:
-    """Verify the WAF engine package with the release's own verifier; answer its version."""
+    """Verify a carried package with the release's own verifier; answer its version."""
 
     code = (
         "import json,sys;"
         f"sys.path.insert(0,{str(lib_dir)!r});"
         "from pathlib import Path;"
-        "from haprion.waf_engine_package import verify_package;"
+        f"from haprion.{module} import verify_package;"
         "version,_=verify_package(Path(sys.argv[1]),sys.argv[2]);"
         "print(json.dumps({'version':version}))"
     )
@@ -304,9 +306,9 @@ def _verify_waf_engine_package(
         facts = json.loads(completed.stdout)
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "").strip().splitlines()[-1:] or ["no detail"]
-        raise InstallError(f"WAF engine package verification failed: {detail[0]}") from exc
+        raise InstallError(f"{label} verification failed: {detail[0]}") from exc
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
-        raise InstallError(f"WAF engine package verification failed: {exc}") from exc
+        raise InstallError(f"{label} verification failed: {exc}") from exc
     return {"version": str(facts["version"]), "sha256": expected}
 
 
@@ -339,6 +341,8 @@ def install_release(
     node_package_sha256: str | None = None,
     waf_engine_package: Path | None = None,
     waf_engine_package_sha256: str | None = None,
+    keyring_package: Path | None = None,
+    keyring_package_sha256: str | None = None,
 ) -> str:
     if require_root and os.geteuid() != 0:
         raise InstallError("installer must run as root")
@@ -367,6 +371,9 @@ def install_release(
     waf_engine_package = _checked_package(
         waf_engine_package, waf_engine_package_sha256, "WAF engine package"
     )
+    keyring_package = _checked_package(
+        keyring_package, keyring_package_sha256, "repository key package"
+    )
 
     runtime = inspect_runtime(python)
     project, version, scripts, _ = inspect_wheel(wheel)
@@ -394,6 +401,7 @@ def install_release(
         for record, label, wanted in (
             ("node_package", "node package", node_package_sha256),
             ("waf_engine_package", "WAF engine package", waf_engine_package_sha256),
+            ("keyring_package", "repository key package", keyring_package_sha256),
         ):
             carried = (installed.get(record) or {}).get("sha256")
             if carried != wanted:
@@ -417,10 +425,26 @@ def install_release(
                 shutil.copyfile(node_package, staging / NODE_PACKAGE_NAME)
             engine_facts = None
             if waf_engine_package is not None and waf_engine_package_sha256 is not None:
-                engine_facts = _verify_waf_engine_package(
-                    python, lib_dir, waf_engine_package, waf_engine_package_sha256
+                engine_facts = _verify_carried_package(
+                    python,
+                    lib_dir,
+                    "waf_engine_package",
+                    "WAF engine package",
+                    waf_engine_package,
+                    waf_engine_package_sha256,
                 )
                 shutil.copyfile(waf_engine_package, staging / WAF_ENGINE_PACKAGE_NAME)
+            keyring_facts = None
+            if keyring_package is not None and keyring_package_sha256 is not None:
+                keyring_facts = _verify_carried_package(
+                    python,
+                    lib_dir,
+                    "keyring_package",
+                    "repository key package",
+                    keyring_package,
+                    keyring_package_sha256,
+                )
+                shutil.copyfile(keyring_package, staging / KEYRING_PACKAGE_NAME)
             installation = {
                 "project": project,
                 "version": version,
@@ -440,6 +464,8 @@ def install_release(
                     "file": WAF_ENGINE_PACKAGE_NAME,
                     **engine_facts,
                 }
+            if keyring_facts is not None:
+                installation["keyring_package"] = {"file": KEYRING_PACKAGE_NAME, **keyring_facts}
             (staging / "INSTALLATION.json").write_text(
                 json.dumps(installation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
@@ -515,6 +541,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="the WAF engine package (tools/build-coraza-package.py) for restored nodes",
     )
     parser.add_argument("--waf-engine-package-sha256")
+    parser.add_argument(
+        "--keyring-package",
+        type=Path,
+        help="the repository key package (tools/build-keyring-package.py) for restored nodes",
+    )
+    parser.add_argument("--keyring-package-sha256")
     parser.add_argument("--target", type=Path, default=DEFAULT_TARGET)
     parser.add_argument("--python", type=Path, default=DEFAULT_PYTHON)
     parser.add_argument(
@@ -540,6 +572,8 @@ def main(argv: list[str] | None = None) -> int:
             node_package_sha256=args.node_package_sha256,
             waf_engine_package=args.waf_engine_package,
             waf_engine_package_sha256=args.waf_engine_package_sha256,
+            keyring_package=args.keyring_package,
+            keyring_package_sha256=args.keyring_package_sha256,
         )
     except InstallError as exc:
         print(f"install-release: ERROR: {exc}", file=sys.stderr)

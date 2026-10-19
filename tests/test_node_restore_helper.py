@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haprion import node_package, node_restore
+from haprion import keyring_package, node_package, node_restore
 from haprion.cli import node_restore_ask, node_restore_helper
 from haprion.cli.node_restore_helper import (
     DISCARD,
@@ -71,6 +71,15 @@ class HelperTest(unittest.TestCase):
             commit="0123456789ab" + "0" * 28,
             sha256=hashlib.sha256(carried.read_bytes()).hexdigest(),
         )
+        # The node package depends on it; a release carries it (B339).
+        key = work / "haprion-archive-keyring.deb"
+        key.write_bytes(b"the release's repository key package")
+        keyring = keyring_package.ReleasePackage(
+            path=key, version="2026.10.17", sha256=hashlib.sha256(key.read_bytes()).hexdigest()
+        )
+        patch = mock.patch.object(keyring_package, "release_package", return_value=keyring)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def answering(self, address: str) -> bool:
         if address in self.silent and any(c[1]["op"] == "network" for c in FakeSession.calls):

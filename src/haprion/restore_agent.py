@@ -109,6 +109,12 @@ PACKAGE_VERSION = re.compile(r"(\d+\.\d+\.\d+)\+git(\d{14})\.([0-9a-f]{12})")
 #
 WAF_ENGINE_FILE = "haprion-coraza-spoa.deb"
 WAF_ENGINE_VERSION = re.compile(r"\d+\.\d+\.\d+-\d+")
+#
+# The repository key, which the node package depends on, carried to a new VM
+# the repository is not given to (`haprion.keyring_package`, B339).
+#
+KEYRING_FILE = "haprion-archive-keyring.deb"
+KEYRING_VERSION = re.compile(r"\d{4}\.\d{1,2}\.\d{1,2}")
 NODE_PREPARE = "/usr/share/haprion-node/install/04-node-prepare"
 CLUSTER_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
 #
@@ -167,6 +173,12 @@ SNAPSHOT_TREES = ("/etc/haprion",)
 REPLACED = re.compile(r"\.replaced-\d{8}-\d{6}$")
 HOSTNAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 APT_DIRECTORIES = ("/etc/apt/sources.list.d", "/etc/apt/preferences.d", "/etc/apt/keyrings")
+#
+# The project repository's key, where docs/install.md puts it and its package
+# keeps it (`haprion.haprion_repository`, B339): placed with the sources,
+# before the update that reads them.
+#
+REPOSITORY_KEYS = ("/usr/share/keyrings/haprion-archive-keyring.asc",)
 #
 # `apt-get update` against the distribution's own mirrors: three tries, and
 # APT's own retries inside each. A mirror caught mid-sync answers with a hash
@@ -782,8 +794,10 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
             raise Refused("the header names an unusable account or group")
     wanted = _package_path(header["run"])
     engine_path = f"{STATE}/{header['run']}/{WAF_ENGINE_FILE}"
+    keyring_path = f"{STATE}/{header['run']}/{KEYRING_FILE}"
     carried: Item | None = None
     engine: Item | None = None
+    keyring: Item | None = None
     for item in items:
         if item.path == ROOT_KEYS or item.path == NETPLAN or item.path.startswith(f"{NETPLAN}/"):
             raise Refused(f"{item.path} is written by a later session, not by apply")
@@ -791,6 +805,8 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
             carried = item
         elif item.path == engine_path and item.kind == "file":
             engine = item
+        elif item.path == keyring_path and item.kind == "file":
+            keyring = item
         elif item.path == STATE or item.path.startswith(f"{STATE}/"):
             raise Refused(f"{item.path} is this restore's own directory, not a file to place")
     described = header.get("node_package")
@@ -810,6 +826,14 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
             raise Refused("the WAF engine package's version is not usable")
         if hashlib.sha256(engine.data).hexdigest() != waf.get("sha256"):
             raise Refused("the WAF engine package does not match the digest the manager sent")
+    key = header.get("keyring")
+    if (key is None) != (keyring is None):
+        raise Refused("the repository key package and its description do not come together")
+    if key is not None and keyring is not None:
+        if not isinstance(key, dict) or not KEYRING_VERSION.fullmatch(str(key.get("version", ""))):
+            raise Refused("the repository key package's version is not usable")
+        if hashlib.sha256(keyring.data).hexdigest() != key.get("sha256"):
+            raise Refused("the repository key package does not match the digest the manager sent")
     if not CLUSTER_ID.fullmatch(str(header.get("cluster", ""))):
         raise Refused("the cluster ID is not usable")
     if not isinstance(header.get("answers"), str) or "\0" in header["answers"]:
@@ -822,9 +846,39 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
         # B183: the node's software is its own.
         if header["keepalived"] != "start":
             raise Refused("an overwrite leaves keepalived running")
-        if any(item.path.startswith(APT_DIRECTORIES) for item in items):
+        if any(_repository_item(item) for item in items):
             raise Refused("an overwrite writes no repository file")
+        if key is not None:
+            raise Refused("an overwrite installs no repository key package")
     return carried
+
+
+def _repository_item(item: Item) -> bool:
+    """A file of the package repositories: placed before the update, not with the rest."""
+
+    return item.path.startswith(APT_DIRECTORIES) or item.path in REPOSITORY_KEYS
+
+
+def _keyring(host: Host, header: dict[str, Any], items: list[Item], report: Report) -> None:
+    """Install the repository key package, when the manager sent it (B339).
+
+    Sent to a new VM the repository is not given to: the node package depends
+    on it, and there is nowhere else to get it from.
+    """
+
+    key = header.get("keyring")
+    if key is None:
+        return
+    path = f"{STATE}/{header['run']}/{KEYRING_FILE}"
+    carried = next(item for item in items if item.path == path)
+    work = host.path(f"{STATE}/{header['run']}/keyring")
+    work.mkdir(parents=True, exist_ok=True, mode=0o700)
+    work.chmod(0o700)
+    deb = work / KEYRING_FILE
+    deb.write_bytes(carried.data)
+    deb.chmod(0o644)
+    host.run(["apt-get", "install", "-y", "--no-install-recommends", *APT_WAIT, str(deb)])
+    report.step("keyring", version=key["version"])
 
 
 def _waf_engine(host: Host, header: dict[str, Any], items: list[Item], report: Report) -> None:
@@ -944,7 +998,7 @@ def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Rep
     if header.get("overwrite"):
         _missing_packages(host, header["packages"], report)
         return
-    apt = [item for item in items if item.path.startswith(APT_DIRECTORIES)]
+    apt = [item for item in items if _repository_item(item)]
     for directory in APT_DIRECTORIES:
         if directory in header["equal_directories"]:
             quarantine(host, directory, [i.path for i in items], header["run"], report)
@@ -1319,7 +1373,7 @@ def _apply(
         quarantine(host, directory, [*keep, *spared], header["run"], report)
     written = 0
     for item in sorted(items, key=lambda i: (i.kind != "directory", i.path.count("/"), i.path)):
-        if item.path.startswith(APT_DIRECTORIES):
+        if _repository_item(item):
             continue
         place(host, item)
         written += 1
@@ -1329,6 +1383,7 @@ def _apply(
         # A running node's releases and `current` are its own (B183).
         _layout(host, header["run"], report)
     _services(host, header, report)
+    _keyring(host, header, items, report)
     _waf_engine(host, header, items, report)
     _node_package(host, header, carried, items, report)
     return {"steps": report.steps, "warnings": report.warnings}

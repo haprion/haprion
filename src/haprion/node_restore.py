@@ -51,7 +51,9 @@ from typing import Any, TextIO
 from haprion import (
     backup_retention,
     cluster_lock,
+    haprion_repository,
     haproxy_repository,
+    keyring_package,
     node_package,
     restore_agent,
     restore_answers,
@@ -520,6 +522,11 @@ class Checked:
     # the target lacks it. None when nothing is to be installed.
     #
     waf_engine: waf_engine_package.ReleasePackage | None = None
+    #
+    # The repository key package the run installs: a new VM the repository
+    # is not given to (B339). None when nothing is to be installed.
+    #
+    keyring: keyring_package.ReleasePackage | None = None
 
 
 def _inspect_header(source: RestoreSource, mode: str, run: str) -> dict[str, Any]:
@@ -717,15 +724,25 @@ def check(
                 "this manager's CLI release carries no node package; install it with --node-package"
             )
     #
+    # A node installed from the project's repository gets the repository on
+    # the new VM, and with it the engine and the key the node package depends
+    # on - as new as the repository's (B339). The plan says whether it does.
+    #
+    from_repository = any(item.path == haprion_repository.SOURCE_PATH for item in plan.files)
+    #
     # The WAF engine, when the node ran it: the cluster's release may carry
-    # WAF rules, which the node's pull-deploy refuses without the engine. It
-    # is in no repository, so it comes from this manager's release - onto a
-    # new VM always, onto the node itself only when the node lacks it (B183).
+    # WAF rules, which the node's pull-deploy refuses without the engine. A
+    # node without the repository gets this manager's release's - onto a new
+    # VM always, onto the node itself only when the node lacks it (B183).
     #
     engine: waf_engine_package.ReleasePackage | None = None
-    if source.waf_engine_version and not (
-        request.mode == "overwrite"
-        and waf_engine_package.PACKAGE in inspected.get("product_installed", ())
+    if (
+        source.waf_engine_version
+        and not from_repository
+        and not (
+            request.mode == "overwrite"
+            and waf_engine_package.PACKAGE in inspected.get("product_installed", ())
+        )
     ):
         try:
             engine = waf_engine_package.release_package()
@@ -736,6 +753,24 @@ def check(
                 problems.append(
                     "the node ran the WAF engine, and this manager's CLI release carries no WAF "
                     "engine package; install the release with --waf-engine-package"
+                )
+    #
+    # The repository key, which the node package depends on: a new VM without
+    # the repository has nowhere else to get it, and apt refuses the node
+    # package without it (B339). An overwrite keeps the node's own packages.
+    #
+    keyring: keyring_package.ReleasePackage | None = None
+    if request.mode != "overwrite" and not from_repository:
+        try:
+            keyring = keyring_package.release_package()
+        except keyring_package.PackageError as exc:
+            problems.append(f"this manager's repository key package cannot be used: {exc}")
+        else:
+            if keyring is None:
+                problems.append(
+                    "the node package depends on the repository key package, and this "
+                    "manager's CLI release carries none; install the release with "
+                    "--keyring-package"
                 )
     derived = ""
     try:
@@ -753,10 +788,13 @@ def check(
         "plan": plan.summary(),
         "node_package": None if package is None else package.sha256,
         "waf_engine": None if engine is None else engine.sha256,
+        "keyring": None if keyring is None else keyring.sha256,
         "answers": derived,
     }
     digest = hashlib.sha256(json.dumps(bound, sort_keys=True).encode()).hexdigest()
-    return Checked(source, plan, inspected, digest, tuple(problems), package, derived, engine)
+    return Checked(
+        source, plan, inspected, digest, tuple(problems), package, derived, engine, keyring
+    )
 
 
 def preview(
@@ -1184,6 +1222,11 @@ def _run(
             if checked.waf_engine is None
             else {"version": checked.waf_engine.version, "sha256": checked.waf_engine.sha256}
         ),
+        "keyring": (
+            None
+            if checked.keyring is None
+            else {"version": checked.keyring.version, "sha256": checked.keyring.sha256}
+        ),
         "answers": checked.answers,
         "traffic_log": plan.traffic_log,
         "groups": [{"name": g.name, "gid": g.gid} for g in plan.groups],
@@ -1233,10 +1276,24 @@ def _run(
                 ),
             )
         )
+        keyring = (
+            ()
+            if checked.keyring is None
+            else (
+                PlannedFile(
+                    path=f"{restore_agent.STATE}/{run_id}/{restore_agent.KEYRING_FILE}",
+                    kind="file",
+                    mode=0o600,
+                    uid=0,
+                    gid=0,
+                    data=checked.keyring.path.read_bytes(),
+                ),
+            )
+        )
         applied = session.call(
             request.target,
             apply_header,
-            payload(checked.source, (*plan.files, carried, *engine)),
+            payload(checked.source, (*plan.files, carried, *engine, *keyring)),
             progress=stream,
         )
         result["sessions"]["apply"] = {k: v for k, v in applied.items() if k != "ok"}

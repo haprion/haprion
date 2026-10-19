@@ -36,7 +36,7 @@ from typing import Any, Literal
 
 import yaml
 
-from haprion import haproxy_repository, safe_yaml
+from haprion import haprion_repository, haproxy_repository, safe_yaml
 from haprion.restore_source import Account, Entry, Group, RestoreSource, content
 
 Mode = Literal["new_vm", "test", "overwrite"]
@@ -567,6 +567,15 @@ def build(
             written = haproxy_repository.repository_files(target.os_release, branch)
         except haproxy_repository.RepositoryError as exc:
             raise PlanError(str(exc)) from exc
+        #
+        # The project's repository, when the node had it (B339): the node
+        # package's engine and key then come from there, as they did before.
+        #
+        if haprion_repository.in_archive(source):
+            try:
+                written = (*written, *haprion_repository.repository_files(target.os_release))
+            except haproxy_repository.RepositoryError as exc:
+                raise PlanError(str(exc)) from exc
         files.extend(
             PlannedFile(path=item.path, kind="file", mode=0o644, uid=0, gid=0, data=item.data)
             for item in written

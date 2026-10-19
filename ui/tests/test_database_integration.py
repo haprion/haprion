@@ -933,6 +933,21 @@ class ARealDatabase(unittest.TestCase):
             )["requires"]["database_head"]
             self.assertEqual(cursor.fetchone(), (declared,))
 
+    def test_healthz_reads_what_it_judges_as_the_web_and_only_the_web_passes(self) -> None:
+        """B332: the web role reads the revision, and the grant is the web's alone."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select version_num from alembic_version")
+            (head,) = cursor.fetchone() or (None,)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            web = db.health(connection)
+        self.assertEqual((web.web, web.revision), (True, head))
+        with (
+            self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection,
+            self.assertRaises(psycopg.errors.InsufficientPrivilege),
+        ):
+            db.health(connection)
+
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
             "HAPRION_UI_TEST_WEB_ROLE": "app_web",

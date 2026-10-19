@@ -332,6 +332,9 @@ is the same file for every release; `update-platform-release` installs it again
 before it activates a release. systemd reports a unit as active as
 soon as the process is up, which is before it has reached its database; "up but
 unable to answer" is exactly the state worth catching during an installation.
+`/healthz` answers 200 only when the service reaches the database `ui.toml` names,
+as a role holding the web's grants (`app_web`), on a schema revision the release
+runs on - or a newer one, as after a rollback; otherwise 503 with the reason.
 
 The health endpoint answers with the identity the database reports back, not the
 one the process believes it has. Running as the wrong role otherwise looks

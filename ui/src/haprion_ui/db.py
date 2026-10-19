@@ -331,6 +331,41 @@ def lock_session(database: Database) -> Connection[Any]:
     return psycopg.connect(database.connection_string, autocommit=True)
 
 
+@dataclass(frozen=True, slots=True)
+class Health:
+    """What /healthz judges (B332): who we are, where, and on which schema.
+
+    `web` is whether the role holds the web's grants (`app_web`); `revision`
+    is the schema's Alembic revision, None when the database has none - an
+    empty database, or one no migration has run against.
+    """
+
+    identity: str
+    database: str
+    web: bool
+    revision: str | None
+
+
+def health(connection: Connection[Any]) -> Health:
+    """The facts /healthz judges, read in one transaction."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select current_user, current_database(), "
+            "pg_has_role(current_user, 'app_web', 'member'), "
+            "to_regclass('alembic_version') is not null"
+        )
+        row = cursor.fetchone()
+        if row is None:  # pragma: no cover - a select of constants returns a row
+            raise psycopg.OperationalError("the database did not answer current_user")
+        revision = None
+        if row[3]:
+            cursor.execute("select version_num from alembic_version")
+            found = cursor.fetchone()
+            revision = None if found is None else str(found[0])
+    return Health(identity=str(row[0]), database=str(row[1]), web=bool(row[2]), revision=revision)
+
+
 def connected_identity(connection: Connection[Any]) -> tuple[str, str]:
     """Who the database thinks we are, and which database this is.
 

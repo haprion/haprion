@@ -135,6 +135,7 @@ app_poller	search_entry	INSERT	admin_only, cluster, href, kind, label, source, t
 app_poller	search_entry	SELECT	admin_only, cluster, href, kind, label, source, title, value
 app_poller	version_diff	INSERT	cluster, commit, diff
 app_poller	version_diff	SELECT	cluster, commit, diff, recorded_at
+app_web	alembic_version	SELECT	version_num
 app_web	app_session	INSERT	expires_at, id_token, token_hash, user_id
 app_web	app_session	SELECT	created_at, expires_at, id_token, last_seen_at, revoked_at, token_hash, user_id
 app_web	app_session	UPDATE	last_seen_at, revoked_at

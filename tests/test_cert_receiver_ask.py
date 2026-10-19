@@ -133,14 +133,14 @@ class WhatItRefusesItself(unittest.TestCase):
         )
 
         self.assertEqual(code, 64)
-        self.assertIn("no command-line arguments", err.getvalue())
+        self.assertIn("accepts no arguments", err.getvalue())
 
     def test_a_request_without_a_request_id_cannot_be_answered_for(self) -> None:
         code, out, err = run('{"operation": "cert_receiver"}', socket_path="/nonexistent")
 
         self.assertEqual(code, 64)
         self.assertEqual(out, "")
-        self.assertIn("request_id", err)
+        self.assertIn("no request identity", err)
 
     def test_a_request_that_is_not_json_is_refused_before_the_socket(self) -> None:
         code, _, err = run("not json", socket_path="/nonexistent")

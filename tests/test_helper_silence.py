@@ -112,3 +112,37 @@ class AskedThenSilent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ARefusalBeforeAskingIsADocument(unittest.TestCase):
+    """Fynd 27 (B335): a request the client turns away asked nothing of anybody.
+
+    It used to leave the worker without a document, which reads as "may have
+    acted"; now each client answers it, so the job says it was refused.
+    """
+
+    def test_a_request_for_another_service_is_refused_in_a_document(self) -> None:
+        for client, _request in CLIENTS:
+            with self.subTest(client=client.__name__):
+                out, err = io.StringIO(), io.StringIO()
+                request = {
+                    "schema_version": 1,
+                    "operation": "something_else",
+                    "cluster": "alpha",
+                    "request_id": REQUEST_ID,
+                    "parameters": {},
+                }
+                code = client.main(
+                    [],
+                    input_stream=io.BytesIO(json.dumps(request).encode()),
+                    output_stream=out,
+                    error_stream=err,
+                    socket_path="/nonexistent",
+                )
+                document = json.loads(out.getvalue())
+                self.assertEqual(code, 64)
+                self.assertEqual(
+                    (document["request_id"], document["outcome"], document["error"]["code"]),
+                    (REQUEST_ID, "failed", "bad_input"),
+                )
+                self.assertIn("nothing was asked", document["error"]["message"])

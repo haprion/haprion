@@ -22,6 +22,7 @@ from haprion.cli import (
     deploy,
     node_ask,
     server_state_helper,
+    socket_ask,
 )
 
 from haprion_ui import operations, worker
@@ -892,8 +893,11 @@ class DefiningClusters(unittest.TestCase):
         for prepared in built:
             with self.subTest(request=prepared.request[:60]):
                 self.assertEqual(prepared.argv, operations.NODE_CLIENT)
-                carried = node_ask._request(io.BytesIO(prepared.request.encode()))
+                carried = socket_ask._read(io.BytesIO(prepared.request.encode()))
                 self.assertEqual(carried, json.loads(prepared.request))
+                self.assertIn(
+                    json.loads(prepared.request)["operation"], node_ask.SERVICE.operations or ()
+                )
 
     def test_a_removal_carries_nothing_but_its_action(self) -> None:
         request = json.loads(self.prepare({"action": "remove"}).request)

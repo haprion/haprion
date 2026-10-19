@@ -210,6 +210,7 @@ class HealthDerivation(unittest.TestCase):
         self.assertFalse(dashboard.not_deployed(status))
         self.assertFalse(dashboard.not_deployed(None))
         self.assertEqual((cluster.label, cluster.tone), ("Not deployed", "unknown"))
+        self.assertEqual(cluster.vip, "None")
         #
         # Said once: no failover state, address, runtime or statistics to
         # report before a first release (Fas 18, finding 61).
@@ -475,6 +476,14 @@ class DashboardShape(unittest.TestCase):
         self.assertFalse(dashboard.clusters[1].configured)
         self.assertEqual(dashboard.clusters[1].label, "Not configured")
         self.assertEqual(dashboard.healthy_clusters, 0)
+
+    def test_the_vip_owner_is_a_node_or_words_never_a_status_code(self) -> None:
+        """B335: `no_owner` and `split_brain` were shown as they are spelt in the contract."""
+
+        self.assertEqual(dashboard._vip_words("no_owner", 0), "None")
+        self.assertEqual(dashboard._vip_words("split_brain", 2), "Split brain (2 nodes)")
+        self.assertEqual(dashboard._vip_words("incomplete", 1), "Not every node read")
+        self.assertEqual(dashboard._vip_words("something_new", 0), "Unknown")
 
     def test_active_vips_counts_addresses_not_clusters(self) -> None:
         #

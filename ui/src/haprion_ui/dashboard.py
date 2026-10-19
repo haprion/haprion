@@ -601,7 +601,9 @@ def _cluster_view(
     owners = summary.get("vip_owners")
     owner_names = [str(owner) for owner in owners] if isinstance(owners, list) else []
     vip_label = (
-        owner_names[0] if vip_state == "single_owner" and len(owner_names) == 1 else vip_state
+        owner_names[0]
+        if vip_state == "single_owner" and len(owner_names) == 1
+        else _vip_words(vip_state, len(owner_names))
     )
 
     target = _mapping(summary.get("target"))
@@ -724,6 +726,26 @@ def _cluster_view(
     )
 
 
+#
+# The cluster's VIP state in words, where a node name stands when one node
+# holds it; the status code itself (`no_owner`) was shown before (B335).
+#
+VIP_WORDS = {
+    "no_owner": "None",
+    "split_brain": "Split brain",
+    "unknown": "Unknown",
+    "incomplete": "Not every node read",
+}
+VIP_NOT_HELD = frozenset(VIP_WORDS.values())
+
+
+def _vip_words(state: str, owners: int) -> str:
+    words = VIP_WORDS.get(state, "Unknown")
+    if state == "split_brain" and owners > 1:
+        return f"{words} ({owners} nodes)"
+    return words
+
+
 def build_dashboard(
     configured_clusters: Iterable[str],
     readings: Iterable[ClusterStatus],
@@ -782,7 +804,7 @@ def build_dashboard(
         active_vips=sum(
             cluster.vip_count
             for cluster in configured_views
-            if cluster.vip not in {"Unknown", "unknown", "incomplete", "no_owner", "split_brain"}
+            if cluster.vip not in VIP_NOT_HELD and not cluster.vip.startswith("Split brain")
         ),
         total_vips=sum(cluster.vip_count for cluster in configured_views),
         converged_clusters=sum(

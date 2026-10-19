@@ -32,6 +32,9 @@ import base64
 import io
 import json
 import os
+import pwd
+import socket
+import struct
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
@@ -74,12 +77,13 @@ from haprion.helper_protocol import (
 )
 from haprion.node_enrollment import AskNode, Enrollment, EnrollmentError, JoinNode, Locations
 from haprion.status_collect import NodeResponse, ask_node, collect, read_target
+from haprion.version_history import request_names
 
 OPERATION = "cluster_node"
 DEFINE = "cluster_define"
 HELPER = "/opt/haprion/current/bin/haprion-node-helper"
 PARAMETERS = {
-    OPERATION: frozenset({"action", "block", "host", "node", "join_key"}),
+    OPERATION: frozenset({"action", "block", "host", "node", "join_key", "requested_by"}),
     DEFINE: frozenset(
         {
             "action",
@@ -92,6 +96,7 @@ PARAMETERS = {
             "join_keys",
             "address_prefix",
             "address_interface",
+            "requested_by",
         }
     ),
 }
@@ -135,11 +140,17 @@ def build_request(
     host: str | None = None,
     node: str | None = None,
     join_key: Mapping[str, str] | None = None,
+    requested_by: str | None = None,
 ) -> str:
     """The exact bounded node request the worker and `haprion-node` send."""
 
     parameters: dict[str, JsonValue] = {"action": action}
-    for name, value in (("block", block), ("host", host), ("node", node)):
+    for name, value in (
+        ("block", block),
+        ("host", host),
+        ("node", node),
+        ("requested_by", requested_by),
+    ):
         if value is not None:
             parameters[name] = value
     if join_key is not None:
@@ -161,10 +172,13 @@ def build_define_request(
     address_prefix: int | None = None,
     address_interface: str | None = None,
     join_keys: Sequence[Mapping[str, str] | None] | None = None,
+    requested_by: str | None = None,
 ) -> str:
     """The exact bounded cluster request the worker and `haprion-cluster` send."""
 
     parameters: dict[str, JsonValue] = {"action": action}
+    if requested_by is not None:
+        parameters["requested_by"] = requested_by
     if action == "add":
         parameters.update(
             {
@@ -219,7 +233,10 @@ def _texts(parameters: Mapping[str, JsonValue], key: str) -> list[str]:
 
 
 def _only(parameters: Mapping[str, JsonValue], allowed: set[str], what: str) -> None:
-    extra = sorted(set(parameters) - allowed)
+    #
+    # `requested_by` goes with any action: who asked, for the version (B335).
+    #
+    extra = sorted(set(parameters) - allowed - {"requested_by"})
     if extra:
         raise HelperProtocolError(f"{what} takes no {', '.join(extra)}", exit_code=65)
 
@@ -469,6 +486,28 @@ def _define_work(
 type Publish = Callable[..., dict[str, Any]]
 
 
+def _caller(stream: Any) -> Mapping[str, str]:
+    """Who sent the request, as `version_history.requester` reads it.
+
+    Through sudo, the account sudo names. Over the socket the worker asks on
+    (B211), nobody sets that: the kernel says who connected (`SO_PEERCRED` on
+    the socket that is this helper's stdin), and only the root group's worker
+    may. Run any other way, it is this process's own account.
+    """
+
+    if os.environ.get("SUDO_USER"):
+        return os.environ
+    try:
+        with socket.socket(fileno=os.dup(stream.fileno())) as connected:
+            credentials = connected.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+            )
+        _pid, uid, _gid = struct.unpack("3i", credentials)
+        return {"SUDO_USER": pwd.getpwuid(uid).pw_name}
+    except (OSError, KeyError, ValueError, AttributeError, io.UnsupportedOperation):
+        return os.environ
+
+
 def _publish_with(addresses: node_publish.Addresses) -> Publish:
     def publish(request: HelperRequest, cluster: Any, **options: Any) -> dict[str, Any]:
         return node_publish.publish(request, cluster, addresses=addresses, **options)
@@ -560,11 +599,19 @@ def main(
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
 
+    #
+    # Who the version a node change publishes is recorded for (B335): read once
+    # the policy names the interface's worker, so the publisher takes it late.
+    #
+    names: list[tuple[str, str]] = [("root", "root")]
+    base = publish or _publish_with(addresses)
+
+    def publisher(request: HelperRequest, cluster: Any, **options: Any) -> dict[str, Any]:
+        return base(request, cluster, names=names[0], **options)
+
     try:
         work = (
-            _node_work(
-                request, locations, require_secure, publish or _publish_with(addresses), leave
-            )
+            _node_work(request, locations, require_secure, publisher, leave)
             if request.operation == OPERATION
             else _define_work(request, locations, places, tools, require_secure, addresses)
         )
@@ -580,6 +627,14 @@ def main(
         return _refuse(
             request, output, errors, config_error_code(exc.exit_code), str(exc), exc.exit_code
         )
+    try:
+        names[0] = request_names(
+            request.parameters,
+            _caller(input_stream or sys.stdin.buffer),
+            interface_account=policy.interface_account,
+        )
+    except HelperProtocolError as exc:
+        return _refuse(request, output, errors, "bad_input", str(exc), exc.exit_code)
 
     if ask is None:
         identity = policy.status_identity
@@ -664,7 +719,7 @@ def main(
             publication = getattr(outcome, "publication", None)
             if comment is not None and request.parameters.get("action") != "remove":
                 changed = load_runtime_config(policy, require_secure=require_secure)
-                publication = (publish or _publish_with(addresses))(
+                publication = publisher(
                     request,
                     changed.cluster(request.cluster),
                     comment=comment,

@@ -1144,8 +1144,10 @@ def prepare(
         # sudo, for the receiver's reason: the helper writes root's
         # known_hosts and the pull accounts' keys, outside this unit's sandbox.
         #
-        _only(payload, "action", "block", "host", "node", "join_key", "deploy")
+        _only(payload, "action", "block", "host", "node", "join_key", "deploy", "requested_by")
         action = payload.get("action")
+        requested_by = _requested_by(payload)
+        given = set(payload) - {"deploy", "requested_by"}
         #
         # Whether the change is deployed in the same job when it is the only
         # thing a deploy would roll out (B321). The worker's to act on; the
@@ -1157,16 +1159,12 @@ def prepare(
             raise BadPayload("only an addition or a removal is deployed with it")
         if action == "remove":
             node = payload.get("node")
-            if (
-                set(payload) - {"deploy"} != {"action", "node"}
-                or not isinstance(node, str)
-                or not node
-            ):
+            if given != {"action", "node"} or not isinstance(node, str) or not node:
                 raise BadPayload("a removal names one node and nothing else")
             return Prepared(
                 argv=NODE_CLIENT,
                 request=node_helper.build_request(
-                    cluster, str(request_id), action="remove", node=node
+                    cluster, str(request_id), action="remove", node=node, requested_by=requested_by
                 ),
             )
         if action == "host":
@@ -1176,14 +1174,19 @@ def prepare(
             # key and answers as the node is the helper's to prove.
             #
             node, host = payload.get("node"), payload.get("host")
-            if set(payload) != {"action", "node", "host"} or not all(
+            if given != {"action", "node", "host"} or not all(
                 isinstance(value, str) and value for value in (node, host)
             ):
                 raise BadPayload("a host change names one node and its new host")
             return Prepared(
                 argv=NODE_CLIENT,
                 request=node_helper.build_request(
-                    cluster, str(request_id), action="host", node=str(node), host=str(host)
+                    cluster,
+                    str(request_id),
+                    action="host",
+                    node=str(node),
+                    host=str(host),
+                    requested_by=requested_by,
                 ),
             )
         if action != "add":
@@ -1199,7 +1202,13 @@ def prepare(
         return Prepared(
             argv=NODE_CLIENT,
             request=node_helper.build_request(
-                cluster, str(request_id), action="add", block=block, host=host, join_key=join_key
+                cluster,
+                str(request_id),
+                action="add",
+                block=block,
+                host=host,
+                join_key=join_key,
+                requested_by=requested_by,
             ),
         )
 
@@ -1212,14 +1221,17 @@ def prepare(
         # certificate the registry has, two blocks made for this cluster - is
         # the helper's, as when the operator types `haprion-cluster`.
         #
-        _only(payload, "action", *DEFINITION_FIELDS)
+        _only(payload, "action", "requested_by", *DEFINITION_FIELDS)
         action = payload.get("action")
+        requested_by = _requested_by(payload)
         if action == "remove":
-            if set(payload) != {"action"}:
+            if set(payload) - {"requested_by"} != {"action"}:
                 raise BadPayload("a removal names its cluster and nothing else")
             return Prepared(
                 argv=NODE_CLIENT,
-                request=node_helper.build_define_request(cluster, str(request_id), action="remove"),
+                request=node_helper.build_define_request(
+                    cluster, str(request_id), action="remove", requested_by=requested_by
+                ),
             )
         if action != "add":
             raise BadPayload("action must be add or remove")
@@ -1278,6 +1290,7 @@ def prepare(
                 address_interface=interface,
                 default_certificate=certificate,
                 join_keys=join_keys,
+                requested_by=requested_by,
                 **texts,
             ),
         )

@@ -222,7 +222,13 @@ class AddingANode(NodesPage):
         self.assertEqual(
             queued["payload"],
             # B321: deployed in the same job when it is all a deploy would roll out.
-            {"action": "add", "block": block(), "host": "lb-edge-c.example.com", "deploy": True},
+            {
+                "action": "add",
+                "block": block(),
+                "host": "lb-edge-c.example.com",
+                "deploy": True,
+                "requested_by": "operator",
+            },
         )
 
     def test_a_wrong_name_queues_nothing(self) -> None:
@@ -294,7 +300,10 @@ class RemovingANode(NodesPage):
         )
         self.assertEqual(response.status_code, 303, response.text)
         (queued,) = self.queued
-        self.assertEqual(queued["payload"], {"action": "remove", "node": "edge-c", "deploy": True})
+        self.assertEqual(
+            queued["payload"],
+            {"action": "remove", "node": "edge-c", "deploy": True, "requested_by": "operator"},
+        )
 
     def test_the_vip_holder_is_not_offered_and_is_refused(self) -> None:
         self.rows = with_third_node()
@@ -345,7 +354,13 @@ class ChangingAHost(NodesPage):
         (queued,) = self.queued
         self.assertEqual((queued["operation"], queued["cluster"]), ("cluster_node", "edge-demo"))
         self.assertEqual(
-            queued["payload"], {"action": "host", "node": "edge-a", "host": "lb-01.example.com"}
+            queued["payload"],
+            {
+                "action": "host",
+                "node": "edge-a",
+                "host": "lb-01.example.com",
+                "requested_by": "operator",
+            },
         )
 
     def test_what_the_page_refuses_queues_nothing(self) -> None:
@@ -459,6 +474,7 @@ class CreatingACluster(ClusterPage):
                 "blocks": [block("gamma", "gamma-a"), block("gamma", "gamma-b")],
                 "hosts": ["gamma-a.example.com", "lb-gamma-b.example.com"],
                 "address_prefix": 24,
+                "requested_by": "operator",
             },
         )
 
@@ -483,6 +499,7 @@ class CreatingACluster(ClusterPage):
                 "blocks": [block("gamma", "gamma-a")],
                 "hosts": ["gamma-a.example.com"],
                 "address_prefix": 24,
+                "requested_by": "operator",
             },
         )
 
@@ -532,7 +549,7 @@ class RemovingACluster(ClusterPage):
         (queued,) = self.queued
         self.assertEqual(
             (queued["operation"], queued["cluster"], queued["payload"]),
-            ("cluster_define", "service-demo", {"action": "remove"}),
+            ("cluster_define", "service-demo", {"action": "remove", "requested_by": "operator"}),
         )
 
     def test_the_last_cluster_is_offered_too(self) -> None:

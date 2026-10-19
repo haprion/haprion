@@ -108,8 +108,11 @@ def publish(
     change_owner: ChangeOwner = default_change_owner,
     clock: Callable[[], datetime] | None = None,
     addresses: Addresses = peers.addresses,
+    names: tuple[str, str] = ("root", "root"),
 ) -> dict[str, Any]:
     """Publish the cluster's node list as a version; what it became, or why it did not.
+
+    `names` is (requested by, run by) for the version, from `request_names`.
 
     Called with the cluster's lock held. `{"version", "hash", "changed"}` when
     a release was installed, `{"error": {"code", "message"}}` when not.
@@ -132,7 +135,7 @@ def publish(
         _publish(
             words=WORDS,
             request=request,
-            names=("root", "root"),
+            names=names,
             cluster=cluster,
             change=Change(expected_head=head, comment=comment, apply=apply),
             output=output,

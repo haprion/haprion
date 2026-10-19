@@ -5302,6 +5302,11 @@ def build_router(config: Config) -> APIRouter:
         operation: str = "cluster_node",
         back: str | None = None,
     ) -> Response:
+        #
+        # Who asked, for the version a node change publishes (B335): the helper
+        # records it only because the worker is the one who sends it.
+        #
+        payload = {**payload, "requested_by": gate.username}
         try:
             operations.prepare(
                 operation=operation, cluster=cluster, request_id=uuid4(), payload=payload

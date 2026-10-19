@@ -56,9 +56,12 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haprion-resolve-helper` | `resolve` | `done`, `failed` | Looks up `parameters.names` (1-20 host names, no addresses) with the manager's resolver, as saving a dns object does for its servers: per name the one address, or the sentence the save is refused with. `done` whatever the names gave; `cluster` is always null. Reached by the web over `/run/haprion/resolve.sock`, as a dynamic user with the network and nothing else |
 | `haprion-cert-export-helper` | `cert_export` | `done`, `failed` | One certificate's key, for a registry entry marked `exportable` and no other: `pem-key` (the key alone), `pfx` (key and chain, AES-256, PBKDF2, SHA-256 MAC) or `pfx-compatible` (3DES, SHA-1 MAC) under the caller's 8-128 character `password`, which is never returned; the file as `content_base64` with the name and media type to serve it under. Refused (`not_exportable`) for any entry without the mark or with a target; nothing is written; `cluster` is always null. Reached by the web over `/run/haprion/cert-export.sock`, as root |
 
-The three operations that record a version (`publish`, `revert`, `changes_publish`) take an optional `requested_by`: the person a caller acts for, at most 64
-printable characters. The commit carries it as a `Requested-By` trailer, beside `Run-By` - the
-account sudo ran the helper as, which the helper can prove. The name is recorded only when that
+The operations that record a version (`publish`, `revert`, `changes_publish`, and `cluster_node`
+and `cluster_define`, whose node list is published as one) take an optional `requested_by`: the
+person a caller acts for, at most 64 printable characters. The commit carries it as a
+`Requested-By` trailer, beside `Run-By` - the account the helper can prove ran it: the one sudo
+names, or, for the node helper the worker reaches over its socket, the one the kernel says
+connected. The name is recorded only when that
 account is the runtime policy's `interface_account`, the web interface's worker; from any other
 caller, and when the policy names no worker, both trailers name the proven account. Without the
 parameter both name that account too. A name that is not printable is `bad_input` whoever sends it,

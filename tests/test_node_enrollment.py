@@ -7,17 +7,20 @@ import dataclasses
 import io
 import json
 import os
+import pwd
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
-from haprion import change_journal
+from haprion import accounts, change_journal
 from haprion import node_enrollment as enrollment
 from haprion.cli import node as node_command
 from haprion.cli import node_helper
@@ -740,6 +743,42 @@ class TheHelper(unittest.TestCase):
         )
         printed = out.getvalue()
         return code, json.loads(printed) if printed else None, err.getvalue()
+
+    def test_the_version_is_recorded_for_who_asked_in_the_interface(self) -> None:
+        """B335: a node change's version named `root`; the worker now says who asked."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            request = node_helper.build_request(
+                "alpha",
+                REQUEST_ID,
+                action="add",
+                block=enrollment.render(block()),
+                host="node-c.example.com",
+                requested_by="alice",
+            )
+            for caller, recorded in (
+                (accounts.WORKER, ("alice", accounts.WORKER)),
+                ("mallory", ("mallory", "mallory")),
+            ):
+                with (
+                    self.subTest(caller=caller),
+                    mock.patch.dict(os.environ, {"SUDO_USER": caller}),
+                ):
+                    (Path(raw) / caller).mkdir()
+                    site = Installation(Path(raw) / caller)
+                    code, _document, err = self.run_helper(site, request)
+                    self.assertEqual(code, 0, err)
+                    self.assertEqual(self.published[-1][1]["names"], recorded)
+
+    def test_over_the_socket_the_kernel_says_who_connected(self) -> None:
+        here, there = socket.socketpair()
+        self.addCleanup(here.close)
+        self.addCleanup(there.close)
+        with mock.patch.dict(os.environ, {"SUDO_USER": ""}):
+            caller = node_helper._caller(there)
+        self.assertEqual(caller["SUDO_USER"], pwd.getpwuid(os.getuid()).pw_name)
+        with mock.patch.dict(os.environ, {"SUDO_USER": ""}):
+            self.assertEqual(node_helper._caller(io.BytesIO()).get("SUDO_USER"), "")
 
     def test_an_addition_answers_with_what_changed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

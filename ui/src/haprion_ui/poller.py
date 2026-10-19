@@ -691,20 +691,31 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
         # The events first: they say which nodes are still joining, and the
         # reading is stored with that (B329).
         #
-        joining = _events(pool, source, cluster=cluster, reading=reading)
-        with pool.connection() as connection:
-            source.record(
-                connection,
-                cluster=cluster,
-                outcome=reading["outcome"],
-                result=with_joining(reading["result"], joining),
-                warnings=reading.get("warnings"),
-                error=reading.get("error"),
-                poll_error=reading.get("poll_error"),
-            )
-            connection.commit()
-        _sample(pool, source, cluster=cluster, result=reading["result"])
-        _index(pool, source, cluster=cluster, reading=reading)
+        #
+        # One reading that cannot be stored costs that reading, not the pass:
+        # it used to raise through the pool of cluster threads and out of the
+        # main loop, and every other cluster and source went unread until
+        # systemd started the poller again (B335). The page shows the reading
+        # as old, and the log says why.
+        #
+        try:
+            joining = _events(pool, source, cluster=cluster, reading=reading)
+            with pool.connection() as connection:
+                source.record(
+                    connection,
+                    cluster=cluster,
+                    outcome=reading["outcome"],
+                    result=with_joining(reading["result"], joining),
+                    warnings=reading.get("warnings"),
+                    error=reading.get("error"),
+                    poll_error=reading.get("poll_error"),
+                )
+                connection.commit()
+            _sample(pool, source, cluster=cluster, result=reading["result"])
+            _index(pool, source, cluster=cluster, reading=reading)
+        except Exception:  # noqa: BLE001 - any failure to store is this reading's alone
+            logger.exception("cluster %s %s: the reading was not stored", cluster, source.operation)
+            continue
         if reading["outcome"] == "done":
             if source.operation == "status":
                 healthy += 1

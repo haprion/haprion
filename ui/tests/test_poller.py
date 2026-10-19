@@ -270,6 +270,54 @@ class Passes(unittest.TestCase):
             ],
         )
 
+    def test_a_reading_that_cannot_be_stored_costs_that_reading_alone(self) -> None:
+        """B335: a failing record raised through the cluster threads and ended the pass."""
+
+        written: list[tuple[str, str]] = []
+
+        class Pool:
+            def connection(self) -> Any:
+                return self
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def commit(self) -> None:
+                return None
+
+        def record(_c: object, **kwargs: Any) -> None:
+            if kwargs["cluster"] == "beta":
+                raise ValueError("a column too long")
+            written.append((kwargs["cluster"], kwargs["outcome"]))
+
+        def helper(cluster: str, _request: str) -> Any:
+            return completed(envelope(cluster=cluster))
+
+        from haprion_ui.config import Config, Database, Listen, Poller, Throttle
+        from haprion_ui.config import Session as SessionPolicy
+
+        config = Config(
+            database=Database(name="x", socket_directory="/tmp"),  # noqa: S108
+            listen=Listen(host="127.0.0.1", port=8080),
+            management_writes=False,
+            demo_fixture=False,
+            session=SessionPolicy(inactivity_minutes=600, absolute_hours=168, cookie_secure=True),
+            throttle=Throttle(max_failures=10, window_minutes=15),
+            clusters=("alpha", "beta", "gamma"),
+            poller=Poller(interval_seconds=60),
+        )
+        with self.assertLogs("haprion_ui.poller", "ERROR") as logged:
+            healthy = poller.poll_once(
+                Pool(), config, (poller.Source("status", helper, record, partial_ok=True),)
+            )
+
+        self.assertEqual(healthy, 2)
+        self.assertEqual(sorted(written), [("alpha", "done"), ("gamma", "done")])
+        self.assertIn("cluster beta status: the reading was not stored", logged.output[0])
+
     def test_a_pass_is_marked_begun_before_its_readings_and_settled_after_them(self) -> None:
         #
         # 0068: a page waits for a pass begun after its job ended to be

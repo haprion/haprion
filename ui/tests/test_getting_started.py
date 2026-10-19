@@ -150,9 +150,11 @@ class TheWayBack(unittest.TestCase):
 
 
 class OnTheDashboard(LoginTestCase):
-    def signed_in(self, *, role: str = "admin", clusters: tuple[str, ...] = ("alpha",)) -> Any:
+    def signed_in(
+        self, *, role: str = "admin", clusters: tuple[str, ...] = ("alpha",), writes: bool = True
+    ) -> Any:
         self.account = replace(self.account, role=role)
-        client = self.client(replace(configuration(), management_writes=True, clusters=clusters))
+        client = self.client(replace(configuration(), management_writes=writes, clusters=clusters))
         self.sign_in(client)
         return client
 
@@ -223,6 +225,16 @@ class OnTheDashboard(LoginTestCase):
 
     def test_a_reader_does_not_see_it(self) -> None:
         self.assertNotIn("Getting started", self.signed_in(role="reader").get("/").text)
+
+    def test_with_writes_off_an_admin_does_not_see_it_either(self) -> None:
+        #
+        # Review 2026-10-18, U2: every row led to a page that answers 404 with
+        # writes off, and the list could not be hidden then.
+        #
+        for clusters in ((), ("alpha",)):
+            page = self.signed_in(clusters=clusters, writes=False).get("/").text
+            self.assertNotIn("Getting started", page)
+            self.assertNotIn('href="/settings', page)
 
     def test_hide_is_stored_audited_and_an_admin_s(self) -> None:
         client = self.signed_in()

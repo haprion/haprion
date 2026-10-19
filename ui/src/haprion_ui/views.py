@@ -887,9 +887,13 @@ def build_router(config: Config) -> APIRouter:
             if config.management_writes and session.role == "admin"
             else {}
         )
+        #
+        # Not with writes off: every row leads to a setting that cannot be made
+        # then, and the list could not be hidden either (review 2026-10-18, U2).
+        #
         checklist = (
             _getting_started(request, dashboard_view, network_rows, first)
-            if session.role == "admin"
+            if session.role == "admin" and config.management_writes
             else None
         )
         return TEMPLATES.TemplateResponse(

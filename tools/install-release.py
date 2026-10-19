@@ -90,8 +90,8 @@ def inspect_runtime(python: Path) -> dict[str, str]:
         raise InstallError("runtime Python/PyYAML/PyNaCl/psycopg probe returned invalid data")
     python_version = tuple(int(part) for part in result["python"].split("."))
     yaml_major = int(result["pyyaml"].split(".", maxsplit=1)[0])
-    if python_version < (3, 12, 0):
-        raise InstallError("runtime Python must be version 3.12 or newer")
+    if python_version < (3, 13, 0):
+        raise InstallError("runtime Python must be version 3.13 or newer")
     if yaml_major != 6:
         raise InstallError("runtime PyYAML must be major version 6")
     #

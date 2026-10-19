@@ -18,7 +18,7 @@
 name = "haprion-certbot-env"
 version = "0"
 description = "certbot and its DNS plugins for Haprion, locked as one set"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     # core - certbot and its own plugins, one version
     "certbot==5.8.0",

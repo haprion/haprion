@@ -358,7 +358,7 @@ class InstallReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             # A stand-in interpreter that has PyYAML's answer but no PyNaCl.
             fake = Path(raw) / "python3"
-            fake.write_text('#!/bin/sh\necho \'{"python": "3.12.0", "pyyaml": "6.0.0"}\'\n')
+            fake.write_text('#!/bin/sh\necho \'{"python": "3.13.0", "pyyaml": "6.0.0"}\'\n')
             fake.chmod(0o755)
             with self.assertRaisesRegex(install_release_module.InstallError, "PyNaCl"):
                 install_release_module.inspect_runtime(fake)
@@ -367,10 +367,22 @@ class InstallReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             fake = Path(raw) / "python3"
             fake.write_text(
-                '#!/bin/sh\necho \'{"python": "3.12.0", "pyyaml": "6.0.0", "pynacl": "1.6.2"}\'\n'
+                '#!/bin/sh\necho \'{"python": "3.13.0", "pyyaml": "6.0.0", "pynacl": "1.6.2"}\'\n'
             )
             fake.chmod(0o755)
             with self.assertRaisesRegex(install_release_module.InstallError, "psycopg"):
+                install_release_module.inspect_runtime(fake)
+
+    def test_a_runtime_below_the_floor_is_refused(self) -> None:
+        # 3.13 is the floor (B303): the lowest a supported distribution ships.
+        with tempfile.TemporaryDirectory() as raw:
+            fake = Path(raw) / "python3"
+            fake.write_text(
+                '#!/bin/sh\necho \'{"python": "3.12.9", "pyyaml": "6.0.0",'
+                ' "pynacl": "1.6.2", "psycopg": "3.2.0"}\'\n'
+            )
+            fake.chmod(0o755)
+            with self.assertRaisesRegex(install_release_module.InstallError, "3.13 or newer"):
                 install_release_module.inspect_runtime(fake)
 
 

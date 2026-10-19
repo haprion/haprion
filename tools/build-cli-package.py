@@ -59,7 +59,7 @@ SUDOERS = "etc/sudoers.d/haprion"
 # come from the project's apt repository with the key that signs it (B325).
 #
 DEPENDS = (
-    "python3 (>= 3.12), python3-yaml, python3-nacl, python3-psycopg, python3-jwt, "
+    "python3 (>= 3.13), python3-yaml, python3-nacl, python3-psycopg, python3-jwt, "
     "python3-cryptography, sudo, git, rsync, openssh-client, openssl, haproxy, passwd, "
     "iproute2, systemd, default-dbus-system-bus | dbus-system-bus, libcrypt1, "
     "haprion-coraza-spoa, haprion-crs, haprion-archive-keyring"

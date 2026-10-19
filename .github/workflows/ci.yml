@@ -13,9 +13,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Every gate on both Pythons a supported distribution ships (B303): 3.13 is
+  # the floor (Debian 13), 3.14 what Ubuntu 26.04 runs. An annotation that
+  # only 3.14 evaluates lazily once broke an install the gate had passed.
   checks:
-    name: Source, quality, and security gates
+    name: Gates on Python ${{ matrix.python }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13", "3.14"]
+    env:
+      # Ahead of .python-version, which names the floor for local work.
+      UV_PYTHON: ${{ matrix.python }}
     # The tests alone took 13 minutes on the private repository's two-core
     # runner on 2026-10-10, and 15 cancelled the run before it said anything.
     timeout-minutes: 30
@@ -29,7 +39,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -128,6 +138,20 @@ jobs:
           # to start rather than reporting a pass it did not earn.
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
         run: ./run-checks
+
+  # The branch rule requires this name. A matrix job reports one check per
+  # Python, so this one stands for both and passes only when both did.
+  gates:
+    name: Source, quality, and security gates
+    needs: checks
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Both Pythons passed
+        env:
+          RESULT: ${{ needs.checks.result }}
+        run: test "${RESULT}" = success
 
   # A Dependabot update merges itself once the gates above pass (B323): patch
   # and minor only, never a major one, and never one labelled `hold`. The

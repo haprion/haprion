@@ -67,6 +67,26 @@ def _certificate_authority() -> tuple[str, ssl.SSLContext]:
         .not_valid_before(now - timedelta(minutes=5))
         .not_valid_after(now + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        # Python 3.13's default context verifies strictly (VERIFY_X509_STRICT):
+        # a CA without these, or a leaf without the authority's key identifier,
+        # is refused - as a real provider's chain would never be.
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False
+        )
         .sign(ca_key, hashes.SHA256())
     )
     server_key = ec.generate_private_key(ec.SECP256R1())
@@ -79,6 +99,9 @@ def _certificate_authority() -> tuple[str, ssl.SSLContext]:
         .not_valid_before(now - timedelta(minutes=5))
         .not_valid_after(now + timedelta(days=1))
         .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False
+        )
         .sign(ca_key, hashes.SHA256())
     )
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

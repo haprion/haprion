@@ -32,7 +32,7 @@ unsafe. There is a working starting point in
 4 checks all three and says so if one is missing.
 
 The
-management host needs Python 3.12+, the OS PyYAML, PyNaCl and psycopg 3 packages, `git`, `rsync`,
+management host needs Python 3.13+, the OS PyYAML, PyNaCl and psycopg 3 packages, `git`, `rsync`,
 `openssh-client` and a `sudo` new enough for no-argument rules.
 
 The answers file is optional. Without one every step uses the defaults in

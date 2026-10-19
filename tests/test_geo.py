@@ -1,7 +1,7 @@
 """The location database reader (B228), against a stand-in for the library.
 
 The library is a system package for Python 3.14 and the development
-environment is 3.12, so the module is stood in for here; the real reading is
+environment is 3.13, so the module is stood in for here; the real reading is
 proved against the installed package on the management host.
 """
 

@@ -3569,7 +3569,7 @@ from the project's signed apt repository ([The packages](install.md#the-packages
 and `haprion-node` depend on the WAF engine and the repository key, and `haprion-ui` on the rest
 of the manager's packages, so one `apt install` on each machine brings them:
 
-- **On the manager**, `haprion-cli` depends on the distribution's Python (3.12 or newer at
+- **On the manager**, `haprion-cli` depends on the distribution's Python (3.13 or newer at
   `/usr/bin/python3`) with PyYAML 6, PyNaCl 1 and psycopg 3, and on `git`, `rsync`, `openssh-client`
   and `sudo`; `haprion-ui` on nginx; `haprion-certbot` carries its own certbot. The setup installs
   PostgreSQL 18 where no cluster runs - from the distribution on Ubuntu 26.04, from the PostgreSQL

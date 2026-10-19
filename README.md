@@ -242,7 +242,7 @@ docs/             installation, user manual, contracts and security documentatio
 ## Development
 
 Python dependencies are resolved in the committed lockfiles (`uv.lock` for the engine,
-`ui/uv.lock` for the interface); `.python-version` selects the minimum supported Python 3.12. With
+`ui/uv.lock` for the interface); `.python-version` selects the minimum supported Python 3.13. With
 [`uv`](https://docs.astral.sh/uv/) installed, set up both environments, the browser the interface
 tests drive, and the pinned standalone checks with:
 

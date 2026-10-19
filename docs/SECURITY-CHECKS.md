@@ -217,7 +217,9 @@ release), the Go that compiles the engine and the govulncheck that reads it. Eve
 3. merges that pull request once every check on it passed - among them the rule set's own regression
    tests (`tools/crs-regression`: go-ftw through the built engine and rules behind the HAProxy branch
    the nodes run, in the rig the engine's source carries, with its list of tests known to fail
-   through HAProxy and ours in `tests/crs-regression.yml`) - each upstream release is seven days old
+   through HAProxy and ours in `tests/crs-regression.yml`), and the installation test on the latest
+   release's packages with the proposal's engine and rules in place of the release's, which is what
+   the repository serves once it is merged - each upstream release is seven days old
    (two when the pinned engine reaches a vulnerability and the proposal is the engine side only), and
    it is not labelled `hold`. The label `no-cooldown` lifts the wait; nothing lifts the major rule.
    The merge on `main` builds and publishes the engine and the rules (`apt-repo.yml`)
@@ -235,6 +237,10 @@ opens runs no checks, and a merge it makes starts no workflow. To set it up:
   private key generated for the app) and, optionally, the variable `UPSTREAM_WATCH_NOTIFY` (the
   login assigned each pull request and issue, so the maintainer is told when one opens and merges)
 - create the labels `hold` and `no-cooldown`
+
+Before setting it up, run the CI workflow by hand (`workflow_dispatch`): the rule set's regression
+tests and the installation test run then too, and both should pass on the runner before a merge
+waits for them.
 
 ## GitHub repository settings
 

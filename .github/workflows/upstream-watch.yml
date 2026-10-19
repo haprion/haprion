@@ -248,6 +248,7 @@ jobs:
           REQUIRED: |
             Source, quality, and security gates
             Rule set regression tests
+            Installation test
         run: |
           set -euo pipefail
           pr=$(gh pr list --head "${BRANCH}" --state open --json number,headRefOid,labels --jq '.[0] // empty')

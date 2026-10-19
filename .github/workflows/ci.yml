@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The jobs that prove a proposal of the upstream watch can also be run by
+  # hand, to see them pass on the runner before the watch relies on them.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -145,7 +148,9 @@ jobs:
   # pull requests, where the pins move; its merge waits for this to pass.
   crs-regression:
     name: Rule set regression tests
-    if: github.event_name == 'pull_request' && github.head_ref == 'upstream-watch'
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request' && github.head_ref == 'upstream-watch')
     runs-on: ubuntu-26.04
     timeout-minutes: 45
 
@@ -192,6 +197,80 @@ jobs:
           uv sync --locked --no-dev
           "${RUNNER_TEMP}/venv/bin/python" tools/crs-regression --source . \
             --packages "${RUNNER_TEMP}/packages" --cache "${RUNNER_TEMP}/cache"
+
+  # A whole installation, manager and two nodes per distribution, from what
+  # the repository would serve once the proposal is merged (B337): the latest
+  # release's packages, with the engine and the rules built from the
+  # proposal's pins in place of the release's.
+  install-test:
+    name: Installation test
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request' && github.head_ref == 'upstream-watch')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          enable-cache: false
+
+      - name: Build the engine and the rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build-release-packages --source . --output-dir "${RUNNER_TEMP}/waf" \
+            --uv "$(command -v uv)" --cache "${RUNNER_TEMP}/cache" --only waf
+
+      # GitHub names a release's files with `.` where the package has `~`; each
+      # is named again from its own control fields, as the build named it.
+      - name: Take the latest release's packages
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          packages="${RUNNER_TEMP}/packages"
+          mkdir -p "${RUNNER_TEMP}/release" "${packages}"
+          gh release download --repo "${REPOSITORY}" --pattern '*.deb' --dir "${RUNNER_TEMP}/release"
+          for deb in "${RUNNER_TEMP}"/release/*.deb; do
+            # shellcheck disable=SC2016 # dpkg-deb's own fields, not the shell's
+            name=$(dpkg-deb --show --showformat '${Package}_${Version}_${Architecture}.deb' "${deb}")
+            cp "${deb}" "${packages}/${name}"
+          done
+          rm -f "${packages}"/haprion-coraza-spoa_*.deb "${packages}"/haprion-crs_*.deb
+          cp "${RUNNER_TEMP}"/waf/*.deb "${packages}/"
+          ls -l "${packages}"
+
+      - name: Install podman
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v podman || { sudo apt-get update -q && sudo apt-get install -y -q podman; }
+          podman --version
+
+      - name: Install on empty machines
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/install-test --packages "${RUNNER_TEMP}/packages" --distribution all \
+            --logs "${RUNNER_TEMP}/install-test-logs"
+
+      - name: Keep what the machines said
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-test-logs
+          path: ${{ runner.temp }}/install-test-logs/
+          retention-days: 7
 
   # The branch rule requires this name. A matrix job reports one check per
   # Python, so this one stands for both and passes only when both did.

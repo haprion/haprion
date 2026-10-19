@@ -33,7 +33,7 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
-from haprion import node_publish
+from haprion import node_enrollment, node_publish
 from haprion.cli import cert_deploy, deploy, node_helper
 from haprion.cli.caller import usage
 from haprion.envelope import new_request_id
@@ -223,7 +223,16 @@ def main(
         writer.write(
             f"Added {result.get('node')} ({result.get('host')}) to {cluster}.\n"
             f"Host key: {result.get('host_key_fingerprint')}\n"
-            f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
+            + (
+                "WARNING: "
+                + node_enrollment.shared_key_warning(
+                    str(result.get("node")), result["shares_host_key_with"]
+                )
+                + "\n"
+                if result.get("shares_host_key_with")
+                else ""
+            )
+            + f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
             + (
                 ""
                 if version is not None

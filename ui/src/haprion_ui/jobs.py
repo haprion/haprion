@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from haprion import server_names
+from haprion import node_enrollment, server_names
 from haprion.deploy_run import CERTIFICATES_NOT_DEPLOYED
 from haprion.restore_agent import RUN_ID
 
@@ -531,6 +531,18 @@ def publication_note(job: Job) -> str | None:
         notes.append(f"The node list was not published: {message.strip()}")
     if isinstance(left, str) and left.strip():
         notes.append(left.strip())
+    #
+    # A cloned machine (fynd 43, B335): the addition stands, and this says why
+    # it should not stay that way. A creation carries it among its warnings.
+    #
+    answer: dict[str, Any] = body if isinstance(body, dict) else {}
+    shared = answer.get("shares_host_key_with")
+    if isinstance(shared, list) and shared:
+        names = [str(name) for name in shared]
+        notes.append(node_enrollment.shared_key_warning(str(answer.get("node", "")), names) + ".")
+    warnings = answer.get("warnings")
+    if isinstance(warnings, list):
+        notes += [f"{text.strip()}." for text in warnings if isinstance(text, str) and text.strip()]
     return " ".join(notes) or None
 
 

@@ -1876,7 +1876,9 @@ fingerprint before anything is changed; typing the node's name queues the additi
 The block carries the node's name, a suggested host name, its ed25519 host key, the public halves
 of its two fetch keys and a **one-time key**. Copying it from the node's console is the trust - the
 manager takes the host key from the block, never from the network - and the fingerprint the page
-prints is the one to compare with what the node printed. The manager then joins the node once: it
+prints is the one to compare with what the node printed. A host key another node already has - two
+machines cloned from one image - is added anyway and said on the job and in the command's answer:
+SSH cannot tell the two apart, so give one a new host key and add it again. The manager then joins the node once: it
 connects with the one-time key as `_haprion-join`, whose only command is `haprion-node-join`, and
 hands over its own keys, its host key, the cluster and the VIP. The node prepares itself with them
 - the packages HAProxy needs, the release layout, the sudo rules, `node.conf`, the manager's keys

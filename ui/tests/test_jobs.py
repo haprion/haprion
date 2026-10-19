@@ -25,6 +25,7 @@ from unittest import mock
 from uuid import UUID, uuid4
 
 import psycopg
+from haprion import node_enrollment
 
 from haprion_ui import db, jobs, operations
 from haprion_ui.db import Job
@@ -578,6 +579,28 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
             jobs.publication_note(job),
             "The node list was not published: there are unsaved changes in the cluster worktree.",
         )
+
+    def test_a_cloned_host_key_is_the_note(self) -> None:
+        """Fynd 43 (B335): the addition stands; the job says why it should not stay so."""
+
+        job = replace(
+            queued(operation="cluster_node", cluster="alpha"),
+            state="done",
+            outcome="done",
+            result={
+                "result": {"action": "added", "node": "node-c", "shares_host_key_with": ["node-a"]}
+            },
+        )
+        self.assertEqual(
+            jobs.publication_note(job),
+            node_enrollment.shared_key_warning("node-c", ["node-a"]) + ".",
+        )
+        created = replace(
+            job,
+            operation="cluster_define",
+            result={"result": {"action": "added", "warnings": ["a timer could not be stopped"]}},
+        )
+        self.assertEqual(jobs.publication_note(created), "a timer could not be stopped.")
 
     def test_a_published_list_needs_no_note(self) -> None:
         job = replace(

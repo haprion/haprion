@@ -47,7 +47,7 @@ import pwd
 import re
 import secrets
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -348,6 +348,36 @@ def host_keys(text: bytes, host: str) -> list[str]:
             if key not in keys:
                 keys.append(key)
     return keys
+
+
+def sharing_host_key(
+    runtime: RuntimeConfig, known: bytes, key: str, *, also: Iterable[tuple[str, str]] = ()
+) -> list[str]:
+    """The nodes already pinned with this host key, by name - a cloned machine (fynd 43).
+
+    `also` adds (name, key) pairs not in the file yet: the other new node of a
+    cluster created with two. A warning, not a refusal (B335): SSH cannot tell
+    the two apart, but nothing breaks until one is rebuilt or impersonated.
+    """
+
+    pinned = key.split()[:2]
+    names = [
+        node.name
+        for cluster in runtime.clusters.values()
+        for node in cluster.nodes
+        if any(other.split()[:2] == pinned for other in host_keys(known, node.mgmt_host))
+    ]
+    names += [name for name, other in also if other.split()[:2] == pinned]
+    return sorted(set(names))
+
+
+def shared_key_warning(node: str, others: Iterable[str]) -> str:
+    """The one sentence, in the engine, the CLI and the job page."""
+
+    return (
+        f"{node} has the same SSH host key as {', '.join(others)}: a cloned machine. "
+        "The manager cannot tell them apart; give one a new host key and add it again"
+    )
 
 
 def known_hosts_moved(text: bytes, old: str, new: str, keys: list[str]) -> bytes:
@@ -921,6 +951,10 @@ class Outcome:
     cluster: str
     files: tuple[str, ...]
     fingerprint: str | None = None
+    #
+    # The nodes already pinned with the same host key (fynd 43, B335).
+    #
+    shares_host_key_with: tuple[str, ...] = ()
 
     previous_host: str | None = None
     #
@@ -938,6 +972,11 @@ class Outcome:
             "host": self.node.mgmt_host,
             "files": list(self.files),
             "host_key_fingerprint": self.fingerprint,
+            **(
+                {"shares_host_key_with": list(self.shares_host_key_with)}
+                if self.shares_host_key_with
+                else {}
+            ),
             **({} if self.previous_host is None else {"previous_host": self.previous_host}),
             **({} if self.publication is None else {"publication": self.publication}),
             **(
@@ -974,6 +1013,9 @@ def add(
         require_secure=require_secure,
     )
     node = Node(name=enrollment.name, mgmt_host=host)
+    sharing = sharing_host_key(
+        runtime, _read((locations or Locations()).root_known_hosts), enrollment.host_key
+    )
     backup_directories = backups.directories_to_make(policy.backup_root, (node.name,))
     with change_journal.transaction(
         Record("node add", cluster, tuple(changes), created=backup_directories),
@@ -1005,6 +1047,7 @@ def add(
         cluster=cluster,
         files=tuple(change.what for change in changes),
         fingerprint=fingerprint(enrollment.host_key),
+        shares_host_key_with=tuple(sharing),
     )
 
 

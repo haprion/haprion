@@ -245,6 +245,29 @@ class Site:
 
 @unittest.skipUnless(Path(GIT).exists(), "git is not installed where the tests run")
 class CreatingACluster(unittest.TestCase):
+    def test_two_new_nodes_with_one_host_key_are_said_and_the_cluster_stands(self) -> None:
+        """Fynd 43 (B335): a cluster created from two clones of one machine."""
+
+        clone = node_enrollment.render(
+            Enrollment(
+                cluster="gamma",
+                name="node-d",
+                host="node-d.example.com",
+                host_key=key(10),
+                config_pull_key=key(21),
+                cert_pull_key=key(22),
+            )
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+
+            outcome = site.add(site.spec(blocks=[block("node-c", 10), clone]))
+
+            self.assertEqual(
+                outcome.warnings, (node_enrollment.shared_key_warning("node-d", ["node-c"]),)
+            )
+            self.assertIn("gamma", site.runtime().clusters)
+
     def test_the_first_cluster_on_an_empty_manager_with_one_node_and_no_certificate(self) -> None:
         """B302: installed without clusters, the first is created with its first node."""
 

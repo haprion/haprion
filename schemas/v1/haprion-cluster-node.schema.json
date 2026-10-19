@@ -26,6 +26,7 @@
         "host": { "type": "string", "maxLength": 253 },
         "files": { "type": "array", "maxItems": 6, "items": { "type": "string", "maxLength": 128 } },
         "host_key_fingerprint": { "oneOf": [{ "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$" }, { "type": "null" }] },
+        "shares_host_key_with": { "description": "After an addition: nodes already pinned with the same SSH host key - a cloned machine (a warning; the addition stands).", "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 63 } },
         "previous_host": { "description": "After a host change: the name the node was reached at before.", "type": "string", "maxLength": 253 },
         "step_down": {
           "description": "B319, after a removal: whether the node stopped keepalived and HAProxy on reading the release without it, or what is left to do. The removal stands either way.",

@@ -957,6 +957,17 @@ def add(
         require_secure=require_secure,
     )
     nodes = tuple(Node(name=enrollment.name, mgmt_host=host) for enrollment, host in spec.nodes)
+    known = _read(locations.root_known_hosts)
+    warnings = []
+    for index, (enrollment, _host) in enumerate(spec.nodes):
+        others = node_enrollment.sharing_host_key(
+            runtime,
+            known,
+            enrollment.host_key,
+            also=[(other.name, other.host_key) for other, _ in spec.nodes[:index]],
+        )
+        if others:
+            warnings.append(node_enrollment.shared_key_warning(enrollment.name, others))
     backup_directories = backups.directories_to_make(
         policy.backup_root, (node.name for node in nodes)
     )
@@ -1006,6 +1017,7 @@ def add(
         fingerprints=tuple(
             node_enrollment.fingerprint(enrollment.host_key) for enrollment, _host in spec.nodes
         ),
+        warnings=tuple(warnings),
     )
 
 

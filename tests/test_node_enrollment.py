@@ -237,6 +237,28 @@ class AddingANode(unittest.TestCase):
             )
             self.assertEqual(outcome.fingerprint, enrollment.fingerprint(HOST_KEY))
 
+    def test_a_host_key_another_node_already_has_is_said_and_the_addition_stands(self) -> None:
+        """Fynd 43 (B335): two nodes cloned from one machine carry one host key."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            site = Installation(Path(raw))
+            first = site.runtime().cluster("alpha").nodes[0]
+            site.known_hosts.write_bytes(
+                enrollment.known_hosts_with(
+                    site.known_hosts.read_bytes(), first.mgmt_host, HOST_KEY + " root@clone"
+                )
+            )
+
+            outcome = site.add()
+
+            self.assertEqual(outcome.shares_host_key_with, (first.name,))
+            self.assertEqual(outcome.as_dict()["shares_host_key_with"], [first.name])
+            self.assertEqual(site.runtime().cluster("alpha").nodes[-1].name, "node-c")
+
+    def test_a_node_with_its_own_host_key_says_nothing_about_it(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertNotIn("shares_host_key_with", Installation(Path(raw)).add().as_dict())
+
     def test_a_node_that_does_not_answer_leaves_every_file_as_it_was(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = Installation(Path(raw))
@@ -936,6 +958,38 @@ class TheCommand(unittest.TestCase):
         self.assertEqual(enrollment.parse(parameters["block"]), block())
         self.assertIn("no certificates yet: haprion-cert-deploy -c alpha", out.getvalue())
         self.assertIn("Published as version 5; haprion-deploy -c alpha", out.getvalue())
+        self.assertNotIn("WARNING", out.getvalue())
+
+    def test_add_says_a_cloned_host_key_after_the_host_key(self) -> None:
+        """Fynd 43 (B335), in the same words as the job page."""
+
+        def run(_request: str) -> subprocess.CompletedProcess[str]:
+            answer = {
+                "operation": "cluster_node",
+                "result": {
+                    "action": "added",
+                    "node": "node-c",
+                    "host": "node-c.example.com",
+                    "files": ["clusters.yaml"],
+                    "host_key_fingerprint": "SHA256:x",
+                    "shares_host_key_with": ["node-a"],
+                    "publication": {"version": 5, "hash": "c" * 40, "changed": True},
+                },
+            }
+            return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
+
+        out = io.StringIO()
+        node_command.main(
+            ["add", "-c", "alpha", "--host", "node-c.example.com"],
+            stdin=io.StringIO(enrollment.render(block())),
+            stdout=out,
+            run=run,
+        )
+
+        self.assertIn(
+            "Host key: SHA256:x\nWARNING: " + enrollment.shared_key_warning("node-c", ["node-a"]),
+            out.getvalue(),
+        )
 
     def removal(self, *, converged: bool, deploying: bool = True) -> tuple[int, str, list[object]]:
         def run(_request: str) -> subprocess.CompletedProcess[str]:

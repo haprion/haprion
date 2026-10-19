@@ -1,0 +1,678 @@
+#!/usr/bin/env python3
+"""Watch the upstream sources the WAF packages are built from (B323, B337).
+
+    tools/upstream-watch check --source <tree> [--apply] [--security-only]
+                               [--report <file>]
+    tools/upstream-watch due --base <tree> --head <tree> [--vulnerable]
+    tools/upstream-watch vuln --source <tree> --cache <dir>
+
+Four pins, all in the tree: the Coraza SPOA engine (a commit), the OWASP Core
+Rule Set (an LTS release), the Go that compiles the engine, and the
+govulncheck that reads it. `check` asks upstream what is newer, verifies what
+it would pin - the rule set's signature against the key in keys/upstream/, the
+Go archive's digest as go.dev publishes it, the engine's archive by the commit
+its release tag names - and with `--apply` writes the new pins into the tree.
+
+Each change has a class. A patch or minor change is merged by itself once the
+upstream release is seven days old; a major one never is - it is reported for
+a person and left out of the tree. `due` reads the change between two trees
+fresh from upstream and answers whether the newer one may be merged now; with
+`--vulnerable` (the pinned engine reaches a known vulnerability today) the wait
+is two days. `vuln` runs govulncheck on the pinned engine as the build does,
+and exits 3 when it finds something.
+
+What counts as major, by component:
+    coraza       0.x: a 0.y step (an 0.x minor may break); then semver
+    crs          a new LTS line; releases outside the LTS line are not candidates
+    go           a new Go line (1.27 after 1.26)
+    govulncheck  semver
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+from collections.abc import Callable, Iterator
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+ENGINE_TOOL = "tools/build-coraza-package.py"
+RELEASE_TOOL = "tools/build-release-packages"
+CRS_KEY = "keys/upstream/coreruleset.asc"
+CORAZA_REPOSITORY = "corazawaf/coraza-spoa"
+CRS_REPOSITORY = "coreruleset/coreruleset"
+GO_REPOSITORY = "golang/go"
+VULN_REPOSITORY = "golang/vuln"
+GITHUB_API = "https://api.github.com"
+GO_DOWNLOADS = "https://go.dev/dl/?mode=json"
+GPG = "/usr/bin/gpg"
+GPGV = "/usr/bin/gpgv"
+FETCH_TIMEOUT = 120
+MAX_FETCH_BYTES = 256 * 1024 * 1024
+WAIT = {"patch": timedelta(days=7), "minor": timedelta(days=7)}
+SECURITY_WAIT = timedelta(days=2)
+# The components a reachable vulnerability can be fixed by: Go code only.
+ENGINE_SIDE = ("coraza", "go", "govulncheck")
+COMMIT = re.compile(r"[0-9a-f]{40}")
+SEMVER = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+GO_RELEASE = re.compile(r"go(\d+)\.(\d+)\.(\d+)")
+
+
+class WatchError(RuntimeError):
+    """Upstream answered something the watch cannot pin."""
+
+
+@dataclass(frozen=True)
+class Change:
+    component: str
+    current: str
+    proposed: str
+    kind: str  # patch, minor or major
+    released_at: str  # ISO 8601, UTC
+
+
+# --------------------------------------------------------------------------
+# Upstream
+# --------------------------------------------------------------------------
+
+
+class Upstream:
+    """Everything the watch reads from outside the tree, in one place."""
+
+    def __init__(self, token: str | None = None) -> None:
+        self.token = token
+
+    def _open(self, url: str, *, api: bool) -> bytes:
+        if not url.startswith("https://"):
+            raise WatchError(f"refusing a non-https source: {url}")
+        request = urllib.request.Request(url)  # noqa: S310 - https only, checked above
+        if api:
+            request.add_header("Accept", "application/vnd.github+json")
+            request.add_header("X-GitHub-Api-Version", "2022-11-28")
+            if self.token:
+                request.add_header("Authorization", f"Bearer {self.token}")
+        with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT) as response:  # noqa: S310
+            body: bytes = response.read(MAX_FETCH_BYTES + 1)
+        if len(body) > MAX_FETCH_BYTES:
+            raise WatchError(f"{url} is larger than {MAX_FETCH_BYTES} bytes")
+        return body
+
+    def github(self, path: str) -> Any:
+        return json.loads(self._open(f"{GITHUB_API}/{path}", api=True))
+
+    def json(self, url: str) -> Any:
+        return json.loads(self._open(url, api=False))
+
+    def download(self, url: str) -> bytes:
+        return self._open(url, api=False)
+
+    # The questions, each answered from one call or two.
+
+    def releases(self, repository: str) -> list[dict[str, Any]]:
+        return [
+            release
+            for release in self.github(f"repos/{repository}/releases?per_page=100")
+            if not release.get("draft") and not release.get("prerelease")
+        ]
+
+    def contains(self, repository: str, tag: str, commit: str) -> bool:
+        """Whether `tag` has `commit` in its history."""
+        status = self.github(f"repos/{repository}/compare/{commit}...{tag}")["status"]
+        return status in ("ahead", "identical")
+
+    def tag_commit(self, repository: str, tag: str) -> str:
+        reference = self.github(f"repos/{repository}/git/ref/tags/{tag}")["object"]
+        if reference["type"] == "tag":  # an annotated tag points at its commit
+            reference = self.github(f"repos/{repository}/git/tags/{reference['sha']}")["object"]
+        sha = str(reference["sha"])
+        if COMMIT.fullmatch(sha) is None:
+            raise WatchError(f"{repository} {tag} names no commit")
+        return sha
+
+    def commit_date(self, repository: str, commit: str) -> str:
+        return str(
+            self.github(f"repos/{repository}/commits/{commit}")["commit"]["committer"]["date"]
+        )
+
+    def tags(self, repository: str) -> list[str]:
+        return [str(tag["name"]) for tag in self.github(f"repos/{repository}/tags?per_page=100")]
+
+    def go_releases(self) -> list[dict[str, Any]]:
+        return [release for release in self.json(GO_DOWNLOADS) if release.get("stable")]
+
+
+# --------------------------------------------------------------------------
+# The pins in the tree
+# --------------------------------------------------------------------------
+
+
+def load(path: Path, name: str) -> ModuleType:
+    """The file as it is now, compiled from its text.
+
+    Not through the import system: its cache is keyed by the file's time in
+    whole seconds and its size, and a pin rewritten within the second to one
+    of the same length (v1.8.0 -> v1.9.0) read back as the old one.
+    """
+    module = ModuleType(name)
+    module.__file__ = str(path)
+    sys.modules[name] = module  # its dataclasses look themselves up here
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), module.__dict__)  # noqa: S102 - a tool from the tree being read
+    return module
+
+
+@dataclass(frozen=True)
+class Pins:
+    coraza_commit: str
+    coraza_version: str
+    crs_version: str
+    go: str
+    govulncheck: str
+
+
+def read_pins(tree: Path) -> Pins:
+    tool = load(tree / ENGINE_TOOL, f"upstream_watch_engine_{abs(hash(tree))}")
+    match = re.fullmatch(r"coraza-spoa-([0-9a-f]{40})", tool.CORAZA.top)
+    if match is None:
+        raise WatchError("the engine is not pinned by commit")
+    return Pins(
+        coraza_commit=match.group(1),
+        coraza_version=tool.CORAZA.version,
+        crs_version=tool.CRS.version,
+        go=tool.GO_VERSION,
+        govulncheck=tool.GOVULNCHECK_VERSION,
+    )
+
+
+def version(text: str, pattern: re.Pattern[str] = SEMVER) -> tuple[int, int, int]:
+    match = pattern.fullmatch(text)
+    if match is None:
+        raise WatchError(f"not a version: {text}")
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def kind(current: tuple[int, int, int], proposed: tuple[int, int, int], *, zero_minor: bool) -> str:
+    """patch, minor or major; with `zero_minor` a 0.y step is major (0.x semver)."""
+    if proposed[0] != current[0]:
+        return "major"
+    if proposed[1] != current[1]:
+        return "major" if zero_minor and current[0] == 0 else "minor"
+    return "patch"
+
+
+# --------------------------------------------------------------------------
+# Candidates, one function per component
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Candidate:
+    change: Change
+    write: Callable[[Path], None]
+
+
+def newest(candidates: list[Candidate]) -> list[Candidate]:
+    """The newest proposal that may be merged by itself, and the newest major one."""
+    chosen: list[Candidate] = []
+    for major in (False, True):
+        matching = [c for c in candidates if (c.change.kind == "major") == major]
+        if matching:
+            chosen.append(matching[-1])
+    return chosen
+
+
+def coraza_candidates(upstream: Upstream, pins: Pins) -> list[Candidate]:
+    current = version(pins.coraza_version)
+    found: list[tuple[tuple[int, int, int], dict[str, Any]]] = []
+    for release in upstream.releases(CORAZA_REPOSITORY):
+        try:
+            proposed = version(release["tag_name"])
+        except WatchError:
+            continue
+        # A release that leaves out the pinned commit would undo what it was
+        # pinned for (the engine is on a commit for a security fix, S04).
+        if proposed > current and upstream.contains(
+            CORAZA_REPOSITORY, release["tag_name"], pins.coraza_commit
+        ):
+            found.append((proposed, release))
+    candidates = []
+    for proposed, release in sorted(found, key=lambda item: item[0]):
+        tag = release["tag_name"]
+        change = Change(
+            "coraza",
+            pins.coraza_version,
+            ".".join(map(str, proposed)),
+            kind(current, proposed, zero_minor=True),
+            release["published_at"],
+        )
+
+        def write(tree: Path, tag: str = tag, change: Change = change) -> None:
+            commit = upstream.tag_commit(CORAZA_REPOSITORY, tag)
+            url = f"https://github.com/{CORAZA_REPOSITORY}/archive/{commit}.tar.gz"
+            archive = upstream.download(url)
+            top = f"coraza-spoa-{commit}"
+            single_tree(archive, top)
+            replace_source(
+                tree / ENGINE_TOOL,
+                "CORAZA",
+                file=f"{top}.tar.gz",
+                sha256=hashlib.sha256(archive).hexdigest(),
+                top=top,
+                version=change.proposed,
+                url=url,
+                revision=("CORAZA_REVISION", "1"),
+                comment=(
+                    f"Release v{change.proposed} at the commit its tag names, by commit so a\n"
+                    "moved tag changes nothing. Proposed by tools/upstream-watch (B337)."
+                ),
+            )
+
+        candidates.append(Candidate(change, write))
+    return candidates
+
+
+def crs_candidates(upstream: Upstream, pins: Pins) -> list[Candidate]:
+    current = version(pins.crs_version)
+    found = []
+    for release in upstream.releases(CRS_REPOSITORY):
+        if not str(release.get("name", "")).strip().endswith("(LTS)"):
+            continue
+        try:
+            proposed = version(release["tag_name"])
+        except WatchError:
+            continue
+        if proposed > current:
+            found.append((proposed, release))
+    candidates = []
+    for proposed, release in sorted(found, key=lambda item: item[0]):
+        text = ".".join(map(str, proposed))
+        change = Change(
+            "crs",
+            pins.crs_version,
+            text,
+            # The LTS line is the minor: another is a new line, for a person.
+            "patch" if proposed[:2] == current[:2] else "major",
+            release["published_at"],
+        )
+
+        def write(tree: Path, text: str = text, tag: str = release["tag_name"]) -> None:
+            file = f"coreruleset-{text}-minimal.tar.gz"
+            url = f"https://github.com/{CRS_REPOSITORY}/releases/download/{tag}/{file}"
+            archive = upstream.download(url)
+            signed_by_crs(tree / CRS_KEY, archive, upstream.download(url + ".asc"))
+            top = f"coreruleset-{text}"
+            single_tree(archive, top)
+            replace_source(
+                tree / ENGINE_TOOL,
+                "CRS",
+                file=file,
+                sha256=hashlib.sha256(archive).hexdigest(),
+                top=top,
+                version=text,
+                url=url,
+                revision=("CRS_REVISION", "1"),
+            )
+
+        candidates.append(Candidate(change, write))
+    return candidates
+
+
+def go_candidates(upstream: Upstream, pins: Pins) -> list[Candidate]:
+    current = version(pins.go, GO_RELEASE)
+    found = []
+    for release in upstream.go_releases():
+        try:
+            proposed = version(release["version"], GO_RELEASE)
+        except WatchError:
+            continue  # go1.27 before its first point release, go1.27rc1
+        if proposed > current:
+            found.append((proposed, release))
+    candidates = []
+    for proposed, release in sorted(found, key=lambda item: item[0]):
+        name = release["version"]
+        archives = [
+            item
+            for item in release["files"]
+            if item.get("os") == "linux"
+            and item.get("arch") == "amd64"
+            and item.get("kind") == "archive"
+        ]
+        if len(archives) != 1 or re.fullmatch(r"[0-9a-f]{64}", archives[0]["sha256"]) is None:
+            raise WatchError(f"go.dev lists no single linux-amd64 archive for {name}")
+        change = Change(
+            "go",
+            pins.go,
+            name,
+            "patch" if proposed[:2] == current[:2] else "major",
+            upstream.commit_date(GO_REPOSITORY, upstream.tag_commit(GO_REPOSITORY, name)),
+        )
+
+        def write(tree: Path, name: str = name, digest: str = archives[0]["sha256"]) -> None:
+            # go.dev's own digest; the build fetches the archive against it.
+            replace_constant(tree / ENGINE_TOOL, "GO_VERSION", name)
+            replace_go_archives(tree / RELEASE_TOOL, name, digest)
+            # Another Go is another engine binary under the same upstream
+            # version: without a new revision apt would not take it.
+            next_revision(tree / ENGINE_TOOL, "CORAZA_REVISION")
+
+        candidates.append(Candidate(change, write))
+    return candidates
+
+
+def govulncheck_candidates(upstream: Upstream, pins: Pins) -> list[Candidate]:
+    current = version(pins.govulncheck)
+    found = []
+    for tag in upstream.tags(VULN_REPOSITORY):
+        try:
+            proposed = version(tag)
+        except WatchError:
+            continue
+        if proposed > current and tag == f"v{proposed[0]}.{proposed[1]}.{proposed[2]}":
+            found.append((proposed, tag))
+    candidates = []
+    for proposed, tag in sorted(found, key=lambda item: item[0]):
+        change = Change(
+            "govulncheck",
+            pins.govulncheck,
+            tag,
+            kind(current, proposed, zero_minor=False),
+            upstream.commit_date(VULN_REPOSITORY, upstream.tag_commit(VULN_REPOSITORY, tag)),
+        )
+
+        # `go install` checks the module against the checksum database.
+        def write(tree: Path, tag: str = tag) -> None:
+            replace_constant(tree / ENGINE_TOOL, "GOVULNCHECK_VERSION", tag)
+
+        candidates.append(Candidate(change, write))
+    return candidates
+
+
+# Each answers every newer release, oldest first.
+# Go before the engine: a new engine release starts its revision over after
+# a Go bump in the same proposal has raised it.
+COMPONENTS: dict[str, Callable[[Upstream, Pins], list[Candidate]]] = {
+    "go": go_candidates,
+    "govulncheck": govulncheck_candidates,
+    "coraza": coraza_candidates,
+    "crs": crs_candidates,
+}
+
+
+# --------------------------------------------------------------------------
+# Verification and writing
+# --------------------------------------------------------------------------
+
+
+def single_tree(archive: bytes, top: str) -> None:
+    """Refuse an archive the build would refuse: one `top/` tree, nothing else."""
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz") as handle:
+        handle.write(archive)
+        handle.flush()
+        with tarfile.open(handle.name) as tar:
+            names = tar.getnames()
+    if not names or any(not (n == top or n.startswith(top + "/")) for n in names):
+        raise WatchError(f"the archive does not hold exactly one {top}/ tree")
+
+
+def signed_by_crs(key: Path, archive: bytes, signature: bytes) -> None:
+    """Refuse an archive the CRS release key did not sign."""
+    with tempfile.TemporaryDirectory(prefix="upstream-watch-") as raw:
+        work = Path(raw)
+        keyring = work / "keyring.gpg"
+        (work / "archive").write_bytes(archive)
+        (work / "archive.asc").write_bytes(signature)
+        # gpgv reads a binary keyring only; the key is kept readable in the tree.
+        subprocess.run(  # noqa: S603 - fixed tool and arguments
+            [
+                GPG,
+                "--batch",
+                "--homedir",
+                str(work),
+                "--dearmor",
+                "--output",
+                str(keyring),
+                str(key),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        done = subprocess.run(  # noqa: S603 - fixed tool and arguments
+            [
+                GPGV,
+                "--homedir",
+                str(work),
+                "--keyring",
+                str(keyring),
+                str(work / "archive.asc"),
+                str(work / "archive"),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 0:
+            raise WatchError(f"the rule set's signature does not verify:\n{done.stderr.strip()}")
+
+
+def replace_once(path: Path, pattern: str, replacement: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    new, count = re.subn(pattern, lambda _: replacement, text, flags=re.MULTILINE | re.DOTALL)
+    if count != 1:
+        raise WatchError(f"{path.name}: expected one match for {pattern!r}, found {count}")
+    path.write_text(new, encoding="utf-8")
+
+
+def replace_constant(path: Path, name: str, value: str) -> None:
+    replace_once(path, rf'^{name} = "[^"\n]*"$', f'{name} = "{value}"')
+
+
+def next_revision(path: Path, name: str) -> None:
+    match = re.search(rf'^{name} = "(\d+)"$', path.read_text(encoding="utf-8"), re.MULTILINE)
+    if match is None:
+        raise WatchError(f"{path.name}: no {name}")
+    replace_constant(path, name, str(int(match.group(1)) + 1))
+
+
+def replace_go_archives(path: Path, name: str, digest: str) -> None:
+    replace_once(
+        path, r"^GO_ARCHIVES = \{\n.*?^\}$", f'GO_ARCHIVES = {{\n    "{name}": "{digest}",\n}}'
+    )
+
+
+def replace_source(
+    path: Path,
+    name: str,
+    *,
+    revision: tuple[str, str],
+    comment: str | None = None,
+    **fields: str,
+) -> None:
+    # A new upstream version starts the package's own revision over.
+    replace_constant(path, *revision)
+    body = "".join(f'    {key}="{value}",\n' for key, value in fields.items())
+    statement = f"{name} = Source(\n{body})"
+    if comment is None:
+        replace_once(path, rf"^{name} = Source\(\n.*?^\)$", statement)
+        return
+    lines = "".join(f"# {line}\n" for line in comment.splitlines())
+    # The comment above the statement goes with it: it said why the old pin.
+    replace_once(path, rf"^(?:#[^\n]*\n)+{name} = Source\(\n.*?^\)$", f"#\n{lines}#\n{statement}")
+
+
+# --------------------------------------------------------------------------
+# Commands
+# --------------------------------------------------------------------------
+
+
+def check(
+    tree: Path, upstream: Upstream, *, apply: bool, security_only: bool
+) -> dict[str, list[dict[str, str]]]:
+    pins = read_pins(tree)
+    proposed: list[Change] = []
+    held: list[Change] = []
+    for component, candidates in COMPONENTS.items():
+        for candidate in newest(candidates(upstream, pins)):
+            if candidate.change.kind == "major":
+                held.append(candidate.change)
+                continue
+            # A pin that reaches a vulnerability is fixed on its own, in two
+            # days; the rule set waits for the next proposal at its own pace.
+            if security_only and component not in ENGINE_SIDE:
+                continue
+            if apply:
+                candidate.write(tree)
+            proposed.append(candidate.change)
+    return {"proposed": [asdict(c) for c in proposed], "held": [asdict(c) for c in held]}
+
+
+def changes_between(base: Path, head: Path, upstream: Upstream) -> list[Change]:
+    """What the head tree changes, read again from upstream rather than trusted."""
+    before, after = read_pins(base), read_pins(head)
+    changes = []
+    for component, candidates in COMPONENTS.items():
+        if component == "coraza":
+            moved = before.coraza_commit != after.coraza_commit
+            target = after.coraza_version
+        else:
+            field = {"crs": "crs_version", "go": "go", "govulncheck": "govulncheck"}[component]
+            moved = getattr(before, field) != getattr(after, field)
+            target = getattr(after, field)
+        if not moved:
+            continue
+        match = [c.change for c in candidates(upstream, before) if c.change.proposed == target]
+        if not match:
+            raise WatchError(f"{component} {target} is not a newer release upstream offers")
+        if component == "coraza" and after.coraza_commit != upstream.tag_commit(
+            CORAZA_REPOSITORY, f"v{target}"
+        ):
+            raise WatchError(f"coraza {target} is pinned at a commit its tag does not name")
+        changes.append(match[0])
+    return changes
+
+
+def due(changes: list[Change], *, vulnerable: bool, now: datetime) -> tuple[bool, str]:
+    """Whether a proposal may be merged now, and why or why not."""
+    if not changes:
+        return False, "nothing changes"
+    majors = [c for c in changes if c.kind == "major"]
+    if majors:
+        return False, "a major change waits for a person: " + ", ".join(
+            f"{c.component} {c.proposed}" for c in majors
+        )
+    security = vulnerable and all(c.component in ENGINE_SIDE for c in changes)
+    when = max(
+        datetime.fromisoformat(c.released_at.replace("Z", "+00:00"))
+        + (SECURITY_WAIT if security else WAIT[c.kind])
+        for c in changes
+    )
+    if now < when:
+        return False, f"waiting until {when.isoformat()}"
+    return True, f"due since {when.isoformat()}"
+
+
+@contextlib.contextmanager
+def scratch(cache: Path) -> Iterator[Path]:
+    work = cache / "upstream-watch"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    try:
+        yield work
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def vuln(tree: Path, cache: Path) -> int:
+    """govulncheck on the pinned engine, as the build runs it; 3 on findings."""
+    cache = cache.resolve()
+    cache.mkdir(parents=True, exist_ok=True)
+    release = load(tree / RELEASE_TOOL, "upstream_watch_release")
+    engine = release.engine_tool(tree)
+    sources = cache / "sources"
+    sources.mkdir(exist_ok=True)
+    archive = release.fetched(sources, engine.CORAZA.file, engine.CORAZA.url, engine.CORAZA.sha256)
+    go = release.go_root(cache, engine.GO_VERSION)
+    bin_dir = cache / f"govulncheck-{engine.GOVULNCHECK_VERSION}"
+    govulncheck = bin_dir / "govulncheck"
+    with scratch(cache) as work:
+        if not govulncheck.exists():
+            release.run(
+                go / "bin" / "go",
+                "install",
+                f"golang.org/x/vuln/cmd/govulncheck@{engine.GOVULNCHECK_VERSION}",
+                env={
+                    **os.environ,
+                    "GOTMPDIR": str(work),
+                    "GOBIN": str(bin_dir),
+                    "GOTOOLCHAIN": "local",
+                    "GOPATH": str(cache / "gopath"),
+                    "GOCACHE": str(cache / "gocache"),
+                },
+            )
+        tree_dir, _ = engine.unpack(archive, engine.CORAZA, work / "src")
+        try:
+            print(engine.vulnerability_check(tree_dir, go, govulncheck, work))
+        except ValueError as exc:
+            print(exc)
+            return 3 if "reaches known vulnerabilities" in str(exc) else 1
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    checking = commands.add_parser("check", help="what upstream has that is newer")
+    checking.add_argument("--source", type=Path, required=True)
+    checking.add_argument("--apply", action="store_true", help="write the proposals into the tree")
+    checking.add_argument(
+        "--security-only", action="store_true", help="the engine side only: Go code, not rules"
+    )
+    checking.add_argument("--report", type=Path, help="write the result as JSON here too")
+    dueing = commands.add_parser("due", help="whether the head tree may be merged now")
+    dueing.add_argument("--base", type=Path, required=True)
+    dueing.add_argument("--head", type=Path, required=True)
+    dueing.add_argument(
+        "--vulnerable", action="store_true", help="the base reaches a vulnerability"
+    )
+    vulning = commands.add_parser("vuln", help="govulncheck on the pinned engine")
+    vulning.add_argument("--source", type=Path, required=True)
+    vulning.add_argument("--cache", type=Path, required=True)
+    args = parser.parse_args()
+    upstream = Upstream(os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
+    try:
+        if args.command == "check":
+            result = check(
+                args.source, upstream, apply=args.apply, security_only=args.security_only
+            )
+            text = json.dumps(result, indent=2)
+            print(text)
+            if args.report:
+                args.report.write_text(text + "\n", encoding="utf-8")
+            return 0
+        if args.command == "due":
+            ready, reason = due(
+                changes_between(args.base, args.head, upstream),
+                vulnerable=args.vulnerable,
+                now=datetime.now(UTC),
+            )
+            print(reason)
+            return 0 if ready else 1
+        return vuln(args.source, args.cache)
+    except (WatchError, OSError, subprocess.CalledProcessError, KeyError, ValueError) as exc:
+        parser.exit(2, f"upstream-watch: {exc}\n")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

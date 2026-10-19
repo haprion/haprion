@@ -143,9 +143,9 @@ CORAZA = Source(
 )
 #
 # The LTS line (B227). The minimal archive is signed by the CRS release key,
-# fingerprint 3600 6F0E 0BA1 6783 2158 8211 38EE ACA1 AB8A 6E72; the signature
-# was checked once, when this digest was pinned (4.25.2: 26-10-14, the LTS
-# security release for the advisories in the review's S04).
+# fingerprint 3600 6F0E 0BA1 6783 2158 8211 38EE ACA1 AB8A 6E72, which is in
+# keys/upstream/; tools/upstream-watch checks the signature before it proposes
+# a digest here (B337).
 #
 CRS = Source(
     file="coreruleset-4.25.2-minimal.tar.gz",

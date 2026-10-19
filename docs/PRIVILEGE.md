@@ -213,7 +213,7 @@ at all, which is a broken system reading as a secured one.
   root-owned file to a loaded configuration directory.
 - DR/rebuild and certificate issuance/distribution remain separate operator policies.
 
-## Mandatory negative tests in Phase 1
+## Mandatory negative tests
 
 Run these tests as the real installed identities, not only through mocks:
 
@@ -232,5 +232,6 @@ Run these tests as the real installed identities, not only through mocks:
 9. deploy/status key identities map to the expected distinct forced commands on every node
 10. positive controls prove each role can perform exactly its intended operations
 
-R2 build-readiness freezes this target and audits the current source boundary. Phase 1 creates the
-identities/helpers/rules and must make all positive and negative tests pass before its gate closes.
+A change to an identity, a helper or a rule is not done until these pass again as the installed
+identities. `install/platform/03-verify` carries the database part - what each role must and must not
+be able to do - and `install/05-verify` the files, keys and nodes.

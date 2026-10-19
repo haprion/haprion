@@ -3503,8 +3503,14 @@ better done elsewhere. The details are in the section linked.
   the management host is the backup; the dump is for putting one table back. Whoever relies
   on it lets their own monitoring follow `haprion-backup.service` and
   `haprion-restore-check.service` ([Backups, and proving they restore](#backups-and-proving-they-restore)).
-  The partitions the nightly retention creates need no watching of their own: the traffic
-  log's run out first, after seven days, and its import then fails in *Needs attention*.
+  The nightly retention is: a run missed shows under *Needs attention*, from the partitions it
+  makes ahead of time.
+- **An existing `haproxy.cfg` is not imported.** A real configuration nearly always holds what the
+  objects do not express - chains of ACLs, maps, `use_backend` logic, Lua. Put it in the
+  handwritten layer (`core/haproxy.cfg` and `manual/`), where it runs beside the objects and shows
+  on *Proxies* as *Manual*, and move the sites to objects one at a time.
+- **A traffic log receiver's TLS certificate is checked against the node's system trust store.**
+  For a receiver with a certificate from your own CA, add that CA to the trust store on each node.
 - **A request the WAF engine could not read cannot be excepted.** A broken body, a malformed
   upload or arguments past the limit are judged by the object's mode, like a rule set match,
   but no exception lets one through: what was not read cannot be narrowed to a field

@@ -182,22 +182,3 @@ These rules are shared by config deploy and certificate deploy:
   blocks, token/password/secret assignments, and paths containing `.ssh`, `/secrets/`,
   `/etc/ssl/private/`, or private certificate-distribution paths.
 - Raw stderr is never used to decide operation state and is never returned to a reader role.
-
-## Current-to-v1 implementation delta
-
-The installed commands remain the regression baseline, but Phase 1 must adapt them to these frozen
-contracts:
-
-- status is ported to the packaged CLI and now emits `outcome`, warning objects and an integer
-  release version; its result also carries the published `target` and, per node, whether that node
-  runs it
-- inventory exists and emits the frozen `inventory` result; the certificate-list command does not
-  yet exist
-- list emits the frozen `list` result under `--json`, and reports the published release alongside
-  the schema's `current_version`: `current` means the newest saved version, which is not
-  necessarily the one the nodes run
-- backup-list, publish, deploy, revert, and cert-deploy still need JSON modes
-- current deploy safety blocks and cert-deploy failures do not yet use the frozen exit-code/outcome
-  mapping
-- the human backup helper's node/`all` syntax remains supported; JSON mode is cluster-bound as
-  specified by the UI CLI contract

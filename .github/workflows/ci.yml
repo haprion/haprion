@@ -139,6 +139,60 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
         run: ./run-checks
 
+  # The rule set's own regression tests through the packages a proposal of the
+  # upstream watch would publish (B337): the engine and the rules built from
+  # its pins, behind the HAProxy branch the nodes run. Only on the watch's
+  # pull requests, where the pins move; its merge waits for this to pass.
+  crs-regression:
+    name: Rule set regression tests
+    if: github.event_name == 'pull_request' && github.head_ref == 'upstream-watch'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          enable-cache: false
+
+      # From the repository a node gets it from, with the key the product
+      # ships, at the branch the installation steps hold nodes to.
+      - name: Install the HAProxy the nodes run
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=$(sed -n 's/^HAPROXY_BRANCH="\([0-9.]*\)"$/\1/p' install/lib.sh)
+          codename=$(. /etc/os-release && echo "${VERSION_CODENAME}")
+          sudo install -m 0644 src/haprion/apt-keys/haproxy-ubuntu-ppa.asc /etc/apt/keyrings/haproxy.asc
+          echo "deb [signed-by=/etc/apt/keyrings/haproxy.asc] https://ppa.launchpadcontent.net/vbernat/haproxy-${branch}/ubuntu ${codename} main" \
+            | sudo tee /etc/apt/sources.list.d/haproxy.list
+          sudo apt-get update -q
+          sudo apt-get install -y -q haproxy
+          haproxy -v | grep -q "^HAProxy version ${branch}\."
+
+      - name: Build the engine and the rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build-release-packages --source . --output-dir "${RUNNER_TEMP}/packages" \
+            --uv "$(command -v uv)" --cache "${RUNNER_TEMP}/cache" --only waf
+
+      - name: Run the rule set's regression tests
+        shell: bash
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/venv
+        run: |
+          set -euo pipefail
+          uv sync --locked --no-dev
+          "${RUNNER_TEMP}/venv/bin/python" tools/crs-regression --source . \
+            --packages "${RUNNER_TEMP}/packages" --cache "${RUNNER_TEMP}/cache"
+
   # The branch rule requires this name. A matrix job reports one check per
   # Python, so this one stands for both and passes only when both did.
   gates:

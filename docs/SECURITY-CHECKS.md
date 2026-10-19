@@ -214,7 +214,10 @@ release), the Go that compiles the engine and the govulncheck that reads it. Eve
    against `keys/upstream/coreruleset.asc`, the Go archive against go.dev's digest, the engine by the
    commit its release tag names - and rewrites the pins on the branch `upstream-watch`, with one pull
    request open for it. A major update is never written: it opens an issue for a person
-3. merges that pull request once every check on it passed, each upstream release is seven days old
+3. merges that pull request once every check on it passed - among them the rule set's own regression
+   tests (`tools/crs-regression`: go-ftw through the built engine and rules behind the HAProxy branch
+   the nodes run, in the rig the engine's source carries, with its list of tests known to fail
+   through HAProxy and ours in `tests/crs-regression.yml`) - each upstream release is seven days old
    (two when the pinned engine reaches a vulnerability and the proposal is the engine side only), and
    it is not labelled `hold`. The label `no-cooldown` lifts the wait; nothing lifts the major rule.
    The merge on `main` builds and publishes the engine and the rules (`apt-repo.yml`)

@@ -1,0 +1,4 @@
+# Rule set tests expected to fail through our packages beyond the list the
+# engine's own rig keeps (ftw/ftw.yml in the pinned Coraza SPOA source), each
+# with its reason. tools/crs-regression refuses an entry upstream already has.
+{}

@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""Run the rule set's own regression tests against the packages built here (B323, B337).
+
+    tools/crs-regression --source <tree> --packages <dir> --cache <dir>
+                         [--haproxy /usr/sbin/haproxy] [--include <regex>]
+
+The engine package's binary, the rule set package's rules and the installed
+HAProxy, with go-ftw sending each of the rule set's test requests through them
+and reading which rules matched. The rig is upstream's: the Coraza SPOA source
+the engine is built from carries one (`ftw/`), with the tests it knows to fail
+through HAProxy and why. It is taken from the pinned source archive and
+changed only where it must be:
+
+    the rules        our pinned rule set, not the one compiled into the engine
+    the addresses    the loopback and ports of our own, not container names
+    the files        a work directory, not /build
+
+and anything upstream changes in those places stops the run rather than being
+patched around. The tests come from the rule set's full source at the pinned
+version, checked against its signature. go-ftw and the backend are built with
+the pinned Go, at the versions the rig names.
+
+What we expect to fail beyond upstream's list is in tests/crs-regression.yml,
+each with its reason. A failure in neither list fails the run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.request
+from collections.abc import Iterator
+from pathlib import Path
+from types import ModuleType
+
+import yaml
+
+ENGINE_TOOL = "tools/build-coraza-package.py"
+RELEASE_TOOL = "tools/build-release-packages"
+CRS_KEY = "keys/upstream/coreruleset.asc"
+OUR_IGNORES = "tests/crs-regression.yml"
+CRS_SHARE = "usr/share/haprion/crs"
+GPG = "/usr/bin/gpg"
+GPGV = "/usr/bin/gpgv"
+DPKG_DEB = "/usr/bin/dpkg-deb"
+# Ports of their own: 8080 is the management interface's on a manager.
+HAPROXY_PORT = 18080
+BACKEND_PORT = 18081
+ENGINE_PORT = 19000
+START_TIMEOUT = 60
+
+
+class RegressionError(RuntimeError):
+    """The rig could not be set up as upstream has it."""
+
+
+def load(path: Path, name: str) -> ModuleType:
+    module = ModuleType(name)
+    module.__file__ = str(path)
+    sys.modules[name] = module  # its dataclasses look themselves up here
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), module.__dict__)  # noqa: S102 - a tool from the tree being tested
+    return module
+
+
+def replaced(text: str, old: str, new: str, *, where: str) -> str:
+    """`text` with `old`, which must be there exactly once, as `new`."""
+    if text.count(old) != 1:
+        raise RegressionError(f"{where}: expected {old!r} once, found it {text.count(old)} times")
+    return text.replace(old, new)
+
+
+def extract_package(directory: Path, pattern: str, into: Path) -> Path:
+    (deb,) = sorted(directory.glob(pattern)) or (None,)
+    if deb is None:
+        raise RegressionError(f"no {pattern} in {directory}")
+    into.mkdir(parents=True)
+    subprocess.run([DPKG_DEB, "-x", str(deb), str(into)], check=True)  # noqa: S603 - fixed tool
+    return into
+
+
+def signed(key: Path, archive: Path, signature: Path, work: Path) -> None:
+    keyring = work / "crs-keyring.gpg"
+    subprocess.run(  # noqa: S603 - fixed tool and arguments
+        [GPG, "--batch", "--homedir", str(work), "--dearmor", "--output", str(keyring), str(key)],
+        check=True,
+        capture_output=True,
+    )
+    done = subprocess.run(  # noqa: S603 - fixed tool and arguments
+        [GPGV, "--homedir", str(work), "--keyring", str(keyring), str(signature), str(archive)],
+        capture_output=True,
+        text=True,
+    )
+    if done.returncode != 0:
+        raise RegressionError(f"the rule set's tests are not signed by its key:\n{done.stderr}")
+
+
+def unpack(archive: Path, top: str, into: Path) -> Path:
+    with tarfile.open(archive) as tar:
+        if any(not (n == top or n.startswith(top + "/")) for n in tar.getnames()):
+            raise RegressionError(f"{archive.name} must hold exactly one {top}/ tree")
+        tar.extractall(into, filter="data")
+    return into / top
+
+
+def rig_version(text: str, image: str, *, where: str) -> str:
+    """The version a rig file names for one of its images."""
+    match = re.search(rf"{re.escape(image)}:v?(\d+\.\d+\.\d+)@sha256:", text)
+    if match is None:
+        raise RegressionError(f"{where} names no pinned {image}")
+    return match.group(1)
+
+
+def go_install(go: Path, module: str, bin_dir: Path, cache: Path, work: Path) -> None:
+    subprocess.run(  # noqa: S603 - the pinned Go, a module at a fixed version
+        [str(go / "bin" / "go"), "install", module],
+        check=True,
+        env={
+            **os.environ,
+            "GOBIN": str(bin_dir),
+            "GOTOOLCHAIN": "local",
+            "GOTMPDIR": str(work),
+            "GOPATH": str(cache / "gopath"),
+            "GOCACHE": str(cache / "gocache"),
+            "GOFLAGS": "-mod=readonly",
+            "GOPROXY": "https://proxy.golang.org",
+            "GOSUMDB": "sum.golang.org",
+        },
+    )
+
+
+def engine_configuration(rig: str, crs: Path, work: Path) -> str:
+    where = "ftw/coraza-spoa.yaml"
+    text = replaced(rig, "bind: 0.0.0.0:9000", f"bind: 127.0.0.1:{ENGINE_PORT}", where=where)
+    #
+    # The rule set's own test setup turns on what its LTS line ships off: the
+    # inspection of XML attribute values (GHSA-6jp8-c2w2-x7wr; its tests/
+    # docker-compose.yml, id 900511), which its tests of that advisory expect.
+    #
+    text = replaced(
+        text,
+        "Include @crs-setup.conf.example",
+        f"Include {crs}/crs-setup.conf.example\n"
+        '      SecAction "id:900511,phase:1,pass,nolog,setvar:tx.crs_xml_attr_inspect=1"',
+        where=where,
+    )
+    text = replaced(text, "Include @owasp_crs/*.conf", f"Include {crs}/rules/*.conf", where=where)
+    #
+    # The rig sets the later phases' default actions for the rule set compiled
+    # into the engine, whose setup does not; ours sets them itself, and the
+    # engine refuses a second definition. Left out only when ours says the same.
+    #
+    setup = (crs / "crs-setup.conf.example").read_text(encoding="utf-8").splitlines()
+    for phase in (3, 4, 5):
+        line = f'SecDefaultAction "phase:{phase},log,auditlog,pass"'
+        if line in setup:
+            text = replaced(text, f"      {line}\n", "", where=where)
+    return text.replace("/build/", f"{work}/")
+
+
+def haproxy_configuration(rig: str, work: Path) -> str:
+    where = "ftw/haproxy/haproxy.cfg"
+    text = replaced(rig, "bind *:8080", f"bind 127.0.0.1:{HAPROXY_PORT}", where=where)
+    text = replaced(
+        text, "server test backend:8081", f"server test 127.0.0.1:{BACKEND_PORT}", where=where
+    )
+    text = replaced(
+        text,
+        "config /usr/local/etc/haproxy/coraza.cfg",
+        f"config {work}/coraza.cfg",
+        where=where,
+    )
+    text = replaced(
+        text,
+        "server coraza_spoa coraza-spoa:9000",
+        f"server coraza_spoa 127.0.0.1:{ENGINE_PORT}",
+        where=where,
+    )
+    # Its own resolvers section reads the container's resolv.conf; unused here.
+    return text
+
+
+def ftw_configuration(rig: str, ours: dict[str, str], work: Path) -> str:
+    where = "ftw/ftw.yml"
+    settings = yaml.safe_load(rig)
+    try:
+        settings["testoverride"]["input"]["dest_addr"] = "127.0.0.1"
+        settings["testoverride"]["input"]["port"] = HAPROXY_PORT
+        ignore = settings["testoverride"]["ignore"]
+    except (KeyError, TypeError) as exc:
+        raise RegressionError(f"{where} is not shaped as it was: {exc}") from exc
+    for test, reason in ours.items():
+        if test in ignore:
+            raise RegressionError(f"{OUR_IGNORES}: {test} is upstream's already; remove it here")
+        ignore[test] = reason
+    settings["logfile"] = str(work / "ftw.log")
+    return yaml.safe_dump(settings, sort_keys=False)
+
+
+@contextlib.contextmanager
+def running(command: list[str], log: Path, port: int) -> Iterator[None]:
+    """A process for as long as the block, once something listens on `port`."""
+    with log.open("wb") as out:
+        process = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)  # noqa: S603
+        try:
+            deadline = time.monotonic() + START_TIMEOUT
+            while True:
+                if process.poll() is not None:
+                    raise RegressionError(
+                        f"{Path(command[0]).name} stopped (exit {process.returncode}):\n"
+                        + log.read_text(errors="replace")[-4000:]
+                    )
+                with socket.socket() as probe:
+                    if probe.connect_ex(("127.0.0.1", port)) == 0:
+                        break
+                if time.monotonic() > deadline:
+                    raise RegressionError(f"{Path(command[0]).name} did not listen on {port}")
+                time.sleep(0.2)
+            yield
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+
+def run(source: Path, packages: Path, cache: Path, haproxy: Path, include: str | None) -> int:
+    source = source.resolve(strict=True)
+    cache = cache.resolve()
+    cache.mkdir(parents=True, exist_ok=True)
+    release = load(source / RELEASE_TOOL, "crs_regression_release")
+    engine = release.engine_tool(source)
+    work = cache / "crs-regression"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(mode=0o700)
+    sources = cache / "sources"
+    sources.mkdir(exist_ok=True)
+
+    # The packages under test.
+    binary = (
+        extract_package(packages, "haprion-coraza-spoa_*.deb", work / "engine")
+        / "usr/sbin/coraza-spoa"
+    )
+    crs = extract_package(packages, "haprion-crs_*.deb", work / "crs") / CRS_SHARE
+    if (crs / "VERSION").read_text().strip() != engine.CRS.version:
+        raise RegressionError("the rule set package is not the pinned version")
+
+    # The rig, from the engine source the package was built from.
+    archive = release.fetched(sources, engine.CORAZA.file, engine.CORAZA.url, engine.CORAZA.sha256)
+    rig = unpack(archive, engine.CORAZA.top, work / "rig") / "ftw"
+
+    # The tests, from the rule set's full source, against its signature.
+    tag = f"v{engine.CRS.version}"
+    tests_archive = sources / f"coreruleset-{engine.CRS.version}-source.tar.gz"
+    tests_signature = sources / f"coreruleset-{engine.CRS.version}-source.tar.gz.asc"
+    download(
+        f"https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz", tests_archive
+    )
+    download(
+        f"https://github.com/coreruleset/coreruleset/releases/download/{tag}/"
+        f"coreruleset-{engine.CRS.version}.tar.gz.asc",
+        tests_signature,
+    )
+    signed(source / CRS_KEY, tests_archive, tests_signature, work)
+    tests = (
+        unpack(tests_archive, f"coreruleset-{engine.CRS.version}", work / "source")
+        / "tests/regression/tests"
+    )
+
+    # go-ftw and the backend, at the versions the rig names, with the pinned Go.
+    ftw_version = rig_version(
+        (rig / "Dockerfile.ftw").read_text(), "go-ftw", where="ftw/Dockerfile.ftw"
+    )
+    backend_version = rig_version(
+        (rig / "docker-compose.yml").read_text(), "albedo", where="ftw/docker-compose.yml"
+    )
+    go = release.go_root(cache, engine.GO_VERSION)
+    bin_dir = cache / f"ftw-{ftw_version}-albedo-{backend_version}"
+    if not (bin_dir / "go-ftw").exists() or not (bin_dir / "albedo").exists():
+        go_install(go, f"github.com/coreruleset/go-ftw/v2@v{ftw_version}", bin_dir, cache, work)
+        go_install(go, f"github.com/coreruleset/albedo@v{backend_version}", bin_dir, cache, work)
+
+    ours = yaml.safe_load((source / OUR_IGNORES).read_text()) or {}
+    (work / "coraza-spoa.yaml").write_text(
+        engine_configuration((rig / "coraza-spoa.yaml").read_text(), crs, work)
+    )
+    (work / "haproxy.cfg").write_text(
+        haproxy_configuration((rig / "haproxy/haproxy.cfg").read_text(), work)
+    )
+    shutil.copy(rig / "haproxy/coraza.cfg", work / "coraza.cfg")
+    (work / "ftw.yml").write_text(ftw_configuration((rig / "ftw.yml").read_text(), ours, work))
+    for log in ("ftw.log", "ftw-audit.log", "ftw-spoa.log"):
+        (work / log).touch()
+
+    command = [
+        str(bin_dir / "go-ftw"),
+        "run",
+        "-d",
+        str(tests),
+        "--config",
+        str(work / "ftw.yml"),
+        "--show-failures-only",
+        "--read-timeout=10s",
+        "--max-marker-retries=50",
+    ]
+    if include:
+        command += ["-i", include]
+    with (
+        running(
+            [str(bin_dir / "albedo"), "--port", str(BACKEND_PORT)],
+            work / "backend.log",
+            BACKEND_PORT,
+        ),
+        running(
+            [str(binary), "--config", str(work / "coraza-spoa.yaml")],
+            work / "engine.log",
+            ENGINE_PORT,
+        ),
+        running(
+            [str(haproxy), "-db", "-f", str(work / "haproxy.cfg")],
+            work / "haproxy.log",
+            HAPROXY_PORT,
+        ),
+    ):
+        print("+", " ".join(command), flush=True)
+        return subprocess.run(command, check=False, cwd=work).returncode  # noqa: S603 - built here
+
+
+def download(url: str, path: Path) -> None:
+    if not url.startswith("https://"):
+        raise RegressionError(f"refusing a non-https source: {url}")
+    if path.exists():
+        return
+    partial = path.with_name(path.name + ".partial")
+    with (
+        urllib.request.urlopen(url, timeout=120) as response,  # noqa: S310 - https only, checked above
+        partial.open("wb") as out,
+    ):
+        shutil.copyfileobj(response, out)
+    partial.rename(path)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--packages", type=Path, required=True, help="where the built .debs are")
+    parser.add_argument("--cache", type=Path, required=True)
+    parser.add_argument("--haproxy", type=Path, default=Path("/usr/sbin/haproxy"))
+    parser.add_argument("--include", help="only the tests whose ids match this expression")
+    args = parser.parse_args()
+    try:
+        return run(args.source, args.packages, args.cache, args.haproxy, args.include)
+    except (RegressionError, OSError, subprocess.CalledProcessError, ValueError) as exc:
+        parser.exit(2, f"crs-regression: {exc}\n")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

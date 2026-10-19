@@ -155,7 +155,9 @@ _OPERATION_OUTCOMES = {
     #
     # `cluster_node` adds or removes one node, all six files or none. `blocked`
     # is a node that did not answer as itself (every file put back), the node
-    # holding the VIP, or the cluster busy; no half exists to be `partial`.
+    # holding the VIP, or the cluster busy; the helper has no half to answer
+    # `partial` with. The deploy that follows a node change (B321) is judged on
+    # its own, and that one can leave the job `partial`.
     #
     "cluster_node": frozenset({"done", "failed", "blocked"}),
     #

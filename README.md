@@ -18,7 +18,7 @@ accordingly. This is not a commercial product: there is no SLA, no support agree
 guaranteed response time, and maintenance is best-effort. There will be bugs.
 
 The project has not reached 1.0 and is **not yet declared ready for production deployment**.
-Everything listed below is built and tested, and everything the interface sets is also a command.
+Everything listed below is built and tested.
 What remains before 1.0 is a full re-verification of an installation built from this repository,
 and documentation.
 

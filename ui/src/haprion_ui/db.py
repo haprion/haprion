@@ -6,9 +6,11 @@ prevent are both about scope rather than syntax:
 
 * an audit record written in a different transaction from the change it
   describes, which leaves a history that can disagree with what happened
-* a connection held while a subprocess runs. A rollout takes minutes and a pool
-  has a handful of connections; a worker that keeps one for the duration is a
-  worker that stops the interface from answering.
+* a transaction held open while a subprocess runs. A rollout takes minutes; an
+  open transaction across it keeps its row locks for that long, and the roles'
+  `idle_in_transaction_session_timeout` ends it ten seconds in. The worker may
+  keep a connection from its own small pool through a job - the web's pool is
+  another process's - but it commits before the command starts.
 
 So the caller opens a transaction, does everything belonging to it, and closes
 it. What is inside is visible at the call site instead of buried here.

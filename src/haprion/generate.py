@@ -868,6 +868,13 @@ def _waf_files(
             f'SecAction "id:900000,phase:1,pass,t:none,nolog,'
             f'setvar:tx.blocking_paranoia_level={proxy.waf.paranoia}"',
             #
+            # The rule set's LTS line ships its fix for attacks in XML
+            # attribute values (GHSA-6jp8-c2w2-x7wr) off; without this an
+            # attack there passes at every level (B338). The id is the one its
+            # setup template gives the switch.
+            #
+            'SecAction "id:900510,phase:1,pass,t:none,nolog,setvar:tx.crs_xml_attr_inspect=1"',
+            #
             # After the level is set and before the rule set: a counter in
             # phase 1 can read the level, and one in phase 2 runs before the
             # score is judged, so it counts a request refused for other rules.

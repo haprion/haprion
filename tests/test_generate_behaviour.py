@@ -2995,6 +2995,25 @@ class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
         self.assertEqual((status, rule), (403, "crs:deny"))
         self.assertIn("942100", rules.split(","))
 
+    def test_an_attack_in_an_xml_attribute_is_refused_as_one_in_its_text(self) -> None:
+        # The rule set's LTS line ships its inspection of attribute values
+        # off (GHSA-6jp8-c2w2-x7wr): before B338 the attribute passed with 200.
+        attack = "x' UNION SELECT password FROM users--"
+        for body in (
+            f'<?xml version="1.0"?><order><item note="{attack}">1</item></order>',
+            f'<?xml version="1.0"?><order><item note="gift">{attack}</item></order>',
+        ):
+            with self.subTest(body):
+                status, rule, rules = self.ask(
+                    "/form", name="blocks", body=body.encode(), content_type="application/xml"
+                )
+                self.assertEqual((status, rule), (403, "crs:deny"))
+                self.assertIn("942100", rules.split(","))
+        harmless = b'<?xml version="1.0"?><order><item note="gift">1</item></order>'
+        self.assertEqual(
+            self.ask("/form", name="blocks", body=harmless, content_type="application/xml")[0], 200
+        )
+
     def test_an_excluded_rule_no_longer_counts(self) -> None:
         # A Host that is an address is CRS 920350; `blocks` has turned it off.
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
@@ -3225,6 +3244,9 @@ class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
         self.skipTest("the engine is not running")
 
     def test_a_blocking_object_refuses_an_attack_in_the_query_and_in_the_body(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_an_attack_in_an_xml_attribute_is_refused_as_one_in_its_text(self) -> None:
         self.skipTest("the engine is not running")
 
     def test_an_excluded_rule_no_longer_counts(self) -> None:

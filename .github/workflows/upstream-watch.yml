@@ -1,0 +1,285 @@
+name: upstream watch
+
+# The WAF packages' upstream sources, watched every night (B323, B337):
+#
+#   vulnerabilities  govulncheck on the pinned engine against today's database;
+#                    a finding opens an issue and makes the next proposal a
+#                    security one (the engine side only, two days' wait)
+#   propose          tools/upstream-watch rewrites the pins on the branch
+#                    `upstream-watch` and keeps one pull request open for it;
+#                    a major update is an issue for a person, never a change
+#   merge            the proposal goes in once every check on it passed, its
+#                    upstream releases are old enough and nobody put `hold` on
+#                    it; the merge on main then builds and publishes the engine
+#                    and the rules (apt-repo.yml)
+#
+# Everything that writes is done as the GitHub App, not with the workflow's own
+# token: a pull request that token opens runs no checks, and a merge it makes
+# starts no workflow - the proposal would go in untested and never be built.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+env:
+  BRANCH: upstream-watch
+  VULNERABLE_TITLE: "The pinned WAF engine reaches a known vulnerability"
+  MAJOR_TITLE: "Major upstream updates of the WAF packages wait for a person"
+
+jobs:
+  vulnerabilities:
+    name: The pinned engine against today's vulnerabilities
+    if: github.repository == 'haprion/haprion'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    outputs:
+      vulnerable: ${{ steps.scan.outputs.vulnerable }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run govulncheck
+        id: scan
+        shell: bash
+        run: |
+          set -uo pipefail
+          python3 tools/upstream-watch vuln --source . --cache "${RUNNER_TEMP}/cache" \
+            | tee "${RUNNER_TEMP}/vulnerabilities.txt"
+          status=${PIPESTATUS[0]}
+          case "${status}" in
+            0) echo "vulnerable=false" >> "${GITHUB_OUTPUT}" ;;
+            3) echo "vulnerable=true" >> "${GITHUB_OUTPUT}" ;;
+            *) exit "${status}" ;;
+          esac
+
+      - name: Keep the report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vulnerabilities
+          path: ${{ runner.temp }}/vulnerabilities.txt
+          retention-days: 7
+
+  propose:
+    name: Propose the newer upstream releases
+    needs: vulnerabilities
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    environment: upstream-watch
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the proposal's branch
+          permission-pull-requests: write # its pull request
+          permission-issues: write # the vulnerability and the major updates
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the vulnerability report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vulnerabilities
+          path: ${{ runner.temp }}/report
+
+      - name: Report a reachable vulnerability, or close the report
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          VULNERABLE: ${{ needs.vulnerabilities.outputs.vulnerable }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+        run: |
+          set -euo pipefail
+          open=$(gh issue list --state open --search "in:title \"${VULNERABLE_TITLE}\"" \
+            --json number,title --jq "map(select(.title == env.VULNERABLE_TITLE))[0].number // empty")
+          if [[ "${VULNERABLE}" == true ]]; then
+            body="${RUNNER_TEMP}/body.md"
+            { echo "govulncheck finds a vulnerability the pinned engine reaches."
+              echo "The next proposal is a security one: the engine side only, merged two days"
+              echo "after its upstream release. Label it \`no-cooldown\` to merge it once green."
+              echo; echo '```'; cat "${RUNNER_TEMP}/report/vulnerabilities.txt"; echo '```'
+            } > "${body}"
+            if [[ -n "${open}" ]]; then
+              gh issue edit "${open}" --body-file "${body}"
+            else
+              gh issue create --title "${VULNERABLE_TITLE}" --body-file "${body}" \
+                ${NOTIFY:+--assignee "${NOTIFY}"}
+            fi
+          elif [[ -n "${open}" ]]; then
+            gh issue close "${open}" --comment "govulncheck finds nothing the pinned engine reaches."
+          fi
+
+      - name: Rewrite the pins
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          VULNERABLE: ${{ needs.vulnerabilities.outputs.vulnerable }}
+        run: |
+          set -euo pipefail
+          security=()
+          if [[ "${VULNERABLE}" == true ]]; then
+            security=(--security-only)
+          fi
+          python3 tools/upstream-watch check --source . --apply "${security[@]}" \
+            --report "${RUNNER_TEMP}/proposal.json"
+
+      - name: Report the major updates, or close the report
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+        run: |
+          set -euo pipefail
+          proposal="${RUNNER_TEMP}/proposal.json"
+          open=$(gh issue list --state open --search "in:title \"${MAJOR_TITLE}\"" \
+            --json number,title --jq "map(select(.title == env.MAJOR_TITLE))[0].number // empty")
+          if [[ "$(jq '.held | length' "${proposal}")" -gt 0 ]]; then
+            body="${RUNNER_TEMP}/body.md"
+            { echo "Never merged by the watch: each needs a person to read what changed."
+              echo; echo "| Component | Pinned | Upstream | Released |"; echo "|---|---|---|---|"
+              jq -r '.held[] | "| \(.component) | \(.current) | \(.proposed) | \(.released_at) |"' "${proposal}"
+            } > "${body}"
+            if [[ -n "${open}" ]]; then
+              gh issue edit "${open}" --body-file "${body}"
+            else
+              gh issue create --title "${MAJOR_TITLE}" --body-file "${body}" \
+                ${NOTIFY:+--assignee "${NOTIFY}"}
+            fi
+          elif [[ -n "${open}" ]]; then
+            gh issue close "${open}" --comment "No major upstream update is waiting."
+          fi
+
+      # One branch, one pull request: what is newer today, on top of main. It
+      # is pushed only when its tree differs from what the branch holds, so the
+      # checks on it run again only when there is something new to check.
+      - name: Keep the proposal's pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          NOTIFY: ${{ vars.UPSTREAM_WATCH_NOTIFY }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          proposal="${RUNNER_TEMP}/proposal.json"
+          open=$(gh pr list --head "${BRANCH}" --state open --json number --jq '.[0].number // empty')
+          if git diff --quiet; then
+            if [[ -n "${open}" ]]; then
+              gh pr close "${open}" --delete-branch --comment "Nothing upstream is newer than main."
+            fi
+            exit 0
+          fi
+          user_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git -c user.name="${APP_SLUG}[bot]" \
+              -c user.email="${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" \
+              commit --quiet --all --message "Update the WAF packages' upstream pins"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          remote="https://github.com/${REPOSITORY}.git"
+          if git -c http.extraheader="${auth}" fetch --quiet "${remote}" "${BRANCH}" 2>/dev/null \
+              && [[ "$(git rev-parse 'FETCH_HEAD^{tree}')" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
+            echo "the branch already holds this proposal"
+          else
+            git -c http.extraheader="${auth}" push --quiet --force "${remote}" "HEAD:refs/heads/${BRANCH}"
+          fi
+          body="${RUNNER_TEMP}/pr.md"
+          { echo "Proposed by the upstream watch (B323). Merged by itself once every check passed"
+            echo "and each upstream release is seven days old - two for a security proposal."
+            echo "Label \`hold\` to stop it, \`no-cooldown\` to merge it once green."
+            echo; echo "| Component | Pinned | Proposed | Class | Released |"; echo "|---|---|---|---|---|"
+            jq -r '.proposed[] | "| \(.component) | \(.current) | \(.proposed) | \(.kind) | \(.released_at) |"' "${proposal}"
+          } > "${body}"
+          if [[ -n "${open}" ]]; then
+            gh pr edit "${open}" --body-file "${body}"
+          else
+            gh pr create --head "${BRANCH}" --base main \
+              --title "Update the WAF packages' upstream pins" --body-file "${body}" \
+              ${NOTIFY:+--assignee "${NOTIFY}"}
+          fi
+
+  merge:
+    name: Merge the proposal when it is due
+    needs: [vulnerabilities, propose]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    environment: upstream-watch
+
+    steps:
+      - name: Act as the app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.UPSTREAM_WATCH_CLIENT_ID }}
+          private-key: ${{ secrets.UPSTREAM_WATCH_PRIVATE_KEY }}
+          permission-contents: write # the merge writes main
+          permission-pull-requests: write # and closes the pull request
+          permission-checks: read # whether every check passed
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Every check must have run and passed on the head being merged. The
+      # named ones must be among them: a check that never started is not one
+      # that passed.
+      - name: Merge when every check passed and the wait is over
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          VULNERABLE: ${{ needs.vulnerabilities.outputs.vulnerable }}
+          REQUIRED: |
+            Source, quality, and security gates
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --head "${BRANCH}" --state open --json number,headRefOid,labels --jq '.[0] // empty')
+          if [[ -z "${pr}" ]]; then
+            echo "no proposal is open"
+            exit 0
+          fi
+          number=$(jq -r .number <<<"${pr}")
+          head=$(jq -r .headRefOid <<<"${pr}")
+          labels=$(jq -r '[.labels[].name] | join(" ")' <<<"${pr}")
+          if [[ " ${labels} " == *" hold "* ]]; then
+            echo "#${number} is on hold"
+            exit 0
+          fi
+          checks=$(gh pr checks "${number}" --json name,bucket || true)
+          if jq -e 'any(.[]; .bucket != "pass" and .bucket != "skipping")' <<<"${checks}" >/dev/null; then
+            echo "#${number}: not every check has passed"
+            jq -r '.[] | "  \(.bucket)  \(.name)"' <<<"${checks}"
+            exit 0
+          fi
+          while IFS= read -r name; do
+            [[ -z "${name}" ]] && continue
+            if ! jq -e --arg name "${name}" 'any(.[]; .name == $name and .bucket == "pass")' <<<"${checks}" >/dev/null; then
+              echo "#${number}: '${name}' has not passed"
+              exit 0
+            fi
+          done <<<"${REQUIRED}"
+          git fetch --quiet origin "${head}"
+          git worktree add --quiet --detach "${RUNNER_TEMP}/head" "${head}"
+          options=()
+          [[ "${VULNERABLE}" == true ]] && options+=(--vulnerable)
+          [[ " ${labels} " == *" no-cooldown "* ]] && options+=(--no-cooldown)
+          if ! python3 tools/upstream-watch due --base . --head "${RUNNER_TEMP}/head" "${options[@]}"; then
+            exit 0
+          fi
+          gh pr merge "${number}" --merge --match-head-commit "${head}" --delete-branch

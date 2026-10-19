@@ -202,6 +202,37 @@ re-check both.
 Accepting a finding is a decision about one of those two contracts, not a way to reach a green
 gate. Anything that is not a contract working as written is fixed in the code.
 
+## Upstream watch
+
+The WAF packages are built from four pins in `tools/build-coraza-package.py` and
+`tools/build-release-packages`: the Coraza SPOA engine (a commit), the OWASP Core Rule Set (an LTS
+release), the Go that compiles the engine and the govulncheck that reads it. Every night
+`.github/workflows/upstream-watch.yml`:
+
+1. runs govulncheck on the pinned engine (`tools/upstream-watch vuln`); a finding opens an issue
+2. asks upstream what is newer (`tools/upstream-watch check`), verifies it - the rule set's signature
+   against `keys/upstream/coreruleset.asc`, the Go archive against go.dev's digest, the engine by the
+   commit its release tag names - and rewrites the pins on the branch `upstream-watch`, with one pull
+   request open for it. A major update is never written: it opens an issue for a person
+3. merges that pull request once every check on it passed, each upstream release is seven days old
+   (two when the pinned engine reaches a vulnerability and the proposal is the engine side only), and
+   it is not labelled `hold`. The label `no-cooldown` lifts the wait; nothing lifts the major rule.
+   The merge on `main` builds and publishes the engine and the rules (`apt-repo.yml`)
+
+What counts as major: for the engine a `0.y` step, for the rule set a new LTS line, for Go a new
+line, for govulncheck a new major version.
+
+The watch writes as a GitHub App, not with the workflow's own token: a pull request that token
+opens runs no checks, and a merge it makes starts no workflow. To set it up:
+
+- create a GitHub App owned by the organization, with no webhook, and repository permissions
+  Contents, Pull requests and Issues read and write, Checks read; install it on this repository only
+- create the environment `upstream-watch`, deployable from `main` only, holding the variable
+  `UPSTREAM_WATCH_CLIENT_ID` (the app's client ID), the secret `UPSTREAM_WATCH_PRIVATE_KEY` (a
+  private key generated for the app) and, optionally, the variable `UPSTREAM_WATCH_NOTIFY` (the
+  login assigned each pull request and issue, so the maintainer is told when one opens and merges)
+- create the labels `hold` and `no-cooldown`
+
 ## GitHub repository settings
 
 Before the first push, create the repository secret `HAPRION_DENYLIST`. When the repository

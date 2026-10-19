@@ -15,6 +15,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
 
+import yaml
+
 BASE = Path(__file__).resolve().parents[1]
 COMMIT = "a" * 40
 LATER_COMMIT = "b" * 40
@@ -352,6 +354,13 @@ class WhenItIsDue(unittest.TestCase):
         self.assertFalse(ready)
         self.assertIn("person", reason)
 
+    def test_a_person_can_lift_the_cooldown_but_not_the_major_rule(self) -> None:
+        self.assertTrue(
+            WATCH.due([self.change("crs")], vulnerable=False, now=self.RELEASED, cooldown=False)[0]
+        )
+        major = [self.change("go", "major")]
+        self.assertFalse(WATCH.due(major, vulnerable=False, now=self.RELEASED, cooldown=False)[0])
+
     def test_nothing_is_not_due(self) -> None:
         self.assertFalse(WATCH.due([], vulnerable=False, now=self.RELEASED)[0])
 
@@ -389,6 +398,24 @@ class ThePinsInTheTree(unittest.TestCase):
             line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:")
         ]
         self.assertEqual(fingerprints[0], "36006F0E0BA167832158821138EEACA1AB8A6E72")
+
+
+class TheWorkflow(unittest.TestCase):
+    def test_every_check_the_merge_waits_for_is_a_job_that_exists(self) -> None:
+        # A renamed job would leave the merge waiting for a check that never
+        # comes - every proposal held, and nothing saying why.
+        workflows = BASE / ".github" / "workflows"
+        watch = yaml.safe_load((workflows / "upstream-watch.yml").read_text())
+        (step,) = [s for s in watch["jobs"]["merge"]["steps"] if "REQUIRED" in s.get("env", {})]
+        required = [line for line in step["env"]["REQUIRED"].splitlines() if line.strip()]
+        self.assertIn("Source, quality, and security gates", required)
+        names = {
+            job.get("name")
+            for path in workflows.glob("*.yml")
+            for job in yaml.safe_load(path.read_text())["jobs"].values()
+        }
+        for name in required:
+            self.assertIn(name, names)
 
 
 if __name__ == "__main__":

@@ -561,7 +561,9 @@ def changes_between(base: Path, head: Path, upstream: Upstream) -> list[Change]:
     return changes
 
 
-def due(changes: list[Change], *, vulnerable: bool, now: datetime) -> tuple[bool, str]:
+def due(
+    changes: list[Change], *, vulnerable: bool, now: datetime, cooldown: bool = True
+) -> tuple[bool, str]:
     """Whether a proposal may be merged now, and why or why not."""
     if not changes:
         return False, "nothing changes"
@@ -570,6 +572,10 @@ def due(changes: list[Change], *, vulnerable: bool, now: datetime) -> tuple[bool
         return False, "a major change waits for a person: " + ", ".join(
             f"{c.component} {c.proposed}" for c in majors
         )
+    # A person's lever (the `no-cooldown` label): an exploited vulnerability
+    # does not wait. A major change still does.
+    if not cooldown:
+        return True, "the cooldown is lifted"
     security = vulnerable and all(c.component in ENGINE_SIDE for c in changes)
     when = max(
         datetime.fromisoformat(c.released_at.replace("Z", "+00:00"))
@@ -646,6 +652,7 @@ def main() -> int:
     dueing.add_argument(
         "--vulnerable", action="store_true", help="the base reaches a vulnerability"
     )
+    dueing.add_argument("--no-cooldown", action="store_true", help="lifted by a person")
     vulning = commands.add_parser("vuln", help="govulncheck on the pinned engine")
     vulning.add_argument("--source", type=Path, required=True)
     vulning.add_argument("--cache", type=Path, required=True)
@@ -665,6 +672,7 @@ def main() -> int:
             ready, reason = due(
                 changes_between(args.base, args.head, upstream),
                 vulnerable=args.vulnerable,
+                cooldown=not args.no_cooldown,
                 now=datetime.now(UTC),
             )
             print(reason)

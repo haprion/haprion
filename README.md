@@ -269,9 +269,9 @@ coverage, unit and frozen contract tests, an sdist/wheel smoke test, and depende
 CodeQL is the heavier pre-push and release gate described in
 [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md).
 
-Changes to migrations, grants or database read/write paths also run against a disposable real
-PostgreSQL cluster with `ui/tools/test-database`; its accounts and isolation boundary are described
-in [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md#disposable-database-integration-gate).
+The gate also runs the interface's migrations, grants and SQL against a disposable real
+PostgreSQL cluster with `ui/tools/test-database`, so it needs PostgreSQL installed; its accounts
+and isolation boundary are described in [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md#disposable-database-integration-gate).
 
 Versioned installation and rollback under `/opt/haprion` are described in
 [`docs/install.md`](docs/install.md) and [`docs/user-manual.md`](docs/user-manual.md).

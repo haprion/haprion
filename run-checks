@@ -4,4 +4,8 @@ set -eu
 base=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 
 "$base/run-tests"
+# The interface's migrations, grants and SQL against a real, disposable
+# PostgreSQL. The unit suite skips these; without this line the gate passed
+# without ever running a migration (review 2026-10-18, R1).
+"$base/ui/tools/test-database"
 "$base/tools/run-gitleaks"

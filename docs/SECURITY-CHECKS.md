@@ -26,6 +26,8 @@ The repository has complementary gates. No single scanner replaces the others.
    `HAPRION_UI_PYTHON` and fail closed without it. The engine's and the interface's test modules
    run through one pool, one module per process (`tools/run_test_modules.py`), heaviest first by
    the previous run's timings; each module's coverage is combined before the report.
+   `run-checks` then runs the interface's migrations and database tests against a disposable
+   PostgreSQL cluster (`ui/tools/test-database`, below), and fails without PostgreSQL installed.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,
    in both directions. It is a deployment check rather than a repository one, so it is not part of
    `run-checks` — but it belongs to the same family, and the reason it checks both directions is in
@@ -83,15 +85,17 @@ quietly leaving the interface unchecked.
 ## Disposable database integration gate
 
 Cursor imitations catch query shape, but they do not execute migrations, PostgreSQL permissions,
-partition routing or SQL semantics. Run the real-database gate after changing a migration, a
-database read/write path, role grants, metric rollups or retention:
+partition routing or SQL semantics. `run-checks` therefore runs the real-database gate on every
+run, in CI as well, and fails when PostgreSQL is not installed rather than skipping it. It can
+also be run on its own:
 
 ```bash
 HAPRION_UI_PYTHON=/path/to/ui-environment/bin/python ui/tools/test-database
 ```
 
 The command must run as the developer, not root. It finds the installed PostgreSQL tools through
-`pg_config`, creates a private temporary cluster under `TMPDIR`, listens only on a Unix socket in
+`pg_config`, or in `HAPRION_PG_BINDIR` where more than one major version is installed (CI names
+18, the version installations run), creates a private temporary cluster under `TMPDIR`, listens only on a Unix socket in
 that directory, applies every Alembic migration and runs `tests.test_database_integration`. A trap
 stops PostgreSQL and removes the complete temporary cluster on success, failure or interruption.
 It never reads an answers file and has no connection string for the development or production

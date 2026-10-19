@@ -13,7 +13,13 @@ python_bin="${HAPRION_UI_PYTHON:-}"
     exit 1
 }
 
-pg_bindir="$(pg_config --bindir)"
+# HAPRION_PG_BINDIR names the server's programs where more than one major
+# version is installed; otherwise `pg_config` says where they are.
+pg_bindir="${HAPRION_PG_BINDIR:-$(pg_config --bindir 2>/dev/null || true)}"
+[[ -n "$pg_bindir" ]] || {
+    echo "PostgreSQL is not installed here (no pg_config); the database gate needs its server" >&2
+    exit 1
+}
 for program in initdb pg_ctl psql createdb; do
     [[ -x "${pg_bindir}/${program}" ]] || {
         echo "PostgreSQL program is missing: ${pg_bindir}/${program}" >&2
@@ -22,6 +28,14 @@ for program in initdb pg_ctl psql createdb; do
 done
 
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/haprion-test-db.XXXXXX")"
+# PostgreSQL's socket file goes inside, and a Unix socket path holds about 107
+# bytes: a deep TMPDIR otherwise fails as a server that would not start.
+socket_file="${test_root}/socket/.s.PGSQL.5432"
+(( ${#socket_file} < 107 )) || {
+    rm -rf -- "$test_root"
+    echo "TMPDIR is too deep for PostgreSQL's socket (${socket_file}); use a shorter one" >&2
+    exit 1
+}
 data_dir="${test_root}/data"
 socket_dir="${test_root}/socket"
 database="haprion_ui_test"

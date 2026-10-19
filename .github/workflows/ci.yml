@@ -100,8 +100,24 @@ jobs:
           tools/install-actionlint "${RUNNER_TEMP}/actionlint"
           printf '%s\n' "${RUNNER_TEMP}/shellcheck" "${RUNNER_TEMP}/actionlint" >> "${GITHUB_PATH}"
 
+      # The database gate runs the interface's migrations, grants and SQL in a
+      # disposable cluster of the major version installations run (18). It
+      # comes from the PostgreSQL project's repository, set up by the script
+      # the distribution's postgresql-common carries with its own key - the
+      # same way install/platform/ensure-postgresql does on Debian.
+      - name: Install the PostgreSQL the database gate runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -q postgresql-18
+
       - name: Run all source, quality, test, and dependency gates
         env:
+          # More than one major can be on the runner image; the gate runs 18.
+          HAPRION_PG_BINDIR: /usr/lib/postgresql/18/bin
           GITLEAKS_BIN: ${{ runner.temp }}/gitleaks/gitleaks
           HAPRION_SECRET_RULES: ${{ runner.temp }}/haprion-private.rules
           # Without this the gate refuses to run rather than skipping the

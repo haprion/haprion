@@ -15,6 +15,11 @@ publishes: a rollout clears the mark only if nobody marked the cluster again
 since the rollout read it, because that later change is one the rollout may not
 have carried.
 
+Every mark draws a new random serial rather than counting up. A count started
+again at 1 once a settle removed the cluster, so a rollout that settled late
+could clear a later run's mark that happened to have its number (review
+2026-10-18, L2). A drawn serial is not reused, and the file keeps its shape.
+
 Every read-modify-write happens under the publisher's lock. A file that cannot
 be read is not a reason to stop publishing certificates: it is read as "every
 cluster may be behind", which costs at most a rollout per cluster that finds its
@@ -26,6 +31,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import secrets
 import stat
 import tempfile
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -34,6 +40,21 @@ from pathlib import Path
 PENDING_NAME = "certificates.pending-deploy.json"
 SCHEMA_VERSION = 1
 MAX_BYTES = 64 * 1024
+
+
+#
+# Below 2**53, so the serial survives any JSON reader as an exact number.
+#
+SERIAL_BOUND = 2**53
+
+
+def fresh_serial(other_than: int | None = None) -> int:
+    """A serial for a new mark: random, at least 1, and never the one it replaces."""
+
+    while True:
+        serial = secrets.randbelow(SERIAL_BOUND - 1) + 1
+        if serial != other_than:
+            return serial
 
 
 def pending_path(registry: Path) -> Path:
@@ -119,7 +140,7 @@ class Ledger:
         self.known = frozenset(known)
         found = read(path)
         if found is None:
-            self.before = dict.fromkeys(sorted(self.known), 1)
+            self.before = {cluster_id: fresh_serial() for cluster_id in sorted(self.known)}
             self._written: dict[str, int] | None = None
         else:
             self.before = {c: s for c, s in found.items() if c in self.known}
@@ -136,7 +157,7 @@ class Ledger:
 
         for cluster_id in clusters:
             if cluster_id in self.known:
-                self.current[cluster_id] = self.current.get(cluster_id, 0) + 1
+                self.current[cluster_id] = fresh_serial(self.current.get(cluster_id))
         self._store()
 
     def keep(self, changed: Collection[str]) -> None:

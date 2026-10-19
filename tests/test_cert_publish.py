@@ -15,6 +15,7 @@ and mode are still set and checked - only the numbers differ from production.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import io
 import json
@@ -719,7 +720,7 @@ class TheCommand(Fixture):
         with mock.patch.object(cert_publish, "publish_to", watching):
             self.run_publish(policy)
 
-        self.assertEqual(marked_at_write, [{"alpha": 1}])
+        self.assertEqual([sorted(marks or {}) for marks in marked_at_write], [["alpha"]])
 
     def test_an_unchanged_run_leaves_no_mark_behind(self) -> None:
         issue(self.live / "example.com", "example.com")
@@ -755,6 +756,38 @@ class TheCommand(Fixture):
         self.run_command(policy, "--deploy", deployer=deployer)
 
         self.assertIn("alpha", cert_pending.read(pending) or {})
+
+    def test_a_late_settle_does_not_clear_a_mark_made_after_the_note_was_emptied(
+        self,
+    ) -> None:
+        #
+        # Review 2026-10-18, L2: A marks, B marks and settles (the note is
+        # empty), C marks, and only then does A settle. A count started again
+        # at 1 after B's settle and gave C A's number, so A cleared C's mark.
+        #
+        registry = self.root / "certificates.yaml"
+        registry.write_text("schema_version: 1\n", encoding="utf-8")
+        pending = cert_pending.pending_path(registry)
+
+        def marked() -> list[tuple[str, int]]:
+            ledger = cert_pending.Ledger(pending, like=registry, known=("alpha",))
+            ledger.mark(["alpha"])
+            ledger.keep(["alpha"])
+            return ledger.order(["alpha"])
+
+        def settle(serial: int) -> None:
+            cert_pending.settle(
+                pending, "alpha", serial, like=registry, locked=contextlib.nullcontext
+            )
+
+        [(_, a)] = marked()
+        [(_, b)] = marked()
+        settle(b)
+        self.assertEqual(cert_pending.read(pending), {})
+        [(_, c)] = marked()
+        settle(a)
+
+        self.assertEqual(cert_pending.read(pending), {"alpha": c})
 
     def test_an_unreadable_note_makes_every_cluster_due(self) -> None:
         issue(self.live / "example.com", "example.com")

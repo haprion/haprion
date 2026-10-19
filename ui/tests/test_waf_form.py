@@ -222,6 +222,13 @@ class TheGroupOnTheEditor(EditorTestCase):
         self.assertIn("Strictness", text)
         self.assertNotIn("is not installed", text)
 
+    def test_large_bodies_says_what_it_leaves_uninspected(self) -> None:
+        """B333: the field is an exemption from full inspection, and says so where it is set."""
+
+        text = self.page(stored("waf:\n  mode: block\n"))
+        field = text.split('<textarea name="waf_large_bodies"', 1)[1].split("</label>", 1)[0]
+        self.assertIn("Inspects the first 15 kB only.", field)
+
     def test_the_closed_group_draws_its_shield_in_the_mode_colour(self) -> None:
         # 26-10-04: whether the engine refuses visitors, seen at a glance.
         text = self.page(stored("waf:\n  mode: block\n"))

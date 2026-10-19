@@ -27,7 +27,7 @@ import sys
 import tarfile
 import tempfile
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -167,6 +167,11 @@ class PackageFacts:
     version: str
     commit: str
     sha256: str
+    #
+    # Each attested node script's SHA-256, as the package carries it: what a
+    # node running this package reports installed (B335).
+    #
+    scripts: dict[str, str] = field(default_factory=dict)
 
 
 def sha256_file(path: Path) -> str:
@@ -308,6 +313,7 @@ def verify_package(deb: Path, expected_sha256: str | None = None) -> PackageFact
     if version is None:
         raise PackageError("package version is not one this project builds")
     found: dict[str, int] = {}
+    scripts: dict[str, str] = {}
     build = b""
     try:
         with tarfile.open(fileobj=io.BytesIO(_dpkg_deb("--fsys-tarfile", str(deb)))) as tree:
@@ -320,6 +326,10 @@ def verify_package(deb: Path, expected_sha256: str | None = None) -> PackageFact
                 if (member.uid, member.gid) != (0, 0):
                     raise PackageError(f"package member is not owned by root: {name}")
                 found[name] = member.mode
+                if name.removeprefix("usr/sbin/") in NODE_SCRIPTS and name.startswith("usr/sbin/"):
+                    extracted = tree.extractfile(member)
+                    content = extracted.read() if extracted is not None else b""
+                    scripts[name.removeprefix("usr/sbin/")] = hashlib.sha256(content).hexdigest()
                 if name == BUILD_FILE:
                     extracted = tree.extractfile(member)
                     build = extracted.read() if extracted is not None else b""
@@ -330,7 +340,9 @@ def verify_package(deb: Path, expected_sha256: str | None = None) -> PackageFact
     recorded = re.fullmatch(rb"commit: ([0-9a-f]{40})\n", build)
     if recorded is None or not recorded.group(1).decode().startswith(version.group(3)):
         raise PackageError("package does not record the commit its version names")
-    return PackageFacts(version=fields["Version"], commit=recorded.group(1).decode(), sha256=actual)
+    return PackageFacts(
+        version=fields["Version"], commit=recorded.group(1).decode(), sha256=actual, scripts=scripts
+    )
 
 
 #
@@ -346,6 +358,7 @@ class ReleasePackage:
     version: str
     commit: str
     sha256: str
+    scripts: dict[str, str] = field(default_factory=dict)
 
 
 def release_package(release: Path | None = None) -> ReleasePackage | None:
@@ -377,7 +390,11 @@ def release_package(release: Path | None = None) -> ReleasePackage | None:
     path = release / RELEASE_PACKAGE
     facts = verify_package(path, record["sha256"])
     return ReleasePackage(
-        path=path, version=facts.version, commit=facts.commit, sha256=facts.sha256
+        path=path,
+        version=facts.version,
+        commit=facts.commit,
+        sha256=facts.sha256,
+        scripts=facts.scripts,
     )
 
 

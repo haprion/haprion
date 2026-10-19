@@ -259,7 +259,9 @@ the exact worker and poller sudo rules, all three services executing from the
 current UI release, and node packages at a sufficient API level whose recorded
 script digests still match. The release IDs are printed for diagnosis but are
 not compared for equality; a UI-only correction must not force an unrelated CLI
-or node rollout.
+or node rollout. A node whose scripts are not the node package the CLI release
+carries is a `WARN` line naming the scripts, never a failure: the CLI and the
+interface are updated before the nodes, so that is the normal state between them.
 
 Before activation, name a prepared release explicitly. The check then reads that
 candidate's requirements and omits only the process check, because the processes

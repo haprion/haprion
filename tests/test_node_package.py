@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -138,6 +139,17 @@ class NodePackageVerifyTests(unittest.TestCase):
 
         self.assertEqual(facts.version, f"0.1.0+git20260921141320.{COMMIT[:12]}")
         self.assertEqual(facts.commit, COMMIT)
+
+    def test_it_answers_each_attested_script_s_digest(self) -> None:
+        """B335: what a node running this package reports installed, per script."""
+
+        facts = node_package.verify_package(self.deb)
+
+        self.assertEqual(set(facts.scripts), set(node_package.NODE_SCRIPTS))
+        name = node_package.NODE_SCRIPTS[0]
+        self.assertEqual(
+            facts.scripts[name], hashlib.sha256(f"# usr/sbin/{name}\n".encode()).hexdigest()
+        )
 
     def test_a_wrong_digest_is_refused(self) -> None:
         with self.assertRaisesRegex(node_package.PackageError, "SHA-256"):

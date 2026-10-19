@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from haprion import accounts
+from haprion import accounts, node_package
 from haprion.config import (
     DEFAULT_POLICY_PATH,
     load_policy,
@@ -79,6 +79,11 @@ class Report:
     def fail(self, subject: str, detail: str) -> None:
         self.failures += 1
         print(f"  FAIL  {subject:<30} {detail}")
+
+    def warn(self, subject: str, detail: str) -> None:
+        """Said, and not a failure: a state the installation passes through on purpose."""
+
+        print(f"  WARN  {subject:<30} {detail}")
 
 
 def _positive_int(value: object, name: str) -> int:
@@ -435,7 +440,41 @@ def _node_installation(entry: object) -> tuple[str, int | None, bool]:
     return shown, parsed_api, installation.get("scripts_current") is True
 
 
-def check_cluster_nodes(report: Report, *, cluster: str, helper: Path, required_api: int) -> None:
+def _scripts_behind(entry: object, expected: Mapping[str, str]) -> list[str]:
+    """The node's scripts whose installed bytes are not the release's node package's."""
+
+    status = entry.get("status") if isinstance(entry, dict) else None
+    installation = status.get("installation") if isinstance(status, dict) else None
+    scripts = installation.get("scripts") if isinstance(installation, dict) else None
+    if not isinstance(scripts, dict):
+        return sorted(expected)
+    behind = []
+    for name, digest in sorted(expected.items()):
+        reported = scripts.get(name)
+        installed = reported.get("installed_sha256") if isinstance(reported, dict) else None
+        if installed != digest:
+            behind.append(name)
+    return behind
+
+
+def check_cluster_nodes(
+    report: Report,
+    *,
+    cluster: str,
+    helper: Path,
+    required_api: int,
+    expected_scripts: Mapping[str, str] | None = None,
+) -> None:
+    """Each node's API and scripts, and whether they are the CLI release's node package.
+
+    A node's own `scripts_current` compares its files with the record its own
+    package left, so a node still on an older package looks current against
+    itself (found 2026-09-10). `expected_scripts` are the digests of the node
+    package the CLI release carries; a node behind them is a warning, not a
+    failure, because the CLI and the interface are installed before the nodes
+    on purpose, and that order would otherwise fail every update (B335).
+    """
+
     request = json.dumps(
         {
             "schema_version": 1,
@@ -468,6 +507,14 @@ def check_cluster_nodes(report: Report, *, cluster: str, helper: Path, required_
             report.fail(subject, f"node API {api}, installed script digests differ")
         else:
             report.pass_(subject, f"node API {api}, script digests current")
+        if expected_scripts:
+            behind = _scripts_behind(entry, expected_scripts)
+            if behind:
+                report.warn(
+                    subject,
+                    f"{len(behind)} script(s) not this release's node package: "
+                    f"{', '.join(behind)} - install it on the node",
+                )
 
 
 def _inventory_differences(
@@ -745,9 +792,18 @@ def main(argv: list[str] | None = None) -> int:
             collector_config=args.collector_config,
         )
     helper = cli_release / "bin/haprion-status-helper"
+    try:
+        carried = node_package.release_package(cli_release)
+    except node_package.PackageError as exc:
+        report.warn("node package", f"the CLI release's node package cannot be read: {exc}")
+        carried = None
     for cluster in args.clusters:
         check_cluster_nodes(
-            report, cluster=cluster, helper=helper, required_api=requirements.node_api
+            report,
+            cluster=cluster,
+            helper=helper,
+            required_api=requirements.node_api,
+            expected_scripts=carried.scripts if carried is not None else None,
         )
 
     print()

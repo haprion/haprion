@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import re
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from haprion import accounts
 from haprion.cli import (
@@ -428,6 +432,45 @@ class TrafficCollectorInventoryTests(unittest.TestCase):
 
 
 class FrozenSchemaTests(unittest.TestCase):
+    def test_a_node_behind_the_release_s_node_package_is_said_and_not_failed(self) -> None:
+        """B335: the node's own record says current; the release's package says otherwise."""
+
+        def entry(digest: str) -> dict[str, object]:
+            return {
+                "name": "node-a",
+                "status": {
+                    "installation": {
+                        "node_api": 1,
+                        "scripts_current": True,
+                        "scripts": {"haprion-node-status": {"installed_sha256": digest}},
+                    }
+                },
+            }
+
+        expected = {"haprion-node-status": "a" * 64}
+        self.assertEqual(
+            compatibility._scripts_behind(entry("b" * 64), expected), ["haprion-node-status"]
+        )
+        self.assertEqual(compatibility._scripts_behind(entry("a" * 64), expected), [])
+        report = compatibility.Report()
+        answer = json.dumps({"result": {"nodes": [entry("b" * 64)]}})
+        with (
+            mock.patch.object(
+                compatibility, "_command", return_value=SimpleNamespace(stdout=answer)
+            ),
+            contextlib.redirect_stdout(io.StringIO()) as printed,
+        ):
+            compatibility.check_cluster_nodes(
+                report,
+                cluster="alpha",
+                helper=Path("/x"),
+                required_api=1,
+                expected_scripts=expected,
+            )
+        self.assertEqual(report.failures, 0)
+        self.assertIn("WARN  node/alpha/node-a", printed.getvalue())
+        self.assertIn("not this release's node package: haprion-node-status", printed.getvalue())
+
     def test_node_installation_metadata_is_documented_in_the_status_contract(self) -> None:
         schema = json.loads((ROOT / "schemas/v1/haprion-status.schema.json").read_text())
         installation = schema["$defs"]["node_status"]["properties"]["installation"]

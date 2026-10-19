@@ -23,7 +23,7 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 
-from haprion_ui import auth, db, metrics
+from haprion_ui import attention, auth, db, metrics
 from haprion_ui.app import create_app
 from haprion_ui.config import Config, Database, Listen, Poller, Throttle
 from haprion_ui.config import Session as SessionPolicy
@@ -201,6 +201,21 @@ class LoginTestCase(unittest.TestCase):
             # Nobody may ask /status/ (B274) unless a test says otherwise.
             mock.patch("haprion_ui.db.status_access", return_value=[]),
             mock.patch("haprion_ui.db.attention_acks", side_effect=lambda _c: set(self.acks)),
+            #
+            # The manager's own services as healthy (B333): the poller wrote the
+            # cluster list just now, and the maintenance made its partitions.
+            #
+            mock.patch(
+                "haprion_ui.db.cluster_list_observed", side_effect=lambda _c: datetime.now(UTC)
+            ),
+            mock.patch(
+                "haprion_ui.db.partition_horizons",
+                side_effect=lambda _c, tables: {
+                    table: datetime.now(UTC).date() + timedelta(days=ahead)
+                    for table, ahead in attention.MAINTENANCE_AHEAD.items()
+                    if table in tables
+                },
+            ),
             mock.patch("haprion_ui.db.forget_attention_acks"),
             mock.patch(
                 "haprion_ui.db.getting_started_hidden_at",

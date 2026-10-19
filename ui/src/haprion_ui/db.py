@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -2755,6 +2755,43 @@ def cluster_list(connection: Connection[Any]) -> tuple[str, ...] | None:
     if row is None or not isinstance(row[0], list):
         return None
     return tuple(str(name) for name in row[0])
+
+
+def cluster_list_observed(connection: Connection[Any]) -> datetime | None:
+    """When the poller last wrote the cluster list - it does on every pass; None before the first."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select observed_at from cluster_list where id = 1")
+        row = cursor.fetchone()
+    return None if row is None else row[0]
+
+
+def partition_horizons(
+    connection: Connection[Any], tables: Iterable[str]
+) -> dict[str, date | None]:
+    """The last day each partitioned table has a partition for, from the catalog.
+
+    Partitions are named `<table>_YYYYMMDD` by the functions that make them;
+    a default partition has no date and is not counted. None for a table with
+    no dated partition, or that does not exist.
+    """
+
+    names = list(tables)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select parent.relname, max(substring(child.relname from '_([0-9]{8})$')) "
+            "  from pg_inherits "
+            "  join pg_class parent on parent.oid = pg_inherits.inhparent "
+            "  join pg_class child on child.oid = pg_inherits.inhrelid "
+            " where parent.relname = any(%(names)s) "
+            " group by parent.relname",
+            {"names": names},
+        )
+        found = {str(name): last for name, last in cursor.fetchall()}
+    return {
+        name: datetime.strptime(found[name], "%Y%m%d").date() if found.get(name) else None
+        for name in names
+    }
 
 
 def begin_cluster_pass(connection: Connection[Any], cluster: str) -> None:

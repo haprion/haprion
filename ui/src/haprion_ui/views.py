@@ -11955,7 +11955,16 @@ def _attention(request: Request, config: Config) -> attention.Attention:
     items: list[attention.Item] = []
     with request.app.state.pool.connection() as connection:
         features.read_in(db.feature_switches(connection))
-        items += attention.from_jobs(db.recent_jobs(connection, limit=200))
+        recent = db.recent_jobs(connection, limit=200)
+        items += attention.from_jobs(recent)
+        items += attention.from_manager(
+            cluster_list_at=db.cluster_list_observed(connection),
+            poller_silent_after=max(stale_after, timedelta(minutes=5)),
+            rows=recent,
+            writes=config.management_writes,
+            horizons=db.partition_horizons(connection, attention.MAINTENANCE_AHEAD),
+            now=now,
+        )
         if config.traffic_logs.enabled:
             items += attention.from_waf(
                 _waf_not_working(request, config, connection, clusters),

@@ -6,6 +6,7 @@ import json
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -512,6 +513,72 @@ class TheSettingsCard(LoginTestCase):
         self.assertIn('<td data-label="Added by">localadmin</td>', page)
         self.assertIn(">192.0.2.10/32\n</textarea>", page)
         self.assertIn('href="/settings#external-monitoring">Cancel</a>', page)
+
+
+class TheManagersOwnServices(unittest.TestCase):
+    """B333: the poller, the worker and the nightly maintenance, judged by their traces."""
+
+    def items(self, **facts: Any) -> list[attention.Item]:
+        arguments: dict[str, Any] = {
+            "cluster_list_at": NOW - timedelta(seconds=20),
+            "poller_silent_after": timedelta(minutes=5),
+            "rows": [],
+            "writes": True,
+            "horizons": {
+                table: NOW.date() + timedelta(days=ahead)
+                for table, ahead in attention.MAINTENANCE_AHEAD.items()
+            },
+            "now": NOW,
+        }
+        arguments.update(facts)
+        return attention.from_manager(**arguments)
+
+    def test_all_three_at_work_is_nothing(self) -> None:
+        self.assertEqual(self.items(), [])
+
+    def test_a_poller_that_stopped_writing_is_listed(self) -> None:
+        for at in (NOW - timedelta(minutes=6), None):
+            with self.subTest(at=at):
+                (item,) = self.items(cluster_list_at=at)
+                self.assertEqual(
+                    (item.kind, item.subject, item.severity), ("manager", "poller", "critical")
+                )
+
+    def test_a_job_waiting_ten_minutes_with_nothing_running_is_the_worker(self) -> None:
+        waiting = replace(job(state="pending"), created_at=NOW - timedelta(minutes=11))
+        (item,) = self.items(rows=[waiting])
+        self.assertEqual((item.subject, item.link), ("worker", "/jobs"))
+        self.assertIn("1 job(s) waiting", item.message)
+        #
+        # Not while one runs (it holds the cluster), not for a job just queued,
+        # and not with writes off - then the worker claims nothing on purpose.
+        #
+        self.assertEqual(self.items(rows=[waiting, job(state="running")]), [])
+        self.assertEqual(
+            self.items(rows=[replace(job(state="pending"), created_at=NOW - timedelta(minutes=2))]),
+            [],
+        )
+        self.assertEqual(self.items(rows=[waiting], writes=False), [])
+
+    def test_a_partition_horizon_a_day_short_is_the_maintenance_not_run(self) -> None:
+        short = {"traffic_log": NOW.date() + timedelta(days=5), "metric_frontend": None}
+        (item,) = self.items(horizons=short)
+        self.assertEqual((item.subject, item.severity), ("retention", "warning"))
+        self.assertIn(f"since {NOW.date() - timedelta(days=2)}", item.message)
+        #
+        # The night's run not yet made today is not late.
+        #
+        self.assertEqual(self.items(horizons={"traffic_log": NOW.date() + timedelta(days=6)}), [])
+
+    def test_the_days_ahead_are_the_maintenance_script_s(self) -> None:
+        script = (
+            Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
+        ).read_text()
+        self.assertIn(f"TRAFFIC_AHEAD_DAYS={attention.MAINTENANCE_AHEAD['traffic_log']}\n", script)
+        self.assertIn(
+            f"METRIC_AHEAD_DAYS={attention.MAINTENANCE_AHEAD['metric_frontend']}\n", script
+        )
+        self.assertIn("metric_frontend", script)
 
 
 class TheDashboardBox(LoginTestCase):

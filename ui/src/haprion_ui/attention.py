@@ -22,7 +22,7 @@ import ipaddress
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from haprion import log_forwarding
@@ -48,6 +48,18 @@ LOG_STALE_SECONDS = 300
 # the queue figures once a minute, so three minutes is a few readings in a row.
 #
 FORWARD_WAITING = timedelta(minutes=3)
+#
+# A job the worker would have taken in seconds. Ten minutes leaves room for a
+# restart and for a long job ahead of it holding the cluster.
+#
+WORKER_WAITING = timedelta(minutes=10)
+#
+# How many days ahead `haprion-retention` creates each table's daily
+# partitions (its TRAFFIC_AHEAD_DAYS and METRIC_AHEAD_DAYS; a test holds the
+# two in step). The nightly run adds a day; a horizon more than a day short
+# means it has not run.
+#
+MAINTENANCE_AHEAD = {"traffic_log": 7, "metric_frontend": 60}
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +161,7 @@ PAGES = {
     "backup": "Node backups",
     "logs": "Traffic logs",
     "forwarding": "Logs & metrics",
+    "manager": "Dashboard",
 }
 KINDS = tuple(PAGES)
 
@@ -534,6 +547,74 @@ def from_log_forwarding(status_rows: Iterable[Any], *, now: datetime) -> list[It
                         link=f"/settings/clusters/{row.cluster}#delivery",
                     )
                 )
+    return items
+
+
+def from_manager(
+    *,
+    cluster_list_at: datetime | None,
+    poller_silent_after: timedelta,
+    rows: Sequence[Job],
+    writes: bool,
+    horizons: Mapping[str, date | None],
+    now: datetime,
+) -> list[Item]:
+    """The manager's own services, read from what they leave in the database.
+
+    The interface cannot ask systemd (it runs without that right), so each
+    service is judged by its trace (review 2026-10-18 S1/A8, B333): the poller
+    writes the cluster list on every pass; the worker takes a queued job within
+    seconds while writes are on; `haprion-retention` creates daily partitions
+    ahead of time every night.
+    """
+
+    items: list[Item] = []
+    if cluster_list_at is None or now - cluster_list_at > poller_silent_after:
+        items.append(
+            Item(
+                kind="manager",
+                severity="critical",
+                cluster=None,
+                subject="poller",
+                message="the poller has not read the clusters"
+                + (f" since {cluster_list_at:%Y-%m-%d %H:%M}" if cluster_list_at else ""),
+                since=cluster_list_at,
+                link="/",
+            )
+        )
+    waiting = [job for job in rows if job.state == "pending"]
+    running = any(job.state == "running" for job in rows)
+    if writes and waiting and not running:
+        oldest = min(job.created_at for job in waiting)
+        if now - oldest > WORKER_WAITING:
+            items.append(
+                Item(
+                    kind="manager",
+                    severity="critical",
+                    cluster=None,
+                    subject="worker",
+                    message=f"{len(waiting)} job(s) waiting and the worker takes none",
+                    since=oldest,
+                    link="/jobs",
+                )
+            )
+    today = now.date()
+    for table, ahead in MAINTENANCE_AHEAD.items():
+        horizon = horizons.get(table)
+        if horizon is not None and horizon < today + timedelta(days=ahead - 1):
+            last_run = horizon - timedelta(days=ahead)
+            items.append(
+                Item(
+                    kind="manager",
+                    severity="warning",
+                    cluster=None,
+                    subject="retention",
+                    message=f"the nightly maintenance (haprion-retention) has not run since {last_run}",
+                    since=datetime.combine(last_run, datetime.min.time(), UTC),
+                    link="/",
+                )
+            )
+            break
     return items
 
 

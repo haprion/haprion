@@ -968,6 +968,25 @@ class ARealDatabase(unittest.TestCase):
             self.assertFalse(db.holds_singleton_lock(holder, key))
             self.assertTrue(db.try_singleton_lock(other, key))
 
+    def test_the_web_reads_the_traces_of_the_manager_s_services(self) -> None:
+        """B333: the poller's cluster list and the partitions' horizon, as the web."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select traffic_log_partition(current_date + 3)")
+            cursor.execute("select metric_partition('metric_frontend', current_date + 9)")
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            db.record_cluster_list(connection, ["alpha"])
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertIsNotNone(db.cluster_list_observed(connection))
+            horizons = db.partition_horizons(connection, ["traffic_log", "metric_frontend", "nope"])
+        today = datetime.now(UTC).date()
+        traffic, metric = horizons["traffic_log"], horizons["metric_frontend"]
+        self.assertTrue(traffic is not None and traffic >= today + timedelta(days=3))
+        self.assertTrue(metric is not None and metric >= today + timedelta(days=9))
+        self.assertIsNone(horizons["nope"])
+
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
             "HAPRION_UI_TEST_WEB_ROLE": "app_web",

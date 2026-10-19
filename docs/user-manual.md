@@ -2770,7 +2770,11 @@ is missing, old or failed; a node whose traffic log collection failed, has not s
 minutes or is still behind after five runs or with older days waiting (catching up after a burst
 is left to the log page's own warning); a receiver of the traffic log whose queue on the node
 has neither emptied nor shrunk for three minutes or holds 10 000 lines or more, with the reason the node's rsyslog
-gave when it has one, or - critical - that dropped lines in the last hour. Nothing there, no
+gave when it has one, or - critical - that dropped lines in the last hour; and the manager's own
+services, judged by what they leave in the database: the poller not having read the clusters for
+two poll intervals (at least five minutes), a job queued ten minutes with none running while
+writes are on (the worker takes none), and the nightly maintenance (`haprion-retention`) not
+having run - its daily partitions made ahead of time fall more than a day short. Nothing there, no
 box. What somebody chose - a drained server, a
 maintenance page, a block, a publish not yet deployed - is not on it: those are on the cluster's
 card and *Operations* line, and on *Versions*.

@@ -11,8 +11,10 @@ on:
 permissions:
   contents: read
 
+# A run by hand does not take the place of the push's run on the same branch
+# (26-10-19: the push's was cancelled and main went untested).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -177,8 +179,12 @@ jobs:
           sudo install -m 0644 src/haprion/apt-keys/haproxy-ubuntu-ppa.asc /etc/apt/keyrings/haproxy.asc
           echo "deb [signed-by=/etc/apt/keyrings/haproxy.asc] https://ppa.launchpadcontent.net/vbernat/haproxy-${branch}/ubuntu ${codename} main" \
             | sudo tee /etc/apt/sources.list.d/haproxy.list
-          sudo apt-get update -q
-          sudo apt-get install -y -q haproxy
+          # The runner's apt reads only its amd64v3 variant's indexes, and the
+          # PPA builds plain amd64: the distribution's older HAProxy won
+          # (measured 26-10-19). The nodes use no variant; nor does this.
+          novariant=(-o 'APT::Architecture-Variants=')
+          sudo apt-get "${novariant[@]}" update -q
+          sudo apt-get "${novariant[@]}" install -y -q haproxy
           haproxy -v | grep -q "^HAProxy version ${branch}\."
 
       - name: Build the engine and the rules

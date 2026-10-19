@@ -156,7 +156,9 @@ def guide(
         for creating in creations:
             if creating.running is not None:
                 return Guide(step=2, cluster=creating.cluster, busy=creating.running)
-            return Guide(step=2, cluster=creating.cluster, problem=creating.message)
+            return Guide(
+                step=2, cluster=creating.cluster, problem=creating.message, form=creating.asked
+            )
         return Guide(step=1)
     if len(clusters) != 1:
         return None

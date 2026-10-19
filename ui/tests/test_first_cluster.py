@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -22,7 +23,7 @@ from haprion import node_enrollment
 from haprion_ui import demo, first_cluster
 from haprion_ui.cluster_nodes import Creating
 from tests.test_login import configuration
-from tests.test_settings_nodes import NOW, NodesPage, block, key
+from tests.test_settings_nodes import NOW, NodesPage, block, creation_job, key
 
 
 def reading(nodes: int = 2, *, deployed: bool = False, owner: str = "edge-a") -> Any:
@@ -140,6 +141,52 @@ class TheSteps(NodesPage):
         self.assertEqual((job["operation"], job["cluster"]), ("cluster_define", "gamma"))
         self.assertEqual(job["payload"]["vip"], "198.51.100.30")
         self.assertEqual(job["payload"]["blocks"], [pasted])
+
+    def test_after_a_failed_creation_the_next_try_has_the_name_and_address(self) -> None:
+        #
+        # Review 2026-10-18, U1: the step came back with empty hidden fields, so
+        # the next try was refused and Back led to an empty first step. From
+        # the failed job to a new job queued from the page as it is rendered.
+        #
+        failed = replace(
+            creation_job("failed", finished=NOW, result={"error": {"message": "did not answer"}}),
+            payload={
+                "action": "add",
+                "display_name": "Gamma",
+                "vip": "198.51.100.30",
+                "node_path": "gamma",
+                "blocks": ["sealed"],
+                "hosts": ["gamma-a.example.com"],
+            },
+        )
+        with (
+            mock.patch("haprion_ui.db.recent_jobs", return_value=[failed]),
+            mock.patch("haprion_ui.db.cluster_statuses", return_value=[]),
+        ):
+            client = self.client(replace(configuration(), management_writes=True, clusters=()))
+            self.sign_in(client)
+            page = client.get("/first-cluster").text
+            hidden = dict(
+                re.findall(r'type="hidden" name="(cluster|display_name|vip)" value="([^"]*)"', page)
+            )
+            self.assertEqual(
+                hidden, {"cluster": "gamma", "display_name": "Gamma", "vip": "198.51.100.30"}
+            )
+            self.assertIn("did not answer", page)
+
+            back = self.post_to(client, "/first-cluster/first-node", **hidden, action="back")
+            self.assertIn('name="vip" value="198.51.100.30"', back.text)
+
+            pasted = block("gamma", "gamma-a")
+            queued = self.post_to(
+                client, "/first-cluster/first-node", **hidden, block=pasted, confirm="gamma-a"
+            )
+        self.assertEqual(queued.status_code, 303)
+        (job,) = self.queued
+        self.assertEqual((job["operation"], job["cluster"]), ("cluster_define", "gamma"))
+        self.assertEqual(
+            (job["payload"]["display_name"], job["payload"]["vip"]), ("Gamma", "198.51.100.30")
+        )
 
     def test_back_keeps_what_was_typed(self) -> None:
         page = self.post_to(

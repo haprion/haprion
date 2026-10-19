@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Collection, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -60,6 +60,22 @@ class Creating:
     failed: str | None
     message: str | None
     job: int
+    #
+    # What was asked for, from the job: the guide fills its form with it after
+    # a failed creation, so trying again does not start from empty fields
+    # (review 2026-10-18, U1). The node block is not among it - it is sealed in
+    # the job, and the node may have spent its key.
+    #
+    asked: Mapping[str, str] = field(default_factory=dict)
+
+
+def _asked(job: Job) -> dict[str, str]:
+    asked = {"cluster": job.cluster or ""}
+    for key in ("display_name", "vip"):
+        value = job.payload.get(key)
+        if isinstance(value, str):
+            asked[key] = value
+    return asked
 
 
 def creations(
@@ -92,7 +108,12 @@ def creations(
         elif job.state in jobs.ATTENTION:
             found.append(
                 Creating(
-                    job.cluster, None, jobs.failure_label(job), jobs.error_message(job), job.id
+                    job.cluster,
+                    None,
+                    jobs.failure_label(job),
+                    jobs.error_message(job),
+                    job.id,
+                    _asked(job),
                 )
             )
     return found

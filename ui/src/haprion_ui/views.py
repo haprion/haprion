@@ -5792,7 +5792,7 @@ def build_router(config: Config) -> APIRouter:
             "first-cluster.html",
             {
                 "guide": guide,
-                "form": form or {},
+                "form": form or guide.form,
                 "block": block,
                 "preview": preview,
                 "problem": problem,

@@ -127,7 +127,10 @@ CORE_TEMPLATE = """#
 # configuration is assembled behind this file and never edits it.
 #
 global
-    # Your own log, chroot, stats socket, user and group lines go here.
+    # Your own log, chroot, stats socket, user and group lines go here. End a
+    # `log /dev/log` line in `alert` (`log /dev/log local0 info alert`): a
+    # backend without a server is logged as `emerg`, which journald writes to
+    # every terminal (docs/user-manual.md, 'Directory layout').
 
     # Required. A generated bind line names its certificate list by a path
     # relative to the file it is written in, and a node validates a release

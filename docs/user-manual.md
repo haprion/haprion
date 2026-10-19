@@ -3734,6 +3734,12 @@ global
     ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
 ```
 
+**A `log /dev/log` line should end in `alert`** - `log /dev/log local0 info alert`. HAProxy logs a
+backend left without a server as `emerg`, and journald writes every `emerg` message to every terminal
+on the node: on a node that does not hold the VIP, that is every object whose servers it cannot reach
+from there (a `source` on the VIP). The last level caps the severity, so the line still says it, as
+`alert`. A core without a `log` line - as `haprion-cluster` writes it - is not concerned.
+
 **A publish is refused while these disagree with the manager's own lists**, and the refusal prints
 the exact line to write. The reason is that both halves are true at once: a generated bind line that
 names a TLS policy carries the manager's list, and every listener naming no policy inherits this

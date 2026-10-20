@@ -12,9 +12,10 @@
     // Settings -> Users uses the same rows (2026-09-27), and so does the
     // search page (B221), and Events -> Audit (26-10-11). The other settings
     // rows - Logs & metrics, Nodes, External monitoring - wore the pointer and
-    // went nowhere outside their name and button (26-10-12).
+    // went nowhere outside their name and button (26-10-12), and so did the
+    // pending changes on Versions (26-10-20).
     const row = event.target.closest(
-      ".proxy-table tr[data-href], .users-table tr[data-href], .search-table tr[data-href], .audit-table tr[data-href], .settings-cluster-table tr[data-href]",
+      ".proxy-table tr[data-href], .users-table tr[data-href], .search-table tr[data-href], .audit-table tr[data-href], .settings-cluster-table tr[data-href], .pending-table tr[data-href]",
     );
     if (!row || event.button !== 0) return;
     if (event.target.closest("a, button, input, select, textarea, summary, label")) return;

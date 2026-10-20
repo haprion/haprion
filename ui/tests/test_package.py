@@ -210,6 +210,10 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
 
         self.assertIn("Saved against an older version", text)
         self.assertIn("shop was saved against an older version", text)
+        # The way there, where the notice is, not only the row's name.
+        self.assertIn(
+            '<a class="secondary-button" href="/proxies/alpha/shop/edit">Open shop</a>', text
+        )
         self.assertNotIn(">Publish 1 change</button>", text)
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(self.queued, [])

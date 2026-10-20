@@ -7,14 +7,24 @@ the markup the script reads is the markup the page sends.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import threading
+from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any, ClassVar
 from unittest import mock
 
+import uvicorn
+
+from haprion_ui.app import create_app
 from haprion_ui.views import STATIC_DIRECTORY
+from tests import browser_policy
+from tests.test_editor_page import EditorTestCase, writing_configuration
 from tests.test_history import reading
-from tests.test_login import LoginTestCase, configuration
+from tests.test_login import PASSWORD, LoginTestCase, configuration
+from tests.test_package import LATER, row
+from tests.test_traffic_browser import free_port
 
 if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
     raise RuntimeError(
@@ -195,3 +205,98 @@ class PublishingAnEarlierVersionAsksFirst(LoginTestCase):
         page.click("[data-confirm-go]")
 
         self.assertEqual(page.evaluate("window.sent"), ["23"])
+
+
+#
+# Every cell of the pending table: how far its content reaches past its box.
+#
+OVERFLOW = """cells => cells.map(cell => cell.scrollWidth - cell.clientWidth)"""
+
+
+class APendingChangeSavedAgainstAnOlderVersion(EditorTestCase):
+    """A row saved against an older version is opened and saved again, and the
+    page has to show where. Its row had an address only its name followed, and
+    at phone width its badge stood out of the card (26-10-20) - neither of which
+    the HTML shows. Served by the application on a loopback port, as the
+    settings browser suite runs it.
+    """
+
+    _playwright: ClassVar[Any]
+    _browser: ClassVar[Any]
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._playwright = sync_playwright().start()
+        cls._browser = cls._playwright.chromium.launch()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._browser.close()
+        cls._playwright.stop()
+
+    def setUp(self) -> None:
+        super().setUp()
+        rows = [row("uptime_admin-web", base_hash=LATER)]
+        for target, effect in (
+            ("cluster_drafts", lambda _c, _cluster: list(rows)),
+            ("cluster_changes", lambda _c, _cluster: {}),
+        ):
+            patch = mock.patch(f"haprion_ui.db.{target}", side_effect=effect)
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.account = replace(self.account, role="admin")
+        self.port = free_port()
+        server = uvicorn.Server(
+            uvicorn.Config(
+                create_app(writing_configuration()),
+                host="127.0.0.1",
+                port=self.port,
+                log_level="warning",
+            )
+        )
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(setattr, server, "should_exit", True)
+        for _ in range(200):
+            if server.started:
+                break
+            threading.Event().wait(0.05)
+        else:
+            self.fail("the test server did not start")
+
+    @contextlib.contextmanager
+    def versions(self, width: int) -> Iterator[Any]:
+        page = self._browser.new_page(viewport={"width": width, "height": 900})
+        browser_policy.watch(self, page)
+        try:
+            page.goto(f"http://127.0.0.1:{self.port}/login")
+            page.fill("input[name=username]", "operator")
+            page.fill("input[name=password]", PASSWORD)
+            page.click("button[type=submit]")
+            page.wait_for_url(f"http://127.0.0.1:{self.port}/")
+            page.goto(f"http://127.0.0.1:{self.port}/history")
+            page.wait_for_selector(".pending-stale")
+            yield page
+        finally:
+            page.close()
+
+    def test_the_row_and_the_way_there_fit_on_one_line_each(self) -> None:
+        for width in (1280, 390):
+            with self.subTest(width=width), self.versions(width) as page:
+                spill = page.eval_on_selector_all(".pending-stale td", OVERFLOW)
+                self.assertTrue(spill, "no pending row to measure")
+                self.assertTrue(all(reach <= 0 for reach in spill), spill)
+                button = page.locator(".form-problem a.secondary-button")
+                self.assertEqual(button.inner_text(), "Open uptime_admin-web")
+                box = button.bounding_box()
+                assert box is not None  # noqa: S101 - drawn, as the line above read it
+                self.assertLessEqual(box["height"], 40)
+                self.assertTrue(
+                    page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                )
+
+    def test_the_row_opens_the_change_wherever_it_is_clicked(self) -> None:
+        with self.versions(1280) as page:
+            page.locator(".pending-stale td[data-label='Saved by']").click()
+            page.wait_for_url("**/proxies/alpha/uptime_admin-web/edit")

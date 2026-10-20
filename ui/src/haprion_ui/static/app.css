@@ -575,7 +575,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    badge of 155. */
 .proxy-table { table-layout: fixed; }
 /* A row with an address opens it anywhere on the row (proxy-rows.js). */
-.proxy-table tr[data-href], .users-table tr[data-href], .settings-cluster-table tr[data-href] { cursor: pointer; }
+.proxy-table tr[data-href], .users-table tr[data-href], .settings-cluster-table tr[data-href], .pending-table tr[data-href] { cursor: pointer; }
 /* Settings -> Users: the name takes what is left and is cut, never pushed into Role. */
 .users-table { table-layout: fixed; }
 .users-table th:nth-child(2), .users-table td:nth-child(2) { width: 110px; }
@@ -1748,6 +1748,9 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .pending-stale td { background: var(--critical-soft); }
 .pending-publish { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 12px 20px 18px; }
 .pending-changes > .form-problem { margin: 12px 20px 18px; }
+.pending-changes > .form-problem { flex-wrap: wrap; }
+.form-problem > a.secondary-button { white-space: nowrap; }
+.form-problem > a.secondary-button:first-of-type { margin-left: auto; }
 .pending-publish .action-buttons { display: flex; flex-wrap: nowrap; gap: 10px; align-items: stretch; }
 .pending-publish .action-buttons button { white-space: nowrap; }
 @media (max-width: 720px) { .pending-publish { grid-template-columns: 1fr; } }
@@ -2327,6 +2330,8 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
   .node-table:not(:where(.log-table, .editor-table)) td:not([data-label]) { padding-left: 8px; }
   /* "Newest backup" is the longest label on the page; its field is widened rather than the label cut or wrapped. */
   .backup-node-table td:nth-child(n), .archive-table td:nth-child(n) { padding-left: 116px; }
+  /* The cards have their own inset; the table's would squeeze the stale badge out of its row. */
+  .pending-changes .pending-table { margin: 0; width: 100%; }
   /* The checkbox column's padding would otherwise pull every card's value under its label. */
   .selectable-table td:nth-child(n) { padding: 9px 8px 9px 88px; }
   /*

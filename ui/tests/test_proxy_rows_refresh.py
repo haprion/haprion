@@ -618,3 +618,39 @@ class TheRowStateBadgesFitTheColumnTheySitIn(unittest.TestCase):
             f"{{ width: {self.COLUMN_SHARE}; }}",
             css,
         )
+
+
+class EveryClickableRowIsFollowed(unittest.TestCase):
+    """A row with an address follows it from anywhere on the row.
+
+    Versions drew its pending changes with `data-href`, but the page never
+    loaded proxy-rows.js and the table was not in its list: only the name went
+    anywhere, and nothing showed it (26-10-20). Certificates follows its own
+    rows (certificates.js).
+    """
+
+    STATIC = Path(__file__).resolve().parents[1] / "src/haprion_ui/static"
+    TEMPLATES = Path(__file__).resolve().parents[1] / "src/haprion_ui/templates"
+
+    def test_each_table_with_addressed_rows_is_followed_and_shows_it(self) -> None:
+        script = (self.STATIC / "proxy-rows.js").read_text()
+        styles = (self.STATIC / "app.css").read_text()
+        followed = set(re.findall(r"\.([\w-]+) tr\[data-href\]", script))
+        pointed = set(re.findall(r"\.([\w-]+) tr\[data-href\]", styles))
+        pointed |= set(re.findall(r"\.([\w-]+) \{ cursor: pointer; \}", styles))
+        tables = 0
+        for template in sorted(self.TEMPLATES.glob("*.html")):
+            text = template.read_text()
+            if "/certificates.js" in text:
+                continue
+            for match in re.finditer(r'<table class="([^"]+)"(.*?)</table>', text, re.S):
+                if "data-href" not in match.group(2):
+                    continue
+                tables += 1
+                classes = set(match.group(1).split())
+                with self.subTest(template=template.name, table=match.group(1)):
+                    self.assertTrue("/proxy-rows.js" in text, "page does not load proxy-rows.js")
+                    self.assertTrue(classes & followed, "not in proxy-rows.js")
+                    rows = set(re.findall(r'<tr[^>]*? class="([\w-]+)', match.group(2)))
+                    self.assertTrue((classes | rows) & pointed, "no pointer in app.css")
+        self.assertGreaterEqual(tables, 6)

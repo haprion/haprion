@@ -448,7 +448,8 @@ read without becoming readable to another account.
 The check restores into a scratch database it creates and drops itself, compares
 row counts against the archive table by table, requires the schema's version row,
 and reads one local account's password hash back in full — counts can match
-while the contents are unusable.
+while the contents are unusable. One dump or check runs at a time: a second, by
+hand or by timer, waits for the first (`/run/lock/haprion-backup.lock`).
 
 `/var/lib/haprion-ui/dumps` still has to be picked up by an off-machine
 backup. Nothing there survives losing the host.

@@ -13,6 +13,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -184,3 +185,48 @@ class TheRestoredHashIsALocalAccounts(unittest.TestCase):
         done = self.checked("plain")
         self.assertEqual(done.returncode, 1)
         self.assertIn("is not Argon2id", done.stderr)
+
+
+class OneRunAtATime(unittest.TestCase):
+    """Review 2026-10-20, R3: a run by hand beside the timer's shared its files."""
+
+    def locked(self, lock: Path, *, wait: int) -> subprocess.CompletedProcess[str]:
+        source = SCRIPT.read_text()
+        program = (
+            "set -Eeuo pipefail\n"
+            'log() { echo "$*"; }\n'
+            'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f"LOCK={lock}\nLOCK_WAIT_SECONDS={wait}\n"
+            + function("take_lock", source)
+            + "take_lock\necho locked\n"
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program], capture_output=True, text=True, check=False
+        )
+
+    def test_dump_and_verify_take_the_lock_and_list_does_not(self) -> None:
+        source = SCRIPT.read_text()
+        self.assertIn("dump)           take_lock; do_dump ;;", source)
+        self.assertIn("verify-restore) take_lock; do_verify_restore ;;", source)
+
+    def test_a_free_lock_is_taken_at_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            done = self.locked(Path(directory) / "lock", wait=1)
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "locked"), done.stderr)
+
+    def test_a_held_lock_is_waited_for_and_then_named(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "lock"
+            holder = subprocess.Popen(  # noqa: S603 - fixed program
+                ["/usr/bin/flock", str(lock), "/usr/bin/sleep", "5"]
+            )
+            self.addCleanup(holder.wait)
+            self.addCleanup(holder.kill)
+            for _ in range(50):
+                if lock.exists():
+                    break
+                time.sleep(0.05)
+            done = self.locked(lock, wait=1)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("waiting for it", done.stdout)
+        self.assertIn("still holds", done.stderr)

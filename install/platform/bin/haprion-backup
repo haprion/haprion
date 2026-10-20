@@ -281,9 +281,28 @@ do_verify_restore() {
 
 step_log() { echo; echo "== $*"; }
 
+#
+# One dump or restore check at a time (review 2026-10-20, R3). Two share the
+# day's file name, its `.partial` and the scratch database's name, so a run by
+# hand beside the timer's could remove the other's file or drop its database
+# and report a backup failure that was neither's fault. systemd keeps a unit
+# from starting twice, not a terminal from starting the same thing. The second
+# waits for the first rather than failing: the timer's run then still happens.
+#
+LOCK=/run/lock/haprion-backup.lock
+LOCK_WAIT_SECONDS=1800
+
+take_lock() {
+    exec 9>"$LOCK"
+    flock -n 9 && return
+    log "another haprion-backup dump or verify-restore is running; waiting for it"
+    flock -w "$LOCK_WAIT_SECONDS" 9 \
+        || die "another haprion-backup run still holds ${LOCK} after ${LOCK_WAIT_SECONDS} s"
+}
+
 case "$command" in
-    dump)           do_dump ;;
-    verify-restore) do_verify_restore ;;
+    dump)           take_lock; do_dump ;;
+    verify-restore) take_lock; do_verify_restore ;;
     list)
         [[ -d "$DUMP_DIR" ]] || die "no dump directory: ${DUMP_DIR}"
         find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" \

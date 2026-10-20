@@ -213,7 +213,7 @@ release), the Go that compiles the engine and the govulncheck that reads it. Eve
 2. asks upstream what is newer (`tools/upstream-watch check`), verifies it - the rule set's signature
    against `keys/upstream/coreruleset.asc`, the Go archive against go.dev's digest, the engine by the
    commit its release tag names - and rewrites the pins on the branch `upstream-watch`, with one pull
-   request open for it. A major update is never written: it opens an issue for a person
+   request open for it. A major update is never written: it opens an issue that needs a decision
 3. merges that pull request once every check on it passed - among them the rule set's own regression
    tests (`tools/crs-regression`: go-ftw through the built engine and rules behind the HAProxy branch
    the nodes run, in the rig the engine's source carries, with its list of tests known to fail

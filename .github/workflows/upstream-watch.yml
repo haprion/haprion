@@ -7,7 +7,7 @@ name: upstream watch
 #                    security one (the engine side only, two days' wait)
 #   propose          tools/upstream-watch rewrites the pins on the branch
 #                    `upstream-watch` and keeps one pull request open for it;
-#                    a major update is an issue for a person, never a change
+#                    a major update is an issue that needs a decision, never a change
 #   merge            the proposal goes in once every check on it passed, its
 #                    upstream releases are old enough and nobody put `hold` on
 #                    it; the merge on main then builds and publishes the engine
@@ -31,7 +31,7 @@ concurrency:
 env:
   BRANCH: upstream-watch
   VULNERABLE_TITLE: "The pinned WAF engine reaches a known vulnerability"
-  MAJOR_TITLE: "Major upstream updates of the WAF packages wait for a person"
+  MAJOR_TITLE: "Major upstream updates of the WAF packages need a decision"
 
 jobs:
   vulnerabilities:
@@ -152,7 +152,7 @@ jobs:
             --json number,title --jq "map(select(.title == env.MAJOR_TITLE))[0].number // empty")
           if [[ "$(jq '.held | length' "${proposal}")" -gt 0 ]]; then
             body="${RUNNER_TEMP}/body.md"
-            { echo "Never merged by the watch: each needs a person to read what changed."
+            { echo "Never merged by the watch: each needs a decision on what changed."
               echo; echo "| Component | Pinned | Upstream | Released |"; echo "|---|---|---|---|"
               jq -r '.held[] | "| \(.component) | \(.current) | \(.proposed) | \(.released_at) |"' "${proposal}"
             } > "${body}"

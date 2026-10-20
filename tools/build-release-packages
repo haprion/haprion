@@ -51,7 +51,7 @@ from types import ModuleType
 # without its digest here stops the build rather than fetching unchecked.
 #
 GO_ARCHIVES = {
-    "go1.26.9": "42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d",
+    "go1.27.3": "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40",
 }
 DISTRIBUTIONS = ("debian13", "ubuntu26.04")
 FETCH_TIMEOUT = 120
@@ -150,7 +150,7 @@ def build(
     for pinned in (tool.CORAZA, tool.CRS):
         fetched(sources, pinned.file, pinned.url, pinned.sha256)
     go = go_root(cache, tool.GO_VERSION)
-    bin_dir = cache / f"govulncheck-{tool.GOVULNCHECK_VERSION}"
+    bin_dir = tool.scanner_dir(cache)
     govulncheck = bin_dir / "govulncheck"
     if not govulncheck.exists():
         env = {

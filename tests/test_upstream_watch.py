@@ -438,9 +438,8 @@ class ThePinsInTheTree(unittest.TestCase):
         # it, and the merge waits forever (PR #3, 2026-10-20).
         with tempfile.TemporaryDirectory(prefix="proposal-") as work:
             tree = Path(work)
-            (tree / "tools").mkdir()
             (tree / "tests").mkdir()
-            shutil.copy(BASE / "tools" / "build-coraza-package.py", tree / "tools")
+            shutil.copytree(BASE / "tools", tree / "tools")
             shutil.copy(BASE / "tests" / "test_coraza_package.py", tree / "tests")
             shutil.copytree(BASE / "src", tree / "src")
             engine = tree / "tools" / "build-coraza-package.py"

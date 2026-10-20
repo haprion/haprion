@@ -634,7 +634,7 @@ def vuln(tree: Path, cache: Path) -> int:
     sources.mkdir(exist_ok=True)
     archive = release.fetched(sources, engine.CORAZA.file, engine.CORAZA.url, engine.CORAZA.sha256)
     go = release.go_root(cache, engine.GO_VERSION)
-    bin_dir = cache / f"govulncheck-{engine.GOVULNCHECK_VERSION}"
+    bin_dir = engine.scanner_dir(cache)
     govulncheck = bin_dir / "govulncheck"
     with scratch(cache) as work:
         if not govulncheck.exists():

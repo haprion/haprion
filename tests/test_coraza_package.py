@@ -326,6 +326,18 @@ class Packages(unittest.TestCase):
         ):
             self.upstream()
 
+    def test_the_scanner_is_kept_per_scanner_and_go(self) -> None:
+        # The one the old Go built read the new Go's library after the pin moved.
+        name = self.tool.scanner_dir(self.root).name
+        self.assertIn(self.tool.GOVULNCHECK_VERSION, name)
+        self.assertIn(self.tool.GO_VERSION, name)
+        tools = Path(__file__).resolve().parents[1] / "tools"
+        for caller in ("build-release-packages", "upstream-watch"):
+            with self.subTest(caller=caller):
+                text = (tools / caller).read_text()
+                self.assertIn(".scanner_dir(cache)", text)
+                self.assertNotIn('f"govulncheck-', text)
+
     def test_building_the_engine_needs_the_scanner(self) -> None:
         out = self.root / "out"
         out.mkdir()

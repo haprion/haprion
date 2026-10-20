@@ -43,9 +43,9 @@ from haprion.debian_package import package, write  # noqa: E402 - the path above
 # Each package counts its own revision: it moves when our part of the package
 # changes (the unit, the build), not when the other package does.
 #
-CORAZA_REVISION = "8"
+CORAZA_REVISION = "9"
 CRS_REVISION = "1"
-GO_VERSION = "go1.26.9"
+GO_VERSION = "go1.27.3"
 GOVULNCHECK_VERSION = "v1.8.0"
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
 DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -313,6 +313,17 @@ TESTED = (
     "github.com/corazawaf/coraza/v3/...",
     "github.com/dropmorepackets/haproxy-go/...",
 )
+
+
+def scanner_dir(cache: Path) -> Path:
+    """Where a build cache keeps govulncheck: one per scanner version *and* Go.
+
+    govulncheck reads the standard library as source with the Go it was built
+    with. Keyed by its own version only, a cache kept the scanner the old Go
+    built after the Go pin moved, and that one need not read the new Go's
+    library (26-10-20). The build and the watch both ask here.
+    """
+    return cache / f"govulncheck-{GOVULNCHECK_VERSION}-{GO_VERSION}"
 
 
 def upstream_tests(tree: Path, go_root: Path, work: Path) -> str:

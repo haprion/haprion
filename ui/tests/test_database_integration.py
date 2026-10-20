@@ -4390,6 +4390,8 @@ class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
                 "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
                 "values ('carol', 'reader', 'oidc', 'https://id.example/', 's1')"
             )
+            # The schema before 0079, where the column 0072 turns on still is.
+            _migration("0079_accounts_binding_gone.py", cursor).downgrade()
             cursor.execute("update oidc_provider set auto_create = false")
             cursor.execute("update oidc_provider set verified_revision = revision")
             _migration("0072_accounts_from_the_groups.py", cursor).upgrade()
@@ -4397,6 +4399,50 @@ class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
             self.assertEqual(cursor.fetchall(), [("carol",)])
             cursor.execute("select auto_create, verified_revision = revision from oidc_provider")
             self.assertEqual(cursor.fetchone(), (True, True))
+            connection.rollback()
+
+    def test_0079_takes_the_setting_and_the_binding_away(self) -> None:
+        """B297: no `auto_create`, no binding by the web; the revision still moves."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select count(*) from information_schema.columns "
+                "where table_name = 'oidc_provider' and column_name = 'auto_create'"
+            )
+            self.assertEqual(_first(cursor), 0)
+            cursor.execute("select revision from oidc_provider")
+            before = _first(cursor)
+            cursor.execute("update oidc_provider set button_text = 'Sign in elsewhere'")
+            cursor.execute("select revision from oidc_provider")
+            self.assertEqual(_first(cursor), before + 1)
+            connection.rollback()
+            cursor.execute(
+                "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
+                "values ('carol', 'reader', 'oidc', 'https://id.example/', 's1')"
+            )
+            connection.commit()
+        with self.web() as connection:
+            connection.execute("update app_user set role = 'admin' where username = 'carol'")
+            connection.rollback()
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute(
+                    "update app_user set oidc_subject = 's2' where username = 'carol'"
+                )
+
+    def test_0079_downgrade_puts_both_back(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            _migration("0079_accounts_binding_gone.py", cursor).downgrade()
+            cursor.execute("select auto_create, revision from oidc_provider")
+            on, before = cursor.fetchone() or (None, None)
+            self.assertIs(on, True)
+            cursor.execute("update oidc_provider set auto_create = false")
+            cursor.execute("select revision from oidc_provider")
+            self.assertEqual(_first(cursor), before + 1)
+            cursor.execute(
+                "select has_column_privilege(%s, 'app_user', 'oidc_subject', 'update')",
+                (os.environ["HAPRION_UI_TEST_WEB_ROLE"],),
+            )
+            self.assertIs(_first(cursor), True)
             connection.rollback()
 
     def test_a_sign_in_in_progress_is_used_once_and_expires(self) -> None:

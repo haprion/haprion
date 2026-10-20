@@ -141,7 +141,7 @@ app_web	app_session	SELECT	created_at, expires_at, id_token, last_seen_at, revok
 app_web	app_session	UPDATE	last_seen_at, revoked_at
 app_web	app_user	INSERT	break_glass, oidc_issuer, oidc_subject, password_hash, role, source, username
 app_web	app_user	SELECT	break_glass, created_at, disabled, id, oidc_issuer, oidc_subject, password_hash, role, source, updated_at, username, username_normalised
-app_web	app_user	UPDATE	break_glass, disabled, oidc_issuer, oidc_subject, password_hash, role
+app_web	app_user	UPDATE	break_glass, disabled, password_hash, role
 app_web	attention_ack	INSERT	acknowledged_by, cluster, kind, subject
 app_web	attention_ack	SELECT	acknowledged_at, acknowledged_by, cluster, kind, subject
 app_web	audit_event	INSERT	action, actor, cluster, detail, request_id
@@ -190,8 +190,8 @@ app_web	node_event	SELECT	at, cluster, detail, event, id, node, subject
 app_web	oidc_login	INSERT	mode, nonce, pre_session_hash, state, verifier
 app_web	oidc_login	SELECT	created_at, mode, nonce, pre_session_hash, state, used_at, verifier
 app_web	oidc_login	UPDATE	used_at
-app_web	oidc_provider	SELECT	admin_group, auth_method, auto_create, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, revision, scopes, updated_at, updated_by, username_claim, verified_revision
-app_web	oidc_provider	UPDATE	admin_group, auth_method, auto_create, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, scopes, updated_by, username_claim, verified_revision
+app_web	oidc_provider	SELECT	admin_group, auth_method, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, revision, scopes, updated_at, updated_by, username_claim, verified_revision
+app_web	oidc_provider	UPDATE	admin_group, auth_method, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, scopes, updated_by, username_claim, verified_revision
 app_web	proxy_draft	INSERT	base_hash, base_version, cluster, deleted, object_id, replaces, stage, updated_by, yaml
 app_web	proxy_draft	SELECT	base_hash, base_version, cluster, deleted, id, object_id, replaces, revision, stage, updated_at, updated_by, yaml
 app_web	proxy_draft	UPDATE	base_hash, base_version, deleted, object_id, replaces, updated_by, yaml
@@ -415,9 +415,15 @@ allow "$WEB_USER" "can change an account's role, state and password" \
 
 allow "$WEB_USER" "can delete an account and mark one break-glass" \
       "delete from app_user where false;
-       update app_user set break_glass = break_glass, oidc_issuer = oidc_issuer,
-              oidc_subject = oidc_subject where false" \
+       update app_user set break_glass = break_glass where false" \
       ""
+
+#
+# An account through the provider is made at its first sign-in, never bound to
+# an identity afterwards (B297, migration 0079).
+#
+refuse "$WEB_USER"    "cannot bind an account to another identity" \
+       "update app_user set oidc_issuer = oidc_issuer, oidc_subject = oidc_subject where false"
 
 allow "$WEB_USER" "can write the provider's settings" \
       "update oidc_provider set enabled = enabled, issuer = issuer, client_id = client_id,

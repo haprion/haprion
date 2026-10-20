@@ -3425,7 +3425,7 @@ sudo haprion-rollback --to <release-id>     # a named one
 ```
 
 "Point `current` back and restart" is the shape of the rollback, but doing only
-that took the interface down when it was measured. Two reasons, neither visible
+that took the interface down when it was measured. Three reasons, none visible
 from the symlink:
 
 - **Configuration is validated strictly.** Unknown keys are refused, which is
@@ -3436,8 +3436,14 @@ from the symlink:
   release that introduced it.
 - **Units name programs.** A unit installed for a newer release starts a program
   an older release does not contain.
+- **The schema may be newer than the target.** After an update the database
+  stands at the new release's head, and an older release runs on it only when
+  every migration since its own head is declared safe for it. The release that
+  carries the schema answers that, from its migrations' declarations; with no
+  such release on disk, or a target older than they are safe for, the rollback
+  is refused and the way back is the dump taken before the update.
 
-So the command checks both against the target *before* switching — asking the
+So the command checks all three against the target *before* switching — asking the
 target's own validator, because the answer is whatever that release says rather
 than what the script believes — and verifies the interface answers afterwards,
 **rolling forward by itself if it does not**. Somebody running this is already
@@ -5500,6 +5506,10 @@ it. The repository's tests refuse a new migration without the declaration and
 metadata that disagrees with the migrations. A failure after activation runs the
 installed UI rollback command and checks the restored processes before
 returning failure.
+
+A migration that takes away what only UIs older than some revision still read
+names that revision as its floor, `ROLLBACK_SAFE_FROM = "0072"`: it is safe for
+a UI at the floor or after it, and `rollback_safe_from` is raised to the floor.
 
 #### HTTPS and the certificate
 

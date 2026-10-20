@@ -341,6 +341,31 @@ class UpgradeFailureTests(unittest.TestCase):
             ("running UI does not accept candidate head 0066",),
         )
 
+    def test_a_rollback_runs_on_a_schema_its_carrier_declares_safe_for_it(self) -> None:
+        """26-10-20: `haprion-rollback` asks before the web starts on a newer schema."""
+
+        carrier = replace(
+            self.requirements(head="0079", accepts=("0072", "0078", "0079")),
+            rollback_safe_from="0072",
+        )
+        at_0078 = self.requirements(head="0078", accepts=("0072", "0078"))
+        at_0071 = self.requirements(head="0071", accepts=("0064", "0071"))
+        problem = compatibility.rollback_schema_problem
+        self.assertIsNone(problem(at_0078, [at_0071, carrier], "0079"))
+        self.assertIsNone(problem(at_0078, [], "0078"))
+        refused = problem(at_0071, [at_0078, carrier], "0079")
+        self.assertEqual(
+            refused, "schema 0079 is safe for a UI from 0072 on; the target stands at 0071"
+        )
+
+    def test_a_rollback_without_a_carrier_or_onto_an_older_schema_is_refused(self) -> None:
+        at_0078 = self.requirements(head="0078", accepts=("0072", "0078"))
+        undeclared = self.requirements(head="0079", accepts=("0079",))
+        problem = compatibility.rollback_schema_problem
+        self.assertIn("no release on this machine", problem(at_0078, [], "0079") or "")
+        self.assertIn("no release on this machine", problem(at_0078, [undeclared], "0079") or "")
+        self.assertIn("older than every", problem(at_0078, [], "0070") or "")
+
     def test_a_bridge_release_makes_both_live_migration_and_rollback_safe(self) -> None:
         bridge = self.requirements(head="0020", accepts=("0020", "0021"))
         candidate = self.requirements(head="0021", accepts=("0021",))
@@ -539,6 +564,26 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
                 found[revision.group(1)] = safe.group(1) == "True"
         return found
 
+    def floors(self) -> dict[str, str]:
+        """The oldest UI head a safe migration is safe for, where it is not every one.
+
+        `ROLLBACK_SAFE_FROM` beside `ROLLBACK_SAFE = True` (0079, 26-10-20): the
+        migration takes away what only a UI older than the floor still reads.
+        """
+
+        found: dict[str, str] = {}
+        for path in self.VERSIONS.glob("[0-9]*.py"):
+            text = path.read_text()
+            revision = re.search(r'^revision = "([^"]+)"', text, re.MULTILINE)
+            floor = re.search(r'^ROLLBACK_SAFE_FROM = "(\d+)"$', text, re.MULTILINE)
+            if revision is None or floor is None:
+                continue
+            with self.subTest(migration=path.name):
+                self.assertRegex(text, r"(?m)^ROLLBACK_SAFE = True$", "a floor on an unsafe one")
+                self.assertLess(floor.group(1), revision.group(1), "a floor at or past itself")
+            found[revision.group(1)] = floor.group(1)
+        return found
+
     def test_every_new_migration_declares_whether_a_rollback_over_it_is_safe(self) -> None:
         self.declarations()
 
@@ -549,6 +594,11 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
         safe_from = self.head()
         while declared.get(safe_from) is True and found[safe_from] is not None:
             safe_from = str(found[safe_from])
+        # A floor among them raises it: a UI below the floor fails over that one.
+        safe_from = max(
+            [safe_from]
+            + [floor for revision, floor in self.floors().items() if revision > safe_from]
+        )
 
         self.assertEqual(self.declared().get("rollback_safe_from"), safe_from)
 

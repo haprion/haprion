@@ -165,6 +165,36 @@ done
   Those services were added after that release. Roll back to a release that has
   them, or stop and disable them first - deliberately, not by surprise."
 
+step "Can the target run on the database's schema?"
+#
+# The web starts on a schema newer than its own head, because a rollback over
+# migrations declared safe for it is exactly that - and so this is the place
+# that decides whether they were (26-10-20: nothing did before). Asked with the
+# interpreter of the release this package installed, which knows the newest
+# migrations; the target may predate the question.
+#
+admin_config="/etc/haprion/ui-admin.conf"
+[[ -r "$admin_config" ]] || die "cannot read ${admin_config}"
+# shellcheck disable=SC1090
+source "$admin_config"
+[[ -n "${DB_NAME:-}" && -n "${DB_ROLE:-}" ]] || die "DB_NAME or DB_ROLE is not set in ${admin_config}"
+revision="$(psql -U "$DB_ROLE" -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 \
+            -c 'select version_num from alembic_version')" \
+    || die "the database did not say its schema revision"
+payload=/usr/lib/haprion/ui/PAYLOAD
+packaged="$(sed -n 's/^RELEASE_ID=//p' "$payload" 2>/dev/null)"
+[[ -n "$packaged" && -x "${releases}/${packaged}/venv/bin/python" ]] \
+    || die "the release this package installed (${payload}) is not on disk"
+packaged_python="${releases}/${packaged}/venv/bin/python"
+if ! "$packaged_python" -I -m "$(release_module "$packaged_python").rollback_schema" \
+        --platform-root "$platform_root" --target "$target" --revision "$revision" 2>&1 \
+        | sed 's/^/  /'; then
+    die "${target} cannot run on the database's schema ${revision}.
+  Roll back to a release at or after the one the schema is declared safe from,
+  or restore the database dump taken before the migration."
+fi
+log "  ok       the target runs on schema ${revision}"
+
 step "Holding the worker's claims"
 #
 # As a release does (CR-12): the restart below ends the job the worker holds.

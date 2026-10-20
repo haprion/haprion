@@ -269,6 +269,33 @@ def declared_safe(active: Requirements, candidate: Requirements) -> bool:
     return safe_from is not None and safe_from <= active.database_head <= candidate.database_head
 
 
+def rollback_schema_problem(
+    target: Requirements, owners: Iterable[Requirements], revision: str
+) -> str | None:
+    """Why the target cannot run on the database's schema; None when it can (26-10-20).
+
+    A revision the target accepts is the plain case. A newer one is a rollback
+    over migrations, safe only when a release that carries them - its head is
+    the database's revision - declares them safe from the target's head or
+    earlier. Nothing on the machine carrying them is no answer, and so a no:
+    the web would start on that schema whether it can or not.
+    """
+
+    if revision in target.database_revisions:
+        return None
+    if revision < target.database_head:
+        return f"schema {revision} is older than every revision the target runs on"
+    for owner in owners:
+        if owner.database_head == revision and owner.rollback_safe_from is not None:
+            if owner.rollback_safe_from <= target.database_head:
+                return None
+            return (
+                f"schema {revision} is safe for a UI from {owner.rollback_safe_from} on; "
+                f"the target stands at {target.database_head}"
+            )
+    return f"no release on this machine declares schema {revision} safe for the target"
+
+
 def active_sudo_rules(text: str) -> tuple[str, ...]:
     return tuple(
         " ".join(line.split())

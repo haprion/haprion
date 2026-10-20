@@ -446,8 +446,8 @@ and hand the descriptor to a `pg_restore` running as `postgres`, so the file is
 read without becoming readable to another account.
 
 The check restores into a scratch database it creates and drops itself, compares
-row counts against the live database table by table, requires the account table
-to be non-empty, and reads one password hash back in full — counts can match
+row counts against the archive table by table, requires the schema's version row,
+and reads one local account's password hash back in full — counts can match
 while the contents are unusable.
 
 `/var/lib/haprion-ui/dumps` still has to be picked up by an off-machine

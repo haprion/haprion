@@ -170,6 +170,27 @@ do_dump() {
     done
 }
 
+#
+# Counts can match while the data is unusable, so one row is read back in full:
+# the oldest local account's hash must still verify as an Argon2id hash. An
+# OIDC account has none, by the schema's own rule, so it is not the row read
+# (review 2026-10-20, R2). A new installation has no account yet - haprion-setup
+# asks for the first after its last step - and an installation can be all OIDC
+# but its break-glass account; the check reads a hash back once there is one.
+#
+restored_hash_intact() {
+    local scratch="$1" hash
+    hash="$(psql_scratch -d "$scratch" -c \
+        "select password_hash from app_user where source = 'local' order by id limit 1")"
+    if [[ -z "$hash" ]]; then
+        log "  ok       no local account; a password hash is read back once there is one"
+        return
+    fi
+    # shellcheck disable=SC2016  # the literal dollar signs are the prefix being matched
+    [[ "$hash" == '$argon2id$'* ]] || die "a restored password hash is not Argon2id"
+    log "  ok       a restored password hash is intact"
+}
+
 do_verify_restore() {
     local newest
     newest="$(find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" -printf '%f\n' \
@@ -242,22 +263,7 @@ do_verify_restore() {
 
     restore_brought_back "$restored"
 
-    #
-    # Counts can match while the data is unusable, so one row is read back in
-    # full: the newest account's hash must still verify as an Argon2id hash. A
-    # new installation has none yet - haprion-setup asks for the first account
-    # after its last step - and the weekly check reads it back once there is.
-    #
-    if [[ "$(grep '^app_user=' <<<"$restored" | cut -d= -f2)" -gt 0 ]]; then
-        local hash
-        hash="$(psql_scratch -d "$scratch" -c \
-            "select password_hash from app_user order by id limit 1")"
-        # shellcheck disable=SC2016  # the literal dollar signs are the prefix being matched
-        [[ "$hash" == '$argon2id$'* ]] || die "a restored password hash is not Argon2id"
-        log "  ok       a restored password hash is intact"
-    else
-        log "  ok       no account yet; a password hash is read back once there is one"
-    fi
+    restored_hash_intact "$scratch"
 
     [[ "$mismatch" -eq 0 ]] || die "the restore does not match the archive"
 

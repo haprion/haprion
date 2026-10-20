@@ -142,3 +142,45 @@ class ANewInstallationIsBackedUpBeforeItHasAnAccount(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheRestoredHashIsALocalAccounts(unittest.TestCase):
+    """Review 2026-10-20, R2: an OIDC account has no hash, by the schema's rule.
+
+    The check read the oldest account of any kind, so an installation whose
+    oldest account was OIDC failed every restore check of a sound dump.
+    """
+
+    def checked(self, answer: str) -> subprocess.CompletedProcess[str]:
+        source = SCRIPT.read_text()
+        program = (
+            "set -Eeuo pipefail\n"
+            'log() { echo "$*"; }\n'
+            'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+            'psql_scratch() { printf "%s\\n" "$*" >&2; printf "%s" "$ANSWER"; }\n'
+            + function("restored_hash_intact", source)
+            + "restored_hash_intact scratch\n"
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "ANSWER": answer},
+        )
+
+    def test_only_a_local_account_is_read(self) -> None:
+        done = self.checked("$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("where source = 'local'", done.stderr)
+        self.assertIn("a restored password hash is intact", done.stdout)
+
+    def test_no_local_account_is_not_a_failure(self) -> None:
+        done = self.checked("")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("no local account", done.stdout)
+
+    def test_a_local_hash_that_is_not_argon2id_fails(self) -> None:
+        done = self.checked("plain")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("is not Argon2id", done.stderr)

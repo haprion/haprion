@@ -3453,6 +3453,40 @@ class NdesDatabase(unittest.TestCase):
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheBackupsHashCheck(unittest.TestCase):
+    """Review 2026-10-20, R2: the restore check's query against the real schema."""
+
+    HASH = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"
+
+    def test_an_oidc_account_first_is_passed_over_for_the_local_one(self) -> None:
+        script = (
+            Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-backup"
+        ).read_text()
+        query = re.search(r'"(select password_hash from app_user[^"]*)"', script)
+        if query is None:
+            self.fail("haprion-backup no longer reads a password hash")
+        with (
+            psycopg.connect(
+                f"{DSN} user={os.environ['HAPRION_UI_TEST_MIGRATION_ROLE']}"
+            ) as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute("truncate app_user cascade")
+            cursor.execute(
+                "insert into app_user (username, password_hash, role, source)"
+                " values ('sso-admin', null, 'admin', 'oidc')"
+            )
+            cursor.execute(
+                "insert into app_user (username, password_hash, role, break_glass)"
+                " values ('admin', %s, 'admin', true)",
+                (self.HASH,),
+            )
+            cursor.execute(query[1])
+            self.assertEqual(cursor.fetchall(), [(self.HASH,)])
+            connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class AccountsFromTheWeb(unittest.TestCase):
     """Migration 0039: the web writes accounts inside grants and a guard (B187)."""
 

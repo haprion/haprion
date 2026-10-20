@@ -2136,17 +2136,18 @@ itself — never a database named in configuration, because a restore test that
 can be pointed at the wrong database will eventually overwrite something real.
 Then it compares the result with what the archive holds:
 
-- row counts for `app_user`, `app_session`, `audit_event`, `login_attempt` and
-  `job`, named explicitly so an empty restore cannot pass by matching zero
-  against zero. The expected count is read from the archive's own data section,
+- row counts for `alembic_version`, `app_user`, `app_session`, `audit_event`,
+  `login_attempt` and `job`, named explicitly so an empty restore cannot pass by
+  matching zero against zero. The expected count is read from the archive's own data section,
   not from the live database: live moves on after the dump — a sign-in adds a
   session, retention removes old jobs — and a check measured against it fails
   on a perfect restore. The live count is printed beside each table as
   information about how far the installation has moved since;
-- a hard requirement that the restored `app_user` table is **not empty**, since
-  an installation nobody can sign into is not a backup worth verifying;
-- one row read back in full — the first account's hash must still be a valid
-  Argon2id hash, because counts can match while the contents are unusable.
+- a hard requirement that the restored database holds its **schema version**,
+  the one row every installation has, including a new one with no account yet;
+- one row read back in full — the oldest local account's hash must still be a
+  valid Argon2id hash, because counts can match while the contents are unusable.
+  OIDC accounts have no hash and are not read.
 
 Any mismatch fails the unit, and the scratch database is dropped either way.
 

@@ -43,6 +43,7 @@ from urllib.parse import urlencode
 from uuid import UUID, uuid4, uuid5
 
 import anyio
+import psycopg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import (
     FileResponse,
@@ -11604,6 +11605,27 @@ def _refusal_page(
             "demo_fixture": config.demo_fixture,
         },
         status_code=400,
+    )
+
+
+def database_unavailable(request: Request, exc: Exception) -> Response:
+    """A request the database could not answer, said as a page (review 2026-10-20, U2).
+
+    It was a bare 500 with no way on. The page reads nothing: the session, the
+    switches and the header's clusters are all database reads, and the
+    database is what failed. A query the server's `statement_timeout` stopped
+    says so, since a narrower filter is then the way on. The error itself goes
+    to the log, never to the page.
+    """
+
+    slow = isinstance(exc, psycopg.errors.QueryCanceled)
+    logger.warning("%s %s: the database did not answer: %s", request.method, request.url.path, exc)
+    posted = request.method != "GET"
+    return TEMPLATES.TemplateResponse(
+        request,
+        "unavailable.html",
+        {"slow": slow, "posted": posted, "again": "/" if posted else str(request.url)},
+        status_code=503,
     )
 
 

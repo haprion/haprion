@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{#
+  The page for a request the database could not answer (review 2026-10-20, U2).
+  Drawn from nothing but the request: no session, no switches, no clusters -
+  every one of them is a database read, and the database is what failed.
+#}
+{% block title %}{% if slow %}Took too long{% else %}Database not answering{% endif %} — Haprion{% endblock %}
+{% block body_class %}login-page{% endblock %}
+{% block main_class %}login-layout{% endblock %}
+{% block content %}
+<section class="login-card" aria-labelledby="unavailable-title">
+  <div class="login-brand">
+    <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="brand-mark-west" d="M11.25 0.5C10.4 6 6.8 10 0.5 12C6.8 14 10.4 18 11.25 23.5Z"></path><path class="brand-mark-east" d="M12.75 0.5C13.6 6 17.2 10 23.5 12C17.2 14 13.6 18 12.75 23.5Z"></path></svg>
+    <span><strong>Haprion</strong></span>
+  </div>
+  <div class="login-copy">
+    {% if slow %}
+    <h1 id="unavailable-title">The page took too long</h1>
+    <p>The database stopped the question at its time limit. A narrower filter asks less of it.</p>
+    {% else %}
+    <h1 id="unavailable-title">The database did not answer</h1>
+    <p>{% if posted %}Whether the change was saved shows once it answers again. {% endif %}The detail is in the web service's log.</p>
+    {% endif %}
+  </div>
+  <a class="primary-button login-action" href="{{ again }}">Try again</a>
+</section>
+{% endblock %}

@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import psycopg
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -131,6 +132,15 @@ def create_app(config: Config | None = None) -> FastAPI:
         if not kind.startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
             return await request_validation_exception_handler(request, exc)
         return await run_in_threadpool(views.form_refusal, request, settings, exc.errors())
+
+    #
+    # A database that does not answer - gone, out of connections, or a query
+    # past its time limit - is a page that says so, not a bare 500 (review
+    # 2026-10-20, U2). PoolTimeout and QueryCanceled are both OperationalError.
+    #
+    @app.exception_handler(psycopg.OperationalError)
+    async def database_errors(request: Request, exc: psycopg.OperationalError) -> Response:
+        return views.database_unavailable(request, exc)
 
     #
     # Each response says where its time went (`timing`): in a header for the

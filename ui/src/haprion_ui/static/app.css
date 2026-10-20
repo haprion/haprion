@@ -1152,7 +1152,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .primary-button { width: 100%; height: 42px; margin-top: 3px; border: 1px solid var(--brand-strong); border-radius: var(--radius-sm); background: var(--brand); color: white; font-weight: 680; cursor: pointer; }
 /* Sign-in through the provider, first while it is on; the local form below it
    is the break-glass way in (B195), so it keeps its size but not the colour. */
-a.login-sso { display: flex; align-items: center; justify-content: center; text-decoration: none; }
+a.login-sso, a.login-action { display: flex; align-items: center; justify-content: center; text-decoration: none; }
 .login-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0; color: var(--muted); font-size: 12px; }
 .login-divider::before, .login-divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 .login-form .secondary-button { width: 100%; height: 42px; margin-top: 3px; }

@@ -2404,6 +2404,69 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual([entry.host for entry in reading.entries], ["copy.example.com"])
         self.assertEqual(reading.entries[0].path, "/ready")
 
+    def test_database_search_finds_the_text_as_the_files_do(self) -> None:
+        """Review 2026-10-20, D1: `_` and `%` were LIKE's wildcards in the database.
+
+        `api_v1` found `/apiXv1` there and not in the files, and `foo\\bar` found
+        nothing. A term is text, the same in both readers.
+        """
+
+        now = datetime.now(UTC).replace(microsecond=0)
+        paths = ["/api_v1", "/apiXv1", "/a%2fb", "/abc2f", "/foo\\bar", "/fooXbar"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            part = root / f"alpha--node-a--{now:%Y-%m-%d}.jsonl"
+            part.write_text(
+                "".join(
+                    json.dumps(
+                        {
+                            "schema": 1,
+                            "at": int(now.timestamp()),
+                            "request": 900 + number,
+                            "client": "192.0.2.21",
+                            "method": "GET",
+                            "host": "literal.example.com",
+                            "path": path,
+                            "frontend": "mgd-main-http",
+                            "backend": "mgd-app-primary",
+                            "server": "s1",
+                            "status": 200,
+                            "request_time": 0,
+                            "queue_time": 0,
+                            "connect_time": 1,
+                            "response_time": 2,
+                            "total_time": 3,
+                            "bytes": 0,
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                    for number, path in enumerate(paths)
+                )
+            )
+            target = NodeTarget("alpha", "node-a", "node-a.example.com")
+            config = CollectorConfig(
+                "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
+            )
+            with self.connect("HAPRION_UI_TEST_COLLECTOR_ROLE") as connection:
+                _ingest_part(config, connection, target, part)
+            for search in ("api_v1", "%2f", "foo\\bar", "NOT api_v1", "api_v1 OR %2f"):
+                with (
+                    self.subTest(search=search),
+                    self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+                ):
+                    reading = traffic_logs.read_database(
+                        connection,
+                        root,
+                        ("alpha",),
+                        substring=f"literal.example.com AND ({search})",
+                    )
+                    expression = traffic_logs._Parser(traffic_logs._tokens(search)).parse()
+                    self.assertEqual(
+                        sorted(entry.path for entry in reading.entries),
+                        sorted(path for path in paths if traffic_logs._matches(expression, path)),
+                    )
+
     def test_a_reload_late_in_a_bucket_keeps_what_came_before_it(self) -> None:
         """2026-10-04: the 30-day graph lost a load test the figures beside it counted.
 

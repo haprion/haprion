@@ -282,6 +282,13 @@ def _matches(expression: _Expression, text: str) -> bool:
     return _matches(expression.left, text) or _matches(expression.right, text)
 
 
+def like_pattern(query: str) -> str:
+    """A substring pattern that matches the text and nothing it could mean to LIKE."""
+
+    escaped = query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _search_sql(expression: _Expression, parameters: list[Any]) -> sql.Composable:
     # Keep this expression byte-for-byte aligned with the per-partition
     # pg_trgm index created by migration 0030 (and, since 0031, the only per-partition index beside the primary key).
@@ -289,7 +296,12 @@ def _search_sql(expression: _Expression, parameters: list[Any]) -> sql.Composabl
     if isinstance(expression, _Term):
         if not expression.value:
             return sql.SQL("true")
-        parameters.append(f"%{expression.value}%")
+        #
+        # A term is text to find, as `_matches` finds it in the files: `_` and
+        # `%` are characters in a backend's name or an encoded path, not LIKE's
+        # wildcards (review 2026-10-20, D1).
+        #
+        parameters.append(like_pattern(expression.value))
         return sql.SQL("{} ilike %s").format(searchable)
     if isinstance(expression, _Not):
         return sql.SQL("not ({})").format(_search_sql(expression.value, parameters))

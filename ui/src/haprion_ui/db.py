@@ -39,6 +39,7 @@ from psycopg_pool import ConnectionPool
 
 from haprion_ui import metrics, node_events, search_index, timing
 from haprion_ui.config import Database
+from haprion_ui.traffic_logs import like_pattern
 
 
 @dataclass(frozen=True, slots=True)
@@ -1552,7 +1553,7 @@ def _audit_filter(
         "since": since,
         "until": until,
         "search": search,
-        "like": _like_pattern(search),
+        "like": like_pattern(search),
         "window": AUDIT_SEARCH_WINDOW_DAYS,
     }
 
@@ -1732,7 +1733,7 @@ def _node_event_filter(
         "since": since,
         "until": until,
         "search": search,
-        "like": _like_pattern(search),
+        "like": like_pattern(search),
     }
 
 
@@ -2731,13 +2732,6 @@ def prune_search_entries(connection: Connection[Any], clusters: Sequence[str]) -
         return cursor.rowcount
 
 
-def _like_pattern(query: str) -> str:
-    """A substring pattern that matches the text and nothing it could mean to LIKE."""
-
-    escaped = query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
-
-
 def backend_rows(
     connection: Connection[Any], *, cluster: str, addresses: Sequence[str]
 ) -> list[tuple[str, str, str]]:
@@ -2796,7 +2790,7 @@ def search(
             " order by array_position(%(kinds)s::text[], kind), shown_cluster, lower(title) "
             " limit %(limit)s offset %(offset)s",
             {
-                "pattern": _like_pattern(query),
+                "pattern": like_pattern(query),
                 "clusters": list(clusters),
                 "admin": role == "admin",
                 "kinds": kinds,

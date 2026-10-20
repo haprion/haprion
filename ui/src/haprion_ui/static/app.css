@@ -210,6 +210,9 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 
 .brand strong, .login-brand strong { color: var(--text-strong); font-weight: 700; }
 .brand-version { margin-left: 4px; color: var(--muted); font-size: 12px; font-weight: 500; letter-spacing: 0; }
+.brand + .update-available { margin: 0 24px 0 -20px; }
+.update-available { color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; text-decoration: none; }
+.update-available:hover { text-decoration: underline; }
 
 /*
  * One star in two halves, coloured as Orion's two brightest: Betelgeuse and
@@ -1172,6 +1175,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   .nav-inner { width: max-content; min-width: 100%; padding: 0 10px; }
   .brand { padding-right: 12px; }
   .brand span { display: none; }
+  .update-available { display: none; }
   .header-search { margin: 0 8px 0 0; }
   .header-search + .header-actions { margin-left: auto; }
   .primary-nav a, .nav-item { padding: 0 10px; }

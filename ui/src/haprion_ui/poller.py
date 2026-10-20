@@ -23,6 +23,7 @@ is killed without cleanup - which is exactly the case a lock file gets wrong.
 from __future__ import annotations
 
 import functools
+import importlib.metadata
 import json
 import logging
 import os
@@ -31,6 +32,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +44,7 @@ from haprion.cli.status import run_status_helper
 from haprion.envelope import new_request_id
 from haprion.version_history import MAX_LIST_LIMIT
 
-from haprion_ui import answers, db, search_index, service
+from haprion_ui import answers, db, search_index, service, update_check
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 from haprion_ui.service import StopRequest
@@ -758,6 +760,7 @@ def main(argv: list[str] | None = None) -> int:
     # cluster is not created yet (B302): the poller runs its passes, records
     # that there is none, and takes up the first one the pass after it exists.
     #
+    installed = importlib.metadata.version("haprion-ui")
     listed_at_start = read_cluster_list()
     known = listed_at_start if listed_at_start is not None else config.clusters
 
@@ -821,6 +824,11 @@ def main(argv: list[str] | None = None) -> int:
                         connection.commit()
                 index_cluster_list(pool, known)
                 poll_manager(pool)
+                #
+                # Once a day at most, and only while its switch is on (B342);
+                # it decides that itself, so most passes it reads one row.
+                #
+                update_check.check(pool, installed=installed, now=datetime.now(UTC))
                 healthy = poll_once(pool, config, clusters=known)
                 if known:
                     logger.info("%d/%d cluster(s) fully current", healthy, len(known))

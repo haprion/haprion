@@ -7,6 +7,8 @@
         <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="brand-mark-west" d="M11.25 0.5C10.4 6 6.8 10 0.5 12C6.8 14 10.4 18 11.25 23.5Z"></path><path class="brand-mark-east" d="M12.75 0.5C13.6 6 17.2 10 23.5 12C17.2 14 13.6 18 12.75 23.5Z"></path></svg>
         <span><strong>Haprion</strong> <small class="brand-version" title="Release {{ release_id }}">{{ release_version }}</small></span>
       </a>
+      {# A newer release, while the update check is on (B342). Beside the brand, not in it: the brand is a link. #}
+      {% set newer = update_available() %}{% if newer %}<a class="update-available" href="{{ newer.url }}" target="_blank" rel="noopener noreferrer">· {{ newer.tag }} available</a>{% endif %}
       {# The header's search (B221): a plain form, so the result is a page with an address. #}
       <form class="header-search" method="get" action="/search" role="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="m20 20-4.5-4.5"></path></svg><input type="search" name="q" value="{{ search_query | default('') }}" maxlength="120" placeholder="Search names and addresses" aria-label="Search proxies, addresses, certificates and nodes"></form>
       <div class="header-actions">

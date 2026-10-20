@@ -139,6 +139,7 @@ from haprion_ui import (
     traffic_log_table,
     traffic_logs,
     traffic_summary,
+    update_check,
     users,
     waf,
 )
@@ -235,6 +236,8 @@ def release_label(prefix: str | None = None) -> tuple[str, str]:
 #
 TEMPLATES.env.globals["asset_token"] = asset_token()
 TEMPLATES.env.globals["release_version"], TEMPLATES.env.globals["release_id"] = release_label()
+INSTALLED_VERSION = importlib.metadata.version("haprion-ui")
+TEMPLATES.env.globals["update_available"] = update_check.header
 TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 #
 # HAProxy's check codes as sentences. A global rather than a field on the row:
@@ -713,6 +716,15 @@ def current_session(request: Request) -> AuthenticatedSession | None:
         # page passes through here before it draws anything.
         #
         features.read_in(db.feature_switches(connection))
+        #
+        # A newer release for the header (B342), read only while the check is
+        # on: off, it costs the page nothing.
+        #
+        update_check.read_in(
+            db.update_check(connection) if features.is_on(features.UPDATE_CHECK) else None,
+            on=features.is_on(features.UPDATE_CHECK),
+            installed=INSTALLED_VERSION,
+        )
     #
     # The clusters' colours follow the order they are listed in, and go when
     # the switch is off or there are more than the colours (B204).
@@ -764,6 +776,8 @@ SWITCHED = {
     "cluster_colours-on": "Cluster colours turned on.",
     "advanced_config-off": "Advanced config turned off. Objects keep their text and it is still published.",
     "advanced_config-on": "Advanced config turned on.",
+    "update_check-off": "Update check turned off. GitHub is not asked again.",
+    "update_check-on": "Update check turned on. The poller asks GitHub within a minute.",
 }
 
 
@@ -4752,6 +4766,7 @@ def build_router(config: Config) -> APIRouter:
             provider = db.oidc_provider(connection)
             recent = db.recent_jobs(connection)
             status_access = db.status_access(connection)
+            update_row = db.update_check(connection)
         creation_rows = _creations(request, recent)
         response = TEMPLATES.TemplateResponse(
             request,
@@ -4809,7 +4824,17 @@ def build_router(config: Config) -> APIRouter:
                     features.WAF_ENGINE: waf.engine(
                         read_source(request, config, OBJECTS_SOURCE)[1],
                         read_source(request, config, STATUS_SOURCE)[1],
-                    ).summary()
+                    ).summary(),
+                    #
+                    # When GitHub last answered, or since when it has not (B342).
+                    #
+                    features.UPDATE_CHECK: update_check.detail(
+                        update_row,
+                        on=switches[features.UPDATE_CHECK].enabled
+                        if features.UPDATE_CHECK in switches
+                        else False,
+                        shown=lambda at: metrics.shown(at).strftime("%y-%m-%d %H:%M"),
+                    ),
                 },
                 "features": [
                     (feature, switches[feature.name].enabled and not locked, locked)

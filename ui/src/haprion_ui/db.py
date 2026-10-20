@@ -1921,6 +1921,72 @@ def hide_getting_started(connection: Connection[Any], *, actor: str) -> bool:
         return cursor.rowcount == 1
 
 
+@dataclass(frozen=True, slots=True)
+class UpdateCheck:
+    """What the poller last heard from GitHub about the newest release (0081, B342).
+
+    `latest_tag`/`latest_url`/`checked_at` are the last answer and outlive a
+    failure after it; `failing_since` is the first failure since that answer.
+    """
+
+    latest_tag: str | None
+    latest_url: str | None
+    checked_at: datetime | None
+    attempted_at: datetime
+    failing_since: datetime | None
+
+
+def update_check(connection: Connection[Any]) -> UpdateCheck | None:
+    """The one row, or None before the first ask."""
+
+    with connection.cursor(row_factory=class_row(UpdateCheck)) as cursor:
+        cursor.execute(
+            "select latest_tag, latest_url, checked_at, attempted_at, failing_since "
+            "  from update_check"
+        )
+        return cursor.fetchone()
+
+
+def switch_enabled(connection: Connection[Any], name: str) -> bool:
+    """Whether one feature switch is on, as the poller asks it (0081)."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select enabled from feature_switch where name = %s", (name,))
+        row = cursor.fetchone()
+        return bool(row and row[0])
+
+
+def record_update_answer(connection: Connection[Any], *, tag: str, url: str, at: datetime) -> None:
+    """GitHub answered: the release it named, and no failure since."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into update_check "
+            "       (latest_tag, latest_url, checked_at, attempted_at, failing_since, error) "
+            "values (%(tag)s, %(url)s, %(at)s, %(at)s, null, null) "
+            "on conflict (only_row) do update "
+            "   set latest_tag = excluded.latest_tag, latest_url = excluded.latest_url, "
+            "       checked_at = excluded.checked_at, attempted_at = excluded.attempted_at, "
+            "       failing_since = null, error = null",
+            {"tag": tag, "url": url, "at": at},
+        )
+
+
+def record_update_failure(connection: Connection[Any], *, error: str, at: datetime) -> None:
+    """GitHub did not answer: the last answer stays, and the failure keeps its first time."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into update_check (attempted_at, failing_since, error) "
+            "values (%(at)s, %(at)s, %(error)s) "
+            "on conflict (only_row) do update "
+            "   set attempted_at = excluded.attempted_at, "
+            "       failing_since = coalesce(update_check.failing_since, excluded.failing_since), "
+            "       error = excluded.error",
+            {"at": at, "error": error[:300]},
+        )
+
+
 def show_getting_started(connection: Connection[Any]) -> bool:
     """Show the list again (0076); False when it was not hidden."""
 

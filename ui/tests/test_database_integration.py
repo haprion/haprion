@@ -815,6 +815,49 @@ class ARealDatabase(unittest.TestCase):
             granted = set(cursor.fetchall())
         self.assertEqual(sorted(written - granted), [])
 
+    def test_the_poller_keeps_the_update_check_and_the_web_reads_it(self) -> None:
+        """0081: the switch, an answer, then failures - the answer stays, the first failure's time too."""
+
+        first = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+        url = "https://github.com/haprion/haprion/releases/tag/v0.9.3"
+        try:
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+                self.assertFalse(db.switch_enabled(connection, "update_check"))
+                db.record_update_answer(connection, tag="v0.9.3", url=url, at=first)
+                db.record_update_failure(
+                    connection, error="timed out", at=first + timedelta(hours=25)
+                )
+                db.record_update_failure(
+                    connection, error="timed out", at=first + timedelta(hours=26)
+                )
+                connection.commit()
+            with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+                kept = db.update_check(connection)
+            assert kept is not None  # noqa: S101 - written just above
+            self.assertEqual(
+                (kept.latest_tag, kept.latest_url, kept.checked_at), ("v0.9.3", url, first)
+            )
+            self.assertEqual(kept.failing_since, first + timedelta(hours=25))
+            self.assertEqual(kept.attempted_at, first + timedelta(hours=26))
+            with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+                db.record_update_answer(
+                    connection,
+                    tag="v0.9.4",
+                    url=url.replace("3", "4"),
+                    at=first + timedelta(hours=27),
+                )
+                connection.commit()
+                self.assertIsNone(db.update_check(connection).failing_since)  # type: ignore[union-attr]
+            with (
+                self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                connection.execute("update update_check set latest_tag = 'v9.9.9'")
+        finally:
+            with self.connect() as connection:
+                connection.execute("delete from update_check")
+                connection.commit()
+
     def test_the_web_can_rename_a_draft_it_wrote(self) -> None:
         """The rename moves the key, so the web needs `update` on `object_id` too.
 
@@ -1527,6 +1570,7 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(cursor.fetchall(), [("930120,932160", 43)])
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0081_update_check.py", cursor).downgrade()
                 migration = _migration("0051_waf_engine.py", cursor)
                 migration.downgrade()
                 cursor.execute(
@@ -3702,18 +3746,21 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                 "cluster_colours": True,
                 "advanced_config": False,
                 "waf_engine": False,
+                "update_check": False,
             },
         )
 
     def test_the_waf_engine_switch_downgrades_and_upgrades_cleanly(self) -> None:
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0081_update_check.py", cursor).downgrade()
                 migration = _migration("0051_waf_engine.py", cursor)
                 migration.downgrade()
                 with self.assertRaises(psycopg.errors.CheckViolation):
                     cursor.execute("insert into feature_switch (name) values ('waf_engine')")
             connection.rollback()
             with connection.cursor() as cursor:
+                _migration("0081_update_check.py", cursor).downgrade()
                 migration = _migration("0051_waf_engine.py", cursor)
                 migration.downgrade()
                 migration.upgrade()
@@ -3724,6 +3771,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
     def test_the_advanced_config_switch_downgrades_and_upgrades_cleanly(self) -> None:
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0081_update_check.py", cursor).downgrade()
                 _migration("0051_waf_engine.py", cursor).downgrade()
                 migration = _migration("0049_advanced_config_switch.py", cursor)
                 migration.downgrade()
@@ -3736,6 +3784,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                     cursor.execute("insert into feature_switch (name) values ('advanced_config')")
             connection.rollback()
             with connection.cursor() as cursor:
+                _migration("0081_update_check.py", cursor).downgrade()
                 _migration("0051_waf_engine.py", cursor).downgrade()
                 migration = _migration("0049_advanced_config_switch.py", cursor)
                 migration.downgrade()
@@ -3747,6 +3796,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
     def test_the_colours_switch_downgrades_and_upgrades_cleanly(self) -> None:
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0081_update_check.py", cursor).downgrade()
                 _migration("0051_waf_engine.py", cursor).downgrade()
                 _migration("0049_advanced_config_switch.py", cursor).downgrade()
                 migration = _migration("0042_cluster_colours_switch.py", cursor)
@@ -3757,6 +3807,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                     cursor.execute("insert into feature_switch (name) values ('cluster_colours')")
             connection.rollback()
             with connection.cursor() as cursor:
+                _migration("0081_update_check.py", cursor).downgrade()
                 _migration("0051_waf_engine.py", cursor).downgrade()
                 _migration("0049_advanced_config_switch.py", cursor).downgrade()
                 migration = _migration("0042_cluster_colours_switch.py", cursor)
@@ -3804,14 +3855,25 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
             ):
                 connection.execute(statement)
 
-    def test_the_worker_and_the_poller_do_not_read_the_switches(self) -> None:
-        for role in ("HAPRION_UI_TEST_WORKER_ROLE", "HAPRION_UI_TEST_POLLER_ROLE"):
+    def test_the_worker_does_not_read_the_switches_and_the_poller_only_whether_one_is_on(
+        self,
+    ) -> None:
+        # The poller asks whether the update check is on (0081, B342), and
+        # nothing else: not what a switch remembers, nor who flipped it.
+        for role, statement in (
+            ("HAPRION_UI_TEST_WORKER_ROLE", "select enabled from feature_switch"),
+            ("HAPRION_UI_TEST_POLLER_ROLE", "select remembered from feature_switch"),
+            ("HAPRION_UI_TEST_POLLER_ROLE", "select updated_by from feature_switch"),
+            ("HAPRION_UI_TEST_POLLER_ROLE", "update feature_switch set enabled = true"),
+        ):
             with (
-                self.subTest(role=role),
+                self.subTest(role=role, statement=statement),
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),
                 self.connect(role) as connection,
             ):
-                connection.execute("select enabled from feature_switch")
+                connection.execute(statement)
+        with self.connect("HAPRION_UI_TEST_POLLER_ROLE") as connection:
+            self.assertFalse(db.switch_enabled(connection, "update_check"))
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

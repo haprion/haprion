@@ -45,7 +45,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\nattention_ack\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\nstatus_access\ntraffic_log\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
+expected_tables=$'alembic_version\napp_session\napp_user\nattention_ack\naudit_event\ncluster_backups\ncluster_certificates\ncluster_change\ncluster_history\ncluster_inventory\ncluster_list\ncluster_network\ncluster_objects\ncluster_pass\ncluster_settings\ncluster_status\ndns_provider_profile\nfeature_switch\ngetting_started\njob\njob_claim_gate\nlogin_attempt\nlogin_unlock\nmanager_certificates\nmetric_backend_alias\nmetric_backend_hour\nmetric_backend_hour_delta\nmetric_backend_member\nmetric_frontend\nmetric_frontend_hour_delta\nmetric_rollup_state\nndes_provider_profile\nnode_event\nnode_event_state\noidc_login\noidc_provider\nproxy_draft\nsearch_entry\nstatus_access\ntraffic_log\nupdate_check\nversion_diff\nwaf_finding_client\nwaf_finding_path\nwaf_match'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -114,6 +114,7 @@ app_poller	cluster_settings	UPDATE	error, outcome, poll_error, result, warnings
 app_poller	cluster_status	INSERT	cluster, error, outcome, poll_error, result, warnings
 app_poller	cluster_status	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_poller	cluster_status	UPDATE	error, outcome, poll_error, result, warnings
+app_poller	feature_switch	SELECT	enabled, name
 app_poller	manager_certificates	INSERT	error, outcome, poll_error, result, warnings
 app_poller	manager_certificates	SELECT	error, id, observed_at, outcome, poll_error, result, warnings
 app_poller	manager_certificates	UPDATE	error, outcome, poll_error, result, warnings
@@ -133,6 +134,9 @@ app_poller	node_event_state	SELECT	cluster, kind, subject, value
 app_poller	node_event_state	UPDATE	value
 app_poller	search_entry	INSERT	admin_only, cluster, href, kind, label, source, title, value
 app_poller	search_entry	SELECT	admin_only, cluster, href, kind, label, source, title, value
+app_poller	update_check	INSERT	attempted_at, checked_at, error, failing_since, latest_tag, latest_url
+app_poller	update_check	SELECT	attempted_at, checked_at, error, failing_since, latest_tag, latest_url, only_row
+app_poller	update_check	UPDATE	attempted_at, checked_at, error, failing_since, latest_tag, latest_url
 app_poller	version_diff	INSERT	cluster, commit, diff
 app_poller	version_diff	SELECT	cluster, commit, diff, recorded_at
 app_web	alembic_version	SELECT	version_num
@@ -199,6 +203,7 @@ app_web	search_entry	SELECT	admin_only, cluster, href, kind, label, source, titl
 app_web	status_access	INSERT	added_by, network
 app_web	status_access	SELECT	added_at, added_by, network
 app_web	traffic_log	SELECT	backend, bytes, client, cluster, connect_time, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, rule, server, status, total_time, waf_id, waf_rules, waf_score
+app_web	update_check	SELECT	attempted_at, checked_at, failing_since, latest_tag, latest_url
 app_web	version_diff	SELECT	cluster, commit, diff, recorded_at
 app_web	waf_finding_client	SELECT	client, cluster, field, hour, object, path, rule_id
 app_web	waf_finding_path	SELECT	cluster, field, hour, last_seen, matched, object, path, requests, rule_id

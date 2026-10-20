@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0080",
+    "database_head": "0081",
     "rollback_safe_from": "0072",
     "database_revisions": [
       "0028",
@@ -56,7 +56,8 @@
       "0077",
       "0078",
       "0079",
-      "0080"
+      "0080",
+      "0081"
     ],
     "engine_api": 30,
     "node_api": 1,

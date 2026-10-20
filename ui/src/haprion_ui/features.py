@@ -25,6 +25,7 @@ NODE_BACKUPS = "node_backups"
 CLUSTER_COLOURS = "cluster_colours"
 ADVANCED_CONFIG = "advanced_config"
 WAF_ENGINE = "waf_engine"
+UPDATE_CHECK = "update_check"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,12 @@ FEATURES = (
     # longer shows still filters traffic.
     #
     Feature(WAF_ENGINE, "WAF engine"),
+    #
+    # Whether the poller asks GitHub once a day for the newest release, for the
+    # header's `vX available` (B334, B342). The one thing the application
+    # fetches from the internet while it runs, so it is off until turned on.
+    #
+    Feature(UPDATE_CHECK, "Update check"),
 )
 BY_NAME = {feature.name: feature for feature in FEATURES}
 

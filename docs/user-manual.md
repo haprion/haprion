@@ -884,6 +884,16 @@ prints the same answer as the dialog's *Check*):
   and the text must carry at least one `server` line. Unticking gives the pool
   back with the text's `server name host:port` lines as its servers.
 
+**Update check** (schema `0081`) is off from the start, on every installation: it is the one
+thing the manager fetches from the internet while it runs. On, the poller asks GitHub for the
+project's latest release once a day, and the header says `· v0.9.3 available` beside the version
+when that release is newer than the one running, linking to its release notes. The switch's row
+says when GitHub last answered, or since when it has not. When GitHub does not answer, the last
+answer stands and the poller asks again every hour until it does; nothing is raised on *Needs
+attention*. The ask goes straight out from the manager - through no proxy - so the manager must be
+allowed to reach `api.github.com` on port 443. Nothing is installed by it: `sudo apt update && sudo
+apt upgrade` installs a release ([The packages](install.md#the-packages)).
+
 ## Access rules
 
 An object can refuse visitors by address, by what a request asks for, and by
@@ -3492,6 +3502,9 @@ better done elsewhere. The details are in the section linked.
   addresses through ([Syslog objects](#syslog-objects)).
 - **Two DNS objects cannot share an address and port**: dnsdist tells them apart by
   where a query arrives ([DNS objects](#dns-objects)).
+- **The update check does not go through a proxy.** A manager that reaches the internet
+  only through one cannot use it; its row says GitHub has not answered
+  ([Features and advanced configuration](#features-and-advanced-configuration)).
 - **A signing request made elsewhere is not signed here.** A device that makes its own
   key and takes only a certificate for its own CSR - HPE iLO, for one - gets it from the
   CA directly: for an internal name, the Microsoft CA's own web enrollment signs an

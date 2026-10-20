@@ -135,6 +135,7 @@ class LoginTestCase(unittest.TestCase):
         self.hidden_by: list[str] = []
         self.shown_again = 0
         self.provider: Any = None
+        self.update_row: Any = None
         self.id_tokens: dict[bytes, str | None] = {}
 
         self.patches = [
@@ -245,6 +246,8 @@ class LoginTestCase(unittest.TestCase):
             # Settings draws its Users card from this; none unless a test says.
             mock.patch("haprion_ui.db.account_rows", return_value=[]),
             mock.patch("haprion_ui.db.feature_switches", side_effect=lambda _c: self.switches),
+            # No answer from GitHub yet unless a test gives one (0081).
+            mock.patch("haprion_ui.db.update_check", side_effect=lambda _c: self.update_row),
             #
             # No list from the poller yet, so the pages fall back to the
             # configured clusters - the state before the poller's first pass.

@@ -388,7 +388,9 @@ govulncheck (the version it names in `GOVULNCHECK_VERSION`) over the source with
 Go, and refuses the build if the engine can reach a known vulnerability in its modules or
 in Go's standard library; a vulnerability only in code the engine never calls is reported
 but does not refuse. The database is read when the package is built, so rebuild to
-check again. Install govulncheck with the pinned Go
+check again. Then it runs upstream's own tests with the pinned Go - the engine's, Coraza's and
+the SPOE library's, at the versions the engine's `go.mod` names (`TESTED`) - and refuses the
+build if any fails. Install govulncheck with the pinned Go
 (`GOBIN=<dir> <go>/bin/go install golang.org/x/vuln/cmd/govulncheck@<version>`).
 Both go on the manager, where publishing compiles the rules before they leave it, and the engine
 on every node.

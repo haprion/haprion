@@ -18,7 +18,9 @@ root, and the Go build drops paths and build IDs. Build twice and compare.
 Before the engine is built, govulncheck (pinned by version) reads the source
 against the Go vulnerability database as it stands that day, and the build is
 refused if the engine can reach a known vulnerability in its modules or in the
-pinned Go's standard library.
+pinned Go's standard library. Then upstream's own tests run with the pinned Go -
+the engine's, the rule engine's (Coraza) and the SPOE library's - and a failure
+refuses the build: upstream tests its code with its Go, and ours is another.
 """
 
 from __future__ import annotations
@@ -298,6 +300,48 @@ def go_environment(go_root: Path, work: Path) -> dict[str, str]:
     }
 
 
+#
+# What `go test` runs before the engine is built (26-10-20): the engine's own
+# packages, and the two modules it is made of - Coraza, which reads the rules
+# and matches them, and the SPOE library HAProxy talks to. Their versions are
+# the ones the engine's go.mod names. Upstream's end-to-end tests (`-tags=e2e`)
+# need HAProxy and a backend; the rule set's regression tests through the
+# built engine are that, and run in CI (tools/crs-regression).
+#
+TESTED = (
+    "./...",
+    "github.com/corazawaf/coraza/v3/...",
+    "github.com/dropmorepackets/haproxy-go/...",
+)
+
+
+def upstream_tests(tree: Path, go_root: Path, work: Path) -> str:
+    """Run upstream's tests with the pinned Go; refuse the build if any fails.
+
+    `-count=1`, so a result is never a cached one. Returns the report, one line
+    per package, without the module downloads.
+    """
+    go_root = go_root.resolve()  # the tests run inside the source tree
+    done = subprocess.run(  # noqa: S603 - pinned toolchain, fixed arguments
+        [str(go_root / "bin" / "go"), "test", "-count=1", *TESTED],
+        capture_output=True,
+        text=True,
+        cwd=tree,
+        env=go_environment(go_root, work),
+        timeout=1800,
+    )
+    report = "\n".join(
+        line
+        for line in (done.stdout + done.stderr).splitlines()
+        if not line.startswith("go: downloading ")
+    ).strip()
+    if done.returncode != 0:
+        raise ValueError(
+            f"upstream's tests failed with {GO_VERSION} (exit {done.returncode}):\n{report}"
+        )
+    return report
+
+
 def vulnerability_check(tree: Path, go_root: Path, govulncheck: Path, work: Path) -> str:
     """Refuse a source from which the engine reaches a known vulnerability.
 
@@ -390,6 +434,7 @@ def build_coraza(
             if govulncheck is None:
                 raise ValueError("building the engine needs govulncheck")
             print(vulnerability_check(tree, go_root, govulncheck, work), file=sys.stderr)
+            print(upstream_tests(tree, go_root, work), file=sys.stderr)
         binary = built or go_build(tree, go_root, work, source.version)
         root = work / "root"
         doc = "usr/share/doc/haprion-coraza-spoa"

@@ -292,6 +292,40 @@ class Packages(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "is not"):
             self.check(self.scanner(version="v0.0.1"))
 
+    def go(self, *, exit_code: int = 0) -> Path:
+        """A `go` stand-in under the root's bin/: prints what it ran and where, then a fixed exit."""
+        path = self.root / "bin" / "go"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(
+            "#!/bin/sh\n"
+            "echo 'go: downloading example.org/module v1.0.0'\n"
+            'echo "ok $(pwd) $*"\n'
+            f"exit {exit_code}\n"
+        )
+        path.chmod(0o755)
+        return path
+
+    def upstream(self) -> str:
+        tree = self.root / "tree"
+        tree.mkdir(exist_ok=True)
+        return str(self.tool.upstream_tests(tree, self.root, self.root))
+
+    def test_upstream_tests_run_uncached_for_the_engine_and_what_it_is_made_of(self) -> None:
+        self.go()
+        report = self.upstream()
+        self.assertIn(
+            f"ok {self.root / 'tree'} test -count=1 " + " ".join(self.tool.TESTED), report
+        )
+        self.assertIn("github.com/corazawaf/coraza/v3/...", self.tool.TESTED)
+        self.assertNotIn("go: downloading", report)
+
+    def test_a_failing_upstream_test_refuses_the_build(self) -> None:
+        self.go(exit_code=1)
+        with self.assertRaisesRegex(
+            ValueError, r"upstream's tests failed with go1\.\S+ \(exit 1\)"
+        ):
+            self.upstream()
+
     def test_building_the_engine_needs_the_scanner(self) -> None:
         out = self.root / "out"
         out.mkdir()

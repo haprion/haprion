@@ -59,6 +59,12 @@ TICK_SECONDS = 5.0
 LIFELINE_GRACE_SECONDS = 10.0
 
 #
+# How long the request's writer waits for a full pipe to drain before it tries
+# again. The wait ends at once when the lifeline is released.
+#
+WRITE_RETRY_SECONDS = 0.05
+
+#
 # The grace between asking the process group to stop and insisting. A deploy
 # that is interrupted mid-step should get the chance to leave the node in a
 # state it chose rather than one the kernel chose.
@@ -248,7 +254,21 @@ def run(
         start_new_session=True,
     )
     group = process.pid
+    #
+    # The request goes out through a descriptor of this process's own, written
+    # without blocking (review 2026-10-20, L1). The buffered pipe's close waits
+    # for its writer's lock, and a writer blocked on a full pipe holds that
+    # lock until the helper reads: a helper stuck before its read kept the
+    # timeout from ever reaching the lifeline, and the worker with it. A dup is
+    # not inherited, and the original is closed before anything is written.
+    #
     process_stdin = cast(BinaryIO, process.stdin)
+    request_fd = os.dup(process_stdin.fileno())
+    process_stdin.close()
+    os.set_blocking(request_fd, False)
+    request_lock = threading.Lock()
+    request_open = True
+    request_closed = threading.Event()
     process_stdout = cast(BinaryIO, process.stdout)
     process_stderr = cast(BinaryIO, process.stderr)
 
@@ -303,20 +323,33 @@ def run(
         rather than reading to end of input.
         """
 
-        try:
-            process_stdin.write(encoded_request + b"\n")
-            process_stdin.flush()
-        except BrokenPipeError:
-            pass
+        pending = memoryview(encoded_request + b"\n")
+        while pending:
+            with request_lock:
+                if not request_open:
+                    return
+                try:
+                    written = os.write(request_fd, pending)
+                except BlockingIOError:
+                    written = 0
+                except OSError:
+                    return  # the helper is gone; its exit says the rest
+            pending = pending[written:]
+            if pending and not written:
+                request_closed.wait(WRITE_RETRY_SECONDS)
         if not lifeline:
-            with suppress(OSError):
-                process_stdin.close()
+            release_lifeline()
 
     def release_lifeline() -> None:
-        """Tell the helper to stop at its next checkpoint."""
+        """Tell the helper to stop at its next checkpoint. Never waits on the writer."""
 
-        with suppress(OSError):
-            process_stdin.close()
+        nonlocal request_open
+        with request_lock:
+            if request_open:
+                request_open = False
+                with suppress(OSError):
+                    os.close(request_fd)
+        request_closed.set()
 
     threads = (
         threading.Thread(
@@ -406,7 +439,6 @@ def run(
     if any(thread.is_alive() for thread in threads):
         process_stdout.close()
         process_stderr.close()
-        process_stdin.close()
         for thread in threads:
             thread.join(timeout=GRACE_SECONDS)
 

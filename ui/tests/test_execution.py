@@ -11,6 +11,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import unittest
 import unittest.mock
@@ -137,6 +138,37 @@ class StoppingWhatItStarted(unittest.TestCase):
         )
 
         self.assertEqual(completed.ending, "timeout")
+
+    def test_a_request_larger_than_the_pipe_does_not_hold_up_the_stop(self) -> None:
+        """Review 2026-10-20, L1: a helper that never reads its request.
+
+        The writer sat blocked on the full pipe, holding the buffer's lock, and
+        the timeout's close waited for that lock: four seconds for a run told
+        to stop after a tenth of one.
+        """
+
+        started = time.monotonic()
+        completed = execution.run(
+            script("import time; time.sleep(30)"),
+            request="x" * 1_000_000,
+            timeout_seconds=0.1,
+            still_ours=lambda: True,
+            lifeline_grace_seconds=0.2,
+        )
+
+        self.assertEqual(completed.ending, "timeout")
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertNotIn("operation-stdin", [thread.name for thread in threading.enumerate()])
+
+    def test_a_request_larger_than_the_pipe_still_arrives_whole(self) -> None:
+        completed = execution.run(
+            script("import sys; sys.stdout.write(str(len(sys.stdin.readline())))"),
+            request="x" * 1_000_000,
+            timeout_seconds=30,
+            still_ours=lambda: True,
+        )
+
+        self.assertEqual((completed.exit_code, completed.stdout), (0, "1000001"))
 
     def test_a_child_of_the_command_is_stopped_too(self) -> None:
         #

@@ -61,9 +61,10 @@ migrate = ["alembic==1.19.1"]
 dev = [
     { include-group = "migrate" },
     # Test-only. FastAPI's TestClient drives the application in-process through
-    # httpx, so the login flow is exercised as HTTP - cookies, redirects and
+    # httpx2, so the login flow is exercised as HTTP - cookies, redirects and
     # form posts included - rather than by calling the handlers directly.
-    "httpx==0.28.1",
+    # Starlette 1.x reads httpx2 and warns on httpx (review 2026-10-20).
+    "httpx2==2.13.1",
     "mypy==2.3.1",
     #
     # Test-only, and a real browser. The interface ships four hand-written

@@ -15,7 +15,7 @@ from dataclasses import replace
 from typing import Any
 from unittest import mock
 
-import httpx
+import httpx2 as httpx
 
 from haprion_ui import auth, views
 from tests.test_login import LoginTestCase, configuration

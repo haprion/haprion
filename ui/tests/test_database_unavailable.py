@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest import mock
 
-import httpx
+import httpx2 as httpx
 import psycopg
 import psycopg_pool
 

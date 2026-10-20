@@ -365,6 +365,60 @@ class WhenItIsDue(unittest.TestCase):
         self.assertFalse(WATCH.due([], vulnerable=False, now=self.RELEASED)[0])
 
 
+class WhetherTheWatchStillRuns(unittest.TestCase):
+    REGISTERED = datetime(2026, 10, 19, 19, 1, 3, tzinfo=UTC)
+    WORKFLOW: ClassVar[dict[str, Any]] = {
+        "state": "active",
+        "created_at": "2026-10-19T21:01:03.000+02:00",
+    }
+
+    def run_at(self, at: datetime) -> dict[str, Any]:
+        return {"created_at": at.strftime("%Y-%m-%dT%H:%M:%SZ"), "event": "schedule"}
+
+    def test_a_scheduled_run_inside_the_window(self) -> None:
+        last = self.REGISTERED + timedelta(days=3)
+        self.assertTrue(WATCH.ran(self.WORKFLOW, self.run_at(last), last + timedelta(hours=47))[0])
+
+    def test_two_nights_without_a_run_is_a_watch_that_stopped(self) -> None:
+        last = self.REGISTERED + timedelta(days=3)
+        ok, reason = WATCH.ran(self.WORKFLOW, self.run_at(last), last + timedelta(hours=49))
+        self.assertFalse(ok)
+        self.assertIn("48 hours", reason)
+
+    def test_before_the_first_run_the_window_counts_from_the_registration(self) -> None:
+        self.assertTrue(WATCH.ran(self.WORKFLOW, None, self.REGISTERED + timedelta(hours=47))[0])
+        ok, reason = WATCH.ran(self.WORKFLOW, None, self.REGISTERED + timedelta(hours=49))
+        self.assertFalse(ok)
+        self.assertIn("no scheduled run", reason)
+
+    def test_a_disabled_watch_has_stopped_whatever_ran_last(self) -> None:
+        # GitHub turns a public repository's schedules off after 60 quiet days.
+        workflow = {**self.WORKFLOW, "state": "disabled_inactivity"}
+        ok, reason = WATCH.ran(workflow, self.run_at(self.REGISTERED), self.REGISTERED)
+        self.assertFalse(ok)
+        self.assertIn("disabled_inactivity", reason)
+
+    def test_the_window_allows_one_dropped_night_and_no_more(self) -> None:
+        # The window is two of the schedule's intervals: a daily cron.
+        watch = yaml.safe_load((BASE / ".github" / "workflows" / "upstream-watch.yml").read_text())
+        (schedule,) = watch[True]["schedule"]
+        minute, hour, *rest = schedule["cron"].split()
+        self.assertTrue(minute.isdigit() and hour.isdigit())
+        self.assertEqual(rest, ["*", "*", "*"])
+        self.assertEqual(WATCH.SCHEDULE_WINDOW, timedelta(days=2))
+
+    def test_ci_asks_about_the_workflow_the_tool_names(self) -> None:
+        workflows = BASE / ".github" / "workflows"
+        self.assertTrue((workflows / WATCH.WORKFLOW).is_file())
+        ci = yaml.safe_load((workflows / "ci.yml").read_text())
+        (step,) = [
+            s
+            for s in ci["jobs"]["upstream-watch-ran"]["steps"]
+            if "upstream-watch ran" in s.get("run", "")
+        ]
+        self.assertIn("--repository", step["run"])
+
+
 class ThePinsInTheTree(unittest.TestCase):
     def test_the_tree_is_pinned_the_way_the_watch_reads_it(self) -> None:
         # A hand edit that left the form the watch rewrites fails here, not in

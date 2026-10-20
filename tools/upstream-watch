@@ -5,6 +5,7 @@
                                [--report <file>]
     tools/upstream-watch due --base <tree> --head <tree> [--vulnerable]
     tools/upstream-watch vuln --source <tree> --cache <dir>
+    tools/upstream-watch ran --repository <owner/name>
 
 Four pins, all in the tree: the Coraza SPOA engine (a commit), the OWASP Core
 Rule Set (an LTS release), the Go that compiles the engine, and the
@@ -19,7 +20,9 @@ a person and left out of the tree. `due` reads the change between two trees
 fresh from upstream and answers whether the newer one may be merged now; with
 `--vulnerable` (the pinned engine reaches a known vulnerability today) the wait
 is two days. `vuln` runs govulncheck on the pinned engine as the build does,
-and exits 3 when it finds something.
+and exits 3 when it finds something. `ran` asks whether the nightly run still
+happens: GitHub's schedule is best effort and drops a run without a trace, so a
+watch that has stopped would otherwise say nothing at all.
 
 What counts as major, by component:
     coraza       0.x: a 0.y step (an 0.x minor may break); then semver
@@ -64,6 +67,9 @@ FETCH_TIMEOUT = 120
 MAX_FETCH_BYTES = 256 * 1024 * 1024
 WAIT = {"patch": timedelta(days=7), "minor": timedelta(days=7)}
 SECURITY_WAIT = timedelta(days=2)
+WORKFLOW = "upstream-watch.yml"
+# One night GitHub drops is allowed; two in a row is a watch that has stopped.
+SCHEDULE_WINDOW = timedelta(hours=48)
 # The components a reachable vulnerability can be fixed by: Go code only.
 ENGINE_SIDE = ("coraza", "go", "govulncheck")
 COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -587,6 +593,26 @@ def due(
     return True, f"due since {when.isoformat()}"
 
 
+def ran(workflow: dict[str, Any], newest: dict[str, Any] | None, now: datetime) -> tuple[bool, str]:
+    """Whether the schedule ran the watch inside the window, and why or why not.
+
+    Only a run the schedule started counts: one started by hand says nothing
+    about whether the nightly one still comes (26-10-20: it never had). Until
+    the first scheduled run, the window counts from when GitHub registered the
+    workflow.
+    """
+    if workflow["state"] != "active":
+        return False, f"the watch is {workflow['state']}, so nothing runs it"
+    if newest is None:
+        since, what = workflow["created_at"], "no scheduled run since the workflow was registered"
+    else:
+        since, what = newest["created_at"], f"the last scheduled run started {newest['created_at']}"
+    when = datetime.fromisoformat(str(since).replace("Z", "+00:00")) + SCHEDULE_WINDOW
+    if now > when:
+        return False, f"{what}, more than {SCHEDULE_WINDOW // timedelta(hours=1)} hours ago"
+    return True, what
+
+
 @contextlib.contextmanager
 def scratch(cache: Path) -> Iterator[Path]:
     work = cache / "upstream-watch"
@@ -656,6 +682,8 @@ def main() -> int:
     vulning = commands.add_parser("vuln", help="govulncheck on the pinned engine")
     vulning.add_argument("--source", type=Path, required=True)
     vulning.add_argument("--cache", type=Path, required=True)
+    running = commands.add_parser("ran", help="whether the schedule still runs the watch")
+    running.add_argument("--repository", required=True, help="owner/name")
     args = parser.parse_args()
     upstream = Upstream(os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
     try:
@@ -677,6 +705,12 @@ def main() -> int:
             )
             print(reason)
             return 0 if ready else 1
+        if args.command == "ran":
+            path = f"repos/{args.repository}/actions/workflows/{WORKFLOW}"
+            runs = upstream.github(f"{path}/runs?event=schedule&per_page=1")["workflow_runs"]
+            ok, reason = ran(upstream.github(path), runs[0] if runs else None, datetime.now(UTC))
+            print(reason)
+            return 0 if ok else 1
         return vuln(args.source, args.cache)
     except (WatchError, OSError, subprocess.CalledProcessError, KeyError, ValueError) as exc:
         parser.exit(2, f"upstream-watch: {exc}\n")

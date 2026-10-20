@@ -278,6 +278,33 @@ jobs:
           path: ${{ runner.temp }}/install-test-logs/
           retention-days: 7
 
+  # GitHub's schedule is best effort and drops a run without a trace
+  # (26-10-20: the watch's first night never started). A watch that stopped
+  # would say nothing, so every push and run by hand asks whether it still
+  # runs. Not on pull requests: a contributor's change is not what broke it,
+  # and the branch rule does not wait for it.
+  upstream-watch-ran:
+    name: The upstream watch still runs
+    if: >-
+      github.repository == 'haprion/haprion'
+      && github.event_name != 'pull_request'
+    # Where the watch itself runs the same tool.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      actions: read # the watch's runs
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: A scheduled run inside the last 48 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: python3 tools/upstream-watch ran --repository "${REPOSITORY}"
+
   # The branch rule requires this name. A matrix job reports one check per
   # Python, so this one stands for both and passes only when both did.
   gates:

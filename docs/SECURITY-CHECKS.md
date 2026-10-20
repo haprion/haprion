@@ -227,6 +227,13 @@ release), the Go that compiles the engine and the govulncheck that reads it. Eve
 What counts as major: for the engine a `0.y` step, for the rule set a new LTS line, for Go a new
 line, for govulncheck a new major version.
 
+GitHub's schedule is best effort: a run it drops leaves no trace, and a watch that stopped would
+say nothing. The CI job *The upstream watch still runs* (`tools/upstream-watch ran`) runs on every
+push to `main` and every run by hand, and fails when the workflow is not active or the schedule has not started
+it in 48 hours - one dropped night is allowed, two are not. A run started by hand does not count.
+A failed scheduled run is not this job's business: GitHub mails it to whoever last changed the
+`cron` line.
+
 The watch writes as a GitHub App, not with the workflow's own token: a pull request that token
 opens runs no checks, and a merge it makes starts no workflow. To set it up:
 

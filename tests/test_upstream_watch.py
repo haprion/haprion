@@ -433,6 +433,28 @@ class ThePinsInTheTree(unittest.TestCase):
         release = (BASE / "tools" / "build-release-packages").read_text()
         self.assertRegex(release, r"(?ms)^GO_ARCHIVES = \{\n.*?^\}$")
 
+    def test_a_proposal_passes_the_package_tests(self) -> None:
+        # A test that pins the tree's revision fails every proposal that moves
+        # it, and the merge waits forever (PR #3, 2026-10-20).
+        with tempfile.TemporaryDirectory(prefix="proposal-") as work:
+            tree = Path(work)
+            (tree / "tools").mkdir()
+            (tree / "tests").mkdir()
+            shutil.copy(BASE / "tools" / "build-coraza-package.py", tree / "tools")
+            shutil.copy(BASE / "tests" / "test_coraza_package.py", tree / "tests")
+            shutil.copytree(BASE / "src", tree / "src")
+            engine = tree / "tools" / "build-coraza-package.py"
+            WATCH.next_revision(engine, "CORAZA_REVISION")
+            WATCH.next_revision(engine, "CRS_REVISION")
+            done = subprocess.run(
+                [sys.executable, "-m", "unittest", "test_coraza_package"],
+                cwd=tree / "tests",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(done.returncode, 0, done.stderr[-2000:])
+
     def test_the_rule_set_key_is_the_one_the_comment_names(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gnupg-") as home:
             listing = subprocess.run(

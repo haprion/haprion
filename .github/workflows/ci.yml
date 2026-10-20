@@ -23,7 +23,7 @@ jobs:
   # only 3.14 evaluates lazily once broke an install the gate had passed.
   checks:
     name: Gates on Python ${{ matrix.python }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -116,17 +116,14 @@ jobs:
           printf '%s\n' "${RUNNER_TEMP}/shellcheck" "${RUNNER_TEMP}/actionlint" >> "${GITHUB_PATH}"
 
       # The database gate runs the interface's migrations, grants and SQL in a
-      # disposable cluster of the major version installations run (18). It
-      # comes from the PostgreSQL project's repository, set up by the script
-      # the distribution's postgresql-common carries with its own key - the
-      # same way install/platform/ensure-postgresql does on Debian.
+      # disposable cluster of the major version installations run (18). Ubuntu
+      # 26.04 ships it, as install/platform/ensure-postgresql takes it there;
+      # the PostgreSQL project's repository was needed only on 24.04.
       - name: Install the PostgreSQL the database gate runs
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -q
-          sudo apt-get install -y -q postgresql-common
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y -q postgresql-18
 
       - name: Run all source, quality, test, and dependency gates
@@ -311,7 +308,7 @@ jobs:
     name: Source, quality, and security gates
     needs: checks
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Both Pythons passed
@@ -332,7 +329,7 @@ jobs:
       && github.event.pull_request.user.login == 'dependabot[bot]'
       && github.repository == 'haprion/haprion'
       && !contains(github.event.pull_request.labels.*.name, 'hold')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: write # the merge writes the update to main

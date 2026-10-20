@@ -5,8 +5,8 @@ directive in the wrong context was found by step 05 on a manager (added with
 the sign-in limit, B305). Skipped where nginx is not installed; the gate's
 machine has it. The site needs nginx 1.25.1 or newer (`http2 on;`), which the
 supported distributions ship (Ubuntu 26.04, Debian 13); the check is skipped on
-an older one, such as the CI runner's (1.24 on Ubuntu 24.04, 26-10-15), rather
-than failing on a version the product does not run on.
+an older one, such as Ubuntu 24.04's 1.24, rather than failing on a version the
+product does not run on.
 """
 
 from __future__ import annotations

@@ -21,7 +21,15 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from typing import Any
+
+#
+# The most an answer may be, as the worker holds a sudo helper's stdout to
+# (`execution.STDOUT_LIMIT`). The helpers are root's own and trusted; the bound
+# is against one that is broken, not against an attacker (review 2026-10-20).
+#
+MAX_ANSWER_BYTES = 4 * 1024 * 1024
 
 
 class HelperUnavailable(Exception):
@@ -69,6 +77,12 @@ def ask(
     """
 
     lead = what[:1].upper() + what[1:]
+    #
+    # `timeout` is for the whole exchange. A socket's timeout bounds one
+    # operation, so an answer that came a byte at a time never tripped it; each
+    # wait is given what is left of the whole instead (review 2026-10-20).
+    #
+    deadline = time.monotonic() + timeout
     connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     connection.settimeout(timeout)
     try:
@@ -86,13 +100,24 @@ def ask(
             raise HelperUnavailable(f"{lead} could not be reached: {error}.") from error
 
         chunks: list[bytes] = []
+        received = 0
         try:
             connection.sendall(json.dumps(request, separators=(",", ":")).encode("utf-8"))
             connection.shutdown(socket.SHUT_WR)
             while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError
+                connection.settimeout(left)
                 chunk = connection.recv(65536)
                 if not chunk:
                     break
+                received += len(chunk)
+                if received > MAX_ANSWER_BYTES:
+                    raise HelperSilent(
+                        f"{lead} answered more than {MAX_ANSWER_BYTES // (1024 * 1024)} MiB;"
+                        " the answer was not read."
+                    )
                 chunks.append(chunk)
         except TimeoutError as error:
             raise HelperSilent(f"{lead} did not answer in time.") from error

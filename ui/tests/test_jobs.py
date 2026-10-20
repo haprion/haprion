@@ -679,3 +679,47 @@ class ANodeChangeThatWasNotPublished(unittest.TestCase):
             },
         )
         self.assertEqual(jobs.publication_note(job), message)
+
+
+class AnUnknownOutcomeSaysWhatToCheck(unittest.TestCase):
+    """Review 2026-10-20, V1: *Outcome unknown* said what happened, not what to do."""
+
+    def job(self, operation: str, state: str = "unknown", **payload: Any) -> Job:
+        moment = datetime(2026, 10, 20, tzinfo=UTC)
+        return Job(
+            id=1,
+            request_id=uuid4(),
+            operation=operation,
+            cluster="alpha",
+            payload=payload,
+            state=state,
+            created_at=moment,
+            started_at=moment,
+            finished_at=moment,
+            exit_code=None,
+            outcome=None,
+            result=None,
+            stderr_excerpt=None,
+            idempotency_key=None,
+            attempts=1,
+        )
+
+    def test_every_operation_the_worker_runs_has_its_own_sentence(self) -> None:
+        from haprion_ui import worker
+
+        self.assertEqual(set(jobs.UNKNOWN_NEXT), set(worker._OPERATION_OUTCOMES))
+
+    def test_a_certificate_request_warns_against_a_second_certificate(self) -> None:
+        self.assertIn(
+            "a second request issues a second certificate",
+            jobs.unknown_note(self.job("cert_issue")) or "",
+        )
+
+    def test_a_publish_that_also_deploys_points_at_the_dashboard(self) -> None:
+        self.assertIn(
+            "Dashboard", jobs.unknown_note(self.job("changes_publish", deploy=True)) or ""
+        )
+        self.assertIn("Versions", jobs.unknown_note(self.job("changes_publish")) or "")
+
+    def test_only_an_unknown_outcome_gets_one(self) -> None:
+        self.assertIsNone(jobs.unknown_note(self.job("deploy", "failed")))

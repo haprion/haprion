@@ -566,6 +566,63 @@ def unresolved_note(job: Job) -> str | None:
     return ". ".join(said) + "." if said else None
 
 
+#
+# What to look at before trying again, for a job whose outcome is unknown
+# (review 2026-10-20, V1). The answer never came, so the operation may have
+# taken effect; the sentence points at where that shows. No Retry button: a
+# second certificate request issues a second certificate, and a second deploy
+# is a different question from the first.
+#
+_DEPLOYED = (
+    "It may have run on some nodes. Check the cluster on the Dashboard before deploying again."
+)
+_CERTIFICATE = (
+    "It may have taken effect. Check the certificate under Certificates before trying again."
+)
+_ISSUED = (
+    "A certificate may have been issued. Check Certificates before asking again:"
+    " a second request issues a second certificate."
+)
+_RESTORE = "Check the restore's page for where the run stands before acting on it again."
+UNKNOWN_NEXT: dict[str, str] = {
+    "deploy": _DEPLOYED,
+    "cert_deploy": _DEPLOYED,
+    "changes_publish": "It may have been published. Check Versions before publishing again.",
+    "revert": "It may have been published. Check Versions before publishing again.",
+    "cluster_define": "It may have changed the cluster list. Check Settings before trying again.",
+    "cluster_node": "It may have changed the cluster's nodes. Check Settings before trying again.",
+    "server_state": "It may have taken effect. Check the server's state on its proxy before setting it again.",
+    "dynamic_unblock": "It may have taken effect. Check the proxy's blocked addresses before unblocking again.",
+    "backup_run": "An archive may have been taken. Check Node backups before running it again.",
+    "backup_schedule": "Check the schedule on Node backups before changing it again.",
+    "cert_issue": _ISSUED,
+    "cert_request": _ISSUED,
+    "cert_scep": _ISSUED,
+    "cert_import": "It may have been imported. Check Certificates before importing again.",
+    "cert_publish": _CERTIFICATE,
+    "cert_delete": _CERTIFICATE,
+    "cert_target": _CERTIFICATE,
+    "cert_receiver": "It may have taken effect. Check the receiver under Certificates before trying again.",
+    "dns_profile_apply": "Check the profile under Settings before applying it again.",
+    "ndes_profile_apply": "Check the profile under Settings before applying it again.",
+    "node_restore_prepare": _RESTORE,
+    "node_restore_preview": _RESTORE,
+    "node_restore": _RESTORE,
+    "node_restore_discard": _RESTORE,
+    "node_restore_status": _RESTORE,
+}
+
+
+def unknown_note(job: Job) -> str | None:
+    if job.state != "unknown":
+        return None
+    if job.operation == "changes_publish" and deploys(job):
+        return _DEPLOYED
+    return UNKNOWN_NEXT.get(
+        job.operation, "It may have taken effect. Check what it changes before trying again."
+    )
+
+
 def deletion_note(job: Job) -> str | None:
     """One sentence per state for a `cert_delete` or `cert_target` result, or None.
 
@@ -688,7 +745,10 @@ def _view(
         # row would bury the ones that mean something.
         #
         diagnostics=diagnostics_of(job) if diagnostics and ended_badly else None,
-        note=deletion_note(job) or publication_note(job) or unresolved_note(job),
+        note=unknown_note(job)
+        or deletion_note(job)
+        or publication_note(job)
+        or unresolved_note(job),
     )
 
 

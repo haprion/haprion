@@ -142,6 +142,13 @@
         return response.text();
       })
       .then((text) => {
+        //
+        // Asked again when the answer is in (review 2026-10-20, U1): the
+        // reader may have gone into a field or opened a dialog while it was on
+        // its way. That answer is then older than what they are doing, so it
+        // is dropped and the page asked again once they are done.
+        //
+        if (typing() || deciding()) return redraw();
         const parsed = new DOMParser().parseFromString(text, "text/html");
         const fresh = parsed.querySelector("main");
         const here = document.querySelector("main");

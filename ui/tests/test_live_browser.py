@@ -172,9 +172,43 @@ class AnOpenDialogHoldsTheRedraw(unittest.TestCase):
         tab.click("[data-open-dialog]")
         self.assertTrue(tab.evaluate("document.getElementById('publish-alpha').open"))
 
+    def test_an_answer_that_arrives_after_the_reader_began_is_not_swapped_in(self) -> None:
+        """Review 2026-10-20, U1: settled before the request, typing when it answered."""
 
-if __name__ == "__main__":
-    unittest.main()
+        context = self.browser.new_context()
+        self.addCleanup(context.close)
+        tab = context.new_page()
+        held: list[Any] = []
+        served = iter((dialog_page("first"), dialog_page("third")))
+        asking = False
+
+        def answer(route: Any) -> None:
+            if asking and not held:
+                held.append(route)
+                return
+            route.fulfill(content_type="text/html", body=next(served))
+
+        tab.route(f"{ORIGIN}/", answer)
+        tab.goto(f"{ORIGIN}/")
+        tab.add_script_tag(path=str(STATIC_DIRECTORY / "live.js"))
+        tab.add_script_tag(path=str(STATIC_DIRECTORY / "dialogs.js"))
+
+        asking = True
+        tab.evaluate("() => { window.haproxyUi.redraw(); }")
+        while not held:
+            tab.wait_for_timeout(20)
+        tab.click("[data-open-dialog]")
+        tab.fill("input[name=comment]", "Move the shop")
+        held[0].fulfill(content_type="text/html", body=dialog_page("second"))
+        tab.wait_for_timeout(1500)
+
+        self.assertEqual(tab.text_content("#drawn"), "first")
+        self.assertTrue(tab.evaluate("document.getElementById('publish-alpha').open"))
+        self.assertEqual(tab.evaluate("document.activeElement.name"), "comment")
+
+        tab.click("[data-close-dialog]")
+        tab.evaluate("document.activeElement.blur()")
+        tab.wait_for_function("document.getElementById('drawn').textContent === 'third'")
 
 
 class APageThatAnswersAFormKeepsStill(unittest.TestCase):
@@ -230,3 +264,7 @@ class APageThatAnswersAFormKeepsStill(unittest.TestCase):
 
     def test_a_page_that_was_asked_for_keeps_itself_current(self) -> None:
         self.assertGreater(self.asked(answered=False), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

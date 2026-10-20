@@ -100,6 +100,11 @@ class JobView:
     #
     note: str | None = None
     #
+    # Queued before the manager last started, and waiting for an admin's Run
+    # or Discard (0082). The worker takes nothing held until then.
+    #
+    held: bool = False
+    #
     # Where the job belongs, when that is a page of its own: a node restore's
     # three jobs are steps of one run, and the run's page is the only place
     # its next step can be taken. Without this nothing led back to it.
@@ -713,6 +718,9 @@ def _view(
     diagnostics: bool,
 ) -> JobView:
     label, tone = _state(job.state)
+    held = job.state == "pending" and job.held_since is not None and job.held_decision is None
+    if held:
+        label, tone = "Held", "warning"
     ended_badly = job.state in ATTENTION
     return JobView(
         id=job.id,
@@ -745,6 +753,7 @@ def _view(
         # row would bury the ones that mean something.
         #
         diagnostics=diagnostics_of(job) if diagnostics and ended_badly else None,
+        held=held,
         note=unknown_note(job)
         or deletion_note(job)
         or publication_note(job)

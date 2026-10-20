@@ -8320,6 +8320,36 @@ def build_router(config: Config) -> APIRouter:
             headers={"Cache-Control": "no-store"},
         )
 
+    @router.post("/jobs/{job_id}/held")
+    def decide_held_job(
+        request: Request,
+        job_id: int,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        decision: Annotated[str, Form(max_length=16)],
+    ) -> Response:
+        """Run or discard a job held since the manager last started (0082, review 2026-10-20 R1)."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if decision not in {"run", "discard"}:
+            return PlainTextResponse("Refused", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            if db.decide_held_job(
+                connection, job_id=job_id, decision=decision, actor=gate.username
+            ):
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="held_job_decided",
+                    detail={"job": job_id, "decision": decision},
+                )
+            connection.commit()
+        return RedirectResponse("/jobs", status_code=303)
+
     @router.get("/jobs", response_class=HTMLResponse)
     def latest_jobs(request: Request) -> Response:
         """Show the bounded, reader-safe history of management requests."""

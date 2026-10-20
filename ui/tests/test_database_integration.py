@@ -3453,6 +3453,103 @@ class NdesDatabase(unittest.TestCase):
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class JobsFromBeforeTheBoot(unittest.TestCase):
+    """0082, review 2026-10-20 R1: a restored manager's old jobs wait for an admin."""
+
+    BOOT = datetime(2000, 1, 2, tzinfo=UTC)
+
+    def connect(self, role: str = "HAPRION_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role]}")
+
+    def setUp(self) -> None:
+        self.ids: list[int] = []
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            for cluster in ("helda", "heldb", "heldc"):
+                job = db.queue_job(
+                    connection,
+                    operation="deploy",
+                    cluster=cluster,
+                    payload={},
+                    idempotency_key=uuid4(),
+                )
+                self.ids.append(job.id)
+            connection.commit()
+        with self.connect() as connection:
+            connection.execute(
+                "update job set created_at = '2000-01-01T00:00:00Z' where id = any(%s)", (self.ids,)
+            )
+            connection.commit()
+        self.addCleanup(self.remove)
+
+    def remove(self) -> None:
+        with self.connect() as connection:
+            connection.execute("delete from job where id = any(%s)", (self.ids,))
+            connection.commit()
+
+    def test_held_jobs_wait_and_an_admin_s_answer_lets_the_worker_end_them(self) -> None:
+        run, discard, waiting = self.ids
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
+            held = db.hold_jobs_queued_before(connection, boot=self.BOOT)
+            connection.commit()
+            self.assertTrue({run, discard, waiting} <= set(held))
+            claimed = db.claim_job(connection, worker_id="w", lease_seconds=60)
+            connection.rollback()
+            self.assertTrue(claimed is None or claimed.id not in self.ids)
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertTrue(
+                db.decide_held_job(connection, job_id=run, decision="run", actor="admin")
+            )
+            self.assertTrue(
+                db.decide_held_job(connection, job_id=discard, decision="discard", actor="admin")
+            )
+            self.assertFalse(
+                db.decide_held_job(connection, job_id=run, decision="discard", actor="admin")
+            )
+            connection.commit()
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("update job set held_since = null where id = %s", (waiting,))
+        taken = {}
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
+            for _ in range(2):
+                claimed = db.claim_job(connection, worker_id="w", lease_seconds=60)
+                connection.commit()
+                if claimed is None:
+                    self.fail("an answered job was not taken")
+                taken[claimed.id] = claimed.held_decision
+        self.assertEqual(taken, {run: "run", discard: "discard"})
+
+    def test_a_job_queued_after_the_boot_is_not_held(self) -> None:
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
+            held = db.hold_jobs_queued_before(connection, boot=datetime(1999, 1, 1, tzinfo=UTC))
+            connection.rollback()
+        self.assertFalse(set(held) & set(self.ids))
+
+    def test_after_restore_holds_every_job_and_ends_every_session(self) -> None:
+        script = (
+            Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-backup"
+        ).read_text()
+        statement = re.search(r"<<'SQL'\n(.*?)\nSQL\n", script, re.DOTALL)
+        if statement is None:
+            self.fail("haprion-backup after-restore has no statement")
+        body = statement[1].replace("begin;\n", "").replace("commit;", "")
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(body)
+            cursor.execute(
+                "select count(*) from job where id = any(%s) and held_since is null", (self.ids,)
+            )
+            self.assertEqual(cursor.fetchone(), (0,))
+            cursor.execute("select count(*) from app_session where revoked_at is null")
+            self.assertEqual(cursor.fetchone(), (0,))
+            cursor.execute(
+                "select action from audit_event where actor = 'haprion-backup' order by id desc limit 2"
+            )
+            self.assertEqual(
+                sorted(row[0] for row in cursor.fetchall()), ["all_sessions_revoked", "jobs_held"]
+            )
+            connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheBackupsHashCheck(unittest.TestCase):
     """Review 2026-10-20, R2: the restore check's query against the real schema."""
 

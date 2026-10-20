@@ -5,6 +5,7 @@
 #     haprion-backup dump
 #     haprion-backup verify-restore
 #     haprion-backup list
+#     haprion-backup after-restore
 #
 # A dump nobody has restored is a belief, not a backup. `dump` therefore reads
 # every dump back with `pg_restore --list` before keeping it, and
@@ -33,7 +34,7 @@ warn() { echo "WARNING: $*" >&2; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
 
 usage() {
-    sed -n '3,9p' "$0" | sed 's/^# \?//'
+    sed -n '3,10p' "$0" | sed 's/^# \?//'
     exit 64
 }
 
@@ -279,6 +280,48 @@ do_verify_restore() {
     log "restore verified from ${newest}"
 }
 
+#
+# After a dump was restored into the live database without the machine
+# starting again (review 2026-10-20, R1). The worker holds what was queued
+# before a boot by itself; a restore without one needs this. Every waiting or
+# running job is held for an admin's Run or Discard on *Jobs* - they are the
+# backup's, and ran then - and every session is ended: the restored ones
+# include sessions signed out since. Both are written to the audit record.
+#
+do_after_restore() {
+    local answer
+    answer="$(psql_as -d "$DB_NAME" <<'SQL'
+begin;
+with held as (
+    update job set held_since = statement_timestamp()
+     where state in ('pending', 'running') and held_since is null
+    returning id
+)
+insert into audit_event (actor, action, detail)
+select 'haprion-backup', 'jobs_held',
+       jsonb_build_object('jobs', coalesce(jsonb_agg(id order by id), '[]'::jsonb),
+                          'reason', 'restored from a dump')
+  from held
+returning detail->'jobs';
+with ended as (
+    update app_session set revoked_at = statement_timestamp()
+     where revoked_at is null
+    returning 1
+)
+insert into audit_event (actor, action, detail)
+select 'haprion-backup', 'all_sessions_revoked', jsonb_build_object('sessions', count(*))
+  from ended
+returning detail->'sessions';
+commit;
+SQL
+)"
+    local jobs sessions
+    jobs="$(sed -n 1p <<<"$answer")"
+    sessions="$(sed -n 2p <<<"$answer")"
+    log "held for an admin on Jobs: ${jobs}"
+    log "sessions ended: ${sessions}"
+}
+
 step_log() { echo; echo "== $*"; }
 
 #
@@ -302,6 +345,7 @@ take_lock() {
 
 case "$command" in
     dump)           take_lock; do_dump ;;
+    after-restore)  do_after_restore ;;
     verify-restore) take_lock; do_verify_restore ;;
     list)
         [[ -d "$DUMP_DIR" ]] || die "no dump directory: ${DUMP_DIR}"

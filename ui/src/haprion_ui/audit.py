@@ -154,6 +154,9 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "password_reset": lambda detail: f"Set a new password for {_account(detail)}",
     "break_glass_changed": _break_glass,
     "sessions_revoked": lambda detail: f"Signed {_account(detail)} out everywhere",
+    "all_sessions_revoked": lambda detail: (
+        f"Signed every account out ({detail.get('sessions', 0)} session(s))"
+    ),
     "throttle_cleared": lambda detail: f"Cleared the sign-in throttle for {_account(detail)}",
     "oidc_configured": lambda _detail: "Changed the identity provider settings",
     "oidc_verified": lambda detail: (
@@ -183,6 +186,14 @@ ACTIVITY_PHRASES: Mapping[str, Callable[[Mapping[str, Any]], str]] = {
     "job_finished": lambda detail: f"Job {detail.get('job', '?')} ended",
     "job_requeued": lambda detail: f"Job {detail.get('job', '?')} was queued again",
     "job_abandoned": lambda detail: f"Job {detail.get('job', '?')} was given up",
+    "jobs_held": lambda detail: (
+        f"Held {len(detail.get('jobs') or [])} job(s) for an admin: {detail.get('reason', '')}"
+    ),
+    "held_job_decided": lambda detail: (
+        f"Let held job {detail.get('job', '?')} run"
+        if detail.get("decision") == "run"
+        else f"Discarded held job {detail.get('job', '?')}"
+    ),
 }
 
 

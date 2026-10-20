@@ -899,3 +899,49 @@ class AFailedCertificateIssue(LoginTestCase):
 
         self.assertIn("certbot_failed", page)
         self.assertNotIn("Cloudflare", page)
+
+
+class AHeldJob(LoginTestCase):
+    """0082, review 2026-10-20 R1: queued before the manager started, it waits for Run or Discard."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        held = replace(job(state="pending"), held_since=datetime.now(UTC))
+        patch = mock.patch("haprion_ui.db.recent_jobs", return_value=[held])
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def admin(self, *, writes: bool = True) -> Any:
+        client = self.client(replace(configuration(), management_writes=writes))
+        self.assertEqual(self.sign_in(client).status_code, 303)
+        return client
+
+    def test_it_is_held_and_an_admin_is_offered_run_and_discard(self) -> None:
+        page = self.admin().get("/jobs").text
+        self.assertIn(">Held</span>", page)
+        self.assertIn("Queued before the manager last started.", page)
+        self.assertIn('action="/jobs/19/held"', page)
+        self.assertIn('name="decision" value="run">Run</button>', page)
+        self.assertIn('name="decision" value="discard">Discard</button>', page)
+        self.assertNotIn('action="/jobs/19/held"', self.admin(writes=False).get("/jobs").text)
+
+    def test_the_answer_is_recorded_and_anything_else_refused(self) -> None:
+        client = self.admin()
+        page = client.get("/jobs").text
+        token = page.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+        with mock.patch("haprion_ui.db.decide_held_job", return_value=True) as decide:
+            answered = client.post(
+                "/jobs/19/held",
+                data={"csrf_token": token, "decision": "discard"},
+                follow_redirects=False,
+            )
+            refused = client.post(
+                "/jobs/19/held",
+                data={"csrf_token": token, "decision": "delete"},
+                follow_redirects=False,
+            )
+        self.assertEqual((answered.status_code, answered.headers["location"]), (303, "/jobs"))
+        self.assertEqual(refused.status_code, 400)
+        decide.assert_called_once()
+        self.assertEqual(decide.call_args.kwargs["decision"], "discard")
+        self.assertIn("held_job_decided", self.audit)

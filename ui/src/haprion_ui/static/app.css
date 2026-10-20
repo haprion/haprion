@@ -1931,6 +1931,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * has a cell of its own, and pushing the note's own code block out there
  * would leave a sentence and a command with a gap between them. */
 .follow-up-line { display: flex; align-items: center; gap: 12px; }
+.held-decision { display: flex; gap: 8px; margin-left: auto; }
 .editor-actions { display: flex; justify-content: flex-end; padding: 14px 20px 4px; }
 /* The note keeps the left, the button the right, and they share one line. */
 /*

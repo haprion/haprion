@@ -237,6 +237,13 @@ class Job:
     stderr_excerpt: str | None
     idempotency_key: UUID | None
     attempts: int
+    #
+    # Held since the manager last started (0082): waiting for an admin's
+    # `run` or `discard`. Read by the Jobs page; other readers leave them out.
+    #
+    held_since: datetime | None = None
+    held_decision: str | None = None
+    held_decided_by: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,6 +419,8 @@ class ClaimedJob:
     idempotency_key: UUID | None
     attempts: int
     claim_token: UUID
+    held_decision: str | None = None
+    held_decided_by: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -530,7 +539,7 @@ def recent_jobs(
         cursor.execute(
             "select id, request_id, operation, cluster, payload, state, created_at, "
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
-            "       idempotency_key, attempts "
+            "       idempotency_key, attempts, held_since, held_decision, held_decided_by "
             "  from job "
             " where (%(cluster)s::text is null or cluster = %(cluster)s) "
             " order by created_at desc, id desc "
@@ -827,6 +836,7 @@ def claim_job(
             " where id = ( "
             "         select id from job "
             "          where state = 'pending' "
+            "            and (held_since is null or held_decision is not null) "
             "            and not exists ( "
             "                select 1 from job_claim_gate "
             "                 where paused_until > statement_timestamp()) "
@@ -835,10 +845,57 @@ def claim_job(
             "          limit 1) "
             "returning id, request_id, operation, cluster, payload, state, created_at, "
             "          started_at, finished_at, exit_code, outcome, result, "
-            "          stderr_excerpt, idempotency_key, attempts, claim_token",
+            "          stderr_excerpt, idempotency_key, attempts, claim_token, "
+            "          held_decision, held_decided_by",
             {"worker_id": worker_id, "lease_seconds": lease_seconds},
         )
         return cursor.fetchone()
+
+
+def hold_jobs_queued_before(connection: Connection[Any], *, boot: datetime | None) -> list[int]:
+    """Hold every waiting or running job queued before `boot` (0082, review 2026-10-20 R1).
+
+    A manager restored from an image boots, and its database holds the jobs
+    that were waiting at the backup's moment - which ran then. None of them is
+    taken again until an admin says `run`. `boot` None holds every one: that is
+    `haprion-backup after-restore`, for a dump restored without a boot.
+    A running one stays running for recovery to settle; if recovery puts it
+    back in the queue, the hold keeps it there.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update job set held_since = statement_timestamp() "
+            " where state in ('pending', 'running') "
+            "   and held_since is null "
+            "   and (%(boot)s::timestamptz is null or created_at < %(boot)s) "
+            "returning id",
+            {"boot": boot},
+        )
+        return sorted(row[0] for row in cursor.fetchall())
+
+
+def decide_held_job(connection: Connection[Any], *, job_id: int, decision: str, actor: str) -> bool:
+    """An admin's answer for a held job: `run` or `discard`. False when it is not held and waiting.
+
+    Only the answer is written; the worker takes the job and runs or ends it,
+    as it changes every job's state.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update job set held_decision = %(decision)s, held_decided_by = %(actor)s "
+            " where id = %(id)s and state = 'pending' "
+            "   and held_since is not null and held_decision is null",
+            {"id": job_id, "decision": decision, "actor": actor},
+        )
+        if cursor.rowcount != 1:
+            return False
+        #
+        # The worker sleeps until a job is queued; an answer is as good as one.
+        #
+        cursor.execute("notify job_queued")
+        return True
 
 
 def renew_lease(

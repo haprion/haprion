@@ -582,7 +582,32 @@ def from_manager(
                 link="/",
             )
         )
-    waiting = [job for job in rows if job.state == "pending"]
+    #
+    # A held job waits for an admin, not for the worker (0082): it is its own
+    # row, and never the worker's silence.
+    #
+    held = [
+        job
+        for job in rows
+        if job.state == "pending" and job.held_since is not None and job.held_decision is None
+    ]
+    if held:
+        items.append(
+            Item(
+                kind="manager",
+                severity="warning",
+                cluster=None,
+                subject="held jobs",
+                message=f"{len(held)} job(s) queued before the manager started wait for Run or Discard",
+                since=min(job.held_since for job in held if job.held_since is not None),
+                link="/jobs",
+            )
+        )
+    waiting = [
+        job
+        for job in rows
+        if job.state == "pending" and (job.held_since is None or job.held_decision is not None)
+    ]
     running = any(job.state == "running" for job in rows)
     if writes and waiting and not running:
         oldest = min(job.created_at for job in waiting)

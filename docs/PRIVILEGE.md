@@ -189,8 +189,9 @@ table you do not own. Running a migration is a deliberate root action, mapped ex
 Table grants live in the migration that creates the table, named against three contract roles
 rather than against accounts, and column by column rather than table-wide. The web role may state
 what it wants done and nothing about what happened: it holds `insert` on the job table's operation,
-cluster and payload, and no `update` at all, while state, request ID and timestamps come from
-column defaults. The audit trail is append-only by grant — no role holds `update` or `delete` on it.
+cluster and payload, while state, request ID and timestamps come from column defaults. Its one
+`update` is an admin's answer for a held job (`held_decision`, `held_decided_by`); the worker
+changes the job's state when it takes that answer. The audit trail is append-only by grant — no role holds `update` or `delete` on it.
 
 Each role carries a `statement_timeout` and an `idle_in_transaction_session_timeout`, set per role
 and per database. The worker must never hold a transaction open across a CLI subprocess, and this

@@ -418,8 +418,34 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
     to prevent.
     """
 
+    if job.held_decision == "discard":
+        #
+        # Held since the manager started, and an admin said it should not run
+        # (0082). Ended here, as every job is, and never started.
+        #
+        logger.info("job %s was held and discarded by %s", job.id, job.held_decided_by)
+        _finish(
+            connection,
+            job,
+            state="blocked",
+            outcome="blocked",
+            exit_code=None,
+            result={
+                "error": {
+                    "code": "held_discarded",
+                    "message": (
+                        f"queued before the manager last started; {job.held_decided_by}"
+                        " decided it should not run"
+                    ),
+                }
+            },
+            stderr_excerpt=None,
+            worker=worker,
+        )
+        return
+
     waited = (datetime.now(UTC) - job.created_at).total_seconds()
-    if job.attempts == 1 and waited > MAX_PENDING_SECONDS:
+    if job.attempts == 1 and job.held_decision is None and waited > MAX_PENDING_SECONDS:
         #
         # Taken for the first time and older than any real queue: asked for
         # before a restore, or while writes were off for hours. Nothing runs;
@@ -730,6 +756,51 @@ def _wait_for_work(listener: Any, stopping: StopRequest, seconds: int) -> None:
     service.sleep_until_notified(stopping, listener, seconds)
 
 
+def boot_time(stat: Path = Path("/proc/stat")) -> datetime | None:
+    """When this machine last started, from the kernel's `btime`; None if it cannot be read."""
+
+    try:
+        for line in stat.read_text(encoding="ascii").splitlines():
+            if line.startswith("btime "):
+                return datetime.fromtimestamp(int(line.split()[1]), UTC)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def hold_from_before_boot(connection: Any, *, worker: str, boot: datetime | None) -> list[int]:
+    """Hold what was queued before this machine started (0082, review 2026-10-20 R1).
+
+    A manager restored from an image or a backup boots holding the jobs that
+    were waiting when the backup was taken, and those ran then. A marker on the
+    manager cannot say it was restored - it is restored too - but the boot can.
+    The cost is that a job queued just before an ordinary reboot waits for a
+    click as well. A boot that cannot be read holds nothing: the two-hour rule
+    is still there behind it.
+    """
+
+    if boot is None:
+        logger.warning("the machine's start time could not be read; no job is held")
+        return []
+    held = db.hold_jobs_queued_before(connection, boot=boot)
+    if held:
+        db.record_audit_event(
+            connection,
+            actor=worker,
+            action="jobs_held",
+            cluster=None,
+            request_id=None,
+            detail={"jobs": held, "reason": "queued before the manager started"},
+        )
+        logger.warning(
+            "%d job(s) queued before the manager started are held for an admin: %s",
+            len(held),
+            ", ".join(str(job) for job in held),
+        )
+    connection.commit()
+    return held
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(format="%(levelname)s %(message)s", level=logging.INFO)
     path = Path(os.environ.get("HAPRION_UI_CONFIG", str(DEFAULT_CONFIG_PATH)))
@@ -761,6 +832,8 @@ def main(argv: list[str] | None = None) -> int:
 
         stopping = StopRequest(what="worker")
         worker = worker_identity()
+        with pool.connection() as connection:
+            hold_from_before_boot(connection, worker=worker, boot=boot_time())
         while not stopping.requested():
             if not config.management_writes:
                 stopping.sleep(IDLE_SECONDS)

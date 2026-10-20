@@ -2173,14 +2173,30 @@ what makes "put that one table back" an ordinary afternoon.
 
 A restored database holds the jobs that were waiting at the moment of the backup. Those ran at the
 time, and running them again would be a new request nobody made — a *Drain* replaced since by
-*Ready* would drain the server again. The worker therefore never runs a job that has waited more
-than two hours: it ends *blocked* with the code `request_expired`, and the job page says so. The
-longest real queue is far shorter. A job the worker had already started is judged as after any
-worker failure ([Jobs and status freshness](#jobs-and-status-freshness)), from what the cluster
-shows rather than from its age.
+*Ready* would drain the server again. So no job queued before the manager last started is run by
+itself. A restored host always starts again, and the worker holds every such job: *Jobs* shows it
+as *Held*, with **Run** and **Discard** for an admin, and *Needs attention* says how many wait. A
+discarded job ends *blocked* with the code `held_discarded`; nothing about it ran. A job queued
+just before an ordinary reboot is held the same way, and needs the same click.
 
-The sessions come back as they were at the backup, including ones signed out or revoked since.
-After a restore, end them for every account: *Settings → Users*, the account, **End sessions**.
+A database restored into a running host, without a restart, is not seen by the worker. Stop it,
+restore, and then run:
+
+```
+sudo systemctl stop haprion-worker
+# restore the dump
+sudo haprion-backup after-restore
+sudo systemctl start haprion-worker
+```
+
+`after-restore` holds every waiting or running job the same way and ends every session; the
+restored sessions include ones signed out or revoked since. Both are in the audit record. After a
+host restore, end the sessions yourself: *Settings → Users*, the account, **End sessions**.
+
+Behind the hold, the worker still never runs a job that has waited more than two hours unless an
+admin chose **Run**: it ends *blocked* with `request_expired`. A job the worker had already
+started is judged as after any worker failure
+([Jobs and status freshness](#jobs-and-status-freshness)), from what the cluster shows.
 
 #### After restoring the database on its own: replay the traffic log
 

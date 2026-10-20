@@ -560,6 +560,26 @@ class TheManagersOwnServices(unittest.TestCase):
         )
         self.assertEqual(self.items(rows=[waiting], writes=False), [])
 
+    def test_a_held_job_waits_for_an_admin_not_for_the_worker(self) -> None:
+        """0082: a job queued before the boot is its own row, never the worker's silence."""
+
+        held = replace(
+            job(state="pending"),
+            created_at=NOW - timedelta(hours=3),
+            held_since=NOW - timedelta(minutes=30),
+        )
+        (item,) = self.items(rows=[held])
+        self.assertEqual(
+            (item.subject, item.severity, item.link), ("held jobs", "warning", "/jobs")
+        )
+        self.assertIn("1 job(s) queued before the manager started", item.message)
+        #
+        # Answered, it is the worker's again.
+        #
+        answered = replace(held, held_decision="run", held_decided_by="admin")
+        (item,) = self.items(rows=[answered])
+        self.assertEqual(item.subject, "worker")
+
     def test_a_partition_horizon_a_day_short_is_the_maintenance_not_run(self) -> None:
         short = {"traffic_log": NOW.date() + timedelta(days=5), "metric_frontend": None}
         (item,) = self.items(horizons=short)

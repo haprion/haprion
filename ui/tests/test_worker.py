@@ -9,6 +9,7 @@ than about SQL.
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from collections.abc import Iterator
 from dataclasses import replace
@@ -415,6 +416,58 @@ class RequestsFromBeforeARestore(WorkerTestCase):
             worker.run_one_job(self.connection, job, worker=WORKER)
 
         self.assertEqual(self.finished[0]["state"], "done")
+
+
+class JobsHeldSinceTheBoot(WorkerTestCase):
+    """0082, review 2026-10-20 R1: what an admin said about a held job."""
+
+    def test_a_discarded_job_ends_blocked_and_never_runs(self) -> None:
+        job = replace(claimed(), held_decision="discard", held_decided_by="admin")
+        with mock.patch.object(execution, "run") as never:
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        never.assert_not_called()
+        (finished,) = self.finished
+        self.assertEqual(finished["state"], "blocked")
+        self.assertEqual(finished["result"]["error"]["code"], "held_discarded")
+        self.assertIn("admin", finished["result"]["error"]["message"])
+
+    def test_a_job_an_admin_let_run_is_not_held_to_the_two_hours(self) -> None:
+        job = replace(
+            claimed(),
+            held_decision="run",
+            held_decided_by="admin",
+            created_at=datetime.now(UTC) - timedelta(days=3),
+        )
+        with mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.assertEqual(self.finished[0]["state"], "done")
+
+    def test_the_boot_is_read_from_the_kernel_and_a_missing_one_holds_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            stat = Path(directory) / "stat"
+            stat.write_text("cpu  1 2 3\nbtime 1792526400\nprocesses 9\n")
+            self.assertEqual(worker.boot_time(stat), datetime.fromtimestamp(1792526400, UTC))
+            self.assertIsNone(worker.boot_time(Path(directory) / "absent"))
+        with mock.patch.object(db, "hold_jobs_queued_before") as hold:
+            self.assertEqual(
+                worker.hold_from_before_boot(self.connection, worker=WORKER, boot=None), []
+            )
+        hold.assert_not_called()
+
+    def test_held_jobs_are_written_to_the_audit_record(self) -> None:
+        boot = datetime(2026, 10, 20, tzinfo=UTC)
+        with (
+            mock.patch.object(db, "hold_jobs_queued_before", return_value=[4, 7]) as hold,
+            mock.patch.object(db, "record_audit_event") as audit,
+        ):
+            self.assertEqual(
+                worker.hold_from_before_boot(self.connection, worker=WORKER, boot=boot), [4, 7]
+            )
+        hold.assert_called_once_with(self.connection, boot=boot)
+        self.assertEqual(audit.call_args.kwargs["action"], "jobs_held")
+        self.assertEqual(audit.call_args.kwargs["detail"]["jobs"], [4, 7])
 
 
 class LosingTheLease(WorkerTestCase):

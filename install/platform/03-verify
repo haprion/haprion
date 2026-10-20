@@ -171,7 +171,8 @@ app_web	feature_switch	UPDATE	enabled, remembered, updated_by
 app_web	getting_started	INSERT	hidden_by
 app_web	getting_started	SELECT	hidden, hidden_at, hidden_by
 app_web	job	INSERT	cluster, idempotency_key, operation, payload
-app_web	job	SELECT	attempts, cluster, created_at, exit_code, finished_at, id, idempotency_key, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt
+app_web	job	SELECT	attempts, cluster, created_at, exit_code, finished_at, held_decided_by, held_decision, held_since, id, idempotency_key, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt
+app_web	job	UPDATE	held_decided_by, held_decision
 app_web	login_attempt	INSERT	client_ip, succeeded, username_normalised
 app_web	login_attempt	SELECT	at, client_ip, id, succeeded, username_normalised
 app_web	login_unlock	INSERT	actor, username_normalised
@@ -211,8 +212,8 @@ app_web	waf_match	SELECT	client, cluster, field, matched, node, object, occurred
 app_worker	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_worker	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_worker	dns_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version
-app_worker	job	SELECT	attempts, claim_token, cluster, created_at, exit_code, finished_at, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt, worker_id
-app_worker	job	UPDATE	attempts, claim_token, exit_code, finished_at, lease_until, outcome, result, started_at, state, stderr_excerpt, worker_id
+app_worker	job	SELECT	attempts, claim_token, cluster, created_at, exit_code, finished_at, held_decided_by, held_decision, held_since, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt, worker_id
+app_worker	job	UPDATE	attempts, claim_token, exit_code, finished_at, held_since, lease_until, outcome, result, started_at, state, stderr_excerpt, worker_id
 app_worker	job_claim_gate	SELECT	paused_until
 app_worker	metric_backend_alias	INSERT	cluster, new_name, old_name
 app_worker	metric_backend_alias	SELECT	cluster, new_name, old_name, renamed_at, reused_at
@@ -345,6 +346,8 @@ refuse "$WEB_USER"    "cannot grant itself a lease" \
         values ('deploy', 'alpha', '{}'::jsonb, now())"
 refuse "$WEB_USER"    "cannot update a job row" \
        "update job set state = 'done'"
+refuse "$WEB_USER"    "cannot hold or release a job itself" \
+       "update job set held_since = null"
 refuse "$WEB_USER"    "cannot queue an operation outside the allowlist" \
        "insert into job (operation, cluster, payload)
         values ('rm-rf', 'alpha', '{}'::jsonb)"

@@ -125,12 +125,12 @@ After restoring the management host, before restoring any node:
   that at every node roll-out: `<...>`. Node status cannot tell you: it compares a node's scripts
   with that node's own record. After a restore, `dpkg-query -W haprion-node` on both nodes should
   name the same version.
-- Expect the jobs that were waiting when the backup was taken to end *blocked*, with
-  `request_expired`. They ran at the time; the worker does not run a job that has waited more than
-  two hours. Ask again for any that still applies.
-- End every account's sessions (*Settings → Users*, the account, **End sessions**). The restored
-  sessions are the ones of the backup's moment, including any that were signed out or revoked
-  since.
+- Decide each job on *Jobs* that is *Held*. They were waiting when the backup was taken and ran at
+  the time; nothing runs them until an admin chooses **Run** or **Discard**. A database restored
+  without restarting the host needs `sudo haprion-backup after-restore` before the worker starts.
+- End every account's sessions (*Settings → Users*, the account, **End sessions**), or let
+  `haprion-backup after-restore` end them all. The restored sessions are the ones of the backup's
+  moment, including any that were signed out or revoked since.
 
 ### 3. Failing over
 

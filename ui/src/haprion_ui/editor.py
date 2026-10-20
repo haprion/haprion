@@ -21,7 +21,7 @@ than none.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -40,7 +40,9 @@ from haprion_ui.preview import (
     MAX_RULES,
     QUERY_TYPES,
     Preview,
+    Unexpressible,
     access_rules,
+    form_from_document,
     named_addresses,
     saved_document,
     unchecked_countries,
@@ -262,6 +264,151 @@ def fingerprint(stored: str | None) -> str:
     if stored is None:
         return ""
     return hashlib.sha256(stored.strip().encode("utf-8")).hexdigest()
+
+
+#
+# Each field of the form by the words the form gives it, for what moved under a
+# draft (0080). Every field is named here - a test holds this to `DEFAULTS` -
+# because a field left out would be a change the page did not mention.
+# The rule fields are one line, `Rules`; `rule_index` is the form's own
+# bookkeeping and never differs on its own.
+#
+FIELD_LABELS: dict[str, str] = {
+    "name": "Name",
+    "hostnames": "Hostnames",
+    "description": "Description",
+    "protocol": "Protocol",
+    "tcp_port": "Port",
+    "vip": "VIP",
+    "source": "Source",
+    "certificate": "Certificate",
+    "redirect_http": "Redirect HTTP to HTTPS",
+    "hsts": "HSTS",
+    "hsts_max_age": "HSTS lifetime",
+    "hsts_subdomains": "HSTS for subdomains",
+    "backend": "Backend name",
+    "balance": "Balancing",
+    "balance_key": "Balancing key",
+    "cookie": "Session cookie",
+    "servers": "Servers",
+    "health_type": "Health check",
+    "health_path": "Health check path",
+    "health_host": "Health check host header",
+    "health_port": "Health check port",
+    "health_expect_status": "Expected status",
+    "health_expect_body": "Expected body",
+    "health_send": "Health check send",
+    "health_expect": "Health check expect",
+    "health_query_name": "Query name",
+    "health_query_type": "Query type",
+    "health_interval": "Check interval",
+    "health_fast_interval": "Fast interval",
+    "health_down_interval": "Down interval",
+    "health_rise": "Checks to rise",
+    "health_fall": "Checks to fall",
+    "backend_tls": "TLS to the servers",
+    "backend_tls_policy": "Server TLS policy",
+    "backend_tls_ca": "Server CA",
+    "proxy_protocol": "PROXY protocol",
+    "listen_tls_policy": "TLS policy",
+    "max_connections": "Connections per server",
+    "server_timeout": "Server timeout",
+    "slow_start": "Slow start",
+    "allow_from": "Reachable from — groups",
+    "allow_ranges": "Reachable from — addresses",
+    "rate_limit": "Rate limit",
+    "rate_window": "Rate window",
+    "block_requests": "Block on deny rules",
+    "block_errors": "Block on errors",
+    "block_connections": "Block on new connections",
+    "block_window": "Block window",
+    "block_for": "Block for",
+    "block_status": "Blocked answer",
+    "block_exempt_from": "Never blocked — groups",
+    "block_exempt_ranges": "Never blocked — addresses",
+    "deny_from": "Denied — groups",
+    "deny_ranges": "Denied — addresses",
+    "deny_mode": "Denied — mode",
+    "max_request_body": "Max request body",
+    "rule_index": "Rules",
+    "rule_name": "Rules",
+    "rule_mode": "Rules",
+    "rule_path": "Rules",
+    "rule_match": "Rules",
+    "rule_header": "Rules",
+    "rule_header_match": "Rules",
+    "rule_header_value": "Rules",
+    "rule_source": "Rules",
+    "rule_methods": "Rules",
+    "rule_negate": "Rules",
+    "maintenance": "Maintenance",
+    "maintenance_message": "Maintenance message",
+    "unavailable_message": "Unavailable message",
+    "request_headers": "Request headers",
+    "response_headers": "Response headers",
+    "redirect_path": "Redirect path",
+    "redirect_match": "Redirect match",
+    "redirect_location": "Redirect to",
+    "redirect_status": "Redirect status",
+    "advanced": "Advanced config",
+    "handwritten_pool": "Handwritten pool",
+    "waf_mode": "WAF mode",
+    "waf_engine_error": "WAF engine not answering",
+    "waf_paranoia": "WAF strictness",
+    "waf_exceptions": "WAF exceptions",
+    "waf_large_bodies": "WAF large bodies",
+}
+RULES = "Rules"
+
+
+@dataclass(frozen=True, slots=True)
+class Moved:
+    """One field of an object as a draft was written against it, and as it is published now."""
+
+    label: str
+    before: str
+    after: str
+
+
+def _shown(value: object) -> str:
+    if isinstance(value, bool):
+        return "On" if value else "Off"
+    if isinstance(value, (list, tuple)):
+        parts = [_shown(item) for item in value]
+        return ", ".join(part for part in parts if part != "—") or "—"
+    text = ", ".join(line.strip() for line in str(value).splitlines() if line.strip())
+    return text or "—"
+
+
+def moved(before: str, after: str, *, networks: Collection[str] = ()) -> tuple[Moved, ...]:
+    """What changed in the published object between a draft's base and now, field by field.
+
+    `before` and `after` are documents, empty where nothing of that name was
+    published. A difference the form cannot express is still a difference,
+    and says so rather than going unmentioned.
+    """
+
+    if before.strip() == after.strip():
+        return ()
+    if not before.strip():
+        return (Moved("Object", "Not published", "Published"),)
+    if not after.strip():
+        return (Moved("Object", "Published", "Removed"),)
+    try:
+        old = form_from_document(before, networks=networks)
+        new = form_from_document(after, networks=networks)
+    except Unexpressible:
+        return (Moved("Settings the form does not show", "", "Changed"),)
+    lines: list[Moved] = []
+    for key, label in FIELD_LABELS.items():
+        if label == RULES:
+            continue
+        if old.get(key) != new.get(key):
+            lines.append(Moved(label, _shown(old.get(key)), _shown(new.get(key))))
+    rule_keys = [key for key, label in FIELD_LABELS.items() if label == RULES]
+    if any(old.get(key) != new.get(key) for key in rule_keys):
+        lines.append(Moved(RULES, _shown(old.get("rule_name")), _shown(new.get("rule_name"))))
+    return tuple(lines) or (Moved("Settings the form does not show", "", "Changed"),)
 
 
 def sequence(values: Sequence[str]) -> tuple[str, ...]:

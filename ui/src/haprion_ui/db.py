@@ -458,6 +458,13 @@ class ProxyDraft:
     # whenever that publish happens.
     #
     replaces: str | None = None
+    #
+    # The object as it was published when this row was written (0080): its
+    # document, or empty where nothing of that name was published. What tells
+    # a draft whose object moved from one the cluster merely moved past. None
+    # on rows from before, which only `base_hash` can judge.
+    #
+    base_document: str | None = None
 
 
 DRAFT = "draft"
@@ -2981,7 +2988,7 @@ def cluster_drafts(connection: Connection[Any], cluster: str) -> list[ProxyDraft
     with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         cursor.execute(
             "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
-            "       updated_by, updated_at, deleted, stage, replaces "
+            "       updated_by, updated_at, deleted, stage, replaces, base_document "
             "  from proxy_draft "
             " where cluster = %(cluster)s "
             " order by object_id, stage",
@@ -3001,7 +3008,7 @@ def live_drafts(connection: Connection[Any]) -> list[ProxyDraft]:
     with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         cursor.execute(
             "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
-            "       updated_by, updated_at, deleted, stage, replaces "
+            "       updated_by, updated_at, deleted, stage, replaces, base_document "
             "  from proxy_draft "
             " where not deleted "
             " order by cluster, object_id, stage"
@@ -3017,7 +3024,7 @@ def read_draft(
     with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         cursor.execute(
             "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
-            "       updated_by, updated_at, deleted, stage, replaces "
+            "       updated_by, updated_at, deleted, stage, replaces, base_document "
             "  from proxy_draft "
             " where cluster = %(cluster)s and object_id = %(object_id)s "
             "   and stage = %(stage)s",
@@ -3035,6 +3042,7 @@ def save_draft(
     base_version: int | None,
     base_hash: str,
     updated_by: str,
+    base_document: str | None,
     deleted: bool = False,
     replaces: str | None = None,
     expected_revision: int | None,
@@ -3064,6 +3072,7 @@ def save_draft(
         "updated_by": updated_by,
         "deleted": deleted,
         "replaces": replaces,
+        "base_document": base_document,
         "revision": expected_revision,
     }
     with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
@@ -3071,12 +3080,13 @@ def save_draft(
             cursor.execute(
                 "insert into proxy_draft "
                 "       (cluster, object_id, yaml, base_version, base_hash, updated_by, deleted, "
-                "        replaces, stage) "
+                "        replaces, base_document, stage) "
                 "values (%(cluster)s, %(object_id)s, %(yaml)s, %(base_version)s, "
-                "        %(base_hash)s, %(updated_by)s, %(deleted)s, %(replaces)s, 'draft') "
+                "        %(base_hash)s, %(updated_by)s, %(deleted)s, %(replaces)s, "
+                "        %(base_document)s, 'draft') "
                 "on conflict do nothing "
                 "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
-                "          updated_by, updated_at, deleted, stage, replaces",
+                "          updated_by, updated_at, deleted, stage, replaces, base_document",
                 values,
             )
         else:
@@ -3084,11 +3094,12 @@ def save_draft(
                 "update proxy_draft "
                 "   set yaml = %(yaml)s, base_version = %(base_version)s, "
                 "       base_hash = %(base_hash)s, updated_by = %(updated_by)s, "
-                "       deleted = %(deleted)s, replaces = %(replaces)s "
+                "       deleted = %(deleted)s, replaces = %(replaces)s, "
+                "       base_document = %(base_document)s "
                 " where cluster = %(cluster)s and object_id = %(object_id)s "
                 "   and stage = 'draft' and revision = %(revision)s "
                 "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
-                "          updated_by, updated_at, deleted, stage, replaces",
+                "          updated_by, updated_at, deleted, stage, replaces, base_document",
                 values,
             )
         row = cursor.fetchone()
@@ -3109,6 +3120,7 @@ def save_change(
     base_version: int | None,
     base_hash: str,
     updated_by: str,
+    base_document: str | None,
     deleted: bool = False,
     replaces: str | None = None,
     saved_revision: int | None,
@@ -3138,6 +3150,7 @@ def save_change(
         "updated_by": updated_by,
         "deleted": deleted,
         "replaces": replaces,
+        "base_document": base_document,
         "saved_revision": saved_revision,
         "draft_revision": draft_revision,
     }
@@ -3157,12 +3170,13 @@ def save_change(
                 cursor.execute(
                     "insert into proxy_draft "
                     "       (cluster, object_id, yaml, base_version, base_hash, updated_by, "
-                    "        deleted, replaces, stage) "
+                    "        deleted, replaces, base_document, stage) "
                     "values (%(cluster)s, %(target)s, %(yaml)s, %(base_version)s, "
-                    "        %(base_hash)s, %(updated_by)s, %(deleted)s, %(replaces)s, 'saved') "
+                    "        %(base_hash)s, %(updated_by)s, %(deleted)s, %(replaces)s, "
+                    "        %(base_document)s, 'saved') "
                     "on conflict do nothing "
                     "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
-                    "          updated_by, updated_at, deleted, stage, replaces",
+                    "          updated_by, updated_at, deleted, stage, replaces, base_document",
                     values,
                 )
             else:
@@ -3171,11 +3185,11 @@ def save_change(
                     "   set object_id = %(target)s, yaml = %(yaml)s, "
                     "       base_version = %(base_version)s, base_hash = %(base_hash)s, "
                     "       updated_by = %(updated_by)s, deleted = %(deleted)s, "
-                    "       replaces = %(replaces)s "
+                    "       replaces = %(replaces)s, base_document = %(base_document)s "
                     " where cluster = %(cluster)s and object_id = %(object_id)s "
                     "   and stage = 'saved' and revision = %(saved_revision)s "
                     "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
-                    "          updated_by, updated_at, deleted, stage, replaces",
+                    "          updated_by, updated_at, deleted, stage, replaces, base_document",
                     values,
                 )
         except psycopg.errors.UniqueViolation as clash:
@@ -3203,6 +3217,7 @@ def rename_draft(
     base_version: int | None,
     base_hash: str,
     updated_by: str,
+    base_document: str | None,
     replaces: str | None = None,
     expected_revision: int,
 ) -> ProxyDraft:
@@ -3229,6 +3244,7 @@ def rename_draft(
         "base_hash": base_hash,
         "updated_by": updated_by,
         "replaces": replaces,
+        "base_document": base_document,
         "revision": expected_revision,
     }
     with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
@@ -3237,11 +3253,12 @@ def rename_draft(
                 "update proxy_draft "
                 "   set object_id = %(new_object_id)s, yaml = %(yaml)s, "
                 "       base_version = %(base_version)s, base_hash = %(base_hash)s, "
-                "       updated_by = %(updated_by)s, replaces = %(replaces)s "
+                "       updated_by = %(updated_by)s, replaces = %(replaces)s, "
+                "       base_document = %(base_document)s "
                 " where cluster = %(cluster)s and object_id = %(object_id)s "
                 "   and stage = 'draft' and revision = %(revision)s "
                 "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
-                "          updated_by, updated_at, deleted, stage, replaces",
+                "          updated_by, updated_at, deleted, stage, replaces, base_document",
                 values,
             )
         except psycopg.errors.UniqueViolation as clash:

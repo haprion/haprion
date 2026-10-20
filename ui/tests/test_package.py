@@ -218,6 +218,37 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(self.queued, [])
 
+    def test_a_row_whose_object_did_not_move_publishes_over_a_newer_version(self) -> None:
+        # 0080: the cluster moved past the row - another object, the network,
+        # core/ - and this object is as the row was written against. Nothing
+        # of anybody's is put back, so nothing waits (26-10-20).
+        self.rows = [row(base_hash=LATER, base_document=SHOP)]
+        client = self.editor()
+
+        text = self.page(client)
+        answer = self.publish(client)
+
+        self.assertNotIn("Saved against an older version", text)
+        self.assertIn(">Publish 1 change</button>", text)
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(sorted(self.queued[0]["payload"]["objects"]), ["shop"])
+
+    def test_a_row_whose_object_moved_holds_the_package_and_says_so(self) -> None:
+        # Even at the newest version: what decides is the object, not the tree.
+        self.rows = [row(base_document=SHOP.replace("8080", "9090"))]
+        client = self.editor()
+
+        text = self.page(client)
+        answer = self.publish(client)
+
+        self.assertIn("Changed since it was saved", text)
+        self.assertIn("shop was changed by a publish after the changes were saved", text)
+        self.assertIn(
+            '<a class="secondary-button" href="/proxies/alpha/shop/edit">Open shop</a>', text
+        )
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(self.queued, [])
+
     def test_a_network_reading_behind_the_objects_waits_rather_than_calls_it_stale(self) -> None:
         # The network is read by its own helper run; saved over a page that
         # still stands at an older version, it cannot be told stale from

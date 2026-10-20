@@ -1749,6 +1749,14 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .pending-publish { grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 12px 20px 18px; }
 .pending-changes > .form-problem { margin: 12px 20px 18px; }
 .pending-changes > .form-problem { flex-wrap: wrap; }
+.moved-under { display: block; }
+.moved-under > p { display: flex; align-items: center; gap: 10px; margin: 0; }
+.moved-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 24px; margin: 12px 0 14px; }
+.moved-fields dt { color: var(--muted); }
+.moved-fields dd { margin: 0; }
+/* A value stays whole where it fits; the line breaks at the arrow first. */
+.moved-fields dd > span { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+.moved-arrow { margin: 0 8px; color: var(--muted); }
 .form-problem > a.secondary-button { white-space: nowrap; }
 .form-problem > a.secondary-button:first-of-type { margin-left: auto; }
 .pending-publish .action-buttons { display: flex; flex-wrap: nowrap; gap: 10px; align-items: stretch; }

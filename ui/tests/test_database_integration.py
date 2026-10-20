@@ -832,6 +832,7 @@ class ARealDatabase(unittest.TestCase):
                     base_version=None,
                     base_hash="a" * 40,
                     updated_by="admin",
+                    base_document="",
                     expected_revision=None,
                 )
                 moved = db.rename_draft(
@@ -843,10 +844,14 @@ class ARealDatabase(unittest.TestCase):
                     base_version=None,
                     base_hash="a" * 40,
                     updated_by="admin",
+                    base_document="name: console\n",
                     expected_revision=draft.revision,
                 )
                 connection.commit()
             self.assertEqual((moved.object_id, moved.id), ("terminal", draft.id))
+            # 0080: written and read back by the web role, as the editor does.
+            self.assertEqual(draft.base_document, "")
+            self.assertEqual(moved.base_document, "name: console\n")
         finally:
             with self.connect() as connection:
                 connection.execute("delete from proxy_draft where cluster = 'alpha'")
@@ -861,6 +866,7 @@ class ARealDatabase(unittest.TestCase):
             "base_version": None,
             "base_hash": "a" * 40,
             "updated_by": "admin",
+            "base_document": "",
         }
         try:
             with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
@@ -918,6 +924,7 @@ class ARealDatabase(unittest.TestCase):
                     base_version=None,
                     base_hash="a" * 40,
                     updated_by="admin",
+                    base_document="",
                     replaces="shop",
                     expected_revision=None,
                 )

@@ -39,6 +39,21 @@
   {% if draft.stage != 'saved' %}<p class="preview-notice">Not published until it is saved.{% if work.saved %} The saved changes under it go out with the next publish.{% endif %}</p>{% endif %}
 </section>
 {% endif %}
+{#
+  What a publish changed in this object after the work on it was written
+  (0080), field by field. Saving the form writes over it, so the choice is made
+  here, where it is read: the two buttons leave the row at the bottom.
+#}
+{% if moved_under %}
+<section class="preview-notice form-problem moved-under" aria-label="Changed after it was saved">
+  <p><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ name }} was changed by a publish after {% if draft.stage == 'saved' %}these changes were{% else %}this draft was{% endif %} saved{% if draft.base_version and current_version %} (v{{ draft.base_version }} → v{{ current_version }}){% endif %}</strong></p>
+  <dl class="moved-fields">{% for line in moved_under %}<dt>{{ line.label }}</dt><dd>{% if line.before %}<span>{{ line.before }}</span><span class="moved-arrow" aria-label="now">→</span>{% endif %}<span>{{ line.after }}</span></dd>{% endfor %}</dl>
+  <div class="form-actions">
+    <button type="submit" form="object-form" name="action" value="discard" class="secondary-button">{% if draft.stage == 'saved' %}Discard the changes{% else %}Discard the draft{% endif %}</button>
+    <button type="submit" form="object-form" name="action" value="save" class="primary-button">Save over them</button>
+  </div>
+</section>
+{% endif %}
 {% for warning in unresolved_servers %}
 <p class="preview-notice notice-warning" data-unresolved><span class="status-orb status-warning" aria-hidden="true"></span>{{ warning }}.</p>
 {% endfor %}
@@ -52,7 +67,7 @@
   draft beside the first rather than moving it, and a discard asked to throw
   away a draft the route had no way to know about.
 #}
-<form method="post" action="{% if name %}/proxies/{{ cluster }}/{{ name }}/edit{% else %}/proxies/{{ cluster }}/new{% endif %}" class="preview-form">
+<form method="post" action="{% if name %}/proxies/{{ cluster }}/{{ name }}/edit{% else %}/proxies/{{ cluster }}/new{% endif %}" class="preview-form" id="object-form">
   {#
     What Enter does, decided rather than inherited. A browser submits with the
     first submit button in tree order, which was "Test health check" inside the form -
@@ -107,8 +122,8 @@
     <a class="secondary-button" href="/proxies">Back to proxies</a>
     <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
     <button type="submit" name="action" value="draft" class="secondary-button">Save as draft</button>
-    {% if draft %}<button type="submit" name="action" value="discard" class="secondary-button">{% if draft.stage == 'saved' %}Discard the changes{% else %}Discard the draft{% endif %}</button>{% endif %}
-    <button type="submit" name="action" value="save" class="primary-button">Save</button>
+    {% if draft and not moved_under %}<button type="submit" name="action" value="discard" class="secondary-button">{% if draft.stage == 'saved' %}Discard the changes{% else %}Discard the draft{% endif %}</button>{% endif %}
+    {% if not moved_under %}<button type="submit" name="action" value="save" class="primary-button">Save</button>{% endif %}
   </div>
 </form>
 

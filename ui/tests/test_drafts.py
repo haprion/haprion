@@ -90,6 +90,7 @@ class RenamingADraft(unittest.TestCase):
             base_version=7,
             base_hash="a" * 40,
             updated_by="admin",
+            base_document="schema: 1\nname: shop\n",
             expected_revision=3,
         )
 
@@ -130,8 +131,20 @@ class SavingADraft(unittest.TestCase):
             base_version=7,
             base_hash="a" * 40,
             updated_by="admin",
+            base_document="schema: 1\nname: shop\n",
             expected_revision=expected_revision,
         )
+
+    def test_the_object_it_was_written_against_is_kept_with_it(self) -> None:
+        """0080: what tells a draft whose object moved from one the cluster moved past."""
+
+        for revision, connection in ((None, FakeConnection(DRAFT)), (3, FakeConnection(DRAFT))):
+            with self.subTest(revision=revision):
+                self.save(connection, revision)
+                self.assertIn("base_document", connection.last.statements[0])
+                self.assertEqual(
+                    connection.last.parameters["base_document"], "schema: 1\nname: shop\n"
+                )
 
     def test_a_first_save_inserts_and_refuses_to_overwrite(self) -> None:
         """`on conflict do nothing`, so a draft that appeared meanwhile is a conflict.

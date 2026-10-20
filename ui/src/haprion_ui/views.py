@@ -9709,6 +9709,19 @@ def _editor_page(
         others=tuple((view.name, view.document) for view in state.stored),
     )
     dns_form = fields.get("protocol") == "dns"
+    #
+    # What a publish changed in this object after the work on it was written
+    # (0080): shown above the form, and Save says it writes over it.
+    #
+    moved_under = (
+        editor_module.moved(
+            draft.base_document,
+            _published_document(state, draft.replaces or name),
+            networks=state.choices.networks,
+        )
+        if draft is not None and _object_moved(state, draft) and draft.base_document is not None
+        else ()
+    )
     held = blocked.object_card(status_rows, cluster=cluster, name=name) if name else None
     unresolved = (
         _unresolved_servers(str(fields.get("name", "") or name), result.document)
@@ -9772,6 +9785,8 @@ def _editor_page(
             "unresolved_servers": unresolved,
             "result": result,
             "draft": draft,
+            "moved_under": moved_under,
+            "current_version": state.base_version,
             "work": work,
             "draft_revision": draft_revision,
             "saved_revision": form.saved_revision,
@@ -9869,6 +9884,7 @@ def _lookup_again(
                 connection,
                 cluster=cluster,
                 object_id=stored.name,
+                base_document=_published_document(state, stored.name),
                 yaml=document,
                 base_version=state.base_version,
                 base_hash=state.commit or "",
@@ -9947,6 +9963,46 @@ def _form_defaults(fields: dict[str, Any]) -> dict[str, Any]:
 # far with anything else has a bug, so it is a 404 and not a page - the readable
 # refusal belongs where the name was typed, and is done there.
 #
+def _published_document(state: Any, name: str | None) -> str:
+    """The object `name` as the reading has it published; empty where nothing of that name is.
+
+    What a draft keeps as its base (0080): the version it was written against
+    moves with every publish of anything, and this moves only with the object.
+    """
+
+    stored = next((view for view in state.stored if view.name == name), None) if name else None
+    return stored.document if stored is not None else ""
+
+
+def _object_moved(state: Any, row: db.ProxyDraft) -> bool:
+    """Whether the object this row changes was published differently after the row was written.
+
+    Unknown - False - on a row from before 0080, which `base_hash` judges.
+    """
+
+    if row.base_document is None:
+        return False
+    now = _published_document(state, row.replaces or row.object_id)
+    return now.strip() != row.base_document.strip()
+
+
+def _carried_base(state: Any, name: str | None, *rows: db.ProxyDraft | None) -> str | None:
+    """The base a write on top of somebody's work keeps: that work's, not the object's now.
+
+    Only a save from the whole form, where the page has shown what moved
+    underneath, takes the object as it is published now. A draft saved again,
+    an exception or a line of advanced config added to a saved change is
+    written over the same base as the work it changes - taking the new one
+    would call the work current without anybody having seen what moved. A row
+    from before 0080 carries None, as it was.
+    """
+
+    for row in rows:
+        if row is not None:
+            return row.base_document
+    return _published_document(state, name)
+
+
 def _proxy_path(cluster: str, *segments: str) -> str:
     """The URL of a page under `/proxies`, from segments that may be used as one."""
 
@@ -10290,6 +10346,11 @@ def _editor_submit(
                     base_version=state.base_version,
                     base_hash=state.commit,
                     updated_by=session.username,
+                    #
+                    # From the whole form, with what moved shown above it:
+                    # the one write that takes the object as it is now.
+                    #
+                    base_document=_published_document(state, replaces or key),
                     replaces=replaces,
                     saved_revision=saved_revision,
                     draft_revision=draft_revision,
@@ -10311,6 +10372,7 @@ def _editor_submit(
                     base_version=state.base_version,
                     base_hash=state.commit,
                     updated_by=session.username,
+                    base_document=_carried_base(state, replaces or key, work.draft),
                     replaces=replaces,
                     expected_revision=draft_revision,
                 )
@@ -10323,6 +10385,7 @@ def _editor_submit(
                     base_version=state.base_version,
                     base_hash=state.commit,
                     updated_by=session.username,
+                    base_document=_carried_base(state, replaces or key, work.draft, work.saved),
                     replaces=replaces,
                     expected_revision=draft_revision if object_id == key else None,
                 )
@@ -10457,11 +10520,14 @@ class PendingRow:
     updated_at: datetime
     link: str
     #
-    # Saved against a version that is no longer the newest. Published as it
-    # is, it could put back what the newer version changed, so the package is
-    # refused until it is saved again over what is there now (B257).
+    # Published as it is, it could put back what a newer version changed, so
+    # the package is refused until it is saved again over what is there now
+    # (B257). Since 0080 that is a row whose object was changed after it was
+    # written (`moved`); a row from before can only say it was saved against
+    # a version that is no longer the newest.
     #
     stale: bool
+    moved: bool = False
     #
     # What a saved network description changes and who it reaches (B277):
     # one line per VIP, source or group, under the row.
@@ -10573,6 +10639,7 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
     objects: dict[str, str | None] = {}
     published = {view.name for view in state.stored}
     for row in saved:
+        moved = _object_moved(state, row)
         objects[row.object_id] = None if row.deleted else row.yaml
         if row.replaces and not row.deleted:
             objects.setdefault(row.replaces, None)
@@ -10592,7 +10659,8 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
                 updated_by=row.updated_by,
                 updated_at=row.updated_at,
                 link=_proxy_path(cluster, row.object_id, "edit"),
-                stale=row.base_hash != head,
+                stale=moved or (row.base_document is None and row.base_hash != head),
+                moved=moved,
             )
         )
     #
@@ -10660,10 +10728,15 @@ def _package(request: Request, config: Config, cluster: str) -> Package:
             {"id": str(change.id), "revision": change.revision}
             for change in sorted(changes.values(), key=lambda change: change.kind)
         ]
-    stale = [row.name for row in rows if row.stale]
+    stale = [row.name for row in rows if row.stale and not row.moved]
+    changed = [row.name for row in rows if row.moved]
     problem = (
         "The stored objects have not been read yet."
         if head is None
+        else f"{', '.join(changed)} {'was' if len(changed) == 1 else 'were'} changed by a "
+        f"publish after the changes were saved. Open {'it' if len(changed) == 1 else 'each'} "
+        "to save over that or discard the changes."
+        if changed
         else f"{', '.join(stale)} {'was' if len(stale) == 1 else 'were'} saved against an "
         "older version. Open and save again before publishing."
         if stale
@@ -10817,6 +10890,7 @@ def _removal_submit(
                 base_version=state.base_version,
                 base_hash=state.commit,
                 updated_by=session.username,
+                base_document=stored.document,
                 deleted=True,
                 saved_revision=existing.saved.revision if existing.saved else None,
                 draft_revision=existing.draft.revision if existing.draft else None,
@@ -11810,6 +11884,7 @@ def _advanced_submit(
                 base_version=state.base_version,
                 base_hash=state.commit,
                 updated_by=session.username,
+                base_document=_carried_base(state, name, draft),
                 replaces=draft.replaces if draft is not None else None,
                 saved_revision=revision,
                 draft_revision=None,
@@ -12147,6 +12222,7 @@ def _waf_save(
                 base_version=state.base_version,
                 base_hash=state.commit,
                 updated_by=session.username,
+                base_document=_carried_base(state, name, draft),
                 replaces=draft.replaces if draft is not None else None,
                 saved_revision=draft.revision if draft is not None else None,
                 draft_revision=None,

@@ -81,8 +81,10 @@ only works with the names used below, that is a bug in the software, not in this
 Editing produces a draft; saving it makes a saved change; publishing produces an immutable
 release; deploying brings nodes to that release. Saved changes are published from *Versions*:
 each cluster lists what is saved there, by whom, and publishes all of it with one comment as
-one version (`changes_publish`, up to 64 objects). A change saved against an older version than
-the newest holds the list until it is saved again. Where something is saved, the dashboard's
+one version (`changes_publish`, up to 64 objects). A change whose object a publish changed after
+it was saved holds the list: its row says *Changed since it was saved*, and *Open* leads to the
+editor, which lists what changed field by field - before and now - and offers *Save over them* or
+*Discard*. A publish of anything else does not hold it. Where something is saved, the dashboard's
 card offers *Publish & deploy N changes* instead of *Deploy configuration*: a dialog lists the
 changes and takes the comment, and one job publishes and deploys - the worker runs the deploy
 helper for the version the publish recorded, and the job ends as the deploy ends, with the

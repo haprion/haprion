@@ -18,9 +18,9 @@
 {% if discarded %}<p class="preview-notice"><strong>The draft for {{ discarded }} was discarded.</strong> Nothing was published under that name.</p>{% endif %}
 
 <section class="metric-grid proxy-summary" aria-label="Proxy summary">
-  <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="published">{{ counts.published }}</strong><span>Proxies</span><small>Published</small></div></article>
-  <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"></path></svg></span><div><strong data-count="managed">{{ counts.managed }}</strong><span>Application</span><small>Created here</small></div></article>
-  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="unmanaged">{{ counts.unmanaged }}</strong><span>Manual</span><small>Read-only</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-count" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="published">{{ counts.published }}</strong><span>Proxies</span><small>Published</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-count" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"></path></svg></span><div><strong data-count="managed">{{ counts.managed }}</strong><span>Application</span><small>Created here</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-count" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="unmanaged">{{ counts.unmanaged }}</strong><span>Manual</span><small>Read-only</small></div></article>
 </section>
 
 {#- From the network page's *Used by* (26-10-11): said, with the way back to all of them. -#}

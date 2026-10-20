@@ -111,8 +111,8 @@
 {% else %}
 
 <section class="metric-grid activity-summary" aria-label="Job summary">
-  <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h12M12 7l5 5-5 5"></path><circle cx="5" cy="12" r="2"></circle></svg></span><div><strong>{{ jobs.active_count }}</strong><span>Active</span><small>Queued or running</small></div></article>
-  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg></span><div><strong>{{ jobs.attention_count }}</strong><span>Need review</span><small>Clusters whose last operation did not work</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-count" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h12M12 7l5 5-5 5"></path><circle cx="5" cy="12" r="2"></circle></svg></span><div><strong>{{ jobs.active_count }}</strong><span>Active</span><small>Queued or running</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-{{ 'critical' if jobs.attention_count else 'healthy' }}" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg></span><div><strong>{{ jobs.attention_count }}</strong><span>Need review</span><small>Clusters whose last operation did not work</small></div></article>
 </section>
 
 <div class="table-scroll job-table-wrap">

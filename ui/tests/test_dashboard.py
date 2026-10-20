@@ -477,6 +477,31 @@ class DashboardShape(unittest.TestCase):
         self.assertEqual(dashboard.clusters[1].label, "Not configured")
         self.assertEqual(dashboard.healthy_clusters, 0)
 
+    def test_each_summary_card_s_icon_says_its_state(self) -> None:
+        """B343: the icons were decoration - a red release card on an installation in order."""
+
+        def tones(*names: str) -> tuple[str, str, str, str]:
+            readings = tuple(
+                replace(reading(name), cluster=cluster)
+                for name, cluster in zip(names, ("alpha", "beta"), strict=False)
+            )
+            view = build_dashboard(
+                tuple(r.cluster for r in readings),
+                readings,
+                now=NOW,
+                stale_after=timedelta(seconds=120),
+            )
+            return (view.cluster_tone, view.node_tone, view.vip_tone, view.release_tone)
+
+        self.assertEqual(tones(), ("unknown",) * 4)
+        self.assertEqual(tones("done-single-owner.json"), ("healthy",) * 4)
+        self.assertEqual(
+            tones("done-single-owner.json", "partial-unreachable.json"),
+            ("critical", "critical", "warning", "warning"),
+        )
+        behind = tones("done-node-behind.json")
+        self.assertEqual((behind[0], behind[3]), ("warning", "warning"))
+
     def test_the_vip_owner_is_a_node_or_words_never_a_status_code(self) -> None:
         """B335: `no_owner` and `split_brain` were shown as they are spelt in the contract."""
 

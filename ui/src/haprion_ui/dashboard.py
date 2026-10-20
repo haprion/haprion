@@ -146,6 +146,18 @@ class DashboardView:
     active_vips: int
     total_vips: int
     converged_clusters: int
+    configured_clusters: int
+    #
+    # The colour of each summary card's icon (B343, 26-10-20).
+    # They were decoration - the release card red and the VIP card amber on an
+    # installation where everything was in order. Now they say the card's
+    # state: green when it is in order, amber for something to finish or look
+    # at, red for something broken, grey before there is anything to count.
+    #
+    cluster_tone: Tone
+    node_tone: Tone
+    vip_tone: Tone
+    release_tone: Tone
 
 
 #
@@ -782,9 +794,48 @@ def build_dashboard(
     )
 
     configured_views = tuple(cluster for cluster in clusters if cluster.configured)
+    counted = len(configured_views)
+    healthy = sum(cluster.tone == "healthy" for cluster in configured_views)
+    online_nodes = sum(
+        node.tone in {"healthy", "warning"} or node.label == NOT_DEPLOYED
+        for cluster in configured_views
+        for node in cluster.nodes
+    )
+    total_nodes = sum(cluster.configured_nodes for cluster in configured_views)
+    active_vips = sum(
+        cluster.vip_count
+        for cluster in configured_views
+        if cluster.vip not in VIP_NOT_HELD and not cluster.vip.startswith("Split brain")
+    )
+    total_vips = sum(cluster.vip_count for cluster in configured_views)
+    converged = sum(cluster.release_state == "Converged" for cluster in configured_views)
+    cluster_tone: Tone = (
+        "unknown"
+        if not counted
+        else "critical"
+        if any(cluster.tone == "critical" for cluster in configured_views)
+        else "healthy"
+        if healthy == counted
+        else "warning"
+    )
+    node_tone: Tone = (
+        "unknown" if not total_nodes else "healthy" if online_nodes == total_nodes else "critical"
+    )
+    vip_tone: Tone = (
+        "unknown"
+        if not total_vips
+        else "critical"
+        if any(cluster.vip.startswith("Split brain") for cluster in configured_views)
+        else "healthy"
+        if active_vips == total_vips
+        else "warning"
+    )
+    release_tone: Tone = (
+        "unknown" if not counted else "healthy" if converged == counted else "warning"
+    )
     return DashboardView(
         clusters=clusters,
-        healthy_clusters=sum(cluster.tone == "healthy" for cluster in configured_views),
+        healthy_clusters=healthy,
         behind_clusters=sum(cluster.behind for cluster in configured_views),
         #
         # A cluster that is only behind is not counted here. An undeployed
@@ -795,19 +846,14 @@ def build_dashboard(
             cluster.tone in {"critical", "warning"} and not cluster.behind
             for cluster in configured_views
         ),
-        online_nodes=sum(
-            node.tone in {"healthy", "warning"} or node.label == NOT_DEPLOYED
-            for cluster in configured_views
-            for node in cluster.nodes
-        ),
-        total_nodes=sum(cluster.configured_nodes for cluster in configured_views),
-        active_vips=sum(
-            cluster.vip_count
-            for cluster in configured_views
-            if cluster.vip not in VIP_NOT_HELD and not cluster.vip.startswith("Split brain")
-        ),
-        total_vips=sum(cluster.vip_count for cluster in configured_views),
-        converged_clusters=sum(
-            cluster.release_state == "Converged" for cluster in configured_views
-        ),
+        online_nodes=online_nodes,
+        total_nodes=total_nodes,
+        active_vips=active_vips,
+        total_vips=total_vips,
+        converged_clusters=converged,
+        configured_clusters=counted,
+        cluster_tone=cluster_tone,
+        node_tone=node_tone,
+        vip_tone=vip_tone,
+        release_tone=release_tone,
     )

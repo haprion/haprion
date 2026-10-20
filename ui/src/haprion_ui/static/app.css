@@ -395,9 +395,17 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .metric-card > div > small { padding-left: 8px; border-left: 1px solid var(--line); color: var(--text-status); font-size: 13px; font-weight: var(--font-weight-regular); }
 .metric-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border-radius: 6px; color: #fff; background: var(--brand); }
 .metric-icon svg { width: 21px; height: 21px; }
-.metric-icon-node { color: #fff; background: var(--info); }
-.metric-icon-vip { color: #fff; background: var(--warning); }
-.metric-icon-release { color: #fff; background: var(--critical); }
+/*
+ * A summary card's icon says its state (B343, 26-10-20): green in order, amber
+ * to finish or look at, red broken, grey before there is anything to count. A
+ * card that only counts something has no state, and its icon stays grey so
+ * that green keeps meaning "in order".
+ */
+.metric-icon-count { color: var(--muted-strong); background: var(--unknown-soft); }
+.metric-icon-healthy { color: #fff; background: var(--healthy); }
+.metric-icon-warning { color: #fff; background: var(--warning); }
+.metric-icon-critical { color: #fff; background: var(--critical); }
+.metric-icon-unknown { color: #fff; background: var(--unknown); }
 .proxy-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }

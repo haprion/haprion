@@ -121,8 +121,8 @@
 {% endif %}
 
 <section class="metric-grid certificate-summary" aria-label="Certificate summary">
-  <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 10h8M8 14h5"></path></svg></span><div><strong>{{ certificates.certificate_count }}</strong><span>Certificates</span><small>{{ certificates.acme_count }} renewed by certbot</small></div></article>
-  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg></span><div><strong>{{ certificates.attention_count }}</strong><span>Need attention</span><small>Expiring or unreadable</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-count" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 10h8M8 14h5"></path></svg></span><div><strong>{{ certificates.certificate_count }}</strong><span>Certificates</span><small>{{ certificates.acme_count }} renewed by certbot</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-{{ 'warning' if certificates.attention_count else 'healthy' }}" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg></span><div><strong>{{ certificates.attention_count }}</strong><span>Need attention</span><small>Expiring or unreadable</small></div></article>
 </section>
 
 <div data-certificates-region{% if refresh %} data-refresh="true"{% endif %}>

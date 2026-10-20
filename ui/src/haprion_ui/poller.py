@@ -801,6 +801,7 @@ def main(argv: list[str] | None = None) -> int:
             # for no reason.
             #
             stopping = StopRequest(what="after this pass")
+            asker = update_check.Asker()
             while not stopping.requested():
                 #
                 # Asked again before every pass. The lock lives as long as its
@@ -826,9 +827,10 @@ def main(argv: list[str] | None = None) -> int:
                 poll_manager(pool)
                 #
                 # Once a day at most, and only while its switch is on (B342);
-                # it decides that itself, so most passes it reads one row.
+                # it decides that itself, so most passes it reads one row. On
+                # its own thread: GitHub never holds up the clusters.
                 #
-                update_check.check(pool, installed=installed, now=datetime.now(UTC))
+                asker.start(pool, installed=installed, now=datetime.now(UTC))
                 healthy = poll_once(pool, config, clusters=known)
                 if known:
                     logger.info("%d/%d cluster(s) fully current", healthy, len(known))

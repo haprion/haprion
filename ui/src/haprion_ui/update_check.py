@@ -9,6 +9,10 @@ installation that cannot reach GitHub is not broken.
 
 No proxy: the ask goes straight out, as the manager's own network allows.
 
+The ask runs on a thread of its own, one at a time (review 2026-10-20, A1):
+GitHub answering a byte at a time, or a name that does not resolve, must not
+hold up the clusters' readings, which the same pass makes.
+
 The web never asks. It reads the row and draws `vX available` beside the
 version in the header when the release is newer than the one running.
 """
@@ -18,6 +22,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -76,11 +82,17 @@ def parse(body: bytes) -> Release:
     return Release(tag=tag, url=url)
 
 
-def fetch(installed: str) -> bytes:
-    """GitHub's answer, bounded in size and time. Raises NoAnswer."""
+def fetch(installed: str, *, url: str = URL) -> bytes:
+    """GitHub's answer, bounded in size and time. Raises NoAnswer.
 
+    The socket's timeout bounds each read, not the answer: one sent a byte at a
+    time would never trip it. So the body is read in pieces against a deadline
+    for the whole answer, which one stalled read can overrun by its own timeout.
+    """
+
+    deadline = time.monotonic() + TIMEOUT_SECONDS
     request = urllib.request.Request(  # noqa: S310 - a fixed https address
-        URL,
+        url,
         headers={
             "Accept": "application/vnd.github+json",
             "User-Agent": f"haprion/{installed}",
@@ -88,7 +100,7 @@ def fetch(installed: str) -> bytes:
     )
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310 - fixed https address
-            body: bytes = response.read(MAX_BYTES + 1)
+            body = _read_by(response, deadline)
     except urllib.error.HTTPError as exc:
         raise NoAnswer(f"GitHub answered {exc.code}") from exc
     except (urllib.error.URLError, OSError) as exc:
@@ -96,6 +108,18 @@ def fetch(installed: str) -> bytes:
     if len(body) > MAX_BYTES:
         raise NoAnswer("the answer is larger than one release")
     return body
+
+
+def _read_by(response: Any, deadline: float) -> bytes:
+    body = bytearray()
+    while len(body) <= MAX_BYTES:
+        if time.monotonic() >= deadline:
+            raise NoAnswer(f"GitHub took longer than {TIMEOUT_SECONDS} s to answer")
+        piece: bytes = response.read1(MAX_BYTES + 1 - len(body))
+        if not piece:
+            break
+        body += piece
+    return bytes(body)
 
 
 def version_of(text: str) -> tuple[int, int, int] | None:
@@ -149,6 +173,42 @@ def check(
         logger.info("update check: the latest release is %s", release.tag)
     except Exception as exc:  # noqa: BLE001 - a cluster's readings must still be made
         logger.warning("update check not recorded: %s", exc)
+
+
+class Asker:
+    """The poller's way to `check`: on a thread, never more than one at a time.
+
+    A pass starts it and goes on to the clusters. A pass that finds the last ask
+    still waiting on GitHub starts none, so threads cannot pile up behind a
+    network that swallows them.
+    """
+
+    def __init__(self) -> None:
+        self._thread: threading.Thread | None = None
+
+    def start(
+        self,
+        pool: Any,
+        *,
+        installed: str,
+        now: datetime,
+        ask: Callable[[str], bytes] = fetch,
+    ) -> bool:
+        if self._thread is not None and self._thread.is_alive():
+            return False
+        self._thread = threading.Thread(
+            target=check,
+            args=(pool,),
+            kwargs={"installed": installed, "now": now, "ask": ask},
+            name="update-check",
+            daemon=True,
+        )
+        self._thread.start()
+        return True
+
+    def join(self, timeout: float | None = None) -> None:
+        if self._thread is not None:
+            self._thread.join(timeout)
 
 
 @dataclass(frozen=True, slots=True)

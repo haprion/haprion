@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import http.server
 import json
+import threading
+import time
 import unittest
 from collections.abc import Callable
 from dataclasses import replace
@@ -131,6 +134,61 @@ class OnePass(unittest.TestCase):
     def test_a_database_that_fails_does_not_stop_the_pass(self) -> None:
         self.pool.connection.side_effect = RuntimeError("gone")
         self.run_with(answer)  # no exception: the clusters are still polled
+
+
+class _Drip(http.server.BaseHTTPRequestHandler):
+    """An answer a byte at a time: every read is quick, the answer never ends."""
+
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Length", "1000")
+        self.end_headers()
+        for _ in range(1000):
+            self.wfile.write(b" ")
+            self.wfile.flush()
+            time.sleep(0.02)
+
+    def log_message(self, *_args: Any) -> None:
+        pass
+
+
+class TheAskHasADeadline(unittest.TestCase):
+    """Review 2026-10-20, A1: the socket's timeout bounds a read, not the answer."""
+
+    def test_an_answer_that_drips_is_given_up_on_by_the_deadline(self) -> None:
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Drip)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = f"http://127.0.0.1:{server.server_address[1]}/"
+        with mock.patch.object(update_check, "TIMEOUT_SECONDS", 0.3):
+            started = time.monotonic()
+            with self.assertRaisesRegex(update_check.NoAnswer, "took longer"):
+                update_check.fetch("0.9.2", url=url)
+            self.assertLess(time.monotonic() - started, 1.0)
+
+
+class ThePollerDoesNotWait(OnePass):
+    """`Asker` as the poller holds it: started each pass, one thread at most."""
+
+    def test_a_pass_goes_on_while_github_has_not_answered(self) -> None:
+        release = threading.Event()
+
+        def stuck(_installed: str) -> bytes:
+            release.wait(5)
+            return answer()
+
+        asker = update_check.Asker()
+        started = time.monotonic()
+        self.assertTrue(asker.start(self.pool, installed="0.9.2", now=NOW, ask=stuck))
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertFalse(asker.start(self.pool, installed="0.9.2", now=NOW, ask=stuck))
+        release.set()
+        asker.join(5)
+        self.assertEqual(self.answers, [{"tag": "v0.9.3", "url": PAGE, "at": NOW}])
+        self.assertTrue(asker.start(self.pool, installed="0.9.2", now=NOW, ask=stuck))
+        asker.join(5)
 
 
 class WhatThePagesSay(LoginTestCase):

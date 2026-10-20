@@ -300,6 +300,53 @@ class PreparedReleaseTests(unittest.TestCase):
                 compatibility.named_release(root, "candidate", "UI")
 
 
+class RollbackSchemaCommandTests(unittest.TestCase):
+    """`python -m haprion_ui.rollback_schema`, as `haprion-rollback` asks it (26-10-20)."""
+
+    def release(self, root: Path, name: str, head: str, safe_from: str) -> None:
+        document = json.loads(MANIFEST.read_text())
+        revisions = document["requires"]["database_revisions"]
+        document["requires"].update(
+            database_head=head,
+            rollback_safe_from=safe_from,
+            database_revisions=revisions[: revisions.index(head) + 1]
+            if head in revisions
+            else [*revisions, head],
+        )
+        site = root / "releases" / name / "venv/lib/python3.12/site-packages"
+        (site / "haprion_ui").mkdir(parents=True)
+        (site / "haprion_ui" / "compatibility.json").write_text(json.dumps(document))
+        info = site / "haprion_ui-0.1.0.dist-info"
+        info.mkdir()
+        (info / "entry_points.txt").write_text(
+            "[console_scripts]\nhaprion-worker = haprion_ui.worker:_entry\n"
+        )
+
+    def ask(self, root: Path, target: str, revision: str) -> tuple[int, str]:
+        from haprion_ui import rollback_schema
+
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = rollback_schema.main(
+                ["--platform-root", str(root), "--target", target, "--revision", revision]
+            )
+        return code, out.getvalue() + err.getvalue()
+
+    def test_the_carrier_on_disk_decides_and_a_target_below_its_floor_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.release(root, "new", "9999", "0072")
+            self.release(root, "prod", "0078", "0064")
+            self.release(root, "old", "0071", "0064")
+            (root / "releases" / "broken").mkdir()
+            self.assertEqual(self.ask(root, "prod", "9999")[0], 0)
+            code, said = self.ask(root, "old", "9999")
+            self.assertEqual(code, 1)
+            self.assertIn("safe for a UI from 0072 on", said)
+            self.assertEqual(self.ask(root, "broken", "9999")[0], 1)
+            self.assertEqual(self.ask(root, "../new", "9999")[0], 1)
+
+
 class UpgradeFailureTests(unittest.TestCase):
     def requirements(self, *, head: str, accepts: tuple[str, ...]) -> compatibility.Requirements:
         return compatibility.Requirements(

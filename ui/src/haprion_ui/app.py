@@ -30,7 +30,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from haprion_ui import compatibility, db, page_headers, timing, views
+from haprion_ui import compatibility, db, page_headers, pages, timing, views
 from haprion_ui.config import DEFAULT_CONFIG_PATH, Config
 from haprion_ui.config import load as load_config
 
@@ -121,6 +121,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         )
 
     app.include_router(views.build_router(settings))
+    app.include_router(pages.build_router(settings))
 
     #
     # A form the framework refuses is answered as a page (CR-06); anything

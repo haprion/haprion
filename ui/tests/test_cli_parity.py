@@ -17,6 +17,7 @@ import tomllib
 import unittest
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from haprion_ui.app import create_app
 from tests.test_login import configuration
@@ -191,12 +192,22 @@ OPERATIONS: dict[str, Command | Gap | NotASetting] = {
 def _posted_routes() -> set[str]:
     app = create_app(replace(configuration(), management_writes=True))
     found: set[str] = set()
-    for route in app.routes:
-        inner = getattr(route, "original_router", None)
-        for candidate in (route, *(inner.routes if inner is not None else ())):
-            methods = getattr(candidate, "methods", None) or set()
+
+    #
+    # Routers in routers: the pages are one per area under one that carries
+    # the feature switches (K1, 26-10-21).
+    #
+    def walk(routes: Any) -> None:
+        for route in routes:
+            inner = getattr(route, "original_router", None)
+            if inner is not None:
+                walk(inner.routes)
+                continue
+            methods = getattr(route, "methods", None) or set()
             if methods & {"POST", "PUT", "PATCH", "DELETE"}:
-                found.add(str(getattr(candidate, "path", "")))
+                found.add(str(getattr(route, "path", "")))
+
+    walk(app.routes)
     return found
 
 

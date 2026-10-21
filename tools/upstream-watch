@@ -613,15 +613,30 @@ def ran(workflow: dict[str, Any], newest: dict[str, Any] | None, now: datetime) 
     return True, what
 
 
+def remove(tree: Path) -> None:
+    """The whole tree, Go's module cache in it included.
+
+    Go makes the module cache read-only, so an ignored error left it behind
+    and the next run stopped on "File exists" (26-10-21). Each directory is
+    made writable first, and what still cannot go is an error that says why.
+    """
+
+    if not tree.exists():
+        return
+    for directory, _, _ in os.walk(tree):
+        os.chmod(directory, 0o700)
+    shutil.rmtree(tree)
+
+
 @contextlib.contextmanager
 def scratch(cache: Path) -> Iterator[Path]:
     work = cache / "upstream-watch"
-    shutil.rmtree(work, ignore_errors=True)
+    remove(work)
     work.mkdir(parents=True)
     try:
         yield work
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        remove(work)
 
 
 def vuln(tree: Path, cache: Path) -> int:

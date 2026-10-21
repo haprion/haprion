@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import io
+import re
 import shutil
 import subprocess
 import sys
@@ -475,6 +476,28 @@ class ThePinsInTheTree(unittest.TestCase):
         self.assertEqual(fingerprints[0], "36006F0E0BA167832158821138EEACA1AB8A6E72")
 
 
+class TheScratchDirectory(unittest.TestCase):
+    def test_a_read_only_module_cache_is_removed_before_and_after(self) -> None:
+        # Go leaves its module cache read-only; ignored, it outlived the run and
+        # the next one stopped on "File exists" (26-10-21).
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+
+            def go_was_here(work: Path) -> None:
+                module = work / "gomodcache" / "example.com" / "m@v1.0.0"
+                module.mkdir(parents=True)
+                (module / "go.mod").write_text("module example.com/m\n")
+                (module / "go.mod").chmod(0o444)
+                for directory in (module, module.parent, work / "gomodcache"):
+                    directory.chmod(0o555)
+
+            go_was_here(cache / "upstream-watch")
+            with WATCH.scratch(cache) as work:
+                self.assertEqual(list(work.iterdir()), [])
+                go_was_here(work)
+            self.assertFalse((cache / "upstream-watch").exists())
+
+
 class TheWorkflow(unittest.TestCase):
     def test_every_check_the_merge_waits_for_is_a_job_that_exists(self) -> None:
         # A renamed job would leave the merge waiting for a check that never
@@ -491,6 +514,64 @@ class TheWorkflow(unittest.TestCase):
         }
         for name in required:
             self.assertIn(name, names)
+
+    def test_a_finding_is_reported_rather_than_ending_the_scan(self) -> None:
+        """The scan step as GitHub runs a `shell: bash` step: `bash -eo pipefail` (26-10-21).
+
+        Under `-e` the step ended on the scanner's 3 before it wrote
+        `vulnerable=true`: the night's finding failed the run, no issue was
+        opened, and the proposal job never ran.
+        """
+
+        watch = yaml.safe_load((BASE / ".github/workflows/upstream-watch.yml").read_text())
+        (step,) = [s for s in watch["jobs"]["vulnerabilities"]["steps"] if s.get("id") == "scan"]
+        self.assertEqual(step["shell"], "bash")
+        for code, outcome, output in (
+            (0, 0, "vulnerable=false"),
+            (3, 0, "vulnerable=true"),
+            (2, 2, ""),
+        ):
+            with self.subTest(scanner=code), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "bin").mkdir()
+                stub = root / "bin" / "python3"
+                stub.write_text(f"#!/bin/sh\necho report\nexit {code}\n")
+                stub.chmod(0o755)
+                (root / "step.sh").write_text(step["run"])
+                (root / "output").write_text("")
+                result = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "--noprofile",
+                        "--norc",
+                        "-eo",
+                        "pipefail",
+                        str(root / "step.sh"),
+                    ],
+                    env={
+                        "PATH": f"{root / 'bin'}:/usr/bin:/bin",
+                        "RUNNER_TEMP": str(root),
+                        "GITHUB_OUTPUT": str(root / "output"),
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, outcome, result.stderr)
+                self.assertEqual((root / "output").read_text().strip(), output)
+                self.assertEqual((root / "vulnerabilities.txt").read_text(), "report\n")
+
+    def test_no_step_reads_a_status_the_shell_never_reaches(self) -> None:
+        """A status read on its own line runs only after success under GitHub's `bash -e`."""
+
+        alone = re.compile(r"^\s*\w+=(\$\?|\$\{PIPESTATUS)", re.MULTILINE)
+        for path in sorted((BASE / ".github" / "workflows").glob("*.yml")):
+            for name, job in yaml.safe_load(path.read_text())["jobs"].items():
+                for step in job.get("steps", []):
+                    script = step.get("run", "")
+                    with self.subTest(workflow=path.name, job=name, step=step.get("name")):
+                        if "set +e" not in script:
+                            self.assertIsNone(alone.search(script))
 
 
 if __name__ == "__main__":

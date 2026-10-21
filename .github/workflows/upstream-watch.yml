@@ -52,10 +52,12 @@ jobs:
         id: scan
         shell: bash
         run: |
+          # GitHub runs `bash -e`: the status is taken on the failing line,
+          # or a finding (3) would end the step before it is reported.
           set -uo pipefail
+          status=0
           python3 tools/upstream-watch vuln --source . --cache "${RUNNER_TEMP}/cache" \
-            | tee "${RUNNER_TEMP}/vulnerabilities.txt"
-          status=${PIPESTATUS[0]}
+            | tee "${RUNNER_TEMP}/vulnerabilities.txt" || status=$?
           case "${status}" in
             0) echo "vulnerable=false" >> "${GITHUB_OUTPUT}" ;;
             3) echo "vulnerable=true" >> "${GITHUB_OUTPUT}" ;;

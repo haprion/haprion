@@ -634,6 +634,7 @@ class TheTrafficLogPage(LoginTestCase):
             patch("haprion_ui.db.cluster_objects", return_value=list(objects)),
             patch("haprion_ui.traffic_logs.read_database", side_effect=file_read),
             patch("haprion_ui.views.datetime", Clock),
+            patch("haprion_ui.pages.traffic.datetime", Clock),
         ):
             response = client.get(f"{path}{query}")
 

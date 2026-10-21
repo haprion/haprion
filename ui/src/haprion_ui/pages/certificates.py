@@ -1084,6 +1084,8 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    # - Certificate cleanup (C5b, B139) ------------------------------------
+
     def _registry_views(
         request: Request, config: Config
     ) -> Mapping[str, certificates.RegistryCertificateView]:
@@ -1141,6 +1143,8 @@ def build_router(config: Config) -> APIRouter:
                 "demo_fixture": config.demo_fixture,
             },
         )
+
+    # - Renew… (C9c) ------------------------------------------------------
 
     def _certificate_renew_page(
         request: Request,
@@ -1273,6 +1277,8 @@ def build_router(config: Config) -> APIRouter:
         if renewal.row.interface:
             return RedirectResponse("/settings", status_code=303)
         return RedirectResponse("/certificates?view=registry", status_code=303)
+
+    # - Publish to… / Remove from… (2026-09-15) ---------------------------
 
     def _certificate_retarget_page(
         request: Request,
@@ -1423,6 +1429,8 @@ def build_router(config: Config) -> APIRouter:
         # column follows the job (like a deletion or a renewal).
         #
         return RedirectResponse("/certificates?view=registry", status_code=303)
+
+    # - Receivers (B142, 2026-09-18) ------------------------------------------
 
     def _receivers_page(
         request: Request,

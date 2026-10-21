@@ -23,7 +23,7 @@ from haprion_ui.app import create_app
 from tests.test_login import configuration
 
 ROOT = Path(__file__).resolve().parents[2]
-VIEWS = ROOT / "ui" / "src" / "haprion_ui" / "views.py"
+VIEWS = ROOT / "ui" / "src" / "haprion_ui" / "pages" / "dashboard.py"
 SCHEMAS = ROOT / "schemas" / "v1"
 #
 # The contracts that only read. A command whose answer is one of these shows a

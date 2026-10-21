@@ -37,6 +37,7 @@ from haprion_ui.views import (
 
 def build_router(config: Config) -> APIRouter:
     router = APIRouter()
+    # - DNS provider profiles (P4) -----------------------------------------
 
     def _dns_profiles_gate(request: Request) -> AuthenticatedSession | Response:
         """The same three answers the certificate form gives before drawing."""

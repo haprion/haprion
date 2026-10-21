@@ -611,9 +611,9 @@ class TheDashboardBox(LoginTestCase):
         client = self.client()
         self.sign_in(client)
 
-        with mock.patch("haprion_ui.views._attention", return_value=some):
+        with mock.patch("haprion_ui.pages.dashboard._attention", return_value=some):
             drawn = client.get("/").text
-        with mock.patch("haprion_ui.views._attention", return_value=none):
+        with mock.patch("haprion_ui.pages.dashboard._attention", return_value=none):
             empty = client.get("/").text
 
         self.assertIn("Needs attention", drawn)

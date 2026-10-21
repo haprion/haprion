@@ -120,7 +120,6 @@ def create_app(config: Config | None = None) -> FastAPI:
             "session.cookie_secure is off: the session cookie will be sent over plain HTTP"
         )
 
-    app.include_router(views.build_router(settings))
     app.include_router(pages.build_router(settings))
 
     #

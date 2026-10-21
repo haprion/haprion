@@ -47,7 +47,7 @@ def event(action: str, actor: str | None = "admin", **detail: Any) -> AuditEvent
 class EveryActionHasASentence(unittest.TestCase):
     def test_the_table_knows_every_action_the_code_writes(self) -> None:
         written: set[str] = set()
-        for path in SOURCE.glob("*.py"):
+        for path in SOURCE.rglob("*.py"):
             text = path.read_text()
             for pattern in WRITTEN:
                 written.update(pattern.findall(text))

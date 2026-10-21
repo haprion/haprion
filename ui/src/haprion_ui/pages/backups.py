@@ -94,6 +94,8 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    # - Node restore (§15.2, B175) -----------------------------------------
+
     def _backup_cluster(request: Request, cluster: str) -> backups.BackupClusterView | None:
         clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
         overview = backups.build_backup_overview(

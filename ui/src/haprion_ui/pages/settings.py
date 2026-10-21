@@ -265,6 +265,15 @@ def build_router(config: Config) -> APIRouter:
             users.TABLE.remember(response, sort, secure=config.session.cookie_secure)
         return response
 
+    # - Settings -> Features (§16.5, B193) ---------------------------------
+    #
+    # Two switches. Receivers off hides them; node backups off also stops
+    # every cluster's backup timer with the schedule job the backup page
+    # queues, remembers what it stopped, and on starts exactly that again.
+    # The flip and its jobs are one transaction: a busy cluster refuses all of
+    # it, so a switch never reads off while a timer it meant to stop still runs.
+    #
+
     def _restore_waiting(request: Request) -> bool:
         with request.app.state.pool.connection() as connection:
             return feature_switch.restore_waiting(connection)
@@ -335,6 +344,16 @@ def build_router(config: Config) -> APIRouter:
             connection.commit()
         return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
 
+    # - Settings -> Users (§16.4 U4, B189) ----------------------------------
+    #
+    # Admin only, behind the same gate as the tab and the form's CSRF token.
+    # The signed-in session is the proof: no second password (decided
+    # 2026-09-27, reverses that part of B187). Refuses the admin's own
+    # account - that is the account menu's - and leaves the last active admin
+    # to the database, which refuses under a lock whichever path asks. The
+    # verbs and audit names are `haprion-user`'s, with `via: web`.
+    #
+
     def _account_row(request: Request, username: str) -> db.AccountRow | None:
         with request.app.state.pool.connection() as connection:
             return db.account_row(
@@ -395,6 +414,8 @@ def build_router(config: Config) -> APIRouter:
             },
             status_code=status_code,
         )
+
+    # - Settings -> Logs & metrics (Fas 15, B209) ---------------------------
 
     def _cluster_settings_page(
         request: Request,
@@ -617,6 +638,14 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         return RedirectResponse(page, status_code=303)
+
+    # - Settings -> Nodes (Fas 16, B211) ------------------------------------
+    #
+    # Which nodes each cluster has, and adding or removing one. The list is the
+    # poller's status reading; a change is a `cluster_node` job for the root
+    # helper, confirmed with the node's name, because both directions change
+    # who can fetch the cluster's configuration and certificates.
+    #
 
     def _nodes_page(
         request: Request,

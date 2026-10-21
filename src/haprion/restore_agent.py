@@ -1110,21 +1110,29 @@ def _update(
     """`apt-get update`, tried again, and let through when only other indexes failed.
 
     The HAProxy repository's index must arrive: without it APT installs the
-    distribution's own, older HAProxy and says nothing. An index of the
+    distribution's own, older HAProxy and says nothing. APT reports a source
+    that did not answer as a warning and exits 0 (a 503 from Launchpad,
+    26-10-21), so its output is read whatever the exit. An index of the
     distribution's that still fails after the tries is a warning - the install
     that follows fails by itself if a package it needs really cannot be had.
     """
 
     for attempt in range(1, tries + 1):
         completed = _apt_update(host, sleep=sleep)
-        if completed.returncode == 0:
+        output = f"{completed.stdout}\n{completed.stderr}"
+        failed = sorted(set(FETCH_FAILED.findall(output)))
+        unread = [url for url in failed if required and url.startswith(required)]
+        if completed.returncode == 0 and not unread:
             return
         if attempt < tries:
             sleep(pause)
-    output = f"{completed.stdout}\n{completed.stderr}"
-    failed = sorted(set(FETCH_FAILED.findall(output)))
     detail = (completed.stderr or completed.stdout).strip().splitlines()[-5:]
-    if not failed or any(url.startswith(required) for url in failed) or not required:
+    if completed.returncode == 0:
+        raise Failed(
+            f"apt-get update could not read the HAProxy repository after {tries} tries: "
+            f"{', '.join(unread[:3])}"
+        )
+    if not failed or unread or not required:
         raise Failed(f"apt-get update exited {completed.returncode}: {' / '.join(detail)}")
     report.warnings.append(
         f"apt-get update could not fetch {len(failed)} index file(s) outside the HAProxy "

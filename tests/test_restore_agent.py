@@ -1141,6 +1141,18 @@ class AptUpdate(unittest.TestCase):
         with self.assertRaisesRegex(restore_agent.Failed, "apt-get update exited 100"):
             self.attempt(*[(100, failing)] * 3)
 
+    def test_the_haproxy_repository_unread_stops_the_restore_though_apt_exits_0(self) -> None:
+        # What APT 3.2 printed for a 503 from Launchpad, and exited 0 (26-10-21).
+        unread = (
+            f"Err:27 {self.SOURCE} x InRelease\n  503  Service Unavailable\n"
+            f"W: Failed to fetch {self.SOURCE}/dists/x/InRelease  503  Service Unavailable\n"
+            "W: Some index files failed to download. They have been ignored, or old ones used instead."
+        )
+        with self.assertRaisesRegex(restore_agent.Failed, "could not read the HAProxy repository"):
+            self.attempt(*[(0, unread)] * 3)
+        warnings, slept = self.attempt((0, unread), (0, ""))
+        self.assertEqual((warnings, slept), ([], [restore_agent.APT_UPDATE_PAUSE]))
+
     def test_a_failure_it_cannot_read_stops_the_restore(self) -> None:
         with self.assertRaises(restore_agent.Failed):
             self.attempt(*[(100, "E: something else entirely")] * 3)

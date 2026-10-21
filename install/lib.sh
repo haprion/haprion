@@ -414,7 +414,7 @@ APT_WAIT=(-o "DPkg::Lock::Timeout=${APT_LOCK_SECONDS}")
 apt_update() {
     local started=$SECONDS output
     while true; do
-        if output="$(apt-get update -q 2>&1)"; then
+        if output="$(apt-get -o Acquire::Retries=3 update -q 2>&1)"; then
             return 0
         fi
         if [[ "$output" != *"Could not get lock"* ]] || (( SECONDS - started >= APT_LOCK_SECONDS )); then
@@ -424,8 +424,18 @@ apt_update() {
         sleep "$APT_LOCK_PAUSE"
     done
 }
+#
+# What apt would install. A source that did not answer leaves `apt-get update`
+# successful with a warning and the distribution's own, older package the
+# candidate (apt 3.2, a 503 from Launchpad, 26-10-21): installing it and
+# refusing it afterwards left the older one on the machine. Asked first.
+#
+apt_candidate() {
+    LC_ALL=C apt-cache policy "$1" 2>/dev/null | sed -n 's/^  Candidate: //p'
+}
+
 ensure_dnsdist() {
-    local hold="${1:-}" id codename version
+    local hold="${1:-}" id codename version candidate
     id="$(. /etc/os-release && echo "${ID:-}")"
     codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-}")"
     case "${id}/${codename}" in
@@ -443,6 +453,10 @@ ensure_dnsdist() {
         log "  masked   dnsdist.service (the binary validates; nothing here serves dns)"
     fi
     apt_update || die "dnsdist: apt-get update failed"
+    candidate="$(apt_candidate dnsdist)"
+    [[ "$candidate" == 2.1.* ]] \
+        || die "dnsdist: repo.powerdns.com offers no 2.1 (apt would install '${candidate:-nothing}');" \
+               "check that this machine reaches it, then run this step again"
     DEBIAN_FRONTEND=noninteractive apt-get "${APT_WAIT[@]}" install -y -q dnsdist >/dev/null \
         || die "dnsdist: the package could not be installed"
     version="$(dnsdist --version 2>/dev/null | head -n 1)"
@@ -492,7 +506,7 @@ ensure_system_bus() {
 }
 
 ensure_haproxy() {
-    local role="${1:-}" installed id codename key keyring suite uri pin release
+    local role="${1:-}" installed id codename key keyring suite uri pin release candidate
     installed="$(dpkg-query -W -f='${Version}' haproxy 2>/dev/null || true)"
     if [[ -n "$installed" ]] && dpkg --compare-versions "$installed" ge "${HAPROXY_BRANCH}~"; then
         log "  ok       haproxy ${installed}"
@@ -534,6 +548,12 @@ ensure_haproxy() {
     [[ -z "$pin" ]] \
         || install_file "/etc/apt/preferences.d/haproxy-${HAPROXY_BRANCH}.pref" root:root 644 "$pin"
     apt_update || die "HAProxy: apt-get update failed"
+    candidate="$(apt_candidate haproxy)"
+    if [[ -z "$candidate" || "$candidate" == "(none)" ]] \
+        || ! dpkg --compare-versions "$candidate" ge "${HAPROXY_BRANCH}~"; then
+        die "HAProxy: ${uri} offers no ${HAPROXY_BRANCH} (apt would install '${candidate:-nothing}');" \
+            "check that this machine reaches it, then run this step again"
+    fi
     #
     # `confold`: a node's haproxy.cfg is a link into the release by now, which
     # dpkg reads as a changed configuration file and would otherwise ask about.

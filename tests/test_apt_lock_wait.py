@@ -30,7 +30,7 @@ LOCKED = "E: Could not get lock /var/lib/apt/lists/lock. It is held by process 8
 #
 # The one `apt-get update` the shell has, inside `apt_update`.
 #
-SHELL_UPDATE = 'if output="$(apt-get update -q 2>&1)"; then'
+SHELL_UPDATE = 'if output="$(apt-get -o Acquire::Retries=3 update -q 2>&1)"; then'
 #
 # apt-get run as a command - at the start of one, after `$(`, a pipe or an
 # environment assignment - and not named in a message.

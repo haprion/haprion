@@ -226,7 +226,9 @@ if __name__ == "__main__":
 ENSURE_HAPROXY = (
     'source "$0"; cd "$(dirname "$0")"; '
     'install_file() { mkdir -p "$ROOT$(dirname "$1")"; printf "%s\\n" "$4" > "$ROOT$1"; }; '
-    "install() { :; }; apt_update() { :; }; apt-get() { :; }; "
+    "install() { :; }; apt_update() { :; }; "
+    'apt-get() { echo "$*" >> "$APT_CALLS"; }; '
+    'apt-cache() { echo "  Candidate: ${CANDIDATE}"; }; '
     'systemctl() { echo "$*" >> "$CALLS"; }; '
     'dpkg-query() { local first; first="$(head -n 1 "$ANSWERS")"; sed -i 1d "$ANSWERS"; '
     'echo "$first"; }; '
@@ -238,7 +240,13 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
     """ensure_haproxy writes what a restored node gets (haproxy_repository), byte for byte."""
 
     def run_step(
-        self, os_id: str, codename: str, before: str, role: str = "", serving: bool = False
+        self,
+        os_id: str,
+        codename: str,
+        before: str,
+        role: str = "",
+        serving: bool = False,
+        candidate: str = "3.4.7-1",
     ) -> tuple[int, str, dict[str, bytes]]:
         work = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, work)
@@ -246,6 +254,8 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
         root.mkdir()
         self.calls = work / "systemctl"
         self.calls.touch()
+        self.apt_calls = work / "apt-get"
+        self.apt_calls.touch()
         answers = work / "dpkg"
         answers.write_text(f"{before}\n3.4.7-1\n")
         os_release = work / "os-release"
@@ -266,6 +276,8 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
                 "OS_RELEASE": str(os_release),
                 "HAPROXY_CURRENT": str(current),
                 "CALLS": str(self.calls),
+                "APT_CALLS": str(self.apt_calls),
+                "CANDIDATE": candidate,
             },
         )
         files = {
@@ -326,8 +338,56 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
         self.run_step("ubuntu", "resolute", "3.4.6-1ppa1~resolute")
         self.assertEqual(self.calls.read_text(), "")
 
+    def test_a_repository_that_did_not_answer_installs_nothing_older(self) -> None:
+        # apt-get update exits 0 when a source answers 503, and the
+        # distribution's 3.2 is then the candidate (26-10-21).
+        code, output, _ = self.run_step("ubuntu", "resolute", "", candidate="3.2.9-1ubuntu2.2")
+        self.assertNotEqual(code, 0)
+        self.assertIn("ppa.launchpadcontent.net/vbernat/haproxy-3.4/ubuntu offers no 3.4", output)
+        self.assertIn("apt would install '3.2.9-1ubuntu2.2'", output)
+        self.assertEqual(self.apt_calls.read_text(), "")
+        self.assertEqual(self.calls.read_text(), "")
+
     def test_another_distribution_is_refused(self) -> None:
         code, output, files = self.run_step("debian", "bookworm", "2.6.12-1")
         self.assertNotEqual(code, 0)
         self.assertEqual(files, {})
         self.assertIn("not a supported distribution", output)
+
+
+ENSURE_DNSDIST = (
+    'source "$0"; cd "$(dirname "$0")"; '
+    "install_file() { :; }; install() { :; }; apt_update() { :; }; systemctl() { :; }; "
+    'apt-get() { echo "$*" >> "$APT_CALLS"; }; '
+    'apt-cache() { echo "  Candidate: ${CANDIDATE}"; }; '
+    'dnsdist() { echo "dnsdist 2.1.3 (Lua 5.4)"; }; '
+    "ensure_dnsdist"
+)
+
+
+class DnsdistFromPowerDns(unittest.TestCase):
+    def run_step(self, candidate: str) -> tuple[int, str, str]:
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        calls = work / "apt-get"
+        calls.touch()
+        done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+            ["/bin/bash", "-c", ENSURE_DNSDIST, str(LIB)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "APT_CALLS": str(calls), "CANDIDATE": candidate},
+        )
+        return done.returncode, done.stdout + done.stderr, calls.read_text()
+
+    def test_the_2_1_series_is_installed(self) -> None:
+        code, output, calls = self.run_step("2.1.3-1pdns.ubuntu26.04")
+        self.assertEqual(code, 0, output)
+        self.assertIn("install -y -q dnsdist", calls)
+
+    def test_a_repository_that_did_not_answer_installs_nothing_older(self) -> None:
+        # apt-get update exits 0 when a source does not answer (26-10-21).
+        code, output, calls = self.run_step("1.9.10-1")
+        self.assertNotEqual(code, 0)
+        self.assertIn("repo.powerdns.com offers no 2.1 (apt would install '1.9.10-1')", output)
+        self.assertEqual(calls, "")

@@ -819,6 +819,297 @@ def _posted(request: Request) -> FormData:
     return anyio.from_thread.run(_read_form, request)
 
 
+def _earlier_names(
+    name: str,
+    targets: Mapping[str, metrics.BackendTarget],
+    aliases: Mapping[str, Sequence[db.EarlierName]],
+) -> list[db.EarlierName]:
+    """A backend's earlier names: recorded renames, and the generator's older form of each."""
+
+    found = list(aliases.get(name, ()))
+    found += [
+        db.EarlierName(older)
+        for older, target in targets.items()
+        if target.current == name and older != name
+    ]
+    return found
+
+
+def _admin_write_gate(config: Config, request: Request) -> AuthenticatedSession | Response:
+    """Signed in, writes on, and an admin - every page that queues a change.
+
+    Named for certificate deletion once, its first user; the backup and
+    restore pages were gated by a name that said otherwise.
+    """
+
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    if not config.management_writes:
+        return PlainTextResponse("Not found", status_code=404)
+    if session.role != "admin":
+        return PlainTextResponse("Refused", status_code=403)
+    return session
+
+
+def _registry_overview(config: Config, request: Request) -> certificates.RegistryView | None:
+    clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
+    overview = certificates.build_certificate_overview(
+        clusters,
+        certificate_rows,
+        manager=read_manager_certificates(request, config),
+        stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+    )
+    return overview.registry
+
+
+def _page_context(
+    config: Config, request: Request, session: AuthenticatedSession
+) -> tuple[str, certificates.RegistryView | None, dict[str, Any]]:
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    registry = _registry_overview(config, request)
+    with request.app.state.pool.connection() as connection:
+        recent = db.recent_jobs(connection)
+    return (
+        token,
+        registry,
+        {
+            "username": session.username,
+            "role": session.role,
+            "csrf_token": auth.csrf_token(token),
+            "registry_present": registry is not None,
+            "certificate_job": jobs.certificate_in_flight(recent),
+            "section": "certificates",
+            "management_writes": config.management_writes,
+            "demo_fixture": config.demo_fixture,
+        },
+    )
+
+
+def _backup_overview(config: Config, request: Request) -> Any:
+    clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
+    return backups.build_backup_overview(
+        clusters,
+        backup_rows,
+        stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+    )
+
+
+def _account_rows(config: Config, request: Request) -> list[db.AccountRow]:
+    with request.app.state.pool.connection() as connection:
+        return db.account_rows(
+            connection,
+            window_minutes=config.throttle.window_minutes,
+            max_failures=config.throttle.max_failures,
+        )
+
+
+def _status_row(config: Config, request: Request, cluster: str) -> Any | None:
+    clusters, rows = read_source(request, config, STATUS_SOURCE)
+    if cluster not in clusters:
+        return None
+    return next((row for row in rows if row.cluster == cluster), None)
+
+
+def _queue_node_job(
+    config: Config,
+    request: Request,
+    gate: AuthenticatedSession,
+    cluster: str,
+    payload: Mapping[str, Any],
+    key: UUID,
+    node: str | None,
+    again: Callable[[str], Response],
+    *,
+    operation: str = "cluster_node",
+    back: str | None = None,
+) -> Response:
+    #
+    # Who asked, for the version a node change publishes (B335): the helper
+    # records it only because the worker is the one who sends it.
+    #
+    payload = {**payload, "requested_by": gate.username}
+    try:
+        operations.prepare(
+            operation=operation, cluster=cluster, request_id=uuid4(), payload=payload
+        )
+    except operations.BadPayload as refused:
+        return again(str(refused))
+    with request.app.state.pool.connection() as connection:
+        try:
+            job = db.queue_job(
+                connection,
+                operation=operation,
+                cluster=cluster,
+                payload=payload,
+                idempotency_key=key,
+            )
+        except db.ClusterBusy:
+            connection.rollback()
+            return again(
+                "A job is already running for this cluster. Try again when it has finished."
+            )
+        except db.RequestConflict:
+            connection.rollback()
+            return PlainTextResponse("That request key asked for something else", 409)
+        #
+        # The audit row names the node and the action, never the block: the
+        # block holds public keys, and the audit log is not where a reader
+        # looks for one.
+        #
+        detail: dict[str, Any] = {
+            "operation": operation,
+            "job": job.id,
+            "action": payload["action"],
+        }
+        if node is not None:
+            detail["node"] = node
+        db.record_audit_event(
+            connection,
+            actor=gate.username,
+            action="queue_job",
+            cluster=cluster,
+            request_id=job.request_id,
+            detail=detail,
+        )
+        connection.commit()
+    if back is not None:
+        return RedirectResponse(back, status_code=303)
+    #
+    # Back to the cluster's page, named from the configured list rather
+    # than from the request: the callers already refused a cluster not on
+    # it, and the address is then never built from what the browser sent.
+    #
+    listed = next(name for name in listed_clusters(request, config) if name == cluster)
+    return RedirectResponse(f"/settings/nodes/{listed}", status_code=303)
+
+
+def _first_cluster(
+    config: Config,
+    request: Request,
+    session: AuthenticatedSession,
+    *,
+    recent: list[Any],
+    busy: Mapping[str, str],
+    status_rows: Iterable[Any],
+    views: Iterable[Any],
+) -> first_cluster.Guide | None:
+    """The guide's step for an admin who may write, or None (B315)."""
+
+    if session.role != "admin" or not config.management_writes:
+        return None
+    listed = listed_clusters(request, config)
+    cluster = listed[0] if len(listed) == 1 else ""
+    reading = next((row for row in status_rows if row.cluster == cluster), None)
+    vip = next((view.vip for view in views if view.cluster == cluster), "")
+    return first_cluster.guide(
+        clusters=listed,
+        reading=reading,
+        creations=_creations(request, recent),
+        busy=busy,
+        vip=vip if vip and vip != "Unknown" else "",
+        phase=request.query_params.get("first-cluster", ""),
+        deployed_recently=first_cluster.deployed_recently(recent, cluster),
+        failure=first_cluster.failure(recent, cluster) if cluster else None,
+    )
+
+
+def _oidc_page(
+    config: Config,
+    request: Request,
+    session: AuthenticatedSession,
+    provider: db.OidcProvider,
+    *,
+    form: Mapping[str, Any] | None = None,
+    problem: str = "",
+    done: str = "",
+    checks: list[dict[str, Any]] | None = None,
+    status_code: int = 200,
+) -> Response:
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    values: dict[str, Any] = {
+        name: getattr(provider, name) for name in db.OIDC_SETTINGS if name != "client_secret_sealed"
+    }
+    values.update(form or {})
+    return TEMPLATES.TemplateResponse(
+        request,
+        "settings-oidc.html",
+        {
+            "username": session.username,
+            "role": session.role,
+            "csrf_token": auth.csrf_token(token),
+            "section": "settings",
+            "management_writes": config.management_writes,
+            "provider": provider,
+            "values": values,
+            "secret_set": provider.client_secret_sealed is not None,
+            "installed": config.oidc_public_key is not None,
+            "redirect_uri": oidc_web.redirect_uri(str(request.base_url)),
+            "auth_methods": oidc_web.AUTH_METHODS,
+            "logout_modes": oidc_web.LOGOUT_MODES,
+            "local_logins": oidc_web.LOCAL_LOGINS,
+            "checks": checks,
+            "problem": problem,
+            "done": done,
+        },
+        status_code=status_code,
+    )
+
+
+def _oidc_provider(request: Request) -> db.OidcProvider | None:
+    with request.app.state.pool.connection() as connection:
+        return db.oidc_provider(connection)
+
+
+def _dns_public_key(config: Config) -> DnsProfilePublicKey | None:
+    """The key the web seals against, read fresh: a rotation is a file swap."""
+
+    if config.dns_profiles_public_key is None:
+        return None
+    try:
+        return read_public_key(config.dns_profiles_public_key)
+    except KeyFileError as exc:
+        logger.error("dns_profiles.public_key cannot be read: %s", exc)
+        return None
+
+
+def _oidc_redirect(request: Request) -> str:
+    return oidc_web.redirect_uri(str(request.base_url))
+
+
+def _start_oidc(
+    request: Request,
+    provider: db.OidcProvider,
+    *,
+    mode: str,
+    bound_to: str,
+) -> Response:
+    """Record a sign-in in progress and answer where the browser goes (O5).
+
+    `bound_to` is the cookie the answer must come back with: the
+    pre-sign-in cookie for a sign-in, the session for Test sign-in. Its
+    hash is kept, never the token. A provider that cannot be reached is
+    the caller's to say, as `oidc_web.OidcProblem`.
+    """
+
+    tokens = oidc_web.new_login_tokens()
+    redirect = _oidc_redirect(request)
+    found = oidc_web.ask("discover", provider, redirect=redirect)
+    with request.app.state.pool.connection() as connection:
+        db.start_oidc_login(
+            connection,
+            state=tokens.state,
+            nonce=tokens.nonce,
+            verifier=tokens.verifier,
+            mode=mode,
+            pre_session_hash=auth.token_hash(bound_to),
+        )
+        connection.commit()
+    return RedirectResponse(
+        oidc_web.authorization_url(provider, found, tokens, redirect=redirect), status_code=303
+    )
+
+
 def build_router(config: Config) -> APIRouter:
     router = APIRouter(dependencies=[Depends(hidden_by_a_switch)])
 
@@ -879,6 +1170,7 @@ def build_router(config: Config) -> APIRouter:
         # (B328, 26-10-18): a guide in the dashboard's place had no way out.
         #
         first = _first_cluster(
+            config,
             request,
             session,
             recent=recent,
@@ -1588,7 +1880,7 @@ def build_router(config: Config) -> APIRouter:
         before a node is asked, so what is checked here is the shape only.
         """
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -1668,7 +1960,7 @@ def build_router(config: Config) -> APIRouter:
         before a node is asked; what is checked here is the shape only.
         """
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -2273,21 +2565,6 @@ def build_router(config: Config) -> APIRouter:
                 "demo_fixture": config.demo_fixture,
             },
         )
-
-    def _earlier_names(
-        name: str,
-        targets: Mapping[str, metrics.BackendTarget],
-        aliases: Mapping[str, Sequence[db.EarlierName]],
-    ) -> list[db.EarlierName]:
-        """A backend's earlier names: recorded renames, and the generator's older form of each."""
-
-        found = list(aliases.get(name, ()))
-        found += [
-            db.EarlierName(older)
-            for older, target in targets.items()
-            if target.current == name and older != name
-        ]
-        return found
 
     def _documents(readings: Iterable[Any], cluster: str) -> dict[str, Any]:
         """One cluster's stored objects, as the engine's own model reads them.
@@ -3331,7 +3608,7 @@ def build_router(config: Config) -> APIRouter:
         certificate: Sequence[str] = Form(default=()),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         if not features.is_on(features.CERT_RECEIVERS):
@@ -3446,7 +3723,7 @@ def build_router(config: Config) -> APIRouter:
     def _external_certificate_gate(
         request: Request, certificate_id: str, csrf_token: str
     ) -> tuple[AuthenticatedSession, certificates.RegistryCertificateView] | Response:
-        session = _admin_write_gate(request)
+        session = _admin_write_gate(config, request)
         if not isinstance(session, AuthenticatedSession):
             return session
         if not features.is_on(features.CERT_RECEIVERS) or not CERTIFICATE_ID.fullmatch(
@@ -3550,7 +3827,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
 
-        public_key = _dns_public_key()
+        public_key = _dns_public_key(config)
         choices = _certificate_choices(request, config)
         try:
             payload = certificate_import_form.payload_from_form(
@@ -3605,7 +3882,7 @@ def build_router(config: Config) -> APIRouter:
                 "replaced by an upload.",
                 back=f"/certificates?view=registry&open={certificate_id}",
             )
-        public_key = _dns_public_key()
+        public_key = _dns_public_key(config)
         if public_key is None:
             return _refusal_page(
                 request,
@@ -3739,7 +4016,7 @@ def build_router(config: Config) -> APIRouter:
                 "problem": problem,
                 "accept": certificate_import_form.ACCEPT,
                 "max_kb": certificate_import_form.MAX_UPLOAD_BYTES // 1024,
-                "sealing_available": _dns_public_key() is not None,
+                "sealing_available": _dns_public_key(config) is not None,
                 "certificate_job": jobs.certificate_in_flight(recent),
                 "section": "certificates",
                 "management_writes": config.management_writes,
@@ -4128,7 +4405,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """The page behind *Renew…*: one row, renewed the way its source is made."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4145,7 +4422,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue the certbot or NDES renewal the page offered; a file goes to the upload route."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4213,22 +4490,6 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/settings", status_code=303)
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
-    def _admin_write_gate(request: Request) -> AuthenticatedSession | Response:
-        """Signed in, writes on, and an admin - every page that queues a change.
-
-        Named for certificate deletion once, its first user; the backup and
-        restore pages were gated by a name that said otherwise.
-        """
-
-        session = current_session(request)
-        if session is None:
-            return RedirectResponse("/login", status_code=303)
-        if not config.management_writes:
-            return PlainTextResponse("Not found", status_code=404)
-        if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
-        return session
-
     # - Publish to… / Remove from… (2026-09-15) ---------------------------
 
     def _certificate_retarget_page(
@@ -4280,7 +4541,7 @@ def build_router(config: Config) -> APIRouter:
 
         if action not in certificate_retarget.ACTIONS:
             return PlainTextResponse("Not found", status_code=404)
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4309,7 +4570,7 @@ def build_router(config: Config) -> APIRouter:
 
         if action not in certificate_retarget.ACTIONS:
             return PlainTextResponse("Not found", status_code=404)
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4383,38 +4644,6 @@ def build_router(config: Config) -> APIRouter:
 
     # - Receivers (B142, 2026-09-18) ------------------------------------------
 
-    def _registry_overview(request: Request) -> certificates.RegistryView | None:
-        clusters, certificate_rows = read_source(request, config, CERTIFICATE_SOURCE)
-        overview = certificates.build_certificate_overview(
-            clusters,
-            certificate_rows,
-            manager=read_manager_certificates(request, config),
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-        )
-        return overview.registry
-
-    def _page_context(
-        request: Request, session: AuthenticatedSession
-    ) -> tuple[str, certificates.RegistryView | None, dict[str, Any]]:
-        token = request.cookies.get(auth.SESSION_COOKIE, "")
-        registry = _registry_overview(request)
-        with request.app.state.pool.connection() as connection:
-            recent = db.recent_jobs(connection)
-        return (
-            token,
-            registry,
-            {
-                "username": session.username,
-                "role": session.role,
-                "csrf_token": auth.csrf_token(token),
-                "registry_present": registry is not None,
-                "certificate_job": jobs.certificate_in_flight(recent),
-                "section": "certificates",
-                "management_writes": config.management_writes,
-                "demo_fixture": config.demo_fixture,
-            },
-        )
-
     def _receivers_page(
         request: Request,
         session: AuthenticatedSession,
@@ -4423,7 +4652,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """The list: every receiver, its fetch commands, and the job on its row."""
 
-        _token, registry, context = _page_context(request, session)
+        _token, registry, context = _page_context(config, request, session)
         rows = registry.receiver_rows if registry else ()
         manager = registry.manager if registry else None
         with request.app.state.pool.connection() as connection:
@@ -4455,7 +4684,7 @@ def build_router(config: Config) -> APIRouter:
         keeps it - not the database, not a cache.
         """
 
-        _token, registry, context = _page_context(request, session)
+        _token, registry, context = _page_context(config, request, session)
         manager = registry.manager if registry else None
         return TEMPLATES.TemplateResponse(
             request,
@@ -4479,7 +4708,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """The form: what is needed before the job, and nothing from after it."""
 
-        _token, _registry, context = _page_context(request, session)
+        _token, _registry, context = _page_context(config, request, session)
         entered = {"receiver": "", "transport": "sftp", "public_key": "", "allow": ""}
         if form:
             entered.update(form)
@@ -4506,7 +4735,7 @@ def build_router(config: Config) -> APIRouter:
     #
     @router.get("/settings/status-access", response_class=HTMLResponse)
     def status_access_edit(request: Request) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _status_access_page(request, gate)
@@ -4548,7 +4777,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Hide the getting started list for the whole installation (B316)."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4568,7 +4797,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Show a hidden getting started list again (0076)."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4621,13 +4850,13 @@ def build_router(config: Config) -> APIRouter:
         scheduled = (
             {
                 view.cluster
-                for view in _backup_overview(request).clusters
+                for view in _backup_overview(config, request).clusters
                 if view.schedule is not None and view.schedule.enabled
             }
             if backups_on
             else set()
         )
-        registry = _registry_overview(request)
+        registry = _registry_overview(config, request)
         interface = registry.interface.identifier if registry and registry.interface else None
         served = certificates.interface_served(read_manager_certificates(request, config))
         facts = getting_started.Facts(
@@ -4648,7 +4877,7 @@ def build_router(config: Config) -> APIRouter:
                 if view.configured
             ),
             interface_self_signed=served.self_signed if served is not None else None,
-            accounts=len(_account_rows(request)),
+            accounts=len(_account_rows(config, request)),
             sso=provider is not None and provider.enabled,
             site_certificates=sum(
                 entry.source_label in {"Certbot", "NDES"} and entry.identifier != interface
@@ -4671,7 +4900,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Leave one row of *Needs attention* out until it has gone (B299)."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4714,7 +4943,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Replace the list of addresses that may ask /status/ (B274); empty switches it off."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4739,7 +4968,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         switched = request.query_params.get("switched", "")[:32]
@@ -4758,7 +4987,7 @@ def build_router(config: Config) -> APIRouter:
         done: str = "",
         status_code: int = 200,
     ) -> Response:
-        _token, registry, context = _page_context(request, gate)
+        _token, registry, context = _page_context(config, request, gate)
         entry = registry.interface if registry else None
         served = certificates.interface_served(read_manager_certificates(request, config))
         sort, asked = users.TABLE.chosen(request)
@@ -4794,7 +5023,7 @@ def build_router(config: Config) -> APIRouter:
                 and bool(entry.fingerprint)
                 and entry.fingerprint != served.fingerprint,
                 "users": users.user_views(
-                    _account_rows(request), signed_in_as=gate.username, sort=sort
+                    _account_rows(config, request), signed_in_as=gate.username, sort=sort
                 ),
                 "user_sorts": users.TABLE.links(sort),
                 # Which provider sign-in goes through, said where accounts are
@@ -4861,14 +5090,6 @@ def build_router(config: Config) -> APIRouter:
     # it, so a switch never reads off while a timer it meant to stop still runs.
     #
 
-    def _backup_overview(request: Request) -> Any:
-        clusters, backup_rows = read_source(request, config, BACKUP_SOURCE)
-        return backups.build_backup_overview(
-            clusters,
-            backup_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-        )
-
     def _restore_waiting(request: Request) -> bool:
         with request.app.state.pool.connection() as connection:
             return feature_switch.restore_waiting(connection)
@@ -4877,7 +5098,7 @@ def build_router(config: Config) -> APIRouter:
     def feature_page(request: Request, name: str) -> Response:
         """The question before turning a feature off, when off does more than hide."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         feature = features.BY_NAME.get(name)
@@ -4904,7 +5125,7 @@ def build_router(config: Config) -> APIRouter:
         enabled: str = Form(default="", max_length=3),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4916,7 +5137,7 @@ def build_router(config: Config) -> APIRouter:
         want = enabled == "on"
         readings = feature_switch.Readings(
             clusters=lambda: listed_clusters(request, config),
-            backup_overview=lambda: _backup_overview(request),
+            backup_overview=lambda: _backup_overview(config, request),
             objects=lambda: read_source(request, config, OBJECTS_SOURCE)[1],
             restore_waiting=lambda: _restore_waiting(request),
         )
@@ -4948,14 +5169,6 @@ def build_router(config: Config) -> APIRouter:
     # to the database, which refuses under a lock whichever path asks. The
     # verbs and audit names are `haprion-user`'s, with `via: web`.
     #
-
-    def _account_rows(request: Request) -> list[db.AccountRow]:
-        with request.app.state.pool.connection() as connection:
-            return db.account_rows(
-                connection,
-                window_minutes=config.throttle.window_minutes,
-                max_failures=config.throttle.max_failures,
-            )
 
     def _account_row(request: Request, username: str) -> db.AccountRow | None:
         with request.app.state.pool.connection() as connection:
@@ -5071,7 +5284,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings/clusters/{cluster}", response_class=HTMLResponse)
     def cluster_settings_edit(request: Request, cluster: str) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         row = _settings_reading(request, cluster)
@@ -5124,7 +5337,7 @@ def build_router(config: Config) -> APIRouter:
         saved_revision: str = Form(default="", max_length=16),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -5250,12 +5463,6 @@ def build_router(config: Config) -> APIRouter:
     # who can fetch the cluster's configuration and certificates.
     #
 
-    def _status_row(request: Request, cluster: str) -> Any | None:
-        clusters, rows = read_source(request, config, STATUS_SOURCE)
-        if cluster not in clusters:
-            return None
-        return next((row for row in rows if row.cluster == cluster), None)
-
     def _nodes_page(
         request: Request,
         gate: AuthenticatedSession,
@@ -5271,12 +5478,12 @@ def build_router(config: Config) -> APIRouter:
         joined: bool = False,
         status_code: int = 200,
     ) -> Response:
-        _token, _registry, context = _page_context(request, gate)
+        _token, _registry, context = _page_context(config, request, gate)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
             hidden_at = db.getting_started_hidden_at(connection)
         listed = listed_clusters(request, config)
-        status = _status_row(request, cluster)
+        status = _status_row(config, request, cluster)
         rows = cluster_nodes.node_rows(status)
         return TEMPLATES.TemplateResponse(
             request,
@@ -5316,80 +5523,9 @@ def build_router(config: Config) -> APIRouter:
             status_code=status_code,
         )
 
-    def _queue_node_job(
-        request: Request,
-        gate: AuthenticatedSession,
-        cluster: str,
-        payload: Mapping[str, Any],
-        key: UUID,
-        node: str | None,
-        again: Callable[[str], Response],
-        *,
-        operation: str = "cluster_node",
-        back: str | None = None,
-    ) -> Response:
-        #
-        # Who asked, for the version a node change publishes (B335): the helper
-        # records it only because the worker is the one who sends it.
-        #
-        payload = {**payload, "requested_by": gate.username}
-        try:
-            operations.prepare(
-                operation=operation, cluster=cluster, request_id=uuid4(), payload=payload
-            )
-        except operations.BadPayload as refused:
-            return again(str(refused))
-        with request.app.state.pool.connection() as connection:
-            try:
-                job = db.queue_job(
-                    connection,
-                    operation=operation,
-                    cluster=cluster,
-                    payload=payload,
-                    idempotency_key=key,
-                )
-            except db.ClusterBusy:
-                connection.rollback()
-                return again(
-                    "A job is already running for this cluster. Try again when it has finished."
-                )
-            except db.RequestConflict:
-                connection.rollback()
-                return PlainTextResponse("That request key asked for something else", 409)
-            #
-            # The audit row names the node and the action, never the block: the
-            # block holds public keys, and the audit log is not where a reader
-            # looks for one.
-            #
-            detail: dict[str, Any] = {
-                "operation": operation,
-                "job": job.id,
-                "action": payload["action"],
-            }
-            if node is not None:
-                detail["node"] = node
-            db.record_audit_event(
-                connection,
-                actor=gate.username,
-                action="queue_job",
-                cluster=cluster,
-                request_id=job.request_id,
-                detail=detail,
-            )
-            connection.commit()
-        if back is not None:
-            return RedirectResponse(back, status_code=303)
-        #
-        # Back to the cluster's page, named from the configured list rather
-        # than from the request: the callers already refused a cluster not on
-        # it, and the address is then never built from what the browser sent.
-        #
-        listed = next(name for name in listed_clusters(request, config) if name == cluster)
-        return RedirectResponse(f"/settings/nodes/{listed}", status_code=303)
-
     @router.get("/settings/nodes/{cluster}", response_class=HTMLResponse)
     def cluster_nodes_page(request: Request, cluster: str) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         if cluster not in listed_clusters(request, config):
@@ -5408,7 +5544,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Read the block and show what it says; with the node's name typed, queue it."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -5421,7 +5557,7 @@ def build_router(config: Config) -> APIRouter:
                 block,
                 cluster=cluster,
                 host=host,
-                count=len(cluster_nodes.node_rows(_status_row(request, cluster))),
+                count=len(cluster_nodes.node_rows(_status_row(config, request, cluster))),
             )
         except cluster_nodes.FormProblem as problem:
             return _nodes_page(
@@ -5450,7 +5586,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
         try:
             stored, join_key = cluster_nodes.sealed_block(
-                addition.block, cluster=cluster, public_key=_dns_public_key()
+                addition.block, cluster=cluster, public_key=_dns_public_key(config)
             )
         except cluster_nodes.FormProblem as problem:
             return _nodes_page(
@@ -5465,6 +5601,7 @@ def build_router(config: Config) -> APIRouter:
         if join_key is not None:
             payload["join_key"] = join_key
         return _queue_node_job(
+            config,
             request,
             gate,
             cluster,
@@ -5487,7 +5624,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Ask first; with the node's name typed, queue the removal."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -5496,7 +5633,7 @@ def build_router(config: Config) -> APIRouter:
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
         refused = cluster_nodes.removable(
-            cluster_nodes.node_rows(_status_row(request, cluster)), node
+            cluster_nodes.node_rows(_status_row(config, request, cluster)), node
         )
         if refused is not None:
             return _nodes_page(request, gate, cluster, problem=refused, status_code=400)
@@ -5516,6 +5653,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         return _queue_node_job(
+            config,
             request,
             gate,
             cluster,
@@ -5538,7 +5676,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """The same node at another name (B295): ask for the host, then queue the change."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -5546,7 +5684,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Refused", status_code=403)
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
-        rows = cluster_nodes.node_rows(_status_row(request, cluster))
+        rows = cluster_nodes.node_rows(_status_row(config, request, cluster))
         if not any(row.name == node for row in rows):
             return PlainTextResponse("Not found", status_code=404)
         if not idempotency_key:
@@ -5568,6 +5706,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         return _queue_node_job(
+            config,
             request,
             gate,
             cluster,
@@ -5595,7 +5734,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Ask first; with the cluster's ID typed, queue its removal (B211)."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -5623,6 +5762,7 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         return _queue_node_job(
+            config,
             request,
             gate,
             cluster,
@@ -5646,7 +5786,7 @@ def build_router(config: Config) -> APIRouter:
         problem: str = "",
         status_code: int = 200,
     ) -> Response:
-        _token, registry, context = _page_context(request, gate)
+        _token, registry, context = _page_context(config, request, gate)
         return TEMPLATES.TemplateResponse(
             request,
             "settings-cluster-new.html",
@@ -5666,7 +5806,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings/new-cluster", response_class=HTMLResponse)
     def new_cluster_page(request: Request) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         #
@@ -5709,7 +5849,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Read the form and both blocks and show them; with the ID typed, queue it (B211)."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -5728,7 +5868,7 @@ def build_router(config: Config) -> APIRouter:
             "block_2": block_2,
             "host_2": host_2,
         }
-        registry = _registry_overview(request)
+        registry = _registry_overview(config, request)
         try:
             creation = cluster_nodes.read_creation(
                 form,
@@ -5757,12 +5897,13 @@ def build_router(config: Config) -> APIRouter:
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         try:
-            creation_payload = creation.payload(_dns_public_key())
+            creation_payload = creation.payload(_dns_public_key(config))
         except cluster_nodes.FormProblem as problem:
             return _new_cluster_page(
                 request, gate, form=form, creation=creation, problem=str(problem), status_code=400
             )
         return _queue_node_job(
+            config,
             request,
             gate,
             creation.cluster,
@@ -5780,34 +5921,6 @@ def build_router(config: Config) -> APIRouter:
             # findings 51 and 57).
             #
             back=f"/settings/new-cluster?creating={creation.cluster}",
-        )
-
-    def _first_cluster(
-        request: Request,
-        session: AuthenticatedSession,
-        *,
-        recent: list[Any],
-        busy: Mapping[str, str],
-        status_rows: Iterable[Any],
-        views: Iterable[Any],
-    ) -> first_cluster.Guide | None:
-        """The guide's step for an admin who may write, or None (B315)."""
-
-        if session.role != "admin" or not config.management_writes:
-            return None
-        listed = listed_clusters(request, config)
-        cluster = listed[0] if len(listed) == 1 else ""
-        reading = next((row for row in status_rows if row.cluster == cluster), None)
-        vip = next((view.vip for view in views if view.cluster == cluster), "")
-        return first_cluster.guide(
-            clusters=listed,
-            reading=reading,
-            creations=_creations(request, recent),
-            busy=busy,
-            vip=vip if vip and vip != "Unknown" else "",
-            phase=request.query_params.get("first-cluster", ""),
-            deployed_recently=first_cluster.deployed_recently(recent, cluster),
-            failure=first_cluster.failure(recent, cluster) if cluster else None,
         )
 
     def _first_cluster_page(
@@ -5842,7 +5955,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     def _first_cluster_gate(request: Request, csrf_token: str) -> AuthenticatedSession | Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -5896,7 +6009,7 @@ def build_router(config: Config) -> APIRouter:
         if action == "back":
             return _first_cluster_page(request, first_cluster.Guide(step=1), form=form)
         step = first_cluster.Guide(step=2)
-        registry = _registry_overview(request)
+        registry = _registry_overview(config, request)
         try:
             creation = cluster_nodes.read_creation(
                 {**form, "block_1": block},
@@ -5914,7 +6027,7 @@ def build_router(config: Config) -> APIRouter:
             return _first_cluster_page(request, step, form=form, block=block, preview=node)
         try:
             key = UUID(idempotency_key)
-            payload = creation.payload(_dns_public_key())
+            payload = creation.payload(_dns_public_key(config))
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
         except cluster_nodes.FormProblem as problem:
@@ -5922,6 +6035,7 @@ def build_router(config: Config) -> APIRouter:
                 request, step, form=form, block=block, problem=str(problem), status_code=400
             )
         return _queue_node_job(
+            config,
             request,
             gate,
             creation.cluster,
@@ -5951,7 +6065,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
-        reading = _status_row(request, cluster)
+        reading = _status_row(config, request, cluster)
         step = first_cluster.Guide(step=3, cluster=cluster, joined=first_cluster.joined(reading))
         try:
             addition = cluster_nodes.read_addition(
@@ -5969,7 +6083,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("A request key is required", status_code=400)
         try:
             stored, join_key = cluster_nodes.sealed_block(
-                addition.block, cluster=cluster, public_key=_dns_public_key()
+                addition.block, cluster=cluster, public_key=_dns_public_key(config)
             )
         except cluster_nodes.FormProblem as problem:
             return _first_cluster_page(
@@ -5984,6 +6098,7 @@ def build_router(config: Config) -> APIRouter:
         if join_key is not None:
             payload["join_key"] = join_key
         return _queue_node_job(
+            config,
             request,
             gate,
             cluster,
@@ -6014,6 +6129,7 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
         guide = _first_cluster(
+            config,
             request,
             session,
             recent=recent,
@@ -6029,7 +6145,7 @@ def build_router(config: Config) -> APIRouter:
     def first_cluster_node_package(request: Request, name: str) -> Response:
         """The node package the CLI release carries, under its versioned name, for the guide."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         if name != first_cluster.node_package_name() or not first_cluster.NODE_PACKAGE.is_file():
@@ -6042,7 +6158,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings/new-user", response_class=HTMLResponse)
     def new_user_page(request: Request) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _new_user_page(request, gate)
@@ -6056,7 +6172,7 @@ def build_router(config: Config) -> APIRouter:
         repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -6101,7 +6217,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/settings/users/{name}", response_class=HTMLResponse)
     def user_page(request: Request, name: str) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         row = _account_row(request, name)
@@ -6120,7 +6236,7 @@ def build_router(config: Config) -> APIRouter:
         break_glass: str = Form(default="", max_length=8),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -6224,57 +6340,11 @@ def build_router(config: Config) -> APIRouter:
             done = action
         return RedirectResponse(f"{users.href(row.username)}?done={done}", status_code=303)
 
-    def _oidc_page(
-        request: Request,
-        session: AuthenticatedSession,
-        provider: db.OidcProvider,
-        *,
-        form: Mapping[str, Any] | None = None,
-        problem: str = "",
-        done: str = "",
-        checks: list[dict[str, Any]] | None = None,
-        status_code: int = 200,
-    ) -> Response:
-        token = request.cookies.get(auth.SESSION_COOKIE, "")
-        values: dict[str, Any] = {
-            name: getattr(provider, name)
-            for name in db.OIDC_SETTINGS
-            if name != "client_secret_sealed"
-        }
-        values.update(form or {})
-        return TEMPLATES.TemplateResponse(
-            request,
-            "settings-oidc.html",
-            {
-                "username": session.username,
-                "role": session.role,
-                "csrf_token": auth.csrf_token(token),
-                "section": "settings",
-                "management_writes": config.management_writes,
-                "provider": provider,
-                "values": values,
-                "secret_set": provider.client_secret_sealed is not None,
-                "installed": config.oidc_public_key is not None,
-                "redirect_uri": oidc_web.redirect_uri(str(request.base_url)),
-                "auth_methods": oidc_web.AUTH_METHODS,
-                "logout_modes": oidc_web.LOGOUT_MODES,
-                "local_logins": oidc_web.LOCAL_LOGINS,
-                "checks": checks,
-                "problem": problem,
-                "done": done,
-            },
-            status_code=status_code,
-        )
-
-    def _oidc_provider(request: Request) -> db.OidcProvider | None:
-        with request.app.state.pool.connection() as connection:
-            return db.oidc_provider(connection)
-
     @router.get("/settings/oidc", response_class=HTMLResponse)
     def oidc_settings_page(request: Request) -> Response:
         """Settings -> Users -> OIDC configuration (B197)."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         provider = _oidc_provider(request)
@@ -6286,14 +6356,14 @@ def build_router(config: Config) -> APIRouter:
             "off": "Sign-in through the provider is off.",
         }
         return _oidc_page(
-            request, gate, provider, done=done.get(request.query_params.get("done", ""), "")
+            config, request, gate, provider, done=done.get(request.query_params.get("done", ""), "")
         )
 
     @router.post("/settings/oidc", response_class=HTMLResponse)
     def change_oidc_settings(request: Request) -> Response:
         """Save, Verify, and turn on or off. Each is audited; the secret never is."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         posted = _posted(request)
@@ -6315,6 +6385,7 @@ def build_router(config: Config) -> APIRouter:
             status_code: int = 400,
         ) -> Response:
             return _oidc_page(
+                config,
                 request,
                 gate,
                 provider,
@@ -6407,6 +6478,7 @@ def build_router(config: Config) -> APIRouter:
                 connection.commit()
             refreshed = _oidc_provider(request) or provider
             return _oidc_page(
+                config,
                 request,
                 gate,
                 refreshed,
@@ -6448,7 +6520,7 @@ def build_router(config: Config) -> APIRouter:
     def delete_user_page(request: Request, name: str) -> Response:
         """The question before an account is removed for good (B197)."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         row = _account_row(request, name)
@@ -6469,7 +6541,7 @@ def build_router(config: Config) -> APIRouter:
     def certificate_receivers_page(request: Request) -> Response:
         """Who fetches from this manager, and what each host runs to do it."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _receivers_page(request, gate)
@@ -6478,10 +6550,10 @@ def build_router(config: Config) -> APIRouter:
     def certificate_receiver_form(request: Request) -> Response:
         """Register a receiver: its own page, like a new certificate is."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
-        if _registry_overview(request) is None:
+        if _registry_overview(config, request) is None:
             return RedirectResponse("/certificates/receivers", status_code=303)
         return _receiver_form_page(request, gate)
 
@@ -6561,7 +6633,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue one `cert_receiver` add job, or draw the form again saying why not."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -6577,7 +6649,7 @@ def build_router(config: Config) -> APIRouter:
             "public_key": public_key,
             "allow": allow,
         }
-        registry = _registry_overview(request)
+        registry = _registry_overview(config, request)
         try:
             payload = certificate_receivers.payload(
                 receiver, transport, public_key, allow, registry.receiver_rows if registry else ()
@@ -6599,7 +6671,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue a new secret for an https receiver, and show its password once."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -6609,7 +6681,7 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        registry = _registry_overview(request)
+        registry = _registry_overview(config, request)
         rows = registry.receiver_rows if registry else ()
         if not any(row.identifier == receiver and row.transport == "https" for row in rows):
             return _receivers_page(request, gate, problem=f"{receiver} is not an https receiver.")
@@ -6635,7 +6707,7 @@ def build_router(config: Config) -> APIRouter:
         public_key: str = "",
         problem: str = "",
     ) -> Response:
-        _token, _registry, context = _page_context(request, session)
+        _token, _registry, context = _page_context(config, request, session)
         return TEMPLATES.TemplateResponse(
             request,
             "certificate-receiver-key.html",
@@ -6652,7 +6724,7 @@ def build_router(config: Config) -> APIRouter:
     def _ssh_transport(request: Request, receiver: str) -> str | None:
         """The receiver's transport when it fetches over ssh, else None."""
 
-        registry = _registry_overview(request)
+        registry = _registry_overview(config, request)
         rows = registry.receiver_rows if registry else ()
         return next(
             (
@@ -6665,7 +6737,7 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/certificates/receivers/key", response_class=HTMLResponse)
     def certificate_receiver_key_form(request: Request) -> Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         receiver = request.query_params.get("receiver", "")
@@ -6684,7 +6756,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue a new key for an ssh receiver; its lock, directory and certificates stay."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -6719,7 +6791,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue one `cert_receiver` remove job for a receiver nothing publishes to."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -6729,7 +6801,7 @@ def build_router(config: Config) -> APIRouter:
             key = UUID(idempotency_key)
         except ValueError:
             return PlainTextResponse("A request key is required", status_code=400)
-        registry = _registry_overview(request)
+        registry = _registry_overview(config, request)
         try:
             payload = certificate_receivers.removal(
                 receiver, registry.receiver_rows if registry else ()
@@ -6751,7 +6823,7 @@ def build_router(config: Config) -> APIRouter:
         about a change, not a view somebody should bookmark.
         """
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -6775,7 +6847,7 @@ def build_router(config: Config) -> APIRouter:
         on the job's rows.
         """
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -6875,17 +6947,6 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Refused", status_code=403)
         return session
 
-    def _dns_public_key() -> DnsProfilePublicKey | None:
-        """The key the web seals against, read fresh: a rotation is a file swap."""
-
-        if config.dns_profiles_public_key is None:
-            return None
-        try:
-            return read_public_key(config.dns_profiles_public_key)
-        except KeyFileError as exc:
-            logger.error("dns_profiles.public_key cannot be read: %s", exc)
-            return None
-
     def _just_removed(request: Request, profile_ids: Sequence[str]) -> str:
         """The profile a removal was just asked for, if the address names one.
 
@@ -6907,7 +6968,7 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             profiles = db.dns_profiles(connection)
             recent = db.profile_jobs(connection, "dns_profile_apply")
-        public_key = _dns_public_key()
+        public_key = _dns_public_key(config)
         catalogue = {provider.id: provider for provider in dns_profile_form.providers()}
         references = certificates.profile_references(
             read_manager_certificates(request, config), field="dns_profile"
@@ -7098,7 +7159,7 @@ def build_router(config: Config) -> APIRouter:
                 if name.startswith("field.")
             },
         )
-        public_key = _dns_public_key()
+        public_key = _dns_public_key(config)
         if public_key is None:
             return _dns_profile_form_page(
                 request,
@@ -7248,7 +7309,7 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 "providers": dns_profile_form.providers(),
                 "existing": existing,
-                "public_key": _dns_public_key(),
+                "public_key": _dns_public_key(config),
                 "problem": problem,
                 "certificate_job": jobs.certificate_in_flight(recent),
                 "section": "certificates",
@@ -7276,7 +7337,7 @@ def build_router(config: Config) -> APIRouter:
                 "form": form,
                 "values": ndes_profile_form.redraw_values(form.values),
                 "existing": existing,
-                "public_key": _dns_public_key(),
+                "public_key": _dns_public_key(config),
                 "problem": problem,
                 "section": "certificates",
                 "management_writes": config.management_writes,
@@ -7310,7 +7371,7 @@ def build_router(config: Config) -> APIRouter:
                 "profiles": profiles,
                 "statuses": statuses,
                 "just_removed": _just_removed(request, [profile.id for profile in profiles]),
-                "public_key": _dns_public_key(),
+                "public_key": _dns_public_key(config),
                 "refresh": any(p.label in {"Applying", "Removing"} for p in statuses.values()),
                 "section": "certificates",
                 "management_writes": config.management_writes,
@@ -7390,7 +7451,7 @@ def build_router(config: Config) -> APIRouter:
                 if name.startswith("field.")
             },
         )
-        public_key = _dns_public_key()
+        public_key = _dns_public_key(config)
         if public_key is None:
             return _ndes_profile_form_page(
                 request,
@@ -7802,7 +7863,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Start a restore from one archive row: the target and the mode."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _restore_form_page(request, gate, cluster=cluster, node=node, archive=archive)
@@ -7823,7 +7884,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue `node_restore_prepare` under a new run ID, then show the run."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -7889,7 +7950,7 @@ def build_router(config: Config) -> APIRouter:
     def _restore_step(
         request: Request, run: str, csrf_token: str, idempotency_key: str
     ) -> tuple[AuthenticatedSession, node_restores.RestoreRun, UUID] | Response:
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -8184,7 +8245,7 @@ def build_router(config: Config) -> APIRouter:
         and the page is shown again instead.
         """
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -8329,7 +8390,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Run or discard a job held since the manager last started (0082, review 2026-10-20 R1)."""
 
-        gate = _admin_write_gate(request)
+        gate = _admin_write_gate(config, request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -9170,41 +9231,6 @@ def build_router(config: Config) -> APIRouter:
         # 303, so a refresh of the answer cannot send the form again.
         return RedirectResponse("/account/password?changed=1", status_code=303)
 
-    def _oidc_redirect(request: Request) -> str:
-        return oidc_web.redirect_uri(str(request.base_url))
-
-    def _start_oidc(
-        request: Request,
-        provider: db.OidcProvider,
-        *,
-        mode: str,
-        bound_to: str,
-    ) -> Response:
-        """Record a sign-in in progress and answer where the browser goes (O5).
-
-        `bound_to` is the cookie the answer must come back with: the
-        pre-sign-in cookie for a sign-in, the session for Test sign-in. Its
-        hash is kept, never the token. A provider that cannot be reached is
-        the caller's to say, as `oidc_web.OidcProblem`.
-        """
-
-        tokens = oidc_web.new_login_tokens()
-        redirect = _oidc_redirect(request)
-        found = oidc_web.ask("discover", provider, redirect=redirect)
-        with request.app.state.pool.connection() as connection:
-            db.start_oidc_login(
-                connection,
-                state=tokens.state,
-                nonce=tokens.nonce,
-                verifier=tokens.verifier,
-                mode=mode,
-                pre_session_hash=auth.token_hash(bound_to),
-            )
-            connection.commit()
-        return RedirectResponse(
-            oidc_web.authorization_url(provider, found, tokens, redirect=redirect), status_code=303
-        )
-
     @router.get("/login/oidc")
     def oidc_sign_in(request: Request) -> Response:
         """The provider button: off to the provider, bound to this browser."""
@@ -9264,7 +9290,7 @@ def build_router(config: Config) -> APIRouter:
 
         gate: AuthenticatedSession | Response | None = None
         if pending.mode == "test":
-            gate = _admin_write_gate(request)
+            gate = _admin_write_gate(config, request)
             if not isinstance(gate, AuthenticatedSession):
                 return gate
 
@@ -9278,7 +9304,7 @@ def build_router(config: Config) -> APIRouter:
             said = request.query_params.get("error_description", "")[:256] or refusal
             message = f"The provider did not sign you in: {said}"
             if isinstance(gate, AuthenticatedSession):
-                return _oidc_page(request, gate, provider, problem=message, status_code=409)
+                return _oidc_page(config, request, gate, provider, problem=message, status_code=409)
             return _login_again(request, config, error=message)
         if not code:
             return _login_again(
@@ -9300,7 +9326,7 @@ def build_router(config: Config) -> APIRouter:
         except oidc_web.OidcProblem as error:
             message = f"The provider's answer was refused: {error}"
             if isinstance(gate, AuthenticatedSession):
-                return _oidc_page(request, gate, provider, problem=message, status_code=409)
+                return _oidc_page(config, request, gate, provider, problem=message, status_code=409)
             with request.app.state.pool.connection() as connection:
                 db.record_audit_event(
                     connection,

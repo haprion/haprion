@@ -7,7 +7,8 @@ name: upstream watch
 #                    security one (the engine side only, two days' wait)
 #   propose          tools/upstream-watch rewrites the pins on the branch
 #                    `upstream-watch` and keeps one pull request open for it;
-#                    a major update is an issue that needs a decision, never a change
+#                    a major update is an issue that needs a decision, never a change;
+#                    an unchanged proposal's failed checks run again
 #   merge            the proposal goes in once every check on it passed, its
 #                    upstream releases are old enough and nobody put `hold` on
 #                    it; the merge on main then builds and publishes the engine
@@ -77,6 +78,9 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     environment: upstream-watch
+    permissions:
+      contents: read
+      actions: write # run a proposal's failed checks again
 
     steps:
       - name: Act as the app
@@ -172,6 +176,7 @@ jobs:
       # is pushed only when its tree differs from what the branch holds, so the
       # checks on it run again only when there is something new to check.
       - name: Keep the proposal's pull request
+        id: proposal
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
@@ -197,6 +202,7 @@ jobs:
           if git -c http.extraheader="${auth}" fetch --quiet "${remote}" "${BRANCH}" 2>/dev/null \
               && [[ "$(git rev-parse 'FETCH_HEAD^{tree}')" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
             echo "the branch already holds this proposal"
+            echo "unchanged=true" >> "${GITHUB_OUTPUT}"
           else
             git -c http.extraheader="${auth}" push --quiet --force "${remote}" "HEAD:refs/heads/${BRANCH}"
           fi
@@ -214,6 +220,25 @@ jobs:
               --title "Update the WAF packages' upstream pins" --body-file "${body}" \
               ${NOTIFY:+--assignee "${NOTIFY}"}
           fi
+
+      # An unchanged branch gets no new checks, so a failure from outside - a
+      # mirror that answered 503 (26-10-21) - would hold the proposal for good.
+      # Its failed jobs run again once a night; a real failure fails again and
+      # stays in view.
+      - name: Run the proposal's failed checks again
+        if: steps.proposal.outputs.unchanged == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/${REPOSITORY}/branches/${BRANCH}" --jq .commit.sha)
+          for run in $(gh api "repos/${REPOSITORY}/actions/runs?head_sha=${head}&status=failure" \
+              --jq '.workflow_runs[].id'); do
+            echo "running the failed jobs of ${run} again"
+            gh api --method POST "repos/${REPOSITORY}/actions/runs/${run}/rerun-failed-jobs"
+          done
 
   merge:
     name: Merge the proposal when it is due

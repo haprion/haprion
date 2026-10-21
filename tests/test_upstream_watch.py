@@ -561,6 +561,53 @@ class TheWorkflow(unittest.TestCase):
                 self.assertEqual((root / "output").read_text().strip(), output)
                 self.assertEqual((root / "vulnerabilities.txt").read_text(), "report\n")
 
+    def test_an_unchanged_proposal_s_failed_checks_run_again(self) -> None:
+        """A failure from outside no longer holds the proposal for good (26-10-21)."""
+
+        watch = yaml.safe_load((BASE / ".github/workflows/upstream-watch.yml").read_text())
+        job = watch["jobs"]["propose"]
+        self.assertEqual(job["permissions"], {"contents": "read", "actions": "write"})
+        (keep,) = [s for s in job["steps"] if s.get("id") == "proposal"]
+        self.assertIn('echo "unchanged=true" >> "${GITHUB_OUTPUT}"', keep["run"])
+        (step,) = [
+            s for s in job["steps"] if s.get("name") == "Run the proposal's failed checks again"
+        ]
+        self.assertEqual(step["if"], "steps.proposal.outputs.unchanged == 'true'")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "bin").mkdir()
+            stub = root / "bin" / "gh"
+            stub.write_text(
+                "#!/bin/sh\n"
+                f'echo "$*" >> {root / "calls"}\n'
+                'case "$*" in\n'
+                "  *branches/upstream-watch*) echo 0123abcd ;;\n"
+                '  *"head_sha=0123abcd&status=failure"*) printf "11\\n12\\n" ;;\n'
+                "esac\n"
+            )
+            stub.chmod(0o755)
+            (root / "step.sh").write_text(step["run"])
+            result = subprocess.run(
+                ["/bin/bash", "--noprofile", "--norc", "-eo", "pipefail", str(root / "step.sh")],
+                env={
+                    "PATH": f"{root / 'bin'}:/usr/bin:/bin",
+                    "REPOSITORY": "example/repo",
+                    "BRANCH": "upstream-watch",
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            posts = [line for line in (root / "calls").read_text().splitlines() if "POST" in line]
+        self.assertEqual(
+            posts,
+            [
+                "api --method POST repos/example/repo/actions/runs/11/rerun-failed-jobs",
+                "api --method POST repos/example/repo/actions/runs/12/rerun-failed-jobs",
+            ],
+        )
+
     def test_no_step_reads_a_status_the_shell_never_reaches(self) -> None:
         """A status read on its own line runs only after success under GitHub's `bash -e`."""
 

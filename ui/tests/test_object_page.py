@@ -806,7 +806,7 @@ class WhichPoolsTheTrafficCardAsksAbout(unittest.TestCase):
 
     def test_the_view_reads_both_and_neither_hides_the_other(self) -> None:
         source = (
-            Path(__file__).resolve().parents[1] / "src" / "haprion_ui" / "views.py"
+            Path(__file__).resolve().parents[1] / "src" / "haprion_ui" / "pages" / "proxies.py"
         ).read_text()
         block = source.split("# Which backends this page can ask about", 1)[1].split(
             "if served:", 1
@@ -857,7 +857,7 @@ class AMovedServerName(DraftReading):
 
     def page(self, **config: Any) -> str:
         patch = mock.patch(
-            "haprion_ui.views.moved_dns_servers",
+            "haprion_ui.pages.proxies.moved_dns_servers",
             return_value=[
                 "ns1.example.com now resolves to 192.0.2.54; look it up again on its object"
             ],
@@ -909,7 +909,7 @@ backends:
 
         for name, answer in (
             (
-                "haprion_ui.views.load_proxy",
+                "haprion_ui.pages.proxies.load_proxy",
                 lambda name, _document: load_proxy(name, self.DOCUMENT),
             ),
             ("haprion_ui.db.read_backend_totals", read_totals),
@@ -957,7 +957,7 @@ backends:
 
         for name, answer in (
             (
-                "haprion_ui.views.load_proxy",
+                "haprion_ui.pages.proxies.load_proxy",
                 lambda name, _document: load_proxy(name, self.DOCUMENT),
             ),
             ("haprion_ui.db.read_backend_totals", read_totals),

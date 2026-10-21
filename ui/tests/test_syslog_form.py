@@ -392,7 +392,8 @@ class AMissingIncludeIsSaidInTheListing(unittest.TestCase):
             (root / "templates" / "proxies.html").read_text(),
         )
         self.assertIn(
-            'listing["unforwarded"].get(view.cluster, ())', (root / "views.py").read_text()
+            'listing["unforwarded"].get(view.cluster, ())',
+            (root / "pages" / "proxies.py").read_text(),
         )
 
     def test_the_nodes_are_read_from_the_status(self) -> None:

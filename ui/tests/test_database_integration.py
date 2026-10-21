@@ -1417,6 +1417,149 @@ class ARealDatabase(unittest.TestCase):
         self.assertIn(f"traffic_log_{suffix}_pkey", indexes)
         self.assertIn(f"traffic_log_{suffix}_search", indexes)
         self.assertIn(f"traffic_log_{suffix}_rule", indexes)
+        # A small cluster beside a large one, in the page's order (0083).
+        self.assertIn(f"traffic_log_{suffix}_cluster", indexes)
+
+    def test_the_web_reads_the_traffic_log_through_a_view_with_its_granted_columns(self) -> None:
+        """The view names what the web was granted on the table, no more and no less (0083)."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select attname from pg_attribute"
+                " where attrelid = 'traffic_log_read'::regclass and attnum > 0 order by 1"
+            )
+            shown = [row[0] for row in cursor.fetchall()]
+            cursor.execute(
+                "select column_name from information_schema.column_privileges"
+                " where table_name = 'traffic_log' and grantee = 'app_web'"
+                "   and privilege_type = 'SELECT' order by 1"
+            )
+            granted = [row[0] for row in cursor.fetchall()]
+        self.assertTrue(shown)
+        self.assertEqual(shown, granted)
+        suffix = f"{datetime.now(UTC):%Y%m%d}"
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select traffic_log_partition(current_date)")
+            migration = _migration("0083_traffic_log_read.py", cursor)
+            migration.downgrade()
+            cursor.execute("select to_regclass('public.traffic_log_read')")
+            self.assertEqual(cursor.fetchone(), (None,))
+            cursor.execute("select to_regclass(%s)", (f"public.traffic_log_{suffix}_cluster",))
+            self.assertEqual(cursor.fetchone(), (None,))
+            migration.upgrade()
+            cursor.execute(
+                "select to_regclass(%s)::text", (f"public.traffic_log_{suffix}_cluster",)
+            )
+            self.assertEqual(cursor.fetchone(), (f"traffic_log_{suffix}_cluster",))
+            connection.rollback()
+
+    def test_the_planner_sees_the_search_index_statistics_for_the_web(self) -> None:
+        """Through the view, the web's estimate of a search is the owner's (0083, D1).
+
+        With column grants alone PostgreSQL hides an expression index's
+        statistics from the planner, which then guessed a search matches about
+        1 % of the rows and read the whole table for one that matched nothing -
+        past the web's statement timeout from a week of busy traffic.
+        """
+
+        now = datetime.now(UTC).replace(microsecond=0)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select traffic_log_partition(%s::date)", (now.date(),))
+            cursor.execute(
+                "insert into traffic_log (event_id, cluster, node, occurred_at, request_number,"
+                " client, method, host, path, frontend, backend, server, status, request_time,"
+                " queue_time, connect_time, response_time, total_time, bytes)"
+                " select sha256(('estimate' || i)::bytea), 'alpha', 'node-a', %s, i,"
+                " '192.0.2.10', 'GET', 'app' || i %% 20 || '.example.com',"
+                " '/api/v1/items/' || i %% 300, 'f', 'be-' || i %% 10, 's',"
+                " 200, 0, 0, 0, 0, 0, 0 from generate_series(1, 5000) as i",
+                (now,),
+            )
+            connection.commit()
+            cursor.execute(f"analyze traffic_log_{now:%Y%m%d}")
+            connection.commit()
+
+        #
+        # A short term over repeated values, as hostnames and paths are: there
+        # the planner's guess without statistics is furthest from the truth.
+        #
+        search = "(host || ' ' || path || ' ' || backend) ilike '%zzqx%'"
+        partition = f"traffic_log_{now:%Y%m%d}"
+
+        def estimate(role: str, relation: str) -> int:
+            def rows(node: dict[str, Any]) -> int | None:
+                if node.get("Relation Name") == partition:
+                    return int(node["Plan Rows"])
+                return next(
+                    (
+                        found
+                        for child in node.get("Plans", [])
+                        if (found := rows(child)) is not None
+                    ),
+                    None,
+                )
+
+            with self.connect(role) as connection, connection.cursor() as cursor:
+                statement = f"explain (format json) select host from {relation} where {search}"  # noqa: S608 - fixed literals
+                cursor.execute(statement)
+                plan: Any = cursor.fetchone()
+                found = rows(plan[0][0]["Plan"])
+                self.assertIsNotNone(found, f"no scan of {partition}")
+                return int(found or 0)
+
+        self.assertEqual(
+            estimate("HAPRION_UI_TEST_WEB_ROLE", "traffic_log_read"),
+            estimate("HAPRION_UI_TEST_MIGRATION_ROLE", "traffic_log"),
+        )
+
+    def test_the_roles_carry_the_limits_the_installation_sets(self) -> None:
+        """test-database sets what `02-platform-database` sets, read out of the step (review D2)."""
+
+        step = Path(__file__).resolve().parents[2] / "install/platform/02-platform-database"
+        limits = re.findall(
+            r'^set_limits "\$(\w+)_USER"\s+"([^"]+)"$', step.read_text(), re.MULTILINE
+        )
+        self.assertEqual(
+            [role for role, _ in limits],
+            ["WEB", "WORKER", "POLLER", "COLLECTOR"],
+            "the step's shape",
+        )
+        for role, timeout in limits:
+            with (
+                self.subTest(role=role),
+                self.connect(f"HAPRION_UI_TEST_{role}_ROLE") as connection,
+            ):
+                self.assertEqual(
+                    connection.execute("show statement_timeout").fetchone(), (timeout,)
+                )
+                self.assertEqual(
+                    connection.execute("show idle_in_transaction_session_timeout").fetchone(),
+                    ("10s",),
+                )
+
+    def test_a_log_query_past_the_web_role_limit_is_cancelled_as_the_503_page_expects(self) -> None:
+        """The installation's 5 s limit, held by test-database too, stops a reading (review D2).
+
+        `views.database_unavailable` turns `QueryCanceled` into the page that
+        says to narrow the filter (U2, `test_database_unavailable`); this is
+        the real server raising it for the log page's own query. A lock held
+        by another session keeps the query waiting, so the limit is what ends
+        it, whatever the table holds.
+        """
+
+        with self.connect() as holder:
+            holder.execute("lock table traffic_log in access exclusive mode")
+            with (
+                tempfile.TemporaryDirectory() as temporary,
+                self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection,
+            ):
+                started = datetime.now(UTC)
+                with self.assertRaises(psycopg.errors.QueryCanceled):
+                    traffic_logs.read_database(connection, Path(temporary), ("alpha",))
+                waited = (datetime.now(UTC) - started).total_seconds()
+            holder.rollback()
+        self.assertGreaterEqual(waited, 4.5)
+        self.assertLess(waited, 15)
 
     def test_traffic_rule_is_bounded_and_downgrades_and_upgrades_cleanly(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)
@@ -1519,6 +1662,7 @@ class ARealDatabase(unittest.TestCase):
         self.assertTrue(all(not entry.rule for entry in none.entries))
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0083_traffic_log_read.py", cursor).downgrade()
                 migration = _migration("0050_traffic_rule.py", cursor)
                 migration.downgrade()
                 cursor.execute(
@@ -1570,6 +1714,7 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(cursor.fetchall(), [("930120,932160", 43)])
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0083_traffic_log_read.py", cursor).downgrade()
                 _migration("0081_update_check.py", cursor).downgrade()
                 migration = _migration("0051_waf_engine.py", cursor)
                 migration.downgrade()
@@ -1703,6 +1848,7 @@ class ARealDatabase(unittest.TestCase):
             connection.rollback()
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0083_traffic_log_read.py", cursor).downgrade()
                 migration = _migration("0052_waf_match.py", cursor)
                 migration.downgrade()
                 cursor.execute("select to_regclass('public.waf_match')")
@@ -3947,6 +4093,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
     def test_the_waf_engine_switch_downgrades_and_upgrades_cleanly(self) -> None:
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0083_traffic_log_read.py", cursor).downgrade()
                 _migration("0081_update_check.py", cursor).downgrade()
                 migration = _migration("0051_waf_engine.py", cursor)
                 migration.downgrade()
@@ -3954,6 +4101,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                     cursor.execute("insert into feature_switch (name) values ('waf_engine')")
             connection.rollback()
             with connection.cursor() as cursor:
+                _migration("0083_traffic_log_read.py", cursor).downgrade()
                 _migration("0081_update_check.py", cursor).downgrade()
                 migration = _migration("0051_waf_engine.py", cursor)
                 migration.downgrade()
@@ -3965,6 +4113,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
     def test_the_advanced_config_switch_downgrades_and_upgrades_cleanly(self) -> None:
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0083_traffic_log_read.py", cursor).downgrade()
                 _migration("0081_update_check.py", cursor).downgrade()
                 _migration("0051_waf_engine.py", cursor).downgrade()
                 migration = _migration("0049_advanced_config_switch.py", cursor)
@@ -3978,6 +4127,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                     cursor.execute("insert into feature_switch (name) values ('advanced_config')")
             connection.rollback()
             with connection.cursor() as cursor:
+                _migration("0083_traffic_log_read.py", cursor).downgrade()
                 _migration("0081_update_check.py", cursor).downgrade()
                 _migration("0051_waf_engine.py", cursor).downgrade()
                 migration = _migration("0049_advanced_config_switch.py", cursor)
@@ -3990,6 +4140,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
     def test_the_colours_switch_downgrades_and_upgrades_cleanly(self) -> None:
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0083_traffic_log_read.py", cursor).downgrade()
                 _migration("0081_update_check.py", cursor).downgrade()
                 _migration("0051_waf_engine.py", cursor).downgrade()
                 _migration("0049_advanced_config_switch.py", cursor).downgrade()
@@ -4001,6 +4152,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                     cursor.execute("insert into feature_switch (name) values ('cluster_colours')")
             connection.rollback()
             with connection.cursor() as cursor:
+                _migration("0083_traffic_log_read.py", cursor).downgrade()
                 _migration("0081_update_check.py", cursor).downgrade()
                 _migration("0051_waf_engine.py", cursor).downgrade()
                 _migration("0049_advanced_config_switch.py", cursor).downgrade()

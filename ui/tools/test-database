@@ -73,6 +73,21 @@ SQL
 "${pg_bindir}/createdb" -h "$socket_dir" -O hm_test_migrate "$database"
 "${pg_bindir}/psql" -h "$socket_dir" -d "$database" -v ON_ERROR_STOP=1 -qtAX \
     -c 'create extension pg_trgm'
+#
+# The installation's per-role limits (install/platform/02-platform-database),
+# so a query the web would lose to its 5 s is lost here too; a test holds the
+# two lists equal.
+#
+while read -r role timeout; do
+    "${pg_bindir}/psql" -h "$socket_dir" -d "$database" -v ON_ERROR_STOP=1 -qtAX \
+        -c "alter role ${role} in database ${database} set statement_timeout = '${timeout}'" \
+        -c "alter role ${role} in database ${database} set idle_in_transaction_session_timeout = '10s'"
+done <<'LIMITS'
+hm_test_web 5s
+hm_test_worker 15s
+hm_test_poller 10s
+hm_test_collector 15s
+LIMITS
 
 export HAPRION_UI_DATABASE_URL="postgresql+psycopg://hm_test_migrate@/${database}?host=${socket_dir}"
 export HAPRION_UI_TEST_DATABASE_DSN="dbname=${database} host=${socket_dir}"

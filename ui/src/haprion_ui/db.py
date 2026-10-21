@@ -4494,7 +4494,7 @@ def read_response_times_by_cluster(
             "select cluster, count(*), "
             "       percentile_disc(0.5) within group (order by response_time), "
             "       percentile_disc(0.95) within group (order by response_time) "
-            "  from traffic_log "
+            "  from traffic_log_read "
             " where cluster = any(%(clusters)s) and response_time >= 0 "
             "   and occurred_at >= %(since)s and occurred_at <= %(until)s "
             " group by cluster",
@@ -4525,7 +4525,7 @@ def read_response_times(
             "select count(*), "
             "       percentile_disc(0.5) within group (order by response_time), "
             "       percentile_disc(0.95) within group (order by response_time) "
-            "  from traffic_log "
+            "  from traffic_log_read "
             " where cluster = any(%(clusters)s) and response_time >= 0 "
             "   and occurred_at >= %(since)s and occurred_at <= %(until)s",
             {"clusters": list(clusters), "since": since, "until": until},
@@ -5344,7 +5344,7 @@ def waf_verdicts(
         cursor.execute(
             "select cluster, split_part(waf_id, '.', 1), count(*)::int, "
             "       count(distinct client)::int "
-            "  from traffic_log "
+            "  from traffic_log_read "
             " where cluster = any(%(clusters)s) and occurred_at >= %(since)s "
             "   and rule in ('crs:log', 'crs:deny') and waf_id <> '' "
             " group by 1, 2",
@@ -5364,7 +5364,7 @@ def waf_request_count(
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select count(*)::int from traffic_log "
+            "select count(*)::int from traffic_log_read "
             " where cluster = any(%(clusters)s) and occurred_at >= %(since)s and rule <> ''",
             {"clusters": list(clusters), "since": since},
         )

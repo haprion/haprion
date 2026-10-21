@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import time
 import unittest
@@ -29,6 +30,19 @@ from haprion_ui.views import ZONE_COOKIE
 from tests.test_login import LoginTestCase, configuration
 
 NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)
+
+
+class TheWebReadsTheView(unittest.TestCase):
+    def test_no_web_query_reads_the_traffic_log_table_itself(self) -> None:
+        """`traffic_log_read`, never `traffic_log`: only the view lets the planner use the search index (0083)."""
+
+        source = Path(__file__).resolve().parents[1] / "src" / "haprion_ui"
+        table = re.compile(r"\b(?:from|join)\s+traffic_log\b(?!_)", re.IGNORECASE)
+        readers = [
+            path.name for path in sorted(source.glob("*.py")) if table.search(path.read_text())
+        ]
+        self.assertEqual(readers, [])
+        self.assertIn("from traffic_log_read", (source / "traffic_logs.py").read_text())
 
 
 class TrafficFreshnessTests(unittest.TestCase):

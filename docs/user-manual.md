@@ -5809,31 +5809,38 @@ is written by whoever made the request and is escaped as text, never as markup.
 
 ##### Sizing the traffic table
 
-The numbers below were measured, not estimated, on a management host at the
-reference size — 2 vCPU, 4 GiB, PostgreSQL with stock `shared_buffers` of
-128 MB, the interface's services running alongside. A throwaway cluster on
-the platform volume took the real migrations, was filled through the collector's
-own `COPY` path with realistic cardinality (twenty hostnames, three hundred
-paths, ten proxies, weighted methods and status codes, seven days of
-time-ordered records as the collector writes them), and was read through the
-page's own query. Three checkpoints, `analyze` before each:
+The numbers below were measured, not estimated, in a throwaway PostgreSQL
+cluster with stock settings (`shared_buffers` 128 MB) on two CPUs, the
+reference size. It took the real migrations and was filled with fabricated
+traffic of realistic shape: two clusters in one time-ordered stream, a large
+one (twenty hostnames, ten proxies) and a small one with a thousandth of its
+requests (three hostnames, two proxies); three hundred paths, weighted methods
+and status codes, 0.1 % 5xx, 0.7 % with an access rule or the WAF engine met.
+The traffic log page and the WAF page were then read through their own
+queries, as the web role and under its five-second statement limit, in 22
+filter combinations: no filter; each cluster; status class and code; one word,
+two words, a rare word, a word nothing matches, `not` and `or`; an object; the
+WAF's requests; and time windows.
 
-| Rows | Table | Indexes | Per row | Newest 500 | Substring, one word | Substring, two words | Status 5xx | One day | One cluster, one day |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 M | 230 MiB | 161 MiB | 411 B | 3 ms | 3 ms | 10 ms | 3 ms | 2 ms | 2 ms |
-| 10 M | 2 299 MiB | 1 678 MiB | 417 B | 3 ms | 4 ms | 11 ms | 4 ms | 2 ms | 3 ms |
-| 30 M | 6 897 MiB | 4 562 MiB | 401 B | 3 ms | 3 ms | 13 ms | 4 ms | 2 ms | 2 ms |
+| Retention | Rows | Table | Indexes | Per row | Slowest page query | Most queries |
+|---|---|---|---|---|---|---|
+| 7 days × 2 M a day | 13.6 M | 3 314 MiB | 2 791 MiB | 471 B | 0.21 s (`a or b`, both rare) | under 15 ms |
+| 90 days × 300 000 a day | 27 M | 6 574 MiB | 4 373 MiB | 426 B | 0.48 s (`a or b`, both rare) | under 60 ms |
 
-**Plan on 410 bytes per record, indexes included**, and on the page staying
-fast: every query form the interface issues answered in about ten milliseconds
-or less at thirty million rows, with the trigram indexes carrying the
-substring searches. The write side is not the limit either — the collector's
-path sustained about 30 000 records per second throughout the load, flat with
-table size, and a run imports a minute's worth of traffic.
+The seven-day row was loaded through the indexes, as the collector writes; the
+ninety-day row had its search indexes built afterwards, which packs them
+tighter, so its per-row figure is low. The host's page cache was larger than a
+4 GiB manager's, so a first reading after a restart can take longer than the
+table shows.
+
+**Plan on 480 bytes per record, indexes included**, and on every page query
+answering well inside the web's limit. The collector's write path, the same
+`COPY` with every index in place, sustained about 40 000 records per second
+into the full seven-day table, and a run imports a minute's worth of traffic.
 
 So the disk a retention window needs is `records per day × retention_days ×
-410 bytes`, plus the collector's day files in staging for the same days (one
-more, the replay margin), plus WAL. At the default seven days that is close to **3 GB per
+480 bytes`, plus the collector's day files in staging for the same days (one
+more, the replay margin), plus WAL. At the default seven days that is about **3.4 GB per
 million records a day**. A pair of nodes serving ten thousand requests a day
 uses tens of megabytes; an installation nearing a million a day should have that
 volume sized for it and the 85 % backup warning ([user manual](#what-the-dump-does)) heeded. The number that grows

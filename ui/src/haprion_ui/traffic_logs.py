@@ -291,7 +291,8 @@ def like_pattern(query: str) -> str:
 
 def _search_sql(expression: _Expression, parameters: list[Any]) -> sql.Composable:
     # Keep this expression byte-for-byte aligned with the per-partition
-    # pg_trgm index created by migration 0030 (and, since 0031, the only per-partition index beside the primary key).
+    # pg_trgm index created by migration 0030: the planner uses it only for
+    # this exact expression, and only through `traffic_log_read` (0083).
     searchable = sql.SQL("(host || ' ' || path || ' ' || backend)")
     if isinstance(expression, _Term):
         if not expression.value:
@@ -780,7 +781,7 @@ def read_database(
                client, method, host, path, frontend, backend, server, status,
                request_time, queue_time, connect_time, response_time, total_time, bytes,
                rule
-          from traffic_log
+          from traffic_log_read
          where {}
          order by occurred_at desc, request_number desc
          limit %s

@@ -4873,7 +4873,14 @@ class WhatAnExceptionLetThroughIsNoFinding(unittest.TestCase):
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
 
     def setUp(self) -> None:
-        self.now = datetime.now(UTC).replace(microsecond=0)
+        #
+        # Inside one hour, which the rollup counts by: from "now" two equal
+        # matches minutes apart fell either side of an hour when the suite ran
+        # just after one, and were kept as two (26-10-21).
+        #
+        self.now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(
+            minutes=30
+        )
         rows = (
             # (rule, field, path, client)
             (190002, "", "/api", "192.0.2.5"),

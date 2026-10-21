@@ -123,8 +123,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -q
-          sudo apt-get install -y -q postgresql-18
+          sudo apt-get -o Acquire::Retries=5 update -q
+          sudo apt-get -o Acquire::Retries=5 install -y -q postgresql-18
 
       - name: Run all source, quality, test, and dependency gates
         env:
@@ -179,7 +179,8 @@ jobs:
           # The runner's apt reads only its amd64v3 variant's indexes, and the
           # PPA builds plain amd64: the distribution's older HAProxy won
           # (measured 26-10-19). The nodes use no variant; nor does this.
-          novariant=(-o 'APT::Architecture-Variants=')
+          # Retried: one 503 from Launchpad failed a whole run (26-10-21).
+          novariant=(-o 'APT::Architecture-Variants=' -o Acquire::Retries=5)
           sudo apt-get "${novariant[@]}" update -q
           sudo apt-get "${novariant[@]}" install -y -q haproxy
           haproxy -v | grep -q "^HAProxy version ${branch}\."
@@ -257,7 +258,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          command -v podman || { sudo apt-get update -q && sudo apt-get install -y -q podman; }
+          command -v podman || {
+            sudo apt-get -o Acquire::Retries=5 update -q
+            sudo apt-get -o Acquire::Retries=5 install -y -q podman
+          }
           podman --version
 
       - name: Install on empty machines

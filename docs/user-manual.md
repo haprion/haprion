@@ -1352,7 +1352,8 @@ A lineage issued through a profile renews through it: certbot writes the profile
 and the catalogue's propagation wait into the lineage's renewal configuration, and [The certbot environment](#the-certbot-environment)'s
 `haprion-cert-renew` restores what a plugin cannot persist. Removing a profile a lineage still
 renews through would break that renewal, which is why the registry and the renewal files are
-checked first.
+checked first. A profile that is missing or unreadable anyway stops only its own lineages: the
+daily renewal names each one, renews the others and makes the NDES pass, and ends non-zero.
 
 **From the terminal**, `haprion-profiles` does the same for DNS and NDES profiles, as root: each
 profile a file lists is sealed by the form's code against the same key, stored the way the page

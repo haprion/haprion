@@ -51,26 +51,41 @@ class RenewalInvocation:
     timeout: int = CERTBOT_TIMEOUT
 
 
+@dataclass(frozen=True, slots=True)
+class Renewals:
+    commands: tuple[RenewalInvocation, ...]
+    #
+    # (lineage, why) for each lineage whose command could not be built.
+    #
+    problems: tuple[tuple[str, str], ...]
+
+
 def invocations(
     policy: PathPolicy,
     runtime: RuntimeConfig,
     *,
-    renewal_directory: Path = RENEWAL_DIRECTORY,
+    renewal_directory: Path | None = None,
     binary: str | None = None,
     dry_run: bool = False,
     run_deploy_hooks: bool = False,
     require_secure: bool = True,
-) -> tuple[RenewalInvocation, ...]:
+) -> Renewals:
     """Build one bounded renewal command for every on-disk lineage.
 
     Certbot creates the renewal directory with its first certificate; until
     then there is nothing to renew, as for certbot itself and for the DNS
     profile helper's reading of the same directory (26-10-14).
+
+    A lineage whose command cannot be built - its DNS profile missing or
+    unreadable - is a problem of its own and the others are still renewed:
+    one stopped the whole pass, NDES included (logic review 26-10-22, L3).
+    What every lineage needs, the registry, still stops it.
     """
 
+    renewal_directory = renewal_directory or RENEWAL_DIRECTORY
     try:
         if not renewal_directory.exists():
-            return ()
+            return Renewals((), ())
         if not renewal_directory.is_dir():
             raise ConfigError(
                 f"certbot renewal directory is not a directory: {renewal_directory}", exit_code=78
@@ -81,7 +96,10 @@ def invocations(
             f"cannot list certbot renewal configurations: {exc}", exit_code=78
         ) from exc
 
+    if lineages and runtime.registry is None:
+        raise ConfigError("no certificate registry is configured", exit_code=78)
     commands: list[RenewalInvocation] = []
+    problems: list[tuple[str, str]] = []
     for lineage in lineages:
         try:
             built = renewal_invocation(
@@ -94,13 +112,14 @@ def invocations(
                 require_secure=require_secure,
             )
         except IssueError as exc:
-            raise ConfigError(str(exc), exit_code=exc.exit_code) from exc
+            problems.append((lineage, str(exc)))
+            continue
         commands.append(
             RenewalInvocation(
                 lineage, built.arguments, built.environment, built.redactions, built.timeout
             )
         )
-    return tuple(commands)
+    return Renewals(tuple(commands), tuple(problems))
 
 
 def _scrub(text: str, values: Sequence[str]) -> str:
@@ -239,8 +258,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         policy = load_policy(args.policy)
         runtime = load_runtime_config(policy)
-        commands = (
-            ()
+        renewals = (
+            Renewals((), ())
             if args.ndes_now or args.acme_now
             else invocations(
                 policy,
@@ -254,8 +273,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return exc.exit_code
 
-    failed = False
-    for invocation in commands:
+    failed = bool(renewals.problems)
+    for lineage, problem in renewals.problems:
+        print(f"ERROR: renewal of {lineage!r} could not be prepared: {problem}", file=sys.stderr)
+    for invocation in renewals.commands:
         try:
             completed = subprocess.run(  # noqa: S603 - fixed argv plus validated lineage/path
                 invocation.arguments,

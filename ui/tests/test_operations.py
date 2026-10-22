@@ -972,8 +972,34 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
     """
 
     def operations_prepare_accepts(self) -> set[str]:
+        return set(operations.OPERATIONS)
+
+    def test_the_registry_is_what_prepare_accepts(self) -> None:
+        """Asked of `prepare` itself: the regular expression these tests read the
+        file with did not see `dynamic_unblock`, which compares with a constant
+        (review 2026-10-22, 6-6)."""
+
+        for operation in sorted(operations.OPERATIONS):
+            with self.subTest(operation=operation):
+                try:
+                    operations.prepare(
+                        operation=operation,
+                        cluster=None if operation in operations.CERTIFICATE_OPERATIONS else "alpha",
+                        request_id=uuid4(),
+                        payload={},
+                    )
+                except operations.UnknownOperation:
+                    self.fail(f"{operation} is in OPERATIONS and prepare does not know it")
+                except operations.BadPayload:
+                    pass
+        for retired in ("objects_publish", "network_publish", "cluster_settings_publish", "x"):
+            with self.subTest(operation=retired), self.assertRaises(operations.UnknownOperation):
+                operations.prepare(
+                    operation=retired, cluster="alpha", request_id=uuid4(), payload={}
+                )
         source = Path(operations.__file__).read_text(encoding="utf-8")
-        return set(re.findall(r'if operation == "([a-z_]+)"', source))
+        named = set(re.findall(r'if operation == "([a-z_]+)"', source))
+        self.assertLessEqual(named, operations.OPERATIONS)
 
     def constraint(self) -> str:
         versions = Path(__file__).resolve().parents[1] / "migrations" / "versions"
@@ -1006,7 +1032,12 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
                 self.assertTrue(worker._OPERATION_OUTCOMES[operation])
 
     def test_the_accepted_outcomes_are_the_schema_s_own(self) -> None:
-        """The contract says which answers exist; the worker must not invent more."""
+        """The contract says which answers exist; the worker must not invent more.
+
+        Each operation's schema is found by the operation it names, for every
+        operation in the registry: the list here was written by hand and left
+        out deploy, cert_deploy and revert (review 2026-10-22, 6-6).
+        """
 
         #
         # From this file rather than from the installed package: a release
@@ -1014,44 +1045,36 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         # contract these are held against lives in the repository.
         #
         schemas = Path(__file__).resolve().parents[2] / "schemas" / "v1"
-        for name, path in (
-            ("backup_run", "haprion-backup-run.schema.json"),
-            ("backup_schedule", "haprion-backup-schedule.schema.json"),
-            ("changes_publish", "haprion-changes-publish.schema.json"),
-            ("cert_issue", "haprion-cert-issue.schema.json"),
-            ("dns_profile_apply", "haprion-dns-profile-apply.schema.json"),
-            ("ndes_profile_apply", "haprion-ndes-profile-apply.schema.json"),
-            ("cert_publish", "haprion-cert-publish.schema.json"),
-            ("cert_target", "haprion-cert-target.schema.json"),
-            ("cert_delete", "haprion-cert-delete.schema.json"),
-            ("cert_scep", "haprion-cert-scep.schema.json"),
-            ("cert_receiver", "haprion-cert-receiver.schema.json"),
-            ("cluster_node", "haprion-cluster-node.schema.json"),
-            ("cluster_define", "haprion-cluster-define.schema.json"),
-            ("server_state", "haprion-server-state.schema.json"),
-            ("dynamic_unblock", "haprion-server-state.schema.json"),
-            ("cert_import", "haprion-cert-import.schema.json"),
-            ("cert_request", "haprion-cert-request.schema.json"),
-            ("node_restore_prepare", "haprion-node-restore-prepare.schema.json"),
-            ("node_restore_preview", "haprion-node-restore-preview.schema.json"),
-            ("node_restore", "haprion-node-restore.schema.json"),
-            ("node_restore_discard", "haprion-node-restore-discard.schema.json"),
-            ("node_restore_status", "haprion-node-restore-status.schema.json"),
-        ):
+        declared: dict[str, set[str]] = {}
+        for path in sorted(schemas.glob("haprion-*.schema.json")):
+            document = json.loads(path.read_text(encoding="utf-8"))
+            #
+            # A schema is either flat or the shared envelope plus one branch of
+            # its own; the branch that names the operation names its outcomes.
+            #
+            for branch in (document, *document.get("allOf", ())):
+                properties = branch.get("properties", {})
+                if "operation" not in properties or "outcome" not in properties:
+                    continue
+                named = properties["operation"]
+                names = named.get("enum") or [named["const"]]
+                for name in names:
+                    declared[name] = set(properties["outcome"]["enum"])
+        for name in sorted(operations.OPERATIONS):
             with self.subTest(operation=name):
-                document = json.loads((schemas / path).read_text(encoding="utf-8"))
-                #
-                # The envelope's shared fields come in by `$ref`, so the branch
-                # that names this operation's own outcomes is the one carrying
-                # `properties`. Found rather than indexed by position: the order
-                # of an `allOf` is not part of the contract.
-                #
-                declared = next(
-                    set(branch["properties"]["outcome"]["enum"])
-                    for branch in document["allOf"]
-                    if "properties" in branch and "outcome" in branch["properties"]
-                )
-                self.assertEqual(worker._OPERATION_OUTCOMES[name], declared)
+                self.assertIn(name, declared, "no schema names this operation")
+                self.assertEqual(worker._OPERATION_OUTCOMES[name], declared[name])
+
+    def test_every_sudo_helper_is_one_the_release_declares(self) -> None:
+        """What `check-compatibility` holds the sudo rules to is what the worker runs."""
+
+        source = Path(operations.__file__).read_text(encoding="utf-8")
+        modules = re.findall(r"argv=\(\w+\.SUDO, \*SUDO_FLAGS, (\w+)\.HELPER\)", source)
+        helpers = {Path(getattr(operations, module).HELPER).name for module in modules}
+        requirements = json.loads(
+            (Path(operations.__file__).with_name("compatibility.json")).read_text()
+        )["requires"]
+        self.assertEqual(helpers, set(requirements["worker_helpers"]))
 
     def test_every_operation_the_code_prepares_may_be_queued(self) -> None:
         permitted = self.constraint()
@@ -1061,6 +1084,13 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         for operation in sorted(accepted):
             with self.subTest(operation=operation):
                 self.assertIn(f"'{operation}'", permitted)
+
+    def test_the_queue_permits_nothing_the_code_does_not_prepare(self) -> None:
+        """A job row is what the worker runs as root; three retired operations stayed permitted."""
+
+        text = self.constraint()
+        current = text[text.index("CURRENT = (") : text.index("RETIRED = ")]
+        self.assertEqual(set(re.findall(r"'([a-z_]+)'", current)), operations.OPERATIONS)
 
 
 class EnrollingOverNdes(unittest.TestCase):

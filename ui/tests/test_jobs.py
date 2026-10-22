@@ -736,3 +736,11 @@ class AnUnknownOutcomeSaysWhatToCheck(unittest.TestCase):
 
     def test_only_an_unknown_outcome_gets_one(self) -> None:
         self.assertIsNone(jobs.unknown_note(self.job("deploy", "failed")))
+
+
+class EveryOperationHasAName(unittest.TestCase):
+    """Review 2026-10-22, 2-2: the fallback showed "Cert scep" and "Dns profile apply"."""
+
+    def test_every_operation_the_worker_runs_is_named(self) -> None:
+        missing = sorted(operations.OPERATIONS - set(jobs.OPERATION_LABELS))
+        self.assertEqual(missing, [])

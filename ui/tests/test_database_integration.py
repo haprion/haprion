@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -565,18 +566,19 @@ class ARealDatabase(unittest.TestCase):
             )
             kept = str(_first(cursor))
             named = {}
-            for name, draft in (("kept", kept), ("gone", str(uuid4()))):
-                cursor.execute(
-                    "insert into job (operation, cluster, payload, idempotency_key, state, "
-                    "started_at, finished_at) values ('objects_publish', 'alpha', %(payload)s, "
-                    "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
-                    "returning id",
-                    {
-                        "payload": json.dumps({"draft": {"id": draft, "revision": 1}}),
-                        "key": uuid4(),
-                    },
-                )
-                named[_first(cursor)] = name
+            with _retired_operations(cursor):
+                for name, draft in (("kept", kept), ("gone", str(uuid4()))):
+                    cursor.execute(
+                        "insert into job (operation, cluster, payload, idempotency_key, state, "
+                        "started_at, finished_at) values ('objects_publish', 'alpha', %(payload)s, "
+                        "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
+                        "returning id",
+                        {
+                            "payload": json.dumps({"draft": {"id": draft, "revision": 1}}),
+                            "key": uuid4(),
+                        },
+                    )
+                    named[_first(cursor)] = name
             cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
             removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
             self.assertEqual(removable, {"gone"})
@@ -662,18 +664,19 @@ class ARealDatabase(unittest.TestCase):
             )
             kept = str(_first(cursor))
             named = {}
-            for name, change in (("kept", kept), ("gone", str(uuid4()))):
-                cursor.execute(
-                    "insert into job (operation, cluster, payload, idempotency_key, state, "
-                    "started_at, finished_at) values ('network_publish', 'alpha', %(payload)s, "
-                    "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
-                    "returning id",
-                    {
-                        "payload": json.dumps({"change": {"id": change, "revision": 1}}),
-                        "key": uuid4(),
-                    },
-                )
-                named[_first(cursor)] = name
+            with _retired_operations(cursor):
+                for name, change in (("kept", kept), ("gone", str(uuid4()))):
+                    cursor.execute(
+                        "insert into job (operation, cluster, payload, idempotency_key, state, "
+                        "started_at, finished_at) values ('network_publish', 'alpha', %(payload)s, "
+                        "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
+                        "returning id",
+                        {
+                            "payload": json.dumps({"change": {"id": change, "revision": 1}}),
+                            "key": uuid4(),
+                        },
+                    )
+                    named[_first(cursor)] = name
             cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
             removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
             self.assertEqual(removable, {"gone"})
@@ -757,17 +760,18 @@ class ARealDatabase(unittest.TestCase):
 
         with self.connect() as connection, connection.cursor() as cursor:
             mine, other = str(uuid4()), str(uuid4())
-            for draft, state in ((mine, "done"), (mine, "failed"), (other, "done")):
-                cursor.execute(
-                    "insert into job (operation, cluster, payload, idempotency_key, state, "
-                    "started_at, finished_at) values ('objects_publish', 'alpha', %(payload)s, "
-                    "%(key)s, %(state)s, now(), now())",
-                    {
-                        "payload": json.dumps({"draft": {"id": draft, "revision": 1}}),
-                        "key": uuid4(),
-                        "state": state,
-                    },
-                )
+            with _retired_operations(cursor):
+                for draft, state in ((mine, "done"), (mine, "failed"), (other, "done")):
+                    cursor.execute(
+                        "insert into job (operation, cluster, payload, idempotency_key, state, "
+                        "started_at, finished_at) values ('objects_publish', 'alpha', %(payload)s, "
+                        "%(key)s, %(state)s, now(), now())",
+                        {
+                            "payload": json.dumps({"draft": {"id": draft, "revision": 1}}),
+                            "key": uuid4(),
+                            "state": state,
+                        },
+                    )
             connection.commit()
         try:
             with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
@@ -2543,6 +2547,25 @@ class ARealDatabase(unittest.TestCase):
         self.assertIn(f"{datetime.now(UTC):%Y%m%d}", days)
         self.assertNotIn("19990101", days)
 
+    def test_the_queue_refuses_a_retired_operation_and_keeps_its_history(self) -> None:
+        """0087 (review 2026-10-22, 6-6): what the worker cannot prepare cannot be queued."""
+
+        insert = (
+            "insert into job (operation, cluster, payload, idempotency_key, state) "
+            "values (%s, %s, '{}', %s, 'pending')"
+        )
+        with self.connect() as connection, connection.cursor() as cursor:
+            with _retired_operations(cursor):
+                cursor.execute(insert, ("network_publish", "alpha", uuid4()))
+            cursor.execute("savepoint refused")
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                cursor.execute(insert, ("objects_publish", "beta", uuid4()))
+            cursor.execute("rollback to savepoint refused")
+            cursor.execute("select count(*) from job where operation = 'network_publish'")
+            self.assertGreaterEqual(_first(cursor), 1)
+            cursor.execute(insert, ("dynamic_unblock", "gamma", uuid4()))
+            connection.rollback()
+
     def test_what_nothing_reads_is_gone_and_comes_back_with_a_downgrade(self) -> None:
         """0086 (review 2026-10-22, 3-6, 3-7): the 0023 views, the matches' request index
         and the web's grant on them - and a downgrade that gives all three back."""
@@ -3187,6 +3210,20 @@ def _first(cursor: psycopg.Cursor) -> Any:
     if row is None:
         raise AssertionError("the statement returned no row")
     return row[0]
+
+
+@contextlib.contextmanager
+def _retired_operations(cursor: psycopg.Cursor) -> Iterator[None]:
+    """Rows of the operations 0087 retired, as an installation from before it holds them.
+
+    The constraint is `not valid` for them: written while it permitted them,
+    kept after (review 2026-10-22, 6-6).
+    """
+
+    retired = _migration("0087_job_operations_retired.py", cursor)
+    retired.downgrade()
+    yield
+    retired.upgrade()
 
 
 def _migration(filename: str, cursor: psycopg.Cursor) -> Any:

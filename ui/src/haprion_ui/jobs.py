@@ -159,26 +159,46 @@ def _state(state: str) -> tuple[str, Tone]:
     return labels.get(state, ("Unknown", "unknown"))
 
 
+#
+# Every operation the worker runs has a name here, and so do the three retired
+# ones the jobs page still lists from history; the fallback turned the rest
+# into "Cert scep" and "Dns profile apply" (review 2026-10-22, 2-2). A test
+# holds this to `operations.OPERATIONS`.
+#
+OPERATION_LABELS = {
+    "deploy": "Deploy configuration",
+    "cert_deploy": "Deploy certificates",
+    "revert": "Publish reverted version",
+    "network_publish": "Publish network description",
+    "cluster_settings_publish": "Publish cluster settings",
+    "objects_publish": "Publish proxy objects",
+    "changes_publish": "Publish saved changes",
+    "cert_issue": "Issue certificate",
+    "cert_scep": "Enroll certificate",
+    "cert_import": "Import certificate",
+    "cert_request": "Request certificate",
+    "cert_publish": "Publish certificates",
+    "cert_target": "Change certificate targets",
+    "cert_delete": "Delete certificates",
+    "cert_receiver": "Change certificate receiver",
+    "dns_profile_apply": "Apply DNS provider profile",
+    "ndes_profile_apply": "Apply NDES profile",
+    "cluster_node": "Change cluster nodes",
+    "cluster_define": "Create or remove cluster",
+    "server_state": "Set server state",
+    "dynamic_unblock": "Unblock addresses",
+    "backup_run": "Back up cluster nodes",
+    "backup_schedule": "Change backup schedule",
+    "node_restore_prepare": "Prepare node restore",
+    "node_restore_preview": "Preview node restore",
+    "node_restore": "Restore node",
+    "node_restore_discard": "Discard node restore",
+    "node_restore_status": "Ask node restore outcome",
+}
+
+
 def _operation(value: str) -> str:
-    return {
-        "deploy": "Deploy configuration",
-        "cert_deploy": "Deploy certificates",
-        "revert": "Publish reverted version",
-        "network_publish": "Publish network description",
-        "cluster_settings_publish": "Publish cluster settings",
-        "changes_publish": "Publish saved changes",
-        "cluster_node": "Change cluster nodes",
-        "cluster_define": "Create or remove cluster",
-        "server_state": "Set server state",
-        "dynamic_unblock": "Unblock addresses",
-        "backup_run": "Back up cluster nodes",
-        "backup_schedule": "Change backup schedule",
-        "node_restore_prepare": "Prepare node restore",
-        "node_restore_preview": "Preview node restore",
-        "node_restore": "Restore node",
-        "node_restore_discard": "Discard node restore",
-        "node_restore_status": "Ask node restore outcome",
-    }.get(value, value.replace("_", " ").capitalize())
+    return OPERATION_LABELS.get(value, value.replace("_", " ").capitalize())
 
 
 def deploys(job: Job) -> bool:

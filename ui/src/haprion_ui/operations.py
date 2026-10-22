@@ -244,6 +244,42 @@ def _formats(payload: Mapping[str, Any], receivers: tuple[str, ...]) -> dict[str
     return checked
 
 
+#
+# Every operation `prepare` builds a command for - the one list the queue's
+# check constraint, the worker's outcomes, the schemas and the jobs page's
+# labels are held to (review 2026-10-22, 6-6, 2-2). The tests found them by a
+# regular expression over this file, which did not see `dynamic_unblock`.
+#
+OPERATIONS = frozenset(
+    {
+        "backup_run",
+        "backup_schedule",
+        "cert_delete",
+        "cert_deploy",
+        "cert_import",
+        "cert_issue",
+        "cert_publish",
+        "cert_receiver",
+        "cert_request",
+        "cert_scep",
+        "cert_target",
+        "changes_publish",
+        "cluster_define",
+        "cluster_node",
+        "deploy",
+        "dns_profile_apply",
+        "dynamic_unblock",
+        "ndes_profile_apply",
+        "node_restore",
+        "node_restore_discard",
+        "node_restore_prepare",
+        "node_restore_preview",
+        "node_restore_status",
+        "revert",
+        "server_state",
+    }
+)
+
 CERTIFICATE_OPERATIONS = frozenset(
     {
         "cert_issue",

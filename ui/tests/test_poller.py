@@ -15,6 +15,7 @@ import subprocess
 import unittest
 import unittest.mock
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -960,3 +961,32 @@ class TheLocalReadingsComeFromOneCall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EachReadingAcceptsWhatItsSchemaAllows(unittest.TestCase):
+    """`partial_ok` against the contract (review 2026-10-22, 6-6).
+
+    A reading that refuses `partial` its schema allows throws away a usable
+    answer; one that accepts it where the schema has none takes as a reading
+    what is not one. Nothing held the two together.
+    """
+
+    def outcomes(self) -> dict[str, set[str]]:
+        schemas = Path(__file__).resolve().parents[2] / "schemas" / "v1"
+        declared: dict[str, set[str]] = {}
+        for path in sorted(schemas.glob("haprion-*.schema.json")):
+            document = json.loads(path.read_text(encoding="utf-8"))
+            for branch in (document, *document.get("allOf", ())):
+                properties = branch.get("properties", {})
+                if "operation" in properties and "outcome" in properties:
+                    named = properties["operation"]
+                    for name in named.get("enum") or [named["const"]]:
+                        declared[name] = set(properties["outcome"]["enum"])
+        return declared
+
+    def test_partial_is_accepted_exactly_where_the_schema_has_it(self) -> None:
+        declared = self.outcomes()
+        for source in poller.SOURCES:
+            with self.subTest(reading=source.operation):
+                self.assertIn(source.operation, declared)
+                self.assertEqual(source.partial_ok, "partial" in declared[source.operation])

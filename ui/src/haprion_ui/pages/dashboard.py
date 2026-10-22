@@ -592,6 +592,7 @@ def build_router(config: Config) -> APIRouter:
         shown: str = Form(default="", alias="package", max_length=64),
         then: str = Form(default="", max_length=8),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+        idempotency_key: str = Form(default="", max_length=64),
     ) -> Response:
         """Publish everything saved for one cluster as one version (B257).
 
@@ -651,7 +652,11 @@ def build_router(config: Config) -> APIRouter:
             "requested_by": gate.username,
             **({"deploy": True} if deploy else {}),
         }
-        key = _publish_key(cluster, "changes_publish", payload)
+        try:
+            drawn = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        key = _publish_key(cluster, "changes_publish", payload, drawn=drawn)
         try:
             operations.prepare(
                 operation="changes_publish", cluster=cluster, request_id=uuid4(), payload=payload

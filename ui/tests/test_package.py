@@ -63,6 +63,12 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         found = re.search(r'name="package" value="([0-9a-f]{64})"', self.page(client))
         return found.group(1) if found else ""
 
+    def drawn(self, client: Any) -> str:
+        """The key the Versions form was drawn with this time."""
+
+        found = re.search(r'name="idempotency_key" value="([0-9a-f-]{36})"', self.page(client))
+        return found.group(1) if found else ""
+
     def publish(self, client: Any, **fields: Any) -> Any:
         data = {
             auth.CSRF_FIELD: self.token(client),
@@ -71,6 +77,8 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
         }
         if "package" not in fields:
             data["package"] = self.shown(client)
+        if "idempotency_key" not in fields:
+            data["idempotency_key"] = self.drawn(client)
         data.update(fields)
         return client.post("/history/alpha/publish", data=data, follow_redirects=False)
 
@@ -108,12 +116,26 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
     def test_the_same_list_twice_is_the_same_request(self) -> None:
         self.rows = [row()]
         client = self.editor()
+        key = self.drawn(client)
+
+        self.publish(client, idempotency_key=key)
+        self.publish(client, idempotency_key=key)
+
+        self.assertEqual(len(self.queued), 2)
+        self.assertEqual(self.queued[0]["idempotency_key"], self.queued[1]["idempotency_key"])
+
+    def test_the_same_list_from_a_page_drawn_again_is_a_new_request(self) -> None:
+        """Review 26-10-22, 1B-1: a publish that failed kept its key, and sending the
+        same list again from a fresh page was answered with the old job."""
+
+        self.rows = [row()]
+        client = self.editor()
 
         self.publish(client)
         self.publish(client)
 
         self.assertEqual(len(self.queued), 2)
-        self.assertEqual(self.queued[0]["idempotency_key"], self.queued[1]["idempotency_key"])
+        self.assertNotEqual(self.queued[0]["idempotency_key"], self.queued[1]["idempotency_key"])
 
     def test_saved_changes_are_listed_and_drafts_are_not(self) -> None:
         self.rows = [row(), row("console", stage="draft")]
@@ -296,9 +318,10 @@ class VersionsPublishesWhatIsSaved(EditorTestCase):
     def test_the_same_publish_asked_twice_carries_one_key(self) -> None:
         self.rows = [row()]
         client = self.editor()
+        key = self.drawn(client)
 
-        self.publish(client)
-        self.publish(client)
+        self.publish(client, idempotency_key=key)
+        self.publish(client, idempotency_key=key)
 
         self.assertEqual(self.queued[0]["idempotency_key"], self.queued[1]["idempotency_key"])
 

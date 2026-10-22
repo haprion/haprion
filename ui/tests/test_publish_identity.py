@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from uuid import UUID
 
 from haprion_ui.views import _publish_key
+
+DRAWN = UUID("00000000-0000-4000-8000-000000000001")
 
 
 class TheKeyIsTheRequest(unittest.TestCase):
@@ -25,7 +28,7 @@ class TheKeyIsTheRequest(unittest.TestCase):
         return body
 
     def key(self, **overrides: object) -> object:
-        return _publish_key("alpha", "objects_publish", self.payload(**overrides))
+        return _publish_key("alpha", "objects_publish", self.payload(**overrides), drawn=DRAWN)
 
     def test_the_same_request_asked_twice_is_one_key(self) -> None:
         self.assertEqual(self.key(), self.key())
@@ -53,12 +56,24 @@ class TheKeyIsTheRequest(unittest.TestCase):
         body = self.payload()
 
         self.assertNotEqual(
-            _publish_key("alpha", "objects_publish", body),
-            _publish_key("beta", "objects_publish", body),
+            _publish_key("alpha", "objects_publish", body, drawn=DRAWN),
+            _publish_key("beta", "objects_publish", body, drawn=DRAWN),
         )
         self.assertNotEqual(
-            _publish_key("alpha", "objects_publish", body),
-            _publish_key("alpha", "network_publish", body),
+            _publish_key("alpha", "objects_publish", body, drawn=DRAWN),
+            _publish_key("alpha", "network_publish", body, drawn=DRAWN),
+        )
+
+    def test_a_form_drawn_again_is_a_new_request(self) -> None:
+        """Review 26-10-22, 1B-1: a publish that failed kept its job and so its key, and
+        the same list sent again from a fresh page was answered with the old job."""
+
+        body = self.payload()
+        again = UUID("00000000-0000-4000-8000-000000000002")
+
+        self.assertNotEqual(
+            _publish_key("alpha", "changes_publish", body, drawn=DRAWN),
+            _publish_key("alpha", "changes_publish", body, drawn=again),
         )
 
     def test_the_order_a_payload_was_built_in_is_not_part_of_the_request(self) -> None:
@@ -66,8 +81,8 @@ class TheKeyIsTheRequest(unittest.TestCase):
         backwards = {key: forwards[key] for key in reversed(list(forwards))}
 
         self.assertEqual(
-            _publish_key("alpha", "objects_publish", forwards),
-            _publish_key("alpha", "objects_publish", backwards),
+            _publish_key("alpha", "objects_publish", forwards, drawn=DRAWN),
+            _publish_key("alpha", "objects_publish", backwards, drawn=DRAWN),
         )
 
 

@@ -2562,8 +2562,8 @@ def _removal_submit(
 PUBLISH_NAMESPACE = UUID("6f1d5f8e-1a2b-4c3d-8e9f-0a1b2c3d4e5f")
 
 
-def _publish_key(cluster: str, operation: str, payload: Mapping[str, Any]) -> UUID:
-    """The idempotency key one request is asked under: a digest of the request.
+def _publish_key(cluster: str, operation: str, payload: Mapping[str, Any], *, drawn: UUID) -> UUID:
+    """The idempotency key one request is asked under: the form's key and a digest of the request.
 
     Derived from everything the job will carry, and that is the whole point.
     The queue treats a repeated key as a retry only when the payload hashes the
@@ -2579,6 +2579,12 @@ def _publish_key(cluster: str, operation: str, payload: Mapping[str, Any]) -> UU
     Deriving it from the payload makes the two agree by construction rather
     than by remembering to add each new field here. A double-click is the same
     request because it is the same bytes; anything else is another request.
+
+    And `drawn`, the key the form was drawn with, as every other form carries.
+    A publish that failed, or was blocked by a locked cluster, kept its job row
+    and so its key: the same list and comment sent again - from a page drawn
+    afresh, after the cause was fixed - was answered with the old job and
+    "Publishing..." while nothing was queued (review 2026-10-22, 1B-1).
     """
 
     #
@@ -2586,7 +2592,7 @@ def _publish_key(cluster: str, operation: str, payload: Mapping[str, Any]) -> UU
     # two orderings of one request must not be two requests.
     #
     body = json.dumps(
-        {"cluster": cluster, "operation": operation, "payload": payload},
+        {"cluster": cluster, "operation": operation, "payload": payload, "drawn": str(drawn)},
         sort_keys=True,
         separators=(",", ":"),
         default=str,

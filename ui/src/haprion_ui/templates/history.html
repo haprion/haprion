@@ -47,6 +47,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="expected_head" value="{{ package.head }}">
         <input type="hidden" name="package" value="{{ package.identity }}">
+        <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
         <label><span class="field-title">Comment</span><input name="comment" maxlength="4096" required placeholder="What these changes are for"></label>
         <div class="action-buttons"><button type="submit" class="primary-button">Publish {{ package.rows | length }} change{% if package.rows | length != 1 %}s{% endif %}</button></div>
       </form>

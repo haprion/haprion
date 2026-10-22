@@ -684,7 +684,9 @@ class ADraftThatWasPublished(DraftReading):
             outcome=None,
             result=None,
             stderr_excerpt=None,
-            idempotency_key=_publish_key("edge-demo", "objects_publish", payload),
+            idempotency_key=_publish_key(
+                "edge-demo", "objects_publish", payload, drawn=UUID(int=1)
+            ),
             attempts=0,
         )
 

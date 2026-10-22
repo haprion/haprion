@@ -101,6 +101,17 @@ class Switched(LoginTestCase):
         self.assertEqual(answer.status_code, 404)
         self.assertEqual(self.queued, [])
 
+    def test_the_waf_engine_off_hides_its_logs(self) -> None:
+        """Review 26-10-22, 7-5: the tab said "Nothing found" about an engine that was off."""
+
+        client = self.admin()
+        self.assertIn('href="/waf"', client.get("/").text)
+
+        self.off(features.WAF_ENGINE)
+
+        self.assertNotIn('href="/waf"', client.get("/").text)
+        self.assertEqual(client.get("/waf").status_code, 404)
+
     def test_receivers_off_hides_their_pages(self) -> None:
         client = self.admin()
         self.off(features.CERT_RECEIVERS)

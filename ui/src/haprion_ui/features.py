@@ -82,6 +82,12 @@ BY_NAME = {feature.name: feature for feature in FEATURES}
 HIDDEN_PATHS = (
     ("/backups", NODE_BACKUPS),
     ("/certificates/receivers", CERT_RECEIVERS),
+    #
+    # Off only while no object uses the engine, so nothing writes a match: the
+    # page said "Nothing found in the last 7 days" about an engine that was not
+    # there (review 2026-10-22, 7-5).
+    #
+    ("/waf", WAF_ENGINE),
 )
 
 #

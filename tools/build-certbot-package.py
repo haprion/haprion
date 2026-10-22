@@ -17,8 +17,12 @@ and the network to PyPI are needed here, and nowhere a package is installed.
 manager whose certbot is already set up (step 14 has installed the renewal
 timer), it then runs step 14, which makes the release current only after a
 dry-run renewal of every lineage with it, and puts the previous one back when
-that fails - the gate a certbot upgrade has always had. On a first installation
-it only unpacks; `haprion-setup` runs step 14.
+that fails - the gate a certbot upgrade has always had. A failed gate is said and
+does not fail the package: the dry run asks Let's Encrypt's staging server, and
+the network or staging being down left `haprion-certbot` unconfigured and, since
+the interface depends on it, `haprion-ui` too (review 2026-10-22, 6-7). The
+previous release keeps renewing. On a first installation it only unpacks;
+`haprion-setup` runs step 14.
 
 The certbot version is the package's upstream version; the commit names the
 lock it was built from.
@@ -97,7 +101,11 @@ if [ "$1" = configure ]; then
     if [ "$(readlink {ROOT}/current || true)" = "releases/$RELEASE_ID" ]; then
         echo "haprion-certbot: release $RELEASE_ID is already current"
     elif [ -f {TIMER} ] && [ -x {STEP} ]; then
-        {STEP} -
+        if ! {STEP} -; then
+            echo "haprion-certbot: WARNING: release $RELEASE_ID was not made current; the reason is above" >&2
+            echo "haprion-certbot: the previous environment keeps renewing" >&2
+            echo "haprion-certbot: when the cause is fixed: sudo {STEP} -" >&2
+        fi
     else
         echo "haprion-certbot: release $RELEASE_ID is prepared in $release"
         echo "haprion-certbot: haprion-setup makes it current"
@@ -115,6 +123,13 @@ if [ "$1" = purge ]; then
     rm -rf {ROOT}
 fi
 """
+
+
+def depends(python: str) -> str:
+    """The distribution's Python, and the CLI: step 14 renews through `haprion-cert-renew`."""
+
+    major, minor = (int(part) for part in python.split("."))
+    return f"python3 (>= {major}.{minor}), python3 (<< {major}.{minor + 1}), haprion-cli"
 
 
 def build_release(
@@ -190,14 +205,13 @@ def build(source: Path, output_dir: Path, distribution: str, uv: Path, podman: P
         )
         write(root, "DEBIAN/postinst", POSTINST.encode(), 0o755)
         write(root, "DEBIAN/postrm", POSTRM.encode(), 0o755)
-        major, minor = (int(part) for part in target.python.split("."))
         return package(
             root,
             {
                 "Package": PACKAGE,
                 "Version": f"{version}{target.suffix}",
                 "Architecture": "amd64",
-                "Depends": f"python3 (>= {major}.{minor}), python3 (<< {major}.{minor + 1})",
+                "Depends": depends(target.python),
                 "Section": "net",
                 "Priority": "optional",
                 "Description": "Haprion's certbot\n"

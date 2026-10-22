@@ -500,6 +500,12 @@ def check_cluster_nodes(
     package the CLI release carries; a node behind them is a warning, not a
     failure, because the CLI and the interface are installed before the nodes
     on purpose, and that order would otherwise fail every update (B335).
+
+    A node that does not answer is a warning too: what it runs is unknown, not
+    wrong. As a failure it stopped the update, or rolled back a release that
+    worked, just when a node was down and the interface was needed to bring
+    it back (review 2026-10-22, 6-2). A node that answers without the metadata,
+    or with an older API, still fails.
     """
 
     request = json.dumps(
@@ -526,6 +532,12 @@ def check_cluster_nodes(
     for entry in nodes:
         name, api, scripts_current = _node_installation(entry)
         subject = f"node/{cluster}/{name}"
+        if isinstance(entry, dict) and entry.get("reachable") is False:
+            report.warn(
+                subject,
+                "did not answer; what it runs is unknown - check again when it is back",
+            )
+            continue
         if api is None:
             report.fail(subject, "does not report node compatibility metadata")
         elif api < required_api:

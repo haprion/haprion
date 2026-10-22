@@ -303,7 +303,7 @@ class TheRepositoryResolvesTheRest(unittest.TestCase):
         for package in ("haprion-coraza-spoa", "haprion-crs", "haprion-archive-keyring"):
             with self.subTest(package=package):
                 self.assertIn(package, names(CLI.DEPENDS))
-        self.assertTrue({"haprion-cli", "haprion-certbot"} <= names(UI.depends("3.14")))
+        self.assertTrue({"haprion-cli", "haprion-certbot"} <= names(UI.depends("3.14", 1)))
 
     def test_a_node_brings_its_engine_and_key(self) -> None:
         for package in ("haprion-coraza-spoa", "haprion-archive-keyring"):

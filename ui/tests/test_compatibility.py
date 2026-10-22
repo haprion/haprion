@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import io
 import json
@@ -129,7 +130,7 @@ class CompatibilityMetadataTests(unittest.TestCase):
     def test_requirements_match_this_deliverys_engine_schema_and_node_installer(self) -> None:
         requirements = compatibility.load_requirements(MANIFEST)
         engine = json.loads((ROOT / "src/haprion/compatibility.json").read_text())
-        self.assertGreaterEqual(engine["engine_api"], requirements.engine_api)
+        self.assertEqual(engine["engine_api"], requirements.engine_api)
 
         migrations = ROOT / "ui/migrations/versions"
         revisions: set[str] = set()
@@ -543,6 +544,41 @@ class FrozenSchemaTests(unittest.TestCase):
         self.assertIn("WARN  node/alpha/node-a", printed.getvalue())
         self.assertIn("not this release's node package: haprion-node-status", printed.getvalue())
 
+    def nodes_checked(self, *entries: dict[str, object]) -> tuple[int, str]:
+        report = compatibility.Report()
+        answer = json.dumps({"result": {"nodes": list(entries)}})
+        with (
+            mock.patch.object(
+                compatibility, "_command", return_value=SimpleNamespace(stdout=answer)
+            ),
+            contextlib.redirect_stdout(io.StringIO()) as printed,
+        ):
+            compatibility.check_cluster_nodes(
+                report, cluster="alpha", helper=Path("/x"), required_api=1
+            )
+        return report.failures, printed.getvalue()
+
+    def test_a_node_that_does_not_answer_is_said_and_not_failed(self) -> None:
+        """Review 2026-10-22, 6-2: a dead node stopped the update that was to help restore it."""
+
+        failures, printed = self.nodes_checked(
+            {"name": "node-a", "reachable": False, "status": None, "error": {}},
+            {
+                "name": "node-b",
+                "reachable": True,
+                "status": {"installation": {"node_api": 1, "scripts_current": True}},
+            },
+        )
+        self.assertEqual(failures, 0)
+        self.assertIn("WARN  node/alpha/node-a", printed)
+        self.assertIn("did not answer", printed)
+        self.assertIn("PASS  node/alpha/node-b", printed)
+
+    def test_a_node_that_answers_without_its_metadata_still_fails(self) -> None:
+        failures, printed = self.nodes_checked({"name": "node-a", "reachable": True, "status": {}})
+        self.assertEqual(failures, 1)
+        self.assertIn("does not report node compatibility metadata", printed)
+
     def test_node_installation_metadata_is_documented_in_the_status_contract(self) -> None:
         schema = json.loads((ROOT / "schemas/v1/haprion-status.schema.json").read_text())
         installation = schema["$defs"]["node_status"]["properties"]["installation"]
@@ -664,6 +700,73 @@ class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
         if not isinstance(revisions, list):
             raise AssertionError(f"database_revisions is not a list: {revisions!r}")
         self.assertIn(self.declared()["database_head"], revisions)
+
+    def test_the_revisions_accepted_are_the_chain_from_the_floor_to_the_head(self) -> None:
+        found = self.revisions()
+        accepted = self.declared()["database_revisions"]
+        if not isinstance(accepted, list):
+            raise AssertionError(f"database_revisions is not a list: {accepted!r}")
+        chain = [self.head()]
+        while chain[-1] != accepted[0] and found.get(chain[-1]) is not None:
+            chain.append(str(found[chain[-1]]))
+        self.assertEqual(accepted, chain[::-1])
+
+    #
+    # What a migration's upgrade brings that code can name: a table, a view, a
+    # function, a column, or a new name for one of them.
+    #
+    CODE = Path(__file__).resolve().parents[1] / "src" / "haprion_ui"
+    CREATES = re.compile(
+        r"\b(?:create table(?: if not exists)?|create (?:or replace )?(?:function|view)"
+        r"|add column(?: if not exists)?|rename (?:column \w+ )?to)\s+(\w+)",
+        re.IGNORECASE,
+    )
+
+    def introduced(self) -> dict[str, str]:
+        """Each name a migration's upgrade creates, and the first revision that does.
+
+        Read from every string in the module but its docstring and its
+        `downgrade`, because an upgrade often runs a module-level statement.
+        """
+
+        found: dict[str, str] = {}
+        for path in sorted(self.VERSIONS.glob("[0-9]*.py")):
+            tree = ast.parse(path.read_text())
+            skipped = {id(node) for node in ast.walk(tree.body[0])}
+            for statement in tree.body:
+                if isinstance(statement, ast.FunctionDef) and statement.name == "downgrade":
+                    skipped |= {id(inner) for inner in ast.walk(statement)}
+            revision = path.name.split("_", 1)[0]
+            for node in ast.walk(tree):
+                if id(node) in skipped or not isinstance(node, ast.Constant):
+                    continue
+                if isinstance(node.value, str):
+                    for name in self.CREATES.findall(node.value):
+                        found.setdefault(name.lower(), revision)
+        return found
+
+    def test_the_code_names_nothing_newer_than_the_oldest_schema_it_accepts(self) -> None:
+        """Review 2026-10-22, 6-3: the release accepted 0028 while it read `held_since` from 0082.
+
+        `/healthz` and `check-compatibility` then called a schema healthy that
+        the first job would fail on - a dump from before a migration, read back
+        under the newer release, for one. A grant is not a name and is not seen
+        here; the floor moves to the newest migration whose grant the code needs.
+        """
+
+        accepted = self.declared()["database_revisions"]
+        if not isinstance(accepted, list):
+            raise AssertionError(f"database_revisions is not a list: {accepted!r}")
+        floor = accepted[0]
+        newer = {name: revision for name, revision in self.introduced().items() if revision > floor}
+        self.assertTrue(self.introduced(), "no migration was read")
+        code = "\n".join(path.read_text() for path in sorted(self.CODE.rglob("*.py")))
+        named = sorted(
+            f"{name} ({revision})"
+            for name, revision in newer.items()
+            if re.search(rf"\b{name}\b", code, re.IGNORECASE)
+        )
+        self.assertEqual(named, [], f"the code needs more than the floor {floor} holds")
 
     def test_every_revision_has_exactly_one_child_or_is_the_head(self) -> None:
         """A fork would make "the head" ambiguous and the release unbuildable."""

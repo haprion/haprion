@@ -239,6 +239,13 @@ def build_wheel(source: Path, commit: str, epoch: int, uv: Path, work: Path) -> 
     return wheels[0]
 
 
+def provides(source: Path, commit: str) -> str:
+    """The engine's API level, as a version the interface's package can depend on (6-4)."""
+
+    document = json.loads(_git(source, "show", f"{commit}:src/haprion/compatibility.json"))
+    return f"haprion-engine (= {int(document['engine_api'])})"
+
+
 def build(
     source: Path, output_dir: Path, uv: Path, waf_engine_deb: Path, keyring_deb: Path
 ) -> Path:
@@ -281,6 +288,7 @@ def build(
                 "Architecture": "all",
                 "Depends": DEPENDS,
                 "Recommends": RECOMMENDS,
+                "Provides": provides(source, commit),
                 "Section": "net",
                 "Priority": "optional",
                 "Description": "Haprion command line: the engine that manages HAProxy clusters\n"

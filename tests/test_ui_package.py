@@ -32,11 +32,18 @@ TOOL = tool()
 class Distributions(unittest.TestCase):
     def test_each_package_takes_only_the_python_its_venv_was_built_for(self) -> None:
         self.assertEqual(
-            TOOL.depends("3.14").split(", ")[:2], ["python3 (>= 3.14)", "python3 (<< 3.15)"]
+            TOOL.depends("3.14", 1).split(", ")[:2], ["python3 (>= 3.14)", "python3 (<< 3.15)"]
         )
         self.assertEqual(TOOL.DISTRIBUTIONS["ubuntu26.04"].python, "3.14")
         self.assertEqual(TOOL.DISTRIBUTIONS["debian13"].python, "3.13")
-        self.assertIn("haprion-cli", TOOL.depends("3.13"))
+        self.assertIn("haprion-cli", TOOL.depends("3.13", 1))
+
+    def test_it_needs_an_engine_at_the_level_the_release_requires(self) -> None:
+        """Review 2026-10-22, 6-4: a CLI downgrade changed the engine under the interface unseen."""
+
+        self.assertIn("haprion-engine (>= 31)", TOOL.depends("3.13", 31).split(", "))
+        commit = TOOL._git(BASE, "rev-parse", "HEAD").decode().strip()
+        self.assertGreaterEqual(TOOL.required_engine_api(BASE, commit), 1)
 
     def test_the_versions_sort_apart_per_distribution(self) -> None:
         self.assertEqual(

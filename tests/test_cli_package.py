@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -56,6 +57,17 @@ def rules() -> dict[str, bool]:
         assert matched, f"not an exact operator rule: {line}"
         found[matched.group(2)] = matched.group(1) is not None
     return found
+
+
+class TheEngineLevel(unittest.TestCase):
+    def test_the_package_provides_the_engine_at_its_api_level(self) -> None:
+        """What the interface's package depends on (review 2026-10-22, 6-4)."""
+
+        commit = TOOL._git(BASE, "rev-parse", "HEAD").decode().strip()
+        committed = json.loads(TOOL._git(BASE, "show", f"{commit}:src/haprion/compatibility.json"))
+        self.assertEqual(
+            TOOL.provides(BASE, commit), f"haprion-engine (= {committed['engine_api']})"
+        )
 
 
 class TheTree(unittest.TestCase):

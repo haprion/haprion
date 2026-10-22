@@ -24,6 +24,7 @@ FIELD_ORDER = (
     "Suggests",
     "Conflicts",
     "Replaces",
+    "Provides",
     "Section",
     "Priority",
     "Homepage",

@@ -381,12 +381,24 @@ UI_DEPENDS = (
 )
 
 
-def depends(python: str) -> str:
+def depends(python: str, engine_api: int) -> str:
+    """The distribution's Python, and an engine at the API level this release requires.
+
+    `haprion-engine` is what `haprion-cli` provides at its own level, so apt
+    refuses a CLI downgrade below it instead of the engine changing under a
+    running interface unseen (review 2026-10-22, 6-4).
+    """
+
     major, minor = (int(part) for part in python.split("."))
     return (
         f"python3 (>= {major}.{minor}), python3 (<< {major}.{minor + 1}), haprion-cli, "
-        f"haprion-certbot, {UI_DEPENDS}"
+        f"haprion-engine (>= {engine_api}), haprion-certbot, {UI_DEPENDS}"
     )
+
+
+def required_engine_api(source: Path, commit: str) -> int:
+    document = json.loads(_git(source, "show", f"{commit}:ui/src/haprion_ui/compatibility.json"))
+    return int(document["requires"]["engine_api"])
 
 
 def build(source: Path, output_dir: Path, distribution: str, uv: Path, podman: Path) -> Path:
@@ -420,7 +432,7 @@ def build(source: Path, output_dir: Path, distribution: str, uv: Path, podman: P
                 "Package": PACKAGE,
                 "Version": f"{version}{target.suffix}",
                 "Architecture": "amd64",
-                "Depends": depends(target.python),
+                "Depends": depends(target.python, required_engine_api(source, commit)),
                 "Section": "net",
                 "Priority": "optional",
                 "Description": "Haprion web interface\n"

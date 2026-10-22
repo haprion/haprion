@@ -34,7 +34,9 @@ RELEASE = "5.8.0-0123456789ab"
 class ThePostinst(unittest.TestCase):
     """Run as written, with its fixed paths moved under a temporary directory."""
 
-    def install(self, raw: str, *, set_up: bool, current: str | None = None) -> tuple[Path, str]:
+    def install(
+        self, raw: str, *, set_up: bool, current: str | None = None, gate_fails: bool = False
+    ) -> tuple[Path, str]:
         top = Path(raw)
         root, lib = top / "opt/haprion-certbot", top / "usr/lib/haprion/certbot"
         step, timer = top / "step14", top / "renew.timer"
@@ -52,7 +54,9 @@ class ThePostinst(unittest.TestCase):
             f"RELEASE_ID={RELEASE}\nRELEASE_ARCHIVE={archive.name}\nRELEASE_SHA256={digest}\n"
         )
         step.write_text(
-            f'#!/bin/sh\necho "step 14 $1"\nln -sfn releases/{RELEASE} {root}/current\n'
+            '#!/bin/sh\necho "step 14 $1"\necho "the dry-run renewal failed" >&2\nexit 1\n'
+            if gate_fails
+            else f'#!/bin/sh\necho "step 14 $1"\nln -sfn releases/{RELEASE} {root}/current\n'
         )
         step.chmod(0o755)
         if set_up:
@@ -72,7 +76,7 @@ class ThePostinst(unittest.TestCase):
             text=True,
             check=True,
         )
-        return root, done.stdout
+        return root, done.stdout + done.stderr
 
     def test_a_first_installation_unpacks_and_leaves_it_to_setup(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -90,6 +94,19 @@ class ThePostinst(unittest.TestCase):
 
             self.assertIn("step 14 -", said)
             self.assertEqual((root / "current").readlink(), Path(f"releases/{RELEASE}"))
+
+    def test_a_failed_dry_run_is_said_and_does_not_fail_the_package(self) -> None:
+        """Review 2026-10-22, 6-7: staging down left haprion-ui unconfigured behind it."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            root, said = self.install(
+                raw, set_up=True, current="releases/5.7.0-old", gate_fails=True
+            )
+
+            self.assertEqual((root / "current").readlink(), Path("releases/5.7.0-old"))
+            self.assertIn(f"release {RELEASE} was not made current", said)
+            self.assertIn("the previous environment keeps renewing", said)
+            self.assertIn(f"sudo {Path(raw) / 'step14'} -", said)
 
     def test_the_current_release_is_left_alone(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -121,4 +138,7 @@ class TheBuild(unittest.TestCase):
         self.assertIn("--target /opt/haprion-certbot", TOOL.BUILD)
 
     def test_the_interface_needs_it(self) -> None:
-        self.assertIn("haprion-certbot", TOOL.ui.depends("3.13").split(", "))
+        self.assertIn("haprion-certbot", TOOL.ui.depends("3.13", 1).split(", "))
+
+    def test_it_needs_the_cli_its_renewal_runs_through(self) -> None:
+        self.assertIn("haprion-cli", TOOL.depends("3.13").split(", "))

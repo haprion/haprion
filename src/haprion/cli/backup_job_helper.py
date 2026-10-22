@@ -238,7 +238,7 @@ def main(
             operation=operation,
             cluster=request.cluster,
             request_id=request.request_id,
-            code="backup_failed",
+            code="backup_busy" if isinstance(exc, state_backup.BackupBusy) else "backup_failed",
             message=str(exc),
             exit_code=1,
         )

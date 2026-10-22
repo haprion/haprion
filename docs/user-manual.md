@@ -3896,7 +3896,10 @@ same count the schedule promised; a file that is present but unreadable stops th
 than falling back to 14. The one exception to the count is an archive a node restore run can still
 restore - one prepared within the hour and not yet carried out, or being carried out now: it stays
 until that run is done, so the count is briefly one more. A run past its hour holds nothing, and
-each backup first puts such runs away as a restore command would. The ordinary list and the backup
+each backup first puts such runs away as a restore command would. A run has ten minutes in all:
+it waits at most two for another backup or restore to finish (then it answers `backup_busy` and
+takes nothing), gives each node up to five, and names a node it had no time left for as
+`backup_budget_exhausted`, keeping the archives it did take. The ordinary list and the backup
 UI show every retained archive per node and identify the source node because hostnames, network state and SSH identities are not
 interchangeable between the pair.
 

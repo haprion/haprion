@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import tempfile
 import time
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 from unittest import mock
 
 from haprion import restore_runs, state_backup
@@ -23,9 +24,9 @@ class StateBackupTests(unittest.TestCase):
 
     @staticmethod
     def fetch(
-        node: Node, identity: DeployIdentity, destination: BinaryIO
+        node: Node, identity: DeployIdentity, destination: BinaryIO, *, timeout: float
     ) -> state_backup.FetchResult:
-        del node, identity
+        del node, identity, timeout
         destination.write(b"complete archive")
         return state_backup.FetchResult(0)
 
@@ -206,9 +207,9 @@ class StateBackupTests(unittest.TestCase):
 
     def test_a_failed_export_never_becomes_a_backup(self) -> None:
         def failed(
-            node: Node, identity: DeployIdentity, destination: BinaryIO
+            node: Node, identity: DeployIdentity, destination: BinaryIO, *, timeout: float
         ) -> state_backup.FetchResult:
-            del node, identity
+            del node, identity, timeout
             destination.write(b"partial")
             return state_backup.FetchResult(1, "export failed")
 
@@ -227,6 +228,97 @@ class StateBackupTests(unittest.TestCase):
 
             self.assertEqual(result.error, "node_export_failed")
             self.assertEqual(list((root / self.node.name).iterdir()), [])
+
+
+class TheRunAnswersWithinItsBudget(unittest.TestCase):
+    """Logic review 26-10-22, L4: 300 s a node, one after the other, under a lock
+    waited for without end, went past the worker's 720 s client while every node
+    was within its own limit; the job read `unknown` and the helper went on."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.raw = Path(directory.name)
+        self.root = self.raw / "backups"
+        self.root.mkdir(mode=0o700)
+        self.now = 1000.0
+        self.asked: list[tuple[str, float]] = []
+        for name, value in (("_key_is_private", True), ("_root_is_private", True)):
+            patch = mock.patch.object(state_backup, name, return_value=value)
+            patch.start()
+            self.addCleanup(patch.stop)
+        patch = mock.patch.object(state_backup, "_directory_is_private", return_value=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def clock(self) -> float:
+        return self.now
+
+    def wait(self, seconds: float) -> None:
+        self.now += seconds
+
+    def slow(
+        self, node: Node, identity: DeployIdentity, destination: BinaryIO, *, timeout: float
+    ) -> state_backup.FetchResult:
+        del identity
+        self.asked.append((node.name, timeout))
+        self.now += timeout
+        destination.write(b"archive")
+        return state_backup.FetchResult(0)
+
+    @staticmethod
+    def valid(path: Path) -> ArchiveFacts:
+        return ArchiveFacts(
+            members=1, files=1, size_bytes=path.stat().st_size, hostname=path.parent.name
+        )
+
+    def backup(self, nodes: int, **kwargs: Any) -> state_backup.BackupResult:
+        cluster = mock.Mock(
+            nodes=tuple(Node(name=f"node-{i}", mgmt_host="node.example") for i in range(nodes))
+        )
+        return state_backup.run(
+            "alpha",
+            cluster,
+            DeployIdentity(user="svc-backup", key=Path("/root/backup-key")),
+            self.root,
+            fetch=self.slow,
+            validator=self.valid,
+            now=datetime(2026, 10, 22, 12, tzinfo=UTC),
+            lock_path=self.raw / "lock",
+            restore_root=self.raw / "runs",
+            clock=self.clock,
+            wait=self.wait,
+            **kwargs,
+        )
+
+    def test_nodes_past_the_budget_are_named_and_the_ones_reached_are_kept(self) -> None:
+        result = self.backup(3)
+
+        self.assertLessEqual(self.now - 1000.0, state_backup.RUN_BUDGET_SECONDS)
+        self.assertEqual(self.asked, [("node-0", 300.0), ("node-1", 300.0)])
+        self.assertEqual(
+            [(node.name, node.outcome, node.error) for node in result.nodes],
+            [
+                ("node-0", "done", None),
+                ("node-1", "done", None),
+                ("node-2", "failed", "backup_budget_exhausted"),
+            ],
+        )
+        self.assertTrue((self.root / "node-0" / "latest").is_symlink())
+
+    def test_the_last_node_gets_what_is_left_not_its_whole_limit(self) -> None:
+        self.backup(2, budget=450.0)
+
+        self.assertEqual(self.asked, [("node-0", 300.0), ("node-1", 150.0)])
+
+    def test_a_lock_held_too_long_is_busy_and_nothing_is_asked(self) -> None:
+        with (self.raw / "lock").open("a+b") as other:
+            fcntl.flock(other.fileno(), fcntl.LOCK_EX)
+            with self.assertRaises(state_backup.BackupBusy):
+                self.backup(2)
+        self.assertEqual(self.asked, [])
+        self.assertGreaterEqual(self.now - 1000.0, state_backup.LOCK_WAIT_SECONDS)
+        self.assertLess(self.now - 1000.0, state_backup.LOCK_WAIT_SECONDS + 1)
 
 
 if __name__ == "__main__":

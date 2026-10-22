@@ -28,7 +28,7 @@ from haprion.config import (
 )
 from haprion.envelope import failure, new_request_id
 from haprion.helper_protocol import write_document
-from haprion.state_backup import BackupResult, BackupRunError, run
+from haprion.state_backup import BackupBusy, BackupResult, BackupRunError, run
 
 EXIT_USAGE = 64
 EXIT_NOT_ROOT = 77
@@ -122,7 +122,8 @@ def main(
                 cluster_id, cluster, policy.backup_identity, policy.backup_root, retention
             )
         except (BackupRunError, RetentionError) as exc:
-            refuse(cluster_id, "backup_failed", f"{cluster_id}: {exc}", 1)
+            refused = "backup_busy" if isinstance(exc, BackupBusy) else "backup_failed"
+            refuse(cluster_id, refused, f"{cluster_id}: {exc}", 1)
             failed = True
             continue
         if json_mode:

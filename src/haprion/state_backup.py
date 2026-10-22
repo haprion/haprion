@@ -19,8 +19,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from time import monotonic
-from typing import BinaryIO, Literal
+from time import monotonic, sleep
+from typing import BinaryIO, Literal, Protocol
 from uuid import uuid4
 
 from haprion import restore_runs
@@ -48,6 +48,23 @@ SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
 
 MAX_STDERR_BYTES = 64 * 1024
 FETCH_TIMEOUT_SECONDS = 300.0
+#
+# One run's whole budget, the lock's wait included (logic review 2026-10-22,
+# L4). The worker's client gives the helper 720 s (`backup_job_ask`) and the
+# worker its job 900 s; a run that took 300 s a node, one after the other,
+# under a lock it waited for without end went past both while every node was
+# within its own limit, and the job read `unknown` while the helper carried on.
+# Within this the run answers itself: the nodes it reached, and the ones it
+# had no time left for. 120 s is left for the last archive's validation and
+# the answer.
+#
+RUN_BUDGET_SECONDS = 600.0
+LOCK_WAIT_SECONDS = 120.0
+#
+# Less than this left, a node is not started: an export that cannot finish is
+# a hung connection, not a backup.
+#
+MIN_FETCH_SECONDS = 10.0
 # Fourteen daily archives per node cover two weeks unless the Backups page set
 # another count (`backup_retention`).  Retention is deliberately per node: a
 # two-node cluster on the default therefore holds 28 archives in total.
@@ -59,13 +76,20 @@ class BackupRunError(RuntimeError):
     """The installation cannot start a trustworthy backup run."""
 
 
+class BackupBusy(BackupRunError):
+    """Another backup run held the lock for longer than this one could wait."""
+
+
 @dataclass(frozen=True, slots=True)
 class FetchResult:
     exit_code: int
     stderr: str = ""
 
 
-type Fetch = Callable[[Node, DeployIdentity, BinaryIO], FetchResult]
+class Fetch(Protocol):
+    def __call__(
+        self, node: Node, identity: DeployIdentity, destination: BinaryIO, *, timeout: float
+    ) -> FetchResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +273,7 @@ def _one_node(
     validator: Callable[[Path], ArchiveFacts],
     retention: int,
     held: frozenset[str] = frozenset(),
+    timeout: float = FETCH_TIMEOUT_SECONDS,
 ) -> NodeResult:
     directory = root / node.name
     directory.mkdir(mode=0o700, exist_ok=True)
@@ -262,7 +287,7 @@ def _one_node(
     try:
         descriptor = os.open(incoming, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, "wb") as destination:
-            fetched = fetch(node, identity, destination)
+            fetched = fetch(node, identity, destination, timeout=timeout)
             destination.flush()
             os.fsync(destination.fileno())
         if fetched.exit_code != 0:
@@ -293,8 +318,11 @@ def run(
     now: datetime | None = None,
     lock_path: Path = LOCK_PATH,
     restore_root: Path = restore_runs.RUN_ROOT,
+    budget: float = RUN_BUDGET_SECONDS,
+    clock: Callable[[], float] = monotonic,
+    wait: Callable[[float], None] = sleep,
 ) -> BackupResult:
-    """Take a state archive from both configured nodes under one global lock."""
+    """Take a state archive from every configured node under one global lock, within `budget`."""
 
     if identity is None:
         raise BackupRunError("backup_identity is not configured in the runtime policy")
@@ -315,9 +343,10 @@ def run(
     #
     taken = now or datetime.now(UTC)
     version = taken.astimezone().strftime("%Y-%m-%d_%H-%M-%S")
+    deadline = clock() + budget
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+b") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        _lock_within(lock.fileno(), min(deadline, clock() + LOCK_WAIT_SECONDS), clock, wait)
         #
         # Runs past their hour first, as a restore step would: nothing else
         # puts them away when no restore runs for weeks (found 2026-10-09,
@@ -328,17 +357,42 @@ def run(
         with suppress(OSError):
             restore_runs.sweep(restore_root, taken.timestamp())
         held = restore_runs.waiting_on(restore_root, taken.timestamp())
-        nodes = tuple(
-            _one_node(
-                node,
-                identity,
-                root,
-                version,
-                fetch=fetch,
-                validator=validator,
-                retention=retention,
-                held=frozenset(version for name, version in held if name == node.name),
+        nodes: list[NodeResult] = []
+        for node in cluster.nodes:
+            remaining = deadline - clock()
+            if remaining < MIN_FETCH_SECONDS:
+                nodes.append(NodeResult(node.name, "failed", None, None, "backup_budget_exhausted"))
+                continue
+            nodes.append(
+                _one_node(
+                    node,
+                    identity,
+                    root,
+                    version,
+                    fetch=fetch,
+                    validator=validator,
+                    retention=retention,
+                    held=frozenset(version for name, version in held if name == node.name),
+                    timeout=min(FETCH_TIMEOUT_SECONDS, remaining),
+                )
             )
-            for node in cluster.nodes
-        )
-    return BackupResult(cluster=cluster_id, version=version, nodes=nodes)
+    return BackupResult(cluster=cluster_id, version=version, nodes=tuple(nodes))
+
+
+def _lock_within(
+    descriptor: int, until: float, clock: Callable[[], float], wait: Callable[[float], None]
+) -> None:
+    """The global lock, or BackupBusy once `until` has passed without it."""
+
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            if clock() >= until:
+                raise BackupBusy(
+                    "another node backup or restore holds the backup lock; try again when it has "
+                    "finished"
+                ) from None
+            wait(0.5)
+        else:
+            return

@@ -922,6 +922,28 @@ def check_ui_tls_install_semantics(document: dict[str, object], path: Path) -> N
         raise AssertionError(f"{path}: a {document['outcome']} ui_tls_install carries a result")
 
 
+def check_probe_semantics(document: dict[str, object], path: Path) -> None:
+    # `done` is a probe some node ran - it answered, and it holds the source
+    # address or none was asked for; `failed` with a result is one no node
+    # could run. Each warning is a node that answered and refused.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done probe carries no result")
+    if not isinstance(result, dict):
+        return
+    nodes = result["nodes"]
+    assert isinstance(nodes, list)
+    ran = [node for node in nodes if node["reachable"] and node["source_held"] is not False]
+    if document["outcome"] == "done" and not ran:
+        raise AssertionError(f"{path}: a done probe that no node ran")
+    if document["outcome"] == "failed" and ran:
+        raise AssertionError(f"{path}: a failed probe that a node ran")
+    refused = {node["node"] for node in nodes if node["reachable"] and node["error"]}
+    warned = {warning["node"] for warning in document["warnings"]}  # type: ignore[union-attr]
+    if warned != refused:
+        raise AssertionError(f"{path}: warnings name {sorted(warned)}, refusals {sorted(refused)}")
+
+
 def check_resolve_semantics(document: dict[str, object], path: Path) -> None:
     # Each name has an address or a reason it has none, never both: the web
     # writes the address into a preview, or says the sentence.
@@ -1229,6 +1251,7 @@ SEMANTIC_CHECKS = {
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
     "resolve": check_resolve_semantics,
+    "probe": check_probe_semantics,
     "cert_export": check_cert_export_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
     "node_restore_preview": check_node_restore_preview_semantics,
@@ -1331,6 +1354,12 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         invalid["outcome"] = "failed"
     elif operation == "resolve":
         result["names"][0]["problem"] = "said beside an address"
+    elif operation == "probe":
+        for node in result["nodes"]:
+            node["reachable"] = invalid["outcome"] == "failed"
+            node["source_held"] = None
+            node["error"] = None
+        invalid["warnings"] = []
     elif operation == "cert_export":
         if result is None:
             invalid["outcome"] = "done"

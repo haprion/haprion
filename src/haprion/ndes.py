@@ -479,12 +479,33 @@ def enroll(
     lock_path = policy.state_root / (
         hashlib.sha256(certificate_id.encode()).hexdigest()[:24] + ".lock"
     )
+    #
+    # The lock and the enrollment's own files are asked about here, and not the
+    # caller's block: the `try` used to hold the `yield`, so a disk-full error
+    # in the caller's import was reported as "NDES state is unavailable" and a
+    # BlockingIOError there as "busy" - after the material may have been
+    # written (review 2026-10-22, 4-4).
+    #
     try:
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError:
+        raise NdesError(
+            "dependency_unavailable", "protected NDES state is unavailable", exit_code=78
+        ) from None
+    try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise NdesError(
+                "busy", "another enrollment is running for this certificate", exit_code=75
+            ) from None
+        except OSError:
+            raise NdesError(
+                "dependency_unavailable", "protected NDES state is unavailable", exit_code=78
+            ) from None
+        try:
             try:
-                yield _enroll(
+                enrollment = _enroll(
                     policy,
                     certificate_id=certificate_id,
                     profile=profile,
@@ -493,20 +514,17 @@ def enroll(
                     require_secure=require_secure,
                     timeout=timeout,
                 )
-            except NdesError as exc:
-                if exc.discard:
-                    remove_request(policy.state_root, certificate_id)
-                raise
-        finally:
-            os.close(fd)
-    except BlockingIOError:
-        raise NdesError(
-            "busy", "another enrollment is running for this certificate", exit_code=75
-        ) from None
-    except OSError:
-        raise NdesError(
-            "dependency_unavailable", "protected NDES state is unavailable", exit_code=78
-        ) from None
+            except OSError:
+                raise NdesError(
+                    "dependency_unavailable", "protected NDES state is unavailable", exit_code=78
+                ) from None
+            yield enrollment
+        except NdesError as exc:
+            if exc.discard:
+                remove_request(policy.state_root, certificate_id)
+            raise
+    finally:
+        os.close(fd)
 
 
 def abandon(policy: NdesPolicy, certificate_id: str, *, require_secure: bool = True) -> bool:

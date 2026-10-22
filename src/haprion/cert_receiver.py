@@ -31,7 +31,6 @@ functions rather than grow a second implementation.
 
 from __future__ import annotations
 
-import contextlib
 import ctypes
 import grp
 import ipaddress
@@ -122,15 +121,25 @@ _CRYPT_OUTPUT_SIZE = 384
 _CRYPT_DATA_SIZE = 32768
 
 type Runner = Callable[[Sequence[str]], tuple[int, str]]
+# One step that takes back what a registration did, and what it names.
+type Undo = tuple[str, Callable[[], None]]
 
 
 class ReceiverError(Exception):
     """A registration that was refused or failed, with the code it is reported under."""
 
-    def __init__(self, code: str, message: str, *, exit_code: int = 64):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        exit_code: int = 64,
+        details: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
+        self.details = details
 
 
 @dataclass(frozen=True, slots=True)
@@ -903,12 +912,12 @@ def add(
         allow=tuple(allow),
     )
 
-    undo: list[Callable[[], None]] = []
+    undo: list[Undo] = []
     layers: list[Layer] = []
     try:
         if transport != "https" and not account_exists(account):
             create_account(account, directory, transport, tools)
-            undo.append(lambda: _discard(tools.run([USERDEL, account])))
+            undo.append((f"account {account}", lambda: _checked(tools.run([USERDEL, account]))))
             layers.append(Layer("account", "created", account))
         else:
             layers.append(Layer("account", "present", account))
@@ -916,12 +925,17 @@ def add(
         existed = directory.exists()
         layers.append(create_directory(directory, account))
         if not existed:
-            undo.append(lambda: shutil.rmtree(directory, ignore_errors=True))
+            undo.append((f"directory {directory}", lambda: shutil.rmtree(directory)))
 
         if transport == "https":
             assert hashed_secret is not None  # noqa: S101 - check_request requires it
             layers.append(write_secret(receiver_id, hashed_secret, locations))
-            undo.append(lambda: secret_file(receiver_id, locations).unlink(missing_ok=True))
+            undo.append(
+                (
+                    f"secret {secret_file(receiver_id, locations)}",
+                    lambda: secret_file(receiver_id, locations).unlink(missing_ok=True),
+                )
+            )
         layers.append(_write_lock(receiver, key_line, registry, locations, tools, undo))
 
         cert_registry.set_receiver(
@@ -934,12 +948,21 @@ def add(
         )
         layers.append(Layer("registry", "created", receiver_id))
     except (ReceiverError, OSError, cert_registry.RegistryError) as exc:
-        for step in reversed(undo):
-            with contextlib.suppress(Exception):
-                step()
-        if isinstance(exc, ReceiverError):
+        left = _undo(undo)
+        if isinstance(exc, ReceiverError) and not left:
             raise
-        raise ReceiverError("write_failed", str(exc), exit_code=74) from exc
+        code, exit_code = (
+            (exc.code, exc.exit_code) if isinstance(exc, ReceiverError) else ("write_failed", 74)
+        )
+        message = str(exc)
+        if left:
+            message += "; not undone: " + "; ".join(left)
+        raise ReceiverError(
+            code,
+            message,
+            exit_code=exit_code,
+            details={"not_undone": left} if left else None,
+        ) from exc
 
     return Result(receiver_id, "added", tuple(layers), instructions(receiver, locations))
 
@@ -959,7 +982,7 @@ def _write_lock(
     registry: Registry,
     locations: Locations,
     tools: Tools,
-    undo: list[Callable[[], None]],
+    undo: list[Undo],
 ) -> Layer:
     """The lock for this transport, with the undo that takes it off again."""
 
@@ -979,13 +1002,18 @@ def _write_lock(
             what="nginx",
         )
         undo.append(
-            lambda: _restore(locations.nginx_snippet, before, [SYSTEMCTL, "reload", "nginx"], tools)
+            (
+                f"nginx snippet {locations.nginx_snippet}",
+                lambda: _restore(
+                    locations.nginx_snippet, before, [SYSTEMCTL, "reload", "nginx"], tools
+                ),
+            )
         )
         return layer
 
     home = receiver.path
     keys_layer = write_authorized_keys(home, authorized_keys_line(receiver, key_line, tools))
-    undo.append(lambda: shutil.rmtree(home / ".ssh", ignore_errors=True))
+    undo.append((f"keys {home / '.ssh'}", lambda: shutil.rmtree(home / ".ssh")))
     if receiver.transport == "sftp":
         before = (
             locations.sshd_dropin.read_text(encoding="utf-8")
@@ -1001,13 +1029,37 @@ def _write_lock(
             what="sshd",
         )
         undo.append(
-            lambda: _restore(locations.sshd_dropin, before, [SYSTEMCTL, "reload", "ssh"], tools)
+            (
+                f"sshd drop-in {locations.sshd_dropin}",
+                lambda: _restore(
+                    locations.sshd_dropin, before, [SYSTEMCTL, "reload", "ssh"], tools
+                ),
+            )
         )
     return keys_layer
 
 
-def _discard(_result: tuple[int, str]) -> None:
-    """An undo step's answer is not a report: the failure it undoes is."""
+def _undo(steps: Sequence[Undo]) -> list[str]:
+    """Take back each step, newest first, and say which could not be.
+
+    Every step is tried whatever the one before it did. Each used to be run
+    under `suppress(Exception)`, so an account or a directory left behind was
+    seen by nobody (review 2026-10-22, 4-12).
+    """
+
+    left = []
+    for name, step in reversed(steps):
+        try:
+            step()
+        except Exception as exc:  # noqa: BLE001 - every step is tried; what failed is reported
+            left.append(f"{name}: {exc}")
+    return left
+
+
+def _checked(result: tuple[int, str]) -> None:
+    code, said = result
+    if code != 0:
+        raise RuntimeError(said.strip() or f"exit {code}")
 
 
 def _restore(path: Path, before: str | None, reload: Sequence[str], tools: Tools) -> None:
@@ -1015,15 +1067,15 @@ def _restore(path: Path, before: str | None, reload: Sequence[str], tools: Tools
 
     The reload is the point: a file put back without one leaves sshd or nginx
     running the configuration that was just refused, until something else
-    reloads it (review 2026-09-20). Its answer is discarded like every undo
-    step's - the failure being undone is the report.
+    reloads it (review 2026-09-20). A reload that fails is said with the
+    failure being undone.
     """
 
     if before is None:
         path.unlink(missing_ok=True)
     else:
         path.write_text(before, encoding="utf-8")
-    _discard(tools.run(reload))
+    _checked(tools.run(reload))
 
 
 def manager_name(locations: Locations | None = None) -> str:

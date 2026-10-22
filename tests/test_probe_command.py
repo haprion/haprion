@@ -33,6 +33,7 @@ from haprion.certificates import DELIMITER
 from haprion.cli import probe, probe_helper
 from haprion.config import DeployIdentity, Node
 from haprion.probe_socket import ask, build_request
+from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -122,6 +123,13 @@ class HelperFixture(unittest.TestCase):
             require_root=False,
             ask=ask or (lambda node, identity, body: answer([])),
         )
+        #
+        # Whatever the helper printed is held to its schema: warnings as bare
+        # strings and refusals with nothing on stdout both passed every test
+        # that read the fields it needed (review 2026-10-22, 4-3).
+        #
+        if out.getvalue():
+            assert_contract("haprion-probe", out.getvalue())
         return code, out.getvalue(), err.getvalue()
 
     def target(self, **fields: object) -> dict[str, object]:
@@ -132,9 +140,14 @@ class HelperFixture(unittest.TestCase):
 
 class WhatTheHelperRefusesToSend(HelperFixture):
     def refusal(self, parameters: dict[str, object]) -> str:
+        """One failure envelope once the request is read (B32; review 2026-10-22, 4-3)."""
+
         code, out, err = self.run_helper(parameters)
         self.assertEqual(code, 65)
-        self.assertEqual(out, "")
+        document = json.loads(out)
+        self.assertEqual((document["outcome"], document["error"]["code"]), ("failed", "bad_input"))
+        self.assertEqual(document["request_id"], "3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f")
+        self.assertIn(document["error"]["message"], err)
         return err
 
     def test_a_probe_with_no_targets(self) -> None:
@@ -418,7 +431,8 @@ class ADnsTarget(HelperFixture):
         for fields in ({"query_name": 'x"y'}, {"query_type": "ANY"}):
             with self.subTest(fields=fields):
                 code, out, err = self.run_helper({"targets": [self.target(type="dns", **fields)]})
-                self.assertEqual((code, out), (65, ""))
+                self.assertEqual(code, 65)
+                self.assertEqual(json.loads(out)["error"]["code"], "bad_input")
                 self.assertIn("query_", err)
 
     def test_a_name_that_does_not_resolve_says_so(self) -> None:
@@ -496,6 +510,26 @@ class WhatTheHelperAnswers(HelperFixture):
         envelope = json.loads(out)
         self.assertEqual(envelope["outcome"], "done")
         self.assertFalse(envelope["result"]["nodes"][0]["results"][0]["ok"])
+
+    def test_a_node_that_refuses_is_a_warning_the_contract_can_read(self) -> None:
+        """Review 2026-10-22, 4-3: warnings were bare strings, against common.schema.json."""
+
+        def ask(
+            node: Node, identity: DeployIdentity, body: bytes
+        ) -> subprocess.CompletedProcess[str]:
+            payload = {"schema_version": 1, "ok": False, "error": "target refused", "results": []}
+            return subprocess.CompletedProcess(
+                args=["ssh"], returncode=0, stdout=json.dumps(payload), stderr=""
+            )
+
+        code, out, _ = self.run_helper({"targets": [self.target()]}, ask=ask)
+        envelope = json.loads(out)
+        self.assertTrue(envelope["warnings"])
+        for warning in envelope["warnings"]:
+            self.assertEqual(warning["code"], "probe_node_error")
+            self.assertIn(warning["node"], self.nodes)
+            self.assertIn("target refused", warning["message"])
+        self.assertEqual(code, 0 if envelope["outcome"] == "done" else 68)
 
     def test_no_node_answering_is_a_failure_of_the_command(self) -> None:
         def ask(

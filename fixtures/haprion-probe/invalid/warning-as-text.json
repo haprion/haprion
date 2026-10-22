@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "operation": "probe",
+  "cluster": "alpha",
+  "request_id": "3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e71",
+  "ok": true,
+  "outcome": "done",
+  "result": { "source": "", "nodes": [] },
+  "warnings": ["node-b: target refused"],
+  "error": null
+}

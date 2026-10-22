@@ -20,10 +20,12 @@ from haprion.cli import (
     cert_receiver_helper,
     changes_publish,
     deploy,
+    deploy_helper,
     node_ask,
     server_state_helper,
     socket_ask,
 )
+from haprion.status_collect import STATUS_TIMEOUT_SECONDS
 
 from haprion_ui import operations, worker
 
@@ -1124,3 +1126,25 @@ class EnrollingOverNdes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheDeployAnswersBeforeTheWorkerStopsIt(unittest.TestCase):
+    """Review 2026-10-22, 6-9: a deploy within every step's limit went past the job's."""
+
+    def test_the_helper_s_budget_ends_before_the_job_s_timeout(self) -> None:
+        for operation in ("deploy", "cert_deploy"):
+            with self.subTest(operation=operation):
+                prepared = operations.prepare(
+                    operation=operation,
+                    cluster="alpha",
+                    request_id=uuid4(),
+                    payload={"allow_vip_unknown": False},
+                )
+                self.assertLessEqual(
+                    deploy_helper.RUN_BUDGET_SECONDS + STATUS_TIMEOUT_SECONDS,
+                    prepared.timeout_seconds,
+                )
+        self.assertGreaterEqual(
+            deploy_helper.BUDGET.node_step,
+            deploy_helper.TRIGGER_TIMEOUT_SECONDS + STATUS_TIMEOUT_SECONDS,
+        )

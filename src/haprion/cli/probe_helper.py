@@ -39,10 +39,11 @@ from haprion.config import (
     load_policy,
     load_runtime_config,
 )
-from haprion.envelope import new_request_id
+from haprion.envelope import Message, envelope
 from haprion.health_probe import MAX_TARGETS, Target, probe
 from haprion.helper_protocol import (
     HelperProtocolError,
+    HelperRequest,
     config_error_code,
     read_helper_request,
     require_no_arguments,
@@ -257,6 +258,21 @@ def _authorities(certificate_root: Path | None, targets: list[Target]) -> dict[s
     return found
 
 
+def _refused(
+    writer: TextIO, errors: TextIO, request: HelperRequest, exc: HelperProtocolError
+) -> int:
+    errors.write(f"ERROR: [bad_input] {exc}\n")
+    return write_failure(
+        writer,
+        operation=OPERATION,
+        cluster=request.cluster,
+        request_id=request.request_id,
+        code="bad_input",
+        message=str(exc),
+        exit_code=exc.exit_code,
+    )
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -286,11 +302,15 @@ def main(
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+    #
+    # From here the request is known, so every refusal is an envelope (B32): a
+    # bare stderr line left the web saying the probe "answered with nothing at
+    # all" when it had said why (review 2026-10-22, 4-3).
+    #
     try:
         targets, source, timeout_ms = _targets(request.parameters)
     except HelperProtocolError as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return _refused(writer, errors, request, exc)
     except dnsdist_config.Unresolved as exc:
         errors.write(f"ERROR: [dns_unresolved] {exc}\n")
         return write_failure(
@@ -323,8 +343,7 @@ def main(
     try:
         authorities = _authorities(policy.certificate_root, targets)
     except HelperProtocolError as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return _refused(writer, errors, request, exc)
 
     identity = policy.probe_identity
     if identity is None and ask is None:
@@ -379,53 +398,52 @@ def main(
     answered = [answer for answer in reachable if answer.source_held is not False]
     nowhere = bool(source) and bool(reachable) and not answered
     ran = bool(answered)
-    outcome = "done" if ran else "failed"
-    document = {
-        "schema_version": 1,
-        "ok": ran,
-        "outcome": outcome,
-        "operation": OPERATION,
-        "cluster": request.cluster,
-        "request_id": request.request_id or new_request_id(),
-        "result": {
-            "source": source,
-            "nodes": [
-                {
-                    "node": answer.node,
-                    "reachable": answer.reachable,
-                    "error": answer.error,
-                    "source_held": answer.source_held,
-                    "results": [
-                        {
-                            "host": entry.host,
-                            "port": entry.port,
-                            "ok": entry.ok,
-                            "status": entry.status,
-                            "error": entry.error,
-                            "ms": entry.ms,
-                        }
-                        for entry in answer.results
-                    ],
-                }
-                for answer in answers
-            ],
-        },
-        "warnings": [
-            f"{answer.node}: {answer.error}"
+    result = {
+        "source": source,
+        "nodes": [
+            {
+                "node": answer.node,
+                "reachable": answer.reachable,
+                "error": answer.error,
+                "source_held": answer.source_held,
+                "results": [
+                    {
+                        "host": entry.host,
+                        "port": entry.port,
+                        "ok": entry.ok,
+                        "status": entry.status,
+                        "error": entry.error,
+                        "ms": entry.ms,
+                    }
+                    for entry in answer.results
+                ],
+            }
             for answer in answers
-            if answer.error and answer.reachable
         ],
-        "error": None
+    }
+    warnings = tuple(
+        Message(code="probe_node_error", message=answer.error[:1024], node=answer.node)
+        for answer in answers
+        if answer.error and answer.reachable
+    )
+    document = envelope(
+        operation=OPERATION,
+        outcome="done" if ran else "failed",
+        cluster=request.cluster,
+        request_id=request.request_id,
+        result=result,
+        warnings=warnings,
+        error=None
         if ran
-        else {
-            "code": "probe_unavailable",
-            "message": (
+        else Message(
+            code="probe_unavailable",
+            message=(
                 f"no node carries the source address {source}, so nothing was tried"
                 if nowhere
                 else "no node answered the probe"
             ),
-        },
-    }
+        ),
+    )
     write_document(writer, document)
     return 0 if ran else 68
 

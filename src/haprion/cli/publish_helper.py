@@ -98,6 +98,7 @@ from haprion.reservations import (
     load_reservations,
     review_fragments,
 )
+from haprion.status_collect import read_target
 from haprion.version_history import count_versions, request_names, version_message
 
 #
@@ -466,6 +467,34 @@ def _publish(
     #
     # 2. The candidate tree. managed/ is carried over from HEAD untouched.
     #
+    def sandboxed(tree_files: Mapping[str, bytes]) -> int | None:
+        """HAProxy's own check of these files in the sandbox; the refusal, or None."""
+
+        candidate = candidate_from_files(build_node_artifact(tree_files))
+        certificate = read_validation_certificate(
+            cluster.validation_certs / VALIDATION_CERTIFICATE,
+            require_secure=require_secure,
+        )
+        prepare_run_root(run_root, require_secure=require_secure)
+        result = validate_candidate(
+            candidate,
+            run_root=run_root,
+            certificate_ids=cluster.certificate_ids,
+            authority_ids=cluster.authority_ids,
+            validation_certificate=certificate,
+            request_id=request.request_id,
+            validator=validator,
+        )
+        if result.valid:
+            return None
+        return refuse(
+            "candidate_invalid",
+            "the HAProxy configuration is invalid. "
+            "No version was created and nothing was published.",
+            65,
+            {"diagnostics": result.diagnostics, "candidate_sha256": candidate.sha256},
+        )
+
     snapshot = build_candidate_tree(repo, head, files)
     if snapshot.unchanged:
         #
@@ -480,6 +509,23 @@ def _publish(
         # verifies the stamp and returns.
         #
         current_files = read_tree_files(repo, snapshot.tree)
+        short = tls_policy.stick_counters_problem(
+            current_files, cluster=request.cluster, config_path=str(cluster.config_path)
+        )
+        if short is not None:
+            return refuse("stick_counters_short", short, BLOCKED_EXIT)
+        #
+        # A head whose release was never installed was never checked either: a
+        # commit made by hand, a cluster's first version whose publish failed
+        # (B318), version 1 after a history reset. It goes through the sandbox
+        # before it goes out, as the managed path's does; a retry of a version
+        # already installed is not checked again (review 2026-10-22, 1A-6).
+        #
+        published = read_target(cluster.publish_path, cluster.node_path)
+        if published is None or published.hash != head:
+            refused = sandboxed(current_files)
+            if refused is not None:
+                return refused
         #
         # The same policy as a change: an unchanged tree is how a retry
         # arrives, and it must not install what the first attempt refused.
@@ -491,11 +537,6 @@ def _publish(
         )
         if stale is not None:
             return refuse("tls_defaults_stale", stale, BLOCKED_EXIT)
-        short = tls_policy.stick_counters_problem(
-            current_files, cluster=request.cluster, config_path=str(cluster.config_path)
-        )
-        if short is not None:
-            return refuse("stick_counters_short", short, BLOCKED_EXIT)
         installed = install_release(
             cluster.publish_path,
             node_path=cluster.node_path,
@@ -555,28 +596,9 @@ def _publish(
     #
     # 4. Validation, in the sandbox, on exactly those bytes.
     #
-    certificate = read_validation_certificate(
-        cluster.validation_certs / VALIDATION_CERTIFICATE,
-        require_secure=require_secure,
-    )
-    prepare_run_root(run_root, require_secure=require_secure)
-    result = validate_candidate(
-        candidate,
-        run_root=run_root,
-        certificate_ids=cluster.certificate_ids,
-        authority_ids=cluster.authority_ids,
-        validation_certificate=certificate,
-        request_id=request.request_id,
-        validator=validator,
-    )
-    if not result.valid:
-        return refuse(
-            "candidate_invalid",
-            "the HAProxy configuration is invalid. "
-            "No version was created and nothing was published.",
-            65,
-            {"diagnostics": result.diagnostics, "candidate_sha256": candidate.sha256},
-        )
+    refused = sandboxed(published_files)
+    if refused is not None:
+        return refused
 
     #
     # After the sandbox, deliberately. A `core/haproxy.cfg` can be both stale and

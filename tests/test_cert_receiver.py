@@ -377,6 +377,29 @@ class AddingAReceiver(ReceiverFixture):
         self.assertFalse(self.locations.nginx_snippet.exists())
         self.assertTrue(registry_file.exists())
 
+    def test_what_could_not_be_undone_is_named_and_the_rest_is_still_undone(self) -> None:
+        """Review 2026-10-22, 4-12: each undo step ran under `suppress(Exception)`."""
+
+        with (
+            mock.patch.object(cert_receiver, "_own"),
+            mock.patch.object(
+                cert_registry, "set_receiver", side_effect=OSError("registry is read-only")
+            ),
+            mock.patch.object(
+                cert_receiver, "_restore", side_effect=RuntimeError("nginx did not reload")
+            ),
+            self.assertRaises(ReceiverError) as caught,
+        ):
+            self.add(transport="https", public_key=None, owner=None, allow=["192.0.2.0/24"])
+
+        left = (caught.exception.details or {}).get("not_undone") or []
+        self.assertEqual(len(left), 1, left)
+        self.assertIn("nginx snippet", left[0])
+        self.assertIn("nginx did not reload", left[0])
+        self.assertEqual(caught.exception.code, "write_failed")
+        self.assertIn("not undone: nginx snippet", str(caught.exception))
+        self.assertFalse(cert_receiver.secret_file("lb-02.example.net", self.locations).exists())
+
     def test_the_instructions_name_what_the_receiver_needs(self) -> None:
         result = self.add()
 

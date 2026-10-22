@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import tempfile
 import time
 import unittest
@@ -73,6 +74,28 @@ class EnrollmentStaging(unittest.TestCase):
         self.assertEqual(calls[1].args[2][0], "request")
         self.assertIn("-R", calls[1].args[2])
         self.assertNotIn("example-challenge", repr(calls))
+
+    def test_the_caller_s_own_failure_is_its_own_not_the_lock_s(self) -> None:
+        """Review 2026-10-22, 4-4: a disk-full import was told "NDES state is unavailable"."""
+
+        for raised in (OSError(28, "No space left on device"), BlockingIOError()):
+            with (
+                self.subTest(raised=type(raised).__name__),
+                mock.patch.object(ndes, "command"),
+                mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+                self.assertRaises(type(raised)) as caught,
+                ndes.enroll(
+                    self.policy,
+                    certificate_id="service.example.com",
+                    profile=self.profile,
+                    domains=DOMAINS,
+                    require_secure=False,
+                    timeout=0,
+                ),
+            ):
+                raise raised
+            self.assertIs(caught.exception, raised)
+            shutil.rmtree(self.directory)
 
     def test_a_rejected_request_takes_its_directory_with_it(self) -> None:
         """Nothing is left to resume once the CA has said no; the directory

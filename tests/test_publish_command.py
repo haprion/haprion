@@ -153,6 +153,14 @@ class EndToEndTests(CallerFixture):
             before = git(self.repo, "rev-parse", "HEAD")
             code, output = self.run_caller(policy_path, "-c", "alpha", "No change at all")
             self.assertEqual(code, 0)
+            #
+            # The head's release had never been installed: it is now, and the
+            # nodes are behind it (review 2026-10-22, 1A-6).
+            #
+            self.assertIn("was not the published release and now is", output)
+            self.assertIn("haprion-deploy -c alpha", output)
+            code, output = self.run_caller(policy_path, "-c", "alpha", "No change at all")
+            self.assertEqual(code, 0)
             self.assertIn("No changes to publish", output)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 

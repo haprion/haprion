@@ -1026,3 +1026,60 @@ class TheFirstDeployWaitsForTheVip(unittest.TestCase):
         report = LAST_REPORT[0]
         assert report.error is not None  # noqa: S101 - asserted by the exit code
         self.assertEqual(report.error.code, "status_unavailable")
+
+
+class TheRunKeepsToItsBudget(unittest.TestCase):
+    """Review 2026-10-22, 6-9: each step had a limit and the run had none."""
+
+    BUDGET = deploy_run.Budget(seconds=840.0, node_step=360.0, reading=60.0)
+
+    def run_slowly(self, cluster: FakeCluster, *, per_node: float) -> tuple[int, dict[str, Any]]:
+        now = [0.0]
+
+        def read_status() -> ClusterStatus:
+            return parse_status(cluster.read_status())
+
+        def trigger(node: NodeStatus) -> int:
+            now[0] += per_node
+            return cluster.trigger(node.name)
+
+        outcome = deploy_run.run(
+            read_status,
+            trigger,
+            io.StringIO(),
+            target=TARGET,
+            pause=lambda _seconds: None,
+            budget=self.BUDGET,
+            clock=lambda: now[0],
+        )
+        document = outcome.report.as_envelope("alpha")
+        reconcile_semantics()(document, Path("deploy"))
+        return outcome.exit_code, document
+
+    def test_a_node_there_is_no_time_left_for_is_named_and_not_started(self) -> None:
+        cluster = pair()
+        code, document = self.run_slowly(cluster, per_node=500.0)
+
+        self.assertEqual(cluster.triggered, ["node-b"])
+        self.assertEqual((code, document["outcome"]), (69, "partial"))
+        rows = {row["name"]: row for row in document["result"]["nodes"]}
+        self.assertEqual(rows["node-a"]["outcome"], "not_attempted")
+        self.assertEqual(rows["node-a"]["error"]["code"], "deploy_budget_exhausted")
+        self.assertEqual(rows["node-b"]["outcome"], "updated")
+
+    def test_nodes_that_fit_are_all_deployed(self) -> None:
+        cluster = pair()
+        code, document = self.run_slowly(cluster, per_node=300.0)
+
+        self.assertEqual(sorted(cluster.triggered), ["node-a", "node-b"])
+        self.assertEqual((code, document["outcome"]), (0, "done"))
+
+    def test_without_time_for_the_first_node_nothing_is_touched(self) -> None:
+        self.BUDGET = deploy_run.Budget(seconds=300.0, node_step=360.0, reading=60.0)
+        cluster = pair()
+        code, document = self.run_slowly(cluster, per_node=1.0)
+
+        self.assertEqual(cluster.triggered, [])
+        self.assertEqual(document["outcome"], "blocked")
+        self.assertEqual(document["error"]["code"], "deploy_budget_exhausted")
+        self.assertEqual(code, 65)

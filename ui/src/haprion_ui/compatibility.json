@@ -7,7 +7,7 @@
       "0085",
       "0086"
     ],
-    "engine_api": 31,
+    "engine_api": 32,
     "node_api": 1,
     "poller_helpers": [
       "haprion-status-helper",

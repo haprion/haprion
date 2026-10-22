@@ -48,7 +48,7 @@ from haprion.config import (
     load_runtime_config,
 )
 from haprion.deploy_run import OPERATION as DEPLOY_OPERATION
-from haprion.deploy_run import CertificatePreflight, ReadStatus, TriggerNode, run
+from haprion.deploy_run import Budget, CertificatePreflight, ReadStatus, TriggerNode, run
 from haprion.envelope import failure, new_request_id
 from haprion.helper_protocol import (
     HelperProtocolError,
@@ -58,7 +58,7 @@ from haprion.helper_protocol import (
     require_no_arguments,
     write_document,
 )
-from haprion.status_collect import ask_node, collect, read_target
+from haprion.status_collect import STATUS_TIMEOUT_SECONDS, ask_node, collect, read_target
 
 OPERATION = "deploy_cluster"
 PARAMETERS = frozenset({"allow_vip_unknown", "json", "expected_version"})
@@ -78,6 +78,17 @@ EXIT_TARGET_CHANGED = 75
 #
 TRIGGER_TIMEOUT_SECONDS = 300
 EXIT_TRIGGER_TIMEOUT = 124
+#
+# The run's whole time (review 2026-10-22, 6-9): the worker gives a deploy job
+# 900 s, and 60 s of that is left for the last reading and the answer. A node
+# is started only with its trigger and the reading after it still inside.
+#
+RUN_BUDGET_SECONDS = 840.0
+BUDGET = Budget(
+    seconds=RUN_BUDGET_SECONDS,
+    node_step=TRIGGER_TIMEOUT_SECONDS + STATUS_TIMEOUT_SECONDS,
+    reading=STATUS_TIMEOUT_SECONDS,
+)
 
 EXIT_NOT_ROOT = 68
 
@@ -385,6 +396,7 @@ def main(
                 allow_vip_unknown=allow_vip_unknown,
                 lifeline=lifeline,
                 preflight=preflight,
+                budget=BUDGET,
             )
     except LockBusy as exc:
         return refuse("operation_locked", str(exc), exc.exit_code)

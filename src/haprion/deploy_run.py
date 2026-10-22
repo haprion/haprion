@@ -227,6 +227,23 @@ def _initial_reports(status: ClusterStatus, target: Target | None) -> dict[str, 
     return reports
 
 
+@dataclass(frozen=True, slots=True)
+class Budget:
+    """The whole run's time, and what one node and one reading may take of it (6-9).
+
+    Each step had its own limit and none had the run's: a trigger of 300 s a
+    node, one after the other, and waits of fifteen readings of up to 60 s,
+    went past the worker's 900 s while every step was within its own - and
+    the job read `unknown` while the helper carried on (review 2026-10-22,
+    6-9; logic review L4 for the backup). Within this the run answers itself:
+    a node it has no time left for is named, not started.
+    """
+
+    seconds: float
+    node_step: float
+    reading: float
+
+
 def run(
     read_status: ReadStatus,
     trigger: TriggerNode,
@@ -238,6 +255,8 @@ def run(
     lifeline: Lifeline | None = None,
     preflight: CertificatePreflight | None = None,
     pause: Callable[[float], None] = time.sleep,
+    budget: Budget | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> DeployRun:
     """Reconcile the cluster and report, in text as it goes and in a result.
 
@@ -246,6 +265,13 @@ def run(
     than derived because the loop is shared with `cert-deploy`, which is the
     command that fixes what the check finds and must not be blocked by it.
     """
+
+    deadline = clock() + budget.seconds if budget is not None else None
+
+    def time_left() -> float:
+        return deadline - clock() if deadline is not None else float("inf")
+
+    reading = budget.reading if budget is not None else 0.0
 
     try:
         status = read_status()
@@ -337,7 +363,14 @@ def run(
         if step.action is Action.FINISHED:
             if any(entry.outcome == "updated" for entry in report.nodes.values()):
                 try:
-                    status = _await_vip_owner(status, read_status, writer, report, pause)
+                    status = _await_vip_owner(
+                        status,
+                        read_status,
+                        writer,
+                        report,
+                        pause,
+                        lambda: time_left() > reading,
+                    )
                 except StatusError as exc:
                     writer.write(f"\nERROR: {exc}\n")
                     writer.write(
@@ -364,6 +397,9 @@ def run(
             # would deploy nothing while reporting success.
             #
             raise RuntimeError("a deploy step must name a node")
+
+        if budget is not None and time_left() < budget.node_step:
+            return _out_of_time(writer, status, report, node_name, budget)
 
         writer.write(f"\n=== Deploy: {node_name} ===\n")
         code = trigger(status.node(node_name))
@@ -427,7 +463,15 @@ def run(
             entry.outcome = "updated"
             entry.verified = bool(landed)
             try:
-                status = _await_peers(status, node_name, read_status, writer, report, pause)
+                status = _await_peers(
+                    status,
+                    node_name,
+                    read_status,
+                    writer,
+                    report,
+                    pause,
+                    lambda: time_left() > reading,
+                )
             except StatusError as exc:
                 #
                 # The next node would otherwise be chosen from the reading
@@ -473,6 +517,7 @@ def _await_peers(
     writer: TextIO,
     report: DeployReport,
     pause: Callable[[float], None],
+    may_read: Callable[[], bool] = lambda: True,
 ) -> ClusterStatus:
     """The status once the deployed node is connected to its peers, or after the wait.
 
@@ -490,8 +535,8 @@ def _await_peers(
 
     for _ in range(PEERS_WAIT_SECONDS):
         waiting = _unconnected_peers(status, node_name)
-        if not waiting:
-            return status
+        if not waiting or not may_read():
+            break
         pause(1.0)
         status = read_status()
     waiting = _unconnected_peers(status, node_name)
@@ -522,6 +567,7 @@ def _await_vip_owner(
     writer: TextIO,
     report: DeployReport,
     pause: Callable[[float], None],
+    may_read: Callable[[], bool] = lambda: True,
 ) -> ClusterStatus:
     """The status once a node owns the VIP, or after the wait.
 
@@ -532,8 +578,8 @@ def _await_vip_owner(
     """
 
     for _ in range(VIP_WAIT_SECONDS):
-        if status.vip_state is not VipState.NO_OWNER:
-            return status
+        if status.vip_state is not VipState.NO_OWNER or not may_read():
+            break
         pause(1.0)
         status = read_status()
     if status.vip_state is VipState.NO_OWNER:
@@ -541,6 +587,29 @@ def _await_vip_owner(
         writer.write(f"WARNING: {warning}\n")
         report.warnings.append(Message(code="vip_not_owned", message=warning))
     return status
+
+
+def _out_of_time(
+    writer: TextIO, status: ClusterStatus, report: DeployReport, node_name: str, budget: Budget
+) -> DeployRun:
+    """The run stopped before a node it had no time left for; the nodes before it stand."""
+
+    message = (
+        f"{node_name} was not started: less than {int(budget.node_step)} s of the deploy's "
+        f"{int(budget.seconds)} s was left. Run the same command again to deploy the rest."
+    )
+    writer.write(f"\nERROR: {message}\n")
+    entry = report.nodes[node_name]
+    entry.outcome = "not_attempted"
+    entry.error = Message(code="deploy_budget_exhausted", message=message, node=node_name)
+    report.final_summary = status.summary
+    if any(node.outcome == "updated" for node in report.nodes.values()):
+        report.outcome = Outcome.PARTIAL
+        report.warnings.append(Message(code="deploy_budget_exhausted", message=message))
+        return DeployRun(EXIT_INCOMPLETE, report)
+    report.outcome = Outcome.BLOCKED
+    report.error = Message(code="deploy_budget_exhausted", message=message)
+    return DeployRun(EXIT_BLOCKED, report)
 
 
 def _certificate_preflight(

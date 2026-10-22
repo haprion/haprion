@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "operation": "probe",
+  "cluster": "alpha",
+  "request_id": "3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e70",
+  "ok": false,
+  "outcome": "failed",
+  "result": {
+    "source": "192.0.2.25",
+    "nodes": [
+      { "node": "node-a", "reachable": true, "error": null, "source_held": false, "results": [] },
+      { "node": "node-b", "reachable": true, "error": null, "source_held": false, "results": [] }
+    ]
+  },
+  "warnings": [],
+  "error": {
+    "code": "probe_unavailable",
+    "message": "no node carries the source address 192.0.2.25, so nothing was tried",
+    "node": null,
+    "details": null
+  }
+}

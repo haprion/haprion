@@ -29,6 +29,7 @@ from typing import BinaryIO, TextIO, cast
 from haprion import node_ssh
 from haprion.certificates import CertificateError, target_for
 from haprion.cli.deploy_helper import (
+    BUDGET,
     EXIT_NO_IDENTITY,
     EXIT_NOT_ROOT,
     read_status,
@@ -285,6 +286,7 @@ def main(
                 allow_vip_unknown=allow_vip_unknown,
                 operation=CERT_OPERATION,
                 lifeline=lifeline,
+                budget=BUDGET,
             )
     except LockBusy as exc:
         return refuse("operation_locked", str(exc), exc.exit_code)

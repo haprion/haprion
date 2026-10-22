@@ -257,7 +257,7 @@ def main(
                 lock_path=lock_path,
             )
     except ReceiverError as exc:
-        return refuse(exc.code, str(exc), exc.exit_code)
+        return refuse(exc.code, str(exc), exc.exit_code, exc.details)
 
     failed = [layer for layer in result.layers if layer.state == "failed"]
     write_document(

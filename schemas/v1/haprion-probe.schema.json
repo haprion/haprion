@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haprion/schemas/v1/haprion-probe.schema.json",
+  "title": "haprion-probe-helper JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "probe" },
+        "cluster": { "type": ["string", "null"] },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/probe_result" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "probe_result": {
+      "description": "What each node said about each server. A server that is down is a finding in `results`, not a failed probe; `failed` with a result is a probe no node could run.",
+      "type": "object",
+      "required": ["source", "nodes"],
+      "properties": {
+        "source": { "type": "string", "maxLength": 45 },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["node", "reachable", "error", "source_held", "results"],
+            "properties": {
+              "node": { "type": "string", "minLength": 1 },
+              "reachable": { "type": "boolean" },
+              "error": { "type": ["string", "null"] },
+              "source_held": { "type": ["boolean", "null"] },
+              "results": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["host", "port", "ok", "status", "error", "ms"],
+                  "properties": {
+                    "host": { "type": "string", "minLength": 1 },
+                    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                    "ok": { "type": "boolean" },
+                    "status": { "type": ["integer", "null"] },
+                    "error": { "type": ["string", "null"] },
+                    "ms": { "type": ["integer", "null"], "minimum": 0 }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

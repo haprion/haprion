@@ -396,6 +396,35 @@ class RefusalTests(PublishFixture):
             self.assertEqual(document["error"]["code"], "base_version_changed")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
+    def test_a_head_never_installed_is_checked_before_it_goes_out(self) -> None:
+        """Review 2026-10-22, 1A-6: a commit made by hand was installed without the sandbox."""
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+            git(self.repo, "commit", "-qam", "Human edit to core")
+
+            code, stdout, _stderr = self.run_publish(
+                policy_path, self.request(), valid=False, diagnostics="[ALERT] parsing error\n"
+            )
+
+            document = assert_contract("haprion-publish", stdout)
+            self.assertEqual(code, 65)
+            self.assertEqual(document["error"]["code"], "candidate_invalid")
+            self.assertEqual(len(self.sandbox_roots), 1)
+            self.assertFalse((self.publish_path / "current").exists())
+
+    def test_a_retry_of_a_head_already_installed_is_not_checked_again(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            code, _stdout, stderr = self.run_publish(policy_path, self.request())
+            self.assertEqual(code, 0, stderr)
+
+            code, stdout, stderr = self.run_publish(policy_path, self.request(), valid=False)
+
+            self.assertEqual(code, 0, stderr)
+            self.assertFalse(json.loads(stdout)["result"]["deployment_required"])
+            self.assertEqual(self.sandbox_roots, [])
+
     def test_an_invalid_candidate_records_nothing(self) -> None:
         """The order the shell path established: validate, then commit."""
         with tempfile.TemporaryDirectory() as raw:

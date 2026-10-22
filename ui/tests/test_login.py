@@ -142,6 +142,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haprion_ui.db.pool", return_value=self.pool),
             mock.patch("haprion_ui.db.account_by_username", side_effect=self._account),
             mock.patch("haprion_ui.db.record_login_attempt", side_effect=self._attempt),
+            mock.patch("haprion_ui.db.lock_sign_in"),
             mock.patch("haprion_ui.db.failures_since_last_success", side_effect=self._failures),
             mock.patch(
                 "haprion_ui.db.account_failures_since_last_success",
@@ -646,6 +647,25 @@ class RefusingToSignIn(LoginTestCase):
         self.assertNotIn(auth.SESSION_COOKIE, client.cookies)
         self.assertEqual(self.attempts[-1][2], False)
         self.assertIn("login_failed", self.audit)
+
+    def test_the_attempt_is_counted_before_the_password_is_hashed(self) -> None:
+        """Review 26-10-22, 3-3: counted after the hash, every attempt sent at once read
+        the same count and the burst passed the budget. Each wrong password is one row,
+        a right one a success after it."""
+
+        counted_when_hashed: list[list[bool]] = []
+        verify = auth.verify_password
+
+        def hashed(stored: str, password: str) -> bool:
+            counted_when_hashed.append([attempt[2] for attempt in self.attempts])
+            return verify(stored, password)
+
+        with mock.patch("haprion_ui.auth.verify_password", side_effect=hashed):
+            self.assertEqual(self.sign_in(self.client(), password="wrong").status_code, 401)
+            self.assertEqual(self.sign_in(self.client()).status_code, 303)
+
+        self.assertEqual(counted_when_hashed, [[False], [False, False]])
+        self.assertEqual([attempt[2] for attempt in self.attempts], [False, False, True])
 
     def test_an_unknown_account_answers_exactly_as_a_wrong_password_does(self) -> None:
         #

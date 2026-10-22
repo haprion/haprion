@@ -2,8 +2,9 @@
 #
 # haprion-retention - keep the database bounded.
 #
-#     haprion-retention prune  [--days <n>] [--dry-run]
-#     haprion-retention report [--days <n>] [--exact]
+#     haprion-retention prune   [--days <n>] [--dry-run]
+#     haprion-retention report  [--days <n>] [--exact]
+#     haprion-retention horizon
 #
 # The job table grows without limit otherwise: it holds one row per management
 # request ever made, and nothing has ever removed one. The audit trail is what
@@ -85,7 +86,13 @@ METRIC_ROLLUP_SAFETY_DAYS=1
 #
 METRIC_ROLLUP_LAG_DAYS=1
 TRAFFIC_KEEP_DAYS=7
-TRAFFIC_AHEAD_DAYS=7
+#
+# A month ahead, for the metrics' reason above: the collector cannot hold a
+# WAF match until its day exists, so after a week of missed runs the matches
+# were lost for good (review 2026-10-22, 3-2). An empty partition costs its
+# indexes and nothing else; the queries are pruned by time.
+#
+TRAFFIC_AHEAD_DAYS=31
 
 #
 # A sign-in through the OIDC provider leaves one row (0041): usable for ten
@@ -400,22 +407,34 @@ traffic_report() {
     fi
 }
 
+#
+# The days ahead, and nothing removed. `horizon` runs this alone, so that the
+# installation and every update can make the partitions the poller and the
+# collector write into without deleting a row on the way (review 2026-10-22,
+# 3-2): until the first nightly run there were none for the metrics at all.
+#
+traffic_horizon() {
+    local table="$1"
+    if [[ "$dry_run" -eq 1 ]]; then
+        log "  ${table}: dry run, partition horizon unchanged"
+        return 0
+    fi
+    psql_as -c "select ${table}_partition(day::date)
+                  from generate_series(
+                      current_date - ${TRAFFIC_KEEP_DAYS} + 1,
+                      current_date + ${TRAFFIC_AHEAD_DAYS},
+                      interval '1 day'
+                  ) as day" >/dev/null
+    log "  ${table}: covered to $(date -d "+${TRAFFIC_AHEAD_DAYS} days" +%F)"
+}
+
 traffic_partitions() {
     local table partition
     local -a expired
     for table in "${TRAFFIC_TABLES[@]}"; do
         [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
         expired=()
-        if [[ "$dry_run" -eq 1 ]]; then
-            log "  ${table}: dry run, partition horizon unchanged"
-        else
-            psql_as -c "select ${table}_partition(day::date)
-                          from generate_series(
-                              current_date - ${TRAFFIC_KEEP_DAYS} + 1,
-                              current_date + ${TRAFFIC_AHEAD_DAYS},
-                              interval '1 day'
-                          ) as day" >/dev/null
-        fi
+        traffic_horizon "$table"
         mapfile -t expired < <(psql_as -c "$(partitions_expired "$table")")
         if [[ "$dry_run" -eq 1 ]]; then
             log "  ${table}: ${#expired[@]} expired partition(s), none dropped"
@@ -848,6 +867,13 @@ main() {
     log "  keeping the ${KEEP_MINIMUM} most recent whatever their age"
 
     case "$command" in
+        horizon)
+            metric_partitions_prepare
+            for table in "${TRAFFIC_TABLES[@]}"; do
+                [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
+                traffic_horizon "$table"
+            done
+            ;;
         report)
             metrics_report
             for table in "${TRAFFIC_TABLES[@]}"; do

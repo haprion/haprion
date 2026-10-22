@@ -29,18 +29,26 @@ sudo ./check-compatibility
 
 The last check reads the real worker and poller processes, and everything step 07 installs, so it comes after step 07.
 
-Steps 11, 13, 14 and 15 are optional and come after them:
+Step 11 comes next, and is not optional: the metric, traffic and WAF tables are partitioned by day
+with no default partition, and it is what makes the days ahead - without it the poller's samples have
+nowhere to go.
 
 ```bash
 sudo ./11-platform-retention /path/to/answers.env
+```
+
+Steps 13, 14 and 15 are optional and come after it:
+
+```bash
 sudo ./13-platform-traffic-collector /path/to/answers.env
 sudo UV_BIN=/path/to/uv ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui
 sudo ./15-platform-dns-keys /path/to/answers.env /usr/share/haprion-ui
 ```
 
-Step 11 keeps the job table bounded. Separate from the backup step because it is
-the only thing here that touches rows in a live table, and it deletes nothing
-itself: it reports what the first run would remove and leaves that to the timer.
+Step 11 keeps the database bounded and its partitions ahead. Separate from the backup step because
+it is the only thing here that touches rows in a live table, and it deletes nothing itself: it makes
+the partitions ahead (`haprion-retention horizon`), reports what the first run would remove and
+leaves that to the timer. Every update makes the partitions ahead again.
 
 Step 13 mirrors each node's structured traffic log onto this host and imports it
 into daily PostgreSQL partitions, and turns the interface's traffic log page on.
@@ -291,7 +299,8 @@ restart or deploy anything on its own.
 
 ## Step 11 — retention
 
-`./11-platform-retention` installs `haprion-retention` and a daily timer.
+`./11-platform-retention` installs `haprion-retention` and a daily timer, and runs
+`haprion-retention horizon` once, which creates the daily partitions ahead and removes nothing.
 
 **A root command, because no application role holds `delete` on any table and
 none is going to.** The audit trail, the login attempts and the job queue follow

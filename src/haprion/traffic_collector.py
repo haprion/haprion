@@ -887,8 +887,13 @@ def _ingest_part(
     connection: psycopg.Connection[Any],
     target: NodeTarget,
     part: Path,
+    window: tuple[datetime, datetime] | None = None,
 ) -> int:
-    """Import one staging part, and answer how many records it had to skip."""
+    """Import one staging part, and answer how many records it had to skip.
+
+    A record outside `window`, the moments the partitions take, is skipped as
+    an unreadable one is: offered, it would have the whole batch refused.
+    """
 
     metadata = _regular(part)
     checkpoint = _database_checkpoint(config, part)
@@ -923,7 +928,11 @@ def _ingest_part(
                 #
                 break
             try:
-                rows.append(_database_row(target.cluster, target.node, line[:-1]))
+                row = _database_row(target.cluster, target.node, line[:-1])
+                if _within_window(row, window):
+                    rows.append(row)
+                else:
+                    skipped += 1
             except CollectorError:
                 #
                 # One unreadable record must not stop a hundred thousand good
@@ -998,6 +1007,43 @@ def _database_days(
         #
         raise CollectorError(f"the database holds no {table} partitions")
     return days
+
+
+def _database_window(
+    connection: psycopg.Connection[Any], table: str = "traffic_log"
+) -> tuple[datetime, datetime] | None:
+    """The first and last moment the partitions take, from their bounds rather than their names.
+
+    A partition named for a day holds that day in the server's time zone, and
+    the collector names days in UTC: west of UTC a match at 03:00Z on the
+    oldest day belongs to the partition before it, which is gone, and
+    PostgreSQL refused the whole batch for it (review 2026-10-22, 3-4). The
+    bounds carry their offset, so they are absolute whatever the zone.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            r"""
+            select min((regexp_match(bound, $$FROM \('([^']+)'\)$$))[1]::timestamptz),
+                   max((regexp_match(bound, $$TO \('([^']+)'\)$$))[1]::timestamptz)
+              from (select pg_get_expr(child.relpartbound, child.oid) as bound
+                      from pg_inherits
+                      join pg_class child on child.oid = pg_inherits.inhrelid
+                      join pg_class parent on parent.oid = pg_inherits.inhparent
+                     where parent.relname = %s) as partitions
+            """,
+            (table,),
+        )
+        found = cursor.fetchone()
+    if found is None or found[0] is None or found[1] is None:
+        return None
+    return found[0], found[1]
+
+
+def _within_window(row: tuple[Any, ...], window: tuple[datetime, datetime] | None) -> bool:
+    """Whether a row's moment - its fourth column - is one a partition takes."""
+
+    return window is None or window[0] <= row[3] < window[1]
 
 
 def _within_margin(day: str, days: frozenset[str]) -> bool:
@@ -1079,6 +1125,7 @@ def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
             f"dbname={config.database} host={config.database_socket}", autocommit=False
         ) as connection:
             days = _database_days(connection)
+            window = _database_window(connection)
             for target in config.nodes:
                 prefix = f"{target.cluster}--{target.node}--"
                 for part in sorted(config.staging.glob(f"{prefix}*.jsonl")):
@@ -1094,7 +1141,7 @@ def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
                         if not _within_margin(day, days):
                             expired += 1
                         continue
-                    skipped += _ingest_part(config, connection, target, part)
+                    skipped += _ingest_part(config, connection, target, part, window)
     except psycopg.Error as exc:
         raise CollectorError(f"database import failed: {_database_reason(exc)}") from exc
     return skipped, expired
@@ -1390,7 +1437,8 @@ def _ingest_waf_pages(
 ) -> tuple[int, int]:
     skipped = 0
     expired = 0
-    days = _database_days(connection, "waf_match")
+    _database_days(connection, "waf_match")
+    window = _database_window(connection, "waf_match")
     for target, page in pages:
         path = _waf_cursor_path(config, target)
         skipped += page.skipped
@@ -1409,7 +1457,7 @@ def _ingest_waf_pages(
         # falls outside is passed by the cursor all the same - unlike a staged
         # traffic day, nothing here could hold it until its day exists.
         #
-        rows = [row for row in page.rows if f"{row[3]:%Y%m%d}" in days]
+        rows = [row for row in page.rows if _within_window(row, window)]
         expired += len(page.rows) - len(rows)
         if rows:
             with connection.cursor() as cursor, cursor.copy(_WAF_COPY) as copy:

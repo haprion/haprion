@@ -175,6 +175,11 @@ one and the browser asks you to accept it.
 If an installation step fails, correct the error it reports and rerun that step.
 The installation scripts support repeated runs.
 
+History and metrics retention is part of every installation, not an option: the metric, traffic and
+WAF tables are partitioned by day, and `haprion-retention` makes the days ahead as well as removing
+the old ones. `haprion-setup` installs it; to run its installer again,
+`sudo ./11-platform-retention /path/to/answers.env` from `/usr/share/haprion-ui/install/platform/`.
+
 ## Optional components
 
 `haprion-setup` installs all of these but the SCEP client. Each is also an installer of its own, to
@@ -185,7 +190,6 @@ certbot lock they read:
 | Component | Installer |
 |---|---|
 | Platform database backups | `sudo ./06-platform-backup /path/to/answers.env` |
-| History and metrics retention | `sudo ./11-platform-retention /path/to/answers.env` |
 | Traffic-log collection | `sudo ./13-platform-traffic-collector /path/to/answers.env` |
 | Certbot and DNS plugins | `sudo ./14-platform-certbot /path/to/answers.env /usr/share/haprion-ui` (with `UV_BIN=/path/to/uv`, builds the environment from the lock instead of the package's) |
 | Certificate and provider sealing keys | `sudo ./15-platform-dns-keys /path/to/answers.env /usr/share/haprion-ui` |

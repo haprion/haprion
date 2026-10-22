@@ -69,6 +69,17 @@ step "Proving database privileges after migration"
 # migrations, and this copy came in the same package as the release.
 ./03-verify
 
+#
+# The days ahead, for a release whose migration may have added a partitioned
+# table, and for an installation whose nightly maintenance has not run lately.
+# Creates partitions and deletes nothing (review 2026-10-22, 3-2).
+#
+if [[ -e /etc/systemd/system/haprion-retention.timer ]]; then
+    step "Making the partitions ahead"
+    /usr/sbin/haprion-retention horizon \
+        || warn "the partitions ahead could not be made; the nightly haprion-retention will try again"
+fi
+
 step "Checking the complete candidate before activation"
 ./check-compatibility --release "$release_id"
 

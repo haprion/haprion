@@ -59,7 +59,7 @@ WORKER_WAITING = timedelta(minutes=10)
 # two in step). The nightly run adds a day; a horizon more than a day short
 # means it has not run.
 #
-MAINTENANCE_AHEAD = {"traffic_log": 7, "metric_frontend": 60}
+MAINTENANCE_AHEAD = {"traffic_log": 31, "metric_frontend": 60}
 
 
 @dataclass(frozen=True, slots=True)
@@ -649,7 +649,26 @@ def from_manager(
     today = now.date()
     for table, ahead in MAINTENANCE_AHEAD.items():
         horizon = horizons.get(table)
-        if horizon is not None and horizon < today + timedelta(days=ahead - 1):
+        if horizon is None:
+            #
+            # No partition at all: the maintenance has never run here, and
+            # every sample the poller takes is refused for want of one. The
+            # check said nothing, since it compared a date it did not have
+            # (review 2026-10-22, 3-2).
+            #
+            items.append(
+                Item(
+                    kind="manager",
+                    severity="critical",
+                    cluster=None,
+                    subject="retention",
+                    message=f"the nightly maintenance (haprion-retention) has never run: {table} has no partitions",
+                    since=None,
+                    link="/",
+                )
+            )
+            break
+        if horizon < today + timedelta(days=ahead - 1):
             last_run = horizon - timedelta(days=ahead)
             items.append(
                 Item(

@@ -644,14 +644,32 @@ class TheManagersOwnServices(unittest.TestCase):
         self.assertEqual(item.subject, "worker")
 
     def test_a_partition_horizon_a_day_short_is_the_maintenance_not_run(self) -> None:
-        short = {"traffic_log": NOW.date() + timedelta(days=5), "metric_frontend": None}
+        ahead = attention.MAINTENANCE_AHEAD
+        metric = NOW.date() + timedelta(days=ahead["metric_frontend"])
+        short = {
+            "traffic_log": NOW.date() + timedelta(days=ahead["traffic_log"] - 2),
+            "metric_frontend": metric,
+        }
         (item,) = self.items(horizons=short)
         self.assertEqual((item.subject, item.severity), ("retention", "warning"))
         self.assertIn(f"since {NOW.date() - timedelta(days=2)}", item.message)
         #
         # The night's run not yet made today is not late.
         #
-        self.assertEqual(self.items(horizons={"traffic_log": NOW.date() + timedelta(days=6)}), [])
+        on_time = {
+            "traffic_log": NOW.date() + timedelta(days=ahead["traffic_log"] - 1),
+            "metric_frontend": metric,
+        }
+        self.assertEqual(self.items(horizons=on_time), [])
+
+    def test_a_table_with_no_partition_is_the_maintenance_never_run(self) -> None:
+        """Review 26-10-22, 3-2: the metric tables have none until the first run, every
+        sample is refused, and the check compared a date it did not have."""
+
+        horizons = {"traffic_log": NOW.date() + timedelta(days=31), "metric_frontend": None}
+        (item,) = self.items(horizons=horizons)
+        self.assertEqual((item.subject, item.severity), ("retention", "critical"))
+        self.assertIn("never run", item.message)
 
     def test_the_days_ahead_are_the_maintenance_script_s(self) -> None:
         script = (

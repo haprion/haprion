@@ -60,6 +60,8 @@ class FakeCursor:
 
 
 class FakeConnection:
+    autocommit = True
+
     def __init__(self, row: Any = None, rowcount: int = 1) -> None:
         self.last = FakeCursor(row, rowcount)
 

@@ -28,6 +28,7 @@ from haprion.traffic_collector import (
     NodeTarget,
     _database_days,
     _database_reason,
+    _database_window,
     _ingest_part,
     _ingest_waf_pages,
     _mirror_window,
@@ -1350,6 +1351,67 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(kept, {"203.0.113.0/24": "admin", "192.0.2.20/32": "operator"})
         self.assertEqual(emptied, [])
 
+    def test_one_name_s_sign_ins_are_counted_one_at_a_time(self) -> None:
+        """Review 2026-10-22, 3-3: the lock the sign-in takes holds a second attempt for
+        the same name until the first is written down, and lets another name pass."""
+
+        import threading
+
+        with (
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as first,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as second,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as other,
+        ):
+            db.lock_sign_in(first, username="Operator")
+            db.lock_sign_in(other, username="admin")
+            done = threading.Event()
+
+            def again() -> None:
+                db.lock_sign_in(second, username="operator")
+                done.set()
+                second.rollback()
+
+            waiting = threading.Thread(target=again)
+            waiting.start()
+            self.assertFalse(done.wait(timeout=1), "the same name went through at once")
+            first.rollback()
+            self.assertTrue(done.wait(timeout=10))
+            waiting.join(timeout=10)
+            other.rollback()
+
+    def test_two_saves_of_the_status_list_at_once_both_finish(self) -> None:
+        """Review 2026-10-22, 3-9: both saw the address missing, and the second met the
+        unique index - a 500 for somebody saving the same list a moment later."""
+
+        import threading
+
+        errors: list[BaseException] = []
+        with (
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as first,
+            self.connect("HAPRION_UI_TEST_WEB_ROLE") as second,
+        ):
+            db.set_status_access(first, networks=("192.0.2.30/32",), actor="admin")
+
+            def save() -> None:
+                try:
+                    db.set_status_access(second, networks=("192.0.2.30/32",), actor="operator")
+                    second.commit()
+                except BaseException as error:  # noqa: BLE001 - reported below
+                    errors.append(error)
+
+            other = threading.Thread(target=save)
+            other.start()
+            other.join(timeout=1)
+            self.assertTrue(other.is_alive(), "the second save should wait for the first")
+            first.commit()
+            other.join(timeout=10)
+            listed = {entry.network: entry.added_by for entry in db.status_access(first)}
+            db.set_status_access(first, networks=(), actor="admin")
+            first.commit()
+
+        self.assertEqual(errors, [])
+        self.assertEqual(listed, {"192.0.2.30/32": "admin"})
+
     def test_worker_can_read_jobs_but_not_accounts(self) -> None:
         with (
             self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection,
@@ -1861,13 +1923,21 @@ class ARealDatabase(unittest.TestCase):
             connection.execute(
                 "update traffic_log set waf_id = 'has space' where host = 'match.example.com'"
             )
-        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select t.path, m.object, m.rule_id, m.field, m.matched from traffic_log t "
                 "join waf_match m on m.cluster = t.cluster and m.request_id = t.waf_id "
                 "where t.host = 'match.example.com'"
             )
             self.assertEqual(cursor.fetchall(), [("/search", "shop", 942100, "ARGS:q", good[4])])
+        #
+        # The web reads the hourly findings (0054), not the matches: what a
+        # requester sent is no page's (review 2026-10-22, 3-6, 0086).
+        #
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                cursor.execute("select matched from waf_match limit 0")
+            connection.rollback()
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 cursor.execute(insert, (b"n" * 32, now, *good))
         with self.connect() as connection, connection.cursor() as cursor:
@@ -2211,7 +2281,7 @@ class ARealDatabase(unittest.TestCase):
                 (root / ".alpha--node-a.waf-cursor").unlink()
                 self.assertEqual(_ingest_waf_pages(config, connection, [(target, page)]), (0, 0))
             self.assertEqual((root / ".alpha--node-a.waf-cursor").read_text(), "s=ab;i=2;b=cd\n")
-        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+        with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "select object, rule_id, field, matched, path, client, occurred_at "
                 "from waf_match where cluster = 'alpha' and request_id = %s",
@@ -2472,6 +2542,50 @@ class ARealDatabase(unittest.TestCase):
             days = _database_days(connection)
         self.assertIn(f"{datetime.now(UTC):%Y%m%d}", days)
         self.assertNotIn("19990101", days)
+
+    def test_what_nothing_reads_is_gone_and_comes_back_with_a_downgrade(self) -> None:
+        """0086 (review 2026-10-22, 3-6, 3-7): the 0023 views, the matches' request index
+        and the web's grant on them - and a downgrade that gives all three back."""
+
+        def state(cursor: psycopg.Cursor) -> tuple[Any, ...]:
+            cursor.execute("select to_regclass('public.metric_listener') is not null")
+            views = _first(cursor)
+            cursor.execute(
+                "select count(*) from pg_indexes "
+                " where tablename like 'waf_match\\_%%' and indexname like '%%\\_request'"
+            )
+            indexes = int(_first(cursor))
+            cursor.execute("select has_table_privilege('app_web', 'waf_match', 'select')")
+            web = _first(cursor)
+            return views, indexes > 0, web
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            self.assertEqual(state(cursor), (False, False, False))
+            migration = _migration("0086_drop_unread.py", cursor)
+            migration.downgrade()
+            self.assertEqual(state(cursor), (True, True, False))
+            cursor.execute(
+                "select has_column_privilege('app_web', 'waf_match', 'matched', 'select')"
+            )
+            self.assertTrue(_first(cursor))
+            migration.upgrade()
+            self.assertEqual(state(cursor), (False, False, False))
+            connection.rollback()
+
+    def test_the_partitions_bounds_are_read_whatever_the_server_s_zone(self) -> None:
+        """Review 2026-10-22, 3-4: west of UTC a day partition starts at 05:00Z, and the
+        collector chose rows by the partition's name, which is the UTC day."""
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("set timezone = 'America/New_York'")
+            cursor.execute("select waf_match_partition('2030-01-10')")
+            window = _database_window(connection, "waf_match")
+            connection.rollback()
+
+        if window is None:
+            self.fail("the partitions' bounds were not read")
+        self.assertEqual(window[1], datetime(2030, 1, 11, 5, tzinfo=UTC))
+        self.assertLess(window[0], datetime.now(UTC))
 
     def test_a_day_outside_the_window_is_refused_by_postgresql_not_stored(self) -> None:
         """The reason the filter above exists, stated as a measurement.
@@ -3286,6 +3400,48 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
                 cursor.execute("delete from job")
                 cursor.execute("delete from dns_provider_profile")
             connection.commit()
+
+    def test_a_profile_whose_job_is_refused_is_not_stored(self) -> None:
+        """Review 2026-10-22, 3-1: `connection.transaction()` on a connection just taken
+        from the pool was the outermost transaction and committed the profile; the
+        refused job's rollback undid nothing, and the profile stood with no apply job -
+        the gap B147 closed. The page's own sequence, against PostgreSQL."""
+
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            db.queue_job(
+                connection,
+                operation="cert_publish",
+                cluster=None,
+                payload={"certificates": ["example.com"]},
+                idempotency_key=uuid4(),
+            )
+            connection.commit()
+
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            db.create_dns_profile(
+                connection,
+                profile_id="probe",
+                name="Probe",
+                provider_id="cloudflare",
+                key_id="0123456789abcdef",
+                ciphertext=b"x" * 48,
+                actor="operator",
+            )
+            self.assertEqual(
+                connection.info.transaction_status, psycopg.pq.TransactionStatus.INTRANS
+            )
+            with self.assertRaises(db.CertificateBusy):
+                db.queue_job(
+                    connection,
+                    operation="dns_profile_apply",
+                    cluster=None,
+                    payload={"profile": "probe", "revision": 1},
+                    idempotency_key=uuid4(),
+                )
+            connection.rollback()
+
+        with self.connect("HAPRION_UI_TEST_MIGRATION_ROLE") as connection:
+            self.assertIsNone(db.dns_profile(connection, "probe"))
 
     def test_the_web_creates_replaces_and_lists_without_seeing_the_box(self) -> None:
         with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:

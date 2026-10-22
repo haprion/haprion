@@ -12,6 +12,7 @@ import psycopg
 from psycopg import Connection
 from psycopg.rows import class_row
 
+from haprion_ui.db.core import savepoint
 from haprion_ui.db.jobs import Job
 
 
@@ -177,7 +178,7 @@ def save_draft(
         "base_document": base_document,
         "revision": expected_revision,
     }
-    with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
+    with savepoint(connection), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         if expected_revision is None:
             cursor.execute(
                 "insert into proxy_draft "
@@ -257,7 +258,7 @@ def save_change(
         "draft_revision": draft_revision,
     }
     stale = f"the changes to {object_id} changed since they were read; reload and try again"
-    with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
+    with savepoint(connection), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         if draft_revision is not None:
             cursor.execute(
                 "delete from proxy_draft "
@@ -349,7 +350,7 @@ def rename_draft(
         "base_document": base_document,
         "revision": expected_revision,
     }
-    with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
+    with savepoint(connection), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         try:
             cursor.execute(
                 "update proxy_draft "
@@ -472,7 +473,7 @@ def save_cluster_change(
         "revision": expected_revision,
     }
     with (
-        connection.transaction(),
+        savepoint(connection),
         connection.cursor(row_factory=class_row(ClusterChange)) as cursor,
     ):
         if expected_revision is None:

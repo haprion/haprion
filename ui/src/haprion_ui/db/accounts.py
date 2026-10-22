@@ -10,6 +10,8 @@ import psycopg
 from psycopg import Connection
 from psycopg.rows import class_row
 
+from haprion_ui.db.core import savepoint
+
 
 @dataclass(frozen=True, slots=True)
 class Account:
@@ -103,6 +105,20 @@ def record_login_attempt(
             "insert into login_attempt (username_normalised, client_ip, succeeded) "
             "values (lower(%(username)s), %(client_ip)s, %(succeeded)s)",
             {"username": username, "client_ip": client_ip, "succeeded": succeeded},
+        )
+
+
+def lock_sign_in(connection: Connection[Any], *, username: str) -> None:
+    """Hold one name's sign-ins to one at a time until the caller's transaction ends (3-3).
+
+    The count of failures and the row that adds to it are read and written
+    under it, so attempts sent at once are counted one after another.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select pg_advisory_xact_lock(hashtext('haprion-sign-in:' || lower(%(username)s)))",
+            {"username": username},
         )
 
 
@@ -375,7 +391,7 @@ def _guarded_update(connection: Connection[Any], statement: str, values: dict[st
     """
 
     try:
-        with connection.transaction(), connection.cursor() as cursor:
+        with savepoint(connection), connection.cursor() as cursor:
             cursor.execute(statement, values)
     except psycopg.errors.CheckViolation as error:
         #
@@ -424,7 +440,7 @@ def delete_account(connection: Connection[Any], *, user_id: int) -> bool:
     audit trail keep the name. False when it was already gone."""
 
     try:
-        with connection.transaction(), connection.cursor() as cursor:
+        with savepoint(connection), connection.cursor() as cursor:
             cursor.execute("delete from app_user where id = %s", (user_id,))
             return cursor.rowcount == 1
     except psycopg.errors.CheckViolation as error:

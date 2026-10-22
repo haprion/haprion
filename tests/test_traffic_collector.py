@@ -11,7 +11,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import psycopg
 
+from haprion import traffic_collector
 from haprion.traffic_collector import (
     CLOSED_DAY_GRACE,
     CollectorConfig,
@@ -995,6 +996,20 @@ class WafJournalCollectorTests(unittest.TestCase):
         )
         self.assertEqual((len(page.rows), page.skipped, page.cursor), (1, 1, journal_cursor(3)))
 
+    def test_a_match_is_offered_by_the_partitions_bounds_not_their_names(self) -> None:
+        """Review 26-10-22, 3-4: west of UTC the day partition named 2030-01-10 runs from
+        05:00Z, and a match at 03:00Z that day - named for it in UTC - has none."""
+
+        new_york_day = (
+            datetime(2030, 1, 10, 5, tzinfo=UTC),
+            datetime(2030, 1, 12, 5, tzinfo=UTC),
+        )
+        early = (None, None, None, datetime(2030, 1, 10, 3, tzinfo=UTC))
+        later = (None, None, None, datetime(2030, 1, 11, 3, tzinfo=UTC))
+
+        self.assertFalse(traffic_collector._within_window(early, new_york_day))
+        self.assertTrue(traffic_collector._within_window(later, new_york_day))
+
     def collect_with(
         self, fetch_waf_page: object, connection: MagicMock | None = None
     ) -> tuple[int, str, MagicMock]:
@@ -1005,6 +1020,13 @@ class WafJournalCollectorTests(unittest.TestCase):
             patch(
                 "haprion.traffic_collector._database_days",
                 return_value=frozenset({f"{NOW:%Y%m%d}"}),
+            ),
+            patch(
+                "haprion.traffic_collector._database_window",
+                return_value=(
+                    datetime.combine(NOW.date(), time(), UTC),
+                    datetime.combine(NOW.date(), time(), UTC) + timedelta(days=1),
+                ),
             ),
             patch("haprion.traffic_collector._ingest_database", return_value=(0, 0)),
             patch("sys.stderr", errors),

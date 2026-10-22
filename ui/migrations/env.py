@@ -58,7 +58,19 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     section = config.get_section(config.config_ini_section, {})
     section["sqlalchemy.url"] = _url()
-    connectable = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
+    #
+    # A lock waited for at most half a minute. A migration queued behind
+    # something holding its table - the nightly retention dropping a partition,
+    # a long read - holds every query that arrives after it, the web's
+    # included, for as long as it waits; with a limit the release stops and
+    # says so, and can be run again (review 2026-10-22, D).
+    #
+    connectable = engine_from_config(
+        section,
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+        connect_args={"options": "-c lock_timeout=30s"},
+    )
 
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=None)

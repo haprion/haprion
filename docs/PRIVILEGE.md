@@ -61,9 +61,9 @@ text is out of date.
 
 | Role | Writes | Reads |
 |---|---|---|
-| web | jobs (insert only, through the queue's allowlist); audit events (insert only); sessions, accounts, sign-in attempts and unlocks, drafts, DNS and NDES provider profiles (ciphertext only), feature switches, the sign-in provider and its pending sign-ins | everything it shows: the caches, metrics, traffic and WAF findings, jobs, audit |
-| worker | a claimed job's state, lease and result; audit events; a renamed backend's alias once its publish is done | jobs, the claim pause, the version listing, the provider profiles it applies |
-| poller | the caches it reads from helpers, metric samples, the search index | the same |
+| web | jobs (insert only, through the queue's allowlist, and an admin's answer to a held job); audit events (insert only); sessions; accounts (and deleting one); sign-in attempts and unlocks; drafts and cluster changes; DNS and NDES provider profiles (ciphertext only); feature switches; the sign-in provider and its pending sign-ins; the status endpoint's address list; acknowledgements on *Needs attention*; the getting-started list | everything it shows: the caches, metrics, traffic logs, WAF findings (not the raw matches), jobs, audit |
+| worker | a claimed job's state, lease and result; audit events; a renamed backend's alias once its publish is done; deleting a removed provider profile; holding the jobs queued before a boot (one function) | jobs, the claim pause, the version listing, the provider profiles it applies |
+| poller | the caches it reads from helpers, each cluster's pass and node list, metric samples, node events and their state, version diffs, the update check, the manager's certificates, the search index (and deleting from it) | the same |
 | traffic collector | traffic-log and WAF-match rows (insert only) | nothing |
 
 Two boundaries are easy to confuse here. An administrator signed in to the interface is held by the
@@ -176,7 +176,7 @@ node-side forced-command mappings. Every node-side sudo invocation uses `sudo -n
 `NOPASSWD` command rule so a policy mismatch fails immediately instead of attempting an interactive
 password path.
 
-## Database boundary
+## Database connections and roles
 
 The interface's three services connect over the local Unix socket with peer authentication. No
 application identity holds a database password, and there is nowhere to put one: each service

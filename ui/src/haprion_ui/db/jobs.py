@@ -13,7 +13,7 @@ from psycopg import Connection
 from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 
-from haprion_ui.db.core import CLUSTER_CHANNEL
+from haprion_ui.db.core import CLUSTER_CHANNEL, savepoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,7 +328,7 @@ def queue_job(
         # below - the one that turns a conflict into a useful answer - cannot
         # run.
         #
-        with connection.transaction(), connection.cursor(row_factory=class_row(Job)) as cursor:
+        with savepoint(connection), connection.cursor(row_factory=class_row(Job)) as cursor:
             cursor.execute(
                 "insert into job (operation, cluster, payload, idempotency_key) "
                 "values (%(operation)s, %(cluster)s, %(payload)s, %(key)s) "

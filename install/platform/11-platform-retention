@@ -1,13 +1,15 @@
 #!/bin/bash
 #
-# Platform step 11 - keep the job table bounded.
+# Platform step 11 - keep the database bounded, and its partitions ahead.
 #
 #     sudo ./11-platform-retention <answers-file>
 #
-# Installs haprion-retention and a daily timer. Optional, and separate from
+# Installs haprion-retention and a daily timer. Required: the metric, traffic
+# and WAF tables are partitioned by day with no default partition, and this is
+# what creates the days ahead - without it the poller's samples have nowhere to
+# go and the WAF matches are dropped (review 2026-10-22, 3-2). Separate from
 # the backup step on purpose: this removes rows from a live table, which is a
-# different kind of action from writing a dump, and an installation that wants
-# one does not necessarily want the other.
+# different kind of action from writing a dump.
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -48,6 +50,13 @@ log "  enabled  daily pruning and rollup"
 # that is enabled but whose next run is never is retention that will not happen.
 #
 systemctl list-timers --no-pager --no-legend "${unit}.timer" | sed 's/^/  /'
+
+step "The partitions ahead"
+#
+# Made now rather than at the first nightly run: until then there is no
+# partition for a metric sample, and nothing is deleted by this.
+#
+/usr/sbin/haprion-retention horizon
 
 step "What the first run will remove"
 #

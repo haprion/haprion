@@ -12,6 +12,7 @@ from psycopg import Connection
 from psycopg.rows import class_row
 
 from haprion_ui.db.accounts import Account
+from haprion_ui.db.core import savepoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +107,7 @@ def save_oidc_provider(
     assignments = ", ".join(f"{name} = %({name})s" for name in settings)
     verification = ", verified_revision = revision + 1" if verified else ""
     try:
-        with connection.transaction(), connection.cursor() as cursor:
+        with savepoint(connection), connection.cursor() as cursor:
             cursor.execute(
                 f"update oidc_provider set {assignments}{verification}, "  # noqa: S608 - names from OIDC_SETTINGS
                 "updated_by = %(actor)s",
@@ -136,7 +137,7 @@ def set_oidc_enabled(connection: Connection[Any], *, enabled: bool, actor: str) 
     active; each refusal comes back as its sentence."""
 
     try:
-        with connection.transaction(), connection.cursor() as cursor:
+        with savepoint(connection), connection.cursor() as cursor:
             cursor.execute(
                 "update oidc_provider set enabled = %(enabled)s, updated_by = %(actor)s",
                 {"enabled": enabled, "actor": actor},
@@ -177,7 +178,7 @@ def create_oidc_account(
     identity that signed in (B297). False when the name or the identity is taken."""
 
     try:
-        with connection.transaction(), connection.cursor() as cursor:
+        with savepoint(connection), connection.cursor() as cursor:
             cursor.execute(
                 "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
                 "values (%(username)s, %(role)s, 'oidc', %(issuer)s, %(subject)s) "

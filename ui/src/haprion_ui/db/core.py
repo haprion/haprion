@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -179,3 +181,37 @@ def holds_singleton_lock(connection: Connection[Any], key: int) -> bool:
     except psycopg.Error:
         return False
     return bool(row and row[0])
+
+
+@contextlib.contextmanager
+def savepoint(connection: Connection[Any]) -> Iterator[None]:
+    """A part of the caller's transaction that may fail on its own, and is never committed here.
+
+    `connection.transaction()` is a savepoint only inside a transaction that is
+    already open. On a connection just taken from the pool none is, so it was
+    the outermost transaction and committed as it closed: a profile was stored
+    while the job that applies it was refused, and a job while the audit row
+    that names who asked for it was not (review 2026-10-22, 3-1). Here the
+    caller's transaction is opened if need be - the first statement does it -
+    and only the caller commits it.
+
+    On an autocommit connection there is no caller's transaction to be part of,
+    and the block is its own, as before.
+    """
+
+    if connection.autocommit:
+        with connection.transaction():
+            yield
+        return
+    connection.execute("savepoint haprion_part")
+    try:
+        yield
+    except BaseException:
+        #
+        # A connection that broke cannot roll back to anything; the caller's
+        # own rollback, or the pool's, takes the whole transaction with it.
+        #
+        with contextlib.suppress(psycopg.Error):
+            connection.execute("rollback to savepoint haprion_part")
+        raise
+    connection.execute("release savepoint haprion_part")

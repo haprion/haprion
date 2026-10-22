@@ -123,11 +123,48 @@ def build_router(config: Config) -> APIRouter:
         # nothing about who has an account.
         #
         busy = False
+        counted = False
         if throttled:
             accepted = False
         elif not auth.HASHING.acquire(timeout=auth.HASHING_WAIT_SECONDS):
             accepted, busy = False, True
         else:
+            #
+            # Counted before the hash, not after it, and one attempt at a time
+            # per name. The count above and the row below were seconds apart,
+            # and every attempt sent at once read the same count - so a burst
+            # passed the budget by as many as could hash in it (review
+            # 2026-10-22, 3-3). Under a lock on the name the count is read
+            # again and this attempt is written down as a failure; a success
+            # written after the hash is what clears it, as any success does.
+            #
+            try:
+                with request.app.state.pool.connection() as connection:
+                    db.lock_sign_in(connection, username=username)
+                    throttled = db.failures_since_last_success(
+                        connection, username=username, client_ip=address, window_minutes=window
+                    ) >= config.throttle.max_failures or (
+                        db.account_failures_since_last_success(
+                            connection, username=username, window_minutes=window
+                        )
+                        >= config.throttle.max_failures * auth.ACCOUNT_FAILURE_FACTOR
+                    )
+                    if not throttled:
+                        db.record_login_attempt(
+                            connection,
+                            username=username or "?",
+                            client_ip=address,
+                            succeeded=False,
+                        )
+                        counted = True
+                    connection.commit()
+            except BaseException:
+                auth.HASHING.release()
+                raise
+            if throttled:
+                auth.HASHING.release()
+                accepted = False
+        if not throttled and not busy:
             try:
                 if (
                     account is None
@@ -167,9 +204,10 @@ def build_router(config: Config) -> APIRouter:
                     and not current.disabled
                     and current.password_hash == account.password_hash
                 )
-            db.record_login_attempt(
-                connection, username=username or "?", client_ip=address, succeeded=accepted
-            )
+            if accepted or not counted:
+                db.record_login_attempt(
+                    connection, username=username or "?", client_ip=address, succeeded=accepted
+                )
             if not accepted:
                 db.record_audit_event(
                     connection,

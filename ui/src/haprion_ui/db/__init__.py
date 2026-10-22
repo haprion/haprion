@@ -44,6 +44,7 @@ from haprion_ui.db.accounts import (
     create_session,
     delete_account,
     failures_since_last_success,
+    lock_sign_in,
     record_login_attempt,
     reset_password,
     revoke_session,
@@ -139,6 +140,7 @@ from haprion_ui.db.core import (
     listener,
     lock_session,
     pool,
+    savepoint,
     try_singleton_lock,
 )
 from haprion_ui.db.drafts import (
@@ -444,6 +446,7 @@ __all__ = [
     "draft_publishes",
     "expired_leases",
     "failures_since_last_success",
+    "lock_sign_in",
     "feature_switches",
     "finish_job",
     "forget_attention_acks",
@@ -517,6 +520,7 @@ __all__ = [
     "save_cluster_change",
     "save_draft",
     "save_oidc_provider",
+    "savepoint",
     "sealed_ndes_profile",
     "sealed_profile",
     "search",

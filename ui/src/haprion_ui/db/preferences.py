@@ -227,10 +227,15 @@ def set_status_access(connection: Connection[Any], *, networks: Sequence[str], a
             "delete from status_access where network <> all(%(wanted)s::cidr[])",
             {"wanted": wanted},
         )
+        #
+        # `on conflict`, not `where not exists`: two saves at once both saw the
+        # address missing, and the second met the unique index and answered 500
+        # (review 2026-10-22, 3-9).
+        #
         for network in wanted:
             cursor.execute(
                 "insert into status_access (network, added_by) "
-                "select %(network)s::cidr, %(actor)s "
-                " where not exists (select 1 from status_access where network = %(network)s::cidr)",
+                "values (%(network)s::cidr, %(actor)s) "
+                "on conflict (network) do nothing",
                 {"network": network, "actor": actor},
             )

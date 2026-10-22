@@ -10,6 +10,8 @@ import psycopg
 from psycopg import Connection
 from psycopg.rows import class_row
 
+from haprion_ui.db.core import savepoint
+
 
 @dataclass(frozen=True, slots=True)
 class DnsProfile:
@@ -84,7 +86,7 @@ def create_dns_profile(
 
     try:
         with (
-            connection.transaction(),
+            savepoint(connection),
             connection.cursor(row_factory=class_row(DnsProfile)) as cursor,
         ):
             cursor.execute(
@@ -213,7 +215,7 @@ def create_ndes_profile(
 
     try:
         with (
-            connection.transaction(),
+            savepoint(connection),
             connection.cursor(row_factory=class_row(DnsProfile)) as cursor,
         ):
             cursor.execute(

@@ -85,6 +85,8 @@ class RaisingCursor(FakeCursor):
 class QueueConnection:
     """An insert that conflicts, followed by the idempotency lookup."""
 
+    autocommit = True
+
     def __init__(self, constraint: str, existing: db.Job | None) -> None:
         self.insert = RaisingCursor(constraint)
         self.lookup = FakeCursor(existing)

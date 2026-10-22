@@ -22,6 +22,7 @@ from typing import Any
 
 import psycopg
 
+from haprion.config import CLUSTER_ID
 from haprion.proxy_model import NAME as OBJECT_NAME
 from haprion.proxy_model import WAF_DECIDING_RULES, waf_field
 
@@ -63,7 +64,6 @@ CLOSED_DAY_GRACE = timedelta(minutes=5)
 # fetching, the rest for the import that follows.
 #
 FETCH_BUDGET_SECONDS = 30.0
-ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 DATABASE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 USER = re.compile(r"^[a-z_][a-z0-9_-]{0,30}$")
@@ -198,7 +198,7 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
         if not isinstance(raw, dict) or set(raw) != {"cluster", "node", "host"}:
             raise CollectorError("collector node has unexpected or missing fields")
         cluster, node, host = raw["cluster"], raw["node"], raw["host"]
-        if not isinstance(cluster, str) or ID.fullmatch(cluster) is None:
+        if not isinstance(cluster, str) or CLUSTER_ID.fullmatch(cluster) is None:
             raise CollectorError("collector node cluster is invalid")
         if not isinstance(node, str) or NODE.fullmatch(node) is None:
             raise CollectorError("collector node name is invalid")

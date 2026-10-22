@@ -13,7 +13,6 @@ is established by the kernel rather than by a secret the process holds.
 
 from __future__ import annotations
 
-import re
 import stat
 import tomllib
 from dataclasses import dataclass
@@ -21,6 +20,15 @@ from pathlib import Path
 from typing import Any
 
 from haprion import accounts
+
+#
+# A cluster ID is the engine's (`haprion.config.CLUSTER_ID`), and the database's
+# CHECK holds the same pattern (0084). The poller passes these to a privileged
+# helper, so a value that has not been checked here is a value the helper has
+# to refuse - and it does, but the refusal reads as a broken poller rather than
+# as a typo in a file.
+#
+from haprion.config import CLUSTER_ID
 
 DEFAULT_CONFIG_PATH = Path(accounts.UI_CONFIG)
 DEFAULT_LOG_DIRECTORY = f"{accounts.UI_DATA}/logs/mirror"
@@ -51,14 +59,6 @@ ALLOWED_POLLER_KEYS = frozenset({"interval_seconds"})
 ALLOWED_TRAFFIC_LOG_KEYS = frozenset({"enabled", "directory", "max_lines", "retention_days"})
 ALLOWED_DNS_PROFILE_KEYS = frozenset({"public_key"})
 ALLOWED_OIDC_KEYS = frozenset({"public_key"})
-
-#
-# A cluster id, the same shape the engine and the database CHECK both use. The
-# poller passes these to a privileged helper, so a value that has not been
-# checked here is a value the helper has to refuse - and it does, but the
-# refusal reads as a broken poller rather than as a typo in a file.
-#
-CLUSTER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
 class ConfigError(ValueError):
@@ -313,7 +313,7 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
     if not isinstance(clusters, list) or not all(isinstance(name, str) for name in clusters):
         raise ConfigError("clusters must be a list of strings")
     for name in clusters:
-        if not CLUSTER_ID.match(name):
+        if not CLUSTER_ID.fullmatch(name):
             raise ConfigError(f"not a valid cluster id: {name!r}")
     if len(set(clusters)) != len(clusters):
         raise ConfigError("clusters contains a duplicate")

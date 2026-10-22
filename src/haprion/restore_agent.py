@@ -116,7 +116,11 @@ WAF_ENGINE_VERSION = re.compile(r"\d+\.\d+\.\d+-\d+")
 KEYRING_FILE = "haprion-archive-keyring.deb"
 KEYRING_VERSION = re.compile(r"\d{4}\.\d{1,2}\.\d{1,2}")
 NODE_PREPARE = "/usr/share/haprion-node/install/04-node-prepare"
-CLUSTER_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
+#
+# The engine's cluster ID (`haprion.config.CLUSTER_ID`), copied because this
+# runs on the node with the standard library alone; a test holds the two equal.
+#
+CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 #
 # Turns the traffic log on in the release's version: the rsyslog rule, the
 # AppArmor snippet and the retention timer, enabled. Run when the archive

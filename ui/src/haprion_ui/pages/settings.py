@@ -16,7 +16,7 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from haprion import cluster_settings as cluster_settings_module
-from haprion.config import ConfigError
+from haprion.config import CLUSTER_ID, ConfigError
 from haprion.digits import is_digits
 
 from haprion_ui import (
@@ -39,7 +39,7 @@ from haprion_ui import (
     users,
     waf,
 )
-from haprion_ui.config import CLUSTER_ID, Config
+from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.views import (
     COMMIT_ID,

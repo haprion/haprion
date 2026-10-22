@@ -138,6 +138,16 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ConfigError):
                 self.load(VALID + "\n" + bad)
 
+    def test_a_cluster_is_named_by_the_engines_id(self) -> None:
+        """Up to 63 characters with hyphens, as the engine makes them; until 2026-10-22, 32."""
+
+        longest = "a" + "b" * 62
+        config = self.load(f'clusters = ["edge-a", "{longest}"]\n' + VALID)
+        self.assertEqual(config.clusters, ("edge-a", longest))
+        for refused in ("al_pha", "1alpha", "alpha\\n", longest + "c"):
+            with self.subTest(cluster=refused), self.assertRaisesRegex(ConfigError, "cluster id"):
+                self.load(f'clusters = ["{refused}"]\n' + VALID)
+
     def test_a_port_outside_the_range_is_refused(self) -> None:
         for port in ("0", "65536", '"8080"', "true"):
             with self.subTest(port=port), self.assertRaises(ConfigError):

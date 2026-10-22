@@ -27,14 +27,18 @@ class Deriving(unittest.TestCase):
         return restore_answers.derive(self.source(node_conf), cluster, PUBLISH_ROOT)
 
     def rendered(self, answers: str, cluster: str = "alpha") -> str:
-        """What 04-node-prepare would install as node.conf from these answers."""
+        """What 04-node-prepare would install as node.conf from these answers.
+
+        The node's path is looked up the way the script looks it up, through
+        `cluster_value`, so the answers' variable name is held to lib.sh's.
+        """
 
         work = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, work)
         (work / "answers.env").write_text(answers, encoding="utf-8")
         script = (
             f"set -euo pipefail; source {LIB}; source {work / 'answers.env'}; "
-            f'render_node_conf {cluster} "$NODE_PATH_{cluster}" '
+            f'render_node_conf {cluster} "$(cluster_value NODE_PATH {cluster})" '
             f"{accounts.LOGS_GROUP}"
         )
         completed = subprocess.run(  # noqa: S603 - fixed interpreter, script built here
@@ -54,6 +58,14 @@ class TheAnswersRenderTheArchivedNodeConfBack(Deriving):
         self.assertNotIn("CERT_PULL_USER", node_conf)
         self.assertEqual(self.rendered(self.answers(node_conf)), node_conf)
 
+    def test_a_cluster_id_with_a_hyphen_too(self) -> None:
+        """lib.sh reads NODE_PATH_edge_a for `edge-a`; until 2026-10-22 such a node was refused."""
+
+        node_conf = NODE_CONF.replace('"alpha', '"edge-a')
+        answers = self.answers(node_conf, cluster="edge-a")
+        self.assertIn('NODE_PATH_edge_a="node-a"', answers)
+        self.assertEqual(self.rendered(answers, cluster="edge-a"), node_conf)
+
     def test_the_manager_supplies_what_node_conf_does_not_carry(self) -> None:
         answers = self.answers()
         self.assertIn(f'PUBLISH_ROOT="{PUBLISH_ROOT}"', answers)
@@ -71,10 +83,10 @@ class WhatStopsTheDerivation(Deriving):
         with self.assertRaisesRegex(AnswersError, "MANAGER"):
             self.answers(node_conf)
 
-    def test_a_cluster_id_that_cannot_name_a_variable_is_refused(self) -> None:
-        node_conf = NODE_CONF.replace('"alpha', '"al-pha')
-        with self.assertRaisesRegex(AnswersError, "cannot name an answers variable"):
-            self.answers(node_conf, cluster="al-pha")
+    def test_a_cluster_id_the_engine_would_not_make_is_refused(self) -> None:
+        node_conf = NODE_CONF.replace('"alpha', '"al_pha')
+        with self.assertRaisesRegex(AnswersError, "not one the engine accepts"):
+            self.answers(node_conf, cluster="al_pha")
 
     def test_service_accounts_out_of_order_are_refused(self) -> None:
         node_conf = NODE_CONF.replace(

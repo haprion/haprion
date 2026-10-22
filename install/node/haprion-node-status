@@ -50,7 +50,11 @@ CERTS_DIR = Path("/etc/haproxy/certs")
 CERT_PENDING = Path("/run/haprion-cert-pull.pending")
 NODE_INSTALLATION = Path("/etc/haprion/node-installation.json")
 NODE_CONF = Path("/etc/haprion/node.conf")
-CLUSTER_LINE = re.compile(r'^CLUSTER="([a-z0-9][a-z0-9_-]{0,31})"$')
+#
+# node.conf's cluster line, holding the engine's cluster ID (copied: the node
+# runs this with the standard library alone; a test holds the two equal).
+#
+CLUSTER_LINE = re.compile(r'^CLUSTER="([a-z][a-z0-9-]{0,62})"$')
 SBIN = Path("/usr/sbin")
 MAX_INSTALLATION_BYTES = 64 * 1024
 SHA256 = re.compile(r"^[0-9a-f]{64}$")

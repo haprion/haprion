@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 from haprion import accounts
+from haprion.config import CLUSTER_ID
 from haprion.restore_source import RestoreSource, content
 
 NODE_CONF = "/etc/haprion/node.conf"
@@ -34,7 +35,6 @@ SERVICE_ACCOUNTS = [accounts.TRIGGER, accounts.STATUS, accounts.BACKUP, accounts
 LINE = re.compile(r'^(?P<key>[A-Z_]+)="(?P<value>[^"]*)"$')
 SAFE = re.compile(r"^[A-Za-z0-9._@+/ -]*$")
 NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
-CLUSTER = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
 NODE_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 REQUIRED = (
     "CLUSTER",
@@ -89,12 +89,8 @@ def derive(source: RestoreSource, cluster: str, publish_root: Path) -> str:
 
     if values["CLUSTER"] != cluster:
         raise AnswersError(f"the archive's node belongs to {values['CLUSTER']}, not to {cluster}")
-    #
-    # 04-node-prepare looks the node's path up as NODE_PATH_<cluster>, a bash
-    # variable name; a cluster ID with a hyphen cannot be one.
-    #
-    if not CLUSTER.fullmatch(cluster):
-        raise AnswersError(f"cluster ID {cluster} cannot name an answers variable")
+    if not CLUSTER_ID.fullmatch(cluster):
+        raise AnswersError(f"cluster ID {cluster} is not one the engine accepts")
     prefix = f"{cluster}/current/"
     remote = values["CONFIG_REMOTE_PATH"]
     node_path = remote.removeprefix(prefix).removesuffix("/")
@@ -128,7 +124,12 @@ def derive(source: RestoreSource, cluster: str, publish_root: Path) -> str:
         f'MANAGER_HOST="{values["MANAGER"]}"',
         f'NODE_CONFIG_PULL_KEY="{values["CONFIG_PULL_KEY"]}"',
         f'PUBLISH_ROOT="{publish_root}"',
-        f'NODE_PATH_{cluster}="{node_path}"',
+        #
+        # 04-node-prepare looks the node's path up as NODE_PATH_<cluster> with
+        # each hyphen an underscore, since no shell variable name holds one
+        # (`cluster_value` in install/lib.sh).
+        #
+        f'NODE_PATH_{cluster.replace("-", "_")}="{node_path}"',
         f'OPERATOR_ACCOUNTS="{" ".join(listed[4:])}"',
         f'EXTRA_BACKUP_GROUPS="{" ".join(groups[1:])}"',
         f'EXTRA_BACKUP_PATHS="{values.get("EXTRA_BACKUP_PATHS", "")}"',

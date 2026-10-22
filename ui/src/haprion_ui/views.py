@@ -59,7 +59,7 @@ from haprion import (
 )
 from haprion.certificates import CERTIFICATE_OPENING
 from haprion.cli import changes_publish
-from haprion.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW, ConfigError
+from haprion.config import CERTIFICATE_ID, CLUSTER_ID, DEFAULT_ABUSE_WINDOW, ConfigError
 from haprion.digits import is_digits
 from haprion.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haprion.managed_network import load_document as load_network_document
@@ -116,7 +116,7 @@ from haprion_ui import editor as editor_module
 from haprion_ui import preview as preview_module
 from haprion_ui import probe as probe_module
 from haprion_ui.cluster_identity import accent_index
-from haprion_ui.config import CLUSTER_ID, Config
+from haprion_ui.config import Config
 from haprion_ui.db import AuthenticatedSession
 from haprion_ui.form_groups import form_groups, waf_exception_count
 from haprion_ui.health_rows import health_rows

@@ -21,6 +21,7 @@ from uuid import uuid4
 
 import psycopg
 import psycopg.sql
+from haprion.config import CLUSTER_ID
 from haprion.traffic_collector import (
     RETENTION_DAYS,
     CollectorConfig,
@@ -777,6 +778,35 @@ class ARealDatabase(unittest.TestCase):
                     "delete from job where payload->'draft'->>'id' = any(%s)", ([mine, other],)
                 )
                 connection.commit()
+
+    def test_every_cluster_check_holds_the_engines_cluster_id(self) -> None:
+        """Migration 0084: the database takes what the engine makes (2026-10-22).
+
+        The CHECKs said the UI's own 32 characters with an underscore, so a
+        cluster the engine accepted with a longer ID could not be cached or
+        queued. Read from the catalogue, so a later migration that copies an
+        old pattern fails here.
+        """
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                "select conrelid::regclass::text, pg_get_constraintdef(oid) from pg_constraint "
+                "where contype = 'c' and pg_get_constraintdef(oid) ~ '\\mcluster ~'"
+            ).fetchall()
+            self.assertGreaterEqual(len({table for table, _ in rows}), 21)
+            for table, definition in rows:
+                with self.subTest(table=table):
+                    (pattern,) = re.findall(r"cluster ~ '([^']*)'", definition)
+                    self.assertEqual(pattern, CLUSTER_ID.pattern)
+            longest = "edge-" + "a" * 58
+            connection.execute(
+                "insert into cluster_pass (cluster, began_at) values (%s, now())", (longest,)
+            )
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                connection.execute(
+                    "insert into cluster_pass (cluster, began_at) values ('1alpha', now())"
+                )
+            connection.rollback()
 
     def test_every_column_the_interface_writes_is_granted_to_one_of_its_roles(self) -> None:
         """A write no role may make is a refusal waiting for its first use.

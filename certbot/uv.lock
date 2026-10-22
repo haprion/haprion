@@ -6,6 +6,9 @@ resolution-markers = [
     "python_full_version < '3.14'",
 ]
 
+[manifest]
+overrides = [{ name = "logging", marker = "python_full_version < '0'" }]
+
 [[package]]
 name = "acme"
 version = "5.8.0"
@@ -1366,7 +1369,6 @@ dependencies = [
     { name = "acme" },
     { name = "certbot" },
     { name = "dnspython" },
-    { name = "logging" },
     { name = "requests" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f2/65/bff54956dbf5f57f0e3951dc8d10838c11b97f921bee14d001ed4404d99f/certbot_dns_zoneedit-0.3.2.tar.gz", hash = "sha256:62f5dca03cea18b46bc5557932913cc8f95b8d7c0e9a2e40203512088125f40f", size = 7441, upload-time = "2023-06-19T05:28:25.574Z" }
@@ -1966,6 +1968,11 @@ dependencies = [
     { name = "certbot-regru" },
 ]
 
+[package.dev-dependencies]
+build = [
+    { name = "setuptools" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "certbot", specifier = "==5.8.0" },
@@ -2053,6 +2060,9 @@ requires-dist = [
     { name = "certbot-plugin-edgedns", specifier = "~=0.1.0" },
     { name = "certbot-regru", specifier = "~=1.0.2" },
 ]
+
+[package.metadata.requires-dev]
+build = [{ name = "setuptools" }]
 
 [[package]]
 name = "hcloud"
@@ -2197,12 +2207,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/28/1b/38e832a4704ad5608
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/42/3419a4c3a493f0af74f94d002f8ed49f982f5c3d13b1503eb080c7c90828/kasserver-0.4.2-py3-none-any.whl", hash = "sha256:7740fb891cd7aa7d96b73996649d0071374eab335a9d400d242fdd5863255b0a", size = 11195, upload-time = "2025-08-05T06:48:38.637Z" },
 ]
-
-[[package]]
-name = "logging"
-version = "0.4.9.6"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/93/4b/979db9e44be09f71e85c9c8cfc42f258adfb7d93ce01deed2788b2948919/logging-0.4.9.6.tar.gz", hash = "sha256:26f6b50773f085042d301085bd1bf5d9f3735704db9f37c1ce6d8b85c38f2417", size = 96029, upload-time = "2013-06-04T23:43:22.086Z" }
 
 [[package]]
 name = "loopialib"

@@ -108,5 +108,22 @@ dependencies = [
     "certbot-dns-lws~=1.0.0",
 ]
 
+#
+# What builds the packages that arrive only as source - twelve when this was
+# written, every one with setuptools. Without it uv fetched the build backend
+# fresh from PyPI with no hash, and ran it in the build and, through step 14,
+# as root on the manager (review 2026-10-22, 5-7). It is a locked dependency
+# already; the group installs that locked wheel first, and the sources are then
+# built against it without isolation (`tools/install-certbot-env.py`).
+#
+[dependency-groups]
+build = ["setuptools"]
+
+#
+# `logging` 0.4.9.6 is a Python 2 era package that certbot-dns-zoneedit names;
+# the standard library's `logging` comes first on the path and is the one
+# imported, so it was a source build of code that never runs.
+#
 [tool.uv]
 package = false
+override-dependencies = ["logging; python_version < '0'"]

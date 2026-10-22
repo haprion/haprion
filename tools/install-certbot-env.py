@@ -384,19 +384,27 @@ def _sync(uv: Path, project: Path, venv: Path, python: Path) -> None:
         "--project",
         str(project),
     ]
-    try:
-        subprocess.run(  # noqa: S603 - validated uv binary, fixed arguments
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=SYNC_TIMEOUT,
-            env=environment,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise InstallError(f"uv sync failed:\n{exc.stderr.strip()}") from exc
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise InstallError(f"uv sync could not run: {exc}") from exc
+    #
+    # Twice. First the `build` group alone, from wheels only: the build backend
+    # at the version and hash the lock holds. Then everything, the packages
+    # that arrive only as source built against that backend in the venv rather
+    # than in an isolated one - where uv fetched it fresh from PyPI with no hash
+    # and ran it (review 2026-10-22, 5-7).
+    #
+    for phase in (["--only-group", "build", "--no-build"], ["--no-build-isolation"]):
+        try:
+            subprocess.run(  # noqa: S603 - validated uv binary, fixed arguments
+                command + phase,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=SYNC_TIMEOUT,
+                env=environment,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise InstallError(f"uv sync failed:\n{exc.stderr.strip()}") from exc
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise InstallError(f"uv sync could not run: {exc}") from exc
 
 
 def install_environment(

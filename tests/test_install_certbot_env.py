@@ -44,6 +44,10 @@ FAKE_UV = textwrap.dedent(
     import os, sys
     from pathlib import Path
     assert sys.argv[1] == "sync" and "--locked" in sys.argv, sys.argv
+    with Path(sys.argv[0]).with_suffix(".calls").open("a") as calls:
+        calls.write(" ".join(sys.argv[2:]) + "\\n")
+    if "--only-group" in sys.argv:
+        raise SystemExit(0)
     venv = Path(os.environ["UV_PROJECT_ENVIRONMENT"])
     python = Path(sys.argv[sys.argv.index("--python") + 1])
     site = venv / "lib" / "{PYTHON_TAG}" / "site-packages"
@@ -140,6 +144,17 @@ class InstallCertbotEnvTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE((release / "venv" / "pyvenv.cfg").stat().st_mode), 0o444)
         self.assertEqual((release / "venv" / "lib64").readlink(), Path("lib"))
         self.assertEqual([p.name for p in (self.target / "releases").iterdir()], [release_id])
+
+    def test_the_build_backend_comes_from_the_lock_before_any_source_is_built(self) -> None:
+        """Review 2026-10-22, 5-7: an isolated build fetched setuptools from PyPI with no hash."""
+
+        self.install("certbot-dns-example")
+        calls = self.uv.with_suffix(".calls").read_text().splitlines()
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("--only-group build --no-build", calls[0])
+        self.assertIn("--no-build-isolation", calls[1])
+        self.assertNotIn("--only-group", calls[1])
 
     def test_the_same_lock_is_not_rebuilt_and_a_changed_lock_is_a_new_release(self) -> None:
         first = self.install("certbot-dns-alpha")

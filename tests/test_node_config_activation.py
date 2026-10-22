@@ -22,6 +22,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from tests.node_fixture import SYSTEMCTL_STUB, NodeTree
+
 BASE = Path(__file__).resolve().parents[1]
 DEPLOY = BASE / "install" / "node" / "haprion-pull-deploy"
 STATUS = BASE / "install" / "node" / "haprion-node-status"
@@ -44,16 +46,6 @@ echo check >> "$RECORD"
 [ -e "${FAIL_CHECK:-/nonexistent}" ] && exit 1
 count=$(grep -c '^check$' "$RECORD")
 [ "$count" = "${KILL_AT_CHECK:-0}" ] && kill -KILL "$PPID"
-exit 0
-"""
-
-SYSTEMCTL_STUB = """#!/bin/sh
-echo "systemctl $*" >> "$RECORD"
-case "$1" in
-    reload) [ "$2" = haproxy ] && [ -e "$FAIL_RELOAD" ] && exit 1 ;;
-    enable) [ "$4" = haproxy ] && [ -e "${FAIL_START:-/nonexistent}" ] && exit 1 ;;
-    is-active|is-enabled) exit 3 ;;
-esac
 exit 0
 """
 
@@ -83,8 +75,9 @@ class Node(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        self.haproxy = self.root / "etc-haproxy"
-        self.releases = self.haproxy / "releases"
+        self.tree = NodeTree.build(self.root)
+        self.haproxy = self.tree.haproxy
+        self.releases = self.tree.releases
         self.pending = self.root / "run" / "deploy.pending"
         self.pending.parent.mkdir()
         self.record = self.root / "record"
@@ -127,13 +120,9 @@ class Node(unittest.TestCase):
         )
         self.left = self.root / "left-cluster"
         #
-        # The node as 04-node-prepare leaves it: haproxy.cfg and conf.d are
-        # links through `current`, which points at the first release.
+        # The node as 04-node-prepare leaves it, serving its first release.
         #
-        self.old = self.write_release(self.releases / "20261004-080000", 7, "a" * 40)
-        self.haproxy.joinpath("current").symlink_to(self.old)
-        self.haproxy.joinpath("haproxy.cfg").symlink_to(self.haproxy / "current" / "haproxy.cfg")
-        self.haproxy.joinpath("conf.d").symlink_to(self.haproxy / "current" / "conf.d")
+        self.old = self.tree.install("20261004-080000", 7, "a" * 40)
         self.write_release(self.offered, 8, "b" * 40)
 
         found = READER.search(STATUS.read_text())
@@ -148,11 +137,7 @@ class Node(unittest.TestCase):
         self.read_release = namespace["read_release"]
 
     def write_release(self, directory: Path, version: int, commit: str) -> Path:
-        (directory / "conf.d").mkdir(parents=True)
-        (directory / "maps").mkdir()
-        (directory / "haproxy.cfg").write_text(f"# version {version}\n")
-        (directory / "RELEASE").write_text(release_text(version, commit))
-        return directory
+        return self.tree.write_release(directory, version, commit)
 
     def deploy(
         self,
@@ -171,6 +156,7 @@ class Node(unittest.TestCase):
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "OFFERED": str(self.offered),
             "RECORD": str(self.record),
+            "UNITS": str(self.tree.units),
             "KILL_AT_CHECK": str(kill_at_check),
             "FAIL_RELOAD": str(self.root / "fail-reload") if fail_reload else "/nonexistent",
             "TMPDIR": str(self.root),
@@ -257,7 +243,13 @@ class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):
 
     def setUp(self) -> None:
         super().setUp()
+        #
+        # As `haprion-pull-deploy` leaves a node that left: both stopped and
+        # disabled, and the marker.
+        #
         self.left.touch()
+        self.tree.set_unit("haproxy", active=False)
+        self.tree.set_unit("keepalived", active=False)
 
     def calls(self) -> list[str]:
         return self.record.read_text().splitlines() if self.record.exists() else []
@@ -294,6 +286,28 @@ class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):
         self.assertTrue(self.left.exists())
         self.assertEqual(self.haproxy.joinpath("current").resolve(), self.old.resolve())
         self.assertFalse(self.pending.exists())
+
+    def test_a_haproxy_an_earlier_attempt_started_is_reloaded_onto_the_new_release(self) -> None:
+        """Code review 26-10-22, 1A-2: an attempt that started HAProxy and then
+        failed on keepalived kept the marker, and the next one's `enable --now`
+        did nothing to a running HAProxy - the node said it ran the new release
+        and served the one before."""
+
+        self.tree.set_unit("haproxy", active=True)
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 0, output)
+        calls = self.calls()
+        self.assertIn("systemctl reload haproxy", calls)
+        self.assertLess(
+            calls.index("systemctl reload haproxy"),
+            calls.index("systemctl enable --quiet --now keepalived"),
+        )
+        self.assertTrue(self.tree.is_active("haproxy"))
+        self.assertTrue(self.tree.is_active("keepalived"))
+        self.assertFalse(self.left.exists())
+        self.assertEqual(self.read_release()["hash"], "b" * 40)
 
     def test_an_unchanged_release_is_still_installed_and_started(self) -> None:
         self.write_release(self.root / "same", 7, "a" * 40)

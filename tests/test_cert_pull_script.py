@@ -21,6 +21,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from tests.node_fixture import SYSTEMCTL_STUB, NodeTree
+
 BASE = Path(__file__).resolve().parents[1]
 PULL = BASE / "install" / "node" / "haprion-cert-pull"
 
@@ -46,11 +48,6 @@ HAPROXY_STUB = """#!/bin/sh
 echo check >> "$RECORD"
 [ -e "$KILL_AT_CHECK" ] && kill -KILL "$PPID"
 [ -e "$FAIL_CHECK" ] && exit 1
-exit 0
-"""
-
-SYSTEMCTL_STUB = """#!/bin/sh
-echo "$*" >> "$RECORD"
 exit 0
 """
 
@@ -111,8 +108,12 @@ class PullHarness(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, True)
-        self.certs = self.root / "certs"
-        self.certs.mkdir()
+        #
+        # A node serving its first release, which names nothing yet.
+        #
+        self.tree = NodeTree.build(self.root)
+        self.release = self.tree.install("20261004-080000", 7, "a" * 40)
+        self.certs = self.tree.certs
         self.offered = self.root / "offered"
         self.offered.mkdir()
         self.bin = self.root / "bin"
@@ -140,6 +141,7 @@ class PullHarness(unittest.TestCase):
             PULL.read_text(encoding="utf-8")
             .replace('NODE_CONF="/etc/haprion/node.conf"', f'NODE_CONF="{conf}"')
             .replace('CERTS_DIR="/etc/haproxy/certs"', f'CERTS_DIR="{self.certs}"')
+            .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.tree.haproxy}"')
             .replace('PENDING="/run/haprion-cert-pull.pending"', f'PENDING="{self.pending}"')
             .replace("/run/lock/haprion-cert-pull.lock", str(self.root / "cert.lock"))
             .replace(
@@ -154,12 +156,15 @@ class PullHarness(unittest.TestCase):
     def offer(self, content: bytes) -> None:
         (self.offered / "cert-a.pem").write_bytes(content)
 
-    def run_pull(self, runtime: int = 3, **flags: bool) -> tuple[int, str]:
+    def run_pull(
+        self, runtime: int = 3, ids: tuple[str, ...] = ("cert-a",), **flags: bool
+    ) -> tuple[int, str]:
         environment = {
             "RUNTIME": str(runtime),
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "OFFERED": str(self.offered),
             "RECORD": str(self.record),
+            "UNITS": str(self.tree.units),
             "KILL_AT_CHECK": str(self.root / "kill") if flags.get("kill") else "/nonexistent",
             "FAIL_CHECK": str(self.root / "fail") if flags.get("fail") else "/nonexistent",
             "TMPDIR": str(self.root),
@@ -171,7 +176,7 @@ class PullHarness(unittest.TestCase):
             else:
                 marker.unlink(missing_ok=True)
         finished = subprocess.run(
-            ["/bin/bash", str(self.script), "cert-a"],
+            ["/bin/bash", str(self.script), *ids],
             capture_output=True,
             text=True,
             env=environment,
@@ -182,7 +187,7 @@ class PullHarness(unittest.TestCase):
     def reloads(self) -> int:
         if not self.record.exists():
             return 0
-        return self.record.read_text().splitlines().count("reload haproxy")
+        return self.record.read_text().splitlines().count("systemctl reload haproxy")
 
 
 class CertPull(PullHarness):
@@ -267,6 +272,58 @@ class CertPull(PullHarness):
         self.assertIn("No reload needed", output)
         self.assertEqual(self.reloads(), 1)
 
+    def test_a_run_killed_before_the_reload_is_not_forgotten_by_one_that_replaces_another(
+        self,
+    ) -> None:
+        """Code review 26-10-22, 1A-3: the second run wrote its own IDs over the
+        marker, replaced only its own certificate in the running HAProxy and
+        removed the marker - and the first one's was never read."""
+
+        (self.certs / "cert-a.pem").write_bytes(self.old)
+        (self.certs / "cert-b.pem").write_bytes(self.old)
+        self.offer(self.new)
+        (self.offered / "cert-b.pem").write_bytes(self.old)
+
+        code, _output = self.run_pull(ids=("cert-a", "cert-b"), kill=True)
+
+        self.assertEqual(code, -9)
+        self.assertEqual(self.pending.read_text().split(), ["cert-a"])
+
+        (self.offered / "cert-b.pem").write_bytes(self.new)
+        code, output = self.run_pull(runtime=0, ids=("cert-a", "cert-b"))
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("update-certs cert-a cert-b", self.record.read_text().splitlines())
+        self.assertFalse(self.pending.exists())
+
+    def test_an_earlier_runs_certificate_is_reloaded_when_haproxy_does_not_hold_them(self) -> None:
+        (self.certs / "cert-a.pem").write_bytes(self.old)
+        (self.certs / "cert-b.pem").write_bytes(self.old)
+        self.offer(self.new)
+        (self.offered / "cert-b.pem").write_bytes(self.old)
+        self.run_pull(ids=("cert-a", "cert-b"), kill=True)
+
+        (self.offered / "cert-b.pem").write_bytes(self.new)
+        code, output = self.run_pull(runtime=3, ids=("cert-a", "cert-b"))
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.reloads(), 1)
+        self.assertFalse(self.pending.exists())
+
+    def test_a_refused_check_keeps_what_an_earlier_run_left_unread(self) -> None:
+        (self.certs / "cert-a.pem").write_bytes(self.old)
+        (self.certs / "cert-b.pem").write_bytes(self.old)
+        self.offer(self.new)
+        (self.offered / "cert-b.pem").write_bytes(self.old)
+        self.run_pull(ids=("cert-a", "cert-b"), kill=True)
+
+        (self.offered / "cert-b.pem").write_bytes(self.new)
+        code, output = self.run_pull(ids=("cert-a", "cert-b"), fail=True)
+
+        self.assertEqual(code, 1, output)
+        self.assertEqual((self.certs / "cert-b.pem").read_bytes(), self.old)
+        self.assertEqual(self.pending.read_text().split(), ["cert-a"])
+
     def test_a_refused_check_restores_the_old_file_and_leaves_nothing_pending(self) -> None:
         (self.certs / "cert-a.pem").write_bytes(self.old)
         self.offer(self.new)
@@ -318,8 +375,12 @@ class TheNodeDoesNotReportWhatItDoesNotServe(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, True)
-        self.certs = self.root / "certs"
-        self.certs.mkdir()
+        #
+        # A node serving its first release, which names nothing yet.
+        #
+        self.tree = NodeTree.build(self.root)
+        self.release = self.tree.install("20261004-080000", 7, "a" * 40)
+        self.certs = self.tree.certs
         self.pending = self.root / "cert.pending"
         pem = certificate(self.root, "a")
         for name in ("cert-a", "cert-b"):
@@ -364,14 +425,9 @@ class CaPull(PullHarness):
 
     def setUp(self) -> None:
         super().setUp()
-        self.etc = self.root / "etc"
-        (self.etc / "conf.d").mkdir(parents=True)
-        (self.etc / "haproxy.cfg").write_text("global\n")
         self.ca_pending = self.root / "run" / "ca.pending"
         self.script.write_text(
-            self.script.read_text(encoding="utf-8")
-            .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.etc}"')
-            .replace(
+            self.script.read_text(encoding="utf-8").replace(
                 'CA_PENDING="/run/haprion-ca-pull.pending"', f'CA_PENDING="{self.ca_pending}"'
             ),
             encoding="utf-8",
@@ -392,6 +448,7 @@ class CaPull(PullHarness):
                 "PATH": f"{self.bin}:/usr/bin:/bin",
                 "OFFERED": str(self.offered),
                 "RECORD": str(self.record),
+                "UNITS": str(self.tree.units),
                 "KILL_AT_CHECK": "/nonexistent",
                 "FAIL_CHECK": "/nonexistent",
                 "TMPDIR": str(self.root),
@@ -414,7 +471,7 @@ class CaPull(PullHarness):
     def test_a_ca_a_pool_names_is_checked_and_reloaded(self) -> None:
         (self.certs / "ca").mkdir()
         (self.certs / "ca" / "corp-root.pem").write_bytes(self.first)
-        (self.etc / "conf.d" / "1001-app.cfg").write_text(
+        (self.release / "conf.d" / "1001-app.cfg").write_text(
             f"server s1 a:443 ssl verify required ca-file {self.certs}/ca/corp-root.pem\n"
         )
         self.offer_ca(self.second)
@@ -424,6 +481,19 @@ class CaPull(PullHarness):
         self.assertEqual(code, 0, output)
         self.assertEqual((self.certs / "ca" / "corp-root.pem").read_bytes(), self.second)
         self.assertIn("check", self.record.read_text().splitlines())
+        self.assertEqual(self.reloads(), 1)
+        self.assertFalse(self.ca_pending.exists())
+
+    def test_a_ca_an_earlier_run_left_unread_is_reloaded_with_one_nothing_names(self) -> None:
+        """1A-3 for the CA files: a new CA nothing names used to leave without a
+        reload, and the earlier run's file HAProxy has not read with it."""
+
+        self.ca_pending.write_text("corp-old\n")
+        self.offer_ca(self.first)
+
+        code, output = self.run_ca()
+
+        self.assertEqual(code, 0, output)
         self.assertEqual(self.reloads(), 1)
         self.assertFalse(self.ca_pending.exists())
 

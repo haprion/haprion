@@ -34,6 +34,11 @@ set -Eeuo pipefail
 
 CERTS_DIR="/etc/haproxy/certs"
 HAPROXY_DIR="/etc/haproxy"
+#
+# haprion-pull-deploy's marker: present while `current` names a release HAProxy
+# has not reloaded into, and its first line is the release HAProxy runs.
+#
+DEPLOY_PENDING="/run/haprion-pull-deploy.pending"
 
 ID_PATTERN='^[a-z0-9][a-z0-9._-]{0,254}$'
 
@@ -78,14 +83,39 @@ fi
 # Every ID is checked before any file is removed, so a request naming one
 # certificate still in use removes nothing and says which.
 #
-declare -a loaded_files=("${HAPROXY_DIR}/haproxy.cfg")
-while IFS= read -r -d '' file; do
-    loaded_files+=("$file")
-done < <(find "${HAPROXY_DIR}/conf.d" "${HAPROXY_DIR}/crt-lists" -type f -print0 2>/dev/null)
+# Against every file HAProxy reads in the release `current` names - the one
+# a reload loads - and in the release it runs, when a deploy has switched
+# `current` and not reloaded yet. Read through the releases themselves: on a
+# node `conf.d` is a link into one, `find` does not follow a link it starts
+# from, and `crt-lists` exists only inside it, so this searched `haproxy.cfg`
+# alone and removed files a crt-list still named (code review 2026-10-22,
+# 1A-1).
+#
+# A node that has never had a release names nothing.
+#
+declare -a releases=()
+if [[ -e "${HAPROXY_DIR}/current" ]]; then
+    releases+=("$(readlink -f "${HAPROXY_DIR}/current")")
+fi
+if [[ -s "$DEPLOY_PENDING" ]]; then
+    releases+=("$(head -n 1 "$DEPLOY_PENDING")")
+fi
+declare -a loaded_files=()
+for release in "${releases[@]}"; do
+    [[ -d "$release" ]] || fail "the release HAProxy reads (${release}) cannot be found; nothing removed"
+    loaded_files+=("${release}/haproxy.cfg")
+    while IFS= read -r -d '' file; do
+        loaded_files+=("$file")
+    done < <(find -L "${release}/conf.d/" "${release}/crt-lists/" -type f -print0 2>/dev/null || true)
+done
 
+#
+# Never `grep` without a file: it reads its standard input instead, which here
+# is the manager's SSH channel, and waits on it.
+#
 for id in "$@"; do
     path="${CERTS_DIR}/${id}.pem"
-    if grep -qsF -- "$path" "${loaded_files[@]}"; then
+    if (( ${#loaded_files[@]} > 0 )) && grep -qsF -- "$path" "${loaded_files[@]}"; then
         fail "${id} is still named by the installed configuration; nothing removed"
     fi
 done

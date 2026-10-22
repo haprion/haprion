@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.node_fixture import NodeTree
+
 BASE = Path(__file__).resolve().parents[1]
 REMOVE = BASE / "install" / "node" / "haprion-cert-remove"
 TRIGGER = BASE / "install" / "node" / "haprion-cert-trigger"
@@ -35,11 +37,17 @@ class ScriptFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, True)
-        self.haproxy = self.root / "etc" / "haproxy"
-        self.certs = self.haproxy / "certs"
-        for directory in (self.certs, self.haproxy / "conf.d", self.haproxy / "crt-lists"):
-            directory.mkdir(parents=True)
-        (self.haproxy / "haproxy.cfg").write_text("global\n", encoding="utf-8")
+        #
+        # The node as 04-node-prepare leaves it (code review 26-10-22, 1A-1):
+        # `conf.d` a link into the release, `crt-lists` only inside it.
+        #
+        tree = NodeTree.build(self.root)
+        self.haproxy = tree.haproxy
+        self.certs = tree.certs
+        self.tree = tree
+        self.release = tree.install("20261004-080000", 7, "a" * 40)
+        (self.release / "crt-lists").mkdir()
+        self.deploy_pending = self.root / "deploy.pending"
         (self.root / "bin").mkdir()
         (self.root / "lock").mkdir()
         sudo = self.root / "bin" / "sudo"
@@ -54,6 +62,10 @@ class ScriptFixture(unittest.TestCase):
             REMOVE.read_text()
             .replace('CERTS_DIR="/etc/haproxy/certs"', f'CERTS_DIR="{self.certs}"')
             .replace('HAPROXY_DIR="/etc/haproxy"', f'HAPROXY_DIR="{self.haproxy}"')
+            .replace(
+                'DEPLOY_PENDING="/run/haprion-pull-deploy.pending"',
+                f'DEPLOY_PENDING="{self.deploy_pending}"',
+            )
             .replace("/run/lock/haprion-cert-pull.lock", str(self.root / "lock" / "cert.lock"))
         )
         self.remove.chmod(0o755)
@@ -78,6 +90,7 @@ class ScriptFixture(unittest.TestCase):
             text=True,
             env={"PATH": "/usr/bin:/bin"},
             check=False,
+            timeout=30,
         )
         return finished.returncode, finished.stdout + finished.stderr
 
@@ -111,7 +124,7 @@ class RemovingOnTheNode(ScriptFixture):
 
     def test_a_certificate_a_crt_list_names_is_refused_and_nothing_is_removed(self) -> None:
         self.carried("old.example.com", "other.example.com")
-        (self.haproxy / "crt-lists" / "main.list").write_text(
+        (self.release / "crt-lists" / "main.list").write_text(
             f"{self.certs}/old.example.com.pem alpn h2\n", encoding="utf-8"
         )
         code, output = self.run_remove("other.example.com", "old.example.com")
@@ -127,6 +140,45 @@ class RemovingOnTheNode(ScriptFixture):
         )
         code, _ = self.run_remove("old.example.com")
         self.assertEqual(code, 1)
+        self.assertTrue((self.certs / "old.example.com.pem").exists())
+
+    def test_the_release_haproxy_still_runs_counts_until_it_reloads(self) -> None:
+        """A deploy switched `current` and has not reloaded yet: HAProxy serves
+        the release the deploy's marker names, and that one is checked too."""
+
+        self.carried("old.example.com")
+        (self.release / "crt-lists" / "main.list").write_text(
+            f"{self.certs}/old.example.com.pem alpn h2\n", encoding="utf-8"
+        )
+        self.tree.install("20261004-090000", 8, "b" * 40)
+        self.deploy_pending.write_text(f"{self.release}\n{self.tree.current.resolve()}\n")
+
+        code, output = self.run_remove("old.example.com")
+
+        self.assertEqual(code, 1, output)
+        self.assertTrue((self.certs / "old.example.com.pem").exists())
+
+        self.deploy_pending.unlink()
+        code, output = self.run_remove("old.example.com")
+
+        self.assertEqual(code, 0, output)
+
+    def test_a_node_without_a_release_names_nothing(self) -> None:
+        self.carried("old.example.com")
+        self.tree.current.unlink()
+
+        code, output = self.run_remove("old.example.com")
+
+        self.assertEqual(code, 0, output)
+        self.assertFalse((self.certs / "old.example.com.pem").exists())
+
+    def test_a_marker_naming_a_release_that_is_gone_removes_nothing(self) -> None:
+        self.carried("old.example.com")
+        self.deploy_pending.write_text(f"{self.root / 'gone'}\n{self.release}\n")
+
+        code, output = self.run_remove("old.example.com")
+
+        self.assertEqual(code, 1, output)
         self.assertTrue((self.certs / "old.example.com.pem").exists())
 
     def test_an_absent_certificate_is_not_an_error(self) -> None:

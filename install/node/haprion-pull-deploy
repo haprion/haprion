@@ -1001,12 +1001,18 @@ fi
 
 #
 # Reload - or, on a node rejoining, start: HAProxy is stopped there, and a
-# reload of a stopped unit fails.
+# reload of a stopped unit fails. Unless an earlier attempt to rejoin started it
+# and failed after, on keepalived: then it runs the release that attempt
+# installed, a start does nothing to a running unit, and only a reload puts
+# this one in service (code review 2026-10-22, 1A-2).
 #
 take_release() {
-    if (( REJOINING )); then
+    if (( REJOINING )) && ! systemctl is-active --quiet haproxy; then
         log "Starting HAProxy..."
         systemctl enable --quiet --now haproxy
+    elif (( REJOINING )); then
+        log "HAProxy already runs from an earlier attempt. Reloading it..."
+        systemctl enable --quiet haproxy && "$SERVER_STATE" reload
     else
         log "Reloading HAProxy..."
         "$SERVER_STATE" reload

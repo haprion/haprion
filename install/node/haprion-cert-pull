@@ -132,6 +132,53 @@ reload_checked() {
 }
 
 #
+# The IDs a marker names: files an earlier run installed and HAProxy has not
+# read. A run that replaces others carries them on rather than writing over
+# them (code review 2026-10-22, 1A-3) - the marker is what stands between a
+# file HAProxy never read and the conclusion that nothing is left to do.
+#
+marker_ids() {
+    local id
+    [[ -f "$1" ]] || return 0
+    while IFS= read -r id; do
+        [[ "$id" =~ $ID_PATTERN ]] && printf '%s\n' "$id"
+    done < "$1"
+}
+
+write_marker() {
+    local file="$1"
+    shift
+    printf '%s\n' "$@" | awk 'NF && !seen[$0]++' > "$file"
+}
+
+#
+# Put back what an earlier run left: the files this run replaced are the old
+# ones again, but the earlier run's are still unread.
+#
+restore_marker() {
+    local file="$1"
+    shift
+    if (( $# > 0 )); then
+        write_marker "$file" "$@"
+    else
+        rm -f "$file"
+    fi
+}
+
+#
+# Every file HAProxy reads from the release `current` names, which is the
+# one a reload loads. Through the links, as HAProxy goes: on a node `conf.d`
+# is a link into the release, and `find` does not follow a link it starts
+# from, so without `-L` and the trailing slash this searched `haproxy.cfg`
+# alone (code review 2026-10-22, 1A-1). The crt-lists exist only inside the
+# release.
+#
+loaded_files() {
+    printf '%s\0' "${HAPROXY_DIR}/haproxy.cfg"
+    find -L "${HAPROXY_DIR}/conf.d/" "${HAPROXY_DIR}/current/crt-lists/" -type f -print0 2>/dev/null || true
+}
+
+#
 # The CA files, start to end. Fetched and checked all before any is installed,
 # like the certificates; HAProxy reloads only when the installed configuration
 # names one that changed, since a CA file nothing names is never read.
@@ -146,7 +193,8 @@ pull_authorities() {
     trap "rm -rf '${work}'" EXIT
     backup="${work}/backup"
     mkdir -p "$backup"
-    local -a changed=()
+    local -a changed=() unread=()
+    mapfile -t unread < <(marker_ids "$pending")
 
     for id in "$@"; do
         candidate="${work}/${id}.pem"
@@ -169,11 +217,11 @@ pull_authorities() {
         changed+=("$id")
     done
 
-    local -a loaded=("${HAPROXY_DIR}/haproxy.cfg")
+    local -a loaded=()
     local file
     while IFS= read -r -d '' file; do
         loaded+=("$file")
-    done < <(find "${HAPROXY_DIR}/conf.d" -type f -print0 2>/dev/null)
+    done < <(loaded_files)
     named() {
         local wanted
         for wanted in "$@"; do
@@ -195,9 +243,10 @@ pull_authorities() {
     fi
 
     log "New CA files: ${changed[*]}"
-    local staged
-    if named "${changed[@]}"; then
-        printf '%s\n' "${changed[@]}" > "$pending"
+    local staged reload=0
+    if named "${changed[@]}" || (( ${#unread[@]} > 0 )); then
+        reload=1
+        write_marker "$pending" "${unread[@]}" "${changed[@]}"
     fi
     for id in "${changed[@]}"; do
         dest="${ca_dir}/${id}.pem"
@@ -217,10 +266,10 @@ pull_authorities() {
                 rm -f "${ca_dir}/${id}.pem"
             fi
         done
-        rm -f "$pending"
+        restore_marker "$pending" "${unread[@]}"
     }
 
-    if ! named "${changed[@]}"; then
+    if (( ! reload )); then
         log "No installed configuration names them yet. No reload needed."
         log "CA deployment complete."
         exit 0
@@ -235,7 +284,9 @@ pull_authorities() {
     if ! "$SERVER_STATE" reload; then
         log "ERROR: HAProxy reload failed. Rolling back."
         restore_authorities
-        "$SERVER_STATE" reload || true
+        if "$SERVER_STATE" reload; then
+            rm -f "$pending"
+        fi
         exit 1
     fi
     rm -f "$pending"
@@ -268,7 +319,8 @@ trap cleanup EXIT
 # A run that installed two, failed on the third and rolled back would have
 # reloaded nothing but still have touched the node twice.
 #
-declare -a CHANGED=()
+declare -a CHANGED=() UNREAD=()
+mapfile -t UNREAD < <(marker_ids "$PENDING")
 
 for id in "$@"; do
     candidate="${WORK}/${id}.pem"
@@ -355,18 +407,20 @@ restore() {
         fi
     done
     #
-    # The old files are back and are what HAProxy was already serving, so
-    # nothing is left unfinished.
+    # The old files are back and are what HAProxy was already serving; what
+    # an earlier run left unread still is.
     #
-    rm -f "$PENDING"
+    restore_marker "$PENDING" "${UNREAD[@]}"
 }
 
 #
 # The IDs, one per line: `haprion-node-status` leaves exactly these out of what
 # it reports while the marker stands, because a file HAProxy has not read does
-# not say what this node serves.
+# not say what this node serves. With them, what an earlier run left unread.
 #
-printf '%s\n' "${CHANGED[@]}" > "$PENDING"
+write_marker "$PENDING" "${UNREAD[@]}" "${CHANGED[@]}"
+declare -a ACTIVATE=()
+mapfile -t ACTIVATE < "$PENDING"
 
 for id in "${CHANGED[@]}"; do
     dest="${CERTS_DIR}/${id}.pem"
@@ -392,7 +446,7 @@ fi
 #
 log "Replacing the certificates in the running HAProxy..."
 
-if "$SERVER_STATE" update-certs "${CHANGED[@]}"; then
+if "$SERVER_STATE" update-certs "${ACTIVATE[@]}"; then
     rm -f "$PENDING"
     log "Certificate deployment complete, without a reload."
     for id in "${CHANGED[@]}"; do
@@ -406,7 +460,9 @@ log "Reloading HAProxy..."
 if ! "$SERVER_STATE" reload; then
     log "ERROR: HAProxy reload failed. Rolling back."
     restore
-    "$SERVER_STATE" reload || true
+    if "$SERVER_STATE" reload; then
+        rm -f "$PENDING"
+    fi
     exit 1
 fi
 

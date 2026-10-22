@@ -145,7 +145,7 @@ def build_router(config: Config) -> APIRouter:
             recent=recent,
             busy=running,
             status_rows=status_rows,
-            views=dashboard_view.clusters,
+            network_readings=network_rows,
         )
         #
         # What is saved and not published, per cluster (B257): where there is

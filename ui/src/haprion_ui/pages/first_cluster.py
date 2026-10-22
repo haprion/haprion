@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -18,7 +17,6 @@ from fastapi.responses import (
 from haprion_ui import (
     auth,
     cluster_nodes,
-    dashboard,
     db,
     first_cluster,
     jobs,
@@ -239,14 +237,8 @@ def build_router(config: Config) -> APIRouter:
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
-        clusters, status_rows = read_source(request, config, STATUS_SOURCE)
+        _, status_rows = read_source(request, config, STATUS_SOURCE)
         _, network_rows = read_source(request, config, NETWORK_SOURCE)
-        dashboard_view = dashboard.build_dashboard(
-            clusters,
-            status_rows,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            network_readings=network_rows,
-        )
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
         guide = _first_cluster(
@@ -256,7 +248,7 @@ def build_router(config: Config) -> APIRouter:
             recent=recent,
             busy=jobs.in_flight(recent),
             status_rows=status_rows,
-            views=dashboard_view.clusters,
+            network_readings=network_rows,
         )
         if guide is None:
             return RedirectResponse("/", status_code=303)

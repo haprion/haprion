@@ -241,6 +241,31 @@ class TheSteps(NodesPage):
         self.assertEqual(missing.status_code, 404)
 
 
+class TheAddress(NodesPage):
+    def test_the_deploy_step_names_the_vip_by_its_address(self) -> None:
+        """R2 26-10-22, F1: the step showed the node that holds the VIP as the VIP."""
+
+        self.rows = [reading(2, owner="edge-a")]
+        with mock.patch("haprion_ui.db.cluster_networks", return_value=demo.network_rows(NOW)):
+            client = self.client(
+                replace(configuration(), management_writes=True, clusters=("edge-demo",))
+            )
+            self.sign_in(client)
+            page = client.get("/first-cluster").text
+        self.assertIn("<strong>192.0.2.20</strong> lands on one of them", page)
+        self.assertNotIn("<strong>edge-a</strong> lands on", page)
+
+    def test_without_a_network_reading_it_is_the_vip(self) -> None:
+        self.rows = [reading(2)]
+        with mock.patch("haprion_ui.db.cluster_networks", return_value=[]):
+            client = self.client(
+                replace(configuration(), management_writes=True, clusters=("edge-demo",))
+            )
+            self.sign_in(client)
+            page = client.get("/first-cluster").text
+        self.assertIn("<strong>the VIP</strong> lands on one of them", page)
+
+
 class OnTheDashboard(NodesPage):
     def test_the_dashboard_stays_the_dashboard_and_its_list_leads_to_the_guide(self) -> None:
         """B328: the guide in the dashboard's place left no way out after an error."""

@@ -396,6 +396,22 @@ def _vips(result: Mapping[str, Any], default_vip: str) -> tuple[VipView, ...]:
     )
 
 
+def default_vip_address(reading: ClusterNetwork | None) -> str:
+    """The cluster's default VIP as an address, or empty before the network has been read."""
+
+    if reading is None or reading.outcome != "done" or not isinstance(reading.result, Mapping):
+        return ""
+    default_vip = reading.result.get("default_vip")
+    return next(
+        (
+            _text(row.get("address"), "")
+            for row in _rows(reading.result, "vips")
+            if row.get("name") == default_vip
+        ),
+        "",
+    )
+
+
 def _paired_sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
     """The addresses a VIP carries, which are edited in that VIP's own row."""
 

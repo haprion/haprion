@@ -959,7 +959,7 @@ def _first_cluster(
     recent: list[Any],
     busy: Mapping[str, str],
     status_rows: Iterable[Any],
-    views: Iterable[Any],
+    network_readings: Iterable[Any],
 ) -> first_cluster.Guide | None:
     """The guide's step for an admin who may write, or None (B315)."""
 
@@ -968,13 +968,20 @@ def _first_cluster(
     listed = listed_clusters(request, config)
     cluster = listed[0] if len(listed) == 1 else ""
     reading = next((row for row in status_rows if row.cluster == cluster), None)
-    vip = next((view.vip for view in views if view.cluster == cluster), "")
+    #
+    # The address from the network description, not the dashboard card's
+    # `vip`, which says who holds it: the guide showed a node's name as the
+    # address (R2 26-10-22, F1).
+    #
+    vip = network.default_vip_address(
+        next((row for row in network_readings if row.cluster == cluster), None)
+    )
     return first_cluster.guide(
         clusters=listed,
         reading=reading,
         creations=_creations(request, recent),
         busy=busy,
-        vip=vip if vip and vip != "Unknown" else "",
+        vip=vip,
         phase=request.query_params.get("first-cluster", ""),
         deployed_recently=first_cluster.deployed_recently(recent, cluster),
         failure=first_cluster.failure(recent, cluster) if cluster else None,

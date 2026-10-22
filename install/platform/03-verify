@@ -238,6 +238,35 @@ else
 fi
 
 #
+# Functions: the ones a role may call, and none a definer function lets
+# anyone else call. A function runs with its owner's rights when it is a
+# definer's, so EXECUTE on one is a grant of what it does (0085).
+#
+expected_routines=$'app_worker\thold_jobs_queued_before\tEXECUTE'
+actual_routines="$(run -c "
+    select grantee, routine_name, privilege_type
+      from information_schema.routine_privileges
+     where routine_schema = 'public' and grantee like 'app\\_%'
+     order by grantee, routine_name, privilege_type")"
+if [[ "$actual_routines" == "$expected_routines" ]]; then
+    log "  ok       $(echo "$expected_routines" | wc -l) function grants, exactly as expected"
+else
+    fail "the functions the roles may call are not what the contract says"
+    diff <(echo "$expected_routines") <(echo "$actual_routines") || true
+fi
+public_definers="$(run -c "
+    select p.proname
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.prosecdef
+       and has_function_privilege('public', p.oid, 'EXECUTE')
+     order by 1")"
+if [[ -z "$public_definers" ]]; then
+    log "  ok       no definer function is open to every role"
+else
+    fail "definer functions every role may call: ${public_definers//$'\n'/, }"
+fi
+
+#
 # The negative half. Each of these has a matching line in the phase gate, and
 # each describes a way the separation could be lost without anything looking
 # wrong: a role that can edit the audit trail, or write a table it only reads.

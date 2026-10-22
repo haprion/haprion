@@ -2179,7 +2179,9 @@ time, and running them again would be a new request nobody made — a *Drain* re
 itself. A restored host always starts again, and the worker holds every such job: *Jobs* shows it
 as *Held*, with **Run** and **Discard** for an admin, and *Needs attention* says how many wait. A
 discarded job ends *blocked* with the code `held_discarded`; nothing about it ran. A job queued
-just before an ordinary reboot is held the same way, and needs the same click.
+just before an ordinary reboot is held the same way, and needs the same click. An answer holds
+until the next start: a job answered **Run** that was still waiting or running when the host was
+backed up is held again when that backup is restored, and asked about again.
 
 A database restored into a running host, without a restart, is not seen by the worker. Stop it,
 restore, and then run:

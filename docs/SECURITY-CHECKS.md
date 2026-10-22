@@ -29,7 +29,8 @@ The repository has complementary gates. No single scanner replaces the others.
    `run-checks` then runs the interface's migrations and database tests against a disposable
    PostgreSQL cluster (`ui/tools/test-database`, below), and fails without PostgreSQL installed.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,
-   in both directions. It is a deployment check rather than a repository one, so it is not part of
+   in both directions: the column grants, the functions each role may call, and that no definer
+   function is open to every role. It is a deployment check rather than a repository one, so it is not part of
    `run-checks` — but it belongs to the same family, and the reason it checks both directions is in
    [`user-manual.md`](user-manual.md#verifying-it).
 8. `install/platform/check-compatibility` reads the separately installed CLI, UI, schema, service

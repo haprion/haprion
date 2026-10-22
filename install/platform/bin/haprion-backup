@@ -285,7 +285,7 @@ do_verify_restore() {
 # starting again (review 2026-10-20, R1). The worker holds what was queued
 # before a boot by itself; a restore without one needs this. Every waiting or
 # running job is held for an admin's Run or Discard on *Jobs* - they are the
-# backup's, and ran then - and every session is ended: the restored ones
+# backup's, and ran then; an answer given before is cleared (0085) - and every session is ended: the restored ones
 # include sessions signed out since. Both are written to the audit record.
 #
 do_after_restore() {
@@ -293,9 +293,7 @@ do_after_restore() {
     answer="$(psql_as -d "$DB_NAME" <<'SQL'
 begin;
 with held as (
-    update job set held_since = statement_timestamp()
-     where state in ('pending', 'running') and held_since is null
-    returning id
+    select hold_jobs_queued_before(null) as id
 )
 insert into audit_event (actor, action, detail)
 select 'haprion-backup', 'jobs_held',

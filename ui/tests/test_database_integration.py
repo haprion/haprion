@@ -2879,6 +2879,30 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
         self.assertEqual(actual_tables, tables)
         self.assertEqual(actual_grants, grants)
 
+    def test_the_functions_the_roles_may_call_are_the_ones_the_step_expects(self) -> None:
+        text = self.SCRIPT.read_text()
+        listed = re.search(r"^expected_routines=\$'([^']*)'$", text, re.MULTILINE)
+        if listed is None:
+            self.fail("03-verify no longer states its function list in the shape this reads")
+        expected = [line.replace("\\t", "\t") for line in listed.group(1).split("\\n")]
+        role = os.environ["HAPRION_UI_TEST_MIGRATION_ROLE"]
+        with psycopg.connect(f"{DSN} user={role}") as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select grantee, routine_name, privilege_type"
+                "  from information_schema.routine_privileges"
+                " where routine_schema = 'public' and grantee like 'app\\_%'"
+                " order by grantee, routine_name, privilege_type"
+            )
+            actual = ["\t".join(row) for row in cursor.fetchall()]
+            cursor.execute(
+                "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace"
+                " where n.nspname = 'public' and p.prosecdef"
+                "   and has_function_privilege('public', p.oid, 'EXECUTE')"
+            )
+            open_to_all = cursor.fetchall()
+        self.assertEqual(actual, expected)
+        self.assertEqual(open_to_all, [])
+
     def test_what_the_step_says_the_web_cannot_do_it_cannot_and_what_it_can_it_can(self) -> None:
         text = self.SCRIPT.read_text()
         probes = re.findall(
@@ -3696,6 +3720,46 @@ class JobsFromBeforeTheBoot(unittest.TestCase):
                 taken[claimed.id] = claimed.held_decision
         self.assertEqual(taken, {run: "run", discard: "discard"})
 
+    def test_an_answer_holds_until_the_next_boot_not_beyond(self) -> None:
+        """Logic review 26-10-22, L2: a job answered Run and still running when
+        a backup was taken came back from it and ran again on the old answer."""
+
+        run = self.ids[0]
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
+            db.hold_jobs_queued_before(connection, boot=self.BOOT)
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WEB_ROLE") as connection:
+            self.assertTrue(
+                db.decide_held_job(connection, job_id=run, decision="run", actor="admin")
+            )
+            connection.commit()
+        with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
+            #
+            # The worker started again on the same boot: the answer stands.
+            #
+            self.assertNotIn(run, db.hold_jobs_queued_before(connection, boot=self.BOOT))
+            connection.commit()
+            #
+            # The machine booted again - restored from an image taken while
+            # the job waited or ran: asked again.
+            #
+            later = datetime.now(UTC) + timedelta(days=1)
+            self.assertIn(run, db.hold_jobs_queued_before(connection, boot=later))
+            connection.commit()
+            claimed = db.claim_job(connection, worker_id="w", lease_seconds=60)
+            connection.rollback()
+            self.assertTrue(claimed is None or claimed.id not in self.ids)
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute(
+                    "update job set held_decision = 'run', held_decided_by = 'w' where id = %s",
+                    (run,),
+                )
+        with self.connect() as connection:
+            row = connection.execute(
+                "select held_decision, held_decided_by from job where id = %s", (run,)
+            ).fetchone()
+        self.assertEqual(row, (None, None))
+
     def test_a_job_queued_after_the_boot_is_not_held(self) -> None:
         with self.connect("HAPRION_UI_TEST_WORKER_ROLE") as connection:
             held = db.hold_jobs_queued_before(connection, boot=datetime(1999, 1, 1, tzinfo=UTC))
@@ -3716,6 +3780,16 @@ class JobsFromBeforeTheBoot(unittest.TestCase):
                 "select count(*) from job where id = any(%s) and held_since is null", (self.ids,)
             )
             self.assertEqual(cursor.fetchone(), (0,))
+            #
+            # An answer given before the dump is cleared too (0085).
+            #
+            cursor.execute(
+                "update job set held_decision = 'run', held_decided_by = 'admin' where id = %s",
+                (self.ids[0],),
+            )
+            cursor.execute(body)
+            cursor.execute("select held_decision from job where id = %s", (self.ids[0],))
+            self.assertEqual(cursor.fetchone(), (None,))
             cursor.execute("select count(*) from app_session where revoked_at is null")
             self.assertEqual(cursor.fetchone(), (0,))
             cursor.execute(

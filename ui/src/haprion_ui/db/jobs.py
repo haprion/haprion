@@ -463,17 +463,15 @@ def hold_jobs_queued_before(connection: Connection[Any], *, boot: datetime | Non
     `haprion-backup after-restore`, for a dump restored without a boot.
     A running one stays running for recovery to settle; if recovery puts it
     back in the queue, the hold keeps it there.
+
+    A job held at an earlier boot is held again and its answer cleared (0085,
+    logic review 2026-10-22, L2): an answer holds for the machine's life it
+    was given in. The function does it, since the worker may not write the
+    answer itself.
     """
 
     with connection.cursor() as cursor:
-        cursor.execute(
-            "update job set held_since = statement_timestamp() "
-            " where state in ('pending', 'running') "
-            "   and held_since is null "
-            "   and (%(boot)s::timestamptz is null or created_at < %(boot)s) "
-            "returning id",
-            {"boot": boot},
-        )
+        cursor.execute("select hold_jobs_queued_before(%(boot)s::timestamptz)", {"boot": boot})
         return sorted(row[0] for row in cursor.fetchall())
 
 

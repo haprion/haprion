@@ -49,6 +49,7 @@ from haprion import (
     node_enrollment,
     node_join,
     node_publish,
+    node_ssh,
     peers,
 )
 from haprion.cert_lock import DEFAULT_LOCK_PATH as CERTIFICATE_LOCK
@@ -313,15 +314,7 @@ def _leave_with(policy: PathPolicy) -> node_enrollment.LeaveNode | None:
     def leave(node: Node) -> NodeResponse:
         said = io.StringIO()
         code = deploy_helper.run_trigger(
-            [
-                deploy_helper.SSH,
-                *deploy_helper.SSH_OPTIONS,
-                "-i",
-                str(identity.key),
-                f"{identity.user}@{node.mgmt_host}",
-            ],
-            node.name,
-            said,
+            node_ssh.ssh_argv(identity.key, identity.user, node.mgmt_host), node.name, said
         )
         return NodeResponse(exit_code=code, stdout=said.getvalue())
 

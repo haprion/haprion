@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import fcntl
 import os
-import selectors
 import stat
-import subprocess
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -23,30 +21,11 @@ from time import monotonic, sleep
 from typing import BinaryIO, Literal, Protocol
 from uuid import uuid4
 
-from haprion import restore_runs
+from haprion import node_ssh, restore_runs
 from haprion.backup_archive import MAX_ARCHIVE_BYTES, ArchiveError, ArchiveFacts, validate
 from haprion.backup_retention import DEFAULT_RETENTION
 from haprion.config import Cluster, DeployIdentity, Node
 
-SSH = "/usr/bin/ssh"
-SSH_OPTIONS = (
-    "-T",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "IdentitiesOnly=yes",
-    "-o",
-    "StrictHostKeyChecking=yes",
-    "-o",
-    "ConnectTimeout=10",
-    "-o",
-    "ConnectionAttempts=1",
-    "-o",
-    "LogLevel=ERROR",
-)
-SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
-
-MAX_STDERR_BYTES = 64 * 1024
 FETCH_TIMEOUT_SECONDS = 300.0
 #
 # One run's whole budget, the lock's wait included (logic review 2026-10-22,
@@ -179,64 +158,18 @@ def fetch_over_ssh(
 ) -> FetchResult:
     """Stream one forced-command response with a hard byte and time ceiling."""
 
-    process = subprocess.Popen(  # noqa: S603 - fixed command; validated config supplies target
-        [
-            SSH,
-            *SSH_OPTIONS,
-            "-i",
-            str(identity.key),
-            f"{identity.user}@{node.mgmt_host}",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=SSH_ENVIRONMENT,
+    ended = node_ssh.stream(
+        node_ssh.ssh_argv(identity.key, identity.user, node.mgmt_host),
+        destination.write,
+        timeout=timeout,
+        max_bytes=max_bytes,
     )
-    if process.stdout is None or process.stderr is None:  # pragma: no cover - Popen contract
-        process.kill()
-        raise BackupRunError("ssh did not provide its output pipes")
-
-    selected = selectors.DefaultSelector()
-    selected.register(process.stdout, selectors.EVENT_READ, "stdout")
-    selected.register(process.stderr, selectors.EVENT_READ, "stderr")
-    deadline = monotonic() + timeout
-    written = 0
-    errors = bytearray()
-    too_large = timed_out = False
-    try:
-        while selected.get_map():
-            remaining = deadline - monotonic()
-            if remaining <= 0:
-                timed_out = True
-                process.kill()
-                break
-            events = selected.select(min(remaining, 1.0))
-            for key, _ in events:
-                chunk = os.read(key.fd, 64 * 1024)
-                if not chunk:
-                    selected.unregister(key.fileobj)
-                    continue
-                if key.data == "stdout":
-                    written += len(chunk)
-                    if written > max_bytes:
-                        too_large = True
-                        process.kill()
-                        break
-                    destination.write(chunk)
-                elif len(errors) < MAX_STDERR_BYTES:
-                    errors.extend(chunk[: MAX_STDERR_BYTES - len(errors)])
-            if too_large:
-                break
-    finally:
-        selected.close()
-        process.wait()
-        process.stdout.close()
-        process.stderr.close()
-
-    if timed_out:
+    if ended.timed_out:
         return FetchResult(124, "the node state export timed out")
-    if too_large:
+    if ended.too_large:
         return FetchResult(65, "the node state export exceeded the archive size limit")
-    return FetchResult(process.returncode, errors.decode("utf-8", errors="replace"))
+    assert ended.returncode is not None  # noqa: S101 - a call not stopped has its exit code
+    return FetchResult(ended.returncode, ended.stderr)
 
 
 def _commit_latest(directory: Path, archive: Path) -> None:

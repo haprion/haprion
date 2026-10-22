@@ -597,7 +597,7 @@ class TheNodeIsAskedWithItsOwnForcedCommand(unittest.TestCase):
     def test_the_call_names_the_identity_the_host_and_three_words(self) -> None:
         identity = DeployIdentity(user="svc-app", key=Path("/root/.ssh/example"))
         node = Node(name="node-a", mgmt_host="node-a.example.com")
-        with mock.patch("haprion.server_state.subprocess.run") as run:
+        with mock.patch("haprion.server_state.node_ssh.run_bounded") as run:
             server_state.ask_node(node, identity, WEB_10, "drain")
 
         argv = run.call_args.args[0]

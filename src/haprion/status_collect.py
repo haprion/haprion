@@ -29,7 +29,6 @@ cannot be used to diagnose the node. The one exception is documented at
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 from collections.abc import Callable, Mapping
@@ -38,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from haprion import dnsdist_config
+from haprion import dnsdist_config, node_ssh
 from haprion.cluster_status import addresses_current, forwarding_current, ipvs_current
 from haprion.config import DeployIdentity, Node
 from haprion.deploy_plan import NodeObservation, ReleaseTarget, VipState
@@ -89,23 +88,6 @@ REQUIRED_NODE_STATUS_KEYS = frozenset(
 )
 
 
-SSH = "/usr/bin/ssh"
-SSH_OPTIONS = (
-    "-T",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "IdentitiesOnly=yes",
-    "-o",
-    "StrictHostKeyChecking=yes",
-    "-o",
-    "ConnectTimeout=5",
-    "-o",
-    "ConnectionAttempts=1",
-    "-o",
-    "LogLevel=ERROR",
-)
-SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
 #
 # The whole status read, not just the connection. `ConnectTimeout` bounds the
 # handshake; a node that connects and then never answers would otherwise hold
@@ -144,19 +126,13 @@ def ask_node(node: Node, identity: DeployIdentity) -> NodeResponse:
     """
 
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
-            [
-                SSH,
-                *SSH_OPTIONS,
-                "-i",
-                str(identity.key),
-                f"{identity.user}@{node.mgmt_host}",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=False,
-            env=SSH_ENVIRONMENT,
+        completed = node_ssh.run_bounded(
+            node_ssh.ssh_argv(
+                identity.key,
+                identity.user,
+                node.mgmt_host,
+                connect_timeout=node_ssh.STATUS_CONNECT_TIMEOUT_SECONDS,
+            ),
             timeout=STATUS_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
@@ -460,8 +436,8 @@ def _node_result(
     entry["reachable"] = True
 
     try:
-        status = json.loads(response.stdout)
-    except json.JSONDecodeError:
+        status = node_ssh.parse_json(response.stdout)
+    except ValueError:
         entry["error"] = {
             "code": "node_status_invalid_json",
             "message": "node responded but status JSON could not be parsed",

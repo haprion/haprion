@@ -21,6 +21,7 @@ from haprion import (
     keyring_package,
     node_package,
     node_restore,
+    node_ssh,
     restore_plan,
     restore_source,
     waf_engine_package,
@@ -1036,10 +1037,6 @@ class Cli(unittest.TestCase):
         self.assertIn("--confirm node-test", out.getvalue())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 #
 # B298: the WAF engine is in no repository; a node that ran it gets the one
 # this manager's release carries, or the restore says why not.
@@ -1221,3 +1218,39 @@ class TheTargetsClock(RestoreTest):
         self.assertIn(
             "2 h 0 min behind", node_restore.clock_skew(1_000.0 - 7200, 1_000.0, 1_001.0) or ""
         )
+
+
+class TheSessionReadsTheTargetsAnswerWithinABudget(unittest.TestCase):
+    """Code review 26-10-22, 4-5: the restore target's answer is read as any node's."""
+
+    def session(self, answer: str) -> node_restore.Session:
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        ssh = root / "ssh"
+        ssh.write_text(f"#!/bin/sh\ncat > {root}/request\necho 'working' >&2\n{answer}\n")
+        ssh.chmod(0o755)
+        self.request = root / "request"
+        patcher = mock.patch.object(node_ssh, "SSH", str(ssh))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return node_restore.Session(key=root / "key", known_hosts=root / "known_hosts")
+
+    def test_the_request_goes_out_and_the_last_line_comes_back(self) -> None:
+        session = self.session("""echo '{"ok": true}'""")
+        progress = io.StringIO()
+
+        result = session.call("192.0.2.10", {"op": "probe"}, b"payload", progress=progress)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(self.request.read_bytes(), b'{"op":"probe"}\npayload')
+        self.assertIn("working", progress.getvalue())
+
+    def test_a_document_nested_past_the_parser_is_no_answer(self) -> None:
+        session = self.session("python3 -c 'print(\"[\" * 200000)'")
+
+        with self.assertRaises(RestoreError):
+            session.call("192.0.2.10", {"op": "probe"}, progress=io.StringIO())
+
+
+if __name__ == "__main__":
+    unittest.main()

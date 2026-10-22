@@ -55,6 +55,7 @@ from haprion import (
     haproxy_repository,
     keyring_package,
     node_package,
+    node_ssh,
     restore_agent,
     restore_answers,
     restore_plan,
@@ -83,7 +84,6 @@ expired = restore_runs.expired
 sweep = restore_runs.sweep
 _Held = restore_runs.Held
 _retire = restore_runs.retire
-SSH = "/usr/bin/ssh"
 SSH_KEYGEN = "/usr/bin/ssh-keygen"
 SSH_KEYSCAN = "/usr/bin/ssh-keyscan"
 IP = "/usr/sbin/ip"
@@ -360,43 +360,38 @@ class Session:
         progress: TextIO | None = None,
         timeout: float = SESSION_TIMEOUT,
     ) -> dict[str, Any]:
-        argv = [
-            SSH,
-            "-T",
-            "-i", str(self.key),
-            "-o", "IdentitiesOnly=yes",
-            "-o", "BatchMode=yes",
-            "-o", f"UserKnownHostsFile={self.known_hosts}",
-            "-o", "GlobalKnownHostsFile=/dev/null",
-            "-o", "StrictHostKeyChecking=yes",
-            "-o", "ConnectTimeout=10",
-            "-o", "ServerAliveInterval=15",
-            "-o", "LogLevel=ERROR",
-            f"root@{ipaddress.IPv4Address(address)}",
+        argv = node_ssh.ssh_argv(
+            self.key,
+            "root",
+            str(ipaddress.IPv4Address(address)),
             agent_command(),
-        ]  # fmt: skip
+            options=(
+                "-o", f"UserKnownHostsFile={self.known_hosts}",
+                "-o", "GlobalKnownHostsFile=/dev/null",
+            ),
+        )  # fmt: skip
         stream = progress or sys.stderr
         request = json.dumps(header, separators=(",", ":")).encode() + b"\n" + payload
-        process = subprocess.Popen(  # noqa: S603 - fixed binary, argv built here
-            argv,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=ENVIRONMENT,
+        #
+        # Read as any node's answer is (code review 2026-10-22, 4-5): within a
+        # budget, and a document that is not one is no answer rather than an
+        # exception from the parser.
+        #
+        output = bytearray()
+        ended = node_ssh.stream(
+            argv, output.extend, timeout=timeout, request=request, env=ENVIRONMENT
         )
-        try:
-            output, errors = process.communicate(request, timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            process.kill()
-            process.communicate()
-            raise RestoreError(f"the {header['op']} session did not finish in time") from exc
-        for line in errors.decode("utf-8", "replace").splitlines():
+        if ended.timed_out:
+            raise RestoreError(f"the {header['op']} session did not finish in time")
+        if ended.too_large:
+            raise RestoreError(f"the {header['op']} session answered with too much")
+        for line in ended.stderr.splitlines():
             stream.write(f"  {line}\n")
         try:
-            result = json.loads(output.decode("utf-8").strip().splitlines()[-1])
-        except (IndexError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            result = node_ssh.parse_json(output.decode("utf-8").strip().splitlines()[-1])
+        except (IndexError, ValueError) as exc:
             raise RestoreError(
-                f"the {header['op']} session gave no answer (ssh exited {process.returncode})"
+                f"the {header['op']} session gave no answer (ssh exited {ended.returncode})"
             ) from exc
         if not isinstance(result, dict):
             raise RestoreError(f"the {header['op']} session answered something else")

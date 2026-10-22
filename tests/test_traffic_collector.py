@@ -965,9 +965,28 @@ class WafJournalCollectorTests(unittest.TestCase):
             b'{"cursor":"","eof":true,"reset":false,"sent":1}\n'
             + json.dumps({"at": 1, "cursor": "a b", "message": "m"}).encode()
             + b"\n",
+            #
+            # Nested past the parser: `RecursionError`, which is not a
+            # `JSONDecodeError`, stopped the WAF import of every node at the
+            # same record on every run (code review 26-10-22, 5-11).
+            #
+            b'{"cursor":"","eof":true,"reset":false,"sent":1}\n' + b"[" * 200_000 + b"\n",
+            b"[" * 200_000 + b"\n",
         ):
             with self.subTest(raw=raw[:70]), self.assertRaises(ProtocolError):
                 _parse_waf_response(raw, self.target)
+
+    def test_an_engine_message_nested_past_the_parser_is_no_match(self) -> None:
+        record = json.dumps({"at": WAF_AT, "cursor": journal_cursor(1), "message": "[" * 200_000})
+        page = _parse_waf_response(
+            b'{"cursor":"'
+            + journal_cursor(1).encode()
+            + b'","eof":true,"reset":false,"sent":1}\n'
+            + record.encode()
+            + b"\n",
+            self.target,
+        )
+        self.assertEqual(page.rows, ())
 
     def test_a_match_that_cannot_be_stored_is_counted_and_stepped_over(self) -> None:
         page = _parse_waf_response(

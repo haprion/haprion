@@ -25,6 +25,7 @@ from unittest import mock
 
 import yaml
 
+from haprion import node_ssh
 from haprion.cli import deploy, deploy_helper
 from haprion.cluster_lock import hold
 from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
@@ -376,7 +377,7 @@ class HelperBehaviourTests(HelperFixture):
             stdout = "ERROR: the WAF engine could not be started.\n"
             stderr = "Job for coraza-spoa.service failed.\n"
 
-        with mock.patch.object(subprocess, "run", lambda *_, **__: Refused()):
+        with mock.patch.object(node_ssh, "run_bounded", lambda *_, **__: Refused()):
             out, err = io.StringIO(), io.StringIO()
             code = deploy_helper.main(
                 [],
@@ -428,7 +429,7 @@ class HelperBehaviourTests(HelperFixture):
             asked.update(options)
             raise subprocess.TimeoutExpired(argv, options["timeout"], output="Fetching...\n")
 
-        with mock.patch.object(subprocess, "run", silent):
+        with mock.patch.object(node_ssh, "run_bounded", silent):
             shown = io.StringIO()
             code = deploy_helper.run_trigger(["ssh", "node-a"], "node-a", shown)
 
@@ -436,7 +437,7 @@ class HelperBehaviourTests(HelperFixture):
         self.assertEqual(code, deploy_helper.EXIT_TRIGGER_TIMEOUT)
         self.assertIn("Fetching...", shown.getvalue())
         self.assertIn("node-a gave no answer within 300 seconds", shown.getvalue())
-        self.assertIn("ServerAliveInterval=15", deploy_helper.SSH_OPTIONS)
+        self.assertIn("ServerAliveInterval=15", node_ssh.SSH_OPTIONS)
 
 
 class CertificatePreflightTests(HelperFixture):

@@ -21,6 +21,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from haprion import node_ssh
 from haprion.config import NAME
 from haprion.dns_profile_keys import (
     DnsProfilePrivateKey,
@@ -90,29 +91,20 @@ def ssh_join(
 ) -> NodeResponse:
     """Connect once as _haprion-join with the one-time key and hand the document over."""
 
-    from haprion.cli.deploy_helper import SSH, SSH_ENVIRONMENT, SSH_OPTIONS  # noqa: PLC0415
-
     with tempfile.TemporaryDirectory(prefix="haprion-join-") as directory:
         identity = Path(directory) / "join_key"
         descriptor = os.open(identity, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="ascii") as stream:
             stream.write(key)
         try:
-            completed = subprocess.run(  # noqa: S603 - fixed path, host from the checked block
-                [
-                    SSH,
-                    *SSH_OPTIONS,
-                    "-o",
-                    f"UserKnownHostsFile={known_hosts}",
-                    "-i",
-                    str(identity),
-                    f"{JOIN_USER}@{node_host}",
-                ],
-                input=json.dumps(document),
-                capture_output=True,
-                text=True,
-                check=False,
-                env=SSH_ENVIRONMENT,
+            completed = node_ssh.run_bounded(
+                node_ssh.ssh_argv(
+                    identity,
+                    JOIN_USER,
+                    node_host,
+                    options=("-o", f"UserKnownHostsFile={known_hosts}"),
+                ),
+                request=json.dumps(document),
                 timeout=JOIN_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired:

@@ -35,6 +35,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO, cast
 
+from haprion import node_ssh
 from haprion.certificates import CertificateError, target_for
 from haprion.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
@@ -68,40 +69,6 @@ FLAGS = ("allow_vip_unknown", "json")
 #
 EXIT_TARGET_CHANGED = 75
 
-SSH = "/usr/bin/ssh"
-
-#
-# The node is reached with the same options the shell-era command used. They are
-# not defaults worth rediscovering: BatchMode never prompts, IdentitiesOnly stops
-# an agent from offering a different key, and StrictHostKeyChecking is what makes
-# the connection mean anything at all.
-#
-SSH_OPTIONS = (
-    "-T",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "IdentitiesOnly=yes",
-    "-o",
-    "StrictHostKeyChecking=yes",
-    "-o",
-    "ConnectTimeout=10",
-    "-o",
-    "ConnectionAttempts=1",
-    #
-    # A connection that goes silent is noticed within a minute rather than
-    # never (review 2026-10-03, I3): ssh asks every 15 s and gives up after
-    # four unanswered.
-    #
-    "-o",
-    "ServerAliveInterval=15",
-    "-o",
-    "ServerAliveCountMax=4",
-    "-o",
-    "LogLevel=ERROR",
-)
-
-SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
 
 #
 # How long one node may take to pull, validate, start its WAF engine and
@@ -171,9 +138,7 @@ def trigger_node(node: NodeStatus, identity: DeployIdentity, writer: TextIO) -> 
     """
 
     return run_trigger(
-        [SSH, *SSH_OPTIONS, "-i", str(identity.key), f"{identity.user}@{node.mgmt_host}"],
-        node.name,
-        writer,
+        node_ssh.ssh_argv(identity.key, identity.user, node.mgmt_host), node.name, writer
     )
 
 
@@ -186,14 +151,7 @@ def run_trigger(argv: list[str], node: str, writer: TextIO) -> int:
     """
 
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
-            argv,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=SSH_ENVIRONMENT,
-            timeout=TRIGGER_TIMEOUT_SECONDS,
-        )
+        completed = node_ssh.run_bounded(argv, timeout=TRIGGER_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as expired:
         for part in (expired.stdout, expired.stderr):
             if part:

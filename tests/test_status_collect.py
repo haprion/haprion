@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from haprion import status_collect
+from haprion import node_ssh, status_collect
 from haprion.config import DeployIdentity, Node
 from haprion.deploy_plan import ReleaseTarget, VipState
 from haprion.object_manifest import MANIFEST_FILE
@@ -381,7 +381,7 @@ class AStatusReadIsBounded(unittest.TestCase):
             silent.chmod(0o755)
             identity = DeployIdentity(user="svc-status", key=Path(raw) / "key")
             with (
-                mock.patch.object(status_collect, "SSH", str(silent)),
+                mock.patch.object(node_ssh, "SSH", str(silent)),
                 mock.patch.object(status_collect, "STATUS_TIMEOUT_SECONDS", 1),
             ):
                 started = time.monotonic()
@@ -394,6 +394,16 @@ class AStatusReadIsBounded(unittest.TestCase):
         error = report.result["nodes"][0]["error"]
         self.assertEqual(error["code"], "ssh_unreachable")
         self.assertEqual(error["message"], "SSH gave no answer within 1 seconds")
+
+    def test_a_document_nested_past_the_parser_is_one_node_without_status(self) -> None:
+        """Code review 26-10-22, 5-6: `RecursionError` is not a `JSONDecodeError`,
+        and one node's answer stopped the read of every node."""
+
+        hostile = status_collect.NodeResponse(exit_code=0, stdout="[" * 200_000)
+        report = status_collect.collect(NODES[:1], lambda _node: hostile, target=None)
+
+        error = report.result["nodes"][0]["error"]
+        self.assertEqual(error["code"], "node_status_invalid_json")
 
 
 if __name__ == "__main__":

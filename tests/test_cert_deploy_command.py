@@ -16,7 +16,6 @@ import base64
 import hashlib
 import io
 import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +23,7 @@ from unittest import mock
 
 import yaml
 
+from haprion import node_ssh
 from haprion.cli import cert_deploy, cert_deploy_helper
 from haprion.cluster_lock import hold
 from haprion.cluster_status import ClusterStatus, NodeStatus, parse_status
@@ -231,7 +231,7 @@ class RolloutTests(HelperFixture):
             stdout = "ERROR: the certificate could not be installed.\n"
             stderr = ""
 
-        with mock.patch.object(subprocess, "run", lambda *_, **__: Refused()):
+        with mock.patch.object(node_ssh, "run_bounded", lambda *_, **__: Refused()):
             code, out, err = self.run_helper(request(json=True), real_trigger=True)
 
         self.assertNotEqual(code, 0)
@@ -288,7 +288,7 @@ class TriggerTests(unittest.TestCase):
             sent.append(argv)
             return FakeCompleted()
 
-        with mock.patch.object(subprocess, "run", fake_run):
+        with mock.patch.object(node_ssh, "run_bounded", fake_run):
             cert_deploy_helper.trigger_node(
                 NodeStatus(
                     name="node-a",

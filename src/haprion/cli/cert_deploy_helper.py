@@ -26,12 +26,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO, cast
 
+from haprion import node_ssh
 from haprion.certificates import CertificateError, target_for
 from haprion.cli.deploy_helper import (
     EXIT_NO_IDENTITY,
     EXIT_NOT_ROOT,
-    SSH,
-    SSH_OPTIONS,
     read_status,
     run_trigger,
 )
@@ -109,14 +108,7 @@ def trigger_node(
     requests.append(" ".join([REQUEST_VERB, *(ref.id for ref in target.certificates)]))
     for request in requests:
         code = run_trigger(
-            [
-                SSH,
-                *SSH_OPTIONS,
-                "-i",
-                str(identity.key),
-                f"{identity.user}@{node.mgmt_host}",
-                request,
-            ],
+            node_ssh.ssh_argv(identity.key, identity.user, node.mgmt_host, request),
             node.name,
             writer,
         )

@@ -24,29 +24,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
+from haprion import node_ssh
 from haprion.config import DeployIdentity, Node
 from haprion.ipvs_config import UDP_CONNECT_TIMEOUT
 from haprion.tls_policy import DEFAULT_MIN_VERSION
 
 SCHEMA_VERSION = 1
 
-SSH = "/usr/bin/ssh"
-SSH_OPTIONS = (
-    "-T",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "IdentitiesOnly=yes",
-    "-o",
-    "StrictHostKeyChecking=yes",
-    "-o",
-    "ConnectTimeout=5",
-    "-o",
-    "ConnectionAttempts=1",
-    "-o",
-    "LogLevel=ERROR",
-)
-SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
 
 #
 # The node bounds these as well, and that is not redundant. This bound protects
@@ -186,15 +170,16 @@ def ask_node(
 ) -> subprocess.CompletedProcess[str]:
     """One node, asked over its forced command. The request is stdin."""
 
-    return subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
-        [SSH, *SSH_OPTIONS, "-i", str(identity.key), f"{identity.user}@{node.mgmt_host}"],
-        input=request,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        check=False,
-        env=SSH_ENVIRONMENT,
+    return node_ssh.run_bounded(
+        node_ssh.ssh_argv(
+            identity.key,
+            identity.user,
+            node.mgmt_host,
+            connect_timeout=node_ssh.STATUS_CONNECT_TIMEOUT_SECONDS,
+        ),
+        request=request,
         timeout=30,
+        max_bytes=MAX_ANSWER_BYTES,
     )
 
 
@@ -224,7 +209,7 @@ def read_answer(node: str, completed: subprocess.CompletedProcess[str]) -> NodeA
             node=node, reachable=False, error="the node answered with too much", results=()
         )
     try:
-        payload = json.loads(completed.stdout)
+        payload = node_ssh.parse_json(completed.stdout)
     except ValueError:
         return NodeAnswer(
             node=node, reachable=False, error="the node did not answer with JSON", results=()

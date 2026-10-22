@@ -74,7 +74,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_registry
+from haprion import cert_registry, node_ssh
 from haprion.cert_inventory import IMPORT_STORE, receiver_files
 from haprion.cert_publish import DEFAULT_LOCK_PATH, prune_receiver_directory, publish_lock
 from haprion.cert_publish import PublishError as LockError
@@ -486,28 +486,30 @@ def remove_request_state(policy: PathPolicy, certificate_id: str) -> Layer | Non
     return Layer(name, "removed" if removed else "absent")
 
 
+#
+# A removal on a node is one `rm` behind two checks; a node that has not
+# answered in two minutes is not going to. Without a limit a node that hung
+# held this root helper - and the certificate lock - for as long as the TCP
+# session lived (code review 2026-10-22, 4-5).
+#
+NODE_TIMEOUT_SECONDS = 120
+
+
 def ask_node(
     identity: DeployIdentity, mgmt_host: str, verb: str, certificate_id: str
 ) -> tuple[int, str]:
-    """The same call `cert-deploy` makes, with a different verb."""
+    """The same call `cert-deploy` makes, with a different verb.
 
-    from haprion.cli.deploy_helper import SSH, SSH_ENVIRONMENT, SSH_OPTIONS
+    A node that runs out of time keeps its copy, as a refusal does: it is
+    reported and asked again on the next run.
+    """
 
-    completed = subprocess.run(  # noqa: S603 - fixed path, host and ID from validated configuration
-        [
-            SSH,
-            *SSH_OPTIONS,
-            "-i",
-            str(identity.key),
-            f"{identity.user}@{mgmt_host}",
-            f"{verb} {certificate_id}",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=SSH_ENVIRONMENT,
-    )
-    output = ((completed.stdout or "") + (completed.stderr or "")).strip()
+    argv = node_ssh.ssh_argv(identity.key, identity.user, mgmt_host, f"{verb} {certificate_id}")
+    try:
+        completed = node_ssh.run_bounded(argv, timeout=NODE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return 124, f"no answer within {NODE_TIMEOUT_SECONDS} seconds"
+    output = (completed.stdout + completed.stderr).strip()
     return completed.returncode, output
 
 

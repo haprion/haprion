@@ -42,13 +42,13 @@ every kept state back after the reload, so the two cannot undo each other.
 from __future__ import annotations
 
 import ipaddress
-import json
 import re
 import subprocess
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+from haprion import node_ssh
 from haprion.config import DeployIdentity, Node
 from haprion.guid import server_guid
 from haprion.proxy_model import NAME, Proxy
@@ -222,21 +222,10 @@ def ask_node(
 ) -> subprocess.CompletedProcess[str]:
     """One server on one node, over the node's forced command."""
 
-    from haprion.cli.deploy_helper import SSH, SSH_ENVIRONMENT, SSH_OPTIONS
-
-    return subprocess.run(  # noqa: S603 - fixed path; host from configuration, words validated
-        [
-            SSH,
-            *SSH_OPTIONS,
-            "-i",
-            str(identity.key),
-            f"{identity.user}@{node.mgmt_host}",
-            f"{NODE_VERB} {guid} {state}",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=SSH_ENVIRONMENT,
+    return node_ssh.run_bounded(
+        node_ssh.ssh_argv(
+            identity.key, identity.user, node.mgmt_host, f"{NODE_VERB} {guid} {state}"
+        ),
         timeout=CALL_TIMEOUT_SECONDS,
     )
 
@@ -252,7 +241,7 @@ def read_answer(node: str, target: Target, completed: subprocess.CompletedProces
     document: object = None
     if completed.stdout and len(completed.stdout) <= MAX_ANSWER_BYTES:
         try:
-            document = json.loads(completed.stdout.strip().splitlines()[-1])
+            document = node_ssh.parse_json(completed.stdout.strip().splitlines()[-1])
         except (ValueError, IndexError):
             document = None
     if not isinstance(document, Mapping):
@@ -391,14 +380,8 @@ def ask_unblock(
 ) -> subprocess.CompletedProcess[str]:
     """One unblock on one node, over the node's forced command."""
 
-    from haprion.cli.deploy_helper import SSH, SSH_ENVIRONMENT, SSH_OPTIONS
-
-    return subprocess.run(  # noqa: S603 - fixed path; host from configuration, words validated
-        [SSH, *SSH_OPTIONS, "-i", str(identity.key), f"{identity.user}@{node.mgmt_host}", request],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=SSH_ENVIRONMENT,
+    return node_ssh.run_bounded(
+        node_ssh.ssh_argv(identity.key, identity.user, node.mgmt_host, request),
         timeout=CALL_TIMEOUT_SECONDS,
     )
 
@@ -411,7 +394,7 @@ def read_unblocked(
     document: object = None
     if completed.stdout and len(completed.stdout) <= MAX_ANSWER_BYTES:
         try:
-            document = json.loads(completed.stdout.strip().splitlines()[-1])
+            document = node_ssh.parse_json(completed.stdout.strip().splitlines()[-1])
         except (ValueError, IndexError):
             document = None
     if not isinstance(document, Mapping):

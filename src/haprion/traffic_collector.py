@@ -8,9 +8,7 @@ import hashlib
 import json
 import os
 import re
-import selectors
 import stat
-import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -22,6 +20,7 @@ from typing import Any
 
 import psycopg
 
+from haprion import node_ssh
 from haprion.config import CLUSTER_ID
 from haprion.proxy_model import NAME as OBJECT_NAME
 from haprion.proxy_model import WAF_DECIDING_RULES, waf_field
@@ -29,7 +28,6 @@ from haprion.proxy_model import WAF_DECIDING_RULES, waf_field
 MAX_CONFIG_BYTES = 1024 * 1024
 MAX_HEADER_BYTES = 4096
 MAX_SEND = 8 * 1024 * 1024
-MAX_STDERR = 64 * 1024
 MAX_RECORD_BYTES = 16 * 1024
 DATABASE_BATCH_ROWS = 1000
 MAX_TIMESTAMP = 253402300799  # 9999-12-31T23:59:59Z, the last second datetime holds
@@ -223,50 +221,29 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
 
 
 def _bounded_ssh(argv: list[str]) -> tuple[int, bytes, bytes]:
-    process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # noqa: S603
-    if process.stdout is None or process.stderr is None:  # pragma: no cover - PIPE guarantees it
-        process.kill()
-        raise SSHError("cannot open SSH output pipes")
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
-    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-    held = {"stdout": bytearray(), "stderr": bytearray()}
-    deadline = time.monotonic() + SSH_TIMEOUT_SECONDS
+    """One request to a node, read through the shared reader (code review 2026-10-22, 4-5).
+
+    The collector's environment is its own, inherited: it runs as its own
+    account, not as root.
+    """
+
+    held = bytearray()
     try:
-        while selector.get_map():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise SSHError("SSH request timed out")
-            ready = selector.select(remaining)
-            if not ready:
-                raise SSHError("SSH request timed out")
-            for key, _ in ready:
-                chunk = os.read(key.fd, 64 * 1024)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                bucket = held[key.data]
-                bucket.extend(chunk)
-                limit = MAX_HEADER_BYTES + MAX_SEND if key.data == "stdout" else MAX_STDERR
-                if len(bucket) > limit:
-                    raise SSHError(f"SSH {key.data} exceeds its size limit")
-        return process.wait(), bytes(held["stdout"]), bytes(held["stderr"])
-    except BaseException:
-        process.kill()
-        process.wait()
-        raise
-    finally:
-        selector.close()
-        #
-        # `Popen` hands out two pipe objects and closes neither. The child is
-        # reaped by `wait`, but the descriptors live until the garbage collector
-        # gets to them, so a run that fetches many node-days holds far more open
-        # files than it needs. Found by R3, where the leak surfaced as a
-        # ResourceWarning on every fetch.
-        #
-        for pipe in (process.stdout, process.stderr):
-            if pipe is not None:
-                pipe.close()
+        ended = node_ssh.stream(
+            argv,
+            held.extend,
+            timeout=SSH_TIMEOUT_SECONDS,
+            max_bytes=MAX_HEADER_BYTES + MAX_SEND,
+            env=dict(os.environ),
+        )
+    except OSError as exc:
+        raise SSHError(f"cannot run SSH request: {exc}") from exc
+    if ended.timed_out:
+        raise SSHError("SSH request timed out")
+    if ended.too_large:
+        raise SSHError("SSH stdout exceeds its size limit")
+    assert ended.returncode is not None  # noqa: S101 - a call not stopped has its exit code
+    return ended.returncode, bytes(held), ended.stderr.encode()
 
 
 def _parse_response(raw: bytes, wanted: date, offset: int) -> Response:
@@ -277,8 +254,8 @@ def _parse_response(raw: bytes, wanted: date, offset: int) -> Response:
     if len(header_line) > MAX_HEADER_BYTES:
         raise ProtocolError("node response header is too large")
     try:
-        header = json.loads(header_line)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        header = node_ssh.parse_json(header_line)
+    except ValueError as exc:
         raise ProtocolError("node response header is not JSON") from exc
     expected = {"file", "size", "offset", "sent", "eof", "reset", "skipped_bytes"}
     if not isinstance(header, dict) or set(header) != expected:
@@ -321,29 +298,13 @@ def _parse_response(raw: bytes, wanted: date, offset: int) -> Response:
 
 
 def _ssh_argv(config: CollectorConfig, target: NodeTarget, request: str) -> list[str]:
-    return [
-        "/usr/bin/ssh",
-        "-T",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "ConnectionAttempts=1",
-        "-o",
-        "IdentitiesOnly=yes",
-        "-o",
-        "StrictHostKeyChecking=yes",
-        "-o",
-        f"UserKnownHostsFile={config.known_hosts}",
-        "-i",
-        str(config.key),
-        "-l",
+    return node_ssh.ssh_argv(
+        config.key,
         config.user,
-        "--",
         target.host,
         request,
-    ]
+        options=("-o", f"UserKnownHostsFile={config.known_hosts}"),
+    )
 
 
 def ssh_fetch(config: CollectorConfig, target: NodeTarget, wanted: date, offset: int) -> Response:
@@ -772,8 +733,8 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
     if not line or len(line) > MAX_RECORD_BYTES:
         raise CollectorError("traffic record exceeds its size limit")
     try:
-        value = json.loads(line)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        value = node_ssh.parse_json(line)
+    except ValueError as exc:
         raise CollectorError("traffic record is not JSON") from exc
     if not isinstance(value, dict) or value.get("schema") != 1:
         raise CollectorError("traffic record has an unsupported schema")
@@ -1265,7 +1226,7 @@ def _waf_row(cluster: str, node: str, at: int, cursor: str, message: str) -> tup
     """
 
     try:
-        value = json.loads(message)
+        value = node_ssh.parse_json(message)
     except ValueError:
         return None
     match = value.get("match") if isinstance(value, dict) else None
@@ -1322,8 +1283,8 @@ def _parse_waf_response(raw: bytes, target: NodeTarget) -> WafPage:
     if len(header_line) > MAX_HEADER_BYTES:
         raise ProtocolError("node WAF response header is too large")
     try:
-        header = json.loads(header_line)
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        header = node_ssh.parse_json(header_line)
+    except ValueError as exc:
         raise ProtocolError("node WAF response header is not JSON") from exc
     if not isinstance(header, dict) or set(header) != {"cursor", "eof", "reset", "sent"}:
         raise ProtocolError("node WAF response header has unexpected or missing fields")
@@ -1345,8 +1306,8 @@ def _parse_waf_response(raw: bytes, target: NodeTarget) -> WafPage:
     skipped = 0
     for line in lines:
         try:
-            record = json.loads(line)
-        except (UnicodeError, json.JSONDecodeError) as exc:
+            record = node_ssh.parse_json(line)
+        except ValueError as exc:
             raise ProtocolError("node WAF record is not JSON") from exc
         if not isinstance(record, dict) or set(record) != {"at", "cursor", "message"}:
             raise ProtocolError("node WAF record has unexpected or missing fields")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import io
 import json
 import tempfile
 import time
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from unittest import mock
 
-from haprion import restore_runs, state_backup
+from haprion import node_ssh, restore_runs, state_backup
 from haprion.backup_archive import ArchiveFacts
 from haprion.config import DeployIdentity, Node
 
@@ -382,3 +383,38 @@ class TheArchiveIsNamedOnTheManagersClock(unittest.TestCase):
             else:
                 os.environ["TZ"] = previous
             time.tzset()
+
+
+class TheExportIsStreamedWithinItsBudget(unittest.TestCase):
+    """`fetch_over_ssh` through the shared reader (code review 26-10-22, 4-5)."""
+
+    def fetch(
+        self, script: str, *, max_bytes: int = 1024
+    ) -> tuple[state_backup.FetchResult, bytes]:
+        with tempfile.TemporaryDirectory() as raw:
+            ssh = Path(raw) / "ssh"
+            ssh.write_text(f"#!/bin/sh\n{script}\n")
+            ssh.chmod(0o755)
+            destination = io.BytesIO()
+            with mock.patch.object(node_ssh, "SSH", str(ssh)):
+                result = state_backup.fetch_over_ssh(
+                    Node(name="node-a", mgmt_host="node-a.example.com"),
+                    DeployIdentity(user="svc-app", key=Path(raw) / "key"),
+                    destination,
+                    timeout=10,
+                    max_bytes=max_bytes,
+                )
+        return result, destination.getvalue()
+
+    def test_the_archive_arrives_whole(self) -> None:
+        result, received = self.fetch("printf archive; echo note >&2")
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(received, b"archive")
+        self.assertEqual(result.stderr.strip(), "note")
+
+    def test_an_export_over_the_limit_is_stopped(self) -> None:
+        result, received = self.fetch("yes x", max_bytes=1024)
+
+        self.assertEqual(result.exit_code, 65)
+        self.assertLessEqual(len(received), 1024)

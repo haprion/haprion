@@ -793,7 +793,11 @@ fi
 #
 # Stopped and disabled, with a marker: the node is no longer this cluster's,
 # and a reboot must not bring it back. Added again, the first release that
-# names it starts both and takes the marker away.
+# names it is validated and installed with both still down; HAProxy then
+# starts on it, keepalived last with the membership it carries, and only then
+# does the marker go (logic review 26-10-22, L1). They used to be started
+# before the validation, on the configuration from before the node left, and
+# stayed up when the new one was refused.
 #
 LEFT_MARKER="/etc/haprion/left-cluster"
 
@@ -824,15 +828,14 @@ if removed_from_release; then
     exit 0
 fi
 
+REJOINING=0
 if [[ -e "$LEFT_MARKER" ]]; then
-    log "This node is in the published release again: starting HAProxy and keepalived."
-    systemctl enable --quiet --now haproxy || { log "ERROR: HAProxy could not be started."; exit 1; }
-    systemctl enable --quiet --now keepalived || { log "ERROR: keepalived could not be started."; exit 1; }
-    rm -f "$LEFT_MARKER"
+    log "This node is in the published release again: it rejoins once the release is installed."
+    REJOINING=1
 fi
 
-# Nothing changed?
-if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
+# Nothing changed? A rejoining node installs the release whatever it was.
+if (( ! REJOINING )) && diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
     if [[ -e "$PENDING" ]]; then
         #
         # The files are the ones asked for, but an earlier run was stopped
@@ -997,11 +1000,20 @@ if ! sync_dns_listener "$OLD_RELEASE"; then
 fi
 
 #
-# Reload
+# Reload - or, on a node rejoining, start: HAProxy is stopped there, and a
+# reload of a stopped unit fails.
 #
-log "Reloading HAProxy..."
+take_release() {
+    if (( REJOINING )); then
+        log "Starting HAProxy..."
+        systemctl enable --quiet --now haproxy
+    else
+        log "Reloading HAProxy..."
+        "$SERVER_STATE" reload
+    fi
+}
 
-if "$SERVER_STATE" reload; then
+if take_release; then
     rm -f "$PENDING"
     #
     # Explicitly, rather than by letting `set -e` end the script: a deploy that
@@ -1012,6 +1024,18 @@ if "$SERVER_STATE" reload; then
     if ! sync_keepalived; then
         log "ERROR: the configuration is live, but keepalived's address list or IPVS file is not."
         exit 1
+    fi
+    if (( REJOINING )); then
+        #
+        # The marker stays on a failure: the next run starts what is not
+        # running and tries keepalived again.
+        #
+        if ! systemctl enable --quiet --now keepalived; then
+            log "ERROR: HAProxy serves the new configuration, but keepalived could not be started."
+            exit 1
+        fi
+        rm -f "$LEFT_MARKER"
+        log "Rejoined: HAProxy and keepalived started, and will start at boot."
     fi
     #
     # After the reload, as keepalived: HAProxy is live and correct, and a
@@ -1024,6 +1048,18 @@ if "$SERVER_STATE" reload; then
     fi
     log "Deploy complete."
     prune_releases
+elif (( REJOINING )); then
+    log "ERROR: HAProxy did not start on the new configuration. Rolling back to ${OLD_RELEASE}; the node stays out of service."
+
+    rm -f "$NEW_LINK"
+    ln -s "$OLD_RELEASE" "$NEW_LINK"
+    mv -Tf "$NEW_LINK" "$CURRENT"
+    systemctl disable --quiet --now haproxy || log "ERROR: HAProxy could not be stopped again."
+    settle_pending
+    sync_waf_engine 1 || true
+    sync_dns_listener "$RELEASE" || true
+
+    exit 1
 else
     log "ERROR: HAProxy reload failed. Rolling back to ${OLD_RELEASE}."
 

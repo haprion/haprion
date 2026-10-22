@@ -1967,8 +1967,9 @@ Left running, its keepalived would keep the old peers: once the remaining nodes 
 they would stop hearing it, and it would take the cluster's addresses beside them. The job says
 whether the node stopped. A node that cannot be reached - usually why it is being removed - is
 removed all the same, and the job says to stop keepalived and HAProxy on it or shut it down before it
-is started again. Added back later, the first release that names it starts both and removes the
-marker. A `keepalived.conf` somebody wrote (one whose first line is not the product's) is left alone,
+is started again. Added back later, the first release that names it is validated and installed
+with both still stopped; HAProxy then starts on it, keepalived last, and the marker goes. A release
+the node refuses, or a HAProxy that does not start on it, leaves the node stopped with its marker. A `keepalived.conf` somebody wrote (one whose first line is not the product's) is left alone,
 as it is by every deploy.
 
 A change cut short - a reboot, a killed process, power - cannot leave the files half changed for

@@ -41,6 +41,7 @@ cp -a "$OFFERED/." "$last"
 #
 HAPROXY_STUB = """#!/bin/sh
 echo check >> "$RECORD"
+[ -e "${FAIL_CHECK:-/nonexistent}" ] && exit 1
 count=$(grep -c '^check$' "$RECORD")
 [ "$count" = "${KILL_AT_CHECK:-0}" ] && kill -KILL "$PPID"
 exit 0
@@ -50,6 +51,7 @@ SYSTEMCTL_STUB = """#!/bin/sh
 echo "systemctl $*" >> "$RECORD"
 case "$1" in
     reload) [ "$2" = haproxy ] && [ -e "$FAIL_RELOAD" ] && exit 1 ;;
+    enable) [ "$4" = haproxy ] && [ -e "${FAIL_START:-/nonexistent}" ] && exit 1 ;;
     is-active|is-enabled) exit 3 ;;
 esac
 exit 0
@@ -74,7 +76,9 @@ exit 64
 """
 
 
-class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
+class Node(unittest.TestCase):
+    """The scratch node and the run of the script on it."""
+
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -117,7 +121,11 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
             .replace(
                 'KEEPALIVED_ADDRESSES="/etc/keepalived/', f'KEEPALIVED_ADDRESSES="{self.root}/'
             )
+            .replace(
+                'LEFT_MARKER="/etc/haprion/left-cluster"', f'LEFT_MARKER="{self.root}/left-cluster"'
+            )
         )
+        self.left = self.root / "left-cluster"
         #
         # The node as 04-node-prepare leaves it: haproxy.cfg and conf.d are
         # links through `current`, which points at the first release.
@@ -146,9 +154,20 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
         (directory / "RELEASE").write_text(release_text(version, commit))
         return directory
 
-    def deploy(self, *, kill_at_check: int = 0, fail_reload: bool = False) -> tuple[int, str]:
+    def deploy(
+        self,
+        *,
+        kill_at_check: int = 0,
+        fail_reload: bool = False,
+        fail_check: bool = False,
+        fail_start: bool = False,
+    ) -> tuple[int, str]:
         self.record.unlink(missing_ok=True)
+        flag = self.root / "flag"
+        flag.touch()
         environment = {
+            "FAIL_CHECK": str(flag) if fail_check else "/nonexistent",
+            "FAIL_START": str(flag) if fail_start else "/nonexistent",
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "OFFERED": str(self.offered),
             "RECORD": str(self.record),
@@ -173,6 +192,8 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
             return 0
         return self.record.read_text().splitlines().count("systemctl reload haproxy")
 
+
+class TheActivationIsRememberedUntilHaproxyReloads(Node):
     def test_a_deploy_reloads_once_and_leaves_no_marker(self) -> None:
         code, output = self.deploy()
 
@@ -227,6 +248,63 @@ class TheActivationIsRememberedUntilHaproxyReloads(unittest.TestCase):
             with self.subTest(content=content):
                 self.pending.write_text(content)
                 self.assertIsNone(self.read_release()["hash"])
+
+
+class ARemovedNodeRejoinsOnTheNewReleaseOnly(Node):
+    """Logic review 26-10-22, L1: a node added again started HAProxy and
+    keepalived on the configuration from before it left, before the new one was
+    validated, and kept them running when it was refused."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.left.touch()
+
+    def calls(self) -> list[str]:
+        return self.record.read_text().splitlines() if self.record.exists() else []
+
+    def test_both_start_after_the_release_is_installed_keepalived_last(self) -> None:
+        code, output = self.deploy()
+
+        self.assertEqual(code, 0, output)
+        calls = self.calls()
+        haproxy = calls.index("systemctl enable --quiet --now haproxy")
+        keepalived = calls.index("systemctl enable --quiet --now keepalived")
+        self.assertEqual(calls[:2], ["check", "check"])
+        self.assertLess(haproxy, keepalived)
+        self.assertNotIn("systemctl reload haproxy", calls)
+        self.assertFalse(self.left.exists())
+        self.assertFalse(self.pending.exists())
+        self.assertEqual(self.read_release()["hash"], "b" * 40)
+
+    def test_a_refused_release_starts_nothing_and_keeps_the_node_out(self) -> None:
+        code, output = self.deploy(fail_check=True)
+
+        self.assertEqual(code, 1, output)
+        self.assertFalse([call for call in self.calls() if call.startswith("systemctl enable")])
+        self.assertTrue(self.left.exists())
+        self.assertEqual(self.haproxy.joinpath("current").resolve(), self.old.resolve())
+
+    def test_haproxy_that_does_not_start_rolls_back_and_keeps_the_node_out(self) -> None:
+        code, output = self.deploy(fail_start=True)
+
+        self.assertEqual(code, 1, output)
+        calls = self.calls()
+        self.assertNotIn("systemctl enable --quiet --now keepalived", calls)
+        self.assertIn("systemctl disable --quiet --now haproxy", calls)
+        self.assertTrue(self.left.exists())
+        self.assertEqual(self.haproxy.joinpath("current").resolve(), self.old.resolve())
+        self.assertFalse(self.pending.exists())
+
+    def test_an_unchanged_release_is_still_installed_and_started(self) -> None:
+        self.write_release(self.root / "same", 7, "a" * 40)
+        self.offered = self.root / "same"
+
+        code, output = self.deploy()
+
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("No change.", output)
+        self.assertIn("systemctl enable --quiet --now keepalived", self.calls())
+        self.assertFalse(self.left.exists())
 
 
 if __name__ == "__main__":

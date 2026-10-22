@@ -3,7 +3,7 @@
 The block is extracted from `install/node/haprion-pull-deploy` verbatim and run
 with `systemctl` and `hostname` replaced by recording stubs, in a scratch root.
 What it proves is the decision: which releases mean "removed", what is stopped,
-and that a node added again comes back. That keepalived then lets the address
+and that a node added again is recognised. That keepalived then lets the address
 go is a fact about a real node, measured on the lab.
 """
 
@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haprion-pull-deploy"
-BLOCK = re.compile(r'^LEFT_MARKER=.*?^    rm -f "\$LEFT_MARKER"\nfi$', re.DOTALL | re.MULTILINE)
+BLOCK = re.compile(r"^LEFT_MARKER=.*?^    REJOINING=1\nfi$", re.DOTALL | re.MULTILINE)
 MARK = re.compile(r"^KEEPALIVED_MARK=.*$", re.MULTILINE)
 
 
@@ -146,7 +146,10 @@ class StepDown(unittest.TestCase):
         self.assertIn("keepalived could not be stopped", said)
         self.assertFalse(self.marker.exists())
 
-    def test_added_again_it_starts_both_and_drops_the_marker(self) -> None:
+    def test_added_again_it_starts_nothing_yet_and_keeps_the_marker(self) -> None:
+        """Started only once the release is installed (logic review 26-10-22, L1;
+        the whole run is in `test_node_config_activation`)."""
+
         self.marker.write_text("")
         self.publish(("node-a", "192.0.2.11"), ("node-b", "192.0.2.12"))
 
@@ -154,11 +157,9 @@ class StepDown(unittest.TestCase):
 
         self.assertEqual(code, 0, said)
         self.assertIn("carried-on", said)
-        self.assertEqual(
-            self.calls(),
-            "systemctl enable --quiet --now haproxy\nsystemctl enable --quiet --now keepalived\n",
-        )
-        self.assertFalse(self.marker.exists())
+        self.assertIn("rejoins once the release is installed", said)
+        self.assertEqual(self.calls(), "")
+        self.assertTrue(self.marker.exists())
 
 
 if __name__ == "__main__":

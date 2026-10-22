@@ -60,6 +60,8 @@ from haprion.proxy_model import NAME
 from haprion.server_state import MAX_ADDRESSES, MAX_SERVERS, STATES, UNBLOCK_OPERATION
 from haprion.version_history import UnfitName, trailer_name
 
+from haprion_ui import execution
+
 # The installation key's identifier as `dns_profile_keys.key_id_of` makes it.
 KEY_ID = re.compile(r"^[0-9a-f]{16}$")
 #
@@ -90,9 +92,10 @@ CERT_TIMEOUT_SECONDS = float(cert_issue.longest_certbot_timeout()) + TIMEOUT_SEC
 #
 # `-n` because a worker has no terminal to answer a password prompt with, and
 # `--` so a helper path could never be read as an option. The paths themselves
-# come from the engine modules rather than being written again here.
+# come from the engine modules rather than being written again here. The
+# worker's check before a run reads the same pair (`execution.sudo_refusal`).
 #
-SUDO_FLAGS = ("-n", "--")
+SUDO_FLAGS = execution.SUDO_FLAGS
 
 #
 # The receiver client runs in this service's own venv, as this account: the

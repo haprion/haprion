@@ -152,6 +152,38 @@ def _environment() -> dict[str, str]:
     return {key: os.environ[key] for key in ENVIRONMENT_KEYS if key in os.environ}
 
 
+SUDO_FLAGS = ("-n", "--")
+SUDO_CHECK_SECONDS = 10
+
+
+def sudo_refusal(argv: Sequence[str]) -> str | None:
+    """Why sudo will not run this command for this account; None when it will, or it is no sudo.
+
+    A refusal is exit 1 with nothing on stdout - the shape of a helper that
+    died after it may have acted, and the job could only be recorded
+    `unknown` when nothing had run (review 2026-10-22, 6-8). `sudo -n -l`
+    asks the same rules for the same command and runs nothing.
+    """
+
+    if len(argv) < 4 or tuple(argv[1:3]) != SUDO_FLAGS:
+        return None
+    try:
+        checked = subprocess.run(  # noqa: S603 - the job's own sudo and helper, listed not run
+            [argv[0], "-n", "-l", *argv[3:]],
+            capture_output=True,
+            text=True,
+            timeout=SUDO_CHECK_SECONDS,
+            check=False,
+            env=_environment(),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if checked.returncode == 0:
+        return None
+    said = checked.stderr.strip().splitlines()
+    return said[-1] if said else f"sudo -l exited {checked.returncode}"
+
+
 def _group_exists(group: int) -> bool:
     """Whether anything is still in the group - not whether we may signal it.
 

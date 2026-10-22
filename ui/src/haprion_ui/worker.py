@@ -26,11 +26,15 @@ import logging
 import os
 import socket
 import sys
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID, uuid5
+
+import psycopg
 
 from haprion_ui import answers, db, diagnostics, execution, operations, recovery, service
 from haprion_ui.config import DEFAULT_CONFIG_PATH
@@ -340,6 +344,18 @@ def _internal_error() -> dict[str, Any]:
     }
 
 
+def _sudo_refused(argv: Sequence[str], refused: str) -> dict[str, Any]:
+    return {
+        "error": {
+            "code": "dependency_unavailable",
+            "message": (
+                f"sudo does not let the worker run {argv[-1]}, so nothing ran: {refused}."
+                " Platform step 07 installs the worker's rules"
+            ),
+        }
+    }
+
+
 def _no_result() -> dict[str, Any]:
     #
     # Nothing at all is a different answer from a wrong one: a helper behind a
@@ -408,7 +424,80 @@ def _sealed_profile(
     )
 
 
-def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
+#
+# How long before the lease runs out, by this worker's clock, a renewal that
+# keeps failing stops the run: two ticks, so the stop is ours and not another
+# worker's claim.
+#
+LEASE_MARGIN_SECONDS = 2 * int(execution.TICK_SECONDS)
+FINISH_RETRY_SECONDS = 5
+
+
+def _broken(connection: Any) -> bool:
+    return (
+        getattr(connection, "broken", False) is True or getattr(connection, "closed", False) is True
+    )
+
+
+def _renewed(connection: Any, job: db.ClaimedJob) -> bool:
+    ours = db.renew_lease(
+        connection,
+        job_id=job.id,
+        claim_token=job.claim_token,
+        lease_seconds=LEASE_SECONDS,
+    )
+    if ours:
+        #
+        # A renewal hidden inside this transaction is invisible to every
+        # other worker, and the role's ten-second idle-in-transaction limit
+        # would then terminate the connection while the CLI is running.
+        # Each tick is therefore its own completed database transaction.
+        #
+        connection.commit()
+    else:
+        connection.rollback()
+    return ours
+
+
+def _finish_on(
+    connection: Any,
+    connect: Callable[[], AbstractContextManager[Any]] | None,
+    renewed_at: Callable[[], float],
+    job: db.ClaimedJob,
+    **fields: Any,
+) -> None:
+    """`_finish`, on a fresh connection when the job's was dropped, while the lease holds.
+
+    Gives up while the lease is still this worker's, so that the job is left
+    `running` for recovery to settle and never written by two workers.
+    """
+
+    while True:
+        try:
+            if connect is not None and _broken(connection):
+                with connect() as fresh:
+                    _finish(fresh, job, **fields)
+            else:
+                _finish(connection, job, **fields)
+            return
+        except psycopg.OperationalError as exc:
+            left = renewed_at() + LEASE_SECONDS - LEASE_MARGIN_SECONDS - time.monotonic()
+            if connect is None or left <= FINISH_RETRY_SECONDS:
+                logger.error(
+                    "job %s: its end could not be written (%s); recovery settles it", job.id, exc
+                )
+                raise
+            logger.warning("job %s: its end could not be written yet (%s)", job.id, exc)
+            time.sleep(FINISH_RETRY_SECONDS)
+
+
+def run_one_job(
+    connection: Any,
+    job: db.ClaimedJob,
+    *,
+    worker: str,
+    connect: Callable[[], AbstractContextManager[Any]] | None = None,
+) -> None:
     """Run a claimed job and record how it ended.
 
     The lease is renewed from inside the run, and the renewal is also the check:
@@ -416,6 +505,12 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
     stopped. Nothing is written in that case - the row belongs to whoever claimed
     it next, and a write here would be the double write the fencing token exists
     to prevent.
+
+    `connect` lends a fresh connection when the job's own was dropped - a
+    PostgreSQL restart under a running deploy. Until then a renewal that fails
+    is not a lease lost: the run goes on while the lease this worker last wrote
+    still holds by its own clock, and the end is written on a fresh connection
+    (review 2026-10-22, 1B-6).
     """
 
     if job.held_decision == "discard":
@@ -501,6 +596,8 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
         )
         return
 
+    renewed_at = time.monotonic()
+
     def lease_is_ours() -> bool:
         """Push the lease forward, and say whether this worker still holds it.
 
@@ -510,23 +607,42 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
         running after somebody else took it.
         """
 
-        ours = db.renew_lease(
-            connection,
-            job_id=job.id,
-            claim_token=job.claim_token,
-            lease_seconds=LEASE_SECONDS,
-        )
+        nonlocal renewed_at
+        try:
+            if connect is not None and _broken(connection):
+                with connect() as fresh:
+                    ours = _renewed(fresh, job)
+            else:
+                ours = _renewed(connection, job)
+        except psycopg.Error as exc:
+            left = renewed_at + LEASE_SECONDS - LEASE_MARGIN_SECONDS - time.monotonic()
+            logger.warning(
+                "job %s: the lease could not be renewed (%s); %d s of it is left",
+                job.id,
+                exc,
+                max(0, int(left)),
+            )
+            with suppress(psycopg.Error):
+                connection.rollback()
+            return left > 0
         if ours:
-            #
-            # A renewal hidden inside this transaction is invisible to every
-            # other worker, and the role's ten-second idle-in-transaction limit
-            # would then terminate the connection while the CLI is running.
-            # Each tick is therefore its own completed database transaction.
-            #
-            connection.commit()
-        else:
-            connection.rollback()
+            renewed_at = time.monotonic()
         return ours
+
+    refused = execution.sudo_refusal(prepared.argv)
+    if refused is not None:
+        logger.error("job %s: sudo will not run %s: %s", job.id, prepared.argv[-1], refused)
+        _finish(
+            connection,
+            job,
+            state="blocked",
+            outcome="blocked",
+            exit_code=None,
+            result=_sudo_refused(prepared.argv, refused),
+            stderr_excerpt=diagnostics.safe_excerpt(refused),
+            worker=worker,
+        )
+        return
 
     logger.info("job %s: %s on %s", job.id, job.operation, job.cluster)
     completed = execution.run(
@@ -580,8 +696,10 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
                 return
             state, outcome, result, exit_code, stderr = followed
 
-    _finish(
+    _finish_on(
         connection,
+        connect,
+        lambda: renewed_at,
         job,
         state=state,
         outcome=outcome,
@@ -625,6 +743,10 @@ def _run_after(
     except (operations.UnknownOperation, operations.BadPayload) as refusal:
         logger.error("job %s: the %s after it was refused: %s", job.id, operation, refusal)
         return "blocked", "blocked", _internal_error(), None, ""
+    refused = execution.sudo_refusal(prepared.argv)
+    if refused is not None:
+        logger.error("job %s: sudo will not run %s: %s", job.id, prepared.argv[-1], refused)
+        return "blocked", "blocked", _sudo_refused(prepared.argv, refused), None, refused
     logger.info("job %s: %s on %s", job.id, operation, job.cluster)
     completed = execution.run(
         prepared.argv,
@@ -839,41 +961,59 @@ def main(argv: list[str] | None = None) -> int:
                 stopping.sleep(IDLE_SECONDS)
                 continue
 
-            with pool.connection() as connection:
+            try:
+                job = _one_turn(pool, worker)
+            except psycopg.OperationalError as exc:
                 #
-                # Before claiming anything new. A job abandoned by a dead worker
-                # is invisible to `claim_job` - it is still `running` - so
-                # nothing would ever pick it up again, and settling it first
-                # means the claim below can find it on this same tick rather
-                # than on the next one.
+                # The database went away between jobs, or under one whose end
+                # could not be written before its lease ran out: said, and the
+                # loop goes on. Exiting handed systemd a worker to kill with a
+                # root helper still at work under it (review 2026-10-22, 1B-6);
+                # a job left `running` is recovery's to settle.
                 #
-                # Below the management-writes check on purpose. With writes off
-                # nothing moves at all, including a job somebody would rather
-                # see moved: that is what makes the flag a rollback and not a
-                # pause, and an abandoned job is still there to adjudicate when
-                # writes come back.
-                #
-                recovery.adjudicate(connection, worker=worker)
-
-                job = db.claim_job(connection, worker_id=worker, lease_seconds=LEASE_SECONDS)
-                #
-                # Committed before the command starts, and not at the end of the
-                # block. The claim holds a row lock until it is committed, and a
-                # deploy that runs inside that transaction would keep the lock -
-                # and its own invisibility - for the whole operation. Every other
-                # worker would see a job that is still pending and nobody
-                # holding it.
-                #
-                connection.commit()
-                if job is not None:
-                    run_one_job(connection, job, worker=worker)
-
+                logger.error("the database did not answer: %s", exc)
+                stopping.sleep(IDLE_SECONDS)
+                continue
             if job is None:
                 _wait_for_work(listener, stopping, IDLE_SECONDS)
     finally:
         listener.close()
         pool.close()
     return 0
+
+
+def _one_turn(pool: Any, worker: str) -> db.ClaimedJob | None:
+    """Settle what dead workers left, claim one job and run it; the job, or None."""
+
+    with pool.connection() as connection:
+        #
+        # Before claiming anything new. A job abandoned by a dead worker
+        # is invisible to `claim_job` - it is still `running` - so
+        # nothing would ever pick it up again, and settling it first
+        # means the claim below can find it on this same tick rather
+        # than on the next one.
+        #
+        # Below the management-writes check on purpose. With writes off
+        # nothing moves at all, including a job somebody would rather
+        # see moved: that is what makes the flag a rollback and not a
+        # pause, and an abandoned job is still there to adjudicate when
+        # writes come back.
+        #
+        recovery.adjudicate(connection, worker=worker)
+
+        job = db.claim_job(connection, worker_id=worker, lease_seconds=LEASE_SECONDS)
+        #
+        # Committed before the command starts, and not at the end of the
+        # block. The claim holds a row lock until it is committed, and a
+        # deploy that runs inside that transaction would keep the lock -
+        # and its own invisibility - for the whole operation. Every other
+        # worker would see a job that is still pending and nobody
+        # holding it.
+        #
+        connection.commit()
+        if job is not None:
+            run_one_job(connection, job, worker=worker, connect=pool.connection)
+    return job
 
 
 def _entry() -> None:  # pragma: no cover - console script shim

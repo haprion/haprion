@@ -9,15 +9,19 @@ than about SQL.
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from collections.abc import Iterator
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar, cast
 from unittest import mock
 from uuid import uuid4
+
+import psycopg
 
 from haprion_ui import db, execution, operations, worker
 
@@ -109,6 +113,11 @@ class WorkerTestCase(unittest.TestCase):
         trail = mock.patch("haprion_ui.db.record_audit_event", side_effect=audit)
         trail.start()
         self.addCleanup(trail.stop)
+
+        # The machine's own sudo is not asked; `ASudoThatRefuses` asks a stand-in.
+        sudo = mock.patch.object(execution, "sudo_refusal", return_value=None)
+        sudo.start()
+        self.addCleanup(sudo.stop)
 
 
 class GoodAnswers(WorkerTestCase):
@@ -366,6 +375,48 @@ class UndeterminedEndings(WorkerTestCase):
         )
 
 
+class ASudoThatRefuses(WorkerTestCase):
+    """Review 2026-10-22, 6-8: a missing rule was recorded as an operation that may have acted."""
+
+    def test_the_job_is_blocked_and_the_helper_never_started(self) -> None:
+        with (
+            mock.patch.object(
+                execution, "sudo_refusal", return_value="sudo: a password is required"
+            ),
+            mock.patch.object(execution, "run") as run,
+        ):
+            worker.run_one_job(self.connection, claimed(), worker=WORKER)
+
+        run.assert_not_called()
+        finished = self.finished[0]
+        self.assertEqual((finished["state"], finished["outcome"]), ("blocked", "blocked"))
+        error = finished["result"]["error"]
+        self.assertEqual(error["code"], "dependency_unavailable")
+        self.assertIn("nothing ran", error["message"])
+        self.assertIn("a password is required", error["message"])
+
+
+class TheSudoCheck(unittest.TestCase):
+    def test_the_check_lists_the_command_and_runs_nothing(self) -> None:
+        argv = ("/usr/bin/sudo", "-n", "--", "/opt/haprion/current/bin/haprion-deploy-helper")
+        refused = subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="sudo: a password is required\n"
+        )
+        with mock.patch("haprion_ui.execution.subprocess.run", return_value=refused) as ran:
+            said = execution.sudo_refusal(argv)
+
+        self.assertEqual(said, "sudo: a password is required")
+        self.assertEqual(
+            ran.call_args.args[0],
+            ["/usr/bin/sudo", "-n", "-l", "/opt/haprion/current/bin/haprion-deploy-helper"],
+        )
+
+    def test_a_command_that_is_not_sudo_is_not_asked_about(self) -> None:
+        with mock.patch("haprion_ui.execution.subprocess.run") as ran:
+            self.assertIsNone(execution.sudo_refusal(("/usr/bin/haprion-cert-receiver-ask",)))
+        ran.assert_not_called()
+
+
 class ThingsThatNeverRan(WorkerTestCase):
     def test_a_refused_payload_blocks_the_job_without_running_it(self) -> None:
         with mock.patch.object(execution, "run") as run:
@@ -512,6 +563,98 @@ class LosingTheLease(WorkerTestCase):
 
         self.connection.rollback.assert_called_once_with()
         self.connection.commit.assert_not_called()
+
+
+class ADatabaseThatDropsUnderARun(WorkerTestCase):
+    """Review 2026-10-22, 1B-6: one failed renewal stopped the operation and the worker."""
+
+    def test_a_failed_renewal_is_not_a_lost_lease_while_the_lease_holds(self) -> None:
+        job = claimed()
+
+        def run(*_: object, still_ours: Any, **__: object) -> execution.Completed:
+            self.assertTrue(still_ours())
+            return completed(stdout=answer(job))
+
+        with (
+            mock.patch.object(execution, "run", side_effect=run),
+            mock.patch.object(
+                db, "renew_lease", side_effect=psycopg.OperationalError("server closed")
+            ),
+        ):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.assertEqual(self.finished[0]["state"], "done")
+
+    def test_renewals_that_keep_failing_stop_the_run_before_the_lease_runs_out(self) -> None:
+        clock = iter((1000.0, 1000.0 + worker.LEASE_SECONDS - worker.LEASE_MARGIN_SECONDS))
+
+        def run(*_: object, still_ours: Any, **__: object) -> execution.Completed:
+            self.assertFalse(still_ours())
+            return completed(ending="lease_lost")
+
+        with (
+            mock.patch("haprion_ui.worker.time.monotonic", side_effect=lambda: next(clock)),
+            mock.patch.object(execution, "run", side_effect=run),
+            mock.patch.object(
+                db, "renew_lease", side_effect=psycopg.OperationalError("server closed")
+            ),
+        ):
+            worker.run_one_job(self.connection, claimed(), worker=WORKER)
+
+        self.assertEqual(self.finished, [])
+
+    def test_a_dropped_connection_is_renewed_and_finished_on_a_fresh_one(self) -> None:
+        job = claimed()
+        self.connection.broken = True
+        fresh = mock.MagicMock()
+        renewed_on: list[object] = []
+
+        def renew(connection: object, **_: object) -> bool:
+            renewed_on.append(connection)
+            return True
+
+        def run(*_: object, still_ours: Any, **__: object) -> execution.Completed:
+            self.assertTrue(still_ours())
+            return completed(stdout=answer(job))
+
+        with (
+            mock.patch.object(execution, "run", side_effect=run),
+            mock.patch.object(db, "renew_lease", side_effect=renew),
+        ):
+            worker.run_one_job(
+                self.connection, job, worker=WORKER, connect=lambda: nullcontext(fresh)
+            )
+
+        self.assertEqual(renewed_on, [fresh])
+        self.assertEqual(self.finished[0]["state"], "done")
+        fresh.commit.assert_called()
+        self.connection.commit.assert_not_called()
+
+    def test_an_end_that_cannot_be_written_yet_is_tried_again_while_the_lease_holds(
+        self,
+    ) -> None:
+        job = claimed()
+        tries: list[str] = []
+
+        def finish(_c: object, **fields: Any) -> bool:
+            tries.append(fields["state"])
+            if len(tries) == 1:
+                raise psycopg.OperationalError("the database system is starting up")
+            self.finished.append(fields)
+            return True
+
+        with (
+            mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))),
+            mock.patch.object(db, "finish_job", side_effect=finish),
+            mock.patch("haprion_ui.worker.time.sleep") as slept,
+        ):
+            worker.run_one_job(
+                self.connection, job, worker=WORKER, connect=lambda: nullcontext(self.connection)
+            )
+
+        self.assertEqual(tries, ["done", "done"])
+        slept.assert_called_once_with(worker.FINISH_RETRY_SECONDS)
+        self.assertEqual(self.finished[0]["state"], "done")
 
 
 class StoredDiagnosticsAreBounded(WorkerTestCase):

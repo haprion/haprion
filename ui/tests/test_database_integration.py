@@ -788,12 +788,14 @@ class ARealDatabase(unittest.TestCase):
         such column fails this test and not a person's save.
         """
 
-        source = (Path(__file__).resolve().parents[1] / "src/haprion_ui/db.py").read_text()
+        package = Path(__file__).resolve().parents[1] / "src/haprion_ui/db"
         statements = [
             node.value
-            for node in ast.walk(ast.parse(source))
+            for module in sorted(package.glob("*.py"))
+            for node in ast.walk(ast.parse(module.read_text()))
             if isinstance(node, ast.Constant) and isinstance(node.value, str)
         ]
+        self.assertGreater(len(statements), 500)
         written: set[tuple[str, str, str]] = set()
         for statement in statements:
             text = " ".join(statement.split())

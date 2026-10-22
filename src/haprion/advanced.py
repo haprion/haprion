@@ -34,7 +34,9 @@ validation, is where those cases are caught.
 
 from __future__ import annotations
 
+import posixpath
 import re
+import string
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -533,13 +535,20 @@ def normalise(text: str) -> str:
     return "\n".join(lines) + "\n" if lines else ""
 
 
+_ESCAPES = {"n": "\n", "r": "\r", "t": "\t"}
+
+
 def words(line: str) -> list[str]:
     """A line split as HAProxy splits it (configuration.txt 2.2).
 
     Quotes group, a backslash escapes outside single quotes, and an unquoted
-    `#` ends the line. Only the words are needed - which keyword this is, and
-    whether a parameter such as `source` or `track-sc0` occurs - so variables
-    are left as written.
+    `#` ends the line. `\\n`, `\\r`, `\\t` and `\\xNN` are the characters they
+    stand for, as HAProxy reads them: taken as a backslash and a letter, the
+    word `\\x67lobal` was `x67lobal` here and the section `global` on the node,
+    and every refusal below could be spelled past (code review 2026-10-22,
+    5-1). Only the words are needed - which keyword this is, and whether a
+    parameter such as `source` or `track-sc0` occurs - so variables are left as
+    written.
     """
 
     result: list[str] = []
@@ -556,7 +565,15 @@ def words(line: str) -> list[str]:
                 current.append(char)
         elif char == "\\" and index + 1 < len(line):
             index += 1
-            current.append(line[index])
+            escaped = line[index]
+            if escaped == "x":
+                digits = line[index + 1 : index + 3]
+                if len(digits) != 2 or any(digit not in string.hexdigits for digit in digits):
+                    raise TextError("\\x takes two hexadecimal digits")
+                current.append(chr(int(digits, 16)))
+                index += 2
+            else:
+                current.append(_ESCAPES.get(escaped, escaped))
             started = True
         elif quote == '"':
             if char == '"':
@@ -707,6 +724,42 @@ def _server_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
     return ""
 
 
+#
+# The files a line may make HAProxy serve: the error pages the haproxy package
+# installs, and nothing else. HAProxy reads such a file as root when it loads
+# the configuration and hands it to whoever asks, and the candidate's sandbox
+# checks the line against a placeholder - so `return ... file` naming another
+# object's certificate served its key (code review 2026-10-22, 5-2).
+#
+ERROR_PAGES = "/etc/haproxy/errors/"
+#
+# Where a file follows: `errorfile <code> <file>` as a keyword, and the
+# payload words of `return` and `http-error`.
+#
+_FILE_WORDS = frozenset({"file", "lf-file", "errorfile"})
+_FILE_KEYWORDS = frozenset(
+    {("http-request",), ("http-response",), ("http-after-response",), ("http-error",)}
+)
+
+
+def _file_problem(tokens: Sequence[str], keyword: tuple[str, ...] | None) -> str:
+    named: list[str] = []
+    if tokens and tokens[0] == "errorfile":
+        named.extend(tokens[2:3])
+    elif keyword is not None and keyword[:1] in _FILE_KEYWORDS:
+        named.extend(
+            tokens[index + 1] for index, word in enumerate(tokens[:-1]) if word in _FILE_WORDS
+        )
+    for path in named:
+        if (
+            not path.startswith(ERROR_PAGES)
+            or ".." in path.split("/")
+            or posixpath.normpath(path) != path
+        ):
+            return f"a file the text names must be one of the error pages under {ERROR_PAGES}"
+    return ""
+
+
 def _server_fact(tokens: Sequence[str]) -> tuple[str, str] | None:
     if len(tokens) < 3 or tokens[0] != "server":
         return None
@@ -831,7 +884,11 @@ def place(
             kind, _, section_name = current[1].partition(" ")
             where = f"{kind} {section_name}"
             if kind != "backend":
-                section_lines.append(record(PLACED, where))
+                problem = _file_problem(tokens, None)
+                if problem:
+                    record(REFUSED_FATE, where, problem)
+                else:
+                    section_lines.append(record(PLACED, where))
                 continue
             keyword, found = keyword_of(tokens)
             problem = ""
@@ -849,6 +906,7 @@ def place(
                 problem = (
                     _server_problem(tokens, keyword)
                     or _waf_problem(tokens, keyword)
+                    or _file_problem(tokens, keyword)
                     or _counter_problem(
                         tokens,
                         keyword,
@@ -891,6 +949,7 @@ def place(
         problem = (
             _server_problem(tokens, keyword)
             or _waf_problem(tokens, keyword)
+            or _file_problem(tokens, keyword)
             or _counter_problem(
                 tokens, keyword, name, rate_limit, own_table=False, dynamic_block=dynamic_block
             )

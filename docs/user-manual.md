@@ -874,7 +874,11 @@ prints the same answer as the dialog's *Check*):
   blocking is on; a `stick-table` on the object's own lines (its
   pool already carries the rate limit's). The text counts on `sc2`, with tables
   in a backend of its own: `track-sc2 src table <object>-logins`. Reading `sc0`
-  and `sc1` is allowed.
+  and `sc1` is allowed. A file HAProxy is told to serve - `errorfile`, and
+  `file`, `lf-file` or `errorfile` in a `return` or `http-error` - must be one of
+  the packaged error pages under `/etc/haproxy/errors/`; HAProxy reads it as root
+  and hands it to whoever asks, so any other path is refused. Escapes count as
+  HAProxy reads them: `\x67lobal` is `global`.
 - `mode` is skipped (the form sets the protocol), and so are lines that set what
   the form owns for the pool — servers, balancing, health checks, cookie, and
   the connect, server, queue, tunnel and check timeouts — while the form writes

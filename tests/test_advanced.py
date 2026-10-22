@@ -76,6 +76,69 @@ class LinesAreSplitTheWayHAProxySplitsThem(unittest.TestCase):
         self.assertEqual(fate("http-request set-header X 'track-sc0'"), PLACED)
 
 
+class TheEscapesAreReadAsHAProxyReadsThem(unittest.TestCase):
+    """Code review 26-10-22, 5-1 (B349): HAProxy decodes `\\xNN`, `\\n`, `\\r` and `\\t`
+    outside single quotes. Read as a backslash and a letter, `\\x67lobal` was the word
+    `x67lobal` here and the section `global` on the node - with `insecure-fork-wanted`
+    and an `external-check command` under it, a command on every node."""
+
+    def test_the_escapes_are_decoded_outside_single_quotes(self) -> None:
+        self.assertEqual(advanced.words(r"\x67lobal"), ["global"])
+        self.assertEqual(advanced.words(r'x "a\x41\tb"'), ["x", "aA\tb"])
+        self.assertEqual(advanced.words(r"x a\nb\rc"), ["x", "a\nb\rc"])
+        self.assertEqual(advanced.words(r"x '\x67'"), ["x", r"\x67"])
+
+    def test_a_hex_escape_that_is_not_two_digits_is_refused(self) -> None:
+        self.assertEqual(fate(r"http-request set-header X a\xZZ"), REFUSED_FATE)
+
+    def test_a_section_spelled_with_an_escape_is_the_section(self) -> None:
+        text = "cache shop-c\n    \\x67lobal\n    insecure-fork-wanted\n    external-check\n"
+        self.assertEqual(
+            [entry[1] for entry in fates(text)], [PLACED, REFUSED_FATE, REFUSED_FATE, REFUSED_FATE]
+        )
+
+    def test_a_parameter_spelled_with_an_escape_is_the_parameter(self) -> None:
+        for line in (
+            r"http-request \x74rack-sc0 src table shop-t",
+            r"http-request set-var(txn\x2ecoraza.action) str(allow)",
+            r"\x73ource 192.0.2.1",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+
+
+class AFileTheTextNamesIsAnErrorPage(unittest.TestCase):
+    """Code review 26-10-22, 5-2 (B349): HAProxy reads a file it is told to serve as
+    root, at load, and the sandbox checked it against a placeholder - so a `return
+    file` naming another object's key served the key to anyone who asked."""
+
+    def test_return_and_error_files_outside_the_error_pages_are_refused(self) -> None:
+        for line in (
+            "http-request return status 200 file /etc/haproxy/certs/other.pem if { path /x }",
+            "http-request return status 200 lf-file /etc/shadow",
+            "http-response return status 503 errorfile /etc/haproxy/certs/other.pem",
+            "http-error status 503 file /etc/haproxy/errors/../certs/other.pem",
+            "errorfile 503 /etc/haproxy/maps/../certs/other.pem",
+            "errorfile 503 errors/503.http",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+
+    def test_the_packaged_error_pages_may_be_named(self) -> None:
+        self.assertEqual(fate("errorfile 503 /etc/haproxy/errors/503.http"), PLACED)
+        self.assertEqual(
+            fate("http-request return status 503 file /etc/haproxy/errors/503.http"), PLACED
+        )
+
+    def test_the_rule_holds_in_the_sections_the_text_adds(self) -> None:
+        for text in (
+            "http-errors shop-e\n    errorfile 503 /etc/haproxy/certs/other.pem\n",
+            "backend shop-b\n    http-request return status 200 file /etc/shadow\n",
+        ):
+            with self.subTest(text):
+                self.assertEqual(fates(text)[1][1], REFUSED_FATE)
+
+
 class TheObjectSRowsLandInItsOwnSections(unittest.TestCase):
     def test_http_rows_go_to_every_pool(self) -> None:
         self.assertEqual(fates("http-request deny\n"), [(1, PLACED, "every pool")])

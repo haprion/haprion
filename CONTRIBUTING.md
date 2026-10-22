@@ -35,5 +35,44 @@ yourself first: [Development](README.md#development) sets it up with the reposit
 - Use made-up values in code, tests and examples, never real ones.
 - Write commit messages in English, short, in the imperative: *Add …*, *Keep …*.
 
+## Releasing
+
+The packages install independently - the CLI engine, the web platform, certbot and the node
+scripts among them - and a release ships the ones a change touched. Which those are has a
+measurable answer:
+
+```bash
+git show --stat <commit>
+```
+
+| What the commit touched | What to release |
+|---|---|
+| `src/haprion/` | the `haprion-cli` package and the `haprion-ui` package: the interface runs its own copy of the engine's modules, and reaches the helpers through the CLI's |
+| `tools/` | whichever package that tool builds or installs |
+| `ui/`, `install/` apart from the node's | the `haprion-ui` package; installing it runs `update-platform-release` |
+| `certbot/` | the `haprion-certbot` package; installing it runs platform step 14 |
+| `install/node/`, node scripts | the `haprion-node` package on every node |
+
+**The CLI package goes first when both move.** The platform check compares the installed CLI before
+it activates a candidate, so the interface released first stops its own update after it has
+already prepared and migrated.
+
+**The engine's API level is the contract between them.** `src/haprion/compatibility.json` holds
+it, with a digest of `schemas/v1`; a schema change fails the gate until the level is raised. The
+interface requires the level it was built with (`ui/src/haprion_ui/compatibility.json`),
+`haprion-cli` provides `haprion-engine` at its level, and `haprion-ui` depends on
+`haprion-engine (>=` that level`)`, so apt will not put an older engine under it.
+
+**Prove it afterwards.** Each install step proves its own result; the whole-installation check
+answers whether the independently installed parts still work together:
+
+```bash
+sudo /usr/share/haprion-ui/install/platform/check-compatibility
+```
+
+**Every release is a commit.** Each package is built from one committed source tree and named
+after it; a release built from an edited tree is one nobody can reproduce. Run the full gate before
+building - a release is not the place to find out that a test fails.
+
 Haprion is licensed under the GNU Affero General Public License, version 3 or later; a contribution
 is made under the same licence.

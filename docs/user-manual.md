@@ -62,7 +62,7 @@ only works with the names used below, that is a bug in the software, not in this
   - [Automating with Ansible](#automating-with-ansible)
 - [Maintenance](#maintenance)
   - [Keeping HAProxy current](#keeping-haproxy-current)
-  - [Releasing a change](#releasing-a-change)
+  - [Updating Haprion](#updating-haprion)
   - [CLI rollback](#cli-rollback)
   - [Rolling a release back](#rolling-a-release-back)
 - [What it does not do](#what-it-does-not-do)
@@ -3385,63 +3385,51 @@ A package one node does not have is not compared, and the kernel is not either.
 Package sources and pinning are described under
 [Where the package comes from](#where-the-package-comes-from).
 
-### Releasing a change
+### Updating Haprion
 
-Four things install independently — the CLI engine, the web platform, certbot and
-the node scripts — and a release ships only the ones a change actually touched.
-Which of them a change touched is a question with a measurable answer, so
-measure it rather than deciding by feel:
+A newer release shows in the header, beside the version, while the update check is on. Updating is
+`apt` on each machine: the manager first, then the nodes.
+
+**The manager.**
 
 ```bash
-git show --stat <commit>
+sudo apt update && sudo apt upgrade
 ```
 
-| What the commit touched | What to release |
-|---|---|
-| `src/haprion/`, `tools/` | the `haprion-cli` package — [Part 3](#part-3--the-versioned-cli-release) |
-| `ui/`, `install/` apart from the node's | the `haprion-ui` package; installing it runs `update-platform-release` |
-| `certbot/` | the `haprion-certbot` package; installing it runs platform step 14 |
-| `install/node/`, node scripts | the `haprion-node` package on every node, per [Part 2](#part-2--the-nodes) |
-| more than one of those | **the CLI package first**, then the platform, then the nodes |
+The web interface's package updates the running platform itself. It checks the new release against
+everything installed, takes a dump of the database before a schema change, migrates, installs the
+platform's service files again, and switches to the new release. A job that is running is finished
+first, and new jobs wait; the pages stop answering for a few seconds while the services restart.
+When it is done the header shows the new version.
 
-**The CLI package goes first when both move**, and the order is not a preference.
-The platform check deliberately compares the independently installed CLI before
-it activates a UI candidate, so releasing the UI first stops its own update —
-correctly, but after it has already prepared and migrated.
+If the update fails, it says why in its own output, and nothing has changed for the users: the
+previous release is the one running, with the files it ran with. Correct what the output names and
+run the update again with `sudo dpkg --configure -a`. A newer certbot that fails its trial renewal
+is not made current; the update says so, the previous certbot keeps renewing, and the update goes
+on.
 
-A CLI-only change does not need a UI release, and forcing one would be the
-mistake the compatibility check was built to avoid. It compares engine API
-levels and helper names, never release hashes, precisely so an engine
-correction does not drag an unrelated UI rollout along with it. What decides
-whether the running UI still fits the new engine is:
+**The nodes**, one at a time, the standby first - the node that does not hold the virtual address,
+as the dashboard shows it:
 
-- `src/haprion/compatibility.json` — the engine API the CLI release carries. A
-  UI release declares the minimum it needs.
-- the console scripts in `pyproject.toml` — the check requires every helper the
-  UI names by name.
+```bash
+sudo apt update && sudo apt upgrade
+```
 
-Unchanged in both means the running UI keeps working, whatever the new release
-is called. Changed in either means the UI release moves with it, in that order.
-
-**Prove it afterwards rather than assuming it.** The install steps each prove
-their own result; the whole-installation check answers the different question of
-whether the independently installed pieces still work together:
+An upgrade can restart HAProxy and the WAF engine on that node, which is why the active node goes
+last. Until
+every node has the release's node package, the manager's check says which are behind:
 
 ```bash
 sudo /usr/share/haprion-ui/install/platform/check-compatibility
 ```
 
-Run it after any of the three.
-
-**Every release is a commit.** Each package is built from one committed source
-tree and named after it, because a release built from an edited tree is one
-nobody can reproduce, and the moment it runs, "what is in it" has no answer. Run
-the full repository gate before building; a release is not the place to find
-out that a test fails.
+It reads the whole installation - the CLI, the platform, the database, the nodes - and ends with
+`COMPATIBLE` when every part fits.
 
 ### CLI rollback
 
-Install the retained previous package, which lets apt put the older version in place:
+Install the retained previous package, which lets apt put the older version in place. When the web interface needs a newer engine than that package provides, apt offers to
+remove the interface instead; answer no, and roll the interface back first.
 
 ```bash
 sudo apt-get install --allow-downgrades /path/to/haprion-cli_<previous version>_all.deb
@@ -4442,7 +4430,9 @@ distribution's own - and the DNS plugins the distribution packages are a dozen. 
 offers many more, so it carries its own certbot: [`../certbot/pyproject.toml`](../certbot/pyproject.toml)
 names certbot and every DNS plugin the web interface can offer, and `certbot/uv.lock` pins the
 whole set, with hashes, as resolved together. What the interface can offer is what that lock
-resolved. Nothing installs a plugin at runtime.
+resolved. Nothing installs a plugin at runtime. A few plugins are published only as source; they
+are built with the setuptools the lock holds, installed first from its hashed wheel, so nothing in
+the build is fetched unlocked.
 
 The `haprion-certbot` package carries that environment, built from the lock for one distribution
 and unpacked under `/opt/haprion-certbot/releases/`. Platform step 14 - which `haprion-setup` runs -
@@ -4488,8 +4478,11 @@ The runtime policy names the release's certbot - `acme.certbot` in [ACME configu
 by step 2 - so the issue helper runs it too. Upgrading is a newer `haprion-certbot` package, a few
 times a year: it is built from a bumped `certbot/uv.lock` (`uv lock --upgrade` in `certbot/`), and
 installing it runs step 14 with the same gate. A plugin that no longer resolves against the newer certbot falls out of the lock, and so out
-of what the interface offers; a release that fails the dry run is never made current. Rolling back
-by hand is one symlink, which the step prints, followed by the same dry run.
+of what the interface offers; a release that fails the dry run is never made current. The
+installation itself does not fail on it: the package says why, the previous environment keeps
+renewing, and `sudo /usr/share/haprion-ui/install/platform/14-platform-certbot -` tries again once
+the cause - often the staging server or the network - is fixed. Rolling back by hand is one
+symlink, which the step prints, followed by the same dry run.
 
 #### The DNS profile key pair
 

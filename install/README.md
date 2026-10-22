@@ -11,10 +11,8 @@ with a key that only works for that, and prepares it itself.
 [`../docs/user-manual.md`](../docs/user-manual.md) explains *why* each step
 looks the way it does. This file is what you follow.
 
-**This is a first installation.** Shipping a later change is a different
-question — which of the CLI engine, the web platform and the node scripts it
-touches, and in what order — and it is answered once in
-[Releasing a change](../docs/user-manual.md#releasing-a-change).
+**This is a first installation.** Updating a running one is `apt` on each
+machine, the manager first: [Updating Haprion](../docs/user-manual.md#updating-haprion).
 
 ## Before you start
 

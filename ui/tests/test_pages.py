@@ -12,7 +12,7 @@ from tests.test_login import configuration
 #
 # Outside the pages: what a probe, the browser's assets and the framework ask.
 #
-UNGUARDED = {"/healthz", "/static", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+UNGUARDED = {"/healthz", "/static"}
 
 
 def routes(found: list[Any], guarded: bool, out: list[tuple[str, bool]]) -> None:

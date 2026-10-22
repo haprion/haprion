@@ -354,6 +354,17 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
 
         self.assertEqual(busy, {"alpha": "Deploying"})
 
+    def test_a_job_held_for_an_answer_says_held(self) -> None:
+        """Review 26-10-22, 1B-4: held after a restart, it waits for Run or Discard and
+        was drawn as "Deploying" with a spinner until somebody answered."""
+
+        held = replace(
+            self.job("alpha", "deploy", "pending"), held_since=datetime(2026, 10, 22, tzinfo=UTC)
+        )
+        self.assertEqual(jobs.in_flight([held]), {"alpha": jobs.HELD})
+        answered = replace(held, held_decision="run", held_decided_by="admin")
+        self.assertEqual(jobs.in_flight([answered]), {"alpha": "Deploying"})
+
     def test_a_queued_job_counts_as_busy_too(self) -> None:
         busy = jobs.in_flight([self.job("alpha", "cert_deploy", "pending")])
 

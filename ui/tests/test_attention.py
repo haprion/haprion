@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haprion_ui import attention, auth, health
+from haprion_ui import attention, auth, dashboard, health
 from haprion_ui.db import StatusAccess
 from tests.test_job_page import job
 from tests.test_login import LoginTestCase, configuration
@@ -28,6 +28,9 @@ def cluster(name: str = "alpha", **fields: Any) -> Any:
         "age_label": "15 s ago",
         "observed_at": NOW - timedelta(seconds=15),
         "nodes": (),
+        "label": "Healthy",
+        "tone": "healthy",
+        "detail": "",
     }
     values.update(fields)
     return SimpleNamespace(**values)
@@ -134,6 +137,66 @@ class EachKindComesAndGoes(unittest.TestCase):
         self.assertEqual([item.kind for item in built.items], ["job", "waf"])
         self.assertEqual(built.counts(), {"critical": 1, "warning": 1})
         self.assertTrue(built.fresh)
+
+
+class EveryClusterTheDashboardPaintsIsListed(unittest.TestCase):
+    """Review 26-10-22, 2-1 and 8-2: the list is the installation's one alarm outward
+    (`/status/attention.json`), and a VIP in split brain or a reading that failed
+    was red on the card and absent from it. Built through the dashboard's own code,
+    so a new red state without a row is a failing test rather than a quiet monitor.
+    """
+
+    def board(self) -> Any:
+        from tests.test_dashboard import reading as status_reading
+
+        healthy = status_reading("done-single-owner.json")
+
+        def named(name: str, base: Any = healthy, **result: Any) -> Any:
+            return replace(base, cluster=name, result={**base.result, **result})
+
+        split = named("split", summary={**healthy.result["summary"], "vip_state": "split_brain"})
+        orphaned = named("orphaned", summary={**healthy.result["summary"], "vip_state": "no_owner"})
+        # As the poller writes a failed collection: no result, the error beside it.
+        failed = replace(healthy, cluster="failed", result={}, poll_error="sudo refused")
+        empty = named("empty", nodes=[])
+        down = replace(status_reading("partial-unreachable.json"), cluster="down")
+        readings = (named("fine"), split, orphaned, failed, empty, down)
+        return dashboard.build_dashboard(
+            [reading.cluster for reading in readings],
+            readings,
+            now=status_reading("done-single-owner.json").observed_at,
+            stale_after=timedelta(seconds=120),
+        )
+
+    def test_every_red_or_amber_cluster_has_a_row(self) -> None:
+        board = self.board()
+        items = attention.from_dashboard(
+            board.clusters,
+            drift_label=dashboard.VERSION_DRIFT,
+            cluster_faults=dashboard.CLUSTER_FAULTS,
+        )
+        listed = {item.cluster for item in items}
+        painted = {
+            view.cluster
+            for view in board.clusters
+            if view.tone in ("critical", "warning") and not view.behind
+        }
+
+        self.assertEqual(
+            painted,
+            {"split", "orphaned", "failed", "empty", "down"},
+            [v.label for v in board.clusters],
+        )
+        self.assertEqual(painted - listed, set())
+        faults = {item.cluster: item.message for item in items if item.kind == "cluster"}
+        self.assertTrue(faults["split"].startswith("VIP fault"))
+        self.assertTrue(faults["failed"].startswith("Collection unavailable"))
+
+    def test_the_nodes_card_counts_a_cluster_it_cannot_read(self) -> None:
+        board = self.board()
+
+        self.assertEqual(board.unread_clusters, 2)
+        self.assertEqual(board.node_tone, "critical")
 
 
 class TheLogsComeOnlyWhenSomebodyIsWanted(unittest.TestCase):

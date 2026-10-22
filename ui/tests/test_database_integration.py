@@ -3153,6 +3153,24 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
         self.assertEqual([job.id for job in found], [applied.id])
         self.assertEqual(db.operation_jobs(self.connection, "ndes_profile_apply"), [])
 
+    def test_a_cluster_s_job_in_flight_is_read_behind_any_number_of_newer_jobs(self) -> None:
+        """Review 2026-10-22, 1B-4: a pending deploy older than the newest twenty was not
+        in the list every page reads the busy badge from - the cluster looked idle and
+        its buttons were refused by the queue."""
+
+        from haprion_ui import jobs
+
+        deploying = self.queue("deploy", "alpha")
+        for index in range(25):
+            self.finish(self.queue("cert_publish", None, certificates=[f"cert-{index}.example"]))
+
+        recent = db.recent_jobs(self.connection)
+
+        self.assertIn(deploying.id, [job.id for job in recent])
+        self.assertEqual(len(recent), 21)
+        self.assertIn("alpha", jobs.in_flight(recent))
+        self.assertEqual([job.id for job in db.recent_jobs(self.connection, cluster="beta")], [])
+
     def test_a_profile_s_evidence_is_found_behind_any_number_of_other_profiles_jobs(
         self,
     ) -> None:

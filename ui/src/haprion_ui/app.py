@@ -105,7 +105,13 @@ def create_app(config: Config | None = None) -> FastAPI:
         finally:
             connections.close()
 
-    app = FastAPI(title="Haprion", lifespan=lifespan, docs_url=None, redoc_url=None)
+    #
+    # No schema either: `/openapi.json` listed every route and form field to
+    # anyone, signed in or not (review 2026-10-22, 4-6). Nothing reads it.
+    #
+    app = FastAPI(
+        title="Haprion", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+    )
     app.state.config = settings
     app.mount("/static", StaticFiles(directory=str(STATIC_DIRECTORY)), name="static")
 

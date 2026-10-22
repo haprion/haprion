@@ -73,6 +73,7 @@ from haprion_ui.views import (
     _return_path,
     client_address,
     current_session,
+    forbidden_page,
     listed_clusters,
     read_manager_certificates,
     read_source,
@@ -321,7 +322,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         with request.app.state.pool.connection() as connection:
             if db.hide_getting_started(connection, actor=gate.username):
                 db.record_audit_event(
@@ -341,7 +342,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         with request.app.state.pool.connection() as connection:
             if db.show_getting_started(connection):
                 db.record_audit_event(
@@ -444,7 +445,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         #
         # Only a row the list shows now: a key made up, or one that has gone
         # since the page was drawn, is acknowledged by nothing.
@@ -485,6 +486,14 @@ def build_router(config: Config) -> APIRouter:
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
+        #
+        # The difference is the objects' documents and the generated
+        # configuration: every backend address, and whatever an advanced text
+        # wrote, passwords included. The object page is an administrator's for
+        # that reason (B68, B221), and so is this (review 2026-10-22, 5-3).
+        #
+        if session.role != "admin":
+            return forbidden_page(request, config)
         clusters, history_rows = read_source(request, config, HISTORY_SOURCE)
         if cluster not in clusters:
             return HTMLResponse("Not found", status_code=404)
@@ -513,6 +522,7 @@ def build_router(config: Config) -> APIRouter:
             {
                 "username": session.username,
                 "role": session.role,
+                "management_writes": config.management_writes,
                 "csrf_token": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
                 "section": "history",
                 "cluster": shown[0],
@@ -601,7 +611,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
         deploy = then == "deploy"
@@ -746,7 +756,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if decision not in {"run", "discard"}:
             return PlainTextResponse("Refused", status_code=400)
         with request.app.state.pool.connection() as connection:
@@ -1114,9 +1124,9 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         #
         # A switched-off feature has no operations either (B193), for the
         # reason `management_writes` gives above: no such endpoint.

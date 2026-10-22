@@ -56,6 +56,7 @@ from haprion_ui.views import (
     _registry_overview,
     _zip_response,
     current_session,
+    forbidden_page,
     read_certificate_takeouts,
     read_manager_certificates,
     read_source,
@@ -255,9 +256,9 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -403,7 +404,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         chosen = tuple(certificate)
         row = _registry_views(request, config).get(chosen[0]) if len(chosen) == 1 else None
         problem = ""
@@ -520,7 +521,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         row = _registry_views(request, config).get(certificate_id)
         if row is None or not row.exportable or not row.fullchain_pem or not row.fingerprint:
             return _refusal_page(
@@ -607,9 +608,9 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -653,7 +654,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token) or session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -782,7 +783,7 @@ def build_router(config: Config) -> APIRouter:
         if not config.management_writes:
             return PlainTextResponse("Not found", status_code=404)
         if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         choices = _certificate_choices(request, config)
         with request.app.state.pool.connection() as connection:
@@ -832,7 +833,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token) or session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -893,7 +894,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token) or session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -1061,7 +1062,7 @@ def build_router(config: Config) -> APIRouter:
             #
             return PlainTextResponse("Not found", status_code=404)
         if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         choices = _certificate_choices(request, config)
         with request.app.state.pool.connection() as connection:
@@ -1198,7 +1199,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         return _certificate_renew_page(request, gate, chosen=tuple(certificate))
 
     @router.post("/certificates/renew/confirm", response_class=HTMLResponse)
@@ -1215,7 +1216,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -1334,7 +1335,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         return _certificate_retarget_page(request, gate, action, chosen=tuple(certificate))
 
     @router.post("/certificates/targets/{action}/confirm", response_class=HTMLResponse)
@@ -1363,7 +1364,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -1615,7 +1616,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -1653,7 +1654,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -1738,7 +1739,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -1773,7 +1774,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -1805,7 +1806,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         return _certificate_delete_page(request, gate, chosen=tuple(certificate))
 
     @router.post("/certificates/delete/confirm", response_class=HTMLResponse)
@@ -1829,7 +1830,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:

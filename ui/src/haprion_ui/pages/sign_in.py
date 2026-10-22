@@ -38,6 +38,7 @@ from haprion_ui.views import (
     _start_oidc,
     client_address,
     current_session,
+    forbidden_page,
 )
 
 
@@ -245,7 +246,7 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
 
         #
         # The new password is judged before the current one is tried, so a

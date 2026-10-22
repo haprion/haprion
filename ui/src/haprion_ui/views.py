@@ -815,7 +815,7 @@ def _admin_write_gate(config: Config, request: Request) -> AuthenticatedSession 
     if not config.management_writes:
         return PlainTextResponse("Not found", status_code=404)
     if session.role != "admin":
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     return session
 
 
@@ -1245,7 +1245,7 @@ def _editor_page(
         #
         return PlainTextResponse("Not found", status_code=404)
     if session.role != "admin":
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
     state = _editor_state(request, config, cluster)
 
@@ -1479,10 +1479,10 @@ def _lookup_again(
     if not config.management_writes:
         return PlainTextResponse("Not found", status_code=404)
     if session.role != "admin":
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
     if not auth.csrf_token_is_valid(token, csrf_token):
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     state = _editor_state(request, config, cluster)
     stored = next((view for view in state.stored if view.name == name), None)
     if stored is None:
@@ -1673,9 +1673,9 @@ def _editor_submit(
         return PlainTextResponse("Not found", status_code=404)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
     if not auth.csrf_token_is_valid(token, form.csrf_token):
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     if session.role != "admin":
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
 
     if is_digits(form.drop_exception):
         form = form.model_copy(
@@ -2483,7 +2483,7 @@ def _removal_submit(
     if not config.management_writes:
         return PlainTextResponse("Not found", status_code=404)
     if session.role != "admin":
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
     if not token or not auth.csrf_token_is_valid(token, csrf_token):
         return _refusal_page(
@@ -3165,6 +3165,38 @@ def _zip_response(files: Sequence[tuple[str, bytes, bool]], filename: str) -> Re
     )
 
 
+def forbidden_page(request: Request, config: Config) -> Response:
+    """What this account's role may not open or do, as a page with the menu (review 26-10-22, 2-8).
+
+    A page for what a browser sends - a page asked for, a form posted - and the
+    plain answer it had before for anything else, by the rule the framework's
+    own refusals follow (CR-06): a script reading JSON is not given HTML.
+    """
+
+    kind = request.headers.get("content-type", "")
+    if request.method != "GET" and not kind.startswith(
+        ("application/x-www-form-urlencoded", "multipart/form-data")
+    ):
+        return PlainTextResponse("Refused", status_code=403)
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    return TEMPLATES.TemplateResponse(
+        request,
+        "forbidden.html",
+        {
+            "username": session.username,
+            "role": session.role,
+            "management_writes": config.management_writes,
+            "csrf_token": auth.csrf_token(token),
+            "section": "",
+            "demo_fixture": config.demo_fixture,
+        },
+        status_code=403,
+    )
+
+
 def _refusal_page(
     request: Request,
     config: Config,
@@ -3459,9 +3491,9 @@ def _advanced_submit(
         return PlainTextResponse("Not found", status_code=404)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
     if not auth.csrf_token_is_valid(token, csrf_token):
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     if session.role != "admin":
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     #
     # Check and save; publishing is Versions' (B257).
     #
@@ -3713,7 +3745,11 @@ def _attention(request: Request, config: Config) -> attention.Attention:
             now=now,
         )
     items += attention.from_log_forwarding(status_rows, now=now)
-    items += attention.from_dashboard(board.clusters, drift_label=dashboard.VERSION_DRIFT)
+    items += attention.from_dashboard(
+        board.clusters,
+        drift_label=dashboard.VERSION_DRIFT,
+        cluster_faults=dashboard.CLUSTER_FAULTS,
+    )
     items += attention.from_services(
         _service_lamps(request, config, board.clusters, status_rows),
         held_label=health.HELD_LABEL,
@@ -3827,9 +3863,9 @@ def _waf_write_gate(
         return PlainTextResponse("Not found", status_code=404)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
     if csrf is not None and not auth.csrf_token_is_valid(token, csrf):
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     if session.role != "admin":
-        return PlainTextResponse("Refused", status_code=403)
+        return forbidden_page(request, config)
     return session
 
 

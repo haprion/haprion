@@ -130,6 +130,21 @@ class ThePage(LoginTestCase):
                 self.assertEqual(response.status_code, 404)
                 read.assert_not_called()
 
+    def test_a_reader_is_shown_neither_the_changes_nor_the_button(self) -> None:
+        """Review 26-10-22, 5-3: the difference carries the objects' documents and the
+        generated configuration - backend addresses, an advanced text's passwords - which
+        the object page keeps from a reader (B68, B221)."""
+
+        self.account = replace(self.account, role="reader")
+        response, read = self.page(f"/history/alpha/versions/{2:040d}")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Administrators only", response.text)
+        read.assert_not_called()
+
+        response, _ = self.page("/history")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("data-version-changes", response.text)
+
     def test_every_row_has_changes_left_of_publish(self) -> None:
         response, _ = self.page("/history")
         self.assertIn(

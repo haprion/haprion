@@ -139,6 +139,13 @@ class DashboardView:
     online_nodes: int
     total_nodes: int
     #
+    # Clusters whose nodes the reading does not say: collection failed, no
+    # node answered, or no reading yet. Their nodes are in neither figure
+    # above, so the card said "All reporting" with a cluster dark (review
+    # 2026-10-22, 2-1).
+    #
+    unread_clusters: int
+    #
     # Addresses, not clusters. The card said 2 for an installation with three
     # VIPs until 2026-09-20, because it counted clusters whose VRRP state was
     # healthy; the number a person checks it against is the VIPs they know.
@@ -180,6 +187,23 @@ VERSION_DRIFT = "Version drift"
 # owner - each true, none of them a fault, and all of them on Needs attention.
 #
 NOT_DEPLOYED = "Not deployed"
+#
+# A node just added that has not answered yet (B329). Neither online nor down:
+# the nodes card left it out of neither figure and turned red for a cluster
+# that was healthy (review 2026-10-22, 1B-7), so it is out of both until it
+# answers.
+#
+JOINING = "Joining"
+#
+# A cluster's own faults, which no node's row can say: every node reports
+# Online while the VIP is in split brain or has no owner, and a reading that
+# failed or returned no node has no node to name (review 2026-10-22, 2-1).
+# Needs attention lists the cluster itself for these.
+#
+VIP_FAULT = "VIP fault"
+COLLECTION_UNAVAILABLE = "Collection unavailable"
+STATUS_UNAVAILABLE = "Status unavailable"
+CLUSTER_FAULTS = frozenset({VIP_FAULT, COLLECTION_UNAVAILABLE, STATUS_UNAVAILABLE})
 
 
 def _vip_count(reading: Any) -> int:
@@ -266,7 +290,7 @@ def _node_view(value: Any, target_hash: str | None = None) -> NodeView:
         return NodeView(
             name=name,
             management_host=management_host,
-            label="Joining",
+            label=JOINING,
             tone="unknown",
             detail="Waiting for its first answer",
             keepalived="—",
@@ -665,16 +689,16 @@ def _cluster_view(
     detail: str
     if reading.poll_error:
         label, tone, detail = (
-            "Collection unavailable",
+            COLLECTION_UNAVAILABLE,
             "critical",
             "The poller could not read status",
         )
     elif not nodes:
-        label, tone, detail = "Status unavailable", "critical", "No node returned usable status"
+        label, tone, detail = STATUS_UNAVAILABLE, "critical", "No node returned usable status"
     elif all(node.label == NOT_DEPLOYED for node in nodes):
         label, tone, detail = NOT_DEPLOYED, "unknown", "No release deployed yet"
     elif vip_state in {"split_brain", "no_owner"}:
-        label, tone, detail = "VIP fault", "critical", f"VIP state: {vip_state.replace('_', ' ')}"
+        label, tone, detail = VIP_FAULT, "critical", f"VIP state: {vip_state.replace('_', ' ')}"
     elif any(node.tone == "critical" for node in nodes):
         affected = sum(node.tone == "critical" for node in nodes)
         label, tone, detail = "Needs attention", "critical", f"{affected} node(s) require attention"
@@ -801,7 +825,10 @@ def build_dashboard(
         for cluster in configured_views
         for node in cluster.nodes
     )
-    total_nodes = sum(cluster.configured_nodes for cluster in configured_views)
+    total_nodes = sum(cluster.configured_nodes for cluster in configured_views) - sum(
+        node.label == JOINING for cluster in configured_views for node in cluster.nodes
+    )
+    unread = sum(not cluster.nodes for cluster in configured_views)
     active_vips = sum(
         cluster.vip_count
         for cluster in configured_views
@@ -819,7 +846,13 @@ def build_dashboard(
         else "warning"
     )
     node_tone: Tone = (
-        "unknown" if not total_nodes else "healthy" if online_nodes == total_nodes else "critical"
+        "critical"
+        if unread and (total_nodes or counted > unread)
+        else "unknown"
+        if not total_nodes
+        else "healthy"
+        if online_nodes == total_nodes
+        else "critical"
     )
     vip_tone: Tone = (
         "unknown"
@@ -848,6 +881,7 @@ def build_dashboard(
         ),
         online_nodes=online_nodes,
         total_nodes=total_nodes,
+        unread_clusters=unread,
         active_vips=active_vips,
         total_vips=total_vips,
         converged_clusters=converged,

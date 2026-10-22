@@ -572,8 +572,13 @@ to a lost last admin is `add`.
 
 ### What the two roles see
 
-A **reader** sees every page and can press nothing. An **admin** can queue the
-operations the interface offers, and sees two things a reader does not.
+A **reader** sees the state of the clusters - the dashboard, *Proxies*, *Versions*, *Certificates*,
+*Metrics*, *Traffic logs*, *WAF logs*, *Network* and *Events* - and can press nothing. What carries
+the configuration itself is an administrator's: an object's page, a version's *Diff*, *Settings*, the
+certificate receivers, node restores and the audit trail, since they show every backend address,
+whatever an advanced text wrote, or where key material goes. A reader who opens one is told
+*Administrators only*. An **admin** can queue the operations the
+interface offers, and sees two more things.
 
 - **The error code** of an operation that did not end cleanly — the stable,
   environment-independent string the engine blamed, such as

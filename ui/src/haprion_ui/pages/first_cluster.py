@@ -34,6 +34,7 @@ from haprion_ui.views import (
     _registry_overview,
     _status_row,
     current_session,
+    forbidden_page,
     listed_clusters,
     read_source,
 )
@@ -79,7 +80,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         return gate
 
     @router.post("/first-cluster/name", response_class=HTMLResponse)

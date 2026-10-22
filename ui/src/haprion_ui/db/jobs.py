@@ -129,12 +129,18 @@ class RequestConflict(Exception):
 def recent_jobs(
     connection: Connection[Any], *, cluster: str | None = None, limit: int = 20
 ) -> list[Job]:
-    """The newest jobs, optionally for one cluster.
+    """The newest jobs, optionally for one cluster - and every job still pending or running.
 
     The cluster arrives as a bound parameter, never as text pasted into the
     statement. That is not only about injection: a bound parameter is also what
     lets PostgreSQL keep the plan, and it keeps the SQL below identical to what
     can be pasted into psql while debugging.
+
+    A job still in flight is in the answer however old it is. Every page reads
+    what a cluster is busy with out of this list, and one older than the newest
+    `limit` was missing from it: the cluster looked idle while the queue
+    refused the next job for it (review 2026-10-22, 1B-4). The queue holds one
+    active job per cluster and one for the certificates, so they are few.
     """
 
     with connection.cursor(row_factory=class_row(Job)) as cursor:
@@ -144,8 +150,12 @@ def recent_jobs(
             "       idempotency_key, attempts, held_since, held_decision, held_decided_by "
             "  from job "
             " where (%(cluster)s::text is null or cluster = %(cluster)s) "
-            " order by created_at desc, id desc "
-            " limit %(limit)s",
+            "   and (state in ('pending', 'running') "
+            "        or id in (select id from job "
+            "                   where (%(cluster)s::text is null or cluster = %(cluster)s) "
+            "                   order by created_at desc, id desc "
+            "                   limit %(limit)s)) "
+            " order by created_at desc, id desc",
             {"cluster": cluster, "limit": limit},
         )
         return cursor.fetchall()

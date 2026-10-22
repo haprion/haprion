@@ -31,6 +31,7 @@ from haprion_ui.views import (
     _dns_public_key,
     _posted,
     current_session,
+    forbidden_page,
     read_manager_certificates,
 )
 
@@ -48,7 +49,7 @@ def build_router(config: Config) -> APIRouter:
         if not config.management_writes:
             return PlainTextResponse("Not found", status_code=404)
         if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         return session
 
     def _just_removed(request: Request, profile_ids: Sequence[str]) -> str:
@@ -190,7 +191,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -248,7 +249,7 @@ def build_router(config: Config) -> APIRouter:
         text = {key: value for key, value in posted.items() if isinstance(value, str)}
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, text.get(auth.CSRF_FIELD, "")):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(text.get("idempotency_key", ""))
         except ValueError:
@@ -540,7 +541,7 @@ def build_router(config: Config) -> APIRouter:
         text = {key: value for key, value in posted.items() if isinstance(value, str)}
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, text.get(auth.CSRF_FIELD, "")):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(text.get("idempotency_key", ""))
         except ValueError:
@@ -701,7 +702,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:

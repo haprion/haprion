@@ -155,6 +155,7 @@ PAGES = {
     "certificate": "Certificates",
     "job": "Events",
     "node": "Dashboard",
+    "cluster": "Dashboard",
     "reading": "Dashboard",
     "service": "Proxies",
     "waf": "WAF logs",
@@ -245,8 +246,10 @@ def from_jobs(rows: Sequence[Job]) -> list[Item]:
     return items
 
 
-def from_dashboard(clusters: Iterable[Any], *, drift_label: str) -> list[Item]:
-    """Nodes that are down, and clusters whose status reading has stopped.
+def from_dashboard(
+    clusters: Iterable[Any], *, drift_label: str, cluster_faults: frozenset[str] = frozenset()
+) -> list[Item]:
+    """Nodes that are down, clusters whose status reading has stopped, and a cluster's own faults.
 
     A node merely behind the published version is not listed (26-10-11): a
     publish waiting for its deploy is a choice, as a drain is, and the cluster
@@ -276,6 +279,26 @@ def from_dashboard(clusters: Iterable[Any], *, drift_label: str) -> list[Item]:
         # node. A node's time is the reading's, which says nothing about when
         # it went wrong, so there is none.
         #
+        #
+        # What the cluster itself is, before its nodes: a VIP in split brain
+        # or with no owner while every node reports Online, and a reading that
+        # failed or had no node in it. The worst states a cluster has, and the
+        # list - with every monitor reading /status/attention.json - said
+        # nothing of them (review 2026-10-22, 2-1).
+        #
+        fault = _severity(cluster.tone) if cluster.label in cluster_faults else None
+        if fault is not None:
+            items.append(
+                Item(
+                    kind="cluster",
+                    severity=fault,
+                    cluster=cluster.cluster,
+                    subject=cluster.cluster,
+                    message=f"{cluster.label} · {cluster.detail}",
+                    since=None,
+                    link="/",
+                )
+            )
         for node in cluster.nodes:
             severity = _severity(node.tone)
             if severity is None or node.label == drift_label:

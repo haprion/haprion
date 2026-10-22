@@ -287,6 +287,9 @@ class HealthDerivation(unittest.TestCase):
         node = joining.clusters[0].nodes[1]
         self.assertEqual((node.label, node.tone), ("Joining", "unknown"))
         self.assertNotIn("connection failed", node.detail)
+        # Review 26-10-22, 1B-7: out of the nodes card's figures until it answers.
+        self.assertEqual((joining.online_nodes, joining.total_nodes), (1, 1))
+        self.assertEqual(joining.node_tone, "healthy")
 
     def engine(self, *, published: bool | None, active: bool) -> Any:
         status = reading("done-single-owner.json")

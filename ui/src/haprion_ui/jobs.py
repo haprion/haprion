@@ -1137,9 +1137,19 @@ def in_flight(jobs: Iterable[Job], operations: Collection[str] | None = None) ->
 PUBLISH_AND_DEPLOY = "Publishing and deploying"
 
 
-def running_label(job: Job) -> str:
-    """What a cluster's job is called while it is pending or running."""
+HELD = "Held"
 
+
+def running_label(job: Job) -> str:
+    """What a cluster's job is called while it is pending or running.
+
+    A job held after a restart waits for an administrator's Run or Discard, and
+    is not doing what its operation says; it was drawn as "Deploying" with a
+    spinner for as long as nobody answered (review 2026-10-22, 1B-4).
+    """
+
+    if job.state == "pending" and job.held_since is not None and job.held_decision is None:
+        return HELD
     if job.operation == "changes_publish" and deploys(job):
         return PUBLISH_AND_DEPLOY
     if named := action_names(job):

@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+{% block title %}Administrators only — Haprion{% endblock %}
+{% block content %}
+{#
+  A page or an action this account's role does not reach (review 2026-10-22,
+  2-8). It answered "Refused" in plain text, outside the interface, with no way
+  back to the pages the account does reach.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Administrators only</h1></div>
+</section>
+
+<div class="refusal-card">
+  <div class="editor-actions"><a class="secondary-button" href="/">Open the dashboard</a></div>
+</div>
+{% endblock %}

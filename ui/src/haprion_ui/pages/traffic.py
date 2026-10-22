@@ -12,7 +12,6 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
-    PlainTextResponse,
     RedirectResponse,
 )
 from haprion import (
@@ -50,6 +49,7 @@ from haprion_ui.views import (
     _waf_remove,
     _waf_work_page,
     current_session,
+    forbidden_page,
     listed_clusters,
     read_source,
 )
@@ -136,7 +136,7 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         clusters, _rows = read_source(request, config, STATUS_SOURCE)
         if only is not None and only not in clusters:

@@ -65,6 +65,7 @@ from haprion_ui.views import (
     _settled_changes,
     _start_oidc,
     _status_row,
+    forbidden_page,
     listed_clusters,
     read_manager_certificates,
     read_source,
@@ -132,7 +133,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             checked = attention.access_list(networks)
         except ValueError as problem:
@@ -314,7 +315,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         feature = features.BY_NAME.get(name)
         if feature is None or enabled not in ("on", "off"):
             return PlainTextResponse("Not found", status_code=404)
@@ -526,7 +527,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if _settings_reading(request, cluster) is None:
             return PlainTextResponse("Not found", status_code=404)
         revision = int(saved_revision) if is_digits(saved_revision) else None
@@ -733,7 +734,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
         try:
@@ -813,7 +814,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
         refused = cluster_nodes.removable(
@@ -865,7 +866,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if cluster not in listed_clusters(request, config):
             return PlainTextResponse("Not found", status_code=404)
         rows = cluster_nodes.node_rows(_status_row(config, request, cluster))
@@ -923,7 +924,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         listed = listed_clusters(request, config)
         if cluster not in listed:
             return PlainTextResponse("Not found", status_code=404)
@@ -1038,7 +1039,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         form = {
             "cluster": cluster,
             "display_name": display_name,
@@ -1128,7 +1129,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         form = {"username": username, "role": role}
         if not username:
             problem = "Name the account."
@@ -1192,7 +1193,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         if action not in users.ACTIONS:
             return PlainTextResponse("Unknown action", status_code=400)
         row = _account_row(request, name)
@@ -1321,7 +1322,7 @@ def build_router(config: Config) -> APIRouter:
         form = {key: value for key, value in posted.items() if isinstance(value, str)}
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, form.get(auth.CSRF_FIELD, "")):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         provider = _oidc_provider(request)
         if provider is None:
             return PlainTextResponse("Not found", status_code=404)

@@ -73,6 +73,7 @@ from haprion_ui.views import (
     _top_layers,
     _traffic_marks,
     current_session,
+    forbidden_page,
     listed_clusters,
     moved_dns_servers,
     read_source,
@@ -555,7 +556,7 @@ def build_router(config: Config) -> APIRouter:
             #
             return PlainTextResponse("Not found", status_code=404)
         if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         state = _editor_state(request, config, cluster)
         stored = next((view for view in state.stored if view.name == name), None)
         if stored is None:
@@ -642,7 +643,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         listed = next((one for one in listed_clusters(request, config) if one == cluster), None)
         if listed is None or not proxy_model.NAME.fullmatch(name):
             return PlainTextResponse("Not found", status_code=404)
@@ -722,7 +723,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         listed = next((one for one in listed_clusters(request, config) if one == cluster), None)
         if listed is None or not proxy_model.NAME.fullmatch(name):
             return PlainTextResponse("Not found", status_code=404)
@@ -795,7 +796,7 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         if session.role != "admin":
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         clusters, object_rows = read_source(request, config, OBJECTS_SOURCE)
         if cluster not in clusters:

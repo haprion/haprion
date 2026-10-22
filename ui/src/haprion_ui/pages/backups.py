@@ -35,6 +35,7 @@ from haprion_ui.views import (
     TEMPLATES,
     _admin_write_gate,
     current_session,
+    forbidden_page,
     read_source,
 )
 
@@ -290,7 +291,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:
@@ -356,7 +357,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
-            return PlainTextResponse("Refused", status_code=403)
+            return forbidden_page(request, config)
         try:
             key = UUID(idempotency_key)
         except ValueError:

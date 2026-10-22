@@ -4,6 +4,7 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/history_reset.py",
       "message": "Overly permissive mask in chmod sets file to group readable.",
+      "count": 1,
       "decided": "2026-08-28",
       "reason": "PRIVILEGE.md requires the config repository to be root-owned, group-readable by the production config group and never group-writable. The reset writes that tree, so 0o640 root:group is the prescribed mode; anything tighter locks the worker out of the tree it must read."
     },
@@ -11,6 +12,7 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/release_install.py",
       "message": "Overly permissive mask in chmod sets file to group readable.",
+      "count": 1,
       "decided": "2026-08-28",
       "reason": "Published releases are read by the nodes as the publish group, which is why _group_id fails closed when that group is missing. 0o640 root:group is the documented mode for a release tree; removing group read would silently break deployment."
     },
@@ -18,6 +20,7 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/release_install.py",
       "message": "Overly permissive mask in open sets file to group readable.",
+      "count": 2,
       "decided": "2026-08-28",
       "reason": "Same release tree, same group: the staged files are created with the mode they will keep, so the open and the later chmod agree rather than leaving a window at a different mode. Covers two writes since 2026-09-06 (B103): the node artifact under node_path, and MANIFEST.json beside it. The manifest is not pulled by a node and needs no group read of its own, but it lives in the release tree and is owned like the rest of it - a file in that tree with a mode of its own would be the exception somebody has to remember."
     },
@@ -25,6 +28,7 @@
       "rule": "py/insecure-protocol",
       "path": "install/node/haprion-health-probe",
       "message": "Insecure SSL/TLS protocol version TLSv1_1 allowed by [call to ssl.create_default_context](1).\nInsecure SSL/TLS protocol version TLSv1 allowed by [call to ssl.create_default_context](1).",
+      "count": 1,
       "decided": "2026-09-05",
       "reason": "TLS 1.0 is not reachable and the alert overstates by naming it: MIN_VERSIONS is an allowlist of exactly TLSv1.1, TLSv1.2 and TLSv1.3, a target naming anything else is refused before a context exists, and minimum_version is always set explicitly rather than inherited from OpenSSL. What remains is that `legacy` floors at TLS 1.1, which is the feature B83 built for one named appliance on a network the operator owns - applied per target that asked for it and never to the rest of the request. The probe must not hold a floor of its own: HAProxy reaches the pool under the policy the object names, and a probe that refused what HAProxy accepts would report a healthy pool as broken."
     },
@@ -32,13 +36,55 @@
       "rule": "py/url-redirection",
       "path": "ui/src/haprion_ui/views.py",
       "message": "Untrusted URL redirection depends on a [user-provided value](1).\nUntrusted URL redirection depends on a [user-provided value](1).",
+      "count": 1,
       "decided": "2026-09-05",
-      "reason": "The value cannot leave the origin, and both halves of that are checkable. It has passed proxy_model.NAME.fullmatch - ^[a-z][a-z0-9_-]{0,39}$ - earlier in the same handler, so it contains no slash, colon, dot or newline; and it is appended to the fixed prefix '/proxies?discarded=', so it cannot begin the target and cannot become '//host'. CodeQL does not carry the allowlist check that far. Re-check both when either changes: a looser NAME, or a redirect where the value is not preceded by a literal path."
+      "reason": "The value cannot leave the origin, and both halves of that are checkable. It has passed proxy_model.NAME.fullmatch - ^[a-z][a-z0-9_-]{0,39}$ - earlier in the same function, _editor_submit (the editor's save and discard, shared by the new-object and edit routes since K1), so it contains no slash, colon, dot or newline; and it is appended to the fixed prefix '/proxies?discarded=', so it cannot begin the target and cannot become '//host'. CodeQL does not carry the allowlist check that far. Re-check both when either changes: a looser NAME, or a redirect where the value is not preceded by a literal path."
+    },
+    {
+      "rule": "py/url-redirection",
+      "path": "ui/src/haprion_ui/pages/certificates.py",
+      "message": "Untrusted URL redirection depends on a [user-provided value](1).",
+      "count": 3,
+      "decided": "2026-09-20",
+      "reason": "Three 303s that land on the registry row the button was pressed on (8632a06): resume_enrollment, publish_certificate and _queue_import's open_row (the import and renewal form). The value is a certificate ID and has passed config.CERTIFICATE_ID.fullmatch - ^[a-z0-9][a-z0-9._-]{0,254}$ - before the redirect is built, through operations.prepare, which raises BadPayload on anything else and answers 400 before a job is queued. So it holds no slash, colon, question mark, ampersand, hash or newline, and it is appended to the fixed prefix '/certificates?view=registry&open=', so it cannot begin the target, become '//host', or add a second query parameter. CodeQL does not carry the allowlist check that far. Re-check every redirect here when CERTIFICATE_ID loosens, or when one appends the value to something other than a literal path. Moved from views.py with the certificate pages (K1, 2026-10-22); _queue_import's redirect had been covered by the views.py entry without being named in it."
+    },
+    {
+      "rule": "py/url-redirection",
+      "path": "ui/src/haprion_ui/pages/dashboard.py",
+      "message": "Untrusted URL redirection depends on a [user-provided value](1).",
+      "count": 1,
+      "decided": "2026-10-22",
+      "reason": "Every target begins with a literal path of the interface's own, so none can become '//host' or name a scheme, and the value after it has passed an allowlist earlier in the same handler. CodeQL does not carry the allowlist check that far. publish_changes answers with '/history?published=' and the cluster, which it has first found in listed_clusters (404 otherwise): the clusters the poller read from the cluster file, whose IDs the engine holds to config.CLUSTER_ID. Covered by the views.py entry without being named in it until K1 moved it here."
+    },
+    {
+      "rule": "py/url-redirection",
+      "path": "ui/src/haprion_ui/pages/dashboard.py",
+      "message": "Untrusted URL redirection depends on a [user-provided value](1).\nUntrusted URL redirection depends on a [user-provided value](1).",
+      "count": 1,
+      "decided": "2026-09-20",
+      "reason": "queue_operation's return path (8632a06): _return_path takes the page from the fixed RETURN_PATHS map, falling back to '/jobs', so the form names a page but never writes a target; and it appends '&open=' only for the certificate registry and only a value that passes config.CERTIFICATE_ID.fullmatch - ^[a-z0-9][a-z0-9._-]{0,254}$ - dropping anything else. So the target is always one of the interface's own pages and the row ID holds no slash, colon, question mark, ampersand, hash or newline. CodeQL does not carry either check that far. Re-check when RETURN_PATHS takes a value from the request or CERTIFICATE_ID loosens."
+    },
+    {
+      "rule": "py/url-redirection",
+      "path": "ui/src/haprion_ui/pages/proxies.py",
+      "message": "Untrusted URL redirection depends on a [user-provided value](1).",
+      "count": 6,
+      "decided": "2026-10-22",
+      "reason": "Every target begins with a literal path of the interface's own, so none can become '//host' or name a scheme, and the value after it has passed an allowlist earlier in the same handler. CodeQL does not carry the allowlist check that far. proxy_servers and proxy_unblock answer three ways each, all with back = '/proxies/<cluster>/<name>' (plus '?servers=' or '?blocked=' and a literal). The cluster is taken from listed_clusters, not from the request, and the handler answers 404 unless the name passes proxy_model.NAME.fullmatch - ^[a-z][a-z0-9_-]{0,39}$ - so neither holds a slash, colon, question mark, hash or newline. Re-check when NAME loosens or back is built from anything else. Covered by the views.py entry without being named in it until K1 moved it here."
+    },
+    {
+      "rule": "py/url-redirection",
+      "path": "ui/src/haprion_ui/pages/settings.py",
+      "message": "Untrusted URL redirection depends on a [user-provided value](1).",
+      "count": 4,
+      "decided": "2026-10-22",
+      "reason": "Every target begins with a literal path of the interface's own, so none can become '//host' or name a scheme, and the value after it has passed an allowlist earlier in the same handler. CodeQL does not carry the allowlist check that far. switch_feature: '/settings?switched=' with a name found in features.BY_NAME and 'on' or 'off', 404 otherwise. cluster_settings_save, twice: '/settings/clusters/<cluster>' after _settings_reading has found the cluster among the listed ones, 404 otherwise. change_user: users.href, '/settings/users/' with the account name quoted whole (safe=''), so a slash, colon, question mark or hash in it is percent-encoded, and '?done=' with a literal. Covered by the views.py entry without being named in it until K1 moved them here."
     },
     {
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/traffic_collector.py",
       "message": "Overly permissive mask in open sets file to group readable.",
+      "count": 1,
       "decided": "2026-09-10",
       "reason": "The default applies to completed metadata beside the traffic mirror, not to staging or key material. The mirror directory is setgid collector:web and not writable by web; mode 0o640 is the documented handoff that lets web read freshness without letting it alter collector state. Calls that write staging parts and completion markers pass 0o600 explicitly."
     },
@@ -46,6 +92,7 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/traffic_collector.py",
       "message": "Overly permissive mask in chmod sets file to group readable.",
+      "count": 1,
       "decided": "2026-09-10",
       "reason": "This is the completed traffic mirror's publication step. The temporary remains 0o600 while it is assembled, then becomes 0o640 immediately before atomic rename into a setgid collector:web directory so the read-only web identity can serve /logs. Removing group read breaks that documented consumer; adding group write would break the privilege boundary."
     },
@@ -53,6 +100,7 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/dns_profile_keys.py",
       "message": "Overly permissive mask in open sets file to group readable.",
+      "count": 1,
       "decided": "2026-09-13",
       "reason": "The public half of the DNS profile key pair (B146, B149) exists to be read by the web process, which seals provider credentials against it and holds no private material. It is created root:platform-group 0o640 under config/, the mode every file in that directory has; the private half beside it in secrets/ is written 0o600 by the function above and is what the rule protects. Group read is the contract, not an oversight."
     },
@@ -60,6 +108,7 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/dns_profile_keys.py",
       "message": "Overly permissive mask in chmod sets file to group readable.",
+      "count": 1,
       "decided": "2026-09-13",
       "reason": "Same public key, same group: the chmod restates the mode the open created it with so the two agree after the chown, rather than leaving a file whose mode depends on the umask the installer ran under."
     },
@@ -67,13 +116,15 @@
       "rule": "py/clear-text-storage-sensitive-data",
       "path": "certbot/verify-integrations.py",
       "message": "This expression stores [sensitive data (secret)](1) as clear text.\nThis expression stores [sensitive data (secret)](2) as clear text.",
+      "count": 2,
       "decided": "2026-09-13",
-      "reason": "A certbot DNS plugin reads its credentials from a 0o600 INI file and nothing else; the rendered file is the interface, and this verifier proves the catalogue's rendering against the installed plugin by writing one into a private temporary directory and handing it to the plugin's own credential setup. The values are the verifier's fixed integration-test constants, named as such, never a real credential; the root helper that writes real ones (P5) writes them the same way because that is what certbot reads."
+      "reason": "A certbot DNS plugin reads its credentials from a 0o600 INI file and nothing else; the rendered file is the interface, and this verifier proves the catalogue's rendering against the installed plugin by writing one into a private temporary directory and handing it to the plugin's own credential setup. The values are the verifier's fixed integration-test constants, named as such, never a real credential; the root helper that writes real ones (P5) writes them the same way because that is what certbot reads. Two such writes, one per integration check: every provider's rendering, and the Azure plugin's own file."
     },
     {
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/cert_publish.py",
       "message": "Overly permissive mask in chmod sets file to group readable.",
+      "count": 1,
       "decided": "2026-09-17",
       "reason": "The per-certificate directory a receiver fetches from (C7, B138). Group read and execute is what lets the receiver's own account reach the 0600 files inside it; the directory itself stays owned by root and not writable by the account, which is the point - a receiver reads what it was given and cannot replace it. The group is the account's own, created with it by haprion-cert-receiver, so group read reaches one receiver and no other. Re-check if a receiver account is ever given a shared group."
     },
@@ -81,27 +132,23 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/cert_receiver.py",
       "message": "Overly permissive mask in chmod sets file to group readable.",
+      "count": 3,
       "decided": "2026-09-17",
-      "reason": "The directory a receiver fetches from, made 0750 root with the fetch account's own group. Group read and execute is how that one account reaches the 0600 files inside; root ownership is what stops it replacing them. The same contract the publisher's per-certificate directory carries, decided in the same C7 pass."
+      "reason": "The directory a receiver fetches from, made 0750 root with the fetch account's own group. Group read and execute is how that one account reaches the 0600 files inside; root ownership is what stops it replacing them. The same contract the publisher's per-certificate directory carries, decided in the same C7 pass. Two more chmods carry the same message under B306 (2026-10-14), both in the https receiver's secrets: the directory the user files live in (write_secret), made 0750 root:www-data, and a user file put back after a failed change (_restore_secret), 0640 root:www-data - the mode write_secret creates it with. nginx's worker processes run as www-data and read auth_basic_user_file on every request; the group reads and never writes, and nothing else is in its reach there. Named here 2026-10-22, when the entry was given its count."
     },
     {
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/cert_receiver.py",
       "message": "Overly permissive mask in chmod sets file to world readable.",
+      "count": 3,
       "decided": "2026-09-17",
       "reason": "Four root-owned things that hold no secret: the fetch account's home and its .ssh directory (0755), the authorized_keys line in it (0644), and the sshd drop-in or nginx site the command writes (0644). The modes are B131's, proven on the node accounts in production - sshd reads the lock as root, and an account that owned or could write any of these could replace its own restrictions. A public key, a chroot path and an address whitelist are not material worth hiding from a machine's own users; what matters is that none of them is writable, which these modes state."
-    },
-    {
-      "rule": "py/url-redirection",
-      "path": "ui/src/haprion_ui/views.py",
-      "message": "Untrusted URL redirection depends on a [user-provided value](1).",
-      "decided": "2026-09-20",
-      "reason": "Three 303s that land on the registry row the button was pressed on (8632a06): resume_enrollment, publish_certificate and the queue_operation return path. The value is a certificate ID, and both halves of why it cannot leave the origin are checkable. It has passed config.CERTIFICATE_ID.fullmatch - ^[a-z0-9][a-z0-9._-]{0,254}$ - before the redirect is built: in the two handlers through operations.prepare, which raises BadPayload on anything else and answers 400 before a job is queued; in _return_path directly, where a non-matching value is dropped. So it holds no slash, colon, question mark, ampersand, hash or newline. And it is appended to the fixed prefix '/certificates?view=registry&open=', so it cannot begin the target, become '//host', or add a second query parameter. CodeQL does not carry the allowlist check that far. One entry covers all three because the gate keys on message text, not line; re-check every redirect in this file that this message names when CERTIFICATE_ID loosens, or when a redirect appends the value to something other than a literal path."
     },
     {
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/backup_schedule_write.py",
       "message": "Overly permissive mask in open sets file to world readable.",
+      "count": 1,
       "decided": "2026-09-21",
       "reason": "The file is a systemd drop-in under /etc/systemd/system/<timer>.d/ holding one OnCalendar line for a cluster's backup timer. Unit files are root-owned 0644 by convention and every unit this project installs is written 644 by install_file; the drop-in keeps that mode so `systemctl cat` shows an operator the effective schedule without root. A daily time is not secret. The directory is verified root-owned and not group/world-writable before the write, the file is created O_EXCL|O_NOFOLLOW and renamed into place, so nothing but root can put content there."
     },
@@ -109,6 +156,7 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/backup_schedule_write.py",
       "message": "Overly permissive mask in chmod sets file to world readable.",
+      "count": 1,
       "decided": "2026-09-22",
       "reason": "The chmod completes the open accepted above: the drop-in directory <timer>.d/ and the file in it are made 0755/0644 explicitly because the socket helper runs under UMask=0077, which filtered the modes given to mkdir and os.open down to 0700/0600 - measured in production 2026-09-22, where systemd logged the drop-in as world-inaccessible on every query. The chmod runs after the directory has been verified root-owned and not group/world-writable, so it never widens something that is not root's. Unit files are root-owned 0644 by convention; a schedule is not secret; and nothing here becomes writable."
     },
@@ -116,6 +164,7 @@
       "rule": "py/overly-permissive-file",
       "path": "src/haprion/cert_receiver.py",
       "message": "Overly permissive mask in open sets file to group readable.",
+      "count": 1,
       "decided": "2026-10-14",
       "reason": "B306: an https receiver's user file holds only the yescrypt hash of its password and is created 0o640 root:www-data, because nginx's worker processes run as www-data and read auth_basic_user_file on every request. The group is the reader the contract names; it is never writable by it, and nothing else is in the group's reach in that directory."
     },
@@ -123,6 +172,7 @@
       "rule": "py/clear-text-logging-sensitive-data",
       "path": "src/haprion/cli/cert_receiver.py",
       "message": "This expression logs [sensitive data (password)](1) as clear text.\nThis expression logs [sensitive data (secret)](2) as clear text.\nThis expression logs [sensitive data (password)](3) as clear text.\nThis expression logs [sensitive data (password)](4) as clear text.",
+      "count": 1,
       "decided": "2026-10-14",
       "reason": "B306: the password an https receiver fetches with is made by this command and printed to the operator who ran it, once, because the receiver must be given it and the manager keeps only its hash. It is printed only when the operator passes --show-password, and the command refuses to make one without it; the interface is the ordinary way and shows it on the page instead. It goes to stdout of the operator's own terminal, never to a log, the audit trail or the registry."
     }

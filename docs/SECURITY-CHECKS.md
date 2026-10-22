@@ -190,6 +190,12 @@ have to be rewritten whenever the file moved a line, and the message text keeps 
 acceptance from covering a world-readable finding in the same file. An entry that matches nothing
 fails the gate: an acceptance whose finding is gone has stopped being a decision and become a hole.
 
+Without a line number, one entry covers every finding with its message in its file, so each entry
+also states how many it covers, and its reason names each of them. A finding of the same kind added
+to the same file then fails the gate until it is written into the entry, rather than being
+accepted by a reason written for another place. The gate reports every kind of failure before its
+verdict, so a stale entry does not hide the findings nobody has accepted.
+
 The second kind of entry is a redirect whose value CodeQL calls user-provided. The interface
 answers a form with a 303 back to the page it was on, and some of those carry an identifier the
 person acted on, so the page can land on that row. CodeQL does not follow the allowlist check that

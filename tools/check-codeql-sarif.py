@@ -15,18 +15,25 @@ finding in the same file, and it carries no line number, which would otherwise
 have to be rewritten every time the file moved a line. An entry that matches
 nothing is itself a failure: an acceptance whose finding is gone has stopped
 being a decision and become a hole.
+
+Without a line, one entry covers every finding with its message in its file,
+so each entry also states how many it covers. A new finding of the same kind
+in the same file then fails the gate until its reason is written into the
+entry too - the redirect entry for views.py had come to cover fourteen
+findings while its reason described three (found 2026-10-22).
 """
 
 from __future__ import annotations
 
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any, NamedTuple
 
 ACCEPTED_PATH = Path(__file__).resolve().parent / "codeql-accepted.json"
 
-REQUIRED_FIELDS = ("rule", "path", "message", "decided", "reason")
+REQUIRED_FIELDS = ("rule", "path", "message", "count", "decided", "reason")
 
 
 class Finding(NamedTuple):
@@ -49,7 +56,12 @@ class GateError(Exception):
     """The gate cannot reach a verdict."""
 
 
-def _load_accepted(path: Path) -> dict[tuple[str, str, str], str]:
+class Acceptance(NamedTuple):
+    covers: int
+    text: str
+
+
+def _load_accepted(path: Path) -> dict[tuple[str, str, str], Acceptance]:
     """The recorded decisions, keyed the same way findings are."""
 
     try:
@@ -62,17 +74,20 @@ def _load_accepted(path: Path) -> dict[tuple[str, str, str], str]:
     if not isinstance(document, dict) or not isinstance(document.get("accepted"), list):
         raise GateError(f"{path.name} must hold an object with an 'accepted' list")
 
-    accepted: dict[tuple[str, str, str], str] = {}
+    accepted: dict[tuple[str, str, str], Acceptance] = {}
     for index, entry in enumerate(document["accepted"]):
         if not isinstance(entry, dict):
             raise GateError(f"{path.name} entry {index} is not an object")
         missing = [field for field in REQUIRED_FIELDS if not str(entry.get(field, "")).strip()]
         if missing:
             raise GateError(f"{path.name} entry {index} is missing {', '.join(missing)}")
+        count = entry["count"]
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise GateError(f"{path.name} entry {index} needs a count of at least 1")
         key = (str(entry["rule"]), str(entry["path"]), str(entry["message"]))
         if key in accepted:
             raise GateError(f"{path.name} entry {index} repeats an earlier acceptance")
-        accepted[key] = f"{entry['decided']}: {entry['reason']}"
+        accepted[key] = Acceptance(count, f"{entry['decided']}: {entry['reason']}")
     return accepted
 
 
@@ -121,14 +136,21 @@ def main() -> int:
         return 2
 
     unaccepted = [finding for finding in findings if finding.key not in accepted]
-    matched = {finding.key for finding in findings if finding.key in accepted}
-    stale = [key for key in accepted if key not in matched]
+    covered = Counter(finding.key for finding in findings if finding.key in accepted)
+    stale = [key for key in accepted if key not in covered]
+    miscounted = [(key, covered[key]) for key in covered if covered[key] != accepted[key].covers]
 
     for finding in findings:
         if finding.key in accepted:
             print(f"CodeQL gate: accepted {finding.rule} at {finding.location}")
-            print(f"  {accepted[finding.key]}")
+            print(f"  {accepted[finding.key].text}")
 
+    #
+    # Every kind of failure is reported before the verdict, so one does not
+    # hide another: a stale entry once ended the run before thirteen findings
+    # nobody had accepted were listed.
+    #
+    failed = False
     if stale:
         print("CodeQL gate: FAIL (acceptance no longer matches any alert)", file=sys.stderr)
         for rule, path, message in stale:
@@ -137,15 +159,32 @@ def main() -> int:
             "Remove the entry from tools/codeql-accepted.json; the finding it documented is gone.",
             file=sys.stderr,
         )
-        return 1
+        failed = True
+
+    if miscounted:
+        print("CodeQL gate: FAIL (acceptance covers a different number of alerts)", file=sys.stderr)
+        for key, found in miscounted:
+            rule, path, _message = key
+            print(
+                f"- {rule} at {path}: {found} found, the entry accepts {accepted[key].covers}",
+                file=sys.stderr,
+            )
+        print(
+            "Read each alert the entry now covers; write it into the reason and the count, or fix it.",
+            file=sys.stderr,
+        )
+        failed = True
 
     if unaccepted:
         print(f"CodeQL gate: FAIL ({len(unaccepted)} alert(s))", file=sys.stderr)
         for finding in unaccepted:
             print(f"- {finding.level}: {finding.rule} at {finding.location}", file=sys.stderr)
+        failed = True
+
+    if failed:
         return 1
 
-    print(f"CodeQL gate: OK (no alerts beyond {len(matched)} recorded acceptance(s))")
+    print(f"CodeQL gate: OK (no alerts beyond {len(covered)} recorded acceptance(s))")
     return 0
 
 

@@ -78,9 +78,25 @@ PY
 )" || die "cannot read clusters from the installed UI configuration"
 mapfile -t ui_config <<<"$ui_lines"
 traffic_logs_enabled="${ui_config[0]}"
-clusters=()
+listed=()
 if [[ ${#ui_config[@]} -gt 1 ]]; then
-    clusters=("${ui_config[@]:1}")
+    listed=("${ui_config[@]:1}")
+fi
+
+#
+# The clusters are the cluster file's, as the poller, the web and step 07 read
+# them: `ui.toml`'s list was checked instead, so a cluster created in the
+# interface was never asked and a removed one still listed there stopped the
+# update (review 2026-10-22, 6-1).
+#
+cluster_lines="$(installed_clusters)" || exit 1
+clusters=()
+if [[ -n "$cluster_lines" ]]; then
+    mapfile -t clusters <<<"$cluster_lines"
+fi
+if [[ ${#listed[@]} -gt 0 ]] \
+    && [[ "$(printf '%s\n' "${listed[@]}" | sort)" != "$(printf '%s\n' "${clusters[@]}" | sort)" ]]; then
+    warn "ui.toml's clusters (${listed[*]}) differ from the cluster file's (${clusters[*]}); the cluster file is the one checked"
 fi
 
 if [[ "$traffic_logs_enabled" == "enabled" ]]; then

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import os
 import shutil
 import subprocess
@@ -183,6 +184,16 @@ if __name__ == "__main__":
 
 
 #
+# The CLI's cluster list: the names in $CLUSTER_FILE, one a line, or a refusal.
+#
+STUB_CLUSTER_CONFIG = """#!/bin/bash
+[[ "$1" == --list ]] || exit 2
+[[ -z "$CLUSTER_FILE_UNREADABLE" ]] || { echo "cannot read clusters.yaml" >&2; exit 1; }
+# shellcheck disable=SC2086 # the list is words on purpose
+[[ -z "$CLUSTER_FILE" ]] || printf '%s\\n' $CLUSTER_FILE
+"""
+
+#
 # A release's Python, standing in for either module. The config read prints
 # what the wrapper asks for; `--help` says whether the module knows the
 # collector flags; the check itself records its arguments and, like argparse
@@ -195,7 +206,8 @@ if [[ "$1" == "-I" && "$2" == "-c" && "$3" == *haprion-worker* ]]; then
 fi
 if [[ "$1" == "-" ]]; then
     cat >/dev/null
-    printf '%s\\n' "$TRAFFIC_LOGS" alpha
+    # shellcheck disable=SC2086 # the list is words on purpose
+    printf '%s\\n' "$TRAFFIC_LOGS" $UI_CLUSTERS
     exit 0
 fi
 if [[ "$*" == "-m ${PACKAGE:-haprion_ui}.compatibility --help" ]]; then
@@ -243,9 +255,18 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         (self.root / "current").symlink_to(self.root / "releases/current-release")
         self.record = work / "arguments"
         self.wrapper = work / "platform/check-compatibility"
+        self.cluster_config = work / "haprion-cluster-config"
+        self.cluster_config.write_text(STUB_CLUSTER_CONFIG)
+        self.cluster_config.chmod(0o755)
 
     def check(
-        self, *arguments: str, module: str, traffic: str = "enabled", package: str = "haprion_ui"
+        self,
+        *arguments: str,
+        module: str,
+        traffic: str = "enabled",
+        package: str = "haprion_ui",
+        ui_clusters: str = "alpha",
+        cluster_file: str | None = "alpha",
     ) -> tuple[int, str]:
         environment = {
             **os.environ,
@@ -253,6 +274,10 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
             "MODULE": module,
             "TRAFFIC_LOGS": traffic,
             "RECORD": str(self.record),
+            "UI_CLUSTERS": ui_clusters,
+            "CLUSTER_CONFIG": str(self.cluster_config),
+            "CLUSTER_FILE": cluster_file if cluster_file is not None else "",
+            "CLUSTER_FILE_UNREADABLE": "1" if cluster_file is None else "",
         }
         completed = subprocess.run(  # noqa: S603 - the copied wrapper, fixed arguments
             ["/bin/bash", str(self.wrapper), *arguments],
@@ -312,6 +337,41 @@ class TheWrapperRunsAgainstARelease(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("--first-install requires --release", errors)
 
+    def clusters(self) -> list[str]:
+        arguments = self.recorded()
+        start = arguments.index("--clusters") + 1
+        return list(itertools.takewhile(lambda word: not word.startswith("--"), arguments[start:]))
+
+    def test_the_clusters_checked_are_the_cluster_file_s(self) -> None:
+        # Review 2026-10-22, 6-1: the list came from `ui.toml`, so a cluster
+        # created in the interface was never asked about.
+        code, errors = self.check(module="new", ui_clusters="", cluster_file="alpha beta")
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(self.clusters(), ["alpha", "beta"])
+        self.assertNotIn("ui.toml", errors)
+
+    def test_a_cluster_only_ui_toml_still_lists_is_not_asked_about(self) -> None:
+        code, errors = self.check(module="new", ui_clusters="alpha gone", cluster_file="alpha")
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(self.clusters(), ["alpha"])
+        self.assertIn("ui.toml's clusters (alpha gone) differ", errors)
+
+    def test_the_same_clusters_in_another_order_are_not_a_difference(self) -> None:
+        code, errors = self.check(module="new", ui_clusters="beta alpha", cluster_file="alpha beta")
+        self.assertEqual(code, 0, errors)
+        self.assertNotIn("ui.toml", errors)
+
+    def test_no_cluster_yet_is_no_node_to_ask(self) -> None:
+        code, errors = self.check(module="new", ui_clusters="", cluster_file="")
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(self.clusters(), [])
+
+    def test_a_cluster_file_that_cannot_be_read_stops_the_check(self) -> None:
+        code, errors = self.check(module="new", cluster_file=None)
+        self.assertNotEqual(code, 0)
+        self.assertIn("the cluster file could not be read", errors)
+        self.assertFalse(self.record.exists())
+
 
 class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
     """The scripts outside a release ask it for its package (rename 26-10-10)."""
@@ -352,9 +412,26 @@ class TheReleaseSaysWhichPackageItIs(unittest.TestCase):
         self.assertNotIn("haprion_ui", unit)
         self.assertNotIn("--port", unit)
 
-    def test_the_update_installs_the_web_unit_before_it_activates(self) -> None:
+    def test_the_update_installs_the_platform_files_before_it_checks(self) -> None:
+        """Review 2026-10-22, 6-5: the check holds the files to the candidate, so they come first."""
+
         text = (ROOT / "install/platform/update-platform-release").read_text()
+        refresh = text.index('./refresh-platform-files "$release_id" "$kept"')
+        self.assertLess(refresh, text.index("./check-compatibility --release"))
+        self.assertLess(refresh, text.index('./install-ui-release "$release_id"'))
+        self.assertIn(
+            "haprion-web.service.example",
+            (ROOT / "install/platform/refresh-platform-files").read_text(),
+        )
+
+    def test_a_failed_update_puts_the_platform_files_back_before_the_rollback(self) -> None:
+        text = (ROOT / "install/platform/update-platform-release").read_text()
+        restore = text[text.index("restore_previous() {") :]
+        self.assertLess(restore.index("settle_files"), restore.index('"$rollback" --to'))
+        self.assertIn("trap 'settle_files;", text)
         self.assertLess(
-            text.index("examples/haprion-web.service.example"),
-            text.index('./install-ui-release "$release_id"'),
+            text.index(
+                "files_settled=yes\n", text.index('step "Proving the running installation"')
+            ),
+            text.index('step "Pruning old releases"'),
         )

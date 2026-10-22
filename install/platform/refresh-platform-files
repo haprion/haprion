@@ -1,0 +1,245 @@
+#!/bin/bash
+#
+# Install again the platform files the numbered steps installed, and keep what
+# each one replaces.
+#
+#     sudo ./refresh-platform-files <release-id> <keep-dir>
+#     sudo ./refresh-platform-files --restore <keep-dir>
+#
+# What `update-platform-release` runs before it checks a candidate (review
+# 2026-10-22, 6-5). Only the web unit used to follow an update: the worker's
+# and the poller's units and sudo rules, the helper sockets, the timers and the
+# nginx site stayed as the first installation wrote them. A release that needed
+# one more helper rule stopped its own update at the check, and a change to the
+# site waited for step 05 to be run again by hand.
+#
+# Installed from this package's examples: what steps 04 and 07 always install,
+# and - only where their step installed it - the optional sockets, the timers
+# and the site. No answers are read again. The accounts are fixed names, the
+# worker's sandbox is the runtime policy's, and the site's three values are in
+# /etc/haprion/ui-tls.conf, where step 05 wrote them.
+#
+# Kept under <keep-dir>: each file replaced, and the name of each file that is
+# new, so that `--restore` puts back what the previous release ran with. The
+# sudo rules are checked exactly, and a newer list fails an older release.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+SUDOERS_DIR="${SUDOERS_DIR:-/etc/sudoers.d}"
+NGINX_SITE="${NGINX_SITE:-/etc/nginx/sites-available/haprion}"
+TLS_CONF="${TLS_CONF:-/etc/haprion/ui-tls.conf}"
+
+#
+# The helper sockets step 07 always installs, and those an answer or a later
+# step adds; the timers steps 06, 11, 13 and 14 install. Tests hold the lists to
+# the steps and to the examples.
+#
+SOCKETS=(resolve cert-export cert-receiver node tls backup-job node-restore)
+OPTIONAL_SOCKETS=(probe oidc)
+TIMERS=(haprion-backup haprion-restore-check haprion-retention haprion-traffic-collector
+        haprion-certbot-renew)
+
+usage() { die "usage: $(basename "$0") <release-id> <keep-dir> | --restore <keep-dir>"; }
+
+#
+# One line a file, in the order written: its kind, its path, and the copy of
+# what it replaced - empty when there was nothing.
+#
+manifest() { echo "${keep}/manifest"; }
+
+restore() {
+    local kind path saved reload=0 site=0
+    local -a sockets=() timers=()
+    [[ -f "$(manifest)" ]] || return 0
+    step "Putting back the platform files the update replaced"
+    while IFS=$'\t' read -r kind path saved; do
+        if [[ -n "$saved" ]]; then
+            # Beside it and renamed over it: a sudo rule is never half there,
+            # and sudo reads no file in sudoers.d whose name holds a dot.
+            cp -a "$saved" "${path}.restoring"
+            mv -f -- "${path}.restoring" "$path"
+            log "  restored ${path}"
+        else
+            if [[ "$kind" == socket && "$path" == *.socket ]]; then
+                systemctl disable --quiet --now "${path##*/}" || true
+            fi
+            rm -f -- "$path"
+            log "  removed  ${path}"
+        fi
+        case "$kind" in
+            sudoers) ;;
+            site) site=1 ;;
+            *) reload=1 ;;
+        esac
+        if [[ -n "$saved" && "$kind" == socket && "$path" == *.socket ]]; then
+            sockets+=("${path##*/}")
+        fi
+        if [[ -n "$saved" && "$kind" == timer && "$path" == *.timer ]]; then
+            timers+=("${path##*/}")
+        fi
+    done < <(tac "$(manifest)")
+    (( reload == 0 )) || systemctl daemon-reload
+    (( ${#sockets[@]} == 0 )) || systemctl restart "${sockets[@]}"
+    (( ${#timers[@]} == 0 )) || systemctl restart "${timers[@]}"
+    if (( site == 1 )); then
+        nginx -t 2>&1 | sed 's/^/  /'
+        systemctl reload nginx
+    fi
+    : > "$(manifest)"
+}
+
+#
+# Install CONTENT at PATH unless it is there already, after keeping what it
+# replaces. A sudo rule is proved by visudo before anything is touched: one
+# that does not parse takes sudo down for everyone on the machine.
+#
+put() {
+    local kind="$1" path="$2" mode="$3" content="$4" saved="" staging=""
+    if [[ -f "$path" && "$(cat "$path")" == "$content" ]]; then
+        log "  ok       ${path}"
+        return 0
+    fi
+    if [[ "$kind" == sudoers ]]; then
+        staging="$(mktemp)"
+        printf '%s\n' "$content" > "$staging"
+        if ! visudo -cqf "$staging"; then
+            rm -f "$staging"
+            die "the sudo rule for ${path} does not parse; nothing was installed"
+        fi
+    fi
+    if [[ -e "$path" ]]; then
+        saved="${keep}/$(( $(wc -l < "$(manifest)") + 1 ))"
+        cp -a "$path" "$saved"
+    fi
+    printf '%s\t%s\t%s\n' "$kind" "$path" "$saved" >> "$(manifest)"
+    if [[ -n "$staging" ]]; then
+        install -o root -g root -m "$mode" "$staging" "$path"
+        rm -f "$staging"
+    else
+        printf '%s\n' "$content" > "$path"
+        chown root:root "$path"
+        chmod "$mode" "$path"
+    fi
+    log "  written  ${path}"
+    changed+=("${kind}:${path}")
+}
+
+socket_pair() {
+    local name="haprion-${1}-helper"
+    put socket "${SYSTEMD_DIR}/${name}@.service" 644 \
+        "$(render_example "examples/${name}@.service.example")"
+    put socket "${SYSTEMD_DIR}/${name}.socket" 644 \
+        "$(render_example "examples/${name}.socket.example")"
+}
+
+[[ $# -eq 2 ]] || usage
+if [[ "$1" == --restore ]]; then
+    keep="$2"
+    [[ -d "$keep" ]] || die "${keep} is not a directory"
+    restore
+    exit 0
+fi
+release_id="$1"
+keep="$2"
+[[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "invalid release id: ${release_id}"
+[[ -d "$keep" ]] || die "${keep} is not a directory"
+touch "$(manifest)"
+release_python="${UI_ROOT}/releases/${release_id}/venv/bin/python"
+[[ -x "$release_python" ]] || die "release ${release_id} is not prepared"
+changed=()
+
+step "Sudo rules"
+put sudoers "${SUDOERS_DIR}/${WORKER_SUDOERS}" 440 "$(cat examples/haprion-worker.sudoers.example)"
+put sudoers "${SUDOERS_DIR}/${POLLER_SUDOERS}" 440 "$(cat examples/haprion-poller.sudoers.example)"
+
+step "Service units"
+#
+# The worker's sandbox is the runtime policy's roots as the release about to
+# run reads them, as step 07 renders it with the release then current.
+#
+policy_paths="$(worker_writable_paths "$release_python")" \
+    || die "cannot read the runtime policy's roots for the worker's sandbox"
+[[ -n "$policy_paths" ]] || die "the runtime policy names no roots for the worker's sandbox"
+put unit "${SYSTEMD_DIR}/${WORKER_UNIT}" 644 \
+    "$(sed -e "s|@POLICY_PATHS@|${policy_paths}|" examples/haprion-worker.service.example)"
+put unit "${SYSTEMD_DIR}/${POLLER_UNIT}" 644 "$(cat examples/haprion-poller.service.example)"
+put unit "${SYSTEMD_DIR}/${WEB_UNIT}" 644 "$(cat examples/haprion-web.service.example)"
+
+step "Helper sockets"
+for name in "${SOCKETS[@]}"; do
+    socket_pair "$name"
+done
+for name in "${OPTIONAL_SOCKETS[@]}"; do
+    if [[ -e "${SYSTEMD_DIR}/haprion-${name}-helper.socket" ]]; then
+        socket_pair "$name"
+    fi
+done
+
+step "Timers"
+for name in "${TIMERS[@]}"; do
+    [[ -e "${SYSTEMD_DIR}/${name}.timer" ]] || continue
+    for kind in service timer; do
+        put timer "${SYSTEMD_DIR}/${name}.${kind}" 644 \
+            "$(render_example "examples/${name}.${kind}.example")"
+    done
+done
+
+if [[ -e "$NGINX_SITE" ]]; then
+    step "The nginx site"
+    [[ -r "$TLS_CONF" ]] || die "${TLS_CONF} is missing; step 05 writes it"
+    site_host="$(admin_value "$TLS_CONF" SERVER_NAME)"
+    site_certificate="$(admin_value "$TLS_CONF" TLS_CERT)"
+    site_key="$(admin_value "$TLS_CONF" TLS_KEY)"
+    [[ -n "$site_host" && -n "$site_certificate" && -n "$site_key" ]] \
+        || die "${TLS_CONF} does not name SERVER_NAME, TLS_CERT and TLS_KEY"
+    put site "$NGINX_SITE" 644 \
+        "$(render_site "$site_host" "$site_certificate" "$site_key" examples/haprion.nginx.example)"
+fi
+
+#
+# Each changed unit is read again, a changed socket or timer restarted so that
+# it listens or fires as written, and a changed site proved by nginx before it
+# is reloaded. The worker, poller and web units take theirs when the release
+# is activated, which restarts them.
+#
+reload=0
+sockets=()
+timers=()
+site=0
+for entry in "${changed[@]}"; do
+    kind="${entry%%:*}"
+    path="${entry#*:}"
+    case "$kind" in
+        socket) reload=1; [[ "$path" == *.socket ]] && sockets+=("${path##*/}") ;;
+        timer) reload=1; [[ "$path" == *.timer ]] && timers+=("${path##*/}") ;;
+        unit) reload=1 ;;
+        site) site=1 ;;
+    esac
+done
+if (( reload == 1 )); then
+    systemctl daemon-reload
+    log "  reloaded systemd"
+fi
+if (( ${#sockets[@]} > 0 )); then
+    systemctl enable --quiet "${sockets[@]}"
+    systemctl restart "${sockets[@]}"
+    log "  restarted ${sockets[*]}"
+fi
+if (( ${#timers[@]} > 0 )); then
+    systemctl restart "${timers[@]}"
+    log "  restarted ${timers[*]}"
+fi
+if (( site == 1 )); then
+    nginx -t 2>&1 | sed 's/^/  /' || die "nginx refuses the new site; the update puts the old one back"
+    systemctl reload nginx
+    log "  reloaded nginx"
+fi
+if (( ${#changed[@]} == 0 )); then
+    log "  every platform file is this package's already"
+fi

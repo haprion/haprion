@@ -370,7 +370,9 @@ sudo ./check-compatibility
 
 Later versions of the package update the running platform themselves: their
 `postinst` runs `update-platform-release` with the release they carry, reads no answers file,
-and leaves the previous release running if it fails.
+and leaves the previous release running if it fails. The update also installs again the units,
+sudo rules, helper sockets, timers and nginx site the numbered steps installed, and puts the old
+ones back if it fails, so no step needs to be run again by hand after `apt upgrade`.
 
 The first activation creates the `admin` account if no account exists and asks for its
 password at the terminal. If installation ran without a terminal, create it afterwards:

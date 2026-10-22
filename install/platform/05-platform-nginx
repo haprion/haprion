@@ -85,10 +85,7 @@ else
 fi
 
 step "Site"
-rendered="$(sed -e "s|SERVER_NAME|${SERVER_NAME}|g" \
-                -e "s|TLS_CERT|${TLS_CERT}|g" \
-                -e "s|TLS_KEY|${TLS_KEY}|g" \
-                examples/haprion.nginx.example)"
+rendered="$(render_site "$SERVER_NAME" "$TLS_CERT" "$TLS_KEY" examples/haprion.nginx.example)"
 install_file /etc/nginx/sites-available/haprion root:root 644 "$rendered"
 
 if [[ -L /etc/nginx/sites-enabled/haprion ]]; then

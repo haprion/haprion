@@ -59,27 +59,24 @@ fi
 ruff check $python_scripts
 # shellcheck disable=SC2086
 ruff format --check $python_scripts
+#
+# Every shell script, found as the Python scripts are - by its ending or its
+# first line - so a new one is checked the day it is added. A list kept by hand
+# had left six out, a new step of the update among them (review 2026-10-22).
+#
+shell_scripts=$(find "$base/install" "$base/examples" "$base/tools" "$base/ui/tools" -type f \
+    ! -path '*/__pycache__/*' \( -name '*.sh' \
+    -o -exec sh -c 'head -n 1 "$1" | grep -Eq "^#! ?(/usr)?/bin/(env )?(ba)?sh( |$)"' _ {} \; \) \
+    -print | sort)
+if [ -z "$shell_scripts" ]; then
+    echo "run-tests: found no shell scripts under install/ - the search is broken" >&2
+    exit 2
+fi
 # -x so the installation scripts' `source ./lib.sh` is followed rather than
 # reported as unreadable, and -P SCRIPTDIR so it is looked up beside the script
 # that sources it rather than in whatever directory the gate was started from.
-shellcheck -x -P SCRIPTDIR "$base/run-checks" "$base/run-tests" "$base/tools/install-actionlint" \
-    "$base/tools/install-gitleaks" "$base/tools/install-shellcheck" \
-    "$base/tools/install-node-package" \
-    "$base/tools/run-codeql" "$base/tools/run-gitleaks" \
-    "$base/install/lib.sh" "$base/install/defaults.sh" "$base/install/setup.sh" \
-    "$base/install/haprion-setup" "$base/install"/[0-9][0-9]-* \
-    "$base/install/platform"/[0-9][0-9]-* "$base/install/platform/migrate" \
-    "$base/install/platform/install-ui-release" "$base/install/platform/update-platform-release" \
-    "$base/install/platform/check-compatibility" \
-    "$base/install/platform/bin"/haprion-* \
-    "$base/install/node/haprion-pull-deploy" \
-    "$base/install/node/haprion-cert-pull" \
-    "$base/install/node/haprion-cert-remove" \
-    "$base/install/node/haprion-cert-trigger" \
-    "$base/install/node/haprion-keepalived-state" \
-    "$base/install/node/haprion-state-export" \
-    "$base/install/node/haprion-traffic-log-enable" \
-    "$base/examples/receivers"/fetch-*
+# shellcheck disable=SC2086 # one path per word; none of them has a space
+shellcheck -x -P SCRIPTDIR "$base/run-checks" "$base/run-tests" $shell_scripts
 actionlint "$base/.github/workflows"/*.yml
 zizmor --pedantic "$base/.github/workflows"
 mypy

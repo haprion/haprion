@@ -89,17 +89,23 @@ sudo apt install ./haprion-ui_<version>_amd64.deb
 sudo ./update-platform-release <release-id>
 ```
 
-It reads no answers file. When it fails, the package is left unconfigured and
-the previous release is the one running.
+It reads no answers file. Before it checks anything it installs again, from the
+package, the files the numbered steps installed: the web's, the worker's and the
+poller's units, their sudo rules, the helper sockets, the timers, and the nginx
+site (from the three values step 05 keeps in `/etc/haprion/ui-tls.conf`). A file
+whose step was never run - an optional socket or timer - stays absent. When the
+update fails, the package is left unconfigured, the previous release is the one
+running, and the files it replaced are back. `./refresh-platform-files` is that
+part on its own.
 
-**Which pieces a change releases at all, and in what order, is decided in
-[`docs/user-manual.md` — Releasing a change](../../docs/user-manual.md#releasing-a-change).**
+**Which packages a change releases, and in what order, is decided in
+[`CONTRIBUTING.md` — Releasing](../../CONTRIBUTING.md#releasing).**
 Read it before running this command. In short: a commit that changes both the
 management engine and the UI releases the CLI package first — the platform check
 compares the independently installed CLI before it activates the UI candidate,
 so reversing the order stops the update after it has already migrated. A change
-confined to the UI needs only the applicable platform updates; rerun optional
-installers such as retention only when their installed files actually changed.
+confined to the UI needs only the UI package; the update installs the platform's
+service files itself.
 
 It prepares the candidate without moving `current`, checks the independently
 installed CLI, helpers and node packages, proves that the running UI can tolerate
@@ -340,7 +346,7 @@ partitioned; the timer deletes their hours before the same boundary.
 **fetches `/healthz`**. The unit runs `/usr/sbin/haprion-web`, which asks the
 current release for its package and reads the port from `ui.toml`, so the unit
 is the same file for every release; `update-platform-release` installs it again
-before it activates a release. systemd reports a unit as active as
+with the platform's other files, before it checks a release. systemd reports a unit as active as
 soon as the process is up, which is before it has reached its database; "up but
 unable to answer" is exactly the state worth catching during an installation.
 `/healthz` answers 200 only when the service reaches the database `ui.toml` names,

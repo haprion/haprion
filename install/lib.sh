@@ -205,8 +205,32 @@ print(entry_points(group="console_scripts")["haprion-worker"].module.partition("
 # worker_writable_paths). One line, space separated.
 #
 worker_writable_paths() {
-    "${UI_ROOT}/current/venv/bin/python" -I -c 'from haprion.config import load_policy, worker_writable_paths
+    "${1:-${UI_ROOT}/current/venv/bin/python}" -I -c 'from haprion.config import load_policy, worker_writable_paths
 print(" ".join(str(path) for path in worker_writable_paths(load_policy())))'
+}
+
+#
+# A platform example with the accounts its step names put in: each step that
+# installs one replaces TOKEN with ${TOKEN}, and the update installs them again
+# without the step (review 2026-10-22, 6-5). A test holds the steps to this list.
+#
+render_example() {
+    sed -e "s|WEB_USER|${WEB_USER}|g" \
+        -e "s|WORKER_USER|${WORKER_USER}|g" \
+        -e "s|OIDC_USER|${OIDC_USER}|g" \
+        -e "s|COLLECTOR_USER|${COLLECTOR_USER}|g" \
+        "$1"
+}
+
+#
+# The nginx site, from the three values step 05 keeps in /etc/haprion/ui-tls.conf.
+#
+render_site() {
+    local host="$1" certificate="$2" key="$3" example="$4"
+    sed -e "s|SERVER_NAME|${host}|g" \
+        -e "s|TLS_CERT|${certificate}|g" \
+        -e "s|TLS_KEY|${key}|g" \
+        "$example"
 }
 
 ui_port() {

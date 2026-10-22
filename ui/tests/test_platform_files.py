@@ -1,0 +1,308 @@
+"""An update installs the platform files again, and puts them back when it fails (review 2026-10-22, 6-5).
+
+Only the web unit followed `apt upgrade`. A release that needed one more
+helper rule stopped its own update at the check ("expected 15 ... found 14"),
+and a changed nginx site waited for step 05 to be run again by hand. These run
+`refresh-platform-files` as written, under a temporary root, with systemctl,
+visudo and nginx standing in; its `../lib.sh` is the real one with the root
+check left out, as in `test_platform_release`.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+PLATFORM = ROOT / "install/platform"
+
+STUB_SYSTEMCTL = """#!/bin/bash
+echo "systemctl $*" >> "$RECORD"
+"""
+STUB_NGINX = """#!/bin/bash
+echo "nginx $*" >> "$RECORD"
+[[ -z "${NGINX_REFUSES:-}" ]]
+"""
+STUB_VISUDO = """#!/bin/bash
+! grep -q "does not parse" "${@: -1}"
+"""
+STUB_CHOWN = """#!/bin/bash
+exit 0
+"""
+#
+# install(1) as the script calls it, without the owner it may not give here.
+#
+STUB_INSTALL = """#!/bin/bash
+arguments=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|-g) shift 2 ;;
+        *) arguments+=("$1"); shift ;;
+    esac
+done
+exec /usr/bin/install "${arguments[@]}"
+"""
+#
+# The release's Python, asked for the worker's sandbox roots.
+#
+STUB_PYTHON = """#!/bin/bash
+echo /srv/example/config /srv/example/registry
+"""
+
+
+class ThePlatformFilesFollowAnUpdate(unittest.TestCase):
+    def setUp(self) -> None:
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        shutil.copytree(PLATFORM / "examples", work / "platform/examples")
+        shutil.copy2(PLATFORM / "refresh-platform-files", work / "platform")
+        (work / "lib.sh").write_text((ROOT / "install/lib.sh").read_text() + "need_root() { :; }\n")
+        shutil.copy2(ROOT / "install/defaults.sh", work / "defaults.sh")
+        (work / "accounts.sh").write_text(
+            (ROOT / "install/accounts.sh")
+            .read_text()
+            .replace("readonly UI_ROOT=/opt/haprion-ui", f"readonly UI_ROOT={work / 'ui'}")
+        )
+        python = work / "ui/releases/r2/venv/bin/python"
+        python.parent.mkdir(parents=True)
+        self.executable(python, STUB_PYTHON)
+        stubs = work / "bin"
+        stubs.mkdir()
+        for name, text in (
+            ("systemctl", STUB_SYSTEMCTL),
+            ("nginx", STUB_NGINX),
+            ("visudo", STUB_VISUDO),
+            ("chown", STUB_CHOWN),
+            ("install", STUB_INSTALL),
+        ):
+            self.executable(stubs / name, text)
+        self.systemd = work / "etc/systemd/system"
+        self.sudoers = work / "etc/sudoers.d"
+        self.site = work / "etc/nginx/sites-available/haprion"
+        self.tls = work / "etc/haprion/ui-tls.conf"
+        for directory in (self.systemd, self.sudoers, self.site.parent, self.tls.parent):
+            directory.mkdir(parents=True)
+        self.tls.write_text(
+            "TLS_CERT=/etc/haprion/tls/ui.crt\nTLS_KEY=/etc/haprion/tls/ui.key\n"
+            "SERVER_NAME=mgr.example.com\n"
+        )
+        self.keep = work / "keep"
+        self.keep.mkdir()
+        self.record = work / "record"
+        self.script = work / "platform/refresh-platform-files"
+        self.environment = {
+            **os.environ,
+            "PATH": f"{stubs}:{os.environ['PATH']}",
+            "RECORD": str(self.record),
+            "SYSTEMD_DIR": str(self.systemd),
+            "SUDOERS_DIR": str(self.sudoers),
+            "NGINX_SITE": str(self.site),
+            "TLS_CONF": str(self.tls),
+        }
+        #
+        # A first installation's files, as an older package wrote them: every
+        # one step 07 always installs, the probe's socket, the retention timer
+        # and the site - and not the OIDC helper's socket or the collector's.
+        #
+        self.old = {
+            self.sudoers / "haprion-worker": "old worker rule",
+            self.sudoers / "haprion-poller": "old poller rule",
+            self.systemd / "haprion-worker.service": "old",
+            self.systemd / "haprion-poller.service": "old",
+            self.systemd / "haprion-web.service": "old",
+            self.systemd / "haprion-retention.service": "old",
+            self.systemd / "haprion-retention.timer": "old",
+            self.site: "old site",
+        }
+        for name in (
+            "resolve",
+            "cert-export",
+            "cert-receiver",
+            "node",
+            "tls",
+            "backup-job",
+            "probe",
+        ):
+            self.old[self.systemd / f"haprion-{name}-helper@.service"] = "old"
+            self.old[self.systemd / f"haprion-{name}-helper.socket"] = "old"
+        for path, text in self.old.items():
+            path.write_text(text + "\n")
+
+    @staticmethod
+    def executable(path: Path, text: str) -> None:
+        path.write_text(text)
+        path.chmod(0o755)
+
+    def run_script(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - the copied script, fixed arguments
+            ["/bin/bash", str(self.script), *arguments],
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def refresh(self) -> subprocess.CompletedProcess[str]:
+        return self.run_script("r2", str(self.keep))
+
+    def recorded(self) -> list[str]:
+        return self.record.read_text().splitlines() if self.record.exists() else []
+
+    def test_every_file_its_step_installed_is_this_package_s(self) -> None:
+        done = self.refresh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+        worker = (self.sudoers / "haprion-worker").read_text()
+        self.assertEqual(worker, (PLATFORM / "examples/haprion-worker.sudoers.example").read_text())
+        unit = (self.systemd / "haprion-worker.service").read_text()
+        self.assertIn("/srv/example/config /srv/example/registry", unit)
+        self.assertNotIn("@POLICY_PATHS@", unit)
+        socket = (self.systemd / "haprion-node-helper.socket").read_text()
+        self.assertIn("SocketGroup=_haprion-worker", socket)
+        self.assertIn("haprion-probe", (self.systemd / "haprion-probe-helper.socket").read_text())
+        site = self.site.read_text()
+        self.assertIn("mgr.example.com", site)
+        self.assertNotIn("SERVER_NAME", site)
+
+    def test_a_socket_step_07_always_installs_is_installed_when_missing(self) -> None:
+        done = self.refresh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+        self.assertTrue((self.systemd / "haprion-node-restore-helper.socket").is_file())
+        enabled = [line for line in self.recorded() if line.startswith("systemctl enable")]
+        self.assertTrue(any("haprion-node-restore-helper.socket" in line for line in enabled))
+
+    def test_what_its_step_did_not_install_stays_out(self) -> None:
+        done = self.refresh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+        self.assertFalse((self.systemd / "haprion-oidc-helper.socket").exists())
+        self.assertFalse((self.systemd / "haprion-traffic-collector.timer").exists())
+        self.assertFalse((self.systemd / "haprion-certbot-renew.timer").exists())
+
+    def test_what_changed_is_read_again_restarted_and_proved(self) -> None:
+        done = self.refresh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+        recorded = self.recorded()
+        self.assertIn("systemctl daemon-reload", recorded)
+        self.assertTrue(
+            any(
+                line.startswith("systemctl restart haprion-")
+                and "haprion-node-helper.socket" in line
+                for line in recorded
+            )
+        )
+        self.assertIn("systemctl restart haprion-retention.timer", recorded)
+        self.assertLess(recorded.index("nginx -t"), recorded.index("systemctl reload nginx"))
+
+    def test_a_second_run_changes_nothing(self) -> None:
+        self.assertEqual(self.refresh().returncode, 0)
+        self.record.unlink()
+        again = self.run_script("r2", str(self.keep))
+
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(self.recorded(), [])
+        self.assertIn("every platform file is this package's already", again.stdout)
+
+    def test_a_restore_puts_back_what_the_previous_release_ran_with(self) -> None:
+        self.assertEqual(self.refresh().returncode, 0)
+        self.record.unlink()
+        done = self.run_script("--restore", str(self.keep))
+
+        self.assertEqual(done.returncode, 0, done.stderr)
+        for path, text in self.old.items():
+            with self.subTest(path=path.name):
+                self.assertEqual(path.read_text(), text + "\n")
+        self.assertFalse((self.systemd / "haprion-node-restore-helper.socket").exists())
+        recorded = self.recorded()
+        self.assertIn(
+            "systemctl disable --quiet --now haprion-node-restore-helper.socket", recorded
+        )
+        self.assertIn("systemctl daemon-reload", recorded)
+        self.assertIn("systemctl reload nginx", recorded)
+        self.assertEqual((self.keep / "manifest").read_text(), "")
+
+    def test_a_sudo_rule_that_does_not_parse_is_not_installed(self) -> None:
+        rule = self.script.parent / "examples/haprion-worker.sudoers.example"
+        rule.write_text("this rule does not parse\n")
+        done = self.refresh()
+
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("does not parse", done.stderr)
+        self.assertEqual((self.sudoers / "haprion-worker").read_text(), "old worker rule\n")
+        self.assertNotIn("haprion-worker\t", (self.keep / "manifest").read_text())
+
+    def test_a_site_nginx_refuses_stops_the_update(self) -> None:
+        self.environment["NGINX_REFUSES"] = "1"
+        done = self.refresh()
+
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("nginx refuses the new site", done.stderr)
+        self.assertNotIn("systemctl reload nginx", self.recorded())
+
+
+class TheListsAreTheSteps(unittest.TestCase):
+    """The lists the update installs from, held to the steps that install them first."""
+
+    @staticmethod
+    def array(name: str) -> list[str]:
+        text = (PLATFORM / "refresh-platform-files").read_text()
+        found = re.search(rf"^{name}=\(([^)]*)\)", text, re.MULTILINE)
+        if found is None:
+            raise AssertionError(f"{name} is not in refresh-platform-files")
+        return found.group(1).split()
+
+    @staticmethod
+    def examples(suffix: str) -> set[str]:
+        return {
+            path.name.removesuffix(suffix) for path in (PLATFORM / "examples").glob(f"*{suffix}")
+        }
+
+    def test_the_sockets_are_those_step_07_always_installs(self) -> None:
+        step = (PLATFORM / "07-platform-services").read_text()
+        always = set(
+            re.findall(
+                r'^install_file "/etc/systemd/system/haprion-([a-z-]+)-helper\.socket"',
+                step,
+                re.MULTILINE,
+            )
+        )
+        self.assertEqual(set(self.array("SOCKETS")), always)
+
+    def test_every_socket_and_timer_example_is_one_of_them(self) -> None:
+        sockets = {
+            name.removeprefix("haprion-").removesuffix("-helper")
+            for name in self.examples(".socket.example")
+        }
+        self.assertEqual(set(self.array("SOCKETS")) | set(self.array("OPTIONAL_SOCKETS")), sockets)
+        self.assertEqual(set(self.array("TIMERS")), self.examples(".timer.example"))
+
+    def test_each_step_renders_an_example_as_render_example_does(self) -> None:
+        lib = (ROOT / "install/lib.sh").read_text()
+        body = lib[
+            lib.index("render_example() {") : lib.index("\n}\n", lib.index("render_example() {"))
+        ]
+        rendered = set(re.findall(r"s\|([A-Z_]+)\|\$\{([A-Z_]+)\}\|g", body))
+        self.assertTrue(rendered)
+        self.assertTrue(all(token == variable for token, variable in rendered))
+        found = 0
+        for step in sorted(PLATFORM.glob("[01][0-9]-platform-*")):
+            text = step.read_text()
+            for token, variable in re.findall(
+                r's\|([A-Z_]+)\|\$\{([A-Z_]+)\}\|g"? [\'"]?examples/', text
+            ):
+                found += 1
+                with self.subTest(step=step.name, token=token):
+                    self.assertEqual(token, variable)
+                    self.assertIn((token, variable), rendered)
+        self.assertGreater(found, 5)
+
+
+if __name__ == "__main__":
+    unittest.main()

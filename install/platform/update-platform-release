@@ -39,6 +39,26 @@ rollback="/usr/sbin/haprion-rollback"
 step "Preparing ${release_id}"
 ./install-ui-release --prepare "$release_id"
 
+#
+# The units, sudo rules, sockets, timers and site the numbered steps
+# installed, from this package (review 2026-10-22, 6-5) - before the first
+# check, which holds them to the candidate. What they replace is kept, and put
+# back by any way this update ends short of a proved release: a die before
+# activation leaves the previous release running, with the files it was
+# checked against.
+#
+kept="$(mktemp -d)"
+files_settled=no
+settle_files() {
+    if [[ "$files_settled" != yes ]]; then
+        ./refresh-platform-files --restore "$kept" \
+            || warn "the platform files could not all be put back; ${kept} holds them"
+        files_settled=yes
+    fi
+}
+trap 'settle_files; rm -rf -- "$kept"' EXIT
+./refresh-platform-files "$release_id" "$kept"
+
 step "Checking prerequisites and rollback-safe schema transition"
 ./check-compatibility --release "$release_id" --before-migration
 #
@@ -90,27 +110,12 @@ restore_previous() {
         warn "the candidate is not current; no UI rollback is needed"
         return 0
     fi
+    settle_files
     warn "restoring UI release ${previous_id}"
     "$rollback" --to "$previous_id"
     ./check-compatibility \
         || die "release ${previous_id} was restored but the installation is not compatible"
 }
-
-#
-# The web unit is the same file for every release (haprion-web reads the
-# release's package and port), so the update brings it with it. Installed
-# before the switch and good for the release on either side of it, which is
-# what the restore below needs.
-#
-step "Web service unit"
-# shellcheck disable=SC2153 # WEB_UNIT is accounts.sh's fixed name, not a misspelt web_unit
-web_unit="/etc/systemd/system/${WEB_UNIT}"
-web_unit_before="$(cat "$web_unit" 2>/dev/null || true)"
-install_file "$web_unit" root:root 644 "$(cat examples/haprion-web.service.example)"
-if [[ "$(cat "$web_unit")" != "$web_unit_before" ]]; then
-    systemctl daemon-reload
-    log "  reloaded systemd"
-fi
 
 step "Activating ${release_id}"
 if ! ./install-ui-release "$release_id"; then
@@ -123,6 +128,7 @@ if ! ./check-compatibility; then
     restore_previous
     die "the final compatibility check failed; UI release ${previous_id} was restored"
 fi
+files_settled=yes
 
 #
 # Release retention (B156), only now that the update is proved: a new release

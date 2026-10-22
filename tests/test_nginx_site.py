@@ -105,10 +105,12 @@ class TheSiteParses(unittest.TestCase):
             )
         self.assertEqual(checked.returncode, 0, checked.stderr)
 
-    def test_only_a_sign_in_post_is_limited(self) -> None:
+    def test_only_a_sign_in_and_its_start_at_the_provider_are_limited(self) -> None:
         site = (TEMPLATE / "haprion.nginx.example").read_text()
-        self.assertIn("POST/login   $binary_remote_addr;", site)
-        self.assertIn('default      "";', site)
+        self.assertIn("POST/login       $binary_remote_addr;", site)
+        self.assertIn("GET/login/oidc   $binary_remote_addr;", site)
+        self.assertNotIn("callback", site.split("map $request_method$uri")[1].split("}")[0])
+        self.assertIn('default          "";', site)
         self.assertIn("limit_req zone=haprion_sign_in", site)
 
 

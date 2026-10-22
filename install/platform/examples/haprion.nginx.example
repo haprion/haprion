@@ -12,14 +12,19 @@
 
 #
 # Sign-in attempts, counted per client before the application spends an Argon2
-# on them (B305, security review S01). Only a POST to /login has a key; every
-# other request maps to an empty one, which nginx does not count. Ten a minute,
-# with room for a burst of ten: a person mistyping never meets it, a script
-# does, and is answered 429 without the application seeing it.
+# on them (B305, security review S01). Only a POST to /login and the start of a
+# sign-in through the identity provider have a key; every other request maps
+# to an empty one, which nginx does not count. Ten a minute, with room for a
+# burst of ten: a person mistyping never meets it, a script does, and is
+# answered 429 without the application seeing it. The provider's start runs a
+# discovery helper and stores a pending sign-in each time, for nobody in
+# particular (security review 2026-10-22, S3); its callback is not counted,
+# so a sign-in already under way is never the one turned away.
 #
 map $request_method$uri $haprion_sign_in {
-    default      "";
-    POST/login   $binary_remote_addr;
+    default          "";
+    POST/login       $binary_remote_addr;
+    GET/login/oidc   $binary_remote_addr;
 }
 limit_req_zone $haprion_sign_in zone=haprion_sign_in:1m rate=10r/m;
 

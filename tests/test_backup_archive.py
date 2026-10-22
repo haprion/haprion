@@ -22,6 +22,8 @@ class BackupArchiveTests(unittest.TestCase):
         omit: str | None = None,
         wrong_checksum: str | None = None,
         omit_netplan: bool = False,
+        hostname: bytes = b"node-a\n",
+        manifest_text: str | None = None,
     ) -> Path:
         stage = root / "stage"
         for name in REQUIRED_PATHS:
@@ -32,7 +34,7 @@ class BackupArchiveTests(unittest.TestCase):
                 path.mkdir(parents=True, exist_ok=True)
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
-            content = b"node-a\n" if name == "meta/hostname.txt" else f"{name}\n".encode()
+            content = hostname if name == "meta/hostname.txt" else f"{name}\n".encode()
             path.write_bytes(content)
 
         if not omit_netplan:
@@ -64,7 +66,8 @@ class BackupArchiveTests(unittest.TestCase):
                 entries.append(entry)
         manifest = stage / "meta/manifest.json"
         manifest.write_text(
-            json.dumps(
+            manifest_text
+            or json.dumps(
                 {"schema_version": 1, "entries": entries},
                 sort_keys=True,
                 separators=(",", ":"),
@@ -105,6 +108,44 @@ class BackupArchiveTests(unittest.TestCase):
             archive = self.make_archive(Path(raw), omit_netplan=True)
             with self.assertRaisesRegex(ArchiveError, "Netplan YAML"):
                 validate(archive)
+
+    def test_a_hostname_that_is_not_utf8_is_an_archive_error(self) -> None:
+        """Code review 26-10-22, 5-11: a `UnicodeDecodeError` the caller did not
+        catch stopped the backup of every node after this one."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.make_archive(Path(raw), hostname=b"node-\xff\n")
+            with self.assertRaisesRegex(ArchiveError, "hostname"):
+                validate(archive)
+
+    def test_a_manifest_nested_past_the_parser_is_an_archive_error(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            archive = self.make_archive(Path(raw), manifest_text="[" * 200_000)
+            with self.assertRaisesRegex(ArchiveError, "not valid JSON"):
+                validate(archive)
+
+    def test_a_long_name_header_is_refused_before_it_is_read(self) -> None:
+        """Code review 26-10-22, 5-5: tarfile reads a GNU long-name header whole,
+        so a few hundred kilobytes compressed asked root for gigabytes."""
+
+        import tracemalloc
+
+        for name, form in (("GNU", tarfile.GNU_FORMAT), ("pax", tarfile.PAX_FORMAT)):
+            with self.subTest(name), tempfile.TemporaryDirectory() as raw:
+                archive = Path(raw) / "state.tar.gz"
+                with tarfile.open(archive, "w:gz", format=form) as output:
+                    info = tarfile.TarInfo("rootfs/" + "a" * (24 * 1024 * 1024))
+                    output.addfile(info, io.BytesIO())
+                tracemalloc.start()
+                try:
+                    with self.assertRaises(ArchiveError) as refused:
+                        validate(archive)
+                    _, peak = tracemalloc.get_traced_memory()
+                finally:
+                    tracemalloc.stop()
+
+                self.assertLess(peak, 4 * 1024 * 1024)
+                self.assertIn("extended header", str(refused.exception))
 
     def test_the_member_limit_stops_reading_at_the_first_header_over_it(self) -> None:
         """S06 (security review 26-10-13): every header was parsed, and the data

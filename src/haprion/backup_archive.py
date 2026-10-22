@@ -25,6 +25,29 @@ MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_MEMBERS = 20_000
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024
+#
+# What a header that carries no file - a GNU long name or link, a pax extended
+# header - may declare. tarfile reads such a header whole, at the size it
+# declares, before it yields the member it belongs to: an archive of 0.4 MB
+# compressed made root allocate 2.4 GiB (code review 2026-10-22, 5-5). Newer
+# Pythons read it in 1 MiB chunks, which bounds each allocation but not the
+# sum, so the size is refused before the first byte is read.
+#
+MAX_EXTENDED_HEADER_BYTES = 64 * 1024
+_EXTENDED_HEADER_TYPES = frozenset(
+    {
+        tarfile.GNUTYPE_LONGNAME,
+        tarfile.GNUTYPE_LONGLINK,
+        tarfile.XHDTYPE,
+        tarfile.XGLTYPE,
+        tarfile.SOLARIS_XHDTYPE,
+    }
+)
+#
+# PATH_MAX. Longer is no file a node exports, and every message below names
+# the path.
+#
+MAX_NAME_CHARACTERS = 4096
 
 # These are the minimum state a clean node needs before the rebuild path can
 # restore identity and let central management put current configuration and
@@ -137,6 +160,20 @@ def _manifest(document: Any) -> dict[str, dict[str, Any]]:
     return indexed
 
 
+class _BoundedTarInfo(tarfile.TarInfo):
+    """A header, refused when it is an extended one larger than `MAX_EXTENDED_HEADER_BYTES`.
+
+    `_proc_member` is where tarfile turns a header into a member and, for the
+    extended types, reads their data; the size is in the header already.
+    """
+
+    def _proc_member(self, archive: tarfile.TarFile) -> tarfile.TarInfo:
+        if self.type in _EXTENDED_HEADER_TYPES and self.size > MAX_EXTENDED_HEADER_BYTES:
+            raise ArchiveError("the state export has an extended header over the size limit")
+        member: tarfile.TarInfo = super()._proc_member(archive)  # type: ignore[misc]
+        return member
+
+
 def validate(path: Path) -> ArchiveFacts:
     """Return bounded, non-secret facts after validating every manifest entry."""
 
@@ -146,8 +183,8 @@ def validate(path: Path) -> ArchiveFacts:
             raise ArchiveError("the state export has an invalid compressed size")
         # Opened separately so parse failures become the same bounded archive
         # error; the context immediately below owns and closes it.
-        archive = tarfile.open(path, mode="r:gz")  # noqa: SIM115
-    except (OSError, tarfile.TarError) as exc:
+        archive = tarfile.open(path, mode="r:gz", tarinfo=_BoundedTarInfo)  # noqa: SIM115
+    except (OSError, EOFError, tarfile.TarError) as exc:
         raise ArchiveError("the state export is not a readable tar.gz archive") from exc
 
     with archive:
@@ -162,6 +199,8 @@ def validate(path: Path) -> ArchiveFacts:
         unpacked = 0
         try:
             for member in archive:
+                if len(member.name) > MAX_NAME_CHARACTERS:
+                    raise ArchiveError("the state export has a path name over the limit")
                 members.append(member)
                 unpacked += member.size
                 if len(members) > MAX_MEMBERS:
@@ -193,7 +232,7 @@ def validate(path: Path) -> ArchiveFacts:
             raise ArchiveError("the state export manifest cannot be read")
         try:
             document = json.loads(stream.read(MAX_MANIFEST_BYTES + 1).decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise ArchiveError("the state export manifest is not valid JSON") from exc
         declared = _manifest(document)
 
@@ -250,9 +289,12 @@ def validate(path: Path) -> ArchiveFacts:
 
         hostname_member = indexed["meta/hostname.txt"]
         hostname_stream = archive.extractfile(hostname_member)
-        hostname = (
-            "" if hostname_stream is None else hostname_stream.read(256).decode("utf-8").strip()
-        )
+        try:
+            hostname = (
+                "" if hostname_stream is None else hostname_stream.read(256).decode("utf-8").strip()
+            )
+        except UnicodeDecodeError as exc:
+            raise ArchiveError("the state export carries an invalid hostname") from exc
         if not hostname or len(hostname) > 253 or any(char.isspace() for char in hostname):
             raise ArchiveError("the state export carries an invalid hostname")
         return ArchiveFacts(

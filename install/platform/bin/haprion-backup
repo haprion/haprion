@@ -3,6 +3,7 @@
 # haprion-backup - dump the interface database, and prove the dump is usable.
 #
 #     haprion-backup dump
+#     haprion-backup dump-before-migration <from> <to>
 #     haprion-backup verify-restore
 #     haprion-backup list
 #     haprion-backup after-restore
@@ -42,7 +43,11 @@ usage() {
 
 command="${1:-}"
 shift || true
-[[ $# -eq 0 ]] || usage
+if [[ "$command" == dump-before-migration ]]; then
+    [[ $# -eq 2 ]] || usage
+else
+    [[ $# -eq 0 ]] || usage
+fi
 
 config="${CONFIG_DIRECTORY}/ui-admin.conf"
 [[ -r "$config" ]] || { echo "ERROR: cannot read ${config}" >&2; exit 78; }
@@ -114,17 +119,16 @@ restore_brought_back() {
         || die "the restored database holds no schema version; the restore brought nothing back"
 }
 
-do_dump() {
-    install -d -o root -g root -m 700 "$DUMP_DIR"
+#
+# A dump to `target`, read back before it is given its name.
+#
+write_dump() {
+    local target="$1" staging used
+    staging="${target}.partial"
 
-    local used
     used="$(df --output=pcent "$DUMP_DIR" | tail -1 | tr -dc '0-9')"
     [[ "$used" -lt "$DISK_WARN_PERCENT" ]] \
         || warn "the filesystem holding ${DUMP_DIR} is ${used}% full"
-
-    local target staging
-    target="${DUMP_DIR}/${DB_NAME}-$(date +%Y%m%d).dump"
-    staging="${target}.partial"
 
     #
     # Written to a name that is not the final one and renamed into place. A
@@ -150,6 +154,11 @@ do_dump() {
     chmod 600 "$staging"
     mv -f -- "$staging" "$target"
     log "  written  ${target}  ($(du -h "$target" | cut -f1))"
+}
+
+do_dump() {
+    install -d -o root -g root -m 700 "$DUMP_DIR"
+    write_dump "${DUMP_DIR}/${DB_NAME}-$(date +%Y%m%d).dump"
 
     #
     # One dump per day: today's overwrites today's. Retention counts files, not
@@ -166,6 +175,36 @@ do_dump() {
     for index in "${!dumps[@]}"; do
         if [[ "$index" -ge "$KEEP_DAYS" ]]; then
             rm -f -- "${DUMP_DIR}/${dumps[$index]}"
+            log "  removed  ${dumps[$index]}"
+        fi
+    done
+}
+
+#
+# Before a release changes the schema (logic review 2026-10-22, F1). A
+# migration that fails is rolled back by PostgreSQL itself; this is for one
+# that succeeds and is wrong, and for the way back to the release before it.
+# Named by both revisions and the moment, in a directory of its own so the
+# daily retention neither counts nor removes it, and the newest three kept.
+#
+BEFORE_MIGRATION_KEPT=3
+
+do_dump_before_migration() {
+    local from="$1" to="$2" directory index
+    [[ "$from" =~ ^[0-9A-Za-z_]{1,32}$ && "$to" =~ ^[0-9A-Za-z_]{1,32}$ ]] \
+        || die "dump-before-migration takes two schema revisions"
+    directory="${DUMP_DIR}/before-migration"
+    install -d -o root -g root -m 700 "$DUMP_DIR" "$directory"
+    write_dump "${directory}/${DB_NAME}-${from}-to-${to}-$(date +%Y%m%d-%H%M%S).dump"
+
+    local -a dumps=()
+    while IFS= read -r file; do dumps+=("$file"); done < <(
+        find "$directory" -maxdepth 1 -name "${DB_NAME}-*.dump" -printf '%T@ %f\n' \
+            | sort -rn | cut -d' ' -f2-
+    )
+    for index in "${!dumps[@]}"; do
+        if [[ "$index" -ge "$BEFORE_MIGRATION_KEPT" ]]; then
+            rm -f -- "${directory}/${dumps[$index]}"
             log "  removed  ${dumps[$index]}"
         fi
     done
@@ -343,6 +382,7 @@ take_lock() {
 
 case "$command" in
     dump)           take_lock; do_dump ;;
+    dump-before-migration) take_lock; do_dump_before_migration "$@" ;;
     after-restore)  do_after_restore ;;
     verify-restore) take_lock; do_verify_restore ;;
     list)

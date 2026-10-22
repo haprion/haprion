@@ -48,6 +48,19 @@ step "Checking prerequisites and rollback-safe schema transition"
 #
 ./ensure-postgresql
 
+#
+# A dump before a schema change, by the release's own alembic (logic review
+# 2026-10-22, F1): the daily one is up to a day old and today's run replaces
+# it. Only when the schema moves - a package installed again takes none.
+#
+schema_now="$(./migrate --release "$release_id" current | { grep -Eo '^[0-9A-Za-z_]+' || true; } | tail -1)"
+schema_next="$(./migrate --release "$release_id" heads | { grep -Eo '^[0-9A-Za-z_]+' || true; } | tail -1)"
+[[ -n "$schema_now" && -n "$schema_next" ]] || die "cannot read the schema revisions"
+if [[ "$schema_now" != "$schema_next" ]]; then
+    step "Dumping the database before ${schema_now} -> ${schema_next}"
+    /usr/sbin/haprion-backup dump-before-migration "$schema_now" "$schema_next"
+fi
+
 step "Migrating from the prepared release"
 ./migrate --release "$release_id"
 

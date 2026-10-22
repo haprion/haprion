@@ -5511,8 +5511,11 @@ For an update, first run `install-ui-release --prepare <release-id>` on the
 release the package unpacked. The candidate is verified but `current` stays on
 the old release. Run `check-compatibility
 --release <release-id> --before-migration` to prove its CLI, helper and node
-requirements, then `migrate --release <release-id>`, `03-verify`, and the candidate
-check again without `--before-migration`. Only after those pass is the same
+requirements, then - when the candidate's schema head differs from the database's -
+`haprion-backup dump-before-migration <from> <to>`, then `migrate --release <release-id>`,
+`03-verify`, and the candidate check again without `--before-migration`. That dump goes to
+`before-migration/` under the dump directory, named by both revisions and the moment; the newest
+three are kept, and the daily dumps' retention neither counts nor removes them. Only after those pass is the same
 prepared release activated by rerunning `install-ui-release` without `--prepare`.
 The final ordinary compatibility check proves the processes after the switch.
 

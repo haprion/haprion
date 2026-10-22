@@ -141,10 +141,6 @@ class ANewInstallationIsBackedUpBeforeItHasAnAccount(unittest.TestCase):
         self.assertNotIn("holds no accounts", source)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheRestoredHashIsALocalAccounts(unittest.TestCase):
     """Review 2026-10-20, R2: an OIDC account has no hash, by the schema's rule.
 
@@ -230,3 +226,74 @@ class OneRunAtATime(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn("waiting for it", done.stdout)
         self.assertIn("still holds", done.stderr)
+
+
+class ADumpBeforeAMigration(unittest.TestCase):
+    """Logic review 26-10-22, F1: a dump of its own before the schema changes."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.dumps = self.root / "dumps"
+        bin_ = self.root / "bin"
+        bin_.mkdir()
+        stubs = {
+            "pg_dump": 'for a; do case "$a" in --file=*) echo dump > "${a#--file=}" ;; esac; done\n',
+            "pg_restore": "echo '1; 0 0 TABLE public job'\n",
+            "chown": "exit 0\n",
+            "install": 'shift 7; mkdir -p "$@"\n',
+        }
+        for name, body in stubs.items():
+            (bin_ / name).write_text("#!/bin/sh\n" + body)
+            (bin_ / name).chmod(0o755)
+        self.path = f"{bin_}:/usr/bin:/bin"
+
+    def dump(self, before: str, after: str) -> subprocess.CompletedProcess[str]:
+        source = SCRIPT.read_text()
+        kept = re.search(r"^BEFORE_MIGRATION_KEPT=.*$", source, re.MULTILINE)
+        if kept is None:
+            self.fail("haprion-backup no longer states how many dumps before a migration it keeps")
+        program = (
+            "set -Eeuo pipefail\n"
+            'log() { echo "$*"; }\nwarn() { echo "$*" >&2; }\n'
+            'die() { echo "ERROR: $*" >&2; exit 1; }\nstep_log() { :; }\n'
+            f"DUMP_DIR={self.dumps}\nDB_NAME=haprion\nDB_ROLE=r\nDISK_WARN_PERCENT=101\n"
+            + kept.group(0)
+            + "\n"
+            + function("write_dump", source)
+            + function("do_dump_before_migration", source)
+            + f"do_dump_before_migration {before} {after}\n"
+        )
+        return subprocess.run(  # noqa: S603 - fixed program
+            ["/bin/bash", "-c", program],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PATH": self.path},
+            cwd=self.root,
+        )
+
+    def test_named_by_both_revisions_apart_from_the_daily_ones_and_three_kept(self) -> None:
+        self.dumps.mkdir()
+        (self.dumps / "haprion-20261022.dump").write_text("daily")
+        for step in range(4):
+            done = self.dump(f"00{80 + step}", f"00{81 + step}")
+            self.assertEqual(done.returncode, 0, done.stderr)
+            time.sleep(1.1)
+        kept = sorted(path.name for path in (self.dumps / "before-migration").iterdir())
+        self.assertEqual(len(kept), 3)
+        self.assertTrue(all(name.startswith("haprion-00") for name in kept))
+        self.assertFalse(any(name.startswith("haprion-0080-to-0081-") for name in kept))
+        self.assertEqual(
+            sorted(path.name for path in self.dumps.glob("*.dump")), ["haprion-20261022.dump"]
+        )
+
+    def test_a_revision_that_is_not_one_is_refused(self) -> None:
+        done = self.dump("0084", "../x")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("takes two schema revisions", done.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

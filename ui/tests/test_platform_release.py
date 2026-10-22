@@ -98,6 +98,18 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertLess(database, candidate)
         self.assertLess(candidate, activate)
 
+    def test_a_schema_change_is_dumped_after_the_checks_and_before_the_migration(self) -> None:
+        """Logic review 26-10-22, F1: the newest dump was up to a day old."""
+
+        prerequisites = self.update.index("--before-migration")
+        dump = self.update.index(
+            'haprion-backup dump-before-migration "$schema_now" "$schema_next"'
+        )
+        migrate = self.update.index('./migrate --release "$release_id"\n')
+        self.assertLess(prerequisites, dump)
+        self.assertLess(dump, migrate)
+        self.assertIn('if [[ "$schema_now" != "$schema_next" ]]; then', self.update)
+
     def test_claims_are_held_before_anything_is_switched_or_restarted(self) -> None:
         """CR-12: the pause and the wait come before `current` moves and the worker restarts.
 

@@ -66,7 +66,7 @@ def location_database(path: Path = DEFAULT_DATABASE) -> CountryReader:
 
     def read(countries: Collection[str]) -> Countries:
         try:
-            import location  # type: ignore[import-not-found]  # noqa: PLC0415
+            import location  # type: ignore[import-not-found]
         except ImportError as exc:
             raise GeoUnavailable(
                 "an object names a country, and the IPFire Location library is not installed "
@@ -106,7 +106,7 @@ def database_stamp(path: Path = DEFAULT_DATABASE) -> str | None:
     """
 
     try:
-        import location  # noqa: PLC0415
+        import location
     except ImportError:
         return None
     if not path.is_file():

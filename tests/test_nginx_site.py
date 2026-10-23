@@ -33,7 +33,7 @@ NGINX_MINIMUM = (1, 25, 1)
 
 
 def nginx_version() -> tuple[int, ...] | None:
-    answer = subprocess.run(  # noqa: S603 - fixed binary
+    answer = subprocess.run(  # fixed binary
         [NGINX, "-v"], capture_output=True, text=True, check=False
     )
     found = re.search(r"nginx/(\d+)\.(\d+)\.(\d+)", answer.stderr + answer.stdout)
@@ -53,7 +53,7 @@ class TheSiteParses(unittest.TestCase):
 
     def render(self, root: Path) -> Path:
         key, cert = root / "tls.key", root / "tls.pem"
-        subprocess.run(  # noqa: S603 - fixed argv, a throwaway pair for the check
+        subprocess.run(  # fixed argv, a throwaway pair for the check
             [
                 "/usr/bin/openssl", "req", "-x509", "-newkey", "ec",
                 "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-days", "1",
@@ -97,7 +97,7 @@ class TheSiteParses(unittest.TestCase):
             self.skipTest(f"nginx {version} is older than the site needs, 1.25.1")
         with tempfile.TemporaryDirectory() as raw:
             conf = self.render(Path(raw))
-            checked = subprocess.run(  # noqa: S603 - fixed binary, a file made above
+            checked = subprocess.run(  # fixed binary, a file made above
                 [NGINX, "-t", "-q", "-p", raw, "-c", str(conf)],
                 capture_output=True,
                 text=True,
@@ -137,7 +137,7 @@ class AReceiversSecretIsWhatNginxChecks(unittest.TestCase):
                 '      auth_basic "192.0.2.9";\n'
                 f"      auth_basic_user_file {root}/receiver.htpasswd;\n    }}\n  }}\n}}\n"
             )
-            server = subprocess.Popen(  # noqa: S603 - fixed binary, a file made above
+            server = subprocess.Popen(  # fixed binary, a file made above
                 [NGINX, "-p", raw, "-c", str(root / "nginx.conf"), "-g", "daemon off;"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

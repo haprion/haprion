@@ -638,7 +638,7 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
                 text=True,
                 timeout=15,
                 check=False,
-            )  # noqa: S603 - verified public certificate, fixed OpenSSL options
+            )  # verified public certificate, fixed OpenSSL options
             if result.returncode:
                 raise NdesError(
                     "certificate_mismatch",
@@ -674,7 +674,7 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
             text=True,
             timeout=15,
             check=False,
-        )  # noqa: S603 - protected public certificate, fixed options
+        )  # protected public certificate, fixed options
         if subject.returncode or subject.stdout.strip() != "subject=CN=" + domains[0]:
             raise NdesError(
                 "certificate_mismatch",

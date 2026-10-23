@@ -63,7 +63,7 @@ def reconcile_semantics() -> Any:
 
     path = Path(__file__).resolve().parents[1] / "contract-tests" / "validate_contracts.py"
     spec = importlib.util.spec_from_file_location("validate_contracts", path)
-    assert spec is not None and spec.loader is not None  # noqa: S101 - a fixed file
+    assert spec is not None and spec.loader is not None  # a fixed file
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.check_reconcile_semantics
@@ -212,13 +212,13 @@ class SharedCountersTests(unittest.TestCase):
         paused: list[float] = []
 
         def disconnect(_: FakeCluster, node: FakeNode) -> None:
-            assert node.peers is not None  # noqa: S101 - set above
+            assert node.peers is not None  # set above
             node.peers[0]["connected"] = False
 
         def pause(seconds: float) -> None:
             paused.append(seconds)
             for node in cluster.nodes:
-                assert node.peers is not None  # noqa: S101 - set above
+                assert node.peers is not None  # set above
                 node.peers[0]["connected"] = True
 
         cluster.on_deploy = disconnect
@@ -232,7 +232,7 @@ class SharedCountersTests(unittest.TestCase):
         cluster = self.sharing()
 
         def disconnect(_: FakeCluster, node: FakeNode) -> None:
-            assert node.peers is not None  # noqa: S101 - set above
+            assert node.peers is not None  # set above
             node.peers[0]["connected"] = False
 
         cluster.on_deploy = disconnect
@@ -250,7 +250,7 @@ class SharedCountersTests(unittest.TestCase):
         cluster = self.sharing()
 
         def disconnect(_: FakeCluster, node: FakeNode) -> None:
-            assert node.peers is not None  # noqa: S101 - set above
+            assert node.peers is not None  # set above
             node.peers[0]["connected"] = False
 
         cluster.on_deploy = disconnect
@@ -270,7 +270,7 @@ class SharedCountersTests(unittest.TestCase):
         self.assertIn("The remaining nodes were not touched", shown)
         report = LAST_REPORT[0]
         self.assertEqual(report.nodes["node-b"].outcome, "updated")
-        assert report.error is not None  # noqa: S101 - asserted by the exit code
+        assert report.error is not None  # asserted by the exit code
         self.assertEqual(report.error.code, "status_unavailable")
 
     def test_turning_sharing_on_does_not_wait_for_a_node_still_without_it(self) -> None:
@@ -1024,7 +1024,7 @@ class TheFirstDeployWaitsForTheVip(unittest.TestCase):
         self.assertTrue(paused)
         self.assertIn("waiting for a node to take the VIP", shown)
         report = LAST_REPORT[0]
-        assert report.error is not None  # noqa: S101 - asserted by the exit code
+        assert report.error is not None  # asserted by the exit code
         self.assertEqual(report.error.code, "status_unavailable")
 
 

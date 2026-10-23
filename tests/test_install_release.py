@@ -291,7 +291,7 @@ class InstallReleaseTests(unittest.TestCase):
             # The body, not the interpreter line: a checkout set up with
             # tools/bootstrap-dev keeps its interpreter inside it (26-10-10).
             self.assertNotIn(str(INSTALLER_PATH.parents[1]), launcher.removeprefix(shebang))
-            subprocess.run(  # noqa: S603 - generated local test launcher
+            subprocess.run(  # generated local test launcher
                 [str(release / "bin/haprion-example")], check=True
             )
 

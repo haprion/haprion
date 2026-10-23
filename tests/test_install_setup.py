@@ -39,7 +39,7 @@ STRICT = f'set -Eeuo pipefail; source "{LIB}"; source "$1"; '
 def bash(
     script: str, *args: str, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's own scripts
+    return subprocess.run(  # fixed interpreter, the repository's own scripts
         ["/bin/bash", "-c", script, "bash", *args],
         capture_output=True,
         text=True,
@@ -91,7 +91,7 @@ class RelativePathsAreTheCallers(unittest.TestCase):
     def test_an_answers_file_beside_the_caller_is_found(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             (Path(raw) / "answers.env").write_text("CONFIG_ROOT=/srv/other\n")
-            done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's lib.sh
+            done = subprocess.run(  # fixed interpreter, the repository's lib.sh
                 [
                     "/bin/bash",
                     "-c",
@@ -138,7 +138,7 @@ class Step3MakesTheFileANodeChangeEdits(unittest.TestCase):
     BLOCK = re.compile(r"^ROOT_KNOWN_HOSTS=.*?^fi\n", re.MULTILINE | re.DOTALL)
 
     def test_it_is_the_file_the_change_reads(self) -> None:
-        from haprion import node_enrollment  # noqa: PLC0415
+        from haprion import node_enrollment
 
         found = self.BLOCK.search((INSTALL / "03-manager-keys").read_text())
         assert found, "03-manager-keys no longer makes root's known_hosts"
@@ -166,7 +166,7 @@ class Step3MakesTheFileANodeChangeEdits(unittest.TestCase):
 
 class Step1GivesARepositoryItsIdentity(unittest.TestCase):
     def test_the_same_identity_create_cluster_keeps(self) -> None:
-        from haprion.cluster_definition import REPOSITORY_IDENTITY  # noqa: PLC0415
+        from haprion.cluster_definition import REPOSITORY_IDENTITY
 
         text = (INSTALL / "01-manager-prepare").read_text()
         for setting, value in REPOSITORY_IDENTITY:
@@ -312,7 +312,7 @@ class TheEditingPolicyWithNoCluster(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".sudoers") as handle:
             handle.write(text)
             handle.flush()
-            return subprocess.run(  # noqa: S603 - the system's visudo, a fixed check
+            return subprocess.run(  # the system's visudo, a fixed check
                 ["/usr/sbin/visudo", "-cqf", handle.name],
                 capture_output=True,
                 text=True,
@@ -584,7 +584,7 @@ class TheChecksBeforeAnythingChanges(unittest.TestCase):
     def test_not_root_changes_nothing_and_says_how(self) -> None:
         if os.geteuid() == 0:
             self.skipTest("the check is for an account that is not root")
-        done = subprocess.run(  # noqa: S603 - the repository's own command, as an operator runs it
+        done = subprocess.run(  # the repository's own command, as an operator runs it
             [str(DRIVER)], capture_output=True, text=True, check=False
         )
         self.assertEqual(done.returncode, 1)
@@ -744,7 +744,7 @@ class WhatLibShReadsShipsWithIt(unittest.TestCase):
         spec = importlib.util.spec_from_file_location(
             "build_ui_package", INSTALL.parent / "tools" / "build-ui-package.py"
         )
-        assert spec is not None and spec.loader is not None  # noqa: S101 - local tool must exist
+        assert spec is not None and spec.loader is not None  # local tool must exist
         tool = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = tool
         spec.loader.exec_module(tool)
@@ -857,7 +857,7 @@ class AClusterTheInterfaceMayCreateTheStepsAccept(unittest.TestCase):
     and no underscore; and an ID with a hyphen made no shell variable name."""
 
     def test_valid_id_is_the_engine_s_pattern(self) -> None:
-        from haprion.config import CLUSTER_ID  # noqa: PLC0415
+        from haprion.config import CLUSTER_ID
 
         lib = (INSTALL / "lib.sh").read_text()
         found = re.search(r'^valid_id\(\) \{\n    \[\[ "\$1" =~ (.*) \]\]\n\}', lib, re.MULTILINE)
@@ -865,7 +865,7 @@ class AClusterTheInterfaceMayCreateTheStepsAccept(unittest.TestCase):
         self.assertEqual(found.group(1), CLUSTER_ID.pattern)
 
     def test_an_answer_for_a_hyphenated_cluster_is_found(self) -> None:
-        done = subprocess.run(  # noqa: S603 - the helper under test
+        done = subprocess.run(  # the helper under test
             [
                 "/bin/bash",
                 "-c",

@@ -22,7 +22,7 @@ def tool() -> Any:
     spec = importlib.util.spec_from_file_location(
         "build_coraza_package", TOOLS / "build-coraza-package.py"
     )
-    assert spec is not None and spec.loader is not None  # noqa: S101 - local test tool must exist
+    assert spec is not None and spec.loader is not None  # local test tool must exist
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module  # dataclasses resolve their module by name
     spec.loader.exec_module(module)
@@ -42,7 +42,7 @@ def archive(path: Path, members: dict[str, bytes], *, mtime: int = 1_700_000_000
 
 def listing(deb: Path) -> dict[str, str]:
     """Path -> 'mode owner' for every member, as dpkg-deb sees it."""
-    out = subprocess.run(  # noqa: S603 - fixed reader, test package
+    out = subprocess.run(  # fixed reader, test package
         ["/usr/bin/dpkg-deb", "--contents", str(deb)], check=True, capture_output=True, text=True
     ).stdout
     rows = {}
@@ -53,7 +53,7 @@ def listing(deb: Path) -> dict[str, str]:
 
 
 def field(deb: Path, name: str) -> str:
-    return subprocess.run(  # noqa: S603 - fixed reader, test package
+    return subprocess.run(  # fixed reader, test package
         ["/usr/bin/dpkg-deb", "--field", str(deb), name], check=True, capture_output=True, text=True
     ).stdout.strip()
 
@@ -160,7 +160,7 @@ class Packages(unittest.TestCase):
         script.chmod(0o755)
         config = self.root / "coraza.yaml"
         config.write_text(f"# example\n{bind}log_level: info\n")
-        return subprocess.run(  # noqa: S603 - the script under test, fixed arguments
+        return subprocess.run(  # the script under test, fixed arguments
             ["/bin/sh", str(script), str(config), *extra],
             capture_output=True,
             text=True,

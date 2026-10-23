@@ -83,7 +83,7 @@ def wait_until(condition: object, what: str, timeout: float = 5.0) -> None:
 
 def echo_server(port: int) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+        def do_GET(self) -> None:  # the name is the library's
             body = b"web ok"
             self.send_response(200)
             self.send_header("Content-Length", str(len(body)))

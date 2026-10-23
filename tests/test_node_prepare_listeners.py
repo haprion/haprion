@@ -41,7 +41,7 @@ def wildcard_listeners(text: str) -> list[str]:
     script = NODE_PREPARE.read_text()
     found = re.search(r"^wildcard_listeners\(\) \{\n.*?^\}\n", script, re.MULTILINE | re.DOTALL)
     assert found is not None, "04-node-prepare has no wildcard_listeners"
-    run = subprocess.run(  # noqa: S603 - fixed binary, the function from the script
+    run = subprocess.run(  # fixed binary, the function from the script
         ["/bin/bash", "-c", f"set -Eeuo pipefail\n{found.group(0)}wildcard_listeners"],
         input=text,
         capture_output=True,
@@ -150,7 +150,7 @@ class TheNodeStepTakesSshdOffTheVirtualAddress(unittest.TestCase):
         }
 
     def run_step(self, **extra: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # noqa: S603 - fixed binary, the step's own functions
+        return subprocess.run(  # fixed binary, the step's own functions
             ["/bin/bash", "-c", self.program],
             env={**os.environ, **self.env, **extra},
             capture_output=True,
@@ -203,7 +203,7 @@ class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
     def link(self, packaged: bool, name: str = "haproxy.cfg") -> subprocess.CompletedProcess[str]:
         body = function(self.script, "link_into_current").replace("/etc/haproxy/", f"{self.etc}/")
         verdict = "true" if packaged else "false"
-        return subprocess.run(  # noqa: S603 - fixed interpreter, the step's own function
+        return subprocess.run(  # fixed interpreter, the step's own function
             [
                 "/bin/bash",
                 "-c",
@@ -249,7 +249,7 @@ class AFreshNodeTakesTheReleaseLayout(unittest.TestCase):
         assert found, "04-node-prepare no longer looks the node path up where the test reads it"
         for answers, expected in (("", "alpha"), ("NODE_PATH_alpha=a", "a")):
             with self.subTest(answers=answers):
-                done = subprocess.run(  # noqa: S603 - fixed interpreter, the step's own lines
+                done = subprocess.run(  # fixed interpreter, the step's own lines
                     [
                         "/bin/bash",
                         "-c",
@@ -270,7 +270,7 @@ class DocumentationDpkgLeftOutIsNoChange(unittest.TestCase):
 
     def changes(self, report: str) -> str:
         body = function(NODE_PREPARE.read_text(), "node_package_changes")
-        done = subprocess.run(  # noqa: S603 - fixed interpreter, the step's own function
+        done = subprocess.run(  # fixed interpreter, the step's own function
             [
                 "/bin/bash",
                 "-c",

@@ -57,7 +57,7 @@ class OneClusterId(unittest.TestCase):
     def test_the_installation_scripts_check_it(self) -> None:
         for cluster, expected in (("edge-a", 0), ("a" + "b" * 62, 0), ("al_pha", 1), ("1a", 1)):
             with self.subTest(cluster=cluster):
-                run = subprocess.run(  # noqa: S603 - fixed interpreter, script built here
+                run = subprocess.run(  # fixed interpreter, script built here
                     [
                         "/bin/bash",
                         "-c",

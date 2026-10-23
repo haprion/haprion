@@ -57,8 +57,8 @@ if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
     )
 
 # Re-exported: the other browser suites import it from here, after this guard.
-from playwright.sync_api import Browser, Playwright  # noqa: E402
-from playwright.sync_api import sync_playwright as sync_playwright  # noqa: E402
+from playwright.sync_api import Browser, Playwright
+from playwright.sync_api import sync_playwright as sync_playwright
 
 
 def free_port() -> int:

@@ -88,7 +88,7 @@ class Site:
         }
 
     def child(self, stop: int, *, mid: bool = False) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # noqa: S603 - this interpreter, the script above
+        return subprocess.run(  # this interpreter, the script above
             [sys.executable, "-c", CHILD, str(self.root), str(stop), "mid" if mid else "-"],
             capture_output=True,
             text=True,
@@ -145,7 +145,7 @@ class AChangeCutShort(unittest.TestCase):
                 "    change_journal.apply((change,))\n"
                 "print('not reached')\n"
             )
-            done = subprocess.run(  # noqa: S603 - this interpreter, the script above
+            done = subprocess.run(  # this interpreter, the script above
                 [sys.executable, "-c", script, str(path), str(journal)],
                 capture_output=True,
                 text=True,

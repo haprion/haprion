@@ -19,7 +19,7 @@ DATED_HISTORY = re.compile(r"\b(?:until|since|before|after) 20\d\d-\d\d-\d\d\b",
 
 
 def markdown_files() -> list[Path]:
-    listed = subprocess.run(  # noqa: S603 - fixed argv
+    listed = subprocess.run(  # fixed argv
         ["git", "ls-files", "-z", "*.md"],  # noqa: S607 - git on PATH, as the gate's other checks
         cwd=ROOT,
         capture_output=True,

@@ -358,8 +358,8 @@ class EnoughStickCountersForWhatIsGenerated(unittest.TestCase):
         self.assertIsNone(self.problem("global\n", path="core/conf.d/0010-core.cfg"))
 
     def test_the_template_a_new_cluster_starts_from_has_the_line(self) -> None:
-        from haprion.cluster_definition import MANAGER_SOCKET, seed_files  # noqa: PLC0415
-        from haprion.managed_publish import GENERATED_PREFIX  # noqa: PLC0415
+        from haprion.cluster_definition import MANAGER_SOCKET, seed_files
+        from haprion.managed_publish import GENERATED_PREFIX
 
         self.assertEqual(tls_policy.GENERATED_CONFIGURATION, GENERATED_PREFIX)
         self.assertEqual(tls_policy.MANAGER_SOCKET, MANAGER_SOCKET)

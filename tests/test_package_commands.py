@@ -29,7 +29,7 @@ INSTALL = BASE / "install"
 
 def load(name: str, relative: str) -> Any:
     spec = importlib.util.spec_from_file_location(name, BASE / relative)
-    assert spec is not None and spec.loader is not None  # noqa: S101 - local tool must exist
+    assert spec is not None and spec.loader is not None  # local tool must exist
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)

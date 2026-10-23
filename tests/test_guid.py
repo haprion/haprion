@@ -248,7 +248,7 @@ class ARedirectIsNamedFromItsPath(unittest.TestCase):
         )
 
     def test_two_objects_that_produce_one_backend_name_are_refused(self) -> None:
-        from haprion.generate import (  # noqa: PLC0415
+        from haprion.generate import (
             GeneratorError,
             _refuse_shared_backend_names,
         )

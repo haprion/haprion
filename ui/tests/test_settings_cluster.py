@@ -49,12 +49,12 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
     """Active only when what is shown is what the nodes run (review 2026-09-29 F1)."""
 
     def job(self, operation: str, cluster: str, state: str = "done") -> Any:
-        from tests.test_queue_route import queued  # noqa: PLC0415
+        from tests.test_queue_route import queued
 
         return queued(operation=operation, cluster=cluster, state=state)
 
     def test_a_settings_publish_since_the_last_deploy_is_waiting_for_one(self) -> None:
-        from haprion_ui import network  # noqa: PLC0415
+        from haprion_ui import network
 
         newest_first = [
             self.job("cluster_settings_publish", "edge-demo"),

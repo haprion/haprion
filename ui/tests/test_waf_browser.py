@@ -19,7 +19,7 @@ if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
         "set PLAYWRIGHT_BROWSERS_PATH to the directory holding the Playwright browsers"
     )
 
-from playwright.sync_api import sync_playwright  # noqa: E402
+from playwright.sync_api import sync_playwright
 
 ALLOW = "/waf/allow?cluster=alpha&object=shop&rule=942100&field=ARGS:q&path=/search"
 
@@ -90,7 +90,7 @@ class TheAllowDialog(EditorTestCase):
                 self.end_headers()
                 self.wfile.write(data)
 
-            def do_GET(self) -> None:  # noqa: N802
+            def do_GET(self) -> None:
                 if self.path.startswith("/static/"):
                     self.reply(200)
                 elif self.path.startswith("/waf/allow"):
@@ -98,7 +98,7 @@ class TheAllowDialog(EditorTestCase):
                 else:
                     self.reply(200, test.listing)
 
-            def do_POST(self) -> None:  # noqa: N802
+            def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length", "0"))
                 test.posts.append(self.rfile.read(length).decode())
                 if refuse:

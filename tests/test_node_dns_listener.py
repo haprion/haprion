@@ -46,7 +46,7 @@ LISTENER = 'setLocal("192.0.2.10:53")\nnewServer({address="198.51.100.53:53"})\n
 
 def extract(name: str, text: str) -> str:
     found = re.search(rf"^{name}\(\) \{{.*?^\}}$", text, re.DOTALL | re.MULTILINE)
-    assert found, f"{name} is no longer where the test extracts it from"  # noqa: S101
+    assert found, f"{name} is no longer where the test extracts it from"
     return found.group(0)
 
 
@@ -93,7 +93,7 @@ class TheDnsListenerSteps(unittest.TestCase):
             f"{self.functions}\n"
             f"{call}\n"
         )
-        finished = subprocess.run(  # noqa: S603 - bash running the extracted functions
+        finished = subprocess.run(  # bash running the extracted functions
             ["/bin/bash", str(script)],
             capture_output=True,
             text=True,
@@ -218,7 +218,7 @@ class TheStatusReport(unittest.TestCase):
         text = STATUS.read_text()
         helper = re.search(r"^def package_version\(.*?(?=^\S)", text, re.DOTALL | re.MULTILINE)
         reader = re.search(r"^def read_dns_listener\(.*?(?=^\S)", text, re.DOTALL | re.MULTILINE)
-        assert helper and reader, "the dns report is no longer where the test extracts it from"  # noqa: S101
+        assert helper and reader, "the dns report is no longer where the test extracts it from"
         self.asked = 0
 
         def counters() -> dict[str, object]:
@@ -234,7 +234,7 @@ class TheStatusReport(unittest.TestCase):
         }
         exec(helper.group(0) + reader.group(0), namespace)  # noqa: S102 - the script's own functions
         reading = namespace["read_dns_listener"]
-        assert callable(reading)  # noqa: S101
+        assert callable(reading)
         report: dict[str, object] = reading()
         return report
 

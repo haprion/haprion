@@ -94,7 +94,7 @@ class TheShellUpdateWaitsForTheListsLock(unittest.TestCase):
         script.chmod(0o755)
 
     def run_update(self, seconds: int = 600) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+        return subprocess.run(  # fixed interpreter, the repository's library
             [
                 "/bin/bash",
                 "-c",

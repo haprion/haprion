@@ -29,7 +29,7 @@ SPEC.loader.exec_module(installer)
 PYTHON_TAG = f"python{sys.version_info[0]}.{sys.version_info[1]}"
 # The interpreter a real installation names is a base one, never a venv's;
 # a venv built on a venv's python finds no standard library.
-BASE_PYTHON = Path(sys._base_executable).resolve()  # type: ignore[attr-defined]  # noqa: SLF001 - the one honest source
+BASE_PYTHON = Path(sys._base_executable).resolve()  # type: ignore[attr-defined]  # the one honest source
 
 #
 # A uv that builds a venv the way uv does - interpreter link, lib64 link,
@@ -134,7 +134,7 @@ class InstallCertbotEnvTests(unittest.TestCase):
         script = release / "venv" / "bin" / "certbot"
         self.assertTrue(script.read_text().startswith(f"#!{release / 'venv' / 'bin' / 'python'}\n"))
         self.assertNotIn(".5.8.0-", script.read_text())
-        completed = subprocess.run(  # noqa: S603 - the release's own script
+        completed = subprocess.run(  # the release's own script
             [str(script)], check=True, capture_output=True, text=True
         )
         self.assertEqual(completed.stdout, "certbot\n")
@@ -247,7 +247,7 @@ class OfflineVerifierTests(unittest.TestCase):
                 raise AssertionError("a socket was created")
             """
         )
-        completed = subprocess.run(  # noqa: S603 - this interpreter and a fixed probe
+        completed = subprocess.run(  # this interpreter and a fixed probe
             [sys.executable, "-I", "-c", probe],
             check=False,
             capture_output=True,

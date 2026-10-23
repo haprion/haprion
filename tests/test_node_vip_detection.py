@@ -155,7 +155,7 @@ class WhoWroteKeepalivedAndWhatTheNodeCarries(unittest.TestCase):
         self.assertEqual(configured(), "operator")
 
     def test_the_mark_is_the_generator_s(self) -> None:
-        from haprion import keepalived_conf  # noqa: PLC0415
+        from haprion import keepalived_conf
 
         self.assertEqual(self.namespace["KEEPALIVED_MARK"], keepalived_conf.MARK)
 

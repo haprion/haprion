@@ -41,7 +41,7 @@ class Deriving(unittest.TestCase):
             f'render_node_conf {cluster} "$(cluster_value NODE_PATH {cluster})" '
             f"{accounts.LOGS_GROUP}"
         )
-        completed = subprocess.run(  # noqa: S603 - fixed interpreter, script built here
+        completed = subprocess.run(  # fixed interpreter, script built here
             ["/bin/bash", "-c", script], check=True, capture_output=True, text=True
         )
         return completed.stdout

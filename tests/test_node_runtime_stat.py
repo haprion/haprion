@@ -29,7 +29,7 @@ def digits(text: str) -> dict[str, Any]:
     """The script's own `_digits`, which the extracted reading calls."""
 
     found = DIGITS.search(text)
-    assert found, "the script no longer defines _digits"  # noqa: S101
+    assert found, "the script no longer defines _digits"
     namespace: dict[str, Any] = {}
     exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
     return {"_digits": namespace["_digits"]}
@@ -90,7 +90,7 @@ class ReadingShowStat(unittest.TestCase):
         self.assertEqual([entry["backend"] for entry in parsed["servers"]], ["shop-dynblock"])
 
     def test_the_shape_is_the_generator_s_names(self) -> None:
-        from haprion.generate import block_tables  # noqa: PLC0415
+        from haprion.generate import block_tables
 
         rows = [row(pxname=name, svname="BACKEND", status="UP") for name in block_tables("a-b")]
         self.assertEqual(self.stat(*rows)["servers"], [])
@@ -179,7 +179,7 @@ SERVERS_STATE = """1
 2 b 2 s2 127.0.0.1 0 0 1 1 1 8 2 0 6 0 0 0 - 2 - 0 0 - - 0
 2 b 3 s3 127.0.0.1 2 8 1 1 1 1 0 0 0 0 0 0 - 3 - 0 0 - - 0
 4 c 2 x2 127.0.0.1 0 5 1 1 1 1 0 0 8 0 0 0 - 6 - 0 0 - - 0
-"""  # noqa: E501 - HAProxy's own line
+"""  # HAProxy's own line
 
 
 class ReadingAdminState(unittest.TestCase):

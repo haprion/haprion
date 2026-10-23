@@ -580,7 +580,7 @@ class EveryNodeLiftsTheBlockTwice(HelperFixture):
             + [f"2001:db8::{index:x}" for index in range(32)],
             ask,
         )
-        done = subprocess.run(  # noqa: S603 - the file under test
+        done = subprocess.run(  # the file under test
             ["/bin/bash", str(BASE / "install/node/haprion-server-state-trigger")],
             env={"PATH": f"{root}:{os.environ['PATH']}", "SSH_ORIGINAL_COMMAND": sent[0]},
             capture_output=True,
@@ -620,7 +620,7 @@ class TheNodeIsAskedWithItsOwnForcedCommand(unittest.TestCase):
         for target in targets:
             for state in server_state.STATES:
                 with self.subTest(guid=target.guid, state=state):
-                    done = subprocess.run(  # noqa: S603 - the file under test
+                    done = subprocess.run(  # the file under test
                         ["/bin/bash", str(BASE / "install/node/haprion-server-state-trigger")],
                         env={
                             "PATH": f"{root}:{os.environ['PATH']}",
@@ -727,7 +727,7 @@ class StepTwoNamesEveryIdentityStepThreeMakes(unittest.TestCase):
 
     def rendered(self, answers: dict[str, str]) -> str:
         script = 'set -eu; source "$0"; render_policy'
-        done = subprocess.run(  # noqa: S603 - the installer's own function
+        done = subprocess.run(  # the installer's own function
             ["/bin/bash", "-c", script, str(BASE / "install" / "lib.sh")],
             env={
                 "PATH": os.environ["PATH"],

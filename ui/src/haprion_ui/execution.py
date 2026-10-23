@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import signal
-import subprocess  # noqa: S404 - running one fixed command is this module's purpose
+import subprocess  # running one fixed command is this module's purpose
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -431,7 +431,7 @@ def run(
                 release_lifeline()
                 ending = "timeout"
                 break
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - raised again below, once the helper is stopped
         callback_error = exc
 
     if ending != "finished" or callback_error is not None:

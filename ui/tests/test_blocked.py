@@ -305,7 +305,7 @@ class TheObjectPageAndTheDashboard(DraftReading):
     def test_the_page_keeps_itself_current_while_the_object_blocks(self) -> None:
         """A block comes and goes on its own time; the card follows it once per poll."""
 
-        from haprion_ui import views  # noqa: PLC0415
+        from haprion_ui import views
 
         original = views.read_source
 

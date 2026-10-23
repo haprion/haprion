@@ -56,8 +56,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from haprion import node_package  # noqa: E402 - the path above comes first
-from haprion.debian_package import package, write  # noqa: E402
+from haprion import node_package  # the path above comes first
+from haprion.debian_package import package, write
 
 PACKAGE = "haprion-ui"
 LIB = "usr/lib/haprion/ui"

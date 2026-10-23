@@ -176,7 +176,7 @@ class HealthDerivation(unittest.TestCase):
     def test_a_cluster_never_deployed_is_not_deployed_and_raises_nothing(self) -> None:
         """Finding 52: before the first deploy nothing has failed; there is nothing yet."""
 
-        from haprion_ui import attention  # noqa: PLC0415
+        from haprion_ui import attention
 
         status = reading("done-single-owner.json")
         result = dict(status.result)

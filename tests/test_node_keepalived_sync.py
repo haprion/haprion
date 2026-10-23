@@ -502,7 +502,7 @@ class TheProductsKeepalivedConf(Step):
         self.assertIn("no interface carries this node's address 192.0.2.99", output)
 
     def test_the_mark_is_the_generator_s(self) -> None:
-        from haprion import keepalived_conf  # noqa: PLC0415
+        from haprion import keepalived_conf
 
         text = SCRIPT.read_text()
         self.assertIn(f'KEEPALIVED_MARK="{keepalived_conf.MARK}"', text)

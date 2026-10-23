@@ -125,7 +125,7 @@ def build(
     # Go refuses a relative GOPATH, and the cache is where it points (26-10-18).
     cache = cache.resolve()
     if subprocess.run(  # noqa: S603 - fixed arguments
-        ["/usr/bin/git", "-C", str(source), "status", "--porcelain", "--untracked-files=no"],  # noqa: S607
+        ["/usr/bin/git", "-C", str(source), "status", "--porcelain", "--untracked-files=no"],
         check=True,
         capture_output=True,
         text=True,

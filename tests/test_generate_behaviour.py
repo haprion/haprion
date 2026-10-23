@@ -357,7 +357,7 @@ def held_dead_port() -> socket.socket:
 
 def echo_server(pool: str, port: int) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+        def do_GET(self) -> None:  # the name is the library's
             body = f"{pool} {self.path}".encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -830,7 +830,7 @@ def header_server(port: int) -> ThreadingHTTPServer:
     """
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+        def do_GET(self) -> None:  # the name is the library's
             body = "".join(f"{name}: {value}\n" for name, value in self.headers.items()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -1375,7 +1375,7 @@ def plain_server(port: int) -> ThreadingHTTPServer:
     """
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+        def do_GET(self) -> None:  # the name is the library's
             body = b"reached"
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -1393,7 +1393,7 @@ def plain_server(port: int) -> ThreadingHTTPServer:
 
 def tls_server(port: int, certificate: Path, key: Path) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+        def do_GET(self) -> None:  # the name is the library's
             body = b"reached"
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -1964,7 +1964,7 @@ class AnUnderscoreInAName(unittest.TestCase):
             arguments = write_release(root, layer)
             binary = shutil.which("haproxy")
             assert binary is not None
-            completed = subprocess.run(  # noqa: S603 - fixed binary, generated files
+            completed = subprocess.run(  # fixed binary, generated files
                 [binary, "-c", *arguments],
                 capture_output=True,
                 text=True,
@@ -2573,7 +2573,7 @@ def body_server(port: int) -> ThreadingHTTPServer:
             self.end_headers()
             self.wfile.write(body)
 
-        do_GET = do_POST = answer  # noqa: N815 - the names are the library's
+        do_GET = do_POST = answer  # the names are the library's
 
         def log_message(self, *_: object) -> None:
             """Silence."""

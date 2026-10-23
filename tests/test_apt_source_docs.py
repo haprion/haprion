@@ -24,7 +24,7 @@ BLOCK = re.compile(r"^```bash\n(.*?)^```$", re.M | re.S)
 def load(name: str, relative: str) -> Any:
     loader = importlib.machinery.SourceFileLoader(name, str(BASE / relative))
     spec = importlib.util.spec_from_loader(name, loader)
-    assert spec is not None  # noqa: S101 - local tool must exist
+    assert spec is not None  # local tool must exist
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     loader.exec_module(module)

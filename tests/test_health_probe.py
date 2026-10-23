@@ -37,7 +37,7 @@ def free_port() -> int:
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+    def do_GET(self) -> None:  # the name is the library's
         body = b"served"
         status = {"/healthz": 200, "/moved": 302}.get(self.path, 404)
         self.send_response(status)

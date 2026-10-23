@@ -33,7 +33,7 @@ class RollbackCopies(unittest.TestCase):
 
     def install_file(self, content: str = "same") -> str:
         owner = f"{os.getuid()}:{os.getgid()}"
-        return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+        return subprocess.run(  # fixed interpreter, the repository's library
             [
                 "/bin/bash",
                 "-c",
@@ -84,7 +84,7 @@ class RollbackCopies(unittest.TestCase):
 
 
 def run_lib(script: str, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+    return subprocess.run(  # fixed interpreter, the repository's library
         ["/bin/bash", "-c", f'source "$0"; {script}', str(LIB), *args],
         capture_output=True,
         text=True,
@@ -114,7 +114,7 @@ class ThePackagesOwnConfigurationFile(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.work)
         self.file = self.work / "haproxy.cfg"
         self.file.write_text("global\n")
-        digest = subprocess.run(  # noqa: S603 - fixed tool
+        digest = subprocess.run(  # fixed tool
             ["/usr/bin/md5sum", str(self.file)], capture_output=True, text=True, check=True
         )
         self.sample_md5 = digest.stdout.split()[0]
@@ -122,7 +122,7 @@ class ThePackagesOwnConfigurationFile(unittest.TestCase):
     def packaged(self, recorded: str) -> bool:
         # dpkg-query's ${Conffiles}: one " <path> <md5>" line per file.
         fake = 'dpkg-query() { printf " %s %s\\n" /etc/other 0000 "$FILE" "$SUM"; }; '
-        done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+        done = subprocess.run(  # fixed interpreter, the repository's library
             [
                 "/bin/bash",
                 "-c",
@@ -160,7 +160,7 @@ class TheSystemBusIsStarted(unittest.TestCase):
             f'[[ "$1" != is-active ]] || {"true" if active else "false"}; }}; '
         )
         with tempfile.NamedTemporaryFile("r") as calls:
-            done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+            done = subprocess.run(  # fixed interpreter, the repository's library
                 ["/bin/bash", "-c", f'source "$0"; {fake} ensure_system_bus', str(LIB)],
                 capture_output=True,
                 text=True,
@@ -189,7 +189,7 @@ class ThePackagesOwnEmptyDirectory(unittest.TestCase):
     def packaged(self, owners: str) -> bool:
         # dpkg-query -S: "<package>[, <package>...]: <path>"
         fake = 'dpkg-query() { [[ -n "$OWNERS" ]] && printf "%s: %s\\n" "$OWNERS" "$DIR"; }; '
-        done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+        done = subprocess.run(  # fixed interpreter, the repository's library
             [
                 "/bin/bash",
                 "-c",
@@ -264,7 +264,7 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
         if serving:
             (work / "20261015-120000").mkdir()
             current.symlink_to(work / "20261015-120000")
-        done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+        done = subprocess.run(  # fixed interpreter, the repository's library
             ["/bin/bash", "-c", ENSURE_HAPROXY, str(LIB), role],
             capture_output=True,
             text=True,
@@ -288,7 +288,7 @@ class HaproxyFromItsMaintainer(unittest.TestCase):
         return done.returncode, done.stdout + done.stderr, files
 
     def test_each_distribution_gets_what_a_restore_writes(self) -> None:
-        from haprion import haproxy_repository  # noqa: PLC0415
+        from haprion import haproxy_repository
 
         for os_id, version, codename in (
             ("debian", "13", "trixie"),
@@ -371,7 +371,7 @@ class DnsdistFromPowerDns(unittest.TestCase):
         self.addCleanup(shutil.rmtree, work)
         calls = work / "apt-get"
         calls.touch()
-        done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+        done = subprocess.run(  # fixed interpreter, the repository's library
             ["/bin/bash", "-c", ENSURE_DNSDIST, str(LIB)],
             capture_output=True,
             text=True,

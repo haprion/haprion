@@ -41,12 +41,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from haprion import (  # noqa: E402 - the path above comes first
+from haprion import (  # the path above comes first
     keyring_package,
     node_package,
     waf_engine_package,
 )
-from haprion.debian_package import package, write  # noqa: E402
+from haprion.debian_package import package, write
 
 PACKAGE = "haprion-cli"
 LIB = "usr/lib/haprion/cli"

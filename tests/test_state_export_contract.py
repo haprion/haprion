@@ -79,7 +79,7 @@ class TheOperatorsOwnPaths(unittest.TestCase):
             + shell_function(self.exporter, "copy_extra_paths")
             + "copy_extra_paths\n"
         )
-        result = subprocess.run(  # noqa: S603 - fixed program over test-owned paths
+        result = subprocess.run(  # fixed program over test-owned paths
             ["/bin/bash", "-c", program],
             capture_output=True,
             text=True,

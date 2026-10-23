@@ -129,7 +129,7 @@ def compare(a: str, b: str) -> int:
                 ["/usr/bin/dpkg", "--compare-versions", a, op, b], check=False
             ).returncode
             == 0
-        ):  # noqa: S603
+        ):
             return result
     return 0
 
@@ -192,7 +192,7 @@ def sign(release: Path, key_file: Path) -> None:
                 [*common, "--clearsign", "-o", str(release.with_name("InRelease")), str(release)],
                 check=True,
                 env=env,
-            )  # noqa: S603
+            )
             subprocess.run(  # noqa: S603 - fixed tools, files this run made
                 [
                     *common,
@@ -204,9 +204,9 @@ def sign(release: Path, key_file: Path) -> None:
                 ],
                 check=True,
                 env=env,
-            )  # noqa: S603
+            )
         finally:
-            subprocess.run(["/usr/bin/gpgconf", "--kill", "all"], check=False, env=env)  # noqa: S603
+            subprocess.run(["/usr/bin/gpgconf", "--kill", "all"], check=False, env=env)
 
 
 FETCH_TIMEOUT = 120
@@ -238,7 +238,7 @@ def verified_release(signed: bytes, public_key: Path) -> str:
             ],
             check=True,
             env=env,
-        )  # noqa: S603
+        )
         inrelease = Path(home) / "InRelease"
         inrelease.write_bytes(signed)
         result = subprocess.run(  # noqa: S603 - fixed tool

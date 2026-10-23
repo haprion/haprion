@@ -125,7 +125,7 @@ from haprion_ui.health_rows import health_rows
 class _TimedTemplates(Jinja2Templates):
     """Every page's template time counted as such (`timing`)."""
 
-    def TemplateResponse(self, *args: Any, **kwargs: Any) -> _TemplateResponse:  # noqa: N802
+    def TemplateResponse(self, *args: Any, **kwargs: Any) -> _TemplateResponse:
         def render() -> _TemplateResponse:
             response: _TemplateResponse = Jinja2Templates.TemplateResponse(self, *args, **kwargs)
             return response

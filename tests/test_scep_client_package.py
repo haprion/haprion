@@ -19,7 +19,7 @@ TOOLS = Path(__file__).resolve().parents[1] / "tools"
 
 def tool(name: str) -> Any:
     spec = importlib.util.spec_from_file_location(name.replace("-", "_"), TOOLS / (name + ".py"))
-    assert spec is not None and spec.loader is not None  # noqa: S101 - local test tool must exist
+    assert spec is not None and spec.loader is not None  # local test tool must exist
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -191,7 +191,7 @@ class ReproducibleBuild(unittest.TestCase):
                 ["/usr/bin/dpkg-deb", "--build", str(tree), str(package)],
                 check=True,
                 capture_output=True,
-            )  # noqa: S603,S607 - local fixture package, no execution
+            )  # local fixture package, no execution
             rows = []
             for name in ("certmonger_0.79.21.orig.tar.gz", "certmonger_0.79.21-1.debian.tar.xz"):
                 data = b"example source"

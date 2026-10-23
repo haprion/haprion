@@ -19,7 +19,7 @@ if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
         "set PLAYWRIGHT_BROWSERS_PATH to the directory holding the Playwright browsers"
     )
 
-from playwright.sync_api import sync_playwright  # noqa: E402
+from playwright.sync_api import sync_playwright
 
 ROW = "".join(f'<td data-label="Column {n}">value {n}</td>' for n in range(1, 9))
 HEAD = "".join(f"<th>Column {n}</th>" for n in range(1, 9))

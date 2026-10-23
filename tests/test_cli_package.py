@@ -26,7 +26,7 @@ def tool() -> Any:
     spec = importlib.util.spec_from_file_location(
         "build_cli_package", BASE / "tools/build-cli-package.py"
     )
-    assert spec is not None and spec.loader is not None  # noqa: S101 - local tool must exist
+    assert spec is not None and spec.loader is not None  # local tool must exist
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -158,7 +158,7 @@ class TheTree(unittest.TestCase):
 
 class TheOperatorsRules(unittest.TestCase):
     def test_visudo_accepts_the_file(self) -> None:
-        checked = subprocess.run(  # noqa: S603 - fixed checker, repository file
+        checked = subprocess.run(  # fixed checker, repository file
             ["/usr/sbin/visudo", "-cf", str(SUDOERS)], capture_output=True, text=True, check=False
         )
         self.assertEqual(checked.returncode, 0, checked.stderr)
@@ -205,7 +205,7 @@ class TheWheel(unittest.TestCase):
         # group-write bits alone. RECORD is written 0664 whatever the umask.
         uv = shutil.which("uv")
         self.assertIsNotNone(uv, "uv must be on PATH")
-        assert uv is not None  # noqa: S101 - narrowed for the type checker
+        assert uv is not None  # narrowed for the type checker
         previous = os.umask(0o002)
         self.addCleanup(os.umask, previous)
         with tempfile.TemporaryDirectory() as directory:

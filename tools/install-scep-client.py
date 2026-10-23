@@ -159,7 +159,7 @@ def install(path: Path, digest: str, target: Path) -> Path:
             release_info[key] = value.strip('"')
     architecture = subprocess.run(
         ["/usr/bin/dpkg", "--print-architecture"], check=True, capture_output=True, text=True
-    ).stdout.strip()  # noqa: S603 - fixed distribution command
+    ).stdout.strip()  # fixed distribution command
     if (release_info.get("ID"), release_info.get("VERSION_ID"), architecture) != (
         manifest["distribution"],
         manifest["distribution_release"],
@@ -208,11 +208,11 @@ def install(path: Path, digest: str, target: Path) -> Path:
                 manifest["dependencies"],
             ],
             check=True,
-        )  # noqa: S603 - relations from the explicitly approved, verified bundle
+        )  # relations from the explicitly approved, verified bundle
         for name in BINARIES:
             result = subprocess.run(  # noqa: S603 - root-only hash-approved ELF
                 ["/usr/bin/ldd", str(staging / name)], check=False, capture_output=True, text=True
-            )  # noqa: S603 - hash-approved ELF under root-only staging
+            )  # hash-approved ELF under root-only staging
             if result.returncode or "not found" in result.stdout:
                 raise InstallError("SCEP runtime library check failed")
         for directory in sorted((p for p in staging.rglob("*") if p.is_dir()), reverse=True):

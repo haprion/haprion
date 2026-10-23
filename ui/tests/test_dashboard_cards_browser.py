@@ -23,7 +23,7 @@ if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
         "set PLAYWRIGHT_BROWSERS_PATH to the directory holding the Playwright browsers"
     )
 
-from playwright.sync_api import sync_playwright  # noqa: E402
+from playwright.sync_api import sync_playwright
 
 
 def card(figure: str, label: str, detail: str) -> str:

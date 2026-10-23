@@ -84,7 +84,7 @@ class TheDocument(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             answers = Path(raw) / "join.env"
             answers.write_text(text)
-            done = subprocess.run(  # noqa: S603 - sourcing the file under test
+            done = subprocess.run(  # sourcing the file under test
                 [
                     "/bin/bash",
                     "-c",

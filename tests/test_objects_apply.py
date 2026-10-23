@@ -293,10 +293,10 @@ class ThroughTheRealHelper(unittest.TestCase):
     """
 
     def test_the_same_files_twice_publish_once(self) -> None:
-        import tempfile as temp  # noqa: PLC0415
+        import tempfile as temp
 
-        from tests.test_changes_publish_network import NetworkPublishFixture  # noqa: PLC0415
-        from tests.test_publish_helper import git  # noqa: PLC0415
+        from tests.test_changes_publish_network import NetworkPublishFixture
+        from tests.test_publish_helper import git
 
         fixture = type("Fixture", (NetworkPublishFixture,), {"runTest": lambda self: None})()
         fixture.setUp()

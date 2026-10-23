@@ -350,7 +350,7 @@ class TheCommandRendersWhatTheHelperSaid(unittest.TestCase):
         def fake_run(
             command: list[str],
             *,
-            input: str,  # noqa: A002
+            input: str,
             capture_output: bool,
             text: bool,
             check: bool,

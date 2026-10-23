@@ -47,7 +47,7 @@ CONTROL_PACKAGE = "openssl"
 
 
 def osv_query(body: dict[str, Any]) -> dict[str, Any]:
-    request = urllib.request.Request(  # noqa: S310 - fixed https endpoint
+    request = urllib.request.Request(  # fixed https endpoint
         OSV_QUERY,
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
@@ -103,7 +103,7 @@ def package_field(package: Path, field: str) -> str:
         capture_output=True,
         text=True,
         timeout=15,
-    ).stdout.strip()  # noqa: S603 - fixed package metadata read
+    ).stdout.strip()  # fixed package metadata read
 
 
 def build(

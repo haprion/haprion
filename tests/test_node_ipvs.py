@@ -35,7 +35,7 @@ def digits(text: str) -> dict[str, Any]:
     """The script's own `_digits`, which the extracted reading calls."""
 
     found = DIGITS.search(text)
-    assert found, "the script no longer defines _digits"  # noqa: S101
+    assert found, "the script no longer defines _digits"
     namespace: dict[str, Any] = {}
     exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
     return {"_digits": namespace["_digits"]}
@@ -44,7 +44,7 @@ def digits(text: str) -> dict[str, Any]:
 def reading() -> dict[str, Any]:
     text = SCRIPT.read_text()
     found = READING.search(text)
-    assert found, "the reading is no longer where the test extracts it from"  # noqa: S101
+    assert found, "the reading is no longer where the test extracts it from"
     namespace: dict[str, Any] = {"re": re, "Path": Path, "ipaddress": ipaddress, **digits(text)}
     exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
     return namespace

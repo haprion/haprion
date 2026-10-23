@@ -152,7 +152,7 @@ def _read_config(path: Path) -> str | None:
 
     try:
         return path.read_text(encoding="utf-8")
-    except Exception:
+    except Exception:  # noqa: BLE001 - as broad as the script's own reader
         return None
 
 

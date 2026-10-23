@@ -102,7 +102,7 @@ _KEY_KINDS = frozenset({"PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY"})
 _CERTIFICATE = "CERTIFICATE"
 
 
-class ImportError_(Exception):  # noqa: N801 - `ImportError` is Python's; the trailing mark says so
+class ImportError_(Exception):  # `ImportError` is Python's; the trailing mark says so
     """The import is refused; nothing was written."""
 
     def __init__(

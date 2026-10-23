@@ -566,7 +566,7 @@ backends:
     def test_the_generator_and_the_page_agree_on_the_name(self) -> None:
         """Built rather than parsed, so no name is split on somebody's hyphen."""
 
-        from haprion.guid import redirect_suffixes  # noqa: PLC0415
+        from haprion.guid import redirect_suffixes
 
         proxy = load_proxy("shop", self.DOCUMENT)
         self.assertEqual(f"shop-{redirect_suffixes(proxy)[('/old', 'prefix')]}", self.CURRENT)

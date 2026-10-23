@@ -460,7 +460,7 @@ class APageReadDuringASnapshotSwap(ChainTestCase):
                     self.chain.node.append(self.chain.today, 3)
                     if self.collect() != 0:  # pragma: no cover - would be the finding
                         raise AssertionError("a collection failed during the read loop")
-            except BaseException as exc:  # pragma: no cover - reported below
+            except BaseException as exc:  # noqa: BLE001  # pragma: no cover - reported below
                 failures.append(exc)
             finally:
                 stop.set()

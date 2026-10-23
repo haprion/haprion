@@ -76,7 +76,7 @@ def dpkg_order(left: str, right: str) -> int:
 
     def holds(relation: str) -> bool:
         return (
-            subprocess.run(  # noqa: S603 - the installed dpkg, versions from this file
+            subprocess.run(  # the installed dpkg, versions from this file
                 [DPKG, "--compare-versions", left, relation, right], check=False
             ).returncode
             == 0

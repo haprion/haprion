@@ -65,7 +65,7 @@ class ReadingTheBlockedTables(unittest.TestCase):
         self.assertEqual(len(self.parsing["parse_blocked_entries"](many)), 100)
 
     def test_the_shape_is_the_generator_s_name(self) -> None:
-        from haprion.generate import block_tables  # noqa: PLC0415
+        from haprion.generate import block_tables
 
         counted, blocked = block_tables("a-b_c")
         text = (

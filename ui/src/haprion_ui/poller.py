@@ -716,7 +716,7 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
                 connection.commit()
             _sample(pool, source, cluster=cluster, result=reading["result"])
             _index(pool, source, cluster=cluster, reading=reading)
-        except Exception:  # noqa: BLE001 - any failure to store is this reading's alone
+        except Exception:  # any failure to store is this reading's alone
             logger.exception("cluster %s %s: the reading was not stored", cluster, source.operation)
             continue
         if reading["outcome"] == "done":

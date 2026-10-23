@@ -14,7 +14,7 @@ import json
 import os
 import re
 import stat
-import subprocess  # noqa: S404 - fixed diagnostic commands are the boundary here
+import subprocess  # fixed diagnostic commands are the boundary here
 import sys
 import uuid
 from collections.abc import Iterable, Mapping

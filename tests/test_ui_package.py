@@ -19,7 +19,7 @@ def tool() -> Any:
     spec = importlib.util.spec_from_file_location(
         "build_ui_package", BASE / "tools/build-ui-package.py"
     )
-    assert spec is not None and spec.loader is not None  # noqa: S101 - local tool must exist
+    assert spec is not None and spec.loader is not None  # local tool must exist
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -80,7 +80,7 @@ class TheBuild(unittest.TestCase):
             for name, mode in given.items():
                 (root / "tree" / name).write_text("")
                 os.chmod(root / "tree" / name, mode)
-            subprocess.run(  # noqa: S603 - fixed arguments
+            subprocess.run(  # fixed arguments
                 ["/usr/bin/tar", "--mode=u+rw,go=rX", "-cf", str(root / "a.tar"),
                  "-C", str(root), "tree"],
                 check=True,

@@ -14,7 +14,7 @@ import unittest
 
 class TheTestClient(unittest.TestCase):
     def test_it_imports_without_a_warning(self) -> None:
-        done = subprocess.run(  # noqa: S603 - this interpreter, a fixed statement
+        done = subprocess.run(  # this interpreter, a fixed statement
             [sys.executable, "-W", "error", "-c", "import fastapi.testclient"],
             capture_output=True,
             text=True,

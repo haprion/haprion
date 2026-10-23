@@ -20,7 +20,7 @@ COMMIT = "0123456789ab" + "0" * 28
 def contents(deb: Path) -> dict[str, str]:
     """Path -> 'mode owner' for every file, as dpkg-deb lists it."""
 
-    listed = subprocess.run(  # noqa: S603 - fixed reader, test package
+    listed = subprocess.run(  # fixed reader, test package
         ["/usr/bin/dpkg-deb", "--contents", str(deb)], check=True, capture_output=True, text=True
     ).stdout
     rows = {}
@@ -32,7 +32,7 @@ def contents(deb: Path) -> dict[str, str]:
 
 
 def field(deb: Path, name: str) -> str:
-    return subprocess.run(  # noqa: S603 - fixed reader, test package
+    return subprocess.run(  # fixed reader, test package
         ["/usr/bin/dpkg-deb", "--field", str(deb), name], check=True, capture_output=True, text=True
     ).stdout.strip()
 
@@ -56,7 +56,7 @@ class NodePackageBuildTests(unittest.TestCase):
         self.git("commit", "-q", "-m", "payload")
 
     def git(self, *arguments: str) -> str:
-        return subprocess.run(  # noqa: S603 - fixed executable, test repository
+        return subprocess.run(  # fixed executable, test repository
             ["/usr/bin/git", "-C", str(self.source), *arguments],
             check=True,
             capture_output=True,

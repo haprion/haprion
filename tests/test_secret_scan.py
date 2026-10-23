@@ -52,7 +52,7 @@ class SecretScanTests(unittest.TestCase):
             (tree / ".venv-ui" / "lib").mkdir(parents=True)
             git = shutil.which("git")
             assert git is not None
-            subprocess.run([git, "init", "-q", str(tree)], check=True)  # noqa: S603
+            subprocess.run([git, "init", "-q", str(tree)], check=True)
             (tree / ".gitignore").write_text(".venv-ui/\n", encoding="utf-8")
             (tree / ".venv-ui" / "lib" / "package.py").write_text(finding, encoding="utf-8")
             rules = root / "rules"

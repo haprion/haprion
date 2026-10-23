@@ -110,7 +110,7 @@ class RunningHaproxy(unittest.TestCase):
             ("SYSTEMCTL", str(systemctl)),
         ):
             setattr(self.helper, name, value)
-        self.process = subprocess.Popen(  # noqa: S603 - fixed binary, scratch configuration
+        self.process = subprocess.Popen(  # fixed binary, scratch configuration
             [HAPROXY, "-W", "-f", str(self.config), "-p", str(self.root / "pid")],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -220,7 +220,7 @@ class TheHelperKeepsAServerWhereItWasPut(RunningHaproxy):
         self.run_helper("set", WEB_A, "maint")
         self.process.send_signal(signal.SIGTERM)
         self.process.wait(timeout=10)
-        self.process = subprocess.Popen(  # noqa: S603 - fixed binary, scratch configuration
+        self.process = subprocess.Popen(  # fixed binary, scratch configuration
             [HAPROXY, "-W", "-f", str(self.config), "-p", str(self.root / "pid")],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -442,7 +442,7 @@ class TheHelperReplacesACertificateWithoutAReload(unittest.TestCase):
             ("CERTS_DIR", self.certs),
         ):
             setattr(self.helper, name, value)
-        self.process = subprocess.Popen(  # noqa: S603 - fixed binary, scratch configuration
+        self.process = subprocess.Popen(  # fixed binary, scratch configuration
             [HAPROXY, "-W", "-f", str(self.config), "-p", str(self.root / "pid")],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -556,7 +556,7 @@ class TheTriggerValidatesBeforeSudo(unittest.TestCase):
         env = {"PATH": f"{self.root}:{os.environ['PATH']}"}
         if request is not None:
             env["SSH_ORIGINAL_COMMAND"] = request
-        return subprocess.run(  # noqa: S603 - the file under test
+        return subprocess.run(  # the file under test
             ["/bin/bash", str(TRIGGER)], env=env, capture_output=True, text=True, check=False
         )
 
@@ -638,7 +638,7 @@ class TheNodeWritesTheManagersKeysFromTheAnswers(unittest.TestCase):
             f'source "{BASE / "install" / "lib.sh"}"\nKEYS_HOME="{self.root}"\n'
             f"{assigned}{self.loop}"
         )
-        return subprocess.run(  # noqa: S603 - the loop under test
+        return subprocess.run(  # the loop under test
             ["/bin/bash", "-c", script], capture_output=True, text=True, check=False
         )
 
@@ -691,7 +691,7 @@ class TheLinesStep3PrintsAreAnswers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             answers = Path(raw) / "answers.env"
             answers.write_text(printed + "\n")
-            done = subprocess.run(  # noqa: S603 - sourcing the line under test
+            done = subprocess.run(  # sourcing the line under test
                 [
                     "/bin/bash",
                     "-c",
@@ -716,7 +716,7 @@ class TheLinesStep3PrintsAreAnswers(unittest.TestCase):
         self.assertTrue(all(var == f"{p.upper()}_PUBKEY" for p, var in handed.items()))
 
     def test_the_node_takes_every_purpose_the_manager_hands_over(self) -> None:
-        from haprion import node_enrollment  # noqa: PLC0415
+        from haprion import node_enrollment
 
         join = (BASE / "install" / "node" / "haprion-node-join").read_text()
         taken = set(re.findall(r'^    "([a-z_]+)": "[A-Z_]+_PUBKEY",$', join, re.MULTILINE))
@@ -726,7 +726,7 @@ class TheLinesStep3PrintsAreAnswers(unittest.TestCase):
 
 class TheSocketIsTheOneTheCoreNames(unittest.TestCase):
     def test_the_helper_and_the_core_template_agree(self) -> None:
-        from haprion import cluster_definition  # noqa: PLC0415
+        from haprion import cluster_definition
 
         self.assertIn(f'ADMIN_SOCKET = "{cluster_definition.MANAGER_SOCKET}"', HELPER.read_text())
 

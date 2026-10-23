@@ -118,7 +118,7 @@ def ssh_join(
 def private_keys(paths: tuple[Path, ...], *, require_secure: bool) -> list[DnsProfilePrivateKey]:
     """The installation's sealing keys, as the certificate import reads them."""
 
-    from haprion.dns_profile_keys import read_private_key  # noqa: PLC0415
+    from haprion.dns_profile_keys import read_private_key
 
     try:
         return [read_private_key(path, require_secure=require_secure) for path in paths]

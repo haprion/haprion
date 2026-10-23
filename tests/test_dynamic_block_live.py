@@ -72,7 +72,7 @@ def _free_port() -> int:
 class _Application(BaseHTTPRequestHandler):
     """200 on every path but /missing, which is the application's own 404."""
 
-    def do_GET(self) -> None:  # noqa: N802 - the standard library's name
+    def do_GET(self) -> None:  # the standard library's name
         status = 404 if self.path == "/missing" else 200
         body = b"application\n"
         self.send_response(status)
@@ -184,7 +184,7 @@ backends:
             ).configuration
             for name, content in files.items():
                 (directory / "conf.d" / name).write_text(content)
-            process = subprocess.Popen(  # noqa: S603 - the local haproxy, a generated config
+            process = subprocess.Popen(  # the local haproxy, a generated config
                 [
                     binary,
                     "-db",

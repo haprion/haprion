@@ -188,7 +188,7 @@ class Site:
             return subprocess.CompletedProcess(list(argv), 0, "", "")
         return subprocess.run(
             list(argv), input=input_text, capture_output=True, text=True, check=False
-        )  # noqa: S603
+        )
 
     def runtime(self) -> RuntimeConfig:
         return load_runtime_config(self.policy, require_secure=False)
@@ -844,7 +844,7 @@ class TheEditingPolicy(unittest.TestCase):
             handle.flush()
             checked = subprocess.run(
                 [visudo, "-cqf", handle.name], capture_output=True, check=False
-            )  # noqa: S603
+            )
         self.assertEqual(checked.returncode, 0, checked.stderr)
 
 

@@ -180,7 +180,7 @@ class GeneratedConfigurationInDnsdist(unittest.TestCase):
         self.addCleanup(shutil.rmtree, directory)
         config = directory / dnsdist_config.FILE
         config.write_text(layer.dns_files[dnsdist_config.FILE])
-        checked = subprocess.run(  # noqa: S603 - the installed dnsdist, our own file
+        checked = subprocess.run(  # the installed dnsdist, our own file
             [str(DNSDIST), "--check-config", "-C", str(config)],
             capture_output=True,
             text=True,
@@ -189,7 +189,7 @@ class GeneratedConfigurationInDnsdist(unittest.TestCase):
         )
         self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
         self.assertNotIn('prio="Warning"', checked.stdout + checked.stderr)
-        self.process = subprocess.Popen(  # noqa: S603 - the installed dnsdist, our own file
+        self.process = subprocess.Popen(  # the installed dnsdist, our own file
             [str(DNSDIST), "--supervised", "--disable-syslog", "-C", str(config)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -229,7 +229,7 @@ class GeneratedConfigurationInDnsdist(unittest.TestCase):
         self.assertEqual(carried, {"127.0.0.1"})
 
     def _metrics(self) -> str:
-        with urllib.request.urlopen(  # noqa: S310 - loopback, fixed port
+        with urllib.request.urlopen(  # loopback, fixed port
             f"http://127.0.0.1:{dnsdist_config.STATS_PORT}/metrics", timeout=5
         ) as response:
             return str(response.read().decode())
@@ -316,7 +316,7 @@ backends:
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / dnsdist_config.FILE
             path.write_text(content)
-            result = subprocess.run(  # noqa: S603 - the installed dnsdist, a generated file
+            result = subprocess.run(  # the installed dnsdist, a generated file
                 [str(DNSDIST), "--check-config", "-C", str(path)],
                 capture_output=True,
                 text=True,
@@ -335,7 +335,7 @@ backends:
                 with self.subTest(case.name), tempfile.TemporaryDirectory() as raw:
                     path = Path(raw) / name
                     path.write_text(content)
-                    result = subprocess.run(  # noqa: S603 - the installed dnsdist, a golden file
+                    result = subprocess.run(  # the installed dnsdist, a golden file
                         [str(DNSDIST), "--check-config", "-C", str(path)],
                         capture_output=True,
                         text=True,

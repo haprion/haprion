@@ -26,7 +26,7 @@ PARSING = re.compile(r"^DNS_METRICS = .*?(?=^def dns_counters\()", re.DOTALL | r
 
 def parse_dns_metrics() -> Callable[[str], dict[str, Any] | None]:
     found = PARSING.search(SCRIPT.read_text())
-    assert found, "the parsing is no longer where the test extracts it from"  # noqa: S101
+    assert found, "the parsing is no longer where the test extracts it from"
     namespace: dict[str, Any] = {"re": re}
     exec(found.group(0), namespace)  # noqa: S102 - the file under test, read from disk
     parse: Callable[[str], dict[str, Any] | None] = namespace["parse_dns_metrics"]

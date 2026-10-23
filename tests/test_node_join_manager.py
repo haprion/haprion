@@ -115,11 +115,11 @@ class TheBlockTheNodePrints(unittest.TestCase):
             paths = {}
             for name in ("host", "config", "cert", "join"):
                 paths[name] = root / name
-                subprocess.run(  # noqa: S603 - a scratch key
+                subprocess.run(  # a scratch key
                     [str(SSH_KEYGEN), "-q", "-t", "ed25519", "-N", "", "-f", str(paths[name])],
                     check=True,
                 )
-            printed = subprocess.run(  # noqa: S603 - the node's rendering under test
+            printed = subprocess.run(  # the node's rendering under test
                 [
                     "/usr/bin/python3",
                     "-",

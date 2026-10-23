@@ -80,7 +80,7 @@ def sni_only_server(
     """
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+        def do_GET(self) -> None:  # the name is the library's
             body = b"reached"
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")

@@ -171,7 +171,7 @@ class SettingsPublicationTests(SettingsPublishFixture):
             self.assertIn("managed/generated/1000-cluster.cfg", git(self.repo, "ls-files"))
 
     def request_network_with_a_source(self) -> str:
-        from tests.test_changes_publish_network import NETWORK  # noqa: PLC0415
+        from tests.test_changes_publish_network import NETWORK
 
         return NETWORK.replace("outbound: 192.0.2.35", "outbound: 192.0.2.36")
 
@@ -288,7 +288,7 @@ class TheTerminalCommand(SettingsPublishFixture):
     def test_as_root_the_helper_runs_directly_so_the_person_is_recorded(self) -> None:
         # Review 2026-09-29 F2: under `sudo haprion-cluster-settings`, an inner
         # sudo would name root; run directly, the outer SUDO_USER carries over.
-        from unittest import mock  # noqa: PLC0415
+        from unittest import mock
 
         with mock.patch("os.geteuid", return_value=0):
             self.assertEqual(command._through("/opt/helper", "--"), ["/opt/helper"])

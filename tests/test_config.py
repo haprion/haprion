@@ -188,7 +188,7 @@ class ConfigTests(unittest.TestCase):
     def test_seed_writes_the_files_create_cluster_commits(self) -> None:
         """Step 1's clusters get the engine's layout, read from no policy (finding 53)."""
 
-        from haprion.cluster_definition import seed_files  # noqa: PLC0415
+        from haprion.cluster_definition import seed_files
 
         with tempfile.TemporaryDirectory() as raw:
             seed = Path(raw) / "seed"

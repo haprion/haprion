@@ -1215,7 +1215,7 @@ class WhatTheInstallationStepWrites(unittest.TestCase):
         source = found.group(0).removesuffix("PY")
         # The command is this interpreter and a block read out of our own
         # installation script; nothing here comes from outside the repository.
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [
                 sys.executable,
                 "-c",
@@ -1347,7 +1347,7 @@ class TheCollectorUnits(unittest.TestCase):
             for kind, text in self.rendered.items():
                 (root / f"haprion-traffic-collector.{kind}").write_text(text)
             for kind in ("timer", "service"):
-                result = subprocess.run(  # noqa: S603
+                result = subprocess.run(
                     [analyze, "verify", str(root / f"haprion-traffic-collector.{kind}")],
                     capture_output=True,
                     text=True,

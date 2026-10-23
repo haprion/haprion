@@ -68,7 +68,7 @@ def shell_names() -> dict[str, str]:
     script = f'source "{INSTALL / "accounts.sh"}"; ' + " ".join(
         f'printf "%s=%s\\n" {variable} "${variable}";' for variable in SHELL_NAMES.values()
     )
-    done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's file
+    done = subprocess.run(  # fixed interpreter, the repository's file
         ["/bin/bash", "-c", script], capture_output=True, text=True, check=True
     )
     return dict(line.split("=", 1) for line in done.stdout.splitlines())
@@ -158,7 +158,7 @@ class AnOldAnswersFile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             answers = Path(raw) / "answers.env"
             answers.write_text(text)
-            return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+            return subprocess.run(  # fixed interpreter, the repository's library
                 ["/bin/bash", "-c", f'source "{INSTALL / "lib.sh"}"; load_answers "{answers}"'],
                 capture_output=True,
                 text=True,
@@ -191,7 +191,7 @@ class TheAdminFileIsReadNotRun(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             config = Path(raw) / "ui-admin.conf"
             config.write_text("# comment\nDB_NAME=haprion\nDB_ROLE=_haprion-migrate\nDUMP_DIR=/d\n")
-            done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+            done = subprocess.run(  # fixed interpreter, the repository's library
                 [
                     "/bin/bash",
                     "-c",
@@ -230,7 +230,7 @@ class SysusersOnAHostWithoutTheDirectory(unittest.TestCase):
     def test_the_fragment_is_installed_where_the_directory_did_not_exist(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw) / "absent" / "sysusers.d"
-            done = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's library
+            done = subprocess.run(  # fixed interpreter, the repository's library
                 [
                     "/bin/bash",
                     "-c",

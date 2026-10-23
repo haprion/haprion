@@ -78,8 +78,8 @@ class TheToolchainIsPinned(unittest.TestCase):
                 "-c",
                 "user.email=t@example.org",
             ]
-            subprocess.run([*git, "init", "-q"], check=True)  # noqa: S603 - fixed arguments
-            subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "t"], check=True)  # noqa: S603
+            subprocess.run([*git, "init", "-q"], check=True)  # fixed arguments
+            subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "t"], check=True)
             os.chdir(directory)
             with (
                 unittest.mock.patch.object(

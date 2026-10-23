@@ -1218,7 +1218,7 @@ class SharedTablesAreCheckedAsANode(unittest.TestCase):
                 (root / "conf.d" / name).write_text(content)
             binary = shutil.which("haproxy")
             assert binary is not None
-            result = subprocess.run(  # noqa: S603 - the local haproxy, a generated case
+            result = subprocess.run(  # the local haproxy, a generated case
                 [
                     binary,
                     "-c",

@@ -20,7 +20,7 @@ from tests.test_cert_publish import Fixture
 
 def _commands(*args: Any, **kwargs: Any) -> tuple[cert_renew.RenewalInvocation, ...]:
     renewals = cert_renew.invocations(*args, **kwargs)
-    assert renewals.problems == ()  # noqa: S101 - every lineage here can be prepared
+    assert renewals.problems == ()  # every lineage here can be prepared
     return renewals.commands
 
 

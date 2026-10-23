@@ -719,7 +719,7 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(stopped.exception.code, 0)
         loader.assert_called_once_with(Path("/etc/config.json"))
         collect_mock.assert_not_called()
-        self.assertEqual(output.getvalue(), "parsed 1 node(s) as svc-logread\n")
+        self.assertEqual(output.getvalue(), "parsed 1 node as svc-logread\n")
 
     def test_a_replay_drops_the_import_positions_and_nothing_else(self) -> None:
         part = self.staging / f"alpha--node-a--{NOW.date()}.jsonl"

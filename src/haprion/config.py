@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from haprion import accounts, exit_codes, safe_yaml
+from haprion import accounts, exit_codes, labels, safe_yaml
 
 DEFAULT_POLICY_PATH = Path("/etc/haprion/runtime-policy.yaml")
 MAX_CONFIG_BYTES = 1024 * 1024
@@ -603,7 +603,9 @@ def _mapping(value: Any, location: str) -> dict[str, Any]:
 def _only_keys(value: Mapping[str, Any], allowed: AbstractSet[str], location: str) -> None:
     unknown = sorted(set(value) - allowed)
     if unknown:
-        raise ConfigError(f"{location} contains unknown field(s): {', '.join(unknown)}")
+        raise ConfigError(
+            f"{location} contains unknown {labels.noun(len(unknown), 'field')}: {', '.join(unknown)}"
+        )
 
 
 def _required_string(value: Mapping[str, Any], key: str, location: str) -> str:
@@ -1297,7 +1299,8 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
         unknown = sorted(set(named) - set(receivers))
         if unknown:
             raise ConfigError(
-                f"{location}.receivers names unregistered receiver(s): {', '.join(unknown)}"
+                f"{location}.receivers names unregistered {labels.noun(len(unknown), 'receiver')}: "
+                f"{', '.join(unknown)}"
             )
         interface = raw.get("interface", False)
         if type(interface) is not bool:
@@ -1683,6 +1686,6 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             if unknown:
                 raise ConfigError(
                     f"certificates.{entry.certificate_id}.clusters names unknown "
-                    f"cluster(s): {', '.join(unknown)}"
+                    f"{labels.noun(len(unknown), 'cluster')}: {', '.join(unknown)}"
                 )
     return RuntimeConfig(schema_version=1, clusters=clusters, registry=registry)

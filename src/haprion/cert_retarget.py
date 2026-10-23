@@ -53,7 +53,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_pending, cert_registry, exit_codes
+from haprion import cert_pending, cert_registry, exit_codes, labels
 from haprion.cert_delete import (
     AUTHORITY_NODE_VERB,
     NODE_VERB,
@@ -231,7 +231,9 @@ def removal_refusal(
     if objects:
         return (
             "referenced_by_object",
-            "named by the committed object(s) " + ", ".join(objects) + "; change them first",
+            f"named by the committed {labels.noun(len(objects), 'object')} "
+            + ", ".join(objects)
+            + f"; change {'it' if len(objects) == 1 else 'them'} first",
         )
     defaults = [c for c in guards.defaults.get(certificate_id, ()) if c in dropped]
     if defaults:

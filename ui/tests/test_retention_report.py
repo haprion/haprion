@@ -8,7 +8,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / "install/platform/bin/haprion-retention"
 FUNCTIONS = (
-    "eval \"$(sed -n '/^log()/p;/^partition_report_query() {/,/^}/p;"
+    "eval \"$(sed -n '/^log()/p;/^counted()/p;/^partition_report_query() {/,/^}/p;"
     '/^traffic_report() {/,/^}/p\' "$0")"; '
     "TRAFFIC_KEEP_DAYS=7; exact_count=$1; "
 )
@@ -32,13 +32,13 @@ class RetentionReport(unittest.TestCase):
                 text=True,
                 check=True,
             )
-            self.assertIn("8192 bytes, retention 7 day(s)", result.stdout)
+            self.assertIn("8192 bytes, retention 7 days", result.stdout)
             if exact == "1":
-                self.assertIn("13 row(s) (exact)", result.stdout)
+                self.assertIn("13 rows (exact)", result.stdout)
                 self.assertIn("select count(*) from traffic_log", result.stderr)
             else:
-                self.assertIn("12 row(s) (estimated)", result.stdout)
-                self.assertIn("1 partition(s) without statistics", result.stdout)
+                self.assertIn("12 rows (estimated)", result.stdout)
+                self.assertIn("1 partition without statistics", result.stdout)
                 self.assertNotIn("select count(*) from traffic_log", result.stderr)
 
     def test_a_failed_catalogue_read_does_not_print_a_successful_report(self) -> None:

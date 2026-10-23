@@ -20,7 +20,7 @@ from typing import Any
 
 import yaml
 
-from haprion import safe_yaml
+from haprion import labels, safe_yaml
 from haprion.config import ConfigError
 
 LOCATION = "managed/cluster.yaml"
@@ -119,7 +119,9 @@ def _mapping(raw: Any, where: str) -> dict[str, Any]:
 def _only(raw: dict[str, Any], allowed: set[str], where: str) -> None:
     unknown = sorted(str(key) for key in raw if key not in allowed)
     if unknown:
-        raise ConfigError(f"{where} has unknown field(s): {', '.join(unknown)}")
+        raise ConfigError(
+            f"{where} has unknown {labels.noun(len(unknown), 'field')}: {', '.join(unknown)}"
+        )
 
 
 def _port(raw: Any, where: str) -> int:

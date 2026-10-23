@@ -74,7 +74,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from haprion import cert_registry, exit_codes, node_ssh
+from haprion import cert_registry, exit_codes, labels, node_ssh
 from haprion.cert_inventory import IMPORT_STORE, receiver_files
 from haprion.cert_publish import DEFAULT_LOCK_PATH, prune_receiver_directory, publish_lock
 from haprion.cert_publish import PublishError as LockError
@@ -326,7 +326,9 @@ def refusal(certificate_id: str, runtime: RuntimeConfig, guards: Guards) -> tupl
     if objects:
         return (
             "referenced_by_object",
-            "named by the committed object(s) " + ", ".join(objects) + "; change them first",
+            f"named by the committed {labels.noun(len(objects), 'object')} "
+            + ", ".join(objects)
+            + f"; change {'it' if len(objects) == 1 else 'them'} first",
         )
     entry = registry.certificates.get(certificate_id)
     if entry is None:

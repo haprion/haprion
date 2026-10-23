@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import dns_profiles, exit_codes
+from haprion import dns_profiles, exit_codes, labels
 from haprion.cli import cert_job
 from haprion.config import (
     DEFAULT_POLICY_PATH,
@@ -206,7 +206,8 @@ def main(
         if references:
             return refuse(
                 "profile_in_use",
-                f"profile {profile_id!r} is referenced by certificate(s): {', '.join(references)}",
+                f"profile {profile_id!r} is referenced by {labels.noun(len(references), 'certificate')}: "
+                f"{', '.join(references)}",
                 exit_codes.REFUSED,
             )
         try:

@@ -20,7 +20,7 @@ from typing import Any
 
 import psycopg
 
-from haprion import atomic_file, exit_codes, node_ssh
+from haprion import atomic_file, exit_codes, labels, node_ssh
 from haprion.config import CLUSTER_ID
 from haprion.proxy_model import NAME as OBJECT_NAME
 from haprion.proxy_model import WAF_DECIDING_RULES, waf_field
@@ -1552,10 +1552,13 @@ def collect(
         try:
             skipped, expired = _ingest_database(config)
             if skipped:
-                print(f"database: skipped {skipped} unusable record(s)", file=sys.stderr)
+                print(
+                    f"database: skipped {labels.counted(skipped, 'unusable record')}",
+                    file=sys.stderr,
+                )
             if expired:
                 print(
-                    f"database: {expired} mirrored day(s) are older than the database keeps",
+                    f"database: {labels.counted(expired, 'mirrored day')} {'is' if expired == 1 else 'are'} older than the database keeps",
                     file=sys.stderr,
                 )
         except (CollectorError, OSError) as exc:
@@ -1597,14 +1600,14 @@ def _entry() -> None:
     try:
         config = load_config(Path(sys.argv[2]))
         if sys.argv[1] == "--check-config":
-            print(f"parsed {len(config.nodes)} node(s) as {config.user}")
+            print(f"parsed {labels.counted(len(config.nodes), 'node')} as {config.user}")
             code = 0
         elif sys.argv[1] == "--replay-database":
             if config.database is None:
                 raise CollectorError("this collector imports into no database; nothing to replay")
             dropped = forget_database_positions(config)
             print(
-                f"dropped {dropped} import position(s); the next run imports every staged day again"
+                f"dropped {labels.counted(dropped, 'import position')}; the next run imports every staged day again"
             )
             code = 0
         else:

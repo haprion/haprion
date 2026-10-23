@@ -63,7 +63,7 @@ for role in app_web app_worker app_poller app_collector; do
         missing="${missing} ${role}"
     fi
 done
-[[ -z "$missing" ]] || die "the contract role(s)${missing} do not exist.
+[[ -z "$missing" ]] || die "missing contract $(counted "$(wc -w <<<"$missing")" role | cut -d" " -f2-):${missing}.
   Run ./02-platform-database first; the migrations grant to them."
 
 if [[ $# -eq 0 ]]; then

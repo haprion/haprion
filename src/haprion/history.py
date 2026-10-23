@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
+from haprion import labels
 from haprion.deploy_plan import ReleaseTarget
 from haprion.version_history import LIST_LIMIT, VersionSummary
 
@@ -116,6 +117,6 @@ def summary_line(result: Mapping[str, object]) -> str:
     if isinstance(unpublished, int):
         return (
             f"Version {result['published_version']} is published; "
-            f"{unpublished} newer version(s) are saved but not published."
+            f"{labels.counted(unpublished, 'newer version')} {'is' if unpublished == 1 else 'are'} saved but not published."
         )
     return f"Version {result['published_version']} is published; it is older than this listing."

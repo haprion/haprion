@@ -341,7 +341,7 @@ FIELD_LABELS: dict[str, str] = {
     "rule_source": "Rules",
     "rule_methods": "Rules",
     "rule_negate": "Rules",
-    "maintenance": "Maintenance",
+    "maintenance": "Maintenance page",
     "maintenance_message": "Maintenance message",
     "unavailable_message": "Unavailable message",
     "request_headers": "Request headers",

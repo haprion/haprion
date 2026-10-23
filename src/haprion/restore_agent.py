@@ -1139,8 +1139,9 @@ def _update(
     if not failed or unread or not required:
         raise Failed(f"apt-get update exited {completed.returncode}: {' / '.join(detail)}")
     report.warnings.append(
-        f"apt-get update could not fetch {len(failed)} index file(s) outside the HAProxy "
-        f"repository after {tries} tries; installing from what it has: {', '.join(failed[:3])}"
+        f"apt-get update could not fetch {len(failed)} index {'file' if len(failed) == 1 else 'files'} "
+        f"outside the HAProxy repository after {tries} tries; installing from what it has: "
+        f"{', '.join(failed[:3])}"
     )
 
 

@@ -32,7 +32,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import exit_codes
+from haprion import exit_codes, labels
 from haprion.cli import (
     cert_list_helper,
     cluster_settings_helper,
@@ -120,7 +120,8 @@ def _reads(parameters: Mapping[str, JsonValue]) -> dict[str, dict[str, JsonValue
     unknown = sorted(set(raw) - set(READINGS))
     if unknown:
         raise HelperProtocolError(
-            f"unknown reading(s): {', '.join(unknown)}", exit_code=exit_codes.REFUSED
+            f"unknown {labels.noun(len(unknown), 'reading')}: {', '.join(unknown)}",
+            exit_code=exit_codes.REFUSED,
         )
     reads: dict[str, dict[str, JsonValue]] = {}
     for name, value in raw.items():
@@ -193,7 +194,8 @@ def main(
         if cluster is None and not set(reads) <= MANAGER_READINGS:
             refused = ", ".join(sorted(set(reads) - MANAGER_READINGS))
             raise HelperProtocolError(
-                f"reading(s) that need a cluster: {refused}", exit_code=exit_codes.REFUSED
+                f"{labels.noun(len(set(reads) - MANAGER_READINGS), 'reading').capitalize()} that need a cluster: {refused}",
+                exit_code=exit_codes.REFUSED,
             )
     except HelperProtocolError as exc:
         errors.write(f"ERROR: {exc}\n")

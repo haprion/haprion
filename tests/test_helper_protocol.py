@@ -380,7 +380,7 @@ class TheRequestWithNoCluster(unittest.TestCase):
         with self.assertRaises(helper_protocol.HelperProtocolError) as caught:
             self.read(io.BytesIO(json.dumps(document).encode("utf-8") + b"\n"))
 
-        self.assertIn("missing field(s): cluster", str(caught.exception))
+        self.assertIn("missing field: cluster", str(caught.exception))
 
     def test_a_cluster_helper_still_refuses_a_null(self) -> None:
         with self.assertRaises(helper_protocol.HelperProtocolError):

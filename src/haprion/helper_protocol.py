@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO, cast
 
-from haprion import exit_codes
+from haprion import exit_codes, labels
 from haprion.config import CLUSTER_ID
 from haprion.envelope import failure
 
@@ -370,12 +370,12 @@ def _read_request(
     unknown = sorted(document.keys() - REQUEST_FIELDS)
     if missing:
         raise HelperProtocolError(
-            f"helper request is missing field(s): {', '.join(missing)}",
+            f"helper request is missing {labels.noun(len(missing), 'field')}: {', '.join(missing)}",
             exit_code=exit_codes.REFUSED,
         )
     if unknown:
         raise HelperProtocolError(
-            f"helper request contains unknown field(s): {', '.join(unknown)}",
+            f"helper request contains unknown {labels.noun(len(unknown), 'field')}: {', '.join(unknown)}",
             exit_code=exit_codes.REFUSED,
         )
 
@@ -427,7 +427,8 @@ def _read_request(
     unknown_parameters = sorted(parameters.keys() - allowed_parameter_keys)
     if unknown_parameters:
         raise HelperProtocolError(
-            f"parameters contains unknown field(s): {', '.join(unknown_parameters)}",
+            f"parameters contains unknown {labels.noun(len(unknown_parameters), 'field')}: "
+            f"{', '.join(unknown_parameters)}",
             exit_code=exit_codes.REFUSED,
         )
     if validate_parameters is not None:

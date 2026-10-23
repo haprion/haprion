@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import cert_retarget, exit_codes
+from haprion import cert_retarget, exit_codes, labels
 from haprion.cert_delete import NodeRemover, ask_node, read_guards
 from haprion.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haprion.cert_publish import DEFAULT_LOCK_PATH, Deployer
@@ -92,7 +92,7 @@ def read_change(parameters: Mapping[str, JsonValue]) -> Change:
     unknown = sorted(set(block) - {"clusters", "receivers", "formats"})
     if unknown:
         raise HelperProtocolError(
-            f"parameters.{action} has unknown key(s): {', '.join(unknown)}",
+            f"parameters.{action} has unknown {labels.noun(len(unknown), 'key')}: {', '.join(unknown)}",
             exit_code=exit_codes.REFUSED,
         )
     if action == "remove" and "formats" in block:

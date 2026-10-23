@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haprion import exit_codes, ndes_profiles
+from haprion import exit_codes, labels, ndes_profiles
 from haprion.cli import cert_job
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_registry
 from haprion.dns_profile_keys import KeyFileError, read_private_key
@@ -129,7 +129,8 @@ def main(
                 if references:
                     return refuse(
                         "profile_in_use",
-                        f"profile {opened.profile_id!r} is referenced by certificate(s): "
+                        f"profile {opened.profile_id!r} is referenced by "
+                        f"{labels.noun(len(set(references)), 'certificate')}: "
                         + ", ".join(sorted(set(references))),
                         exit_codes.REFUSED,
                     )

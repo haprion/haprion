@@ -12,6 +12,7 @@ only works with the names used below, that is a bug in the software, not in this
 ## Contents
 
 - [Configuration and deployment](#configuration-and-deployment)
+  - [An http or https object, field by field](#an-http-or-https-object-field-by-field)
   - [A whole subdomain](#a-whole-subdomain)
   - [A pool's servers](#a-pools-servers)
   - [A pool over HTTPS](#a-pool-over-https)
@@ -151,6 +152,142 @@ its file.
 200 characters - what the service is and who to ask. The object's page shows it in the *Stored
 object* card as *Description:*, and the search finds it. In YAML it is `description:` beside `name:`; nothing generated reads it,
 so a publish that changes only the description deploys the same HAProxy configuration.
+
+### An http or https object, field by field
+
+The editor's form has three parts - *Frontend*, *Backend* and *Health check* - and shows only the
+fields that mean something for the chosen *Protocol*: *Certificate* and *TLS and HSTS* are https
+only, and the fields of other protocols are hidden. What an object cannot do without is always
+on screen; the rest sits in folded groups, closed when the page opens, each with one line that says
+what it holds. A group whose fields have been changed says *Changed — validate to see the result*
+until *Validate* writes the line anew. Below, the fields in the order the form shows them.
+
+**Frontend.** *Name* is lowercase letters, digits, hyphens and underscores, starting with a letter,
+at most 40 characters and unique in the cluster. *Hostnames* takes several names separated by
+commas, and one may be a whole subdomain ([A whole subdomain](#a-whole-subdomain)). *VIP* is the
+cluster's default VIP unless another is chosen; http and https are served on the cluster's own
+ports, so a site names no port. *Description* is the one line described above.
+
+*Certificate* lists the certificates the cluster carries ([Certificates](#certificates)); an https
+object is refused without one. Where the management host can read the certificate, a publish
+refuses a hostname it does not answer for.
+
+**TLS and HSTS** (https only):
+
+- *Specific TLS for this site only* is *Use VIP settings* unless the site needs terms of its own:
+  *TLS 1.2 only*, *TLS 1.2 and 1.3* or *TLS 1.3 only*. The terms are chosen by the name the client
+  asks for in the handshake, so the site keeps sharing its VIP with sites on other terms.
+- *Redirect plain HTTP to HTTPS (301)* puts the site on the VIP's http port as well and answers
+  every plain request there with a 301 to the same address over https.
+- *Send HSTS* adds `Strict-Transport-Security` to every answer, for *HSTS lifetime, seconds* (one
+  year, 31536000, unless changed; at most two years). *…including subdomains* extends it to every
+  name under the site's. HSTS cannot be taken back by changing the configuration: for its lifetime
+  a browser that has seen it refuses plain http to the name and offers no way past a certificate
+  warning.
+
+**Access**, **Dynamic blocking** and **WAF** decide who is served. *Reachable from* takes groups from
+the *Network* page and addresses, ranges or countries; anyone else is refused. *Rate limit* is
+requests per source address within *Rate window* (`10s` when empty); what is over it is answered
+429 and the rest is served. *Denied*, *Max request body* and *Deny rules* are described in
+[Access rules](#access-rules), blocking in [Dynamic blocking](#dynamic-blocking) and the WAF group,
+shown where the engine is offered or already in use, in [The WAF engine](#the-waf-engine).
+
+**Maintenance page.** *Out of service for maintenance* takes the whole site out on purpose: every
+request for its hostnames is answered 503 with *What visitors are told instead*, which is required
+while the box is ticked, and the answer is not cached. The object, its routing and its pool stay as
+they are, and its servers go on being health-checked, so publishing it unticked brings the site
+back with nothing to rebuild. This is the site's own switch, published and deployed like any other
+field; one server taken out of its pool is the *Maintenance* button on the object's *Servers* card
+([Drain and maintenance](#drain-and-maintenance)).
+
+*What visitors are told when no server answers* replaces HAProxy's own text on a 502, 503 or 504 -
+the answers a site's own error page cannot give, because they arise when nothing behind the proxy
+answers. Empty keeps HAProxy's text. Both messages are one line of plain text of at most 200
+characters, without double quotes or backslashes; `%URL%` becomes the site's first exact hostname,
+and no other `%...%` is accepted.
+
+**Backend.** *Backend name* is the object's name when empty. It must be unique in the cluster, and
+it is the name metrics use. *Servers* is one server per line, with weights and backup servers as
+described in [A pool's servers](#a-pools-servers).
+
+*Balancing* chooses a server for each new connection; `roundrobin` unless changed:
+
+- `roundrobin` in turn, by weight; `static-rr` the same without weight changes while running.
+- `leastconn` fewest connections first, for long-lived sessions rather than short requests.
+- `first` fills one server before using the next. It ignores weights, so a pool with weights refuses
+  it, and it only means something together with *Connections per server*.
+- `source` hashes the client's address and `uri` the request path, so one client or one URL keeps
+  one server; `random` picks at random.
+- `hdr` and `url_param` hash the value of one request header or one query parameter, named in
+  *Balancing key* - required with these two and refused with the others.
+
+**Connections.**
+
+- *Source address* is the address the pool is reached from: the VIP's own unless another is named
+  ([Addresses, and what to call them](#addresses-and-what-to-call-them)).
+- *Backend TLS* and *CA* are described in [A pool over HTTPS](#a-pool-over-https). With HTTPS
+  chosen, *Specific TLS for this backend only* is *Use default settings (TLS 1.2 and 1.3)*, *TLS 1.3
+  only*, or *TLS 1.1 and up — for old equipment*.
+- *Session cookie* keeps one visitor on one server. HAProxy adds the cookie to its answers,
+  takes it off each request before the server sees it, and marks the answer so a shared cache does
+  not hand one visitor's cookie to another. Empty means no persistence; the field suggests
+  `hap_<name>`, and a name is letters, digits, `_` and `-`, at most 32. Unlike `source` balancing it
+  follows the session rather than the address, so visitors behind one NAT address are still spread.
+- *Connections per server*, 1 to 65535, is how many connections one server is given at once. The
+  rest wait in the pool's queue for up to 5 seconds instead of making every server slow at once.
+- *Server timeout* is described in [A slow server](#a-slow-server).
+- *Slow start* ramps a server that comes back after being seen as failed up to its full share over
+  the time given, such as `30s`, so a cold server is not knocked over again. It never applies when
+  HAProxy starts. It needs a health check and must be longer than the check interval, since the
+  ramp moves one step per check; the hint under the field names the interval as it stands.
+
+**Redirect.** *Path*, *Match*, *To* and *Status* are one redirect: a request for *Path* is answered
+with *To*, an absolute `http://` or `https://` URL that replaces the whole address, and never
+reaches the backend. *Match* is `prefix` (the path and everything under it) or `exact`; a redirect
+of `/` itself must be `exact`, so the backend keeps the rest of the site. *Status* is 301 unless
+changed, and 302, 303, 307 or 308 otherwise. A browser may turn a redirected POST into a GET on 301
+and 302, and not on 307 and 308. *Path* and *To* go together; *Status* is greyed out until both are
+written.
+
+**Headers.** *Request headers* are changed on the way to the servers and *Response headers* on the
+way back, one per line: `Name: value` sets a header and replaces any with that name, `+Name: value`
+adds another with the same name, and `-Name` removes every one. One name under two of the three is
+refused. A value is at most 200 characters, without a single quote. `X-Forwarded-For`,
+`X-Forwarded-Proto` and `X-Forwarded-Host` are the cluster's, written from what the connection
+was, and refused here.
+
+**Health check.** *Type* `disabled` means no check: HAProxy treats every server as always up, sends a
+server that has gone its share of the traffic all the same, and the object has no lamp. A new
+object's form arrives with an `http` check of `/` that accepts `200-499` - proof the web server
+answers, without a 401 or 404 on `/` marking the pool down at its first deploy. Changing *Protocol*
+while *Type* is still `disabled` or still that offer makes the offer again for the new protocol -
+`https` when *Backend TLS* is HTTPS, `tcp` for a tcp object - and changing *Backend TLS* switches an
+untouched offer between `http` and `https`. A type somebody chose stays.
+
+- `http` and `https` send a GET for *Path* and expect *Expected status*: one status or a range such
+  as `204` or `200-299`, and any 2xx or 3xx when empty. Write the application's health page and
+  narrow the range where there is one: a 302 to a login page is the answer a broken application
+  gives. `https` speaks TLS to the check even on a plain pool, and `http` speaks plain on a pool
+  reached over HTTPS, for a plaintext management port. A check over TLS judges no certificate.
+- `tcp` opens a connection, and `tcp, TLS handshake` completes a TLS handshake. *Send* and *Expect*
+  turn either into a short exchange: *Send* is written once the connection is up and the answer
+  must contain *Expect*. The two belong together, and each is one short word - letters, digits and
+  `. _ : / + = @ -`, at most 64 - with `\r` and `\n` as the only escapes, for a line protocol that
+  answers once a line has ended: `PING\r\n` to a Redis server.
+
+*Check details* holds *Port* (the server's own when empty, for a health endpoint on a management
+port), *Host header* for a backend that serves several names - without it such a backend may answer
+the check with a 404 or a redirect and look dead - and *Expected body*, text the answer must contain
+as well as the status, written the same way as *Expect*.
+
+*Timing* holds *Check interval* (`2s`), *Checks to rise* (2 good answers before a server is used
+again), *Checks to fall* (3 failures before it is taken out), and *Fast interval* and *Down
+interval* (`1s` each), the interval while a server is going up or down and while it is down. Rise
+and fall are 1 to 10; intervals are written as `500ms`, `5s` or `1m`.
+
+*Test health check*, in the editor, asks the node holding the object's address to try the check as
+it stands on screen, once, now. *What the nodes report* lists each node's verdict on each server;
+the rows that test tried are marked *tested*, and pointing at *Last check* shows HAProxy's own code.
 
 ### A whole subdomain
 

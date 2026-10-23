@@ -66,7 +66,7 @@ if (( ${#existing[@]} > 0 )) && [[ "${ROTATE:-0}" != "1" ]]; then
             || die "${file} has no public half at ${PUBLIC_DIR}/${key_id}.pub"
         log "  ok       ${key_id}  (private ${file}, public ${PUBLIC_DIR}/${key_id}.pub)"
     done
-    log "  kept     ${#existing[@]} pair(s); run with ROTATE=1 to add a new one"
+    log "  kept     $(counted "${#existing[@]}" pair); run with ROTATE=1 to add a new one"
 else
     key_id="$(/usr/bin/python3 -I "$tool" create \
         --private "$PRIVATE_DIR" --public "$PUBLIC_DIR" --group "$PLATFORM_GROUP")"

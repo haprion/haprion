@@ -444,9 +444,9 @@ class TheSetupReport(unittest.TestCase):
             "== Releases\n  PASS  UI release        r1\n"
             "  FAIL  worker sudoers    cannot read /etc/sudoers.d/haprion-worker\n"
             "  FAIL  node socket       /run/haprion/cluster-node.sock: No such file\n\n"
-            "INCOMPATIBLE: 2 check(s) failed\n"
+            "INCOMPATIBLE: 2 checks failed\n"
         )
-        self.assertIn("What went wrong: INCOMPATIBLE: 2 check(s) failed", shown)
+        self.assertIn("What went wrong: INCOMPATIBLE: 2 checks failed", shown)
         self.assertIn("Why:             FAIL  worker sudoers    cannot read", shown)
         self.assertIn("FAIL  node socket", shown)
         self.assertNotIn("PASS", shown)

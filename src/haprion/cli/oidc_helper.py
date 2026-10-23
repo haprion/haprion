@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haprion import exit_codes, oidc
+from haprion import exit_codes, labels, oidc
 from haprion.cli import cert_job
 from haprion.dns_profile_keys import KeyFileError, read_private_key
 from haprion.envelope import envelope
@@ -136,7 +136,7 @@ def _verify(
 
     try:
         keys = oidc.signing_keys(client, discovery)
-        record("keys", True, f"{len(keys.keys)} signing key(s)")
+        record("keys", True, labels.counted(len(keys.keys), "signing key"))
     except oidc.OidcError as exc:
         record("keys", False, str(exc))
 

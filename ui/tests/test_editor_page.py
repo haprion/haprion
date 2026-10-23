@@ -429,6 +429,14 @@ class SavingADraft(EditorTestCase):
         self.assertIn('<select name="health_type" data-proposed="http">', page)
         self.assertIn('name="health_expect_status" value="200-499"', page)
 
+    def test_the_maintenance_page_is_not_named_as_the_server_button(self) -> None:
+        """7-1: the group shared its name with a server's Maintenance button."""
+
+        page = self.editor().get("/proxies/alpha/new").text
+
+        self.assertIn('<span class="form-group-title">Maintenance page</span>', page)
+        self.assertNotIn('<span class="form-group-title">Maintenance</span>', page)
+
     def test_the_certificate_is_asked_for_rather_than_offered_as_none(self) -> None:
         """7-15: an https object must have one, and the list started at *None*."""
 

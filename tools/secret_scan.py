@@ -284,7 +284,10 @@ def main() -> int:
             findings.extend(scan_file(name, content, rules))
 
         if findings:
-            print(f"secret scan: BLOCKED ({len(findings)} finding(s))", file=sys.stderr)
+            print(
+                f"secret scan: BLOCKED ({len(findings)} {'finding' if len(findings) == 1 else 'findings'})",
+                file=sys.stderr,
+            )
             for name, line, label in findings:
                 location = f"{name}:{line}" if line else name
                 print(f"  {location}: {label}", file=sys.stderr)

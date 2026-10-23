@@ -176,7 +176,10 @@ def main() -> int:
         failed = True
 
     if unaccepted:
-        print(f"CodeQL gate: FAIL ({len(unaccepted)} alert(s))", file=sys.stderr)
+        print(
+            f"CodeQL gate: FAIL ({len(unaccepted)} {'alert' if len(unaccepted) == 1 else 'alerts'})",
+            file=sys.stderr,
+        )
         for finding in unaccepted:
             print(f"- {finding.level}: {finding.rule} at {finding.location}", file=sys.stderr)
         failed = True
@@ -184,7 +187,10 @@ def main() -> int:
     if failed:
         return 1
 
-    print(f"CodeQL gate: OK (no alerts beyond {len(covered)} recorded acceptance(s))")
+    print(
+        f"CodeQL gate: OK (no alerts beyond {len(covered)} recorded "
+        f"{'acceptance' if len(covered) == 1 else 'acceptances'})"
+    )
     return 0
 
 

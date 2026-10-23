@@ -43,7 +43,7 @@ backends:
     balance: roundrobin
     health:
       type: tcp
-      send: PING
+      send: PING\r\n
       expect: PONG
       interval: 5s
       fast_interval: 1s

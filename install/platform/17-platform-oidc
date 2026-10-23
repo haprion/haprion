@@ -81,7 +81,7 @@ if (( ${#existing[@]} > 0 )) && [[ "${ROTATE:-0}" != "1" ]]; then
             || die "${file} has no public half at ${PUBLIC_DIR}/${key_id}.pub"
         log "  ok       ${key_id}"
     done
-    log "  kept     ${#existing[@]} pair(s); run with ROTATE=1 to add a new one"
+    log "  kept     $(counted "${#existing[@]}" pair); run with ROTATE=1 to add a new one"
 else
     chown root:root "$KEY_DIR"
     chmod 700 "$KEY_DIR"

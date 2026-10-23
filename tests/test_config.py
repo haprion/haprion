@@ -960,7 +960,7 @@ class TheCertificateRegistry(RegistryTestCase):
         def typo(data: dict[str, Any]) -> None:
             data["certificates"]["example.net"]["clusters"] = ["alpha", "alhpa"]
 
-        with self.assertRaisesRegex(ConfigError, "names unknown cluster\\(s\\): alhpa"):
+        with self.assertRaisesRegex(ConfigError, "names unknown cluster: alhpa"):
             self.load(mutate_registry=typo)
 
     def test_a_certificate_naming_an_unregistered_receiver_is_refused(self) -> None:

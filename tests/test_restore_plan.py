@@ -239,7 +239,7 @@ class TestMode(Planning):
         rewrite = next(r for r in plan.rewrites if r.path == "/etc/keepalived/ipvs.conf")
         self.assertEqual(
             (rewrite.field, rewrite.old, rewrite.new),
-            ("virtual_server", "2 virtual server(s)", "(none)"),
+            ("virtual_server", "2 virtual servers", "(none)"),
         )
 
     def test_a_new_vm_gets_the_file_as_it_was(self) -> None:

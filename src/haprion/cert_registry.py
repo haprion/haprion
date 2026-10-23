@@ -43,7 +43,7 @@ from typing import Any
 
 import yaml
 
-from haprion import atomic_file, exit_codes, safe_yaml
+from haprion import atomic_file, exit_codes, labels, safe_yaml
 from haprion.cert_lock import DEFAULT_LOCK_PATH, LOCK_WAIT_SECONDS, hold
 from haprion.config import (
     DEFAULT_RECEIVER_FORMAT,
@@ -194,7 +194,9 @@ def write(
         for certificate in candidate.certificates.values():
             unknown = sorted(set(certificate.clusters) - set(runtime.clusters))
             if unknown:
-                raise ConfigError(f"unknown cluster(s): {', '.join(unknown)}")
+                raise ConfigError(
+                    f"unknown {labels.noun(len(unknown), 'cluster')}: {', '.join(unknown)}"
+                )
         #
         # A cluster that had certificates is not left with none by a retarget.
         # A new cluster starts without any and loads (B302), but one that has
@@ -485,13 +487,14 @@ def set_targets(
     if unknown_clusters:
         raise RegistryError(
             "unknown_cluster",
-            f"unknown cluster(s): {', '.join(unknown_clusters)}",
+            f"unknown {labels.noun(len(unknown_clusters), 'cluster')}: {', '.join(unknown_clusters)}",
         )
     unknown_receivers = sorted(set(receivers) - set(registry.receivers))
     if unknown_receivers:
         raise RegistryError(
             "unknown_receiver",
-            f"unknown receiver(s): {', '.join(unknown_receivers)}. Register a receiver "
+            f"unknown {labels.noun(len(unknown_receivers), 'receiver')}: "
+            f"{', '.join(unknown_receivers)}. Register a receiver "
             "during installation before publishing to it.",
         )
 

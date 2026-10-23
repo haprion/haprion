@@ -509,6 +509,6 @@ refuse "$WEB_USER" "cannot queue a second active job for one cluster" \
 
 echo
 if (( failures )); then
-    die "${failures} check(s) failed"
+    die "$(counted "${failures}" check) failed"
 fi
 log "platform step 3 done - the database grants exactly what the contract says"

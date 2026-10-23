@@ -338,7 +338,12 @@ GROUPS: Mapping[str, FormGroup] = {
         _waf_badges,
     ),
     "maintenance": FormGroup(
-        "Maintenance", ("maintenance", "maintenance_message", "unavailable_message"), _maintenance
+        #
+        # The page the object serves, not a server's Maintenance button (review 2026-10-22, 7-1).
+        #
+        "Maintenance page",
+        ("maintenance", "maintenance_message", "unavailable_message"),
+        _maintenance,
     ),
     "connections": FormGroup(
         "Connections",

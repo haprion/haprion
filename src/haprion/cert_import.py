@@ -55,6 +55,7 @@ from haprion import (
     cert_registry,
     cert_request_state,
     exit_codes,
+    labels,
     ui_interface,
 )
 from haprion.cert_inventory import (
@@ -765,13 +766,19 @@ def import_certificate(
         )
     unknown_clusters = sorted(set(clusters) - set(runtime.clusters))
     if unknown_clusters:
-        raise ImportError_("unknown_cluster", "unknown cluster(s): " + ", ".join(unknown_clusters))
+        raise ImportError_(
+            "unknown_cluster",
+            f"unknown {labels.noun(len(unknown_clusters), 'cluster')}: "
+            + ", ".join(unknown_clusters),
+        )
     known_receivers = set(runtime.registry.receivers) if runtime.registry else set()
     unknown_receivers = sorted(set(receivers) - known_receivers)
     if unknown_receivers:
         raise ImportError_(
             "unknown_receiver",
-            "unknown receiver(s): " + ", ".join(unknown_receivers) + ". Register a receiver "
+            f"unknown {labels.noun(len(unknown_receivers), 'receiver')}: "
+            + ", ".join(unknown_receivers)
+            + ". Register a receiver "
             "during installation before publishing to it.",
         )
     for receiver_id, form in (formats or {}).items():
@@ -1108,7 +1115,11 @@ def import_authority(
         )
     unknown_clusters = sorted(set(clusters) - set(runtime.clusters))
     if unknown_clusters:
-        raise ImportError_("unknown_cluster", "unknown cluster(s): " + ", ".join(unknown_clusters))
+        raise ImportError_(
+            "unknown_cluster",
+            f"unknown {labels.noun(len(unknown_clusters), 'cluster')}: "
+            + ", ".join(unknown_clusters),
+        )
     moment = now or datetime.now(UTC)
     try:
         described = [describe(block) for block in blocks]

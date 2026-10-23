@@ -292,7 +292,7 @@ class ThePages(ProfileRouteTestCase):
             result={
                 "error": {
                     "code": "profile_in_use",
-                    "message": "profile 'cf-main' is referenced by certificate(s): shop",
+                    "message": "profile 'cf-main' is referenced by certificate: shop",
                 }
             },
         )
@@ -314,7 +314,7 @@ class ThePages(ProfileRouteTestCase):
         # The helper's reason is on the page the removal lands on, not one
         # click away - and only there. A later visit has the column's link.
         self.assertIn("Removal of <code>cf-main</code> was refused.", page)
-        self.assertIn("referenced by certificate(s): shop", page)
+        self.assertIn("referenced by certificate: shop", page)
         self.assertNotIn("was refused", later)
         self.assertIn('href="/jobs#job-41">· Removal refused</a>', later)
         self.assertNotIn("was refused", other)

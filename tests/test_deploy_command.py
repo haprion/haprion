@@ -259,7 +259,7 @@ class HelperBoundaryTests(HelperFixture):
         # would only be moving the decision, not protecting it.
         #
         self.assertEqual(code, 65)
-        self.assertIn("unknown field(s): nodes", err)
+        self.assertIn("unknown field: nodes", err)
         self.assertEqual(self.triggered, [])
 
     def test_the_helper_refuses_a_non_boolean_option(self) -> None:

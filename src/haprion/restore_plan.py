@@ -36,7 +36,7 @@ from typing import Any, Literal
 
 import yaml
 
-from haprion import haprion_repository, haproxy_repository, safe_yaml
+from haprion import haprion_repository, haproxy_repository, labels, safe_yaml
 from haprion.restore_source import Account, Entry, Group, RestoreSource, content
 
 Mode = Literal["new_vm", "test", "overwrite"]
@@ -525,7 +525,12 @@ def build(
                 )
                 data = b""
                 rewrites.append(
-                    Rewrite(entry.path, "virtual_server", f"{servers} virtual server(s)", "(none)")
+                    Rewrite(
+                        entry.path,
+                        "virtual_server",
+                        labels.counted(servers, "virtual server"),
+                        "(none)",
+                    )
                 )
         files.append(_planned(entry, data))
 

@@ -135,7 +135,7 @@ done
     ssh -o StrictHostKeyChecking=ask <node> true"
 
 install -o root -g "$COLLECTOR_USER" -m 640 "$pinned" "$COLLECTOR_KNOWN_HOSTS"
-log "  installed ${COLLECTOR_KNOWN_HOSTS}  (${count} node(s), copied not scanned)"
+log "  installed ${COLLECTOR_KNOWN_HOSTS}  ($(counted "${count}" node), copied not scanned)"
 
 step "Configuration from the inventory"
 

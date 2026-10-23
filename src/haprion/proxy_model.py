@@ -466,9 +466,13 @@ STATUS_RANGE = re.compile(r"^[1-5][0-9]{2}(-[1-5][0-9]{2})?$")
 #
 # What a check may send and look for. Narrow on purpose: the value is written
 # into a configuration line, and whitespace, quotes or backslashes there change
-# where the line ends rather than what the check looks for.
+# where the line ends rather than what the check looks for. The two escapes
+# `\r` and `\n` are the exception: a line protocol (Redis, SMTP) answers only
+# once a line has ended, and HAProxy writes them as CR and LF - measured
+# against 3.4.7, `tcp-check send PING\r\n` sent b"PING\r\n" (review
+# 2026-10-22: the form offered that as its example and the model refused it).
 #
-PROBE = re.compile(r"^[A-Za-z0-9._:/+=@-]{1,64}$")
+PROBE = re.compile(r"^(?:[A-Za-z0-9._:/+=@-]|\\[rn]){1,64}$")
 MATCH_MODES = ("exact", "prefix")
 #
 # `ca` (B276): verified against one of the cluster's own authorities, named
@@ -1513,7 +1517,8 @@ def _probe(data: Mapping[str, Any], key: str, location: str) -> str | None:
         return None
     if not isinstance(value, str) or not PROBE.fullmatch(value):
         raise ModelError(
-            f"{location}.{key} must be a short value without spaces, quotes or backslashes"
+            f"{location}.{key} must be a short value without spaces, quotes or backslashes "
+            "(\\r and \\n excepted)"
         )
     return value
 

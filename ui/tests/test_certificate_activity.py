@@ -55,7 +55,7 @@ class DeletionStates(unittest.TestCase):
                     {
                         "certificate": "shop.example.com",
                         "state": "refused",
-                        "reason": "named by the committed object(s) alpha/shop",
+                        "reason": "named by the committed object alpha/shop",
                     },
                 ]
             },

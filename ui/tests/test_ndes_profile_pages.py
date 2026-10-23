@@ -177,7 +177,7 @@ class RemovingAnNdesProfile(NdesPages):
             result={
                 "error": {
                     "code": "profile_in_use",
-                    "message": "profile 'certserver1' is referenced by certificate(s): webserver1-scep",
+                    "message": "profile 'certserver1' is referenced by certificate: webserver1-scep",
                 }
             },
         )

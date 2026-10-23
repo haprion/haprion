@@ -74,7 +74,16 @@ class OpeningAnObject(DraftReading):
 
         self.assertEqual(page.status_code, 200)
         self.assertIn("app.demo.example", page.text)
-        self.assertIn("managed/proxies/public-web.yaml", page.text)
+
+    def test_the_card_names_no_file_and_no_commit(self) -> None:
+        """Review 2026-10-22, 7-20: the repository's path and hash are not the reader's;
+        the publication line says the version."""
+
+        page = self.demo_client().get("/proxies/edge-demo/public-web")  # type: ignore[attr-defined]
+        card = page.text.split("<h3>Stored object</h3>", 1)[1].split("</header>", 1)[0]
+
+        self.assertNotIn("managed/proxies/", card)
+        self.assertNotRegex(card, r"\b[0-9a-f]{12}\b")
 
     def test_the_demo_fixture_finds_the_same_server_in_memory(self) -> None:
         """26-10-18: no database rows in demo mode; the search's builders make them."""

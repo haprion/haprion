@@ -107,7 +107,7 @@ class CodeqlGateTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertIn("acceptance no longer matches any alert", output)
-        self.assertIn("FAIL (2 alert(s))", output)
+        self.assertIn("FAIL (2 alerts)", output)
         self.assertIn("pages/a.py:10", output)
         self.assertIn("pages/b.py:20", output)
 

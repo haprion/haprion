@@ -38,6 +38,7 @@ log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 step() { CURRENT_STEP="$*"; echo; echo "== $*"; }
 warn() { echo "WARNING: $*" >&2; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
+counted() { if [[ "$1" == 1 ]]; then echo "1 $2"; else echo "$1 ${3:-$2s}"; fi; }  # "1 row", "2 rows"
 
 #
 # An error in three parts, the shape haprion-setup shows: what went wrong, why,

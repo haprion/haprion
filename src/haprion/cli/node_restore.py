@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import exit_codes, node_restore
+from haprion import exit_codes, labels, node_restore
 from haprion.backup_archive import ArchiveError
 from haprion.cli import node_restore_helper
 from haprion.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
@@ -158,7 +158,7 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
         )
     if plan["mode"] == "overwrite":
         out.write(
-            f"  changes   {len(plan['changed'])} file(s), {plan['unchanged']} already equal\n"
+            f"  changes   {labels.counted(len(plan['changed']), 'file')}, {plan['unchanged']} already equal\n"
         )
         for path in plan["changed"]:
             out.write(f"    {path}\n")

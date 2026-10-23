@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haprion import atomic_file, cert_registry, exit_codes
+from haprion import atomic_file, cert_registry, exit_codes, labels
 from haprion.cert_inventory import (
     IMPORT_STORE,
     LETSENCRYPT_LIVE,
@@ -262,12 +262,18 @@ def make_request(
     #
     unknown_clusters = sorted(set(clusters) - set(runtime.clusters))
     if unknown_clusters:
-        raise RequestError("unknown_cluster", "unknown cluster(s): " + ", ".join(unknown_clusters))
+        raise RequestError(
+            "unknown_cluster",
+            f"unknown {labels.noun(len(unknown_clusters), 'cluster')}: "
+            + ", ".join(unknown_clusters),
+        )
     known_receivers = set(runtime.registry.receivers) if runtime.registry else set()
     unknown_receivers = sorted(set(receivers) - known_receivers)
     if unknown_receivers:
         raise RequestError(
-            "unknown_receiver", "unknown receiver(s): " + ", ".join(unknown_receivers)
+            "unknown_receiver",
+            f"unknown {labels.noun(len(unknown_receivers), 'receiver')}: "
+            + ", ".join(unknown_receivers),
         )
     for receiver_id, form in (formats or {}).items():
         if receiver_id not in receivers:

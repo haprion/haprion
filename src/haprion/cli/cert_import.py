@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import exit_codes, ui_interface
+from haprion import exit_codes, labels, ui_interface
 from haprion.cert_import import (
     OPERATION,
     ImportError_,
@@ -62,7 +62,7 @@ USAGE = (
     "  --key <pem>           The unencrypted private key. Omitted, the key the manager\n"
     "                        already holds for the ID is used: a signing request made\n"
     "                        here (haprion-cert-request), or an earlier import.\n"
-    "  --chain <pem>         The issuing CA certificate(s), if not in --certificate.\n"
+    "  --chain <pem>         The issuing CA certificates, if not in --certificate.\n"
     "  --pkcs12 <file>       Everything in one PKCS#12 (.pfx/.p12) instead.\n"
     "  --password-file <p>   A file whose first line is the PKCS#12 password.\n"
     "                        Never on the command line.\n"
@@ -178,7 +178,7 @@ def _summary(result: ImportResult, writer: TextIO) -> None:
         verb = "replaced" if result.replaced else "imported"
         writer.write(
             f"{verb} CA {result.certificate_id} ({result.facts.subject}), "
-            f"{result.chain_length + 1} certificate(s), first valid until "
+            f"{labels.counted(result.chain_length + 1, 'certificate')}, first valid until "
             f"{result.facts.not_after.isoformat(timespec='seconds')}\n"
         )
         for entry in result.publish.certificates:

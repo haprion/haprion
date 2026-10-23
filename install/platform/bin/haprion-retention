@@ -139,6 +139,7 @@ METRIC_COUNTERS="scur, stot, bin, bout, req_tot, qcur, ereq, econ, eresp, dreq, 
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
+counted() { if [[ "$1" == 1 ]]; then echo "1 $2"; else echo "$1 ${3:-$2s}"; fi; }  # "1 row", "2 rows"
 
 usage() {
     sed -n '3,7p' "$0" | sed 's/^# \?//'
@@ -219,18 +220,18 @@ oidc_logins() {
     oidc_logins_present || return 0
     expired="$(psql_as -c "select count(*) from oidc_login where $(where_oidc_login_expired)")"
     if [[ "$command" == "report" ]]; then
-        log "  oidc_login: $(psql_as -c 'select count(*) from oidc_login') row(s), ${expired} older than ${OIDC_LOGIN_KEEP_HOURS} hour(s)"
+        log "  oidc_login: $(counted "$(psql_as -c 'select count(*) from oidc_login')" row), ${expired} older than $(counted "${OIDC_LOGIN_KEEP_HOURS}" hour)"
         return 0
     fi
     if [[ "$dry_run" -eq 1 ]]; then
-        log "  oidc_login: dry run, would remove ${expired} row(s)"
+        log "  oidc_login: dry run, would remove $(counted "${expired}" row)"
         return 0
     fi
     removed="$(psql_as -c "with removed as (
                               delete from oidc_login where $(where_oidc_login_expired)
                               returning 1
                            ) select count(*) from removed")"
-    log "  oidc_login: removed ${removed} row(s) older than ${OIDC_LOGIN_KEEP_HOURS} hour(s)"
+    log "  oidc_login: removed $(counted "${removed}" row) older than $(counted "${OIDC_LOGIN_KEEP_HOURS}" hour)"
 }
 
 version_diffs_present() {
@@ -260,18 +261,18 @@ version_diffs() {
     version_diffs_present || return 0
     unlisted="$(psql_as -c "select count(*) from version_diff where $(where_version_diff_unlisted)")"
     if [[ "$command" == "report" ]]; then
-        log "  version_diff: $(psql_as -c 'select count(*) from version_diff') row(s), ${unlisted} for versions no longer listed"
+        log "  version_diff: $(counted "$(psql_as -c 'select count(*) from version_diff')" row), ${unlisted} for versions no longer listed"
         return 0
     fi
     if [[ "$dry_run" -eq 1 ]]; then
-        log "  version_diff: dry run, would remove ${unlisted} row(s)"
+        log "  version_diff: dry run, would remove $(counted "${unlisted}" row)"
         return 0
     fi
     removed="$(psql_as -c "with removed as (
                               delete from version_diff where $(where_version_diff_unlisted)
                               returning 1
                            ) select count(*) from removed")"
-    log "  version_diff: removed ${removed} row(s) for versions no longer listed"
+    log "  version_diff: removed $(counted "${removed}" row) for versions no longer listed"
 }
 
 where_session_ended() {
@@ -313,29 +314,29 @@ account_history_table() {
     local table="$1" predicate="$2" keep="$3" expired removed
     expired="$(psql_as -c "select count(*) from ${table} where ${predicate}")"
     if [[ "$command" == "report" ]]; then
-        log "  ${table}: $(psql_as -c "select count(*) from ${table}") row(s), ${expired} past ${keep}"
+        log "  ${table}: $(counted "$(psql_as -c "select count(*) from ${table}")" row), ${expired} past ${keep}"
         return 0
     fi
     if [[ "$dry_run" -eq 1 ]]; then
-        log "  ${table}: dry run, would remove ${expired} row(s)"
+        log "  ${table}: dry run, would remove $(counted "${expired}" row)"
         return 0
     fi
     removed="$(psql_as -c "with removed as (
                               delete from ${table} where ${predicate}
                               returning 1
                            ) select count(*) from removed")"
-    log "  ${table}: removed ${removed} row(s) past ${keep}"
+    log "  ${table}: removed $(counted "${removed}" row) past ${keep}"
 }
 
 account_history() {
-    account_history_table app_session "$(where_session_ended)" "${SESSION_KEEP_DAYS} day(s) after they ended"
-    account_history_table login_attempt "$(where_login_attempt_old)" "${LOGIN_ATTEMPT_KEEP_DAYS} day(s)"
-    account_history_table audit_event "$(where_audit_old)" "${AUDIT_KEEP_DAYS} day(s)"
+    account_history_table app_session "$(where_session_ended)" "$(counted "${SESSION_KEEP_DAYS}" day) after they ended"
+    account_history_table login_attempt "$(where_login_attempt_old)" "$(counted "${LOGIN_ATTEMPT_KEEP_DAYS}" day)"
+    account_history_table audit_event "$(where_audit_old)" "$(counted "${AUDIT_KEEP_DAYS}" day)"
     #
     # A database from before 0071 has no such table; the next migration adds it.
     #
     if [[ "$(psql_as -c "select to_regclass('public.node_event') is not null")" == "t" ]]; then
-        account_history_table node_event "$(where_node_event_old)" "${NODE_EVENT_KEEP_DAYS} day(s)"
+        account_history_table node_event "$(where_node_event_old)" "$(counted "${NODE_EVENT_KEEP_DAYS}" day)"
     fi
 }
 
@@ -401,9 +402,9 @@ traffic_report() {
     IFS='|' read -r estimated unknown size <<< "$figures"
     if [[ "$exact_count" -eq 1 ]]; then
         exact="$(psql_as -c "select count(*) from ${table}")"
-        log "  ${table}: ${exact} row(s) (exact), ${size}, retention ${TRAFFIC_KEEP_DAYS} day(s)"
+        log "  ${table}: $(counted "${exact}" row) (exact), ${size}, retention $(counted "${TRAFFIC_KEEP_DAYS}" day)"
     else
-        log "  ${table}: ${estimated} row(s) (estimated), ${size}, retention ${TRAFFIC_KEEP_DAYS} day(s); ${unknown} partition(s) without statistics"
+        log "  ${table}: $(counted "${estimated}" row) (estimated), ${size}, retention $(counted "${TRAFFIC_KEEP_DAYS}" day); $(counted "${unknown}" partition) without statistics"
     fi
 }
 
@@ -437,13 +438,13 @@ traffic_partitions() {
         traffic_horizon "$table"
         mapfile -t expired < <(psql_as -c "$(partitions_expired "$table")")
         if [[ "$dry_run" -eq 1 ]]; then
-            log "  ${table}: ${#expired[@]} expired partition(s), none dropped"
+            log "  ${table}: $(counted "${#expired[@]}" "expired partition"), none dropped"
             continue
         fi
         for partition in "${expired[@]}"; do
             psql_as -c "drop table if exists \"${partition}\""
         done
-        log "  ${table}: dropped ${#expired[@]} expired partition(s)"
+        log "  ${table}: dropped $(counted "${#expired[@]}" "expired partition")"
     done
 }
 
@@ -481,18 +482,18 @@ trim_hours() {
         [[ "$(psql_as -c "select to_regclass('public.${table}') is not null")" == "t" ]] || continue
         expired="$(psql_as -c "select count(*) from ${table} where $("$where")")"
         if [[ "$command" == "report" ]]; then
-            log "  ${table}: $(psql_as -c "select count(*) from ${table}") row(s), ${expired} before ${kept}"
+            log "  ${table}: $(counted "$(psql_as -c "select count(*) from ${table}")" row), ${expired} before ${kept}"
             continue
         fi
         if [[ "$dry_run" -eq 1 ]]; then
-            log "  ${table}: dry run, would remove ${expired} row(s)"
+            log "  ${table}: dry run, would remove $(counted "${expired}" row)"
             continue
         fi
         removed="$(psql_as -c "with removed as (
                                   delete from ${table} where $("$where")
                                   returning 1
                                ) select count(*) from removed")"
-        log "  ${table}: removed ${removed} row(s) before ${kept}"
+        log "  ${table}: removed $(counted "${removed}" row) before ${kept}"
     done
 }
 
@@ -528,7 +529,7 @@ metrics_report() {
                                  join pg_class parent on parent.oid = inhparent
                                 where parent.relname = '${table}'")"
         expired="$(psql_as -c "select count(*) from ($(metric_partitions_expired "${table}")) as expired")"
-        log "  ${table}: ${covered} partition(s), ${expired} older than ${METRIC_KEEP_DAYS} day(s)"
+        log "  ${table}: $(counted "${covered}" partition), ${expired} older than $(counted "${METRIC_KEEP_DAYS}" day)"
     done
 }
 
@@ -605,7 +606,7 @@ SQL
         )"
         [[ -n "$written" && -n "$complete_before" ]] \
             || die "${METRIC_ROLLUP_NAME} did not advance its completion boundary"
-        log "  ${METRIC_ROLLUP_TABLE}: added ${written} hour(s), complete before ${complete_before}"
+        log "  ${METRIC_ROLLUP_TABLE}: added $(counted "${written}" hour), complete before ${complete_before}"
     else
         #
         # The command is installed apart from the release, so a database may
@@ -640,7 +641,7 @@ with hours as (
 select count(*) from added;
 SQL
         )"
-        log "  ${METRIC_ROLLUP_TABLE}: added ${written} hour(s); completion boundary unavailable"
+        log "  ${METRIC_ROLLUP_TABLE}: added $(counted "${written}" hour); completion boundary unavailable"
     fi
 
     mapfile -t dropped < <(psql_as -c "
@@ -654,17 +655,17 @@ SQL
                < date_trunc('month', current_date - ${METRIC_ROLLUP_KEEP_DAYS})
          order by child.relname")
     if [[ ${#dropped[@]} -eq 0 || -z "${dropped[0]}" ]]; then
-        log "  ${METRIC_ROLLUP_TABLE}: nothing older than ${METRIC_ROLLUP_KEEP_DAYS} day(s)"
+        log "  ${METRIC_ROLLUP_TABLE}: nothing older than $(counted "${METRIC_ROLLUP_KEEP_DAYS}" day)"
         return 0
     fi
     if [[ "$dry_run" -eq 1 ]]; then
-        log "  ${METRIC_ROLLUP_TABLE}: dry run, would drop ${#dropped[@]} partition(s)"
+        log "  ${METRIC_ROLLUP_TABLE}: dry run, would drop $(counted "${#dropped[@]}" partition)"
         return 0
     fi
     for partition in "${dropped[@]}"; do
         psql_as -c "drop table if exists \"${partition}\""
     done
-    log "  ${METRIC_ROLLUP_TABLE}: dropped ${#dropped[@]} partition(s)"
+    log "  ${METRIC_ROLLUP_TABLE}: dropped $(counted "${#dropped[@]}" partition)"
 }
 
 metric_partitions_prepare() {
@@ -690,7 +691,7 @@ metric_partitions_prepare() {
                                        current_date + ${METRIC_AHEAD_DAYS},
                                        interval '1 day'
                                    ) as day, metric_partition('${table}', day::date)")"
-            log "  ${table}: ${created} day(s) covered, to $(date -d "+${METRIC_AHEAD_DAYS} days" +%F)"
+            log "  ${table}: $(counted "${created}" day) covered, to $(date -d "+${METRIC_AHEAD_DAYS} days" +%F)"
         fi
 
     done
@@ -702,11 +703,11 @@ metric_partitions_prune() {
     for table in "${METRIC_TABLES[@]}"; do
         mapfile -t dropped < <(psql_as -c "$(metric_partitions_expired "${table}")")
         if [[ ${#dropped[@]} -eq 0 || -z "${dropped[0]}" ]]; then
-            log "  ${table}: nothing older than ${METRIC_KEEP_DAYS} day(s)"
+            log "  ${table}: nothing older than $(counted "${METRIC_KEEP_DAYS}" day)"
             continue
         fi
         if [[ "$dry_run" -eq 1 ]]; then
-            log "  ${table}: dry run, would drop ${#dropped[@]} partition(s)"
+            log "  ${table}: dry run, would drop $(counted "${#dropped[@]}" partition)"
             continue
         fi
         for partition in "${dropped[@]}"; do
@@ -718,7 +719,7 @@ metric_partitions_prune() {
             #
             psql_as -c "drop table if exists \"${partition}\""
         done
-        log "  ${table}: dropped ${#dropped[@]} partition(s)"
+        log "  ${table}: dropped $(counted "${#dropped[@]}" partition)"
     done
 }
 
@@ -863,7 +864,7 @@ main() {
     local total removable removed table
     { read -r total; read -r removable; } < <(counts)
 
-    log "  ${DB_NAME}: ${total} job row(s), ${removable} older than ${KEEP_DAYS} day(s)"
+    log "  ${DB_NAME}: $(counted "${total}" "job row"), ${removable} older than $(counted "${KEEP_DAYS}" day)"
     log "  keeping the ${KEEP_MINIMUM} most recent whatever their age"
 
     case "$command" in
@@ -927,7 +928,7 @@ main() {
                                           delete from job where $(where_removable)
                                           returning 1
                                        ) select count(*) from removed")"
-                log "  removed  ${removed} job row(s)"
+                log "  removed  $(counted "${removed}" "job row")"
             fi
             ;;
         *)

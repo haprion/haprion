@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
-from haprion import exit_codes, server_names
+from haprion import exit_codes, labels, server_names
 from haprion.cli import changes_publish
 from haprion.cli.apply_common import (
     PartlyDone,
@@ -277,7 +277,9 @@ def _summary(plan: Plan, *, check: bool, versions: Sequence[Mapping[str, Any]]) 
 
 def _render(cluster: str, plan: Plan, summary: Mapping[str, Any], writer: TextIO) -> None:
     if plan.empty:
-        writer.write(f"{cluster}: nothing to change ({len(plan.unchanged)} object(s) as stored).\n")
+        writer.write(
+            f"{cluster}: nothing to change ({labels.counted(len(plan.unchanged), 'object')} as stored).\n"
+        )
         return
     lead = "Would" if summary["check"] else "Did"
     for verb, names in (("add", plan.added), ("change", plan.changed), ("remove", plan.removed)):
